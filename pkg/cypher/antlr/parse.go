@@ -5,6 +5,7 @@
 package antlr
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -101,48 +102,37 @@ func Parse(query string) (*ParseResult, error) {
 // This is the hot path used when NORNICDB_PARSER=antlr for strict syntax validation.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
 func Validate(query string) error {
-	return ValidateWithCancellation(query, nil)
+	return ValidateContext(context.Background(), query)
 }
 
-// ValidationWork is the statement's cancellation owner, as validation sees
-// it: CheckBoundary reports false, and Err the reason, once the statement
-// is cancelled.
-type ValidationWork interface {
-	Err() error
-	CheckBoundary() bool
-}
-
-// ValidateWithCancellation is Validate under the statement's cancellation.
-// The upstream runtime gives a running parse no way to stop, so the deadline
-// is checked at the parse's boundaries: before it, between the SLL pass and
-// the LL retry, and after it. A cancelled statement returns work.Err(), never
-// a syntax verdict. A nil work is Validate.
-func ValidateWithCancellation(query string, work ValidationWork) error {
-	if work != nil && !work.CheckBoundary() {
-		return work.Err()
-	}
-	cancelled, err := validate(query, work)
-	if cancelled {
+// ValidateContext validates syntax while observing cancellation during lexer
+// and parser lookahead, including cold prediction. Cancellation returns only
+// after the parser has unwound and its pooled validator is released.
+func ValidateContext(ctx context.Context, query string) (err error) {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if work != nil && !work.CheckBoundary() {
-		return work.Err()
-	}
-	return err
-}
-
-// validate is Validate's body; cancelled reports that it stopped at the
-// boundary between its passes, so err is work.Err().
-func validate(query string, work ValidationWork) (cancelled bool, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			if canceled, ok := p.(predictionCanceled); ok {
+				err = canceled.err
+			} else {
+				panic(p)
+			}
+		}
+	}()
 	query = strings.TrimSpace(query)
 	if query == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
-		return false, localization.NewLocalizedError(string(message.ID), message, nil)
+		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 
 	v := validatorPool.Get().(*pooledValidator)
 	v.errorListener.reset()
-	defer validatorPool.Put(v)
+	defer func() {
+		v.parser.SetTokenStream(v.tokens)
+		validatorPool.Put(v)
+	}()
 
 	var input antlr.CharStream
 	if isASCII(query) {
@@ -154,30 +144,31 @@ func validate(query string, work ValidationWork) (cancelled bool, err error) {
 	v.lexer.Reset()
 
 	v.tokens.SetTokenSource(v.lexer)
-	v.parser.SetTokenStream(v.tokens)
+	var tokens antlr.TokenStream = v.tokens
+	if ctx.Done() != nil {
+		tokens = &contextTokenStream{TokenStream: v.tokens, ctx: ctx}
+	}
+	v.parser.SetTokenStream(tokens)
 
 	// Fast path: SLL prediction mode is usually faster; fall back to LL on errors.
 	v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeSLL)
 	_ = v.parser.Script()
 
 	if len(v.errorListener.errors) > 0 {
-		if work != nil && !work.CheckBoundary() {
-			return true, work.Err()
-		}
 		// Retry with LL prediction mode to avoid rejecting valid queries that
 		// require full context prediction.
 		v.errorListener.reset()
 		v.tokens.Seek(0)
-		v.parser.SetTokenStream(v.tokens)
+		v.parser.SetTokenStream(tokens)
 		v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeLL)
 		_ = v.parser.Script()
 
 		if len(v.errorListener.errors) > 0 {
 			message := localization.CypherANTLRValidateSyntaxError(strings.Join(v.errorListener.errors, "; "))
-			return false, localization.NewLocalizedError(string(message.ID), message, nil)
+			return localization.NewLocalizedError(string(message.ID), message, nil)
 		}
 	}
-	return false, nil
+	return nil
 }
 
 // parseErrorListener collects syntax errors during parsing

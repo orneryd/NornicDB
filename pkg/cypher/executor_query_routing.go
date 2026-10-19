@@ -283,16 +283,14 @@ func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher st
 // parameters and bound values, so DISTINCT, aggregation, ORDER BY, SKIP and
 // LIMIT behave as after any other clause (#713).
 func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	probe := contextPipelineProbe(ctx)
+ probe:=contextPipelineProbe(ctx)
 	// Parameters are row values ($name), not text: a substituted value would
 	// read as a literal (RETURN $a / $b with a = 1.0, b = 0 would fold like
 	// RETURN 1.0 / 0).
 	params := getParamsFromContext(ctx)
 	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
 	for name, value := range e.fabricRecordBindings {
-		if probe.stopped() {
-			return nil, probe.failed()
-		}
+  if probe.stopped() { return nil,probe.failed() }
 		row[name] = value
 	}
 	bindParameterRow(ctx, row)
@@ -300,9 +298,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	// that travel in the value scope; the innermost bindings shadow params.
 	if bindings := valueBindingsFromContext(ctx); bindings != nil {
 		for name, value := range bindings {
-			if probe.stopped() {
-				return nil, probe.failed()
-			}
+   if probe.stopped() { return nil,probe.failed() }
 			row[name] = value
 		}
 	}
@@ -379,13 +375,7 @@ func splitReturnExpressions(clause string) []string {
 // When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
 // cypher25 is the statement's language version (its scope checks differ).
-func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
-	return e.validateSyntaxWithCancellation(cypher, cypher25, nil)
-}
-func (e *StorageExecutor) validateSyntaxWithCancellation(cypher string, cypher25 bool, probe *pipelineCancellation) error {
-	if probe != nil && !probe.poll() {
-		return probe.err
-	}
+func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool) error {
 	// A text the selected validator accepted passed every check below (it
 	// is marked valid only then), so a repeated query skips them all (#823):
 	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
@@ -393,9 +383,6 @@ func (e *StorageExecutor) validateSyntaxWithCancellation(cypher string, cypher25
 	validator := activeSyntaxValidator()
 	if e.hasCachedValidSyntax(cypher, validator) {
 		return nil
-	}
-	if probe != nil && probe.err != nil {
-		return probe.err
 	}
 	if err := validateUnicodeOperators(cypher); err != nil {
 		return err
@@ -416,44 +403,27 @@ func (e *StorageExecutor) validateSyntaxWithCancellation(cypher string, cypher25
 		return err
 	}
 	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLRWithCancellation(cypher, cypher25, probe)
+		return e.validateSyntaxANTLR(ctx, cypher, cypher25)
 	}
 	return e.validateSyntaxNornic(cypher)
 }
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
-func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) error {
-	return e.validateSyntaxANTLRWithCancellation(cypher, cypher25, nil)
-}
-func (e *StorageExecutor) validateSyntaxANTLRWithCancellation(cypher string, cypher25 bool, probe *pipelineCancellation) error {
-	if probe != nil && !probe.poll() {
-		return probe.err
-	}
+func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string, cypher25 bool) error {
 	if isNornicExtensionStatement(cypher) {
 		if err := e.validateSyntaxNornic(cypher); err != nil {
 			return err
 		}
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
-		if probe != nil {
-			return probe.err
-		}
+		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
 		return nil
 	}
-	var parserError error
-	if probe == nil {
-		parserError = antlr.Validate(cypher)
-	} else {
-		parserError = antlr.ValidateWithCancellation(cypher, probe)
-		if probe.err != nil {
-			return probe.err
-		}
+	parserError := antlr.ValidateContext(ctx, cypher)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if parserError == nil {
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
-		if probe != nil {
-			return probe.err
-		}
 		return nil
 	}
 	if err := e.validateSyntaxNornic(cypher); err != nil {
@@ -732,11 +702,6 @@ func hasAdjacentOperands(cypher string) bool {
 }
 
 func isSyntaxBoundaryKeyword(word string) bool {
-	// Every keyword in this finite grammar table is shorter than 32 bytes.
-	// A long identifier cannot match; avoid case-folding/hashing its whole text.
-	if len(word) > 32 {
-		return false
-	}
 	if _, allowed := literalLeadingKeywords[upperASCII(word)]; allowed {
 		return true
 	}
@@ -890,6 +855,9 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	e.syntaxValidationOnce.Do(func() {
 		if e.syntaxValidationCache == nil {
 			e.syntaxValidationCache = &syntaxValidationCache{max: 4096}
+			for i := range e.syntaxValidationCache.shards {
+				e.syntaxValidationCache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
+			}
 		}
 	})
 	return e.syntaxValidationCache
