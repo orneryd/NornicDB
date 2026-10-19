@@ -451,6 +451,10 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 // steps follow every relationship. The path algorithms (dijkstra, aStar,
 // allSimplePaths) read their relTypesAndDirections through it too (#1185).
 func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+	return e.apocStepsWithCancellation(node, steps, nil)
+}
+
+func (e *StorageExecutor) apocStepsWithCancellation(node storage.NodeID, steps []apocRelationshipStep, probe *pipelineCancellation) []*storage.Edge {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
@@ -465,13 +469,16 @@ func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshi
 		}
 	}
 	for _, step := range steps {
+		if probe.stopped() { return nil }
 		if step.direction != "in" {
 			for _, edge := range out {
+				if probe.stopped() { return nil }
 				take(edge, step)
 			}
 		}
 		if step.direction != "out" {
 			for _, edge := range in {
+				if probe.stopped() { return nil }
 				take(edge, step)
 			}
 		}
@@ -567,7 +574,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			if err != nil {
 				return nil, err
 			}
-			edges := e.apocSteps(step.node.ID, filter)
+			edges := e.apocStepsWithCancellation(step.node.ID, filter, probe)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
 				if probe.stopped() {

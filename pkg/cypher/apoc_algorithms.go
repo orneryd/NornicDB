@@ -72,7 +72,9 @@ func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []inter
 			return nil, procedureArgumentTypeError(procedure, "defaultWeight", "FLOAT", value)
 		}
 	}
-	path, weight := e.dijkstra(startID, endID, steps, weightProp, defaultWeight)
+	probe := contextPipelineProbe(ctx)
+	path, weight := e.dijkstraWithCancellation(startID, endID, steps, weightProp, defaultWeight, probe)
+	if probe.failed() != nil { return nil, probe.failed() }
 	if path == nil {
 		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
 	}
@@ -80,6 +82,10 @@ func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []inter
 }
 
 func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]storage.NodeID, float64) {
+	return e.dijkstraWithCancellation(startID, endID, steps, weightProp, defaultWeight, nil)
+}
+
+func (e *StorageExecutor) dijkstraWithCancellation(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64, probe *pipelineCancellation) ([]storage.NodeID, float64) {
 	dist := make(map[storage.NodeID]float64)
 	dist[startID] = 0
 	pq := &priorityQueue{}
@@ -88,6 +94,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 	visited := make(map[storage.NodeID]bool)
 
 	for pq.Len() > 0 {
+		if probe.stopped() { return nil, 0 }
 		current := heap.Pop(pq).(*pathItem)
 		if visited[current.nodeID] {
 			continue
@@ -96,7 +103,8 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 		if current.nodeID == endID {
 			return current.path, current.cost
 		}
-		for _, edge := range e.apocSteps(current.nodeID, steps) {
+		for _, edge := range e.apocStepsWithCancellation(current.nodeID, steps, probe) {
+			if probe.stopped() { return nil, 0 }
 			neighbor := otherEnd(edge, current.nodeID)
 			if visited[neighbor] {
 				continue
@@ -112,7 +120,8 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 			newDist := dist[current.nodeID] + weight
 			if oldDist, exists := dist[neighbor]; !exists || newDist < oldDist {
 				dist[neighbor] = newDist
-				newPath := append([]storage.NodeID{}, current.path...)
+				newPath := appendPipelineItems([]storage.NodeID(nil), current.path, probe)
+				if probe.failed() != nil { return nil, 0 }
 				newPath = append(newPath, neighbor)
 				heap.Push(pq, &pathItem{nodeID: neighbor, cost: newDist, path: newPath})
 			}
@@ -140,7 +149,9 @@ func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interfac
 	if err != nil {
 		return nil, err
 	}
-	path, weight := e.astar(startID, endID, steps, weightProp, latProp, lonProp)
+	probe := contextPipelineProbe(ctx)
+	path, weight := e.astarWithCancellation(startID, endID, steps, weightProp, latProp, lonProp, probe)
+	if probe.failed() != nil { return nil, probe.failed() }
 	if path == nil {
 		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
 	}
@@ -148,6 +159,10 @@ func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interfac
 }
 
 func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]storage.NodeID, float64) {
+	return e.astarWithCancellation(startID, endID, steps, weightProp, latProp, lonProp, nil)
+}
+
+func (e *StorageExecutor) astarWithCancellation(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string, probe *pipelineCancellation) ([]storage.NodeID, float64) {
 	endNode, err := e.getQueryNode(e.storage, endID)
 	if err != nil {
 		return nil, 0
@@ -189,6 +204,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 	visited := make(map[storage.NodeID]bool)
 
 	for pq.Len() > 0 {
+		if probe.stopped() { return nil, 0 }
 		current := heap.Pop(pq).(*pathItem)
 		if current.nodeID == endID {
 			return current.path, gScore[endID]
@@ -197,7 +213,8 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 			continue
 		}
 		visited[current.nodeID] = true
-		for _, edge := range e.apocSteps(current.nodeID, steps) {
+		for _, edge := range e.apocStepsWithCancellation(current.nodeID, steps, probe) {
+			if probe.stopped() { return nil, 0 }
 			neighbor := otherEnd(edge, current.nodeID)
 			if visited[neighbor] {
 				continue
@@ -213,7 +230,8 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 			tentativeG := gScore[current.nodeID] + weight
 			if oldG, exists := gScore[neighbor]; !exists || tentativeG < oldG {
 				gScore[neighbor] = tentativeG
-				newPath := append([]storage.NodeID{}, current.path...)
+				newPath := appendPipelineItems([]storage.NodeID(nil), current.path, probe)
+				if probe.failed() != nil { return nil, 0 }
 				newPath = append(newPath, neighbor)
 				heap.Push(pq, &pathItem{nodeID: neighbor, cost: tentativeG + heuristic(neighbor), path: newPath})
 			}
@@ -237,8 +255,9 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 	}
 	var paths [][]storage.NodeID
 	if maxNodes > 0 {
-		paths = e.findAllSimplePaths(startID, endID, steps, int(maxNodes))
+		paths = e.findAllSimplePathsWithCancellation(startID, endID, steps, int(maxNodes), probe)
 	}
+	if probe.failed() != nil { return nil, probe.failed() }
 	rows := make([][]interface{}, len(paths))
 	for i, path := range paths {
 		if probe.stopped() {
@@ -250,22 +269,28 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 }
 
 func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, steps []apocRelationshipStep, maxDepth int) [][]storage.NodeID {
+	return e.findAllSimplePathsWithCancellation(startID, endID, steps, maxDepth, nil)
+}
+
+func (e *StorageExecutor) findAllSimplePathsWithCancellation(startID, endID storage.NodeID, steps []apocRelationshipStep, maxDepth int, probe *pipelineCancellation) [][]storage.NodeID {
 	var result [][]storage.NodeID
 	visited := make(map[storage.NodeID]bool)
 	var dfs func(current storage.NodeID, path []storage.NodeID, depth int)
 	dfs = func(current storage.NodeID, path []storage.NodeID, depth int) {
+		if probe.stopped() { return }
 		if depth > maxDepth {
 			return
 		}
 		if current == endID {
-			pathCopy := make([]storage.NodeID, len(path))
-			copy(pathCopy, path)
+			pathCopy := appendPipelineItems([]storage.NodeID(nil), path, probe)
+			if probe.failed() != nil { return }
 			result = append(result, pathCopy)
 			return
 		}
 		visited[current] = true
 		defer func() { visited[current] = false }()
-		for _, edge := range e.apocSteps(current, steps) {
+		for _, edge := range e.apocStepsWithCancellation(current, steps, probe) {
+			if probe.stopped() { return }
 			neighbor := otherEnd(edge, current)
 			if visited[neighbor] {
 				continue
