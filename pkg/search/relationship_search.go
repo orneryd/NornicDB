@@ -471,7 +471,7 @@ func (s *Service) relationshipVectorsPath() (string, error) {
 	if s == nil || !s.persistEnabled.Load() || s.fulltextIndexPath == "" {
 		return "", nil
 	}
-	return filepath.Abs(s.fulltextIndexPath + relationshipVectorsFileSuffix)
+	return security.AbsCanonicalFilePath(s.fulltextIndexPath + relationshipVectorsFileSuffix)
 }
 
 func (s *Service) loadRelationshipVectors() map[string]*relationshipEntry {
