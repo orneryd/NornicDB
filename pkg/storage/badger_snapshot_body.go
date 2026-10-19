@@ -43,7 +43,7 @@ func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.
 		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
 	}
 	if cached, ok := b.cacheLoadNodeBody(id, item.Version()); ok {
-		return projectCachedNodeForRead(cached, properties), nil
+		return projectCachedNodeForRead(cached, properties, false), nil
 	}
 	var node *Node
 	err := item.Value(func(value []byte) error {
