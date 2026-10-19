@@ -81,7 +81,9 @@ func BenchmarkCodeIntelRelationshipReads(b *testing.B) {
 	exec := codeIntelReadFixture(b, 128, 2048)
 	for _, query := range []struct{ name, text string }{
 		{"labelled_count", "MATCH (:CodeIntel)-[r]->(:CodeIntel) RETURN count(r)"},
-		} {
+		{"unlabelled_count", "MATCH ()-[r]->() RETURN count(r)"},
+		{"identity", "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash"},
+	} {
 		b.Run(query.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
@@ -97,6 +99,40 @@ func BenchmarkCodeIntelRelationshipReads(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestQueryMemoryTraversalSourceSemantics(t *testing.T) {
+	exec := codeIntelReadFixture(t, 4, 8)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "MATCH (a:CodeIntel {id:0}) CREATE (a)-[:SELF]->(a) CREATE (a)-[:LINK]->(:Other {id:99})", nil)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		query string
+		want  int64
+	}{
+		{"MATCH (:CodeIntel)-[r:LINK]->(:Other) RETURN count(r)", 1},
+		{"MATCH (:Other)-[r:LINK]->(:CodeIntel) RETURN count(r)", 0},
+		{"MATCH (:Other)<-[r:LINK]-(:CodeIntel) RETURN count(r)", 1},
+		{"MATCH (:CodeIntel)-[r:SELF]-(:CodeIntel) RETURN count(r)", 1},
+		{"MATCH (a:CodeIntel)-[r:SELF]->(a) RETURN count(r)", 1},
+		{"MATCH ()-[r:SELF|LINK]->() RETURN count(r)", 2},
+		{"MATCH (a:CodeIntel)-[r]->(b) WHERE a.id = 0 AND b.id = 99 RETURN count(r)", 1},
+		{"MATCH ()-[r]->() WHERE false RETURN count(r)", 0},
+		{"MATCH p=(:CodeIntel)-[:SELF]->(:CodeIntel) RETURN sum(length(p))", 1},
+		{"MATCH ()-[r:CALLS]->() WITH r WHERE r.props_hash = 'fixed' RETURN count(r)", 8},
+	} {
+		result, err := exec.Execute(ctx, tc.query, nil)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, [][]interface{}{{tc.want}}, result.Rows, tc.query)
+	}
+	// The same underlying store must never expose another namespace's edges.
+	base := exec.storage.(*storage.NamespacedEngine).GetInnerEngine()
+	other := NewStorageExecutor(storage.NewNamespacedEngine(base, "other"))
+	_, err = other.Execute(ctx, "CREATE (:CodeIntel)-[:FOREIGN]->(:CodeIntel)", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (:CodeIntel)-[r:FOREIGN]->(:CodeIntel) RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 }
 func TestCodeIntelRelationshipIdentityWorkingSet(t *testing.T) {
 	const edges = 65536
