@@ -113,12 +113,12 @@ struct FirstRunWizard: View {
             completion(false)
             return
         }
-        
+
         // Health endpoint is always on HTTP port 7474
         let url = URL(string: "http://localhost:\(config.httpPortNumber)/health")!
         var request = URLRequest(url: url)
         request.timeoutInterval = 2.0
-        
+
         URLSession.shared.dataTask(with: request) { _, response, error in
             DispatchQueue.main.async {
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
@@ -132,5 +132,5 @@ struct FirstRunWizard: View {
             }
         }.resume()
     }
-    
+
 }
