@@ -54,15 +54,11 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 	reader, available := e.getStorage(ctx).(storage.RelationshipPropertySeeker)
 	viewport, _ := TemporalViewportFromContext(ctx)
 	if !available || !reader.RelationshipPropertySeeksAvailable() || viewport.Enabled() {
-		access := &relationshipAccess{}
-		if open, close := firstRelationshipBracket(template.pattern); open >= 0 {
-			access.variable = relationshipDeclarationHead(template.pattern[open+1 : close]).variable
-		}
-		return access
+		return &relationshipAccess{variable: template.syntax.variable}
 	}
 	plans, _ := ctx.Value(relationshipAccessPlansKey{}).(*relationshipAccessPlans)
 	if plans == nil {
-		return e.planRelationshipTemplate(ctx, template)
+		return e.planRelationshipAccess(ctx, template)
 	}
 	key := relationshipAccessKey{e.getStorage(ctx).GetSchema(), template.pattern, template.where}
 	plans.mu.Lock()
@@ -70,70 +66,89 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 	if access := plans.plans[key]; access != nil {
 		return access
 	}
-	access := e.planRelationshipTemplate(ctx, template)
+	access := e.planRelationshipAccess(ctx, template)
 	if len(plans.plans) < 1024 {
 		plans.plans[key] = access
 	}
 	return access
 }
 
-func (e *StorageExecutor) planRelationshipTemplate(ctx context.Context, template *relationshipAccessTemplate) *relationshipAccess {
-	match := e.parseTraversalPattern(ctx, relationshipAccessPatternStructure(template.pattern))
-	return e.planRelationshipAccess(ctx, template.pattern, match, template.where)
+// relationshipAccessSyntax contains only graph-independent facts. Its maps are
+// immutable; schema alternatives and row key values never enter the program.
+type relationshipAccessSyntax struct {
+	variable, relType string
+	expressions       map[string]string
+	inline            map[string]bool
 }
 
-func (e *StorageExecutor) planRelationshipAccess(ctx context.Context, pattern string, match *TraversalMatch, where string) *relationshipAccess {
-	access := &relationshipAccess{}
+func compileRelationshipAccessSyntax(pattern, where string) relationshipAccessSyntax {
+	var syntax relationshipAccessSyntax
+	// The structural mask removes node/property operands before the existing
+	// traversal reader runs. No bindings, values or storage are consulted.
+	reader := &StorageExecutor{}
+	match := reader.parseTraversalPattern(context.Background(), relationshipAccessPatternStructure(pattern))
 	if match == nil {
-		return access
+		return syntax
 	}
-	access.variable = match.Relationship.Variable
+	syntax.variable = match.Relationship.Variable
 	if match.IsChained || match.Relationship.VariableLength || match.Relationship.MinHops != 1 || match.Relationship.MaxHops != 1 || len(match.Relationship.Types) != 1 {
-		return access
+		return syntax
 	}
+	syntax.relType = match.Relationship.Types[0]
 	expressions := make(map[string]string)
 	if open, close := firstRelationshipBracket(pattern); open >= 0 {
 		props := relationshipDeclarationOf(pattern[open+1 : close]).properties
 		if strings.HasPrefix(props, "{") && strings.HasSuffix(props, "}") {
-			for _, pair := range e.splitPropertyPairs(props[1 : len(props)-1]) {
+			for _, pair := range reader.splitPropertyPairs(props[1 : len(props)-1]) {
 				if colon := findTopLevelMapKeyValueSeparator(pair); colon >= 0 {
 					property := normalizePropertyKey(pair[:colon])
 					expressions[property] = strings.TrimSpace(pair[colon+1:])
-					if access.inline == nil {
-						access.inline = make(map[string]bool)
+					if syntax.inline == nil {
+						syntax.inline = make(map[string]bool)
 					}
-					access.inline[property] = true
+					syntax.inline[property] = true
 				}
 			}
 		}
 	}
 	for _, conjunct := range splitTopLevelAndConjuncts(where) {
-		property, expr, ok := relationshipSeekEquality(access.variable, conjunct)
+		property, expr, ok := relationshipSeekEquality(syntax.variable, conjunct)
 		if ok && expressions[property] == "" {
 			expressions[property] = expr
 		}
 	}
-	if len(expressions) == 0 {
+	// The candidate relationship cannot be an incoming scalar key. Record this
+	// once, rather than re-reading free variables for every schema/row.
+	for property, expression := range expressions {
+		for _, name := range expressionFreeVariables(expression) {
+			if name == syntax.variable && name != "" {
+				delete(expressions, property)
+				break
+			}
+		}
+	}
+	syntax.expressions = expressions
+	return syntax
+}
+
+func (e *StorageExecutor) planRelationshipAccess(ctx context.Context, template *relationshipAccessTemplate) *relationshipAccess {
+	syntax := &template.syntax
+	access := &relationshipAccess{variable: syntax.variable, inline: syntax.inline}
+	if len(syntax.expressions) == 0 {
 		return access
 	}
-	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(match.Relationship.Types[0]) {
+	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(syntax.relType) {
 		keys := make([]string, len(index.Properties))
 		complete := true
 		for i, property := range index.Properties {
-			keys[i] = expressions[property]
+			keys[i] = syntax.expressions[property]
 			if keys[i] == "" {
 				complete = false
 				break
 			}
-			// The candidate relationship is never an incoming scalar key.
-			for _, name := range expressionFreeVariables(keys[i]) {
-				if name == access.variable && name != "" {
-					complete = false
-				}
-			}
 		}
 		if complete {
-			access.alternatives = append(access.alternatives, relationshipSeek{name: index.Name, relType: match.Relationship.Types[0], properties: index.Properties, estimatedRows: 10})
+			access.alternatives = append(access.alternatives, relationshipSeek{name: index.Name, relType: syntax.relType, properties: index.Properties, estimatedRows: 10})
 			access.expressions = append(access.expressions, keys)
 		}
 	}

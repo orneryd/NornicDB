@@ -10,6 +10,41 @@ import (
 
 type relationshipAccessScanOnly struct{ storage.Engine }
 
+func TestRelationshipAccessProgramKeepsSchemaAndRowsLive(t *testing.T) {
+	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "live_site_owner"))
+	_, err := e.Execute(context.Background(), "CREATE ()-[:T {p:'x'}]->()", nil)
+	require.NoError(t, err)
+	const query = "MATCH ()-[r:T]->() WHERE r.p=$x RETURN r.p"
+	for _, phase := range []struct {
+		ddl  string
+		seek bool
+	}{
+		{"", false},
+		{"CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)", true},
+		{"DROP INDEX rel_p", false},
+	} {
+		if phase.ddl != "" {
+			_, err := e.Execute(context.Background(), phase.ddl, nil)
+			require.NoError(t, err)
+		}
+		for _, value := range []string{"x", "absent"} {
+			for _, mode := range []string{"EXPLAIN", "PROFILE"} {
+				result, err := e.Execute(context.Background(), mode+" "+query, map[string]interface{}{"x": value})
+				require.NoError(t, err)
+				seek := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipIndexSeek")
+				require.Equal(t, phase.seek, seek != nil, "%s, %s, %s", phase.ddl, value, mode)
+				if mode == "PROFILE" {
+					if value == "x" {
+						require.Equal(t, [][]interface{}{{"x"}}, result.Rows)
+					} else {
+						require.Empty(t, result.Rows)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestRelationshipAccessProgramScanView(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "scan_site_owner")
 	setup := NewStorageExecutor(store)

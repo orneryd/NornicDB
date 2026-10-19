@@ -20,6 +20,12 @@ type relationshipAccessProgram struct {
 type relationshipAccessTemplate struct {
 	id, pattern, where string
 	occurrences        int64
+
+	syntax relationshipAccessSyntax
+}
+
+func newRelationshipAccessTemplate(id, pattern, where string) *relationshipAccessTemplate {
+	return &relationshipAccessTemplate{id: id, pattern: pattern, where: where, syntax: compileRelationshipAccessSyntax(pattern, where)}
 }
 
 type relationshipAccessProgramKey struct{}
@@ -64,7 +70,7 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 		id := relationshipAccessID(pattern, where)
 		if graphDepth > 0 {
 			if program.byID[id] == nil {
-				program.byID[id] = &relationshipAccessTemplate{id: id, pattern: pattern, where: where}
+				program.byID[id] = newRelationshipAccessTemplate(id, pattern, where)
 			}
 			return
 		}
@@ -72,7 +78,8 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 			site.occurrences++
 			return
 		}
-		site := &relationshipAccessTemplate{id: id, pattern: pattern, where: where, occurrences: 1}
+		site := newRelationshipAccessTemplate(id, pattern, where)
+		site.occurrences = 1
 		seen[id] = site
 		program.byID[id] = site
 		program.sites = append(program.sites, site)
