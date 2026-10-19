@@ -63,7 +63,7 @@ package cypher
 
 import (
 	"context"
-	"strconv"
+	
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -386,15 +386,15 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		}
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
-		view := graphIdentityView(e.storage)
+		view := identityGraphEngine(e.storage)
 		config.bindIdentity(view, nil)
-		reader := e.cloneForStorage(view)
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
 		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, view, build)
 		if err != nil {
 			return nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 		}
+		reader := e.cloneForStorage(view)
 		graph = built
 		degrees := make(map[storage.NodeID]int)
 		degree = func(node storage.NodeID) int {
@@ -412,7 +412,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		}
 	}
 	if _, ok := graph[config.SourceNode]; !ok {
-		return nil, nil, localizedError(localization.CypherGraphProceduresSourceNodeNotFound(string(config.SourceNode)), nil)
+		return nil, nil, localizedError(localization.CypherGraphProceduresSourceNodeNotFound(config.sourceDisplay()), nil)
 	}
 	return graph, degree, nil
 }
@@ -516,7 +516,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		return nil, err
 	}
 	if value := c.value("sourceNode"); value != nil {
-		source, ok := linkPredictionNodeID(value)
+		source, ok := graphEntityDisplayID(value)
 		if !ok {
 			return nil, c.typeError("sourceNode", "Node")
 		}
@@ -531,7 +531,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
 		config.targetValues = targets
 		for _, target := range targets {
-			id, ok := linkPredictionNodeID(target)
+			id, ok := graphEntityDisplayID(target)
 			if !ok {
 				return nil, c.typeError("targetNodes", "List")
 			}
@@ -566,23 +566,6 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 	return config, nil
 }
 
-// linkPredictionNodeID reads a link prediction node: a node, its id, or an
-// INTEGER id.
-func linkPredictionNodeID(value interface{}) (storage.NodeID, bool) {
-	switch node := value.(type) {
-	case *storage.Node:
-		if node != nil {
-			return node.ID, true
-		}
-	case string:
-		return storage.NodeID(node), true
-	default:
-		if isIntegerProcedureValue(value) {
-			return storage.NodeID(strconv.FormatInt(toInt64(value), 10)), true
-		}
-	}
-	return "", false
-}
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result
 func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID) *ExecuteResult {
