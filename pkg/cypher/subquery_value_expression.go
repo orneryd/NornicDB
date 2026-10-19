@@ -486,54 +486,9 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if seed == nil {
 		return 0, false
 	}
-	ctx = withValueBindings(ctx, values)
-	execution := e.relationshipExecutionFor(ctx, pattern, where)
-	paths, err := execution.paths(ctx, matches, []*storage.Node{seed}, nil, nil)
-	if err != nil { recordExpressionFailure(ctx, err); return 0, false }
-	var count int64
-	for _, path := range paths {
-		inner := e.buildPathContext(path, matches)
-		correlated := true
-		for name, node := range inner.nodes {
-			if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || bound.ID != node.ID) {
-				correlated = false
-				break
-			}
-		}
-		for name, relationship := range inner.rels {
-			if !correlated {
-				break
-			}
-			if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || bound.ID != relationship.ID) {
-				correlated = false
-				break
-			}
-		}
-		if !correlated {
-			continue
-		}
-		if where != "" {
-			// The WHERE sees the row's values with the path's bindings.
-			row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
-			for name, value := range values {
-				row[name] = value
-			}
-			for name, node := range inner.nodes {
-				row[name] = node
-			}
-			for name, relationship := range inner.rels {
-				row[name] = relationship
-			}
-			if !e.evaluateRowPredicate(ctx, where, row) {
-				continue
-			}
-		}
-		count++
-		if first {
-			return count, true
-		}
-	}
-	return count, true
+	ctx = withRelationshipSeekPredicate(withValueBindings(ctx, values), pattern, where)
+	execution := e.relationshipExecutionFor(ctx, pattern, "" )
+	return execution.anchoredCount(ctx, matches, seed, values, first)
 }
 
 // patternMapsAreConstant reports whether every property map in a node or

@@ -38,6 +38,7 @@ func (run relationshipAccessExecution) trySeek(ctx context.Context, match *Trave
 	traversal := e.newTraversalContext(ctx, nil, &match.Relationship)
 	// The traversal's projection hints describe only the far endpoint. A
 	// relationship seek loads both ends here, so use full query-node reads.
+	defer traversal.memory.close()
 	seedAllows := func(seeds []*storage.Node, id storage.NodeID) bool {
 		if len(seeds) == 0 {
 			return true
@@ -90,11 +91,14 @@ func (run relationshipAccessExecution) trySeek(ctx context.Context, match *Trave
 			if !ok || !e.matchesEndPattern(end, &match.EndNode) {
 				continue
 			}
+			if err := traversal.memoryRetention().reservePath(2, 1); err != nil {
+				return nil, true, err
+			}
 			paths = append(paths, PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}, Length: 1})
 		}
 	}
-	if seekWhere != "" {
-		paths = e.filterPathsByWhere(ctx, paths, match, seekWhere, nil)
+	if run.physicalWhere != "" {
+		paths = e.filterPathsByWhere(ctx, paths, match, run.physicalWhere, nil)
 	}
 	if match.TraversalLimit > 0 && len(paths) > match.TraversalLimit {
 		paths = paths[:match.TraversalLimit]
