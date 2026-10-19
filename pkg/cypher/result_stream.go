@@ -154,7 +154,10 @@ func (s *ResultStream) begin(columns []string) {
 // emit hands one RETURN row to the stream. It returns false when the
 // statement must stop: ctx was cancelled while the stream waited for the
 // consumer.
-func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
+func (s *ResultStream) emit(ctx context.Context, owner *StorageExecutor, row []interface{}) bool {
+	// Every stream producer crosses the same visibility/lifetime boundary as
+	// a materialized result, before rows enter any consumer-owned buffer.
+	row = owner.publishQueryRow(row)
 	if !s.started {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {
