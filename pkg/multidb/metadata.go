@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -173,12 +174,12 @@ func (m *DatabaseManager) hasLegacyRemoteCredentials() bool {
 				return true
 			}
 			endpoint, err := url.Parse(ref.URI)
-			if err == nil && endpoint.User != nil {
-				return true
-			}
 			if err == nil {
 				legacy := false
-				_ = mapRemoteURLCredentials(endpoint, func(value string) (string, error) {
+				_ = observability.MapURLCredentials(endpoint, func(user *url.Userinfo) *url.Userinfo {
+					legacy = true
+					return user
+				}, func(value string, _ error) (string, error) {
 					legacy = legacy || !isEncryptedRemoteCredential(value)
 					return value, nil
 				})
