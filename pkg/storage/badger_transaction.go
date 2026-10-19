@@ -3857,7 +3857,13 @@ func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == nil {
 		if tx.nodeHeadCache == nil {
-			tx.nodeHeadCache = make(map[NodeID]MVCCHead)
+			// A direct relationship write has two endpoints. Retain the
+			// existing bulk allocation without charging every small write for it.
+			capacity := 64
+			if len(tx.operations) < capacity/2 {
+				capacity = len(tx.operations) * 2
+			}
+			tx.nodeHeadCache = make(map[NodeID]MVCCHead, capacity)
 		}
 		tx.nodeHeadCache[nodeID] = head
 	}
