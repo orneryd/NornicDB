@@ -122,7 +122,7 @@ func (k *KMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, q
 		unlock()
 		// Fall back to brute-force
 		candidates, exhausted, err := NewBruteForceCandidateGen(k.vectorIndex).searchCandidatesWithExhaustion(ctx, query, limit, minSimilarity)
-		return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}, err
+		return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}.withBound(0), err
 	}
 	if dims := view.index.Dimensions(); dims > 0 && len(query) != dims {
 		unlock()
@@ -144,7 +144,7 @@ func (k *KMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, q
 	}
 
 	if len(results) == 0 {
-		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}.withBound(0), nil
 	}
 
 	// Convert SearchResult to Candidate with approximate scores.
@@ -169,5 +169,5 @@ func (k *KMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, q
 	if !routed {
 		candidates = candidates[:candidateLimit]
 	}
-	return candidates, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}, nil
+	return candidates, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}.withBound(0), nil
 }

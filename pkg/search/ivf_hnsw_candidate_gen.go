@@ -200,7 +200,7 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 		return nil, candidateEvidence{}, err
 	}
 	if len(indexes) == 0 {
-		return []Candidate{}, candidateEvidence{exhausted: routedAll, routedComplete: true}, nil
+		return []Candidate{}, candidateEvidence{exhausted: routedAll, routedComplete: true}.withBound(0), nil
 	}
 
 	// The pool kept for exact rescoring follows the single-graph rule,
@@ -217,6 +217,7 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 	totalLimit := quantizedCandidateLimit(ctx, k, quantized)
 	results := make([][]ANNResult, len(indexes))
 	exhausted := make([]bool, len(indexes))
+	bounds := make([]float64, len(indexes))
 	errors := make([]error, len(indexes))
 	ef := hnswEfFromContext(ctx)
 	workers := min(4, runtime.GOMAXPROCS(0), len(indexes))
@@ -229,7 +230,7 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 			// Any list may contain the entire global top-K: retain its full budget,
 			// with a beam wide enough to supply it. A beam as wide as the
 			// graph's population scores all of it (searchWithEfExhaustion).
-			results[i], exhausted[i], errors[i] = indexes[i].searchWithEfExhaustion(ctx, query, totalLimit, minSimilarity, ivfSearchBeam(indexes[i], ef, totalLimit))
+			results[i], exhausted[i], bounds[i], errors[i] = indexes[i].searchBoundedFromEntries(ctx, query, totalLimit, minSimilarity, ivfSearchBeam(indexes[i], ef, totalLimit), nil)
 		}
 	}
 	if workers == 1 {
@@ -244,12 +245,14 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 	}
 	// Merge in route order after all workers finish, preserving error and score policy.
 	routed := true
+	bound := 0.0 // the largest of the searched graphs' score bounds
 	best := make(map[string]float64, totalLimit)
 	for i, hits := range results {
 		if errors[i] != nil {
 			return nil, candidateEvidence{}, errors[i]
 		}
 		routed = routed && exhausted[i]
+		bound = max(bound, bounds[i])
 		for _, r := range hits {
 			score := float64(r.Score)
 			if prev, ok := best[r.ID]; !ok || score > prev {
@@ -267,7 +270,7 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 		out = out[:totalLimit]
 		routed = false
 	}
-	return out, candidateEvidence{exhausted: routedAll && routed, routedComplete: routed}, nil
+	return out, candidateEvidence{exhausted: routedAll && routed, routedComplete: routed}.withBound(bound), nil
 }
 
 // routedGraphs routes query on view's generation and takes the routed

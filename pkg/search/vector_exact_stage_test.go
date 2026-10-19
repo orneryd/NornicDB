@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -511,5 +514,176 @@ func TestSelectiveClusteredSearchJumpsToTheAllClusterPass(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func randomUnitVectors(rng *rand.Rand, n, dims int) [][]float32 {
+	out := make([][]float32, n)
+	for i := range out {
+		v := make([]float32, dims)
+		for d := range v {
+			v[d] = float32(rng.NormFloat64())
+		}
+		out[i] = vector.Normalize(v)
+	}
+	return out
+}
+
+// TestCompressedScoresStayWithinTheirBound: for every stored vector and
+// query, a scalar or PQ graph's exact cosine is at most its approximate score
+// plus the codes' bound (and float32 slack), also after a save and load; a
+// binary graph has no bound.
+func TestCompressedScoresStayWithinTheirBound(t *testing.T) {
+	const n, dims = 400, 16
+	rng := rand.New(rand.NewSource(7))
+	vectors := randomUnitVectors(rng, n, dims)
+	queries := randomUnitVectors(rng, 25, dims)
+	for _, mode := range []HNSWQuantization{HNSWQuantizationScalar, HNSWQuantizationProduct, HNSWQuantizationBinary} {
+		t.Run(string(mode), func(t *testing.T) {
+			index := NewHNSWIndex(dims, DefaultHNSWConfig())
+			byID := map[string][]float32{}
+			for i, v := range vectors {
+				id := fmt.Sprintf("v-%03d", i)
+				byID[id] = v
+				require.NoError(t, index.Add(id, v))
+			}
+			require.NoError(t, index.SetQuantization(context.Background(), HNSWQuantizationConfig{Mode: mode}))
+			path := filepath.Join(t.TempDir(), "hnsw")
+			require.NoError(t, index.Save(path))
+			loaded, err := LoadHNSWIndex(path, func(id string) ([]float32, bool) { v, ok := byID[id]; return v, ok })
+			require.NoError(t, err)
+			for name, graph := range map[string]*HNSWIndex{"built": index, "loaded": loaded} {
+				graph.mu.RLock()
+				require.NotNil(t, graph.quantized, name)
+				for _, q := range queries {
+					scorer := graph.quantized.query(q)
+					bound := scorer.scoreBound()
+					if mode == HNSWQuantizationBinary {
+						require.True(t, math.IsInf(bound, 1), "binary codes have no bound")
+						scorer.release()
+						continue
+					}
+					require.False(t, math.IsInf(bound, 1), "%s %s", name, mode)
+					for id, internal := range graph.idToInternal {
+						exact := float64(vector.DotProduct(q, byID[id]))
+						approx := float64(scorer.dot(internal))
+						require.LessOrEqual(t, exact, approx+bound+exactScoreSlack(dims), "%s %s %s", name, mode, id)
+					}
+					scorer.release()
+				}
+				graph.mu.RUnlock()
+			}
+		})
+	}
+}
+
+// TestIVFPQScoresStayWithinTheirBound: an exact cosine is at most a list
+// member's PQ score plus the index's residual bound.
+func TestIVFPQScoresStayWithinTheirBound(t *testing.T) {
+	const n, dims = 600, 16
+	rng := rand.New(rand.NewSource(11))
+	store, err := NewVectorFileStore(t.TempDir()+"/vectors", dims)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	byID := map[string][]float32{}
+	for i, v := range randomUnitVectors(rng, n, dims) {
+		id := fmt.Sprintf("v-%03d", i)
+		byID[id] = v
+		require.NoError(t, store.Add(id, v))
+	}
+	index, _, err := BuildIVFPQFromVectorStore(context.Background(), store, IVFPQProfile{
+		Dimensions: dims, IVFLists: 8, PQSegments: 4, PQBits: 4, NProbe: 8, RerankTopK: 40,
+		TrainingSampleMax: n, KMeansMaxIterations: 8,
+	}, nil)
+	require.NoError(t, err)
+	bound := index.scoreBound()
+	require.False(t, math.IsInf(bound, 1))
+	for _, q := range randomUnitVectors(rng, 20, dims) {
+		candidates, err := index.SearchApprox(context.Background(), q, n, -1, 8)
+		require.NoError(t, err)
+		require.Len(t, candidates, n)
+		for _, c := range candidates {
+			exact := float64(vector.DotProduct(q, byID[c.ID]))
+			require.LessOrEqual(t, exact, c.Score+bound+exactScoreSlack(dims), c.ID)
+		}
+	}
+}
+
+// boundedNoiseGenerator returns every vector of a corpus with its exact
+// score lowered by up to noise: a generator whose scores are within noise.
+type boundedNoiseGenerator struct {
+	candidates []Candidate
+}
+
+func (g *boundedNoiseGenerator) SearchCandidates(context.Context, []float32, int, float64) ([]Candidate, error) {
+	return g.candidates, nil
+}
+
+// TestBoundedStageMatchesFullStage: scoring nodes best bound first and
+// stopping once none can qualify or reach the top k returns exactly what
+// scoring every node returns when every vector was surfaced (an exhaustive
+// pass), for single- and multi-chunk nodes, thresholds and page sizes, and
+// reports a cut whenever the full stage does. With some chunks unsurfaced (a
+// restricted pass), every returned node still carries its best chunk's exact
+// score, ranked and above the threshold.
+func TestBoundedStageMatchesFullStage(t *testing.T) {
+	const dims, noise = 8, 0.05
+	rng := rand.New(rand.NewSource(3))
+	index := NewVectorIndex(dims)
+	members := map[string][]string{}
+	best := map[string]float64{}
+	var all, some []Candidate
+	query := randomUnitVectors(rng, 1, dims)[0]
+	for n := 0; n < 300; n++ {
+		node := fmt.Sprintf("doc-%03d", n)
+		best[node] = math.Inf(-1)
+		for c, v := range randomUnitVectors(rng, 1+n%4, dims) {
+			id := node
+			if c > 0 {
+				id = fmt.Sprintf("%s-chunk-%d", node, c)
+			}
+			require.NoError(t, index.Add(id, v))
+			members[node] = append(members[node], id)
+			exact := float64(vector.DotProduct(query, v))
+			best[node] = math.Max(best[node], exact)
+			candidate := Candidate{ID: id, Score: exact - noise*rng.Float64()}
+			all = append(all, candidate)
+			if c == 0 || rng.Intn(2) == 0 {
+				some = append(some, candidate)
+			}
+		}
+	}
+	resolve := func(ids []string) map[string][]string {
+		out := map[string][]string{}
+		for _, id := range ids {
+			out[id] = members[id]
+		}
+		return out
+	}
+	pipeline := NewVectorSearchPipeline(&boundedNoiseGenerator{candidates: all}, NewCPUExactScorer(index))
+	ctx := withVectorMembers(context.Background(), resolve)
+	bound := noise + exactScoreSlack(dims)
+	for _, k := range []int{1, 5, 20, 0} {
+		for _, threshold := range []float64{-1, 0, 0.3, 0.6, 0.9} {
+			full, fullCut, err := pipeline.scoreNodes(ctx, query, all, k, threshold, math.Inf(1))
+			require.NoError(t, err)
+			bounded, boundedCut, err := pipeline.scoreNodes(ctx, query, all, k, threshold, bound)
+			require.NoError(t, err)
+			require.Equal(t, full, bounded, "k=%d threshold=%v", k, threshold)
+			if fullCut {
+				require.True(t, boundedCut, "k=%d threshold=%v", k, threshold) // conservative: may also cut where full doesn't
+			}
+
+			partial, _, err := pipeline.scoreNodes(ctx, query, some, k, threshold, bound)
+			require.NoError(t, err)
+			for i, result := range partial {
+				node := normalizeVectorResultIDToNodeID(result.ID)
+				require.InDelta(t, best[node], result.Score, 1e-6, "k=%d threshold=%v %s", k, threshold, node)
+				require.GreaterOrEqual(t, result.Score, threshold)
+				if i > 0 {
+					require.LessOrEqual(t, result.Score, partial[i-1].Score)
+				}
+			}
+		}
 	}
 }

@@ -10,6 +10,11 @@ type hnswQuantizationSnapshot struct {
 	Scales     []float32
 	Binary     []uint64
 	Books      []ivfpqCodebook
+	// MaxResidual and ResidualKnown carry the codes' error bound
+	// (hnswQuantizedVectors.scoreBound). A graph saved before them loads
+	// with no bound.
+	MaxResidual   float64 `msgpack:",omitempty"`
+	ResidualKnown bool    `msgpack:",omitempty"`
 }
 
 func (q *hnswQuantizedVectors) snapshot() *hnswQuantizationSnapshot {
@@ -17,7 +22,8 @@ func (q *hnswQuantizedVectors) snapshot() *hnswQuantizationSnapshot {
 		return nil
 	}
 	return &hnswQuantizationSnapshot{Config: q.config, Dimensions: q.dimensions, Stride: q.stride,
-		Codes: append([]byte(nil), q.codes...), Scales: append([]float32(nil), q.scales...), Binary: append([]uint64(nil), q.binary...), Books: q.books}
+		Codes: append([]byte(nil), q.codes...), Scales: append([]float32(nil), q.scales...), Binary: append([]uint64(nil), q.binary...), Books: q.books,
+		MaxResidual: q.residualBound(), ResidualKnown: q.residualKnown}
 }
 
 func restoreHNSWQuantization(s *hnswQuantizationSnapshot, dim, count int) (*hnswQuantizedVectors, bool) {
@@ -27,7 +33,9 @@ func restoreHNSWQuantization(s *hnswQuantizationSnapshot, dim, count int) (*hnsw
 	if s.Dimensions != dim || dim <= 0 {
 		return nil, false
 	}
-	q := &hnswQuantizedVectors{config: s.Config, dimensions: dim, stride: s.Stride, codes: s.Codes, scales: s.Scales, binary: s.Binary, books: s.Books}
+	q := &hnswQuantizedVectors{config: s.Config, dimensions: dim, stride: s.Stride, codes: s.Codes, scales: s.Scales, binary: s.Binary, books: s.Books,
+		residualKnown: s.ResidualKnown}
+	q.noteResidual(s.MaxResidual)
 	switch s.Config.Mode {
 	case HNSWQuantizationScalar:
 		if s.Stride != dim || len(s.Codes)/dim != count || len(s.Codes)%dim != 0 || len(s.Scales) != count {
