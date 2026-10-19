@@ -315,14 +315,10 @@ func (ew *EmbedWorker) tryNextNodeResult() (*storage.Node, bool, bool) {
 		ew.dropNodeEmbeddingRetry(node.ID)
 		return node, false, false // Regenerate through the current provider dispatch.
 	}
-	// Text comparison intentionally omits bookkeeping properties. Structured
-	// providers receive the entire property map unchanged, including id and
-	// timestamp properties, so their retry must also compare that exact input.
-	// Capability forwarding through cached/traced providers follows this check.
-	policy := storage.EmbeddingTextPolicy{IncludeLabels: true}
-	source := &storage.Node{Labels: retained.labels, Properties: retained.properties}
-	structured, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
-	if !policy.SameSource(source, node) || (usesProperties && structured.UsesDocumentProperties() && !reflect.DeepEqual(retained.properties, node.Properties)) {
+	// Retry, final storage acceptance and later body updates use the same
+	// consumed-source record produced with the result.
+	source := &storage.Node{Labels: retained.labels, Properties: retained.properties, EmbedMeta: retained.meta}
+	if !storage.EmbeddingSourceMatches(source, node, storage.EmbeddingTextPolicy{IncludeLabels: true}) {
 		ew.dropNodeEmbeddingRetry(node.ID)
 		return node, false, false
 	}

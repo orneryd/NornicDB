@@ -5,13 +5,17 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 type retryMetadataPropertyEmbedder struct {
 	*mockEmbedder
-	key string
+	key      string
+	declared bool
+	chunked  bool
+	textless bool
 }
 
 func (*retryMetadataPropertyEmbedder) UsesDocumentProperties() bool { return true }
@@ -26,7 +30,19 @@ func (p *retryMetadataPropertyEmbedder) EmbedDocumentPropertyChunks(ctx context.
 	} else if properties[p.key] == "new" {
 		marker = 2
 	}
-	return &embed.DocumentChunkResult{Chunks: []string{text}, Embeddings: [][]float32{{marker, 1}}, Model: p.Model()}, nil
+	result := &embed.DocumentChunkResult{Chunks: []string{text}, Embeddings: [][]float32{{marker, 1}}, Model: p.Model()}
+	if p.declared {
+		result.Source = &embeddingsource.Source{Text: true, Properties: []string{p.key}}
+	}
+	if p.chunked {
+		result.Chunks = []string{text[:len(text)/2], text[len(text)/2:]}
+		result.Embeddings = [][]float32{{marker, 1}, {marker, 1}}
+	}
+	if p.textless {
+		result.Source = &embeddingsource.Source{Properties: []string{p.key}}
+		result.Chunks = []string{"constant"}
+	}
+	return result, nil
 }
 
 type retryMetadataPropertyBatchEmbedder struct{ *retryMetadataPropertyEmbedder }

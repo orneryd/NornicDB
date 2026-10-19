@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -153,8 +154,17 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	err = b.commitEngineWrite(func(cw *commitWriter) error {
 		var writes []func(txn *badger.Txn) error
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
+			before := node.UpdatedAt
 			if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
 				return err
+			}
+			if writeMeta && !before.Equal(node.UpdatedAt) {
+				meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
+				var err error
+				metaBytes, err = encodeValue(meta)
+				if err != nil {
+					return err
+				}
 			}
 			it := txn.NewIterator(badgerPrefixIteratorOptions(embeddingPrefix(node.ID)))
 			defer it.Close()
@@ -219,9 +229,10 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	if err != nil {
 		return err
 	}
-	if !b.sameEmbeddingSource(stored, embedded) {
+	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
+	embedded.UpdatedAt = stored.UpdatedAt
 	return nil
 }
 
@@ -230,7 +241,33 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 func sameStoredValue(a, b any) bool {
 	if x, ok := numericConstraintValue(a); ok {
 		y, ok := numericConstraintValue(b)
-		return ok && x == y
+		if !ok {
+			return false
+		}
+		va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+		integer := func(v reflect.Value) bool { return v.Kind() >= reflect.Int && v.Kind() <= reflect.Int64 }
+		unsigned := func(v reflect.Value) bool { return v.Kind() >= reflect.Uint && v.Kind() <= reflect.Uint64 }
+		if integer(va) && integer(vb) {
+			return va.Int() == vb.Int()
+		}
+		if unsigned(va) && unsigned(vb) {
+			return va.Uint() == vb.Uint()
+		}
+		if integer(va) && unsigned(vb) {
+			return va.Int() >= 0 && uint64(va.Int()) == vb.Uint()
+		}
+		if unsigned(va) && integer(vb) {
+			return vb.Int() >= 0 && va.Uint() == uint64(vb.Int())
+		}
+		if !integer(va) && !integer(vb) && !unsigned(va) && !unsigned(vb) {
+			return x == y
+		}
+		// Mixed integer/float values must not round adjacent nanosecond IDs
+		// or timestamps into the same input. Decimal coercion matches stored
+		// numeric value semantics without reducing integers to float64.
+		left, lok := new(big.Rat).SetString(fmt.Sprint(a))
+		right, rok := new(big.Rat).SetString(fmt.Sprint(b))
+		return lok && rok && left.Cmp(right) == 0
 	}
 	if x, ok := a.(time.Time); ok {
 		y, ok := b.(time.Time)
