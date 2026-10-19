@@ -11,10 +11,10 @@ GGUF names/download requirements. Stop and Restart buttons require confirmation.
 After verification, rebuild/reinstall locally, restore the intended OpenAI
 text-embedding-3-small configuration with ten workers without exposing secrets,
 then re-embed the existing nornicdbcode graph. Resume paused #1487 afterward.
-On October 18 the maintainer explicitly requested temporarily disabling the
-installed pre-commit check. The global pre-commit entry is preserved as
-pre-commit.disabled; main-update ingestion remains installed. This is a local
-operational change, not a permanent bypass in this PR.
+On October 18 the maintainer explicitly requested temporarily disabling all
+installed duplication and automatic-ingestion Git hooks. Their entries are
+preserved as .disabled files; do not restore them without maintainer direction.
+This is a local operational change, not a permanent bypass in this PR.
 
 An optional Advanced tab in setup and Settings edits persistent server environment
 variables and runtime arguments. Load the existing LaunchAgent environment and
