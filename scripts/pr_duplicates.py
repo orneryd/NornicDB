@@ -455,6 +455,22 @@ def ingested_commit(db, repo):
     return (rows[0]["commit"] if rows else None) or None
 
 
+def resolved_owner_calls(graph_path, candidates):
+    """Resolve existing-owner use from extracted AST calls, never guessed names."""
+    callers = {candidate.id: candidate.source_file for candidate in candidates}
+    calls = {}
+    if not callers:
+        return calls
+    for edge in gi.graph_items(graph_path, gi.graph_link_key(graph_path)):
+        source, target = edge.get("source"), edge.get("target")
+        if (source in callers and isinstance(target, str)
+                and edge.get("source_file") == callers[source]
+                and edge.get("relation") == "calls" and edge.get("_origin") == "ast"
+                and edge.get("confidence") == "EXTRACTED"):
+            calls.setdefault(source, {})[target] = edge.get("source_location", "")
+    return calls
+
+
 def retired_ids(db, repo, diff):
     """Graphify ids of existing functions the PR deletes: their file is deleted or their definition line is removed."""
     files = [path for path, d in diff.items() if d.removed]
@@ -520,9 +536,15 @@ def behavior_standout(candidate, hits, *, min_gap, min_lead, min_hits):
 
 def evaluate(candidate, hits, *, repo, retired, touched, min_similarity, cross_repo=False, max_matches=5,
              min_tokens=0, ignore=(), semantic=True, semantic_min_gap=0.15, semantic_min_lead=0.05,
-             semantic_min_hits=5, deadline=None):
+             semantic_min_hits=5, deadline=None, owner_calls=None, existing_owner_calls=None):
     """Apply the match rules to one candidate's search hits. Returns (Finding | None, moved)."""
-    standout = behavior_standout(candidate, hits, min_gap=semantic_min_gap, min_lead=semantic_min_lead,
+    # A semantic-only match to an AST-resolved callee identifies existing reuse.
+    # Copied bodies still qualify on code similarity, even if they also call it.
+    owner_calls = owner_calls or {}
+    reused = {hit.id for hit in hits if hit.id in owner_calls and hit.repo == repo
+              and similarity(candidate.body, hit.body)["score"] < min_similarity}
+    standout = behavior_standout(candidate, [hit for hit in hits if hit.id not in reused],
+                                 min_gap=semantic_min_gap, min_lead=semantic_min_lead,
                                  min_hits=semantic_min_hits) if semantic else None
     matches, moved, seen = [], False, set()
     for hit in hits:
@@ -535,6 +557,11 @@ def evaluate(candidate, hits, *, repo, retired, touched, min_similarity, cross_r
         if gi.is_test_source(hit.source_file) != candidate.test or ignored(hit.source_file, ignore):
             continue
         if len(tokens(hit.body)) < min_tokens:
+            continue
+        if hit.id in reused:
+            if existing_owner_calls is not None and hit.id not in retired and hit.id not in touched:
+                existing_owner_calls.append((candidate, hit, owner_calls[hit.id]))
+            seen.add(hit.id)
             continue
         sim = similarity(candidate.body, hit.body)
         if sim["score"] >= min_similarity:
@@ -573,6 +600,7 @@ class Report:
     moved: int = 0
     warnings: list = field(default_factory=list)
     nothing_compared: str = ""
+    existing_owner_calls: list = field(default_factory=list)
 
     @property
     def refactor_targets(self):
@@ -608,6 +636,7 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
         report.warnings.append(f"Only the {opts['max_candidates']} largest added functions were analyzed; "
                                f"{report.skipped_by_cap} were skipped.")
     retired = retired_ids(db, repo, diff)
+    calls = resolved_owner_calls(graph_path, candidates)
     started = clock()
     for index, candidate in enumerate(candidates):
         if clock() - started > opts["deadline_seconds"]:
@@ -623,7 +652,8 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
                                   max_matches=opts["max_matches"], min_tokens=opts["min_tokens"], ignore=ignore,
                                   semantic=bool(opts["semantic"]), semantic_min_gap=opts["semantic_min_gap"],
                                   semantic_min_lead=opts["semantic_min_lead"],
-                                  semantic_min_hits=opts["semantic_min_hits"], deadline=getattr(db, "deadline", None))
+                                  semantic_min_hits=opts["semantic_min_hits"], deadline=getattr(db, "deadline", None),
+                                  owner_calls=calls.get(candidate.id), existing_owner_calls=report.existing_owner_calls)
         if moved:
             report.moved += 1
         if finding:
@@ -712,6 +742,12 @@ def render_summary(report, *, server="https://github.com", max_findings=10):
         if len(items) > max_findings:
             lines.append(f"- ...and {len(items) - max_findings} more")
         lines.append("")
+    if report.existing_owner_calls:
+        lines += ["### AST-resolved existing owner calls", ""]
+        for candidate, owner, location in report.existing_owner_calls:
+            lines.append(f"- `{candidate.source_file}` `{candidate.label}` calls `{owner.label}` "
+                         f"in `{owner.source_file}` ({location or 'AST call'}); no copied body at the configured code threshold.")
+        lines.append("")
     for warning in report.warnings:
         lines += [f"> **Note:** {warning}", ""]
     return "\n".join(lines)
@@ -727,7 +763,11 @@ def report_json(report):
             "analyzed": report.analyzed, "moved": report.moved, "skipped_by_cap": report.skipped_by_cap,
             "refactor_targets": len(report.refactor_targets), "reuse_candidates": len(report.reuse_candidates),
             "warnings": report.warnings, "nothing_compared": report.nothing_compared,
-            "findings": [finding_json(f) for f in report.findings]}
+            "findings": [finding_json(f) for f in report.findings],
+            "existing_owner_calls": [{"caller": {"id": c.id, "file": c.source_file, "label": c.label},
+                                      "owner": {"id": h.id, "file": h.source_file, "label": h.label},
+                                      "call_location": location, "evidence": "extracted_ast_call"}
+                                     for c, h, location in report.existing_owner_calls]}
 
 
 # --------------------------------------------------------------------------------------

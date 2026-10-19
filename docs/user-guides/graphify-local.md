@@ -305,3 +305,12 @@ canonical API and delete redundant wrappers, compatibility aliases, shims and
 obsolete entry points. Do not retain a tiny delegating function merely to keep
 the old call shape. Deletion/rewriting exclusions prevent comparison with old
 bodies removed by the same commit; they do not justify keeping wrapper cruft.
+
+The summary also lists **AST-resolved existing owner calls**. A semantic-only
+match to an implementation that the changed function already calls is existing
+reuse, rather than a parallel implementation. This requires an extracted AST
+call from the current caller to the exact matched owner; inferred relationships,
+name resemblance and unrelated edges do not establish it. Code-copy matches still
+block even when the changed function also calls the owner, and other semantic
+matches remain eligible. No score floor or copy threshold is reduced. The report
+and JSON retain the caller, owner and call location for review.

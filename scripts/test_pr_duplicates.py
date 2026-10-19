@@ -326,6 +326,29 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual((evidence["basis"], evidence["vector_similarity"]), ("behavior", 0.70))
         self.assertIn("structural", evidence)
 
+    def test_existing_owner_use_does_not_hide_another_semantic_duplicate(self):
+        records = []
+        finding, _ = self.evaluate(self.field(0.95, runner_up=0.72),
+                                   owner_calls={"top": "L2"}, existing_owner_calls=records)
+        self.assertEqual([match.hit.id for match in finding.matches], ["second"])
+        self.assertEqual(records[0][1].id, "top")
+
+    def test_copy_still_blocks_even_when_the_candidate_also_calls_the_owner(self):
+        copied = FUNC_A.replace("    return subtotal + tax", """    shipping = sum(item.quantity for item in items)
+    discount = min(subtotal, shipping)
+    total = subtotal + tax + shipping
+    total -= discount
+    adjusted = max(0, total)
+    return adjusted""")
+        self.cand.body = copied.replace("def total_price", "def order_total").replace(
+            "    return adjusted", "    total_price(items, tax_rate)\n    return adjusted")
+        self.assertGreaterEqual(pd.similarity(self.cand.body, copied)["score"], 0.8)
+        records = []
+        finding, _ = self.evaluate([self.hit("copy", body=copied)], owner_calls={"copy": "L10"},
+                                   existing_owner_calls=records)
+        self.assertEqual(finding.matches[0].basis, "code")
+        self.assertEqual(records, [])
+
     def test_no_behavior_match_without_a_clear_standout(self):
         # A top hit that does not stand out from related code is no match.
         self.assertEqual(self.evaluate(self.field(0.48, runner_up=0.46, rest=(0.45, 0.44, 0.40, 0.38))), (None, False))
@@ -483,6 +506,20 @@ class AnalyzeTests(unittest.TestCase):
         self.assertEqual(len(report.refactor_targets[0].matches), 2)
         self.assertTrue(any("merge base" in w for w in report.warnings))
 
+    def test_only_extracted_calls_from_the_current_caller_are_proof_of_reuse(self):
+        candidate = pd.select_candidates(self.graph, self.root, self.diff,
+                                         min_body_lines=0, min_added_fraction=0, max_query_chars=2000)[0]
+        valid = {"source": "c1", "target": "owner", "relation": "calls", "_origin": "ast",
+                 "confidence": "EXTRACTED", "source_file": "app/new.py", "source_location": "L2"}
+        for overrides in [{"_origin": "inferred"}, {"relation": "related_to"},
+                          {"confidence": "INFERRED"}, {"source_file": "other.py"},
+                          {"source": "different-owner"}]:
+            with self.subTest(overrides=overrides):
+                graph = json.loads(self.graph.read_text())
+                graph["links"] = [{**valid, **overrides}]
+                self.graph.write_text(json.dumps(graph))
+                self.assertEqual(pd.resolved_owner_calls(self.graph, [candidate]), {})
+
     def test_old_body_of_new_forwarding_wrapper_is_not_a_duplicate(self):
         source = Path(self.root, "app/new.py")
         existing = source.read_text()
@@ -500,6 +537,29 @@ class AnalyzeTests(unittest.TestCase):
             server.close()
         self.assertEqual(report.analyzed, 1)
         self.assertEqual(report.findings, [])
+
+    def test_semantic_match_to_resolved_existing_call_is_existing_reuse(self):
+        source = Path(self.root, "app/new.py")
+        source.write_text(FUNC_B.replace("    net = 0", '    greet("user")\n    net = 0'))
+        self.diff["app/new.py"].added.update(range(1, 10))
+        graph = json.loads(self.graph.read_text())
+        graph["links"] = [{"source": "c1", "target": "owner", "relation": "calls",
+                           "_origin": "ast", "confidence": "EXTRACTED",
+                           "source_file": "app/new.py", "source_location": "L2"}]
+        self.graph.write_text(json.dumps(graph))
+        hits = []
+        for index, score in enumerate([0.95, 0.45, 0.40, 0.38, 0.35, 0.33]):
+            h = hit_json("owner" if index == 0 else f"other-{index}", "greet()", f"lib/{index}.py", OTHER)
+            h["matches"] = [{"kind": "chunk", "score": score}]
+            hits.append(h)
+        server = FakeServer(search_hits=hits, cypher={"CodeRepository": [{"commit": "b" * 40}]})
+        try:
+            report = self.run_analysis(server)
+        finally:
+            server.close()
+        self.assertEqual(report.findings, [])
+        self.assertIn("AST-resolved existing owner", pd.render_summary(report))
+        self.assertEqual(pd.report_json(report)["existing_owner_calls"][0]["owner"]["id"], "owner")
 
     def test_repository_never_ingested(self):
         server = FakeServer()
