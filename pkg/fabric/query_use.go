@@ -10,9 +10,6 @@ import (
 // grammar. A clause-keyword spelling is still a name in this production.
 func (r *structureReader) useReference(node grammar.IFabricUseClauseContext) (UseClause, bool) {
 	if call := node.FunctionInvocation(); call != nil {
-		if call.LPAREN() == nil || call.RPAREN() == nil {
-			return UseClause{}, false
-		}
 		name := call.GetStart().GetText()
 		if invocation := call.InvocationName(); invocation != nil {
 			parts := make([]string, 0, len(invocation.AllSymbol()))
@@ -20,6 +17,12 @@ func (r *structureReader) useReference(node grammar.IFabricUseClauseContext) (Us
 				parts = append(parts, unquoteSyntaxName(part.GetText()))
 			}
 			name = strings.Join(parts, ".")
+		}
+		// An invalid argument may stop parsing before the closing delimiter.
+		// Retain the grammar-established function identity for routing; the
+		// incomplete structure keeps its syntax error and cannot be executed.
+		if call.LPAREN() == nil || call.RPAREN() == nil {
+			return UseClause{Function: name}, true
 		}
 		args := splitArguments(r.text[r.end(call.LPAREN().GetSymbol()):r.start(call.RPAREN().GetSymbol())])
 		return UseClause{Function: name, Args: args}, true

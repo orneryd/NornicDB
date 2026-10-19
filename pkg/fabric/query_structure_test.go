@@ -97,3 +97,10 @@ func TestFabricStructureGraphSelectionNames(t *testing.T) {
 		}
 	}
 }
+
+func TestFabricStructureIncompleteGraphInvocation(t *testing.T) {
+	text := "USE graph.byName(1 +) MATCH (n:EI) RETURN n.v AS v"
+	q := ReadQueryStructure(text)
+	require.Error(t, q.Err)
+	require.Equal(t, []UseClause{{Function: "graph.byName"}}, q.Uses())
+}
