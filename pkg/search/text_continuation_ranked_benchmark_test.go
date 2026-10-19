@@ -33,7 +33,7 @@ func BenchmarkSearchTextContinuationRankedHNSW(b *testing.B) {
 				b.Fatal(err)
 			}
 		}
-		if _, err := service.getOrCreateHNSWIndex(context.Background(), 2, nil); err != nil {
+		if _, err := service.getOrCreateHNSWIndex(context.Background(), 2); err != nil {
 			b.Fatal(err)
 		}
 		for service.hnswRebuildInFlight.Load() {
