@@ -508,8 +508,8 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 					delete(retained, name)
 				}
 			} else {
-				start = make(typeScope, len(unscoped.Reads))
-				for _, name := range unscoped.Reads {
+				start = make(typeScope, len(branchScope.Reads))
+				for _, name := range branchScope.Reads {
 					if operand, visible := initial[name]; visible {
 						start[name] = operand
 					}

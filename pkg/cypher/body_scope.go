@@ -195,13 +195,14 @@ func (r *scopeRecorder) inScope(name string) bool {
 }
 
 // read records a read of name that the body hasn't declared, and reports
-// whether name is visible to the walk now (so it can bind it).
+// whether the walk needs an incoming binding for it. Local declarations are
+// bound by the clause walk itself, after its checks of the incoming scope.
 func (r *scopeRecorder) read(name string) bool {
 	if r == nil {
 		return false
 	}
 	if _, local := r.local[name]; local {
-		return true
+		return false
 	}
 	if r.implicit {
 		if _, seen := r.seen[name]; !seen {

@@ -116,6 +116,10 @@ func TestBodyScopeOfShape(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"n"}, scope.Reads)
 	require.Equal(t, []string{"label", "c"}, scope.Branches[0].Declares)
+	scope, err = exec.bodyScopeOf("CALL db.labels() YIELD label WHERE label <> 'ignored' RETURN label, n.id AS c", nil, false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"n"}, scope.Reads)
+	require.Equal(t, []string{"label", "c"}, scope.Branches[0].Declares)
 
 	scope, err = exec.bodyScopeOf("CALL (n) { RETURN 1 AS one } RETURN one", nil, false)
 	require.NoError(t, err)
