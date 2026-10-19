@@ -128,18 +128,16 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 		}
 		return []*storage.Node{typed}, nil
 	case string:
-		id := storage.NodeID(normalizeNodeIDValue(typed).(string))
-		if view, ok := e.storage.(*graphIdentityStorage); ok {
-			var valid bool
-			id, valid = view.inputKey(typed)
-			if !valid {
-				return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
-			}
+		view := graphIdentityView(e.storage)
+		id,valid := view.inputKey(typed)
+		if !valid {
+			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
-		node, err := e.getQueryNode(e.storage, id)
+		node, err := view.GetNode(id)
 		if err != nil || node == nil {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
+		if _,working := e.storage.(*graphIdentityStorage); !working { node = graphIdentityNodeValue(node) }
 		return []*storage.Node{node}, nil
 	}
 	return nil, localizedError(localization.CypherCoreApocPathNodeArgument(argument, neo4jProvidedValue(value)), nil)
