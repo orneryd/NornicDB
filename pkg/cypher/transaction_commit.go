@@ -9,7 +9,12 @@ import (
 // Preserve database admission/accounting wrappers when committing the raw
 // transaction opened by unwrapping the storage engine. Both explicit and
 // implicit transactions must use this boundary.
-func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
+func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *storage.BadgerTransaction) (err error) {
+	defer func() {
+		if err == nil {
+			publishStatementCommit(ctx)
+		}
+	}()
 	engine := e.storage
 	if e.txContext != nil && e.txContext.tx == tx && e.txContext.engine != nil {
 		// Administration can choose system after BEGIN. Commit through that
