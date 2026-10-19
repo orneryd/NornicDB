@@ -992,6 +992,9 @@ type Service struct {
 	completePolicyGen    atomic.Uint64
 	completeBuilds       atomic.Int64
 
+	// Set at construction; shared registries supply their own page limit.
+	continuationMaxPageSize int
+
 	nodeDecayFilter NodeDecayFilterFunc
 
 	strategyTransitionMu         sync.Mutex
@@ -1177,6 +1180,9 @@ func NewServiceWithDimensionsAndBM25Engine(engine storage.Engine, dimensions int
 
 // ServiceOptions configures database-specific search service resources.
 type ServiceOptions struct {
+	// SearchCursorMaxPageSize bounds pages when this service owns its registry.
+	SearchCursorMaxPageSize int
+
 	DatabaseID               string
 	SearchResultCacheEntries int
 	SearchResultCacheTTL     time.Duration
@@ -1261,6 +1267,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		svc.bm25MemoryMaxBytes = options.BM25MemoryMaxBytes
 		svc.vectorMemoryMaxBytes = options.VectorMemoryMaxBytes
 		svc.metadataMemoryMaxBytes = options.MetadataMemoryMaxBytes
+		svc.continuationMaxPageSize = options.SearchCursorMaxPageSize
 	}
 	svc.ready.Store(false)
 	svc.persistEnabled.Store(false)
