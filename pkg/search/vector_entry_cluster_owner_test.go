@@ -63,7 +63,10 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 				require.NoError(t, engine.DeleteNode(marker.ID))
 				require.NoError(t, svc.RemoveNode(marker.ID))
 				checkTerms()
-				require.True(t, cgHits(t, svc, vectorOwnerAxis(0), "other"))
+				hits, err := svc.VectorSearchCandidates(context.Background(), vectorOwnerAxis(0), &SearchOptions{Limit: 10})
+				require.NoError(t, err)
+				require.NotEmpty(t, hits)
+				require.Equal(t, "other", hits[0].ID, "the other node's vector remains publicly searchable")
 			})
 		}
 	}
