@@ -44,6 +44,7 @@ type QueryClause struct {
 	BatchSize                                 string
 	Scoped                                    bool
 	ScopeText                                 string
+	embeddingStart, embeddingEnd              int
 	ScopeNames                                []string
 	BodyOffset                                int
 	tree                                      antlr4.ParserRuleContext
@@ -300,6 +301,9 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 			startsStatement = false
 		}
 		c := QueryClause{Start: r.start(clause.GetStart()), End: r.end(clause.GetStop()), statement: q.statements}
+		if option := clause.EmbeddingSt(); option != nil {
+			c.embeddingStart, c.embeddingEnd = r.start(option.GetStart()), r.end(option.GetStop())
+		}
 		headEnd := r.end(clause.GetStart())
 		switch {
 		case clause.FabricUseClause() != nil:
@@ -1297,6 +1301,21 @@ func LocalQuery(text string) string {
 		return text
 	}
 	return q.LocalText
+}
+
+// StripEmbeddingOption consumes only a grammar-owned option on an updating
+// clause. A projection of a variable named EMBEDDING is a different production.
+func StripEmbeddingOption(text string) (string, bool) {
+	q := ReadQueryStructure(text)
+	if q.Err == nil {
+		for _, clause := range q.Clauses {
+			if clause.embeddingEnd > clause.embeddingStart {
+				before, after := strings.TrimSpace(text[:clause.embeddingStart]), strings.TrimSpace(text[clause.embeddingEnd:])
+				return strings.TrimSpace(before + " " + after), true
+			}
+		}
+	}
+	return text, false
 }
 
 func ReadOnlyQueryPrefix(text string) string {
