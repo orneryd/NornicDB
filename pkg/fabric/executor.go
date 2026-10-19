@@ -264,11 +264,7 @@ func materializeIterator(columns []string, it RowIterator) (*ResultStream, error
 }
 
 func inferReturnColumnsFromQuery(query string) []string {
-	clause := ReadQueryStructure(query).Last("RETURN")
-	if clause == nil {
-		return nil
-	}
-	return ProjectionColumns(clause.Projection)
+	return ReadQueryStructure(query).ResultColumns()
 }
 
 func splitTopLevelCSV(s string) []string {
