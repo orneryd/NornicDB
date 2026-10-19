@@ -913,14 +913,14 @@ fabricClause
     | returnSt
     | matchSt
     | unwindSt
-    | createSt
-    | fabricInsertSt
-    | mergeSt
-    | deleteSt
-    | fabricNoDetachDeleteSt
-    | setSt
-    | removeSt
-    | foreachSt
+    | createSt embeddingSt?
+    | fabricInsertSt embeddingSt?
+    | mergeSt embeddingSt?
+    | deleteSt embeddingSt?
+    | fabricNoDetachDeleteSt embeddingSt?
+    | setSt embeddingSt?
+    | removeSt embeddingSt?
+    | foreachSt embeddingSt?
     | letSt
     | filterSt
     | forSt
