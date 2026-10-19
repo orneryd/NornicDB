@@ -52,7 +52,12 @@ func (b *BadgerEngine) admitNamespaceTasks(ctx context.Context, namespace string
 }
 
 func (b *BadgerEngine) withNamespaceSideStateWrite(entityID string, write func() error) error {
-	revision := b.namespaceLifetimeRevision()
+	return b.withNamespaceSideStateWriteAt(entityID, b.namespaceLifetimeRevision(), write)
+}
+
+// A synchronous writer captures its lifetime before draining buffered work;
+// retirement during that wait must still refuse a write into its replacement.
+func (b *BadgerEngine) withNamespaceSideStateWriteAt(entityID string, revision uint64, write func() error) error {
 	release, err := b.beginWrite()
 	if err != nil {
 		return err
