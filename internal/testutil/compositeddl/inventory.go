@@ -57,6 +57,10 @@ func Cases() []Case {
 				options += " USER admin PASSWORD '" + Password + "'"
 				auth, user = "user_password", "admin"
 			}
+			if mode == "uri" {
+				// URI credentials expose the public username while retaining forwarding mode.
+				user = "admin"
+			}
 			options += " TYPE remote ACCESS read"
 			for _, operation := range []string{"create", "if_not_exists", "add"} {
 				c := Case{Name: operation + "_" + scheme + "_" + mode, Grammar: true, Inspect: "constituents", Alias: "r", Database: "nornic", Type: "remote", Access: "read", URI: scheme + "://127.0.0.1:1", Auth: auth, User: user}
