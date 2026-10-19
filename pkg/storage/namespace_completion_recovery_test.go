@@ -6,10 +6,12 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNamespaceIntrinsicFailureRemainsReplayable(t *testing.T) {
+	t.Cleanup(config.WithWALEnabled())
 	for _, failure := range []string{"physical", "catalog", "callback", "none"} {
 		t.Run(failure, func(t *testing.T) {
 			dir := t.TempDir()
