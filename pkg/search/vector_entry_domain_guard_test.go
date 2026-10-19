@@ -617,6 +617,9 @@ func (g *vectorDomainGuard) checkIdentitySyntax(where string, root ast.Node, own
 						continue
 					}
 					key, ok := kv.Key.(*ast.Ident)
+					if ok && recv == "stageNode" && key.Name == "id" && g.infer(kv.Value) != domainNode {
+						g.flag(where, "non-node identity assigned to exact-stage owner")
+					}
 					if ok && ((key.Name == "ID" && (recv == "Candidate" || recv == "ScoredCandidate" || recv == "ANNResult")) || (key.Name == "id" && recv == "hnswBuildPair")) && g.infer(kv.Value)&domainNode != 0 {
 						g.flag(where, "document identity assigned to a vector entry record")
 					}
@@ -644,6 +647,9 @@ func (g *vectorDomainGuard) checkIdentitySyntax(where string, root ast.Node, own
 				}
 				if sel, ok := lhs.(*ast.SelectorExpr); ok {
 					recv, field := g.field(sel)
+					if recv == "stageNode" && field == "id" && g.infer(x.Rhs[i]) != domainNode {
+						g.flag(where, "non-node identity assigned to exact-stage owner")
+					}
 					if (recv == "LexicalSeedHint" || recv == "nodeLexicalHint") && field == "ID" && g.infer(x.Rhs[i])&domainEntry != 0 {
 						g.flag(where, "entry key assigned to a document hint")
 					}
@@ -769,7 +775,7 @@ func (g *vectorDomainGuard) run() {
 					g.flag(where, "constructs a document hint outside the key owner")
 				}
 			case *ast.ReturnStmt:
-				if where == "Service.nodeVectorIDsLocked" && len(x.Results) > 0 && g.infer(x.Results[0]) != domainEntry {
+				if (where == "Service.nodeVectorIDsLocked" || where == "Service.vectorMembersOf") && len(x.Results) > 0 && g.infer(x.Results[0]) != domainEntry {
 					g.flag(where, "inventory returns non-entry identities")
 				}
 			}
