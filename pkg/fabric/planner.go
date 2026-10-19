@@ -64,6 +64,9 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 	if err := ReadQueryStructure(trimmed).ValidateUnions(); err != nil {
 		return nil, err
 	}
+	// Preserve name roles while their binding context is still present. A
+	// later fragment may legitimately receive that binding as an input row.
+	trimmed = PreserveNameRoles(trimmed)
 	session := planTarget{name: sessionDB}
 	scope := compositeScopeRoot(sessionDB)
 	return p.planQuery(trimmed, session, scope, false)
