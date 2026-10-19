@@ -86,4 +86,4 @@ all arguments after the binary, including the existing position of `serve`.
 
 Maintainer layout correction: the shared one-time storage upgrade control is at
 the front of the first setup page and on Review, never under Advanced. Layout
-captures will be refreshed to match this correction.
+captures above reflect this correction.
