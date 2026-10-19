@@ -21,22 +21,16 @@ struct FirstRunWizard: View {
                     Text(["1. Server / Security", "2. Optional AI", "3. Review"][step])
                         .fontWeight(currentStep == step ? .bold : .regular)
                 }
-                Toggle("Advanced", isOn: $showAdvanced).toggleStyle(.checkbox)
+                Picker("Settings", selection: $showAdvanced) {
+                    Text("Setup").tag(false)
+                    Text("Advanced").tag(true)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 170)
             }.padding(.horizontal)
             Divider()
             if showAdvanced {
                 AdvancedRuntimeSettingsView(config: config)
             } else if currentStep == 0 {
-                ScrollView {
-                    VStack {
-                        SettingsView(config: config, appDelegate: appDelegate).serverTab
-                        SettingsView(config: config, appDelegate: appDelegate).securityTab
-                        Toggle("Start automatically at login", isOn: $config.autoStartEnabled).padding()
-                        Toggle("Authorize one storage upgrade on next start", isOn: $config.upgradeStorageOnNextStart).padding(.horizontal)
-                        Text("For existing older storage only. Back up your database first; storage upgrades are one-way.")
-                            .font(.caption).foregroundColor(.secondary).padding()
-                    }
-                }
+                ServerSecuritySetupView(config: config)
             } else if currentStep == 1 {
                 AIServiceSettingsView(config: config)
             } else {

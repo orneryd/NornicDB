@@ -20,7 +20,7 @@ class ConfigManager: ObservableObject {
     @Published var heimdallAPIKey: String = ""
     @Published var embeddingWorkers: Int = 1
     @Published var runtimeEnvironment: [String: String] = [:]
-    @Published var runtimeArguments: [String] = []
+    @Published var runtimeArguments: [String] = ["serve"]
     @Published var configurationError: String = ""
 
     func loadRuntimeSettings(_ plist: [String: Any]) {
@@ -56,10 +56,11 @@ class ConfigManager: ObservableObject {
         if let value = environment["NORNICDB_EMBEDDING_DIMENSIONS"], let parsed = Int(value) { embeddingDimensions = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_EMBEDDING_DIMENSIONS") }
         if let value = environment["NORNICDB_EMBED_WORKER_NUM_WORKERS"], let parsed = Int(value) { embeddingWorkers = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_EMBED_WORKER_NUM_WORKERS") }
         if let value = environment["NORNICDB_EMBED_CHUNK_SIZE"], let parsed = Int(value) { embeddingChunkSize = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_EMBED_CHUNK_SIZE") }
+        if let value = environment["NORNICDB_EMBED_CHUNK_OVERLAP"], let parsed = Int(value) { embeddingChunkOverlap = parsed; runtimeEnvironment.removeValue(forKey: "NORNICDB_EMBED_CHUNK_OVERLAP") }
         useAppleIntelligence = embeddingProvider == "openai" && embeddingModel == "apple-ml-embeddings" && embeddingURL == "http://localhost:\(ConfigManager.appleEmbeddingPort)"
         autoStartEnabled = plist["RunAtLoad"] as? Bool ?? autoStartEnabled
         let arguments = plist["ProgramArguments"] as? [String] ?? []
-        runtimeArguments = Array(arguments.dropFirst(arguments.count > 1 && arguments[1] == "serve" ? 2 : 1))
+        runtimeArguments = arguments.isEmpty ? ["serve"] : Array(arguments.dropFirst())
     }
     @Published var embeddingsEnabled: Bool = false
     @Published var kmeansEnabled: Bool = false
@@ -764,7 +765,7 @@ func launchAgentEnvironmentVariables(config: ConfigManager, homeDir: String) -> 
 func launchAgentPropertyList(config: ConfigManager, homeDir: String) -> [String: Any] {
     return [
         "Label": "com.nornicdb.server",
-        "ProgramArguments": ["/usr/local/bin/nornicdb", "serve"] + config.runtimeArguments,
+        "ProgramArguments": ["/usr/local/bin/nornicdb"] + config.runtimeArguments,
         "WorkingDirectory": "/usr/local/var/nornicdb",
         "RunAtLoad": config.autoStartEnabled,
         "KeepAlive": config.autoStartEnabled ? ["SuccessfulExit": false, "Crashed": true] as Any : false,
