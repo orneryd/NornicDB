@@ -215,72 +215,57 @@ func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string,
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
-			var properties []string
-			switch {
-			case c.Type == ConstraintUnique && len(c.Properties) > 0:
-				properties = c.Properties
-			case c.Type == ConstraintNodeKey:
-				properties = c.Properties
-			case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
-				// The grouping key: every property before (valid_from, valid_to).
-				properties = c.Properties[:len(c.Properties)-2]
-			default:
-				continue
-			}
-			// Composite/list-bearing TEMPORAL keys must lock on the same raw
-			// whole-key hash used by their history and creation validation.
-			// Extract it before the ordinary constraint lock projection loses
-			// the original list shape. Other constraint and temporal keys keep
-			// their existing lock representation.
-			if c.Type == ConstraintTemporal && len(properties) > 1 {
-				spec, specOK := splitTemporalKeySpec(c.Properties)
-				if specOK {
-					keyValue, missing := spec.keyValue(node.Properties)
-					if missing == "" && spec.composite() && spec.listBearing(keyValue) {
-						if keys == nil {
-							keys = make([]uniqueConstraintLockKey, 0, len(nodes))
-						}
-						keys = append(keys, uniqueConstraintLockKey{
-							label:    c.Label,
-							property: string(c.Type) + ":" + strings.Join(properties, ","),
-							value:    spec.keyHash(keyValue),
-						})
-						continue
-					}
+			if key, _, ok := nodeConstraintLockKey(c, node); ok {
+				if keys == nil {
+					keys = make([]uniqueConstraintLockKey, 0, len(nodes))
 				}
-			}
-			if len(properties) == 1 {
-				// One key property (UNIQUE, a one-property NODE KEY, the
-				// temporal key): no intermediate slice.
-				value, ok := constraintLockValue(node, properties[0])
-				if ok {
-					if keys == nil {
-						keys = make([]uniqueConstraintLockKey, 0, len(nodes))
-					}
-					keys = append(keys, uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value})
-				}
-				continue
-			}
-			values := make([]interface{}, len(properties))
-			complete := true
-			for i, prop := range properties {
-				value, ok := constraintLockValue(node, prop)
-				if !ok {
-					complete = false
-					break
-				}
-				values[i] = value
-			}
-			if complete {
-				keys = append(keys, uniqueConstraintLockKey{
-					label:    c.Label,
-					property: string(c.Type) + ":" + strings.Join(properties, ","),
-					value:    constraintCompositeKey(values),
-				})
+				keys = append(keys, key)
 			}
 		}
 	}
 	return sm.acquireUniqueConstraintCommitLocks(ctx, owner, keys)
+}
+
+// nodeConstraintLockKey is the canonical node key projection for both commit
+// and MERGE admission. Composite constraints lock one tuple, never its columns.
+// rounded reports a composite tuple holding an integer the generic composite
+// index rounds (exactConstraintIntegerKey); any other tuple is filed in that
+// index under the lock's own hash.
+func nodeConstraintLockKey(c Constraint, node *Node) (key uniqueConstraintLockKey, rounded bool, ok bool) {
+	var properties []string
+	switch {
+	case (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey) && len(c.Properties) > 0:
+		properties = c.Properties
+	case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
+		properties = c.Properties[:len(c.Properties)-2]
+	default:
+		return uniqueConstraintLockKey{}, false, false
+	}
+	// Preserve TEMPORAL's raw whole-key hash for composite list-bearing keys.
+	if c.Type == ConstraintTemporal && len(properties) > 1 {
+		if spec, ok := splitTemporalKeySpec(c.Properties); ok {
+			value, missing := spec.keyValue(node.Properties)
+			if missing == "" && spec.composite() && spec.listBearing(value) {
+				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, false, true
+			}
+		}
+	}
+	if len(properties) == 1 {
+		value, ok := constraintLockValue(node, properties[0])
+		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, false, ok
+	}
+	values := make([]interface{}, len(properties))
+	for i, property := range properties {
+		value, ok := constraintLockValue(node, property)
+		if !ok {
+			return uniqueConstraintLockKey{}, false, false
+		}
+		if _, exact := value.(exactConstraintIntegerKey); exact {
+			rounded = true
+		}
+		values[i] = value
+	}
+	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: constraintCompositeKey(values)}, rounded, true
 }
 
 // constraintLockValue is node's canonical value of prop for a constraint key
@@ -476,28 +461,43 @@ func newEngineWriteLockOwner() string {
 	return "engine-write-" + strconv.FormatUint(engineWriteLockOwners.Add(1), 10)
 }
 
-// uniqueMergeKey returns the lock key of value under label's single-property
-// UNIQUE constraint (or one-property NODE KEY) on property, as
-// lockConstraintKeysOf builds it; ok is false when there's no such
-// constraint or value is null.
-func (sm *SchemaManager) uniqueMergeKey(label, property string, value interface{}) (uniqueConstraintLockKey, bool) {
-	if sm == nil || value == nil {
-		return uniqueConstraintLockKey{}, false
+// mergeAdmissionKey couples the canonical commit lock with the constraint
+// whose current equality index supplies the node to catch up to. indexHash is
+// a composite tuple's full key in that index, projected once with the lock.
+type mergeAdmissionKey struct {
+	lock       uniqueConstraintLockKey
+	properties []string
+	indexHash  string
+}
+
+func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]interface{}) []mergeAdmissionKey {
+	if sm == nil || len(props) == 0 {
+		return nil
 	}
-	for _, c := range sm.GetConstraintsForLabels([]string{label}) {
-		if c.EffectiveEntityType() != ConstraintEntityNode || c.Label != label || len(c.Properties) != 1 || c.Properties[0] != property {
+	var keys []mergeAdmissionKey
+	node := &Node{Properties: props}
+	for _, c := range sm.GetConstraintsForLabels(labels) {
+		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}
-		if c.Type != ConstraintUnique && c.Type != ConstraintNodeKey {
+		key, rounded, ok := nodeConstraintLockKey(c, node)
+		if !ok || !lockableUniqueConstraintKey(key) {
 			continue
 		}
-		key, ok := uniqueConstraintValueKey(value)
-		if !ok {
-			return uniqueConstraintLockKey{}, false
+		admission := mergeAdmissionKey{lock: key, properties: c.Properties}
+		if len(c.Properties) > 1 {
+			admission.indexHash, _ = key.value.(string)
+			if rounded {
+				values := make([]interface{}, len(c.Properties))
+				for i, property := range c.Properties {
+					values[i], _ = indexValueKey(props[property])
+				}
+				admission.indexHash = NewCompositeKey(values...).Hash
+			}
 		}
-		return uniqueConstraintLockKey{label: label, property: property, value: key}, true
+		keys = append(keys, admission)
 	}
-	return uniqueConstraintLockKey{}, false
+	return keys
 }
 
 // HasUniqueValueTracking reports whether any unique constraint exists whose

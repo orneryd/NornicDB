@@ -4278,21 +4278,10 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
 		nsPrefix := tx.namespace + ":"
 		for _, id := range idx.LookupFull(values...) {
-			if id == node.ID || tx.committedNodeSupersededLocked(id) || (tx.namespace != "" && !strings.HasPrefix(string(id), nsPrefix)) {
+			if id == node.ID || tx.committedNodeSupersededLocked(id) {
 				continue
 			}
-			existing, err := tx.engine.GetNode(id)
-			if err != nil || existing == nil || !hasLabel(existing.Labels, c.Label) {
-				continue
-			}
-			match := true
-			for i, prop := range c.Properties {
-				if v, ok := existing.Properties[prop]; !ok || !compareValues(v, values[i]) {
-					match = false
-					break
-				}
-			}
-			if match {
+			if existing := tx.engine.committedKeyHolder(id, tx.namespace, c.Label, c.Properties, node.Properties); existing != nil {
 				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
 				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 			}
@@ -4329,6 +4318,27 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	}
 
 	return nil
+}
+
+// committedKeyHolder returns candidate id's committed node when it belongs to
+// namespace, carries label and equals props exactly on every key property:
+// the check that turns a composite equality-index candidate into the key's
+// holder for commit validation and MERGE admission alike. Index buckets can be
+// coarser than equality (their numeric keys are float64).
+func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, properties []string, props map[string]interface{}) *Node {
+	if namespace != "" && !(len(id) > len(namespace) && strings.HasPrefix(string(id), namespace) && id[len(namespace)] == ':') {
+		return nil
+	}
+	existing, err := b.GetNode(id)
+	if err != nil || existing == nil || !hasLabel(existing.Labels, label) {
+		return nil
+	}
+	for _, prop := range properties {
+		if v, ok := existing.Properties[prop]; !ok || !compareValues(v, props[prop]) {
+			return nil
+		}
+	}
+	return existing
 }
 
 // scanForNodeKeyViolation performs a full database scan to check for NODE KEY violations
@@ -4573,50 +4583,7 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error
 // A wait ends with ErrDeadlock, also transient, when it would close a cycle
 // of transactions waiting for each other, or with ctx's error.
 func (tx *BadgerTransaction) PrepareMergeKey(ctx context.Context, label, property string, value interface{}) error {
-	tx.mu.Lock()
-	if tx.Status != TxStatusActive || tx.namespace == "" || tx.snapshotTx == nil {
-		tx.mu.Unlock()
-		return nil
-	}
-	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	key, constrained := schema.uniqueMergeKey(label, property, value)
-	constrained = constrained && lockableUniqueConstraintKey(key)
-	held := false
-	if constrained {
-		_, held = tx.mergeKeyReleases[key]
-	}
-	tx.mu.Unlock()
-	if !constrained || held {
-		// A key the transaction holds can't gain a node it hasn't seen: no
-		// other transaction can commit the key until this one ends.
-		return nil
-	}
-	nodeID, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, property, value)
-	if found {
-		return tx.catchUpToNode(nodeID)
-	}
-	if !complete {
-		return nil
-	}
-	release, err := schema.acquireUniqueConstraintCommitLocks(ctx, tx.ID, []uniqueConstraintLockKey{key})
-	if err != nil {
-		return err
-	}
-	tx.mu.Lock()
-	if _, held = tx.mergeKeyReleases[key]; tx.Status != TxStatusActive || held {
-		tx.mu.Unlock()
-		release()
-		return nil
-	}
-	if tx.mergeKeyReleases == nil {
-		tx.mergeKeyReleases = make(map[uniqueConstraintLockKey]func(), 1)
-	}
-	tx.mergeKeyReleases[key] = release
-	tx.mu.Unlock()
-	if nodeID, found, _, _ = schema.LookupUniqueConstraintValueForPlanning(label, property, value); found {
-		return tx.catchUpToNode(nodeID)
-	}
-	return nil
+	return tx.PrepareMergeNode(ctx, []string{label}, map[string]interface{}{property: value})
 }
 
 // ReleaseMergeKeys releases the MERGE key locks the transaction holds

@@ -232,14 +232,24 @@ func directedMergePath(pattern string) string {
 // (#907). created reports which. A null or NaN property in the pattern is a
 // SemanticError, as for a single relationship (validateMergePatternProperties).
 func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
-	for _, segment := range mergePathSegments(pattern) {
+	for index, segment := range mergePathSegments(pattern) {
 		shape, shapeErr := e.parseMergeRelationshipShape(segment)
 		if shapeErr != nil {
 			return nil, nil, false, shapeErr
 		}
-		for _, content := range [...]string{shape.startContent, shape.endContent} {
-			if _, properties := splitNodePatternProperties("(" + content + ")"); properties != "" {
-				if err := validateMergePatternProperties(e.parseMergeProperties(ctx, properties, nodeContext, relContext), "node"); err != nil {
+		for side, content := range [...]string{shape.startContent, shape.endContent} {
+			if index > 0 && side == 0 {
+				continue // the previous segment's end node, already checked and admitted
+			}
+			variable, labels, properties, parseErr := e.parseMergeNodePattern(ctx, "("+content+")", nodeContext, relContext)
+			if parseErr != nil {
+				return nil, nil, false, parseErr
+			}
+			if err := validateMergePatternProperties(properties, "node"); err != nil {
+				return nil, nil, false, err
+			}
+			if nodeContext[variable] == nil {
+				if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
 					return nil, nil, false, err
 				}
 			}
