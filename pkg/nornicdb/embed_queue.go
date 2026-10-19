@@ -107,10 +107,10 @@ type EmbedWorker struct {
 
 	// embeddingRetries holds generated payloads after rejected writes. claimMu
 	// protects ownership; a claim retries persistence before calling a provider.
-	embeddingRetries        map[storage.NodeID]*retainedNodeEmbedding
-	retryMaxCount           int // zero uses the shared owner default
-	retryMaxBytes           int64
-	retryBudgetBlocked      bool // claimMu; cleared only when capacity is released or invalidated
+	embeddingRetries   map[storage.NodeID]*retainedNodeEmbedding
+	retryMaxCount      int // zero uses the shared owner default
+	retryMaxBytes      int64
+	retryBudgetBlocked bool // claimMu; cleared only when capacity is released or invalidated
 
 	embeddingEpoch atomic.Uint64
 	retryTurn      bool // claimMu alternates due retries with fresh work.
