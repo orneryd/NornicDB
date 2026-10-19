@@ -18,6 +18,9 @@ import (
 // Each explicit transaction gets its own executor instance.
 type ExecutorFactory func(dbName string) (*cypher.StorageExecutor, error)
 
+// Session cleanup is bounded independently of an HTTP request and of idle TTL.
+const terminalCleanupTimeout = 30 * time.Second
+
 // Session stores explicit transaction state shared across transports.
 type Session struct {
 	ID       string
@@ -28,8 +31,15 @@ type Session struct {
 
 	mu             sync.Mutex
 	terminalErr    error
+	closed         bool
 	lifetimeCancel context.CancelFunc
 	idleTimer      *time.Timer
+}
+
+func (s *Session) Expiration() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Expires
 }
 
 // Manager tracks explicit transaction sessions and lifecycle operations.
@@ -117,14 +127,16 @@ func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, e
 		Executor:       executor,
 		Expires:        now.Add(m.ttl),
 		lifetimeCancel: cancel,
-		idleTimer:      time.AfterFunc(m.ttl, cancel),
 	}
 
+	session.mu.Lock()
 	m.mu.Lock()
 	m.lastID++
 	session.ID = strconv.FormatUint(m.lastID, 10)
 	m.sessions[session.ID] = session
+	session.idleTimer = time.AfterFunc(m.ttl, func() { m.expire(session) })
 	m.mu.Unlock()
+	session.mu.Unlock()
 
 	return session, nil
 }
@@ -138,6 +150,11 @@ func (m *Manager) GetForOwner(txID string, owner string) (*Session, bool) {
 	session, ok := m.sessions[txID]
 	m.mu.RUnlock()
 	if !ok || session == nil {
+		return nil, false
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if m.expiredLocked(session) {
 		return nil, false
 	}
 	boundOwner := strings.TrimSpace(session.Owner)
@@ -154,17 +171,12 @@ func (m *Manager) GetForOwner(txID string, owner string) (*Session, bool) {
 }
 
 func (m *Manager) Delete(txID string) {
-	m.mu.Lock()
-	if session := m.sessions[txID]; session != nil {
-		if session.idleTimer != nil {
-			session.idleTimer.Stop()
-		}
-		if session.lifetimeCancel != nil {
-			session.lifetimeCancel()
-		}
+	m.mu.RLock()
+	session := m.sessions[txID]
+	m.mu.RUnlock()
+	if session != nil {
+		_ = m.RollbackAndDelete(context.Background(), session)
 	}
-	delete(m.sessions, txID)
-	m.mu.Unlock()
 }
 
 func (m *Manager) SetTerminalErrorObserver(observer func(*Session, error)) {
@@ -177,6 +189,17 @@ func (m *Manager) Touch(session *Session) {
 	if session == nil {
 		return
 	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !m.expiredLocked(session) {
+		m.touchLocked(session)
+	}
+}
+
+func (m *Manager) touchLocked(session *Session) {
+	if session.closed {
+		return
+	}
 	session.Expires = m.nowFunc().Add(m.ttl)
 	if session.idleTimer != nil {
 		session.idleTimer.Reset(m.ttl)
@@ -184,10 +207,14 @@ func (m *Manager) Touch(session *Session) {
 }
 
 func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
-	if session == nil || session.Executor == nil {
+	if session == nil {
 		return nil, fmt.Errorf("transaction session is not available")
 	}
 	session.mu.Lock()
+	if m.expiredLocked(session) {
+		session.mu.Unlock()
+		return nil, fmt.Errorf("transaction session has expired or closed")
+	}
 	if session.terminalErr != nil {
 		err := session.terminalErr
 		session.mu.Unlock()
@@ -198,7 +225,7 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 	}
 
 	result, err := session.Executor.Execute(ctx, query, params)
-	m.Touch(session)
+	m.touchLocked(session)
 	if err != nil {
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
@@ -210,21 +237,15 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 }
 
 func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cypher.ExecuteResult, error) {
-	if session == nil || session.Executor == nil {
+	if session == nil {
 		return nil, fmt.Errorf("transaction session is not available")
 	}
-	defer m.Delete(session.ID)
 	session.mu.Lock()
-	if session.idleTimer != nil {
-		session.idleTimer.Stop()
-	}
-	if session.terminalErr != nil {
-		err := session.terminalErr
+	if m.expiredLocked(session) {
 		session.mu.Unlock()
-		return nil, err
+		return nil, fmt.Errorf("transaction session has expired or closed")
 	}
-
-	result, err := session.Executor.Execute(cypher.WithTransactionControl(ctx), "COMMIT", nil)
+	result, err := m.endLocked(ctx, session, "COMMIT")
 	if err != nil {
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
@@ -236,22 +257,67 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 }
 
 func (m *Manager) RollbackAndDelete(ctx context.Context, session *Session) error {
-	if session == nil || session.Executor == nil {
+	if session == nil {
 		return fmt.Errorf("transaction session is not available")
 	}
-	defer m.Delete(session.ID)
 	session.mu.Lock()
+	defer session.mu.Unlock()
+	_, err := m.endLocked(ctx, session, "ROLLBACK")
+	return err
+}
+
+// endLocked is the only session terminal owner. The operation mutex arbitrates
+// expiry, explicit endings and active statements. Participants end while their
+// transaction lifetime is still live; only then is the session retired and its
+// lifetime cancelled. Cleanup has a bound even for an unresponsive participant.
+func (m *Manager) endLocked(ctx context.Context, session *Session, command string) (*cypher.ExecuteResult, error) {
+	if session.closed {
+		return nil, nil
+	}
+	session.closed = true
 	if session.idleTimer != nil {
 		session.idleTimer.Stop()
 	}
+	defer func() {
+		m.mu.Lock()
+		delete(m.sessions, session.ID)
+		m.mu.Unlock()
+		session.lifetimeCancel()
+		session.Executor = nil
+	}()
 	if session.terminalErr != nil {
-		session.mu.Unlock()
-		return nil
+		if command == "COMMIT" {
+			return nil, session.terminalErr
+		}
+		return nil, nil
 	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), terminalCleanupTimeout)
+	defer cancel()
+	stop := context.AfterFunc(cleanup, session.lifetimeCancel)
+	defer stop()
+	return session.Executor.Execute(cypher.WithTransactionControl(cleanup), command, nil)
+}
 
-	_, err := session.Executor.Execute(cypher.WithTransactionControl(ctx), "ROLLBACK", nil)
-	session.mu.Unlock()
-	return err
+func (m *Manager) expiredLocked(session *Session) bool {
+	if session.closed {
+		return true
+	}
+	if !m.nowFunc().Before(session.Expires) {
+		_, _ = m.endLocked(context.Background(), session, "ROLLBACK")
+		return true
+	}
+	return false
+}
+
+func (m *Manager) expire(session *Session) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !m.expiredLocked(session) {
+		// A timer already firing may have waited behind an active statement.
+		// That statement refreshed the idle deadline; it must not be expired by
+		// the obsolete firing.
+		session.idleTimer.Reset(session.Expires.Sub(m.nowFunc()))
+	}
 }
 
 func (m *Manager) rememberTerminalErrorLocked(session *Session, err error) (error, bool) {

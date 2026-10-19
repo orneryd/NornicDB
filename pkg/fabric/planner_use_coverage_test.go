@@ -138,10 +138,9 @@ func TestPlan_DynamicTopLevelUseWithStaticSubquery(t *testing.T) {
 // TestParseLeadingWithUse_NameStartingWithUse pins that a name that only
 // starts with the letters USE after an importing WITH is not a USE clause:
 // the body is returned unchanged. The name here continues with a non-ASCII
-// letter (א), which the WITH-clause scanner treats as the end of a word but
-// the USE grammar treats as part of the name.
+// letter (א), which is part of the identifier in the grammar.
 func TestParseLeadingWithUse_NameStartingWithUse(t *testing.T) {
-	body := "WITH a USEא MATCH (n) RETURN n"
+	body := "WITH a, USEא MATCH (n) RETURN n"
 	use, rewritten, ok, err := parseLeadingWithUse(body)
 	require.NoError(t, err)
 	require.False(t, ok)

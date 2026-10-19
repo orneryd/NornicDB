@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -206,6 +207,9 @@ func splitUnwindBody(body string) (list, alias string, ok bool) {
 // pipelineClauseBody is a clause's text after its keyword, which the
 // clause splitter matched in any letter case (Return, rEtUrN).
 func pipelineClauseBody(text, keyword string) string {
+	if body, ok := fabric.ClauseBody(text, keyword); ok {
+		return body
+	}
 	text = strings.TrimSpace(text)
 	if len(text) >= len(keyword) && strings.EqualFold(text[:len(keyword)], keyword) {
 		text = text[len(keyword):]
@@ -280,6 +284,28 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 // subquery) returns (nil, false) so the caller falls back. topLevelCall
 // reports whether the query has a CALL of its own (cachedPipelineClauses).
 func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
+	// Fabric fragments and ordinary grammar-supported statements share the
+	// parser's clause ownership, including keyword-named expressions. The
+	// scanner below remains only for Nornic extensions absent from the grammar.
+	if structure := fabric.ReadQueryStructure(cypher); structure.Err == nil {
+		kinds := map[string]pipelineClauseKind{"MATCH": pipelineClauseMatch, "OPTIONAL MATCH": pipelineClauseOptionalMatch, "CREATE": pipelineClauseCreate, "MERGE": pipelineClauseMerge, "DELETE": pipelineClauseDelete, "DETACH DELETE": pipelineClauseDelete, "SET": pipelineClauseSet, "REMOVE": pipelineClauseRemove, "WITH": pipelineClauseWith, "UNWIND": pipelineClauseUnwind, "FOR": pipelineClauseUnwind, "RETURN": pipelineClauseReturn, "FOREACH": pipelineClauseForeach, "LET": pipelineClauseLet, "FILTER": pipelineClauseFilter}
+		for _, clause := range structure.Clauses {
+			kind, found := kinds[clause.Kind]
+			if clause.Kind == "CALL" {
+				found = true
+				topLevelCall = true
+				kind = pipelineClauseCall
+				if clause.Nested != nil {
+					kind = pipelineClauseCallSubquery
+				}
+			}
+			if !found {
+				return nil, false, topLevelCall
+			}
+			clauses = append(clauses, pipelineClause{kind: kind, text: clause.ExecutionText, optional: clause.Optional && clause.Kind == "CALL"})
+		}
+		return clauses, len(clauses) > 0, topLevelCall
+	}
 	type kw struct {
 		name string
 		kind pipelineClauseKind
