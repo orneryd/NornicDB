@@ -196,7 +196,43 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// and extension rewrites can mistake a keyword-spelled name for a clause.
 	fabricQuery := e.shouldUseFabricPlanner(cypher)
 	if fabricQuery {
-		cypher = fabric.LocalQuery(cypher)
+		syntax := fabric.ReadQueryStructure(cypher)
+		if syntax.Err != nil {
+			fabricQuery = false
+		} else {
+			if err := syntax.ValidateUnions(); err != nil {
+				return nil, err
+			}
+			if len(syntax.LocalEdits) > 0 {
+				columns := syntax.ResultColumns()
+				if syntax.First("EXPLAIN") != nil || syntax.First("PROFILE") != nil {
+					columns = nil
+				}
+				edits := make([]labelRewriteEdit, 0, len(syntax.LocalEdits))
+				for _, edit := range syntax.LocalEdits {
+					edits = append(edits, labelRewriteEdit{start: edit.Start, end: edit.End, text: edit.Text})
+				}
+				lowered, sourceRewrite := applyLabelRewriteEdits(cypher, edits, true)
+				cypher = lowered
+				defer func() {
+					result, retErr = sourceRewrite.restore(result, retErr)
+					if result != nil && columns != nil && len(columns) == len(result.Columns) {
+						changed := false
+						for i, column := range columns {
+							if result.Columns[i] != column {
+								changed = true
+								break
+							}
+						}
+						if changed {
+							copyResult := *result
+							copyResult.Columns = columns
+							result = &copyResult
+						}
+					}
+				}()
+			}
+		}
 	}
 	if config.IsCypherQueryNormalizationEnabled() {
 		canonical, rewrite = canonicalizeQueryText(cypher)
@@ -411,7 +447,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
-	if fabricQuery {
+	if fabricQuery || e.shouldUseFabricPlanner(cypher) {
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}

@@ -61,6 +61,9 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 	if trimmed == "" {
 		return nil, fmt.Errorf("empty query")
 	}
+	if err := ReadQueryStructure(trimmed).ValidateUnions(); err != nil {
+		return nil, err
+	}
 	session := planTarget{name: sessionDB}
 	scope := compositeScopeRoot(sessionDB)
 	return p.planQuery(trimmed, session, scope, false)
@@ -75,16 +78,6 @@ func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope stri
 		return nil, err
 	}
 	if hasUnion {
-		var knownColumns []string
-		for _, part := range parts {
-			if columns := inferReturnColumnsFromQuery(part); columns != nil {
-				if knownColumns == nil {
-					knownColumns = columns
-				} else if _, same := UnionColumnOrder(knownColumns, columns); !same {
-					return nil, fmt.Errorf("UNION queries must return the same columns (got %v and %v)", knownColumns, columns)
-				}
-			}
-		}
 		lhs, err := p.planQuery(parts[0], current, scope, inSubquery)
 		if err != nil {
 			return nil, err
