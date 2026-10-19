@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -59,6 +60,10 @@ type QueryInfo struct {
 
 	// Original query (normalized)
 	NormalizedQuery string
+
+	// Compiled by the determinism owner with this cached analysis. A registry
+	// replacement refreshes it; ordinary hits only evaluate actual bindings.
+	cachePolicy atomic.Pointer[executionDeterminismPolicy]
 
 	// Structured AST (lazily built, cached)
 	// Use GetAST() to access - builds on first call
@@ -137,6 +142,7 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 	// Analyze query
 	info := analyzeQuery(text)
 	info.NormalizedQuery = normalized
+	info.cachePolicy.Store(cachedExecutionPolicy(text))
 
 	// Cache result
 	a.cacheMu.Lock()
