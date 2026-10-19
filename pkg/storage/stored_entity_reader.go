@@ -127,8 +127,38 @@ func StreamStoredNodesByLabelProjected(engine Engine, label string, properties [
 // StreamNodesWithOptions' options: every engine can stream stored nodes
 // (ApplyDecayFilter false), so it only rules the visibility out.
 func StreamStoredNodes(ctx context.Context, engine Engine, opts StreamNodesOptions, visit func(*Node) error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	opts.ApplyDecayFilter = false
 	return engine.StreamNodesWithOptions(ctx, opts, visit)
+}
+
+// CollectStoredNodes returns every stored node of engine, its separately
+// stored embeddings included, for a backup, snapshot or export: the ones the
+// visibility layer hides are stored data too (StreamStoredNodes).
+func CollectStoredNodes(ctx context.Context, engine Engine) ([]*Node, error) {
+	var nodes []*Node
+	if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+		nodes = append(nodes, node)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+// CollectStoredEdges is CollectStoredNodes for relationships
+// (StreamStoredEdgesByType).
+func CollectStoredEdges(ctx context.Context, engine Engine) ([]*Edge, error) {
+	var edges []*Edge
+	if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
+		edges = append(edges, edge)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return edges, nil
 }
 
 // ============================================================================
