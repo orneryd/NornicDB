@@ -1138,10 +1138,16 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 
 func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoints) (*qpb.QueryBatchResponse, error) {
 	start := time.Now()
+	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+		return nil, err
+	}
 
 	ctx = s.bindQueryEmbedding(ctx, req)
 	results := make([]*qpb.BatchResult, 0, len(req.GetQueryPoints()))
 	for _, q := range req.GetQueryPoints() {
+		if q != nil {
+			q.CollectionName = req.GetCollectionName()
+		}
 		resp, err := s.Query(ctx, q)
 		if err != nil {
 			return nil, err
