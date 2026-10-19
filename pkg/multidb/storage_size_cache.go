@@ -103,7 +103,7 @@ func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) 
 	var nodeSize int64
 	var edgeSize int64
 
-	err := storage.StreamNodesWithFallback(context.Background(), engine, 1000, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		size, sizeErr := calculateNodeSize(node)
 		if sizeErr != nil {
 			return localizedError(localization.MultidbStorageCalculateNodeSizeFailed(sizeErr), sizeErr)
@@ -114,7 +114,7 @@ func (m *DatabaseManager) calculateStorageSizeFromEngine(engine storage.Engine) 
 	if err != nil {
 		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesForSizeCalculationFailed(err), err)
 	}
-	err = storage.StreamEdgesWithFallback(context.Background(), engine, 1000, func(edge *storage.Edge) error {
+	err = storage.StreamStoredEdgesByType(context.Background(), engine, "", func(edge *storage.Edge) error {
 		size, sizeErr := calculateEdgeSize(edge)
 		if sizeErr != nil {
 			return localizedError(localization.MultidbStorageCalculateEdgeSizeFailed(sizeErr), sizeErr)

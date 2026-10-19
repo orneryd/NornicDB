@@ -121,6 +121,16 @@ func (b *BadgerEngine) StreamEdgesByType(ctx context.Context, edgeType string, v
 // records are read or decoded. An empty edgeType streams every edge, matching
 // GetEdgesByType("").
 func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edgeType string, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeInScope(ctx, scope, edgeType, visibleRead, visit)
+}
+
+// StreamStoredEdgesByType is StreamEdgesByType for integrity work: it also
+// visits the relationships the visibility layer hides (StoredEntityReader).
+func (b *BadgerEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeInScope(ctx, "", edgeType, storedRead, visit)
+}
+
+func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edgeType string, v readVisibility, visit func(*Edge) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -149,7 +159,7 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 
 	nowNanos := DecayScoringTime()
 	emit := func(edge *Edge) error {
-		if edge == nil || b.filterEdgeByDecay(edge, nowNanos) {
+		if edge == nil || b.hidesEdge(v, edge, nowNanos) {
 			return nil
 		}
 		if len(touched) > 0 && touched[edge.ID] {
@@ -164,7 +174,7 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
-		checkTombstones := b.decayEnabled && !b.revealAll.Load()
+		checkTombstones := b.checksIndexTombstones(v)
 		for it.Rewind(); it.Valid(); it.Next() {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -195,7 +205,7 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 		return err
 	}
 	for _, e := range overlay {
-		if !edgeIDInScope(e.ID, scope) || b.filterEdgeByDecay(e, nowNanos) {
+		if !edgeIDInScope(e.ID, scope) || b.hidesEdge(v, e, nowNanos) {
 			continue
 		}
 		if err := visit(copyEdge(e)); err != nil {

@@ -51,6 +51,14 @@ func (e *quotaAdmissionReadFailure) StreamNodes(ctx context.Context, fn func(*st
 	return e.StreamingEngine.StreamNodes(ctx, fn)
 }
 
+// Storage sizing streams stored nodes (storage.StreamStoredNodes).
+func (e *quotaAdmissionReadFailure) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, fn func(*storage.Node) error) error {
+	if e.at == "bytes" {
+		return e.err
+	}
+	return e.StreamingEngine.StreamNodesWithOptions(ctx, opts, fn)
+}
+
 func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 	for _, at := range []string{"node", "edge", "nodes", "edges", "bytes"} {
 		t.Run(at, func(t *testing.T) {

@@ -359,9 +359,11 @@ type tlfStreamGuard struct {
 	calls, visits, fallback int
 }
 
-func (g *tlfStreamGuard) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
+// Constraint creation streams the stored relationships of the type
+// (StoredEntityReader).
+func (g *tlfStreamGuard) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
 	g.calls++
-	return g.NamespacedEngine.StreamEdgesByType(ctx, edgeType, func(edge *Edge) error {
+	return g.NamespacedEngine.StreamStoredEdgesByType(ctx, edgeType, func(edge *Edge) error {
 		g.visits++
 		return visit(edge)
 	})
@@ -372,7 +374,7 @@ func (g *tlfStreamGuard) GetEdgesByType(string) ([]*Edge, error) {
 	return nil, ErrInvalidData
 }
 
-var _ EdgeTypeStreamer = (*tlfStreamGuard)(nil)
+var _ StoredEntityReader = (*tlfStreamGuard)(nil)
 
 func tlfRelationshipDDL(t *testing.T, c Constraint, engine *NamespacedEngine, edges []*Edge, route string) error {
 	t.Helper()

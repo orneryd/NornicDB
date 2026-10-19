@@ -65,7 +65,7 @@ func (db *DB) runRetentionSweep(ctx context.Context) {
 	sweepStart := time.Now()
 	dbName := db.defaultDatabaseName()
 
-	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, db.storage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		if processed >= budget {
 			return localizedError(localization.NornicDBRetentionSweepBudgetExhausted(budget), nil)
 		}
@@ -127,7 +127,7 @@ func (db *DB) retentionContext(ctx context.Context) context.Context {
 // CollectSubjectRetentionRecords returns retention records for all nodes owned by a subject.
 func (db *DB) CollectSubjectRetentionRecords(ctx context.Context, subjectID string) ([]*retention.DataRecord, error) {
 	var records []*retention.DataRecord
-	err := storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(ctx, db.storage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		if db.nodeMatchesSubject(node, subjectID) {
 			records = append(records, nodeToDataRecord(node, db.subjectIdentifierProperties()))
 		}

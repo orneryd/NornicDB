@@ -134,7 +134,7 @@ func TestBadgerAdjacencyReadsPropagateTransactionErrors(t *testing.T) {
 	t.Run("closed engine", func(t *testing.T) {
 		b := newTestEngine(t)
 		require.NoError(t, b.Close())
-		edges, err := b.materializeAdjEdges([]EdgeID{"test:uncached"})
+		edges, err := b.materializeAdjEdges([]EdgeID{"test:uncached"}, visibleRead)
 		require.ErrorIs(t, err, ErrStorageClosed)
 		require.Nil(t, edges)
 	})

@@ -298,27 +298,34 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 }
 
 // nodeHasResidualRelationships reports whether a relationship other than
-// those beingDeleted connects nodeID.
+// those beingDeleted connects nodeID (connectingRelationships).
 func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
-	outgoing, err := store.GetOutgoingEdges(nodeID)
+	connecting, err := connectingRelationships(store, nodeID)
 	if err != nil {
 		return false, err
 	}
-	for _, edge := range outgoing {
-		if _, deleting := beingDeleted[edge.ID]; !deleting {
-			return true, nil
-		}
-	}
-	incoming, err := store.GetIncomingEdges(nodeID)
-	if err != nil {
-		return false, err
-	}
-	for _, edge := range incoming {
+	for _, edge := range connecting {
 		if _, deleting := beingDeleted[edge.ID]; !deleting {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// connectingRelationships returns the relationships that connect nodeID for
+// a DELETE: those DETACH DELETE removes with the node, and those that keep a
+// non-DETACH DELETE from removing it. A store that lists the relationships the
+// visibility layer hides (storage.IncidentEdgeLister: a transaction) lists
+// them too, since the node's delete removes them all the same; without them a
+// non-DETACH DELETE removed a node whose only relationships were hidden, as
+// in Neo4j it fails with DeleteConnectedNode for any relationship. Stores run
+// without a transaction (composite and remote databases) list what their
+// reads return.
+func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	if lister, ok := store.(storage.IncidentEdgeLister); ok {
+		return lister.IncidentEdges(nodeID)
+	}
+	return undirectedIncidentEdges(store, nodeID)
 }
 
 // residualRelationshipDeleteError builds the error returned when a

@@ -142,7 +142,7 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 // RebuildTemporalIndexes, for one label instead of the whole store.
 func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
 	var ids []NodeID
-	if err := streamNodesByLabelForValidation(engine, label, []string{}, func(node *Node) error {
+	if err := StreamStoredNodesByLabelProjected(engine, label, []string{}, func(node *Node) error {
 		if node != nil {
 			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
 		}
@@ -175,7 +175,7 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 var errStopLabelProbe = errors.New("label has nodes")
 
 func labelHasNoNodes(engine Engine, label string) (bool, error) {
-	err := streamNodesByLabelForValidation(engine, label, nil, func(node *Node) error {
+	err := StreamStoredNodesByLabelProjected(engine, label, nil, func(node *Node) error {
 		if node == nil {
 			return nil
 		}

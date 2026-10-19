@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -969,7 +968,7 @@ func TestTransaction_CheckNodeKeyConstraintAndValidateNodeConstraints(t *testing
 	})
 }
 
-func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
+func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 	t.Run("buffers edge and index deletions for matched prefix", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		_, err := engine.CreateNode(&Node{ID: NodeID(prefixTestID("del-node-1")), Labels: []string{"Person"}})
@@ -991,13 +990,11 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		outPrefix := engine.outgoingIndexPrefixString(edge.StartNode)
-		if outPrefix == nil {
-			t.Fatal("outgoing prefix missing for seeded edge")
-		}
-		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outPrefix, edge.StartNode, nil)
+		tx.mu.Lock()
+		count, ids, err := tx.deleteNodeBuffered(edge.StartNode, nil)
+		tx.mu.Unlock()
 		if err != nil {
-			t.Fatalf("deleteEdgesWithPrefixBuffered failed: %v", err)
+			t.Fatalf("deleteNodeBuffered failed: %v", err)
 		}
 		if count != 1 || len(ids) != 1 || ids[0] != edge.ID {
 			t.Fatalf("unexpected delete result: count=%d ids=%v", count, ids)
@@ -1060,11 +1057,9 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		outPrefix := engine.outgoingIndexPrefixString(nodeID)
-		if outPrefix == nil {
-			t.Fatal("outgoing prefix missing for seeded node")
-		}
-		_, _, err = tx.deleteEdgesWithPrefixBuffered(outPrefix, nodeID, nil)
+		tx.mu.Lock()
+		_, err = tx.incidentEdgesLocked(nodeID)
+		tx.mu.Unlock()
 		if err == nil {
 			t.Fatal("expected corrupt edge payload error")
 		}
@@ -1754,10 +1749,10 @@ func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *tes
 	require.Equal(t, "entry-1", stored.Properties["description"])
 }
 
-// TestTransaction_ScanCommittedKeysWithPrefix covers the committed-key scan the
-// buffered deletes use (#703): a visit error stops the scan and is returned,
-// and a key under an adjacency prefix that isn't an edge key is skipped.
-func TestTransaction_ScanCommittedKeysWithPrefix(t *testing.T) {
+// TestTransaction_IncidentEdgesSkipNonEdgeKeys covers the committed adjacency
+// read of a node's relationships (incidentEdgesLocked, #703): a key under an
+// adjacency prefix that isn't an edge key is skipped.
+func TestTransaction_IncidentEdgesSkipNonEdgeKeys(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	start := NodeID(prefixTestID("scan-node-1"))
 	end := NodeID(prefixTestID("scan-node-2"))
@@ -1770,27 +1765,16 @@ func TestTransaction_ScanCommittedKeysWithPrefix(t *testing.T) {
 	outPrefix := engine.outgoingIndexPrefixString(start)
 	require.NotNil(t, outPrefix)
 
-	t.Run("visit error is returned", func(t *testing.T) {
-		tx, err := engine.BeginTransaction()
-		require.NoError(t, err)
-		defer tx.Rollback()
-		stop := errors.New("stop scan")
-		tx.mu.Lock()
-		err = tx.scanCommittedKeysWithPrefixLocked(outPrefix, func([]byte) error { return stop })
-		tx.mu.Unlock()
-		require.ErrorIs(t, err, stop)
-	})
-
-	t.Run("non-edge key under the adjacency prefix is skipped", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
-		}))
-		tx, err := engine.BeginTransaction()
-		require.NoError(t, err)
-		defer tx.Rollback()
-		count, ids, err := tx.deleteEdgesWithPrefixBuffered(outPrefix, start, []string{"Person"})
-		require.NoError(t, err)
-		require.EqualValues(t, 1, count)
-		require.Equal(t, []EdgeID{edge.ID}, ids)
-	})
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
+	}))
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	tx.mu.Lock()
+	edges, err := tx.incidentEdgesLocked(start)
+	tx.mu.Unlock()
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, edge.ID, edges[0].ID)
 }

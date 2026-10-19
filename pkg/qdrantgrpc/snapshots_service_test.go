@@ -48,6 +48,15 @@ func (e *snapshotErrEngine) AllEdges() ([]*storage.Edge, error) {
 	return e.Engine.AllEdges()
 }
 
+// The full-snapshot fallback streams stored nodes; the fake fails that stream
+// as it fails AllNodes.
+func (e *snapshotErrEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if e.nodesErr != nil {
+		return e.nodesErr
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
+}
+
 func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, CollectionStore, string, func()) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)

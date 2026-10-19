@@ -28,6 +28,19 @@ func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScope(_, label string) ([]
 	return e.GetNodesByLabel(label)
 }
 
+// Index backfills read stored nodes (storage.StoredEntityReader and its
+// scoped form), so the fake fails those label reads too.
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
+	if label == e.errOnLabel {
+		return nil, fmt.Errorf("forced label lookup error for %s", label)
+	}
+	return e.MemoryEngine.GetStoredNodesByLabel(label)
+}
+
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelInScope(_, label string) ([]*storage.Node, error) {
+	return e.GetStoredNodesByLabel(label)
+}
+
 func TestSchema_CreateIndexBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "schema_index_cov")

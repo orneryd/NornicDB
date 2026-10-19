@@ -87,7 +87,9 @@ func (idx *relationshipUniqueIndex) put(edge *Edge) {
 
 // relationshipUniqueCandidates returns the exact-value equality candidates.
 // Unsupported keys, decay-filtered query views and write-behind use the old
-// complete scan, rather than trusting an incomplete index miss.
+// complete scan, rather than trusting an incomplete index miss. The index is
+// built from every stored relationship of the type: one hidden from reads
+// still holds its value.
 func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, namespace string) ([]NodeID, bool, error) {
 	if b.writeBehind != nil || b.decayEnabled || namespace == "" || len(c.Properties) == 0 {
 		return nil, false, nil
@@ -105,7 +107,7 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		if hook := getUniqueConstraintScanHook(); hook != nil {
 			hook()
 		}
-		edges, err := b.GetEdgesByType(edge.Type)
+		edges, err := b.GetStoredEdgesByType(edge.Type)
 		if err != nil {
 			set.active.Store(len(set.entries) > 0)
 			return nil, false, err
