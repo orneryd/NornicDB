@@ -139,10 +139,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 						}
 						lookup = grouping.stringGroups
 					} else {
-						key = cypherEquivalenceKey(value)
+						key = cypherValueKey(value, cypherEquivalenceContract)
 					}
 				} else {
-					parts = append(parts, cypherEquivalenceKey(value))
+					parts = append(parts, cypherValueKey(value, cypherEquivalenceContract))
 				}
 			}
 			if groupingCount > 1 {
@@ -381,7 +381,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 					if !ok {
 						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
 					}
-					parts = append(parts, cypherEquivalenceKey(value))
+					parts = append(parts, cypherValueKey(value, cypherEquivalenceContract))
 				}
 			}
 			key := strings.Join(parts, "\x1f")
@@ -495,7 +495,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		if state.seen == nil {
 			state.seen = make(map[string]struct{})
 		}
-		key := cypherEquivalenceKey(value)
+		key := cypherValueKey(value, cypherEquivalenceContract)
 		if _, exists := state.seen[key]; exists {
 			return true
 		}

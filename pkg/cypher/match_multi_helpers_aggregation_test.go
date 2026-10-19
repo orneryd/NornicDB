@@ -506,9 +506,9 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 		require.False(t, ok)
 
 		for _, value := range []interface{}{nil, "x", 2, int64(3), 2.5, true, false, []int{1, 2}} {
-			require.Equal(t, cypherEquivalenceKey(value), cartesianValueKey(value))
+			require.Equal(t, cypherValueKey(value, cypherValueEqualityContract), cypherValueKey(value, cypherValueEqualityContract))
 		}
-		require.Equal(t, cartesianValueKey(int64(1)), cartesianValueKey(float64(1)))
+		require.Equal(t, cypherValueKey(int64(1), cypherValueEqualityContract), cypherValueKey(float64(1), cypherValueEqualityContract))
 	})
 
 	t.Run("prop collection and filters", func(t *testing.T) {
@@ -519,18 +519,18 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 			{ID: "n3", Properties: map[string]interface{}{"other": 1}},
 		}
 
-		vals := collectPropValues(nodes, "k")
+		vals := collectPropValues(nodes, "k", cypherValueEqualityContract)
 		require.Len(t, vals, 2)
-		_, hasA := vals[cypherEquivalenceKey("a")]
-		_, hasB := vals[cypherEquivalenceKey("b")]
+		_, hasA := vals[cypherValueKey("a", cypherEquivalenceContract)]
+		_, hasB := vals[cypherValueKey("b", cypherEquivalenceContract)]
 		require.True(t, hasA)
 		require.True(t, hasB)
 
-		filtered := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{cypherEquivalenceKey("b"): {}})
+		filtered := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{cypherValueKey("b", cypherEquivalenceContract): {}}, cypherValueEqualityContract)
 		require.Len(t, filtered, 1)
 		require.Equal(t, storage.NodeID("n2"), filtered[0].ID)
 
-		noFilter := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{})
+		noFilter := filterNodesByAllowedPropSet(nodes, "k", map[string]struct{}{}, cypherValueEqualityContract)
 		require.Len(t, noFilter, len(nodes))
 
 		notNull := filterNodesByNullConstraint(nodes, "nullable", true)
@@ -823,13 +823,13 @@ func TestCartesianOffsetArithmeticExact(t *testing.T) {
 	require.True(t, cartesianOffsetValuesEqual(int64(9007199254740991), int64(9007199254740992), -1))
 
 	// The shifted lookup key stays exact and keeps the stored type.
-	key, ok := cartesianShiftValueKey(int64(9007199254740992), 1)
+	key, ok := cartesianShiftValueKey(int64(9007199254740992), 1, cypherValueEqualityContract)
 	require.True(t, ok)
-	require.Equal(t, cypherEquivalenceKey(int64(9007199254740993)), key)
-	intKey, ok := cartesianShiftValueKey(5, -2)
+	require.Equal(t, cypherValueKey(int64(9007199254740993), cypherEquivalenceContract), key)
+	intKey, ok := cartesianShiftValueKey(5, -2, cypherValueEqualityContract)
 	require.True(t, ok)
-	require.Equal(t, cypherEquivalenceKey(int64(3)), intKey)
-	_, ok = cartesianShiftValueKey("x", 1)
+	require.Equal(t, cypherValueKey(int64(3), cypherEquivalenceContract), intKey)
+	_, ok = cartesianShiftValueKey("x", 1, cypherValueEqualityContract)
 	require.False(t, ok)
 
 	// Overflow never wraps into a wrong bucket.

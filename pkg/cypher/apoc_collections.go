@@ -128,7 +128,7 @@ func toSet(val interface{}) []interface{} {
 	result := make([]interface{}, 0, len(items))
 	seen := cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range items {
-		if !seen.add(item) {
+		if !seen.addByContract(item, cypherEquivalenceContract) {
 			result = append(result, item)
 		}
 	}
@@ -459,11 +459,11 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 	}
 	in2, seen := cypherValueSet{encoded: make(map[string]int)}, cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range l2 {
-		in2.add(item)
+		in2.addByContract(item, cypherEquivalenceContract)
 	}
 	for _, item := range l1 {
-		if in2.has(item) {
-			if !seen.add(item) {
+		if in2.hasByContract(item, cypherEquivalenceContract) {
+			if !seen.addByContract(item, cypherEquivalenceContract) {
 				result = append(result, item)
 			}
 		}
@@ -497,13 +497,13 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 	}
 	in2, seen := cypherValueSet{encoded: make(map[string]int)}, cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range l2 {
-		in2.add(item)
+		in2.addByContract(item, cypherEquivalenceContract)
 	}
 	for _, item := range l1 {
-		if in2.has(item) {
+		if in2.hasByContract(item, cypherEquivalenceContract) {
 			continue
 		}
-		if !seen.add(item) {
+		if !seen.addByContract(item, cypherEquivalenceContract) {
 			result = append(result, item)
 		}
 	}
@@ -568,7 +568,7 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 	}
 	in1 := apocValueSet(l1)
 	for _, item := range l2 {
-		if item == nil || !in1.has(item) {
+		if item == nil || !in1.hasByContract(item, cypherValueEqualityContract) {
 			return false
 		}
 	}
@@ -578,10 +578,10 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 // apocValueSet is a list's non-null items as a set, for lookups by APOC's
 // value equality (cypherValueEquals): a null finds nothing.
 func apocValueSet(list []interface{}) cypherValueSet {
-	set := cypherValueSet{contract: cypherValueEqualityContract, encoded: make(map[string]int)}
+	set := cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range list {
 		if item != nil {
-			set.add(item)
+			set.addByContract(item, cypherValueEqualityContract)
 		}
 	}
 	return set
@@ -613,7 +613,7 @@ func apocCollContainsAny(list1, list2 interface{}) bool {
 	}
 	in1 := apocValueSet(l1)
 	for _, item := range l2 {
-		if item != nil && in1.has(item) {
+		if item != nil && in1.hasByContract(item, cypherValueEqualityContract) {
 			return true
 		}
 	}
@@ -797,15 +797,33 @@ func apocCollZip(list1, list2 interface{}) []interface{} {
 // APOC Analysis Functions
 // ========================================
 
-// apocSameValue reports whether apoc.map.clean's value list holds value: an
-// equal value of the same kind, as APOC compares (2 is not 2.0) (#1164).
+// apocSameValue uses Java-object removal-set equivalence: overlap occurrences
+// and numeric representations stay distinct, including nested values (#1164).
 func apocSameValue(value, listed interface{}) bool {
-	if equal, _ := cypherEquality(value, listed).(bool); !equal {
+	if cypherValueKindOf(value) == valueKindNull || cypherValueKindOf(listed) == valueKindNull {
 		return false
 	}
 	_, valueFloat := value.(float64)
 	_, listedFloat := listed.(float64)
-	return valueFloat == listedFloat
+	if valueFloat != listedFloat {
+		return false
+	}
+	if equal, numeric := cypherNumericEquality(value, listed); numeric {
+		return equal
+	}
+	switch typed := value.(type) {
+	case string:
+		other, ok := listed.(string)
+		return ok && typed == other
+	case bool:
+		other, ok := listed.(bool)
+		return ok && typed == other
+	}
+	if equal, temporal := compareTemporalByContract(value, listed, cypherEquivalenceContract); temporal {
+		return equal
+	}
+	return cypherValueKeyWithNumericPolicy(value, cypherNumericKinds, cypherEquivalenceContract) ==
+		cypherValueKeyWithNumericPolicy(listed, cypherNumericKinds, cypherEquivalenceContract)
 }
 
 // apocCollFrequencies is apoc.coll.frequencies(list): each distinct item
@@ -821,7 +839,7 @@ func apocCollFrequencies(val interface{}) []interface{} {
 	result := make([]interface{}, 0, len(list))
 	positions := cypherValueSet{encoded: make(map[string]int, len(list))}
 	for _, item := range list {
-		if position, seen := positions.addPosition(item); seen {
+		if position, seen := positions.addPositionByContract(item, cypherEquivalenceContract); seen {
 			entry := result[position].(map[string]interface{})
 			entry["count"] = entry["count"].(int64) + 1
 			continue
