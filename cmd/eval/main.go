@@ -474,7 +474,7 @@ func min(a, b int) int {
 func validateURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("malformed URL: %w", err)
+		return fmt.Errorf("malformed URL: %w", observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
 	// Only allow http and https schemes
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
@@ -563,7 +563,7 @@ func createSampleData(serverURL string) error {
 	// Construct full URL safely using url.JoinPath to prevent path traversal
 	targetURL, err := url.JoinPath(serverURL, "db", "nornic", "tx", "commit")
 	if err != nil {
-		return fmt.Errorf("failed to construct request URL: %w", err)
+		return fmt.Errorf("failed to construct request URL: %w", observability.RedactError(err, observability.ClientCredentials(serverURL)...))
 	}
 
 	client := newSafeClient(30 * time.Second)

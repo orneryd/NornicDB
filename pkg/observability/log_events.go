@@ -26,11 +26,11 @@ func logBootstrapEvent(logger *log.Logger, event bootstrapLogEvent, args ...any)
 	if logger == nil {
 		logger = log.Default()
 	}
-	message := fmt.Sprintf(event.format, args...)
+	message := RedactText(fmt.Sprintf(event.format, args...))
 	fields := fmt.Sprintf(" event_id=%q component=%q", event.id, "observability")
 	for index, name := range event.attrs {
 		if index < len(args) {
-			fields += fmt.Sprintf(" %s=%q", name, fmt.Sprint(args[index]))
+			fields += fmt.Sprintf(" %s=%q", name, DisplayValue(name, fmt.Sprint(args[index])))
 		}
 	}
 	logger.Print(message + fields)
@@ -43,12 +43,19 @@ func logSlogBootstrapEvent(logger *slog.Logger, event bootstrapLogEvent, args ..
 	attrs := []slog.Attr{slog.String("event_id", event.id), slog.String("component", "observability")}
 	for index, name := range event.attrs {
 		if index < len(args) {
-			attrs = append(attrs, slog.Any(name, args[index]))
+			value := args[index]
+			switch item := value.(type) {
+			case string:
+				value = DisplayValue(name, item)
+			case error:
+				value = RedactError(item)
+			}
+			attrs = append(attrs, slog.Any(name, value))
 		}
 	}
 	level := slog.LevelInfo
 	if event.level == "WARN" {
 		level = slog.LevelWarn
 	}
-	logger.LogAttrs(context.Background(), level, fmt.Sprintf(event.format, args...), attrs...)
+	logger.LogAttrs(context.Background(), level, RedactText(fmt.Sprintf(event.format, args...)), attrs...)
 }

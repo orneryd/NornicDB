@@ -1,12 +1,10 @@
 package observability
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -272,7 +270,7 @@ func ClientCredentials(endpoint string, secrets ...string) []string {
 		return values
 	}
 	_ = MapURLCredentials(u, func(user *url.Userinfo) *url.Userinfo {
-		values = append(values, user.String())
+		values = append(values, user.String(), user.Username())
 		if password, ok := user.Password(); ok {
 			values = append(values, password, user.Username()+":"+password)
 		}
@@ -299,36 +297,7 @@ func ContextCredentials(context string, secrets ...string) []string {
 // used by HTTP forms, JSON and Basic authorization. It never reads environment
 // variables or discovers credentials from unrelated clients.
 func RedactText(text string, credentials ...string) string {
-	for _, credential := range credentials {
-		if credential == "" {
-			continue
-		}
-		secrets := []string{credential}
-		if scheme, value, ok := strings.Cut(credential, " "); ok {
-			if strings.EqualFold(scheme, "Bearer") {
-				secrets = append(secrets, value)
-			} else if strings.EqualFold(scheme, "Basic") {
-				secrets = append(secrets, value)
-				if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
-					secrets = append(secrets, string(decoded))
-					if _, password, ok := strings.Cut(string(decoded), ":"); ok {
-						secrets = append(secrets, password)
-					}
-				}
-			}
-		}
-		for _, secret := range secrets {
-			if secret == "" {
-				continue
-			}
-			quoted, _ := json.Marshal(secret)
-			goQuoted := strconv.Quote(secret)
-			for _, encoded := range []string{string(quoted[1 : len(quoted)-1]), goQuoted[1 : len(goQuoted)-1], url.QueryEscape(secret), url.PathEscape(secret),
-				base64.StdEncoding.EncodeToString([]byte(secret)), secret} {
-				text = strings.ReplaceAll(text, encoded, redactedPlaceholder)
-			}
-		}
-	}
+	text = redactOwnedCredentials(text, credentials)
 	if strings.Contains(text, "://") {
 		// Config/flag URL scalars may be malformed. Inspect their complete
 		// value before tokenization so quotes or whitespace in userinfo cannot
