@@ -6,6 +6,7 @@ import (
     "testing"
 
     "github.com/orneryd/nornicdb/pkg/storage"
+    "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 )
 
@@ -52,7 +53,7 @@ func TestCompositeMutationIdentityMatrix(t *testing.T) {
                 }
                 result,err:=exec.Execute(ctx,compositeIdentityQueryPrefix+testCase.clause,nil)
                 require.NoError(t,err)
-                require.Equal(t,testCase.rows,result.Rows)
+                assert.Equal(t,testCase.rows,result.Rows)
                 if mode!="autocommit" {
                     terminal:="COMMIT"
                     if mode=="rollback" {terminal="ROLLBACK"}

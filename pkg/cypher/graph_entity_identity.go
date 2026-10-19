@@ -435,6 +435,34 @@ func nativeEntityIdentity(value interface{}) (storage.EntityIdentity, bool) {
     return storage.EntityIdentity{},false
 }
 
+// Native values reach storage only through this adapter. Their local IDs are
+// opaque; the selected source is retained until the engine boundary decides
+// whether a qualified lookup is needed. No operation unwraps its transaction.
+func nativeEntityStorageID(engine storage.Engine, value interface{}) (string, bool) {
+    identity, ok := nativeEntityIdentity(value)
+    if !ok { return "", false }
+    kind := "4"
+    if _, relationship := value.(*storage.Edge); relationship { kind = "5" }
+    return identity.LookupID(engine,kind)
+}
+
+func nativeEdgeStorageEndpoints(engine storage.Engine, edge *storage.Edge) (storage.NodeID,storage.NodeID,bool) {
+    if edge==nil {return "","",false}
+    start,startOK:=edge.StartIdentity().NodeLookupID(engine)
+    end,endOK:=edge.EndIdentity().NodeLookupID(engine)
+    return start,end,startOK&&endOK
+}
+
+// Deleted entity views preserve physical provenance and relationship endpoints
+// while removing visible labels/properties. These are value copies, not keys.
+func nativeDeletedNodeValue(node *storage.Node) *storage.Node {
+    return &storage.Node{ID:node.ID,Database:node.Database}
+}
+
+func nativeDeletedEdgeValue(edge *storage.Edge) *storage.Edge {
+    return &storage.Edge{ID:edge.ID,Database:edge.Database,Type:edge.Type,StartNode:edge.StartNode,EndNode:edge.EndNode}
+}
+
 func nativeEntityMetadataID(engine storage.Engine, identity storage.EntityIdentity) string {
     if identity.Database != "" && storage.DatabaseOf(engine) != identity.Database {
         return identity.Database+":"+identity.LocalID
