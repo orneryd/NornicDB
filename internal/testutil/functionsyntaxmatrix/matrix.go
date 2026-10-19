@@ -13,6 +13,17 @@ type family struct {
 	rows                 string
 }
 
+// NativeCases cover existing NornicDB extensions absent from Neo4j 5.26.
+// Keep these out of the differential oracle while exercising the same routes.
+func NativeCases() []Case {
+	return []Case{
+		{"native/alias-name-gap", "RETURN ceiling /* don't range('bad'), */ (1.2) AS v", `[[2]]`},
+		{"native/alias-argument", "RETURN ceiling(/* don't range('bad'), */ 1.2) AS v", `[[2]]`},
+		{"native/quoted-alias", "RETURN `ceiling`(/* don't range('bad'), */ 1.2) AS v", `[[2]]`},
+		{"native/property-exists", "CREATE (n {v:1}) RETURN PROPERTY_EXISTS(/* gap */ n, /* don't range('bad'), */ v) AS v", `[[true]]`},
+	}
+}
+
 func Cases() []Case {
 	families := []family{
 		{"substring", "", "", []string{"toLower(§'OKAY')", "(§0)", "(§2)"}, `[["ok"]]`},
