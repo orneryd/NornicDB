@@ -303,13 +303,13 @@ func expectedReturnColumnsFromTail(tail string) []string {
 }
 
 func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (result *ExecuteResult, err error) {
- // Every tail route consumes the same seed once, including projections,
- // empty row sets and write tails. Pass-through results already own its stats.
- defer func() {
-  if err == nil && result != nil && seed != nil && result != seed && result.Stats != seed.Stats {
-   result.Stats = mergeQueryStats(result.Stats, seed.Stats)
-  }
- }()
+	// Every tail route consumes the same seed once, including projections,
+	// empty row sets and write tails. Pass-through results already own its stats.
+	defer func() {
+		if err == nil && result != nil && seed != nil && result != seed && result.Stats != seed.Stats {
+			result.Stats = mergeQueryStats(result.Stats, seed.Stats)
+		}
+	}()
 	if seed == nil {
 		return nil, localizedError(localization.CypherCommandRoutingCallTailSeedRequired(), nil)
 	}
@@ -451,7 +451,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 			return nil, true, err
 		}
 		combined.Stats = mergeQueryStats(combined.Stats, procedureResult.Stats)
-if len(combined.Columns) == len(prefixColumns) {
+		if len(combined.Columns) == len(prefixColumns) {
 			combined.Columns = append(combined.Columns, procedureResult.Columns...)
 		}
 		for _, procedureRow := range procedureResult.Rows {
@@ -615,6 +615,7 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
 			}
 		}
+		combined.Stats = mergeQueryStats(combined.Stats, result.res.Stats)
 		combined.Rows = append(combined.Rows, result.res.Rows...)
 	}
 	if combined == nil {
