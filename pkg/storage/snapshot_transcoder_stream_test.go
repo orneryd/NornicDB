@@ -99,21 +99,31 @@ func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
 	})
 	path := filepath.Join(t.TempDir(), "snapshot.nds")
 	require.NoError(t, SaveStreamingSnapshot(context.Background(), engine, path, SnapshotOptions{}))
+	generalPath := filepath.Join(t.TempDir(), "general.nds")
+	require.NoError(t, SaveStreamingSnapshot(context.Background(), snapshotGeneralEdgeStream{StreamingEngine: engine}, generalPath, SnapshotOptions{}))
 	recovered, err := NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, recovered.Close()) })
 	_, status, err := RecoverIntoEngine(recovered, t.TempDir(), path)
 	require.NoError(t, err)
 	require.Equal(t, uint64(len(corpus)+1), status.SnapshotEdges)
+	reference, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reference.Close()) })
+	_, referenceStatus, err := RecoverIntoEngine(reference, t.TempDir(), generalPath)
+	require.NoError(t, err)
+	require.Equal(t, status.SnapshotEdges, referenceStatus.SnapshotEdges)
 	var before, after bytes.Buffer
-	require.NoError(t, WriteSnapshot(context.Background(), engine, &before, SnapshotOptions{}))
+	require.NoError(t, WriteSnapshot(context.Background(), reference, &before, SnapshotOptions{}))
 	require.NoError(t, WriteSnapshot(context.Background(), recovered, &after, SnapshotOptions{}))
 	left, right := &collectingSnapshotVisitor{}, &collectingSnapshotVisitor{}
 	_, err = ReadSnapshot(&before, left)
 	require.NoError(t, err)
 	_, err = ReadSnapshot(&after, right)
 	require.NoError(t, err)
-	require.Equal(t, left.edges, right.edges, "snapshot to recovery retains hidden flags, metadata and strict property types")
+	// General recovery already normalizes some list widths on re-import.
+	// B must produce precisely the same recovered state, including that policy.
+	require.Equal(t, left.edges, right.edges, "fast and general snapshots recover equivalent hidden flags, metadata and strict property types")
 }
 
 func TestSnapshotTranscoderOverlayDifferential(t *testing.T) {
