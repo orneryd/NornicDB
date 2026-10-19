@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"strings"
@@ -96,8 +97,8 @@ func TestSlowQueryLog_RedactionCorpus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			exec, logged := captureSlowQueryLog(t)
 			// The second emission finds the verdict the first one cached.
-			exec.emitSlowQueryLog(tc.in, nil, time.Second)
-			exec.emitSlowQueryLog(tc.in, nil, time.Second)
+			exec.emitSlowQueryLog(t.Context(), tc.in, nil, time.Second)
+			exec.emitSlowQueryLog(t.Context(), tc.in, nil, time.Second)
 			got := logged()
 			if len(got) != 2 {
 				t.Fatalf("want 2 slow-query records, got %d", len(got))
@@ -123,9 +124,9 @@ func countRedactGrammarParses(t *testing.T) *int {
 	t.Helper()
 	calls := new(int)
 	validate := redactGrammarValidate
-	redactGrammarValidate = func(query string) error {
+	redactGrammarValidate = func(ctx context.Context, query string) error {
 		*calls++
-		return validate(query)
+		return validate(ctx, query)
 	}
 	t.Cleanup(func() { redactGrammarValidate = validate })
 	return calls
@@ -141,7 +142,7 @@ func TestSlowQueryLog_LargeStatementIsNotParsed(t *testing.T) {
 	}
 	calls := countRedactGrammarParses(t)
 	exec, logged := captureSlowQueryLog(t)
-	exec.emitSlowQueryLog(query, nil, time.Second)
+	exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
 	if *calls != 0 {
 		t.Fatalf("slow-query log parsed the large statement %d times", *calls)
 	}
@@ -188,7 +189,7 @@ func TestSlowQueryLog_ReusesGrammarVerdict(t *testing.T) {
 	if *calls != wantParses {
 		t.Fatalf("first slow-query record ran %d grammar parses, want %d", *calls, wantParses)
 	}
-	exec.emitSlowQueryLog(query, nil, time.Second)
+	exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
 	if *calls != wantParses {
 		t.Fatalf("repeated slow-query record parsed again: %d parses, want %d", *calls, wantParses)
 	}
@@ -206,12 +207,12 @@ func TestSlowQueryLog_GrammarVerdictIsExactText(t *testing.T) {
 	calls := countRedactGrammarParses(t)
 	const first = "MATCH (n:Person) WHERE n.name = 'first' RETURN n.name"
 	const second = "MATCH (n:Person) WHERE n.name = 'second' RETURN n.name"
-	exec.emitSlowQueryLog(first, nil, time.Second)
+	exec.emitSlowQueryLog(t.Context(), first, nil, time.Second)
 	if exec.hasCachedValidSyntax(second, syntaxGrammarAccepted) {
 		t.Fatal("grammar acceptance escaped the exact statement text")
 	}
-	exec.emitSlowQueryLog(second, nil, time.Second)
-	exec.emitSlowQueryLog(second, nil, time.Second)
+	exec.emitSlowQueryLog(t.Context(), second, nil, time.Second)
+	exec.emitSlowQueryLog(t.Context(), second, nil, time.Second)
 	if *calls != 2 {
 		t.Fatalf("want one grammar parse per exact text, got %d", *calls)
 	}
@@ -233,7 +234,7 @@ func TestSlowQueryLog_ExtensionStatementKeepsStructureOnly(t *testing.T) {
 	}
 	exec, logged := captureSlowQueryLog(t)
 	exec.markCachedValidSyntax(query, syntaxValidANTLR)
-	exec.emitSlowQueryLog(query, nil, time.Second)
+	exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
 	got := logged()
 	if len(got) != 1 {
 		t.Fatalf("want 1 slow-query record, got %d", len(got))
