@@ -27,46 +27,8 @@ type grpcDatabaseAccessMode struct {
 
 func (m grpcDatabaseAccessMode) CanAccessDatabase(database string) bool { return m.allows(database) }
 
-func (s *Server) grpcDatabaseTargets(database string, mode auth.DatabaseAccessMode) ([]string, bool) {
-	physical, allowed := s.graphAccess(mode, database)
-	if !allowed {
-		return nil, false
-	}
-	if s.dbManager == nil {
-		return []string{physical}, true
-	}
-	if resolved, err := s.dbManager.ResolveDatabase(physical); err == nil {
-		physical = resolved
-	}
-	if mode != nil && !mode.CanAccessDatabase(physical) {
-		return nil, false
-	}
-	info, err := s.dbManager.GetDatabase(physical)
-	if err != nil || info.Type != "composite" {
-		return []string{physical}, true
-	}
-	targets := []string{physical}
-	for _, constituent := range info.Constituents {
-		if constituent.Type != "local" {
-			return nil, false
-		}
-		target, ok := s.graphAccess(mode, constituent.DatabaseName)
-		if !ok {
-			return nil, false
-		}
-		if resolved, err := s.dbManager.ResolveDatabase(target); err == nil {
-			target = resolved
-		}
-		if mode != nil && !mode.CanAccessDatabase(target) {
-			return nil, false
-		}
-		targets = append(targets, target)
-	}
-	return targets, true
-}
-
 func (s *Server) grpcDatabaseAccessForRoles(roles []string, database string) auth.ResolvedAccess {
-	targets, allowed := s.grpcDatabaseTargets(database, nil)
+	targets, allowed := s.databaseReadTargets(database, nil)
 	if !allowed {
 		return auth.ResolvedAccess{}
 	}
@@ -169,7 +131,7 @@ func (s *Server) startQdrantGRPC() error {
 				return nil
 			}
 			return grpcDatabaseAccessMode{DatabaseAccessMode: mode, allows: func(database string) bool {
-				_, allowed := s.grpcDatabaseTargets(database, mode)
+				_, allowed := s.databaseReadTargets(database, mode)
 				return allowed
 			}}
 		}

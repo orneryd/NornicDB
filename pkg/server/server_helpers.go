@@ -162,7 +162,7 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 // databaseReadAccess is the shared decision for HTTP routes that read database
 // data directly instead of executing an authorized Cypher statement.
 func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
-	dataDatabase, accessible := s.graphAccess(s.getDatabaseAccessMode(claims), dbName)
+	targets, accessible := s.databaseReadTargets(dbName, s.getDatabaseAccessMode(claims))
 	if !accessible {
 		return false, false
 	}
@@ -170,8 +170,12 @@ func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (acce
 	if claims != nil {
 		resolve = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
 	}
-	_, readable = auth.ResolveDatabaseReadAccess(nil, resolve, dataDatabase)
-	return true, readable
+	for _, target := range targets {
+		if _, allowed := auth.ResolveDatabaseReadAccess(nil, resolve, target); !allowed {
+			return true, false
+		}
+	}
+	return true, true
 }
 
 // authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
