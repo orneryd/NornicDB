@@ -283,7 +283,7 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	if nested {
 		result, err = scopedExec.executeInternal(ctx, query, params)
 	} else {
-		result, err = scopedExec.Execute(ctx, query, params)
+		result, err = scopedExec.executeRouted(ctx, query, params)
 	}
 	if result != nil {
 		// A routed result can come from a shared cache. Attach the selected
