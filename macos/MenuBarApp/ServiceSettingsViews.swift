@@ -194,6 +194,16 @@ struct AIFeatureSettingsView: View {
                 FeatureToggle(title: "Memory Decay",
                     description: "Natural episodic, semantic, and procedural memory decay",
                     isEnabled: $config.memoryDecayEnabled, icon: "brain.filled.head.profile")
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Search cursor continuation").font(.headline)
+                    HStack {
+                        Text("Maximum active cursors")
+                        TextField("0", value: $config.searchCursorMax, formatter: NumberFormatter())
+                            .frame(width: 100)
+                    }
+                    Text("0 disables continuation. A positive number enables it and limits retained cursors across the server. Changes require a restart.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
                 FeatureToggle(title: "Auto-TLP",
                     description: "Automatic Topological Link prediction",
                     isEnabled: $config.autoTLPEnabled, icon: "point.3.connected.trianglepath.dotted")

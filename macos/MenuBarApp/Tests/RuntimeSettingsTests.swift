@@ -2,6 +2,21 @@ import XCTest
 @testable import NornicDB
 
 final class RuntimeSettingsTests: XCTestCase {
+    func testCursorLimitLoadsIntoFeatureControlAndEditsReachStartup() {
+        let config = ConfigManager()
+        XCTAssertEqual(config.searchCursorMax, 0)
+        config.loadRuntimeSettings(["EnvironmentVariables": ["NORNICDB_SEARCH_CURSOR_MAX": "128"]])
+        XCTAssertEqual(config.searchCursorMax, 128)
+        XCTAssertNil(config.runtimeEnvironment["NORNICDB_SEARCH_CURSOR_MAX"])
+        config.searchCursorMax = 256
+        XCTAssertEqual(launchAgentEnvironmentVariables(config: config, homeDir: "/fixture")["NORNICDB_SEARCH_CURSOR_MAX"], "256")
+        config.searchCursorMax = 0
+        XCTAssertEqual(launchAgentEnvironmentVariables(config: config, homeDir: "/fixture")["NORNICDB_SEARCH_CURSOR_MAX"], "0")
+        config.searchCursorMax = -1
+        XCTAssertFalse(config.saveConfig())
+        XCTAssertTrue(config.configurationError.contains("search cursors"))
+    }
+
     func testSavedAIFeaturesLoadAndEditsReachServerEnvironment() {
         let config = ConfigManager()
         config.loadRuntimeSettings(["EnvironmentVariables": [
