@@ -345,7 +345,7 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 	var nodeSize int64
 	var edgeSize int64
 
-	err := storage.StreamNodesWithFallback(context.Background(), engine, 1000, func(node *storage.Node) error {
+	err := storage.StreamStoredNodes(context.Background(), engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 		size, err := calculateNodeSize(node)
 		if err != nil {
 			size = 1024
@@ -357,7 +357,7 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 		return 0, 0, localizedError(localization.MultidbStorageGetAllNodesFailed(err), err)
 	}
 
-	err = storage.StreamEdgesWithFallback(context.Background(), engine, 1000, func(edge *storage.Edge) error {
+	err = storage.StreamStoredEdgesByType(context.Background(), engine, "", func(edge *storage.Edge) error {
 		size, err := calculateEdgeSize(edge)
 		if err != nil {
 			size = 512

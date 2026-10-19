@@ -2195,15 +2195,17 @@ func (e *StorageExecutor) addPropertyIndex(name, label string, properties []stri
 }
 
 // backfillCompositeIndex fills a newly created equality index from the
-// label's stored nodes. A new index whose fill fails is dropped by
-// addPropertyIndex / addSchemaConstraint, since index lookups trust an index
-// to hold every matching node.
+// label's stored nodes, those the visibility layer hides from reads included:
+// an index lookup finds them once they are shown again, and a NODE KEY check
+// that trusts the index sees their values. A new index whose fill fails is
+// dropped by addPropertyIndex / addSchemaConstraint, since index lookups
+// trust an index to hold every matching node.
 func (e *StorageExecutor) backfillCompositeIndex(name, label string, properties []string) error {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil
 	}
-	nodes, err := e.storage.GetNodesByLabel(label)
+	nodes, err := storage.GetStoredNodesByLabel(e.storage, label)
 	if err != nil {
 		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
 	}
