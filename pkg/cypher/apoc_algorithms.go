@@ -279,12 +279,11 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.algo.pageRank"
-	graph, nodes, err := e.algorithmIdentityInput(procedure, args)
+	graph, nodes, config, err := e.readAlgorithmGraph(procedure, args)
 	if err != nil {
 		return nil, err
 	}
 	// The config map: iterations (default 20) and dampingFactor (0.85).
-	config := algorithmConfig(args)
 	iterations, damping := 20, 0.85
 	if n, ok := fastRPConfigInt(config["iterations"]); ok && n > 0 {
 		iterations = n
@@ -343,7 +342,7 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, err := e.algorithmIdentityInput("apoc.algo.betweenness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +413,7 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, err := e.algorithmIdentityInput("apoc.algo.closeness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
 	}
@@ -668,14 +667,6 @@ func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]i
 		result[node.ID] = number
 	}
 	return result
-}
-
-// algorithmConfig is the config map an algorithm procedure reads from its
-// second argument, for pageRank and louvain alike (#1164). Any other second
-// argument (the documented relationship-type list, #1169) gives no config.
-func algorithmConfig(args []interface{}) map[string]interface{} {
-	config, _ := procedureArgument(args, 1).(map[string]interface{})
-	return config
 }
 
 // algorithmNodes reads the nodes a whole-graph algorithm runs over from its
