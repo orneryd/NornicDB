@@ -1466,14 +1466,14 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 	// LHS must be id(var) or elementId(var).
 	kind := ""
 	varName := ""
-	lowerLeft := lowerASCII(left)
+	functionName, _, _ := parseFunctionCallWS(left)
 	switch {
-	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
+	case strings.EqualFold(functionName, "id"):
 		kind = "id"
-		varName = strings.TrimSpace(left[3 : len(left)-1])
-	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
+		varName = singleFunctionArgument(left)
+	case strings.EqualFold(functionName, "elementId"):
 		kind = "elementId"
-		varName = strings.TrimSpace(left[10 : len(left)-1])
+		varName = singleFunctionArgument(left)
 	default:
 		return "", nil
 	}
