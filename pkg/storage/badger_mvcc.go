@@ -1403,6 +1403,10 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 }
 
 func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCVersion, yield func(*Edge) error) error {
+	return b.iterateEdgesAtInTxn(txn, version, visibleRead, yield)
+}
+
+func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion, v readVisibility, yield func(*Edge) error) error {
 	// See iterateNodesVisibleAtInTxn for the walk-heads pattern and why
 	// we can't just scan the version prefix post-refactor.
 	headPrefix := []byte{prefixMVCCEdgeHead}
@@ -1487,7 +1491,7 @@ func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 		if body == nil {
 			continue
 		}
-		if b.filterEdgeByDecay(body, nowNanos) {
+		if b.hidesEdge(v, body, nowNanos) {
 			continue
 		}
 		if err := yield(body); err != nil {
