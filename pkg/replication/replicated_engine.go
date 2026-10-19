@@ -225,8 +225,10 @@ func (e *ReplicatedEngine) DeleteByPrefixContext(ctx context.Context, prefix str
 		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
 	}
 	cmd := &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}
-	cmd.namespaceDrop = op
-	ctx = storage.WithNamespaceDrop(ctx, op)
+	if isNamespaceLifecycle(cmd) {
+		cmd.namespaceDrop = op
+		ctx = storage.WithNamespaceDrop(ctx, op)
+	}
 	if replicator, ok := e.replicator.(ContextReplicator); ok {
 		err = replicator.ApplyContext(ctx, cmd, e.timeout)
 	} else if ctx.Done() == nil {
