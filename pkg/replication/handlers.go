@@ -162,6 +162,8 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			if err := decodeGob(msg.Payload, &cmd); err != nil {
 				return nil, localizedError(localization.ReplicationRPCDecodeFailed("forward apply", err), err)
 			}
+			// Capture request scope before Raft can stamp the admitted payload.
+			namespaceLifecycle := isNamespaceLifecycle(&cmd)
 			timeout := 30 * time.Second
 			if deadline, ok := ctx.Deadline(); ok {
 				if d := time.Until(deadline); d > 0 && d < timeout {
@@ -180,7 +182,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			if err != nil {
 				respPayload.Err = err.Error()
 			}
-			if isNamespaceLifecycle(&cmd) && err != nil {
+			if namespaceLifecycle && err != nil {
 				var outcome *storage.NamespaceDropError
 				respPayload.DropOutcome = "aborted"
 				if errors.As(err, &outcome) && !outcome.Aborted {
