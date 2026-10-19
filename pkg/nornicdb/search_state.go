@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -248,6 +247,17 @@ func (db *DB) searchStateNamesLocked() []string {
 func (e *dbSearchService) retire() {
 	e.pendingMu.Lock()
 	e.retired = true
+	for key, retry := range e.refreshRetries {
+		e.forgetRetryLocked(key, retry, true)
+	}
+	for _, mutation := range e.pendingOps {
+		(search.RefreshRetry{Node: mutation}).Discard()
+	}
+	for _, mutation := range e.pendingEdgeOps {
+		(search.RefreshRetry{Edge: mutation}).Discard()
+	}
+	clear(e.pendingOps)
+	clear(e.pendingEdgeOps)
 	e.pendingMu.Unlock()
 	if e.svc != nil {
 		_ = e.svc.Close()
@@ -283,61 +293,6 @@ func (db *DB) currentSearchService(dbName string) *search.Service {
 		return nil
 	}
 	return svc
-}
-
-// searchRefreshRetry queues again a refresh whose storage read failed, so a
-// transient failure delays the refresh instead of losing it. A refresh that
-// keeps failing is retried searchRefreshRetryLimit times with a doubling
-// delay, then reported and dropped.
-func (db *DB) searchRefreshRetry(entry *dbSearchService) search.RefreshRetryFunc {
-	return func(nodeID storage.NodeID, edgeID storage.EdgeID, err error) {
-		if db.shouldIgnoreSearchIndexingError(err) {
-			return
-		}
-		key := "n:" + string(nodeID)
-		if nodeID == "" {
-			key = "e:" + string(edgeID)
-		}
-		attempt, ok := entry.noteRetry(key)
-		if !ok {
-			return
-		}
-		if attempt > searchRefreshRetryLimit {
-			log.Printf("⚠️  search refresh of %s in database %s failed %d times; dropped", key[2:], entry.dbName, searchRefreshRetryLimit)
-			entry.clearRetry(key)
-			return
-		}
-		if nodeID != "" {
-			entry.queueRefresh(string(nodeID))
-		} else {
-			entry.queueEdgeRefresh(string(edgeID))
-		}
-		delay := entry.flushDelay() << attempt
-		if delay > searchRefreshRetryMax || delay <= 0 {
-			delay = searchRefreshRetryMax
-		}
-		time.AfterFunc(delay, func() { db.ensurePendingFlush(entry) })
-	}
-}
-
-// noteRetry counts a retry of key; false once the entry is retired.
-func (e *dbSearchService) noteRetry(key string) (int, bool) {
-	e.pendingMu.Lock()
-	defer e.pendingMu.Unlock()
-	if e.retired {
-		return 0, false
-	}
-	if e.retryAttempts == nil {
-		e.retryAttempts = make(map[string]int)
-	}
-	e.retryAttempts[key]++
-	return e.retryAttempts[key], true
-}
-
-func (e *dbSearchService) clearRetry(key string) {
-	e.pendingMu.Lock()
-	delete(e.retryAttempts, key)
-	e.pendingMu.Unlock()
 }
 
 // SearchServiceResolver resolves a database's current search service on each
