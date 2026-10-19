@@ -53,6 +53,8 @@ func validateDiscoveryURL(field, s string) error {
 // buildDiscoveryBody returns marshalled JSON for the configured-OAuth case
 // or nil for the empty-body Community-parity case. Validates Issuer and
 // CallbackURL syntax; returns error on malformed URLs.
+// RedirectURI is public protocol configuration: it must match CallbackURL
+// exactly so clients send the URI used by the actual OAuth flow.
 func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
 	if oauthCfg == nil || !oauthCfg.IsConfigured() {
 		return nil, nil
@@ -78,7 +80,7 @@ func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
 				TokenEndpoint:           observability.RedactURL(issuer + "/oauth2/v1/token"),
 				AuthFlow:                "pkce",
 				ClientID:                oauthCfg.ClientID,
-				RedirectURI:             observability.RedactURL(oauthCfg.CallbackURL),
+				RedirectURI:             oauthCfg.CallbackURL,
 				Scopes:                  []string{"openid", "profile", "email"},
 				Audience:                "nornic",
 				WellKnownDiscoveryURI:   observability.RedactURL(issuer + "/.well-known/openid-configuration"),

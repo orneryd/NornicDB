@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -123,12 +124,21 @@ func TestSolReviewRealBinaries(t *testing.T) {
 	t.Run("bolt-oauth-discovery", func(t *testing.T) {
 		hp, bp := solPort(t), solPort(t)
 		dir := t.TempDir()
-		solStart(t, solRealBinary, []string{"NORNICDB_BOLT_ENABLED=true", "NORNICDB_AUTH_PROVIDER=oauth", "NORNICDB_OAUTH_CLIENT_ID=public-client-id", "NORNICDB_OAUTH_CLIENT_SECRET=synthetic-oauth-client-secret-0981726354", "NORNICDB_OAUTH_ISSUER=http://probe:" + solSecret + "@127.0.0.1:1/issuer", "NORNICDB_OAUTH_CALLBACK_URL=http://127.0.0.1/callback?api_key=" + solSecret}, "serve", "--no-auth", "--headless", "--http-port="+hp, "--bolt-port="+bp, "--data-dir="+filepath.Join(dir, "data"), "--embedding-enabled=false", "--stdio-log-max-kb=0")
+		const callbackURI = "http://127.0.0.1/callback?state=fixed-route&code=public-code&key=public-key&api_key=public-route"
+		solStart(t, solRealBinary, []string{"NORNICDB_BOLT_ENABLED=true", "NORNICDB_AUTH_PROVIDER=oauth", "NORNICDB_OAUTH_CLIENT_ID=public-client-id", "NORNICDB_OAUTH_CLIENT_SECRET=synthetic-oauth-client-secret-0981726354", "NORNICDB_OAUTH_ISSUER=http://probe:" + solSecret + "@127.0.0.1:1/issuer", "NORNICDB_OAUTH_CALLBACK_URL=" + callbackURI}, "serve", "--no-auth", "--headless", "--http-port="+hp, "--bolt-port="+bp, "--data-dir="+filepath.Join(dir, "data"), "--embedding-enabled=false", "--stdio-log-max-kb=0")
 		data := solGet(t, "http://127.0.0.1:"+bp+"/")
 		if !bytes.Contains(data, []byte("public-client-id")) {
 			t.Error("public client ID lost")
 		}
 		solAbsent(t, "Bolt HTTP OAuth discovery", data)
+		var discovery struct {
+			Providers []struct {
+				RedirectURI string `json:"redirect_uri"`
+			}
+		}
+		if err := json.Unmarshal(data, &discovery); err != nil || len(discovery.Providers) != 1 || discovery.Providers[0].RedirectURI != callbackURI {
+			t.Error("real discovery response changed the public OAuth redirect URI")
+		}
 	})
 	t.Run("eval-url-banner", func(t *testing.T) {
 		bin := solBuild(t, "./cmd/eval")
