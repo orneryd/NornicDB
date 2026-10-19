@@ -146,6 +146,15 @@ func domainTypeName(t types.Type) string {
 		t = types.Unalias(ptr.Elem())
 	}
 	if n, ok := t.(*types.Named); ok {
+		if pkg := n.Obj().Pkg(); pkg != nil {
+			switch pkg.Path() {
+			case "github.com/orneryd/nornicdb/pkg/search", "github.com/orneryd/nornicdb/pkg/storage", "github.com/orneryd/nornicdb/pkg/gpu":
+			default:
+				// For example voyage.Candidate is a graph rerank record, not
+				// search.Candidate. Equal spellings do not establish identity.
+				return pkg.Path() + "." + n.Obj().Name()
+			}
+		}
 		return n.Obj().Name()
 	}
 	return ""
@@ -826,6 +835,7 @@ func domainFixtureWrongMap() map[string]LexicalSeedHint { return nil }
 var domainFixtureGlobal = func(s *Service, id storage.NodeID) { s.removeVectorLocked(string(id)) }
 func domainFixtureNodeLookup(pair hnswBuildPair) { nodeHintForID(nil, pair.id) }
 func domainFixtureCandidate(id storage.NodeID) Candidate { return Candidate{ID:string(id)} }
+func domainFixtureValidRerank(id storage.NodeID) RerankCandidate { return RerankCandidate{ID:string(id)} }
 func (s *Service) domainFixtureHintBridge() { s.hnswIndex.SetBuildLexicalHints(nil) }
 type domainFixtureBackend struct{}
 func (*domainFixtureBackend) Add(string, []float32) error { return nil }
@@ -848,6 +858,7 @@ func TestVectorEntryDomainGuardRejectsBypasses(t *testing.T) {
 		require.True(t, found, "guard missed bypass %s", name)
 	}
 	for issue := range g.violations {
+		require.False(t, strings.Contains(issue, "domainFixtureValidRerank"), "an unrelated Candidate type is not a vector entry")
 		require.True(t, strings.Contains(issue, "domainFixture") || strings.Contains(issue, "vector-domain-fixture.go"), "production violation: %s", issue)
 	}
 }
