@@ -24,7 +24,6 @@ func TestPointsService_SearchServiceReturnsOwningPointForAnyVectorName(t *testin
 		}
 		return shared, nil
 	}
-	service.vecIndex = nil // force the search-service path
 
 	dense := func(values ...float32) *qpb.Vector {
 		return &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: values}}}
