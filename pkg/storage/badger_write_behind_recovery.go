@@ -20,7 +20,7 @@ import (
 // recovery boundary the sync path uses.
 func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	b, ok := engine.(*BadgerEngine)
-	if !ok || b == nil || wal == nil || b.writeBehind == nil {
+	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}
 
@@ -31,7 +31,25 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
 
 	var pending []bufferedCommit
+	replayed := 0
+	flushPending := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := b.applyBufferedCommits(pending); err != nil {
+			return err
+		}
+		replayed += len(pending)
+		pending = nil
+		return nil
+	}
 	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+		if entry.Operation == OpNamespaceLifecycle {
+			if err := flushPending(); err != nil {
+				return err
+			}
+			return ReplayWALEntry(b, entry)
+		}
 		if entry.Operation != OpBufferedCommit {
 			return nil
 		}
@@ -77,11 +95,11 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(pending) == 0 {
+	if len(pending) == 0 && replayed == 0 {
 		return 0, nil
 	}
 
-	if err := b.applyBufferedCommits(pending); err != nil {
+	if err := flushPending(); err != nil {
 		return 0, fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
 	}
 
@@ -89,10 +107,10 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	// counts from committed entities so readers never observe committed
 	// entities without their counts.
 	if err := b.ensureLabelCounts(); err != nil {
-		return len(pending), fmt.Errorf("wal: rebuild label counts after buffered replay: %w", err)
+		return replayed, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", err)
 	}
 	if err := b.ensureEdgeTypeCounts(); err != nil {
-		return len(pending), fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", err)
+		return replayed, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", err)
 	}
-	return len(pending), nil
+	return replayed, nil
 }

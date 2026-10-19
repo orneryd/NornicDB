@@ -25,8 +25,17 @@ func (w *WALEngine) DeleteByPrefixContext(ctx context.Context, prefix string) (i
 	if NamespaceDropFromContext(ctx) == nil {
 		ctx = WithNamespaceDrop(ctx, NewNamespaceDrop(nil))
 	}
+	NamespaceDropFromContext(ctx).nativeWAL = w.wal
+	journalPrefix := prefix
+	if w.journalNamespace != "" {
+		journalPrefix = w.journalNamespace + ":" + prefix
+	}
+	if err := PrepareNamespaceJournal(ctx, w.engine, journalPrefix, NamespaceDropFromContext(ctx)); err != nil {
+		return 0, 0, err
+	}
 	release, err := util.LockContext(ctx, w.mutationMu.RLock, w.mutationMu.RUnlock)
 	if err != nil {
+		NamespaceDropFromContext(ctx).Abort()
 		return 0, 0, err
 	}
 	nodes, edges, err := DeletePrefixContext(context.WithValue(ctx, deferredDropCompletionKey{}, true), w.engine, prefix)

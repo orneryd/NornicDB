@@ -197,16 +197,22 @@ type BadgerEngine struct {
 	writeBarrier sync.RWMutex
 	// Immutable publication fences exist only while prefix deletion is active.
 	// Updates use prefixDeleteMu; ordinary commits perform one atomic load.
-	prefixDeleteMu            sync.Mutex
-	deletingPrefixes          atomic.Pointer[[]string]
-	namespaceLifetimes        atomic.Pointer[namespaceLifetimes]
-	namespaceRetirementHooks  sync.Map
-	namespaceRetirementHookID atomic.Uint64
-	namespaceTaskGates        sync.Map
-	catalogObserversMu        sync.Mutex
-	catalogObservers          atomic.Pointer[namespaceCatalogObservers]
-	catalogObserverID         uint64
-	catalogRevision           atomic.Uint64
+	prefixDeleteMu               sync.Mutex
+	deletingPrefixes             atomic.Pointer[[]string]
+	namespaceLifetimes           atomic.Pointer[namespaceLifetimes]
+	namespaceRetirementHooks     sync.Map
+	namespaceRetirementHookID    atomic.Uint64
+	namespaceTaskGates           sync.Map
+	catalogObserversMu           sync.Mutex
+	catalogObservers             atomic.Pointer[namespaceCatalogObservers]
+	catalogObserverID            uint64
+	catalogRevision              atomic.Uint64
+	catalogRecordGates           sync.Map
+	namespaceJournalMu           sync.Mutex
+	namespaceJournalStates       map[string]*namespaceJournalState
+	namespaceJournalGlobal       namespaceJournalState
+	namespaceJournalPreparations map[string]*NamespaceDrop
+	namespaceWALOwner            *WALEngine
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup

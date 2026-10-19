@@ -180,7 +180,7 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			if err != nil {
 				respPayload.Err = err.Error()
 			}
-			if cmd.Type == CmdDeleteByPrefix && err != nil {
+			if isNamespaceLifecycle(&cmd) && err != nil {
 				var outcome *storage.NamespaceDropError
 				respPayload.DropOutcome = "aborted"
 				if errors.As(err, &outcome) && !outcome.Aborted {

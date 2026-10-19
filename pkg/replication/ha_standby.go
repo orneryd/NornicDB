@@ -654,7 +654,7 @@ func (r *HAStandbyReplicator) ApplyContext(ctx context.Context, cmd *Command, ti
 
 	// Honor write-ack mode: optionally wait for standby acknowledgement.
 	walPos, _ := r.storage.GetWALPosition()
-	if cmd.Type == CmdDeleteByPrefix {
+	if isNamespaceLifecycle(cmd) {
 		op := storage.NamespaceDropFromContext(ctx)
 		if op == nil {
 			op = cmd.namespaceDrop
