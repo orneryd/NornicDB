@@ -2,16 +2,28 @@ package nornicdb
 
 import "github.com/orneryd/nornicdb/pkg/storage"
 
-// retainNodeEmbedding transfers this claim's private result to the retry owner.
-// Keep the prepared sidecar, including vectors, spans and provider metadata,
-// rather than reconstructing it or buying the provider result again.
+// retainedNodeEmbedding owns the provider payload and the business-source
+// evidence required to reuse it. Body timestamps, named vectors and storage
+// flags belong to the fresh claim and must never be carried by a retry.
+type retainedNodeEmbedding struct {
+	labels     []string
+	properties map[string]any
+	vectors    [][]float32
+	meta       map[string]any
+}
+
+// retainNodeEmbedding transfers this claim's private payload to the retry
+// owner. Spans and provider metadata are already prepared in EmbedMeta.
 func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node) {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
 	if ew.embeddingRetries == nil {
-		ew.embeddingRetries = make(map[storage.NodeID]*storage.Node)
+		ew.embeddingRetries = make(map[storage.NodeID]*retainedNodeEmbedding)
 	}
-	ew.embeddingRetries[node.ID] = node
+	ew.embeddingRetries[node.ID] = &retainedNodeEmbedding{
+		labels: node.Labels, properties: node.Properties,
+		vectors: node.ChunkEmbeddings, meta: node.EmbedMeta,
+	}
 }
 
 // claimNextNodeResult reports progress for a deleted candidate or a retained
@@ -29,11 +41,14 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 	// Compare the full business source with storage's canonical value comparison;
 	// matching text alone would reuse stale structured inputs or chunk spans.
 	policy := storage.EmbeddingTextPolicy{IncludeLabels: true}
-	if !policy.SameSource(retained, node) {
+	source := &storage.Node{Labels: retained.labels, Properties: retained.properties}
+	if !policy.SameSource(source, node) {
 		return node, false
 	}
 	defer ew.releaseNodeClaim(node.ID)
-	ew.writeEmbeddedNode(retained)
+	node.ChunkEmbeddings = retained.vectors
+	node.EmbedMeta = retained.meta
+	ew.writeEmbeddedNode(node)
 	return nil, true
 }
 
