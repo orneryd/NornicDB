@@ -636,12 +636,12 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"CREATE (n:Row)": {
-				Columns: []string{"n"},
+			"CREATE (n:Row) RETURN n AS v": {
+				Columns: []string{"v"},
 				Rows:    [][]interface{}{{"lhs"}},
 			},
-			"RETURN 1 AS one": {
-				Columns: []string{"one"},
+			"RETURN 1 AS v": {
+				Columns: []string{"v"},
 				Rows:    [][]interface{}{{int64(1)}},
 			},
 		},
@@ -651,16 +651,16 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 	union := &FragmentUnion{
 		LHS: &FragmentExec{
 			Input:     &FragmentInit{},
-			Query:     "CREATE (n:Row)",
+			Query:     "CREATE (n:Row) RETURN n AS v",
 			GraphName: "db1",
-			Columns:   []string{"n"},
+			Columns:   []string{"v"},
 			IsWrite:   true,
 		},
 		RHS: &FragmentExec{
 			Input:     &FragmentInit{},
-			Query:     "RETURN 1 AS one",
+			Query:     "RETURN 1 AS v",
 			GraphName: "db1",
-			Columns:   []string{"one"},
+			Columns:   []string{"v"},
 		},
 		Columns: []string{"v"},
 	}
@@ -2146,15 +2146,15 @@ func TestExecuteUnion_RoutesToSequentialForWrite(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"CREATE (n:A)":  {Columns: []string{"n"}, Rows: [][]interface{}{{"a"}}},
-			"RETURN 1 AS x": {Columns: []string{"x"}, Rows: [][]interface{}{{int64(1)}}},
+			"CREATE (n:A) RETURN n AS v": {Columns: []string{"v"}, Rows: [][]interface{}{{"a"}}},
+			"RETURN 1 AS v":              {Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}}},
 		},
 	}
 	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
-		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A)", GraphName: "db1", IsWrite: true},
-		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "db1"},
+		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A) RETURN n AS v", GraphName: "db1", IsWrite: true},
+		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS v", GraphName: "db1"},
 		Columns: []string{"v"},
 	}
 	result, err := exec.Execute(context.Background(), nil, union, nil, "")
