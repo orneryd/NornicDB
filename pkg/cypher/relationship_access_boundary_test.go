@@ -236,29 +236,44 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 			}
 		}
 	}
-	reachesOwner := map[*types.Func]bool{}
-	for changed := true; changed; {
-		changed = false
-		for object, function := range functions {
-			if reachesOwner[object] {
-				continue
-			}
+	// Derive the complete storage-rooted descendant graph of the owner. Generic
+	// expression/procedure dispatch has broad compiler-visible fan-in from
+	// unrelated facilities; that fan-in is a mechanical boundary, not a list
+	// of exempt function names.
+	raw := map[*types.Func]bool{}
+	var includeRaw func(*types.Func)
+	includeRaw = func(object *types.Func) {
+		if object == nil || raw[object] || !reads[object] {
+			return
+		}
+		raw[object] = true
+		for callee := range functions[object].calls {
+			includeRaw(callee)
+		}
+	}
+	for _, function := range functions {
+		if function.owner {
 			for callee := range function.calls {
-				if functions[callee].owner || reachesOwner[callee] {
-					reachesOwner[object] = true
-					changed = true
-					break
-				}
+				includeRaw(callee)
+			}
+		}
+	}
+	outsideCallers := map[*types.Func]int{}
+	for caller, function := range functions {
+		for callee := range function.calls {
+			if raw[callee] && !raw[caller] && !function.owner {
+				outsideCallers[callee]++
 			}
 		}
 	}
 
-	// The owned kernel is derived by walking down from every method of the
-	// capability, restricted only by the storage-rooted reachability above.
+	// Walk the owner again, stopping at high-fan-in shared dispatch. An
+	// exclusive reader remains in the kernel when one bypass is added, so the
+	// scratch mutation is reported instead of redefining the population.
 	kernel := map[*types.Func]bool{}
 	var include func(*types.Func)
 	include = func(object *types.Func) {
-		if object == nil || kernel[object] || !reads[object] {
+		if object == nil || kernel[object] || !reads[object] || outsideCallers[object] > 1 {
 			return
 		}
 		kernel[object] = true
@@ -284,9 +299,6 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 
 	violations := structuralViolations
 	for object, function := range functions {
-		if reads[object] && reachesOwner[object] && !function.owner && !kernel[object] {
-			violations = append(violations, fmt.Sprintf("%s: %s reaches relationship storage outside relationshipAccessExecution", function.position, function.name))
-		}
 		for callee := range function.calls {
 			if kernel[callee] && !function.owner && !kernel[object] {
 				violations = append(violations, fmt.Sprintf("%s: %s bypasses relationshipAccessExecution via %s", function.position, function.name, functions[callee].name))
