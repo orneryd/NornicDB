@@ -37,7 +37,7 @@ func TestFunctionResultRecursiveNulls(t *testing.T) {
 }
 
 func TestFunctionResultRetainsCanonicalValues(t *testing.T) {
-	for _, value := range []interface{}{nil, int64(1), "text", []byte{0, 128, 255}, []int64{1, 2}, []interface{}(nil), []string(nil), map[string]interface{}{}, &storage.Node{}, storage.RemoteEntityValue{"elementId": "node"}, storage.RemotePathValue{"nodes": []interface{}{}}} {
+	for _, value := range []interface{}{nil, int64(1), "text", []byte{0, 128, 255}, []int64{1, 2}, []interface{}(nil), []string(nil), map[string]interface{}{}, &storage.Node{}, storage.RemoteEntityValue{"elementId": "node"}, storage.RemotePathValue{{"elementId": "node"}}} {
 		require.Equal(t, value, FunctionResult(value), "%T", value)
 	}
 	unchanged := map[string]interface{}{"a": []interface{}{nil, "text", int64(1)}}
