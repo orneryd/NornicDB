@@ -66,8 +66,8 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		if variable != "" {
 			candidate = strings.TrimSpace(part[strings.Index(part, "=")+1:])
 		}
-		if _, _, funcIdx, ok := extractShortestPathCall(candidate); call == "" && ok && funcIdx == 0 &&
-			findMatchingParen(candidate, strings.IndexByte(candidate, '(')) == len(candidate)-1 {
+		if name, _, ok := parseFunctionCallWS(candidate); call == "" && ok &&
+			(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
 			call, pathVariable = candidate, variable
 			continue
 		}

@@ -135,7 +135,15 @@ func containsTrailingListComma(cypher string) bool {
 // literals and Neo4j rejects it.
 func hasAdjacentStringLiterals(cypher string) bool {
 	for i := 0; i < len(cypher); i++ {
+		if end := queryCommentEnd(cypher, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		c := cypher[i]
+		if c == '`' {
+			i = skipCypherQuotedText(cypher, i, c) - 1
+			continue
+		}
 		if c != '\'' && c != '"' {
 			continue
 		}
