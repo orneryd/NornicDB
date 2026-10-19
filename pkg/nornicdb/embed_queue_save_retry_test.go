@@ -155,6 +155,22 @@ func TestEmbedWorkerSaveRetryRetainsProviderResult(t *testing.T) {
 	}
 }
 
+func TestEmbedWorkerSaveRetryPreservesDocumentBatch(t *testing.T) {
+	for _, mode := range []string{"document-batch", "resolved-document-batch", "property-batch"} {
+		t.Run(mode, func(t *testing.T) {
+			worker, _, provider := nodeSaveRetryFixture(t, mode, 16, 1)
+			var published int
+			worker.SetOnEmbedded(func(*storage.Node) { published++ })
+			require.True(t, worker.processNextBatch())
+			require.Zero(t, published)
+			require.Equal(t, 16, provider.GetEmbedCount())
+			require.True(t, worker.processNextBatch())
+			require.Equal(t, 16, published, "retained writes must finish as one bounded batch, without a worker delay per node")
+			require.Equal(t, 16, provider.GetEmbedCount())
+		})
+	}
+}
+
 func TestEmbedWorkerSaveRetryAcrossWorkers(t *testing.T) {
 	worker, _, provider := nodeSaveRetryFixture(t, "whole", 16, 2)
 	var published atomic.Int64
