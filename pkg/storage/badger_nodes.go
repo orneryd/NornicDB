@@ -190,7 +190,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 				if state.deleted {
 					return true, ErrNotFound
 				}
-				node = hitCopy(state.node)
+				node = state.node
 				return true, nil
 			}
 		}
@@ -200,7 +200,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 		b.nodeCacheMu.RLock()
 		value, found := b.nodeCache[id]
 		if found {
-			node = hitCopy(value)
+			node = value
 		}
 		b.nodeCacheMu.RUnlock()
 		return found, nil
@@ -210,7 +210,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 			if state.deleted {
 				return ErrNotFound
 			}
-			node = hitCopy(state.node)
+			node = state.node
 			return nil
 		}
 		item, err := txn.Get(nodeKey(id))
@@ -229,6 +229,11 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 	}
 	if node == nil {
 		return nil, ErrNotFound
+	}
+	if !loaded {
+		// Captured cache and overlay versions are immutable. Materialize after
+		// capture so copying does not extend either read lock or its hot frame.
+		node = hitCopy(node)
 	}
 	if b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound

@@ -32,10 +32,10 @@ type badgerReadView struct {
 // transaction, overlay copy or view allocation. Busy cache reads and transaction
 // capture share the retirement lock. Default callers always get a strict view.
 func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
-	var opts readViewOptions
-	if len(options) != 0 {
-		opts = options[0]
+	if len(options) == 0 {
+		return b.captureReadViewFallback(b.writeBehind, capture, readViewOptions{})
 	}
+	opts := &options[0]
 	w := b.writeBehind
 	if opts.cached != nil {
 		epoch, idle := w.idleReadEpoch(opts.scope)
@@ -46,7 +46,7 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 			}
 		}
 	}
-	return b.captureReadViewFallback(w, capture, opts)
+	return b.captureReadViewFallback(w, capture, *opts)
 }
 
 // Keep transaction creation and its defers off the committed-cache fast path.
@@ -131,14 +131,10 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 }
 
 func (b *BadgerEngine) withReadView(capture func(*WriteBehindBuffer), read func(*badger.Txn) error, options ...readViewOptions) error {
-	var opts readViewOptions
-	if len(options) != 0 {
-		opts = options[0]
+	if len(options) != 0 && options[0].current != nil {
+		return b.withCurrentReadView(capture, read, options[0])
 	}
-	if opts.current != nil {
-		return b.withCurrentReadView(capture, read, opts)
-	}
-	view, err := b.captureReadView(capture, opts)
+	view, err := b.captureReadView(capture, options...)
 	if err != nil || view == nil {
 		return err
 	}
