@@ -11,7 +11,8 @@ import (
 func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	name := lowerASCII(function)
 	// Nested calls may contain commas without adding arguments to this call.
-	if fn, single := singleValueFunctions[name]; single && len(splitTopLevelComma(argument)) == 1 {
+	var argumentBuffer [8]string
+	if fn, single := singleValueFunctions[name]; single && len(appendTopLevelComma(argumentBuffer[:0], argument)) == 1 {
 		// The argument's value goes straight to the one implementation.
 		value, resolved, err := e.evaluateRowValue(argument, values)
 		if err != nil || !resolved {
