@@ -33,7 +33,7 @@ func Run(t *testing.T, factory func(*testing.T) Fixture) {
 			f := factory(t)
 			var results []search.SearchResult
 			for _, id := range []string{"retry-a", "retry-b", "retry-c"} {
-				_, err := f.Engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
+				_, err := f.Engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Properties: map[string]any{"retry_id": id}})
 				require.NoError(t, err)
 				results = append(results, search.SearchResult{ID: id, NodeID: storage.NodeID(id), Score: 1})
 			}
