@@ -36,7 +36,7 @@ func TestDynamicLabelPublicBolt(t *testing.T) {
 			for _, explicit := range []bool{false, true} {
 				for _, c := range dynamiclabels.Cases() {
 					t.Run(fmt.Sprintf("tx=%t/%s", explicit, c.Name), func(t *testing.T) {
-						check := func(t *testing.T, d neo4j.DriverWithContext, database string) {
+						check := func(t *testing.T, d neo4j.DriverWithContext, database string, reference bool) {
 							session := d.NewSession(ctx, neo4j.SessionConfig{DatabaseName:database})
 							defer session.Close(ctx)
 							run := func(ctx context.Context, query string, params map[string]any) (neo4j.ResultWithContext, error) { return session.Run(ctx, query, params) }
@@ -60,17 +60,20 @@ func TestDynamicLabelPublicBolt(t *testing.T) {
 								rows = make([][]any, len(records))
 								for i, record := range records { rows[i] = record.Values }
 							}
-							if c.Code != "" {
+							code := c.Code
+							if reference && c.ReferenceCode != "" { code = c.ReferenceCode }
+							if code != "" {
 								var status *neo4j.Neo4jError
 								require.True(t, errors.As(err, &status), "%v", err)
-								require.Equal(t, c.Code, status.Code)
+								require.Equal(t, code, status.Code)
+								if reference && c.ReferenceMessage != "" { require.Contains(t, status.Msg, c.ReferenceMessage) }
 								return
 							}
 							require.NoError(t, err, c.Query)
 							require.Equal(t, c.Rows, rows, c.Query)
 						}
-						if reference != nil && !c.Cypher25 { t.Run("neo4j-5.26", func(t *testing.T) { check(t, reference, "neo4j") }) }
-						check(t, driver, "dynamic_public")
+						if reference != nil && !c.Cypher25 { t.Run("neo4j-5.26", func(t *testing.T) { check(t, reference, "neo4j", true) }) }
+						check(t, driver, "dynamic_public", false)
 					})
 				}
 			}
