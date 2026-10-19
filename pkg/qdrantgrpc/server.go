@@ -187,8 +187,13 @@ type Config struct {
 	// CanAccessDatabase(collectionName) is checked before opening the collection.
 	DatabaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
 	// ResolvedAccessResolver, when set, gates read and write RPCs: ResolvedAccess.Write
-	// for (roles, collectionName) must be true or the request is denied.
+	// for writes, or ResolvedAccess.Read for reads, must be true.
 	ResolvedAccessResolver func(roles []string, dbName string) auth.ResolvedAccess
+
+	// DatabaseOperationAccessResolver explicitly binds a combined selection and
+	// permission decision. When set, it replaces the separate permission callback
+	// for direct operations; existing resolver configurations retain their contract.
+	DatabaseOperationAccessResolver func(roles []string, database string, mode auth.DatabaseAccessMode, write bool) (bool, auth.ResolvedAccess)
 }
 
 // SearchServiceProvider returns a search service configured for the provided database namespace.
@@ -235,8 +240,9 @@ type Server struct {
 	basicAuthCache *auth.BasicAuthCache
 
 	// Per-database RBAC (optional). When set, collection = database and access is checked before each RPC.
-	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
-	resolvedAccessResolver     func(roles []string, dbName string) auth.ResolvedAccess
+	databaseAccessModeResolver      func(roles []string) auth.DatabaseAccessMode
+	resolvedAccessResolver          func(roles []string, dbName string) auth.ResolvedAccess
+	databaseOperationAccessResolver func([]string, string, auth.DatabaseAccessMode, bool) (bool, auth.ResolvedAccess)
 
 	grpcServer *grpc.Server
 	listener   net.Listener
@@ -272,10 +278,8 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 	}
 	var accessible bool
 	var access auth.ResolvedAccess
-	if combined, ok := mode.(interface {
-		ResolveDatabaseAccess(string, bool) (bool, auth.ResolvedAccess)
-	}); ok {
-		accessible, access = combined.ResolveDatabaseAccess(database, write)
+	if s.databaseOperationAccessResolver != nil {
+		accessible, access = s.databaseOperationAccessResolver(roles, database, mode, write)
 	} else {
 		accessible = mode.CanAccessDatabase(database)
 		access = auth.ResolvedAccess{Read: true, Write: true}
@@ -470,6 +474,7 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if config != nil {
 		srv.databaseAccessModeResolver = config.DatabaseAccessModeResolver
 		srv.resolvedAccessResolver = config.ResolvedAccessResolver
+		srv.databaseOperationAccessResolver = config.DatabaseOperationAccessResolver
 	}
 	return srv, nil
 }
