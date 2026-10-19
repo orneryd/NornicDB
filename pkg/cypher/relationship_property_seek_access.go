@@ -39,33 +39,44 @@ func withRelationshipAccessPlans(ctx context.Context, query string) context.Cont
 
 // Both execution and EXPLAIN call this owner. The cache is statement-local,
 // schema/namespace-specific, and contains expression text, never row values.
-func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern string, match *TraversalMatch, where string) *relationshipAccess {
+func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, where string) *relationshipAccess {
+	program, _ := ctx.Value(relationshipAccessProgramKey{}).(*relationshipAccessProgram)
+	if program == nil {
+		return &relationshipAccess{}
+	}
+	template := program.byID[relationshipAccessID(pattern, where)]
+	if template == nil {
+		recordUnregisteredRelationshipAccess(ctx, pattern, where)
+		return &relationshipAccess{}
+	}
 	// Availability belongs to the current read view, even when nested entries
 	// share a schema and the statement's immutable expression templates.
 	reader, available := e.getStorage(ctx).(storage.RelationshipPropertySeeker)
 	viewport, _ := TemporalViewportFromContext(ctx)
 	if !available || !reader.RelationshipPropertySeeksAvailable() || viewport.Enabled() {
 		access := &relationshipAccess{}
-		if match != nil {
-			access.variable = match.Relationship.Variable
-		}
 		return access
 	}
 	plans, _ := ctx.Value(relationshipAccessPlansKey{}).(*relationshipAccessPlans)
 	if plans == nil {
-		return e.planRelationshipAccess(ctx, pattern, match, where)
+		return e.planRelationshipTemplate(ctx, template)
 	}
-	key := relationshipAccessKey{e.getStorage(ctx).GetSchema(), pattern, where}
+	key := relationshipAccessKey{e.getStorage(ctx).GetSchema(), template.pattern, template.where}
 	plans.mu.Lock()
 	defer plans.mu.Unlock()
 	if access := plans.plans[key]; access != nil {
 		return access
 	}
-	access := e.planRelationshipAccess(ctx, pattern, match, where)
+	access := e.planRelationshipTemplate(ctx, template)
 	if len(plans.plans) < 1024 {
 		plans.plans[key] = access
 	}
 	return access
+}
+
+func (e *StorageExecutor) planRelationshipTemplate(ctx context.Context, template *relationshipAccessTemplate) *relationshipAccess {
+	match := e.parseTraversalPattern(ctx, relationshipAccessPatternStructure(template.pattern))
+	return e.planRelationshipAccess(ctx, template.pattern, match, template.where)
 }
 
 func (e *StorageExecutor) planRelationshipAccess(ctx context.Context, pattern string, match *TraversalMatch, where string) *relationshipAccess {

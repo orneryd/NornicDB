@@ -404,6 +404,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		defer func() { result, retErr = orderRewrite.restore(result, retErr) }()
 	}
 
+	ctx = withRelationshipAccessProgram(ctx, cypher)
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {

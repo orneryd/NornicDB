@@ -27,7 +27,7 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 		// They can still supply an equality key evaluated in this incoming row.
 		seekWhere = original.where
 	}
-	seek, ok := e.relationshipAccessFor(ctx, pattern, match, seekWhere).resolve(ctx, e, match.Relationship.Properties)
+	seek, ok := e.relationshipAccessFor(ctx, pattern, seekWhere).resolve(ctx, e, match.Relationship.Properties)
 	if !ok {
 		recordRelationshipSeekFallback(ctx, pattern, seekWhere, match.Relationship.Variable)
 		return nil, false, nil

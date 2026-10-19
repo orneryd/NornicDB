@@ -468,6 +468,10 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 // parseCallSubquery extracts the body from CALL { ... } and any trailing clauses
 // Returns: body, afterCall, inTransactions bool, batchSize int
 func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
+	return parseCallSubquery(cypher)
+}
+
+func parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
 	batchSize = 1000 // Default batch size
 
 	trimmed := strings.TrimSpace(cypher)
