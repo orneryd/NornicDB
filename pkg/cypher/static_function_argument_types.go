@@ -400,9 +400,9 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
-	syntax:=readFunctionSyntax(text)
+	syntax := readFunctionSyntax(text)
 	for index := 0; index < len(text); {
-		call, ok := syntax.nextCall(index,true,false,false)
+		call, ok := syntax.nextCall(index, true, false, false)
 		if !ok {
 			break
 		}

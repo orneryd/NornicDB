@@ -40,7 +40,11 @@ func TestFunctionSyntaxUncachedWholeTextWalk(t *testing.T) {
 	require.Greater(t, len(text), 16384)
 	count := 0
 	require.NoError(t, forEachFunctionCall(text, func(name, _ string) error {
-		if count%2 == 0 { require.Equal(t, "coalesce", name) } else { require.Equal(t, "custom.fn", name) }
+		if count%2 == 0 {
+			require.Equal(t, "coalesce", name)
+		} else {
+			require.Equal(t, "custom.fn", name)
+		}
 		count++
 		return nil
 	}))

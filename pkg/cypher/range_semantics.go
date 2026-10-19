@@ -155,9 +155,9 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 
 func namedFunctionArguments(expression, function string) []string {
 	arguments := make([]string, 0)
-	syntax:=readFunctionSyntax(expression)
+	syntax := readFunctionSyntax(expression)
 	for index := 0; index < len(expression); {
-		call, ok := syntax.nextCall(index,true,false,false)
+		call, ok := syntax.nextCall(index, true, false, false)
 		if !ok {
 			break
 		}
