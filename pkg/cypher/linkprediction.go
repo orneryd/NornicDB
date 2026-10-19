@@ -63,7 +63,6 @@ package cypher
 
 import (
 	"context"
-	
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -386,7 +385,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		}
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
-		view := identityGraphEngine(e.storage,e.graphIdentityScope)
+		view := identityGraphEngine(e.storage, e.graphIdentityScope)
 		config.bindIdentity(view, nil)
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
@@ -565,7 +564,6 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 	}
 	return config, nil
 }
-
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result
 func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID) *ExecuteResult {

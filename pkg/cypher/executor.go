@@ -450,8 +450,8 @@ type StorageExecutor struct {
 	syntaxValidationCache *syntaxValidationCache
 	syntaxValidationOnce  sync.Once
 
-	graphIdentityScope *graphIdentityScope
- statementCacheScope *multidb.StatementCacheScope
+	graphIdentityScope  *graphIdentityScope
+	statementCacheScope *multidb.StatementCacheScope
 	statementCaches     *StatementCaches
 	statementCachesOnce sync.Once
 
@@ -555,7 +555,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
 	cloned := &StorageExecutor{
- graphIdentityScope: e.graphIdentityScope,
+		graphIdentityScope:             e.graphIdentityScope,
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),

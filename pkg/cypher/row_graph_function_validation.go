@@ -180,7 +180,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	}
 	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
 		Storage:  e.storage,
- Database: e.databaseName(),
+		Database: e.databaseName(),
 		Cypher25: rowIsCypher25(values),
 		Eval: func(expression string) (interface{}, error) {
 			value, resolved, err := e.evaluateRowValue(expression, values)

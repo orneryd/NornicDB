@@ -126,8 +126,10 @@ func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string
 	if storage.CompositeDatabaseOf(e.storage) == "" && e.graphIdentityDomain().foreignQualifier(database) {
 		return "", false, true
 	}
-	if storage.CompositeDatabaseOf(e.storage) == "" { return local,true,true }
- id, found := (storage.EntityIdentity{Database: database, LocalID: local}).LookupID(e.storage, kind)
+	if storage.CompositeDatabaseOf(e.storage) == "" {
+		return local, true, true
+	}
+	id, found := (storage.EntityIdentity{Database: database, LocalID: local}).LookupID(e.storage, kind)
 	return id, found, true
 }
 

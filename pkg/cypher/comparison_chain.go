@@ -52,7 +52,7 @@ func evaluateComparisonChain(
 	resolve func(string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
- domains ...graphIdentityDomain,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
@@ -87,7 +87,7 @@ func evaluateScannedComparisonChain(
 	resolve func(int, string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
- domains ...graphIdentityDomain,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, error) {
 	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
 	hasNull, resolved := false, leftOK
