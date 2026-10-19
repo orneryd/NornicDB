@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"sort"
 	"testing"
@@ -52,6 +53,8 @@ func BenchmarkHNSWChurn(b *testing.B) {
 		rng := rand.New(rand.NewSource(7))
 		var removeTime, insertTime time.Duration
 		b.ResetTimer()
+		pprof.SetGoroutineLabels(pprof.WithLabels(b.Context(), pprof.Labels("phase", "measured-churn")))
+		defer pprof.SetGoroutineLabels(b.Context())
 		for i := 0; i < b.N; i++ {
 			at := rng.Intn(n)
 			id := fmt.Sprintf("v-%d", at)
@@ -110,6 +113,8 @@ func BenchmarkHNSWChurn(b *testing.B) {
 			queries[i] = query(rng)
 		}
 		b.ResetTimer()
+		pprof.SetGoroutineLabels(pprof.WithLabels(b.Context(), pprof.Labels("phase", "measured-churn")))
+		defer pprof.SetGoroutineLabels(b.Context())
 		for i := 0; i < b.N; i++ {
 			if _, err := index.Search(context.Background(), queries[i%len(queries)], 10, -1); err != nil {
 				b.Fatal(err)
@@ -149,6 +154,8 @@ func BenchmarkHNSWChurn(b *testing.B) {
 		}
 		lookup := func(id string) ([]float32, bool) { v, ok := byID[id]; return v, ok }
 		b.ResetTimer()
+		pprof.SetGoroutineLabels(pprof.WithLabels(b.Context(), pprof.Labels("phase", "measured-churn")))
+		defer pprof.SetGoroutineLabels(b.Context())
 		for i := 0; i < b.N; i++ {
 			loaded, err := LoadHNSWIndex(path, lookup)
 			if err != nil || loaded == nil {
@@ -173,6 +180,8 @@ func BenchmarkHNSWChurn(b *testing.B) {
 		}
 		b.ReportMetric(float64(removed), "removed")
 		b.ResetTimer()
+		pprof.SetGoroutineLabels(pprof.WithLabels(b.Context(), pprof.Labels("phase", "measured-churn")))
+		defer pprof.SetGoroutineLabels(b.Context())
 		for i := 0; i < b.N; i++ {
 			if _, err := index.Search(context.Background(), center, 1, -1); err != nil {
 				b.Fatal(err)
@@ -207,6 +216,8 @@ func BenchmarkHNSWChurn(b *testing.B) {
 		}
 		hits, total := 0, 0
 		b.ResetTimer()
+		pprof.SetGoroutineLabels(pprof.WithLabels(b.Context(), pprof.Labels("phase", "measured-churn")))
+		defer pprof.SetGoroutineLabels(b.Context())
 		for i := 0; i < b.N; i++ {
 			q := i % len(queries)
 			results, err := index.Search(context.Background(), queries[q], 10, -1)

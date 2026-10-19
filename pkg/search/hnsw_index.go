@@ -160,6 +160,23 @@ type visitedGenState struct {
 	cur uint16
 }
 
+// next starts a search generation, retaining prior stamps until wraparound.
+func (v *visitedGenState) next(size int) uint16 {
+	if len(v.gen) < size {
+		oldLen := len(v.gen)
+		// Inserts grow the node array one slot at a time. Retain spare
+		// capacity instead of copying the full stamp array on every insert.
+		v.gen = slices.Grow(v.gen, size-oldLen)[:size]
+		clear(v.gen[oldLen:])
+	}
+	v.cur++
+	if v.cur == 0 {
+		clear(v.gen)
+		v.cur = 1
+	}
+	return v.cur
+}
+
 type hnswDistNode struct {
 	id           uint32
 	dist         float32
@@ -341,9 +358,7 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 
 	level := h.randomLevel()
 
-	// Allocation-free overflow guard for the uint32 internal-ID domain.
-	// util.SafeIntToUint32 would also work here but costs strconv/fmt
-	// allocations on the per-node hot path (~4 allocs/node measured).
+	// Reject the next slot before exhausting the uint32 internal-ID domain.
 	if uint64(len(h.nodeLevel)) >= uint64(^uint32(0)) {
 		return errHNSWIndexFull
 	}
@@ -1240,12 +1255,10 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 	)
 
 	for id := range h.nodeLevel {
-		// Allocation-free bounds check: this loop visits every node on each
-		// removal of the entry point or of a top-level node.
-		if uint64(id) > uint64(^uint32(0)) {
+		internalID, ok := util.SafeIntToUint32(id)
+		if !ok {
 			break
 		}
-		internalID := uint32(id)
 		if validHNSWIndex(internalID, len(h.deleted)) && h.deleted[internalID] {
 			continue
 		}
@@ -1394,23 +1407,7 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	var mode M
 	visited := h.visitedPool.Get().(*visitedGenState)
 	defer h.visitedPool.Put(visited)
-	if len(visited.gen) < len(h.nodeLevel) {
-		oldLen := len(visited.gen)
-		if cap(visited.gen) < len(h.nodeLevel) {
-			next := make([]uint16, len(h.nodeLevel))
-			copy(next, visited.gen)
-			visited.gen = next
-		} else {
-			visited.gen = visited.gen[:len(h.nodeLevel)]
-			clear(visited.gen[oldLen:])
-		}
-	}
-	visited.cur++
-	if visited.cur == 0 {
-		clear(visited.gen)
-		visited.cur = 1
-	}
-	curGen := visited.cur
+	curGen := visited.next(len(h.nodeLevel))
 
 	candidates := h.heapPool.Get().(*distHeap)
 	candidates.Reset(false, ef*2)

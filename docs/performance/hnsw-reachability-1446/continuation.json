@@ -1,0 +1,1098 @@
+{
+  "BenchmarkSearchTextContinuationRankedHNSW/cache=false/all-12": {
+    "develop": {
+      "median": {
+        "B/op": 15184596.0,
+        "allocs/op": 60293.0,
+        "docs/op": 2000.0,
+        "ns/op": 10082909.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 9935924.0,
+          "docs/op": 2000.0,
+          "B/op": 15179848.0,
+          "allocs/op": 60290.0
+        },
+        {
+          "round": 2,
+          "ns/op": 10082909.0,
+          "docs/op": 2000.0,
+          "B/op": 15183968.0,
+          "allocs/op": 60293.0
+        },
+        {
+          "round": 3,
+          "ns/op": 10197191.0,
+          "docs/op": 2000.0,
+          "B/op": 15184596.0,
+          "allocs/op": 60291.0
+        },
+        {
+          "round": 4,
+          "ns/op": 10457562.0,
+          "docs/op": 2000.0,
+          "B/op": 15187913.0,
+          "allocs/op": 60294.0
+        },
+        {
+          "round": 5,
+          "ns/op": 9961905.0,
+          "docs/op": 2000.0,
+          "B/op": 15188101.0,
+          "allocs/op": 60293.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 14364712.0,
+        "allocs/op": 53989.0,
+        "docs/op": 2000.0,
+        "ns/op": 9290706.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 9290706.0,
+          "docs/op": 2000.0,
+          "B/op": 14364312.0,
+          "allocs/op": 53989.0
+        },
+        {
+          "round": 2,
+          "ns/op": 8990960.0,
+          "docs/op": 2000.0,
+          "B/op": 14365791.0,
+          "allocs/op": 53990.0
+        },
+        {
+          "round": 3,
+          "ns/op": 9351429.0,
+          "docs/op": 2000.0,
+          "B/op": 14366393.0,
+          "allocs/op": 53989.0
+        },
+        {
+          "round": 4,
+          "ns/op": 9182981.0,
+          "docs/op": 2000.0,
+          "B/op": 14364712.0,
+          "allocs/op": 53989.0
+        },
+        {
+          "round": 5,
+          "ns/op": 9743851.0,
+          "docs/op": 2000.0,
+          "B/op": 14362507.0,
+          "allocs/op": 53989.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 14366237.0,
+        "allocs/op": 53989.0,
+        "docs/op": 2000.0,
+        "ns/op": 9155590.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 9075082.0,
+          "docs/op": 2000.0,
+          "B/op": 14366201.0,
+          "allocs/op": 53988.0
+        },
+        {
+          "round": 2,
+          "ns/op": 9365935.0,
+          "docs/op": 2000.0,
+          "B/op": 14370830.0,
+          "allocs/op": 53991.0
+        },
+        {
+          "round": 3,
+          "ns/op": 9155590.0,
+          "docs/op": 2000.0,
+          "B/op": 14364534.0,
+          "allocs/op": 53989.0
+        },
+        {
+          "round": 4,
+          "ns/op": 9253532.0,
+          "docs/op": 2000.0,
+          "B/op": 14369321.0,
+          "allocs/op": 53990.0
+        },
+        {
+          "round": 5,
+          "ns/op": 9077312.0,
+          "docs/op": 2000.0,
+          "B/op": 14366237.0,
+          "allocs/op": 53989.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedHNSW/cache=false/selective-12": {
+    "develop": {
+      "median": {
+        "B/op": 156602.0,
+        "allocs/op": 621.0,
+        "docs/op": 11.0,
+        "ns/op": 557487.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 555662.0,
+          "docs/op": 11.0,
+          "B/op": 156697.0,
+          "allocs/op": 621.0
+        },
+        {
+          "round": 2,
+          "ns/op": 554040.0,
+          "docs/op": 11.0,
+          "B/op": 156569.0,
+          "allocs/op": 621.0
+        },
+        {
+          "round": 3,
+          "ns/op": 563558.0,
+          "docs/op": 11.0,
+          "B/op": 156621.0,
+          "allocs/op": 621.0
+        },
+        {
+          "round": 4,
+          "ns/op": 568767.0,
+          "docs/op": 11.0,
+          "B/op": 156602.0,
+          "allocs/op": 621.0
+        },
+        {
+          "round": 5,
+          "ns/op": 557487.0,
+          "docs/op": 11.0,
+          "B/op": 156570.0,
+          "allocs/op": 621.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 158217.0,
+        "allocs/op": 575.0,
+        "docs/op": 11.0,
+        "ns/op": 499321.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 491214.0,
+          "docs/op": 11.0,
+          "B/op": 158215.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 2,
+          "ns/op": 493225.0,
+          "docs/op": 11.0,
+          "B/op": 158211.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 3,
+          "ns/op": 499601.0,
+          "docs/op": 11.0,
+          "B/op": 158260.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 4,
+          "ns/op": 499321.0,
+          "docs/op": 11.0,
+          "B/op": 158217.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 5,
+          "ns/op": 508026.0,
+          "docs/op": 11.0,
+          "B/op": 158222.0,
+          "allocs/op": 575.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 158215.0,
+        "allocs/op": 575.0,
+        "docs/op": 11.0,
+        "ns/op": 500592.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 508404.0,
+          "docs/op": 11.0,
+          "B/op": 158220.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 2,
+          "ns/op": 499506.0,
+          "docs/op": 11.0,
+          "B/op": 158215.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 3,
+          "ns/op": 500592.0,
+          "docs/op": 11.0,
+          "B/op": 158123.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 4,
+          "ns/op": 508925.0,
+          "docs/op": 11.0,
+          "B/op": 158216.0,
+          "allocs/op": 575.0
+        },
+        {
+          "round": 5,
+          "ns/op": 491686.0,
+          "docs/op": 11.0,
+          "B/op": 158213.0,
+          "allocs/op": 575.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedHNSW/cache=true/all-12": {
+    "develop": {
+      "median": {
+        "B/op": 6598883.0,
+        "allocs/op": 21678.0,
+        "docs/op": 2000.0,
+        "ns/op": 1982409.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 1844213.0,
+          "docs/op": 2000.0,
+          "B/op": 6598883.0,
+          "allocs/op": 21678.0
+        },
+        {
+          "round": 2,
+          "ns/op": 2002026.0,
+          "docs/op": 2000.0,
+          "B/op": 6599007.0,
+          "allocs/op": 21679.0
+        },
+        {
+          "round": 3,
+          "ns/op": 1982409.0,
+          "docs/op": 2000.0,
+          "B/op": 6598906.0,
+          "allocs/op": 21678.0
+        },
+        {
+          "round": 4,
+          "ns/op": 2041924.0,
+          "docs/op": 2000.0,
+          "B/op": 6598881.0,
+          "allocs/op": 21678.0
+        },
+        {
+          "round": 5,
+          "ns/op": 1899372.0,
+          "docs/op": 2000.0,
+          "B/op": 6598875.0,
+          "allocs/op": 21678.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 5778581.0,
+        "allocs/op": 15380.0,
+        "docs/op": 2000.0,
+        "ns/op": 1800320.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 1746987.0,
+          "docs/op": 2000.0,
+          "B/op": 5778602.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 2,
+          "ns/op": 1800320.0,
+          "docs/op": 2000.0,
+          "B/op": 5778628.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 3,
+          "ns/op": 1867465.0,
+          "docs/op": 2000.0,
+          "B/op": 5778581.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 4,
+          "ns/op": 1780437.0,
+          "docs/op": 2000.0,
+          "B/op": 5778547.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 5,
+          "ns/op": 1900448.0,
+          "docs/op": 2000.0,
+          "B/op": 5778565.0,
+          "allocs/op": 15380.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 5778590.0,
+        "allocs/op": 15380.0,
+        "docs/op": 2000.0,
+        "ns/op": 1757121.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 1755153.0,
+          "docs/op": 2000.0,
+          "B/op": 5778666.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 2,
+          "ns/op": 1769179.0,
+          "docs/op": 2000.0,
+          "B/op": 5778539.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 3,
+          "ns/op": 1781996.0,
+          "docs/op": 2000.0,
+          "B/op": 5778606.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 4,
+          "ns/op": 1757121.0,
+          "docs/op": 2000.0,
+          "B/op": 5778590.0,
+          "allocs/op": 15380.0
+        },
+        {
+          "round": 5,
+          "ns/op": 1730468.0,
+          "docs/op": 2000.0,
+          "B/op": 5778559.0,
+          "allocs/op": 15380.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedHNSW/cache=true/selective-12": {
+    "develop": {
+      "median": {
+        "B/op": 37808.0,
+        "allocs/op": 228.0,
+        "docs/op": 11.0,
+        "ns/op": 13663.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 13062.0,
+          "docs/op": 11.0,
+          "B/op": 37808.0,
+          "allocs/op": 228.0
+        },
+        {
+          "round": 2,
+          "ns/op": 13663.0,
+          "docs/op": 11.0,
+          "B/op": 37808.0,
+          "allocs/op": 228.0
+        },
+        {
+          "round": 3,
+          "ns/op": 14312.0,
+          "docs/op": 11.0,
+          "B/op": 37808.0,
+          "allocs/op": 228.0
+        },
+        {
+          "round": 4,
+          "ns/op": 14608.0,
+          "docs/op": 11.0,
+          "B/op": 37808.0,
+          "allocs/op": 228.0
+        },
+        {
+          "round": 5,
+          "ns/op": 13600.0,
+          "docs/op": 11.0,
+          "B/op": 37808.0,
+          "allocs/op": 228.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 31296.0,
+        "allocs/op": 183.0,
+        "docs/op": 11.0,
+        "ns/op": 12265.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 11936.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 2,
+          "ns/op": 11909.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 3,
+          "ns/op": 12690.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 4,
+          "ns/op": 12265.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 5,
+          "ns/op": 12889.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 31296.0,
+        "allocs/op": 183.0,
+        "docs/op": 11.0,
+        "ns/op": 11896.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 11833.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 2,
+          "ns/op": 11898.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 3,
+          "ns/op": 11749.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 4,
+          "ns/op": 11936.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 5,
+          "ns/op": 11896.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedIVFHNSW/cache=false/all-12": {
+    "develop": {
+      "median": {
+        "B/op": 891285.0,
+        "allocs/op": 4009.0,
+        "docs/op": 150.0,
+        "ns/op": 531748.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 514798.0,
+          "docs/op": 150.0,
+          "B/op": 891345.0,
+          "allocs/op": 4009.0
+        },
+        {
+          "round": 2,
+          "ns/op": 527170.0,
+          "docs/op": 150.0,
+          "B/op": 891285.0,
+          "allocs/op": 4009.0
+        },
+        {
+          "round": 3,
+          "ns/op": 537320.0,
+          "docs/op": 150.0,
+          "B/op": 891257.0,
+          "allocs/op": 4009.0
+        },
+        {
+          "round": 4,
+          "ns/op": 557711.0,
+          "docs/op": 150.0,
+          "B/op": 891327.0,
+          "allocs/op": 4009.0
+        },
+        {
+          "round": 5,
+          "ns/op": 531748.0,
+          "docs/op": 150.0,
+          "B/op": 891248.0,
+          "allocs/op": 4009.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 9971887.0,
+        "allocs/op": 33193.0,
+        "docs/op": 2000.0,
+        "ns/op": 4978392.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 4978392.0,
+          "docs/op": 2000.0,
+          "B/op": 9971887.0,
+          "allocs/op": 33193.0
+        },
+        {
+          "round": 2,
+          "ns/op": 4695974.0,
+          "docs/op": 2000.0,
+          "B/op": 9971533.0,
+          "allocs/op": 33193.0
+        },
+        {
+          "round": 3,
+          "ns/op": 4829114.0,
+          "docs/op": 2000.0,
+          "B/op": 9970329.0,
+          "allocs/op": 33192.0
+        },
+        {
+          "round": 4,
+          "ns/op": 4998972.0,
+          "docs/op": 2000.0,
+          "B/op": 9972538.0,
+          "allocs/op": 33194.0
+        },
+        {
+          "round": 5,
+          "ns/op": 5132052.0,
+          "docs/op": 2000.0,
+          "B/op": 9973383.0,
+          "allocs/op": 33195.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 9971840.0,
+        "allocs/op": 33192.0,
+        "docs/op": 2000.0,
+        "ns/op": 4838958.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 4763874.0,
+          "docs/op": 2000.0,
+          "B/op": 9969260.0,
+          "allocs/op": 33192.0
+        },
+        {
+          "round": 2,
+          "ns/op": 4962137.0,
+          "docs/op": 2000.0,
+          "B/op": 9971840.0,
+          "allocs/op": 33192.0
+        },
+        {
+          "round": 3,
+          "ns/op": 4968928.0,
+          "docs/op": 2000.0,
+          "B/op": 9971246.0,
+          "allocs/op": 33192.0
+        },
+        {
+          "round": 4,
+          "ns/op": 4838958.0,
+          "docs/op": 2000.0,
+          "B/op": 9972130.0,
+          "allocs/op": 33193.0
+        },
+        {
+          "round": 5,
+          "ns/op": 4734262.0,
+          "docs/op": 2000.0,
+          "B/op": 9972652.0,
+          "allocs/op": 33192.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedIVFHNSW/cache=false/selective-12": {
+    "develop": {
+      "median": {
+        "B/op": 53037.0,
+        "allocs/op": 299.0,
+        "docs/op": 11.0,
+        "ns/op": 48987.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 47574.0,
+          "docs/op": 11.0,
+          "B/op": 53035.0,
+          "allocs/op": 299.0
+        },
+        {
+          "round": 2,
+          "ns/op": 49267.0,
+          "docs/op": 11.0,
+          "B/op": 53029.0,
+          "allocs/op": 299.0
+        },
+        {
+          "round": 3,
+          "ns/op": 49882.0,
+          "docs/op": 11.0,
+          "B/op": 53037.0,
+          "allocs/op": 299.0
+        },
+        {
+          "round": 4,
+          "ns/op": 48987.0,
+          "docs/op": 11.0,
+          "B/op": 53044.0,
+          "allocs/op": 299.0
+        },
+        {
+          "round": 5,
+          "ns/op": 48298.0,
+          "docs/op": 11.0,
+          "B/op": 53046.0,
+          "allocs/op": 299.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 380044.0,
+        "allocs/op": 687.0,
+        "docs/op": 11.0,
+        "ns/op": 267958.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 267958.0,
+          "docs/op": 11.0,
+          "B/op": 380315.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 2,
+          "ns/op": 255422.0,
+          "docs/op": 11.0,
+          "B/op": 379761.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 3,
+          "ns/op": 258672.0,
+          "docs/op": 11.0,
+          "B/op": 380159.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 4,
+          "ns/op": 270357.0,
+          "docs/op": 11.0,
+          "B/op": 380044.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 5,
+          "ns/op": 272504.0,
+          "docs/op": 11.0,
+          "B/op": 379469.0,
+          "allocs/op": 687.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 379951.0,
+        "allocs/op": 687.0,
+        "docs/op": 11.0,
+        "ns/op": 259031.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 264815.0,
+          "docs/op": 11.0,
+          "B/op": 378496.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 2,
+          "ns/op": 253747.0,
+          "docs/op": 11.0,
+          "B/op": 379665.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 3,
+          "ns/op": 259031.0,
+          "docs/op": 11.0,
+          "B/op": 380304.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 4,
+          "ns/op": 259164.0,
+          "docs/op": 11.0,
+          "B/op": 379951.0,
+          "allocs/op": 687.0
+        },
+        {
+          "round": 5,
+          "ns/op": 258737.0,
+          "docs/op": 11.0,
+          "B/op": 380542.0,
+          "allocs/op": 687.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedIVFHNSW/cache=true/all-12": {
+    "develop": {
+      "median": {
+        "B/op": 442109.0,
+        "allocs/op": 1535.0,
+        "docs/op": 150.0,
+        "ns/op": 111254.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 107436.0,
+          "docs/op": 150.0,
+          "B/op": 442113.0,
+          "allocs/op": 1535.0
+        },
+        {
+          "round": 2,
+          "ns/op": 110370.0,
+          "docs/op": 150.0,
+          "B/op": 442109.0,
+          "allocs/op": 1535.0
+        },
+        {
+          "round": 3,
+          "ns/op": 111313.0,
+          "docs/op": 150.0,
+          "B/op": 442107.0,
+          "allocs/op": 1535.0
+        },
+        {
+          "round": 4,
+          "ns/op": 118504.0,
+          "docs/op": 150.0,
+          "B/op": 442109.0,
+          "allocs/op": 1535.0
+        },
+        {
+          "round": 5,
+          "ns/op": 111254.0,
+          "docs/op": 150.0,
+          "B/op": 442110.0,
+          "allocs/op": 1535.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 5775334.0,
+        "allocs/op": 15368.0,
+        "docs/op": 2000.0,
+        "ns/op": 1866051.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 1811965.0,
+          "docs/op": 2000.0,
+          "B/op": 5775356.0,
+          "allocs/op": 15369.0
+        },
+        {
+          "round": 2,
+          "ns/op": 1797580.0,
+          "docs/op": 2000.0,
+          "B/op": 5775305.0,
+          "allocs/op": 15368.0
+        },
+        {
+          "round": 3,
+          "ns/op": 1866051.0,
+          "docs/op": 2000.0,
+          "B/op": 5775334.0,
+          "allocs/op": 15369.0
+        },
+        {
+          "round": 4,
+          "ns/op": 1928385.0,
+          "docs/op": 2000.0,
+          "B/op": 5775336.0,
+          "allocs/op": 15368.0
+        },
+        {
+          "round": 5,
+          "ns/op": 1979269.0,
+          "docs/op": 2000.0,
+          "B/op": 5775310.0,
+          "allocs/op": 15368.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 5775341.0,
+        "allocs/op": 15368.0,
+        "docs/op": 2000.0,
+        "ns/op": 1828935.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 1813370.0,
+          "docs/op": 2000.0,
+          "B/op": 5775349.0,
+          "allocs/op": 15369.0
+        },
+        {
+          "round": 2,
+          "ns/op": 1882913.0,
+          "docs/op": 2000.0,
+          "B/op": 5775316.0,
+          "allocs/op": 15368.0
+        },
+        {
+          "round": 3,
+          "ns/op": 1828935.0,
+          "docs/op": 2000.0,
+          "B/op": 5775346.0,
+          "allocs/op": 15369.0
+        },
+        {
+          "round": 4,
+          "ns/op": 1812972.0,
+          "docs/op": 2000.0,
+          "B/op": 5775341.0,
+          "allocs/op": 15368.0
+        },
+        {
+          "round": 5,
+          "ns/op": 1829657.0,
+          "docs/op": 2000.0,
+          "B/op": 5775318.0,
+          "allocs/op": 15368.0
+        }
+      ]
+    }
+  },
+  "BenchmarkSearchTextContinuationRankedIVFHNSW/cache=true/selective-12": {
+    "develop": {
+      "median": {
+        "B/op": 27984.0,
+        "allocs/op": 140.0,
+        "docs/op": 11.0,
+        "ns/op": 8475.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 8253.0,
+          "docs/op": 11.0,
+          "B/op": 27984.0,
+          "allocs/op": 140.0
+        },
+        {
+          "round": 2,
+          "ns/op": 8346.0,
+          "docs/op": 11.0,
+          "B/op": 27984.0,
+          "allocs/op": 140.0
+        },
+        {
+          "round": 3,
+          "ns/op": 8688.0,
+          "docs/op": 11.0,
+          "B/op": 27984.0,
+          "allocs/op": 140.0
+        },
+        {
+          "round": 4,
+          "ns/op": 9165.0,
+          "docs/op": 11.0,
+          "B/op": 27984.0,
+          "allocs/op": 140.0
+        },
+        {
+          "round": 5,
+          "ns/op": 8475.0,
+          "docs/op": 11.0,
+          "B/op": 27984.0,
+          "allocs/op": 140.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 31296.0,
+        "allocs/op": 183.0,
+        "docs/op": 11.0,
+        "ns/op": 12300.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 11764.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 2,
+          "ns/op": 12182.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 3,
+          "ns/op": 12300.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 4,
+          "ns/op": 12326.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 5,
+          "ns/op": 12906.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 31296.0,
+        "allocs/op": 183.0,
+        "docs/op": 11.0,
+        "ns/op": 11935.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 11744.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 2,
+          "ns/op": 12497.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 3,
+          "ns/op": 11739.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 4,
+          "ns/op": 11935.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        },
+        {
+          "round": 5,
+          "ns/op": 12150.0,
+          "docs/op": 11.0,
+          "B/op": 31296.0,
+          "allocs/op": 183.0
+        }
+      ]
+    }
+  }
+}
