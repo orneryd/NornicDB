@@ -31,15 +31,24 @@ func (b *BadgerEngine) beginWrite() (func(), error) {
 // Replay is the only write admitted during shutdown's final drain. Existing
 // committers already hold their publication lease and finish before that drain.
 func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
+	if err := b.admitPublication(replay); err != nil {
+		return nil, err
+	}
+	return b.writeBarrier.RUnlock, nil
+}
+
+// admitPublication is the shared close/admission decision. Callers with an
+// explicit completion method release the barrier there without a bound closure.
+func (b *BadgerEngine) admitPublication(replay bool) error {
 	b.writeBarrier.RLock()
 	b.mu.RLock()
 	closed := b.closed || (b.closing && !replay)
 	b.mu.RUnlock()
 	if closed {
 		b.writeBarrier.RUnlock()
-		return nil, ErrStorageClosed
+		return ErrStorageClosed
 	}
-	return b.writeBarrier.RUnlock, nil
+	return nil
 }
 
 func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
