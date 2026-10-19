@@ -28,6 +28,7 @@ type CompositeEngine struct {
 
 	// ConstituentNames maps alias to actual database name (for routing)
 	constituentNames map[string]string
+	constituentScope CompositeConstituentResolver
 
 	// Access modes for each constituent
 	accessModes map[string]string // "read", "write", "read_write"
@@ -202,13 +203,20 @@ func (c *CompositeEngine) getConstituentsForWrite() []string {
 
 // getConstituent returns a constituent engine by alias.
 func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	return c.constituentForOperation(alias, false)
+}
 
+func (c *CompositeEngine) constituentForOperation(alias string, write bool) (Engine, error) {
+	c.mu.RLock()
 	engine, exists := c.constituents[alias]
+	resolve := c.constituentScope
+	mode := c.accessModes[alias]
+	c.mu.RUnlock()
 	if !exists {
 		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 	}
+	if write && mode != "write" && mode != "read_write" { return nil, ErrNotFound }
+	if resolve != nil { return resolve(alias, engine, write) }
 	return engine, nil
 }
 
@@ -374,7 +382,11 @@ func (c *CompositeEngine) DeleteNode(id NodeID) error {
         engine, err := c.getConstituent(alias)
         if err != nil { continue }
         _, err = engine.GetNode(NodeID(local))
-        if err == nil { return engine.DeleteNode(NodeID(local)) }
+        if err == nil {
+            engine, err = c.constituentForOperation(alias, true)
+            if err != nil { return err }
+            return engine.DeleteNode(NodeID(local))
+        }
         if err != ErrNotFound { return err }
     }
     return ErrNotFound
@@ -431,7 +443,11 @@ func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
         engine, err := c.getConstituent(alias)
         if err != nil { continue }
         _, err = engine.GetEdge(EdgeID(local))
-        if err == nil { return engine.DeleteEdge(EdgeID(local)) }
+        if err == nil {
+            engine, err = c.constituentForOperation(alias, true)
+            if err != nil { return err }
+            return engine.DeleteEdge(EdgeID(local))
+        }
         if err != ErrNotFound { return err }
     }
     return ErrNotFound
@@ -1006,7 +1022,7 @@ func (c *CompositeEngine) BulkDeleteNodes(ids []NodeID) error {
         for _, alias := range aliases { groups[alias] = append(groups[alias], NodeID(local)) }
     }
     for alias, local := range groups {
-        engine, err := c.getConstituent(alias)
+        engine, err := c.constituentForOperation(alias, true)
         if err != nil { return err }
         if err := engine.BulkDeleteNodes(local); err != nil && err != ErrNotFound { return err }
     }
@@ -1021,7 +1037,7 @@ func (c *CompositeEngine) BulkDeleteEdges(ids []EdgeID) error {
         for _, alias := range aliases { groups[alias] = append(groups[alias], EdgeID(local)) }
     }
     for alias, local := range groups {
-        engine, err := c.getConstituent(alias)
+        engine, err := c.constituentForOperation(alias, true)
         if err != nil { return err }
         if err := engine.BulkDeleteEdges(local); err != nil && err != ErrNotFound { return err }
     }
@@ -1082,6 +1098,7 @@ func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) 
 func (c *CompositeEngine) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.constituentScope != nil { return nil }
 
 	var lastErr error
 	for alias, engine := range c.constituents {

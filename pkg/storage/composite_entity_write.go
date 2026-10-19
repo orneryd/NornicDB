@@ -12,8 +12,12 @@ import (
 func (c *CompositeEngine) constituentsForIdentity(identity EntityIdentity, candidates []string) []string {
     if identity.Database == "" { return candidates }
     for _, alias := range candidates {
-        engine, err := c.getConstituent(alias)
-        if err == nil && c.constituentDatabase(alias, engine) == identity.Database { return []string{alias} }
+        // Select from immutable catalog metadata before opening a physical
+        // participant. Looking for one native source must not open all others.
+        c.mu.RLock()
+        engine := c.constituents[alias]
+        c.mu.RUnlock()
+        if engine != nil && c.constituentDatabase(alias, engine) == identity.Database { return []string{alias} }
     }
     return nil
 }
@@ -34,7 +38,11 @@ func (c *CompositeEngine) withExistingIdentity(kind string, identity EntityIdent
         engine, err := c.getConstituent(alias)
         if err != nil { continue }
         if kind == "4" { _, err = engine.GetNode(NodeID(identity.LocalID)) } else { _, err = engine.GetEdge(EdgeID(identity.LocalID)) }
-        if err == nil { return apply(engine, identity.LocalID) }
+        if err == nil {
+            engine, err = c.constituentForOperation(alias, true)
+            if err != nil { return err }
+            return apply(engine, identity.LocalID)
+        }
         if !errors.Is(err, ErrNotFound) { return err }
     }
     return ErrNotFound
@@ -49,7 +57,7 @@ func (c *CompositeEngine) nodeCreateSource(node *Node) (string, Engine, error) {
         if selected := c.constituentsForIdentity(node.Identity(), candidates); len(selected) > 0 { alias = selected[0] }
     } else { alias = c.routeWrite("create_node", node.Labels, node.Properties, candidates) }
     if alias == "" { return "", nil, localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil) }
-    engine, err := c.getConstituent(alias)
+    engine, err := c.constituentForOperation(alias, true)
     return alias, engine, err
 }
 
@@ -95,6 +103,8 @@ func (c *CompositeEngine) edgeCreateSource(edge *Edge) (string, Engine, *Edge, e
             if _, err := engine.GetNode(prepared.EndNode); errors.Is(err, ErrNotFound) { continue } else if err != nil { return "", nil, nil, err }
         }
         prepared.Database = c.constituentDatabase(alias, engine)
+        engine, err = c.constituentForOperation(alias, true)
+        if err != nil { return "", nil, nil, err }
         return alias, engine, &prepared, nil
     }
     // Preserve the existing read-only diagnostic, without writing through it.
