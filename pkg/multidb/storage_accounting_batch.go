@@ -32,7 +32,9 @@ func (t *sizeTrackingEngine) prepareAccountingBatch(tx accountingTransaction, ch
 				image.ID = storage.NodeID(unprefix(string(image.ID)))
 			}
 			return image, err
-		}, calculateNodeSize, trackBytes)
+		}, calculateNodeSize, trackBytes, func(id storage.NodeID) (bool, error) {
+			return storage.StoredNodeExists(t.Engine, storage.NodeID(unprefix(string(id))))
+		})
 	if err != nil {
 		return accountingBatch{}, err
 	}
@@ -48,31 +50,44 @@ func (t *sizeTrackingEngine) prepareAccountingBatch(tx accountingTransaction, ch
 				image.EndNode = storage.NodeID(unprefix(string(image.EndNode)))
 			}
 			return image, err
-		}, calculateEdgeSize, trackBytes)
+		}, calculateEdgeSize, trackBytes, func(id storage.EdgeID) (bool, error) {
+			return storage.StoredEdgeExists(t.Engine, storage.EdgeID(unprefix(string(id))))
+		})
 	return accountingBatch{nodes: nodes, edges: edges}, err
 }
 
 // Fold exactly one hidden-inclusive stored prior/final pair per ID. Existence
 // and size are derived together from those same images, including deletion and
 // replacement; the operation history is deliberately irrelevant here.
-func storedEntityAccounting[K comparable, V any](pending map[K]*V, read func(K) (*V, error), image func(*V) (*V, error), size func(*V) (int64, error), trackBytes bool) (entityAccountingDelta, error) {
+func storedEntityAccounting[K comparable, V any](pending map[K]*V, read func(K) (*V, error), image func(*V) (*V, error), size func(*V) (int64, error), trackBytes bool, presence func(K) (bool, error)) (entityAccountingDelta, error) {
 	var delta entityAccountingDelta
 	for id, final := range pending {
-		prior, err := read(id)
+		var prior *V
+		var found bool
+		var err error
+		if !trackBytes && presence != nil {
+			found, err = presence(id)
+		} else {
+			prior, err = read(id)
+			found = prior != nil
+		}
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return entityAccountingDelta{}, err
 		}
 		if errors.Is(err, storage.ErrNotFound) {
-			prior = nil
+			prior, found = nil, false
 		}
-		pair := [2]*V{prior, final}
-		for side, body := range pair {
-			if body == nil {
+		pair := [2]struct {
+			body   *V
+			exists bool
+		}{{prior, found}, {final, final != nil}}
+		for side, state := range pair {
+			if !state.exists {
 				continue
 			}
 			sign := int64(2*side - 1)
 			if trackBytes {
-				body, err = image(body)
+				body, err := image(state.body)
 				if err != nil {
 					return entityAccountingDelta{}, err
 				}

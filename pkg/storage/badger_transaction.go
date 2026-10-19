@@ -817,6 +817,12 @@ func (tx *BadgerTransaction) createNodeLocked(node *Node, creationTimes bool) (N
 func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.updateNodeLocked(node, nil, false)
+}
+
+// Direct staging may already own the prior node read for upsert/timestamps.
+// Consume that same snapshot image rather than fetching and copying it again.
+func (tx *BadgerTransaction) updateNodeLocked(node, prior *Node, owned bool) error {
 
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
@@ -838,9 +844,13 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 
 	// Check if node exists
-	var oldNode *Node
+	oldNode := prior
 	createOpIdx := -1
-	if pending, exists := tx.pendingNodes[node.ID]; exists {
+	if prior != nil {
+		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
+			return err
+		}
+	} else if pending, exists := tx.pendingNodes[node.ID]; exists {
 		oldNode = copyNode(pending)
 		createOpIdx = tx.pendingCreateNodeOperationIndexLocked(node.ID)
 	} else {
@@ -922,7 +932,10 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 
 	// Track for read-your-writes
-	nodeCopy := copyNode(node)
+	nodeCopy := node
+	if !owned {
+		nodeCopy = copyNode(node)
+	}
 	// A distinct body means reconciliation intentionally preserved a managed
 	// sidecar. Otherwise this write owns the full range, even when it fits inline.
 	if body == node {
@@ -1673,6 +1686,12 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.updateEdgeLocked(edge, false)
+}
+
+// owned permits the private managed adapter to transfer its already-cloned
+// caller input to staging. Public transaction writes retain their copy contract.
+func (tx *BadgerTransaction) updateEdgeLocked(edge *Edge, owned bool) error {
 
 	if edge == nil {
 		return ErrInvalidData
@@ -1786,7 +1805,10 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	}
 
 	// Track for read-your-writes.
-	edgeCopy := copyEdge(edge)
+	edgeCopy := edge
+	if !owned {
+		edgeCopy = copyEdge(edge)
+	}
 	tx.pendingEdges[edge.ID] = edgeCopy
 	if err := tx.bufferEdgeReplacementCountDeltasLocked(oldEdge, edge); err != nil {
 		return err
@@ -3835,7 +3857,7 @@ func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == nil {
 		if tx.nodeHeadCache == nil {
-			tx.nodeHeadCache = make(map[NodeID]MVCCHead, 64)
+			tx.nodeHeadCache = make(map[NodeID]MVCCHead)
 		}
 		tx.nodeHeadCache[nodeID] = head
 	}
