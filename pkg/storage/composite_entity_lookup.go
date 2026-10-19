@@ -38,6 +38,57 @@ func (c *CompositeEngine) constituentDatabase(alias string,engine Engine) string
 	return database
 }
 
+func nodeFromDatabase(node *Node,database string) *Node {
+	if node == nil || node.Database != "" { return node }
+	copy := *node
+	copy.Database = database
+	return &copy
+}
+
+func edgeFromDatabase(edge *Edge,database string) *Edge {
+	if edge == nil || edge.Database != "" { return edge }
+	copy := *edge
+	copy.Database = database
+	return &copy
+}
+
+func (c *CompositeEngine) sourceNode(alias string,engine Engine,node *Node) *Node {
+	if node == nil || node.Database != "" { return node }
+	return nodeFromDatabase(node,c.constituentDatabase(alias,engine))
+}
+func (c *CompositeEngine) sourceEdge(alias string,engine Engine,edge *Edge) *Edge {
+	if edge == nil || edge.Database != "" { return edge }
+	return edgeFromDatabase(edge,c.constituentDatabase(alias,engine))
+}
+
+func edgesFromDatabase(edges []*Edge,database string) []*Edge {
+	for _,edge := range edges {
+		if edge != nil && edge.Database == "" {
+			copy := append([]*Edge(nil),edges...)
+			for i,value := range copy { copy[i] = edgeFromDatabase(value,database) }
+			return copy
+		}
+	}
+	return edges
+}
+
+func nodesFromDatabase(nodes []*Node,database string) []*Node {
+	for _,node := range nodes {
+		if node != nil && node.Database == "" {
+			copy := append([]*Node(nil),nodes...)
+			for i,value := range copy { copy[i] = nodeFromDatabase(value,database) }
+			return copy
+		}
+	}
+	return nodes
+}
+
+func nodePairDatabase(start,end NodeID) string {
+	_,database,_,qualified := ParseElementID(string(start))
+	if !qualified { _,database,_,_ = ParseElementID(string(end)) }
+	return database
+}
+
 // constituentForNodePair scopes both endpoints to the same selected source.
 // Unqualified endpoint IDs stay local within that source; two different
 // qualified sources can never name a stored relationship.
@@ -56,14 +107,5 @@ func (c *CompositeEngine) constituentForNodePair(start, end NodeID) (Engine,Node
 }
 
 func (c *CompositeEngine) constituentNodeElementID(alias string, engine Engine, id NodeID) NodeID {
-	database := DatabaseOf(engine)
-	if database == "" {
-		c.mu.RLock()
-		database = c.constituentNames[alias]
-		c.mu.RUnlock()
-	}
-	if database == "" {
-		database = alias
-	}
-	return NodeID(SourceNodeElementID(database, id))
+	return NodeID(SourceNodeElementID(c.constituentDatabase(alias,engine), id))
 }

@@ -34,7 +34,17 @@ func TestCompositeIdentityConsumerMatrix(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
 				})
+				t.Run("selected native nodes/"+proc,func(t *testing.T) {
+					result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"CALL apoc.algo."+proc+"([n,m,n]) YIELD node RETURN count(DISTINCT node)",nil)
+					require.NoError(t,err)
+					require.Equal(t,[][]interface{}{{int64(2)}},result.Rows)
+				})
 			}
+			t.Run("community topology",func(t *testing.T) {
+				result,err := exec.Execute(ctx,"USE comp CALL apoc.algo.wcc() YIELD node,componentId RETURN count(DISTINCT componentId)",nil)
+				require.NoError(t,err)
+				require.Equal(t,[][]interface{}{{int64(2)}},result.Rows)
+			})
 			for _, tc := range []struct { proc string; want float64 }{
 				{"adamicAdar",0}, {"commonNeighbors",0}, {"resourceAllocation",0}, {"preferentialAttachment",1}, {"totalNeighbors",2},
 			} {
@@ -57,6 +67,17 @@ func TestCompositeIdentityConsumerMatrix(t *testing.T) {
 					if tc.want != 0 { require.Equal(t, "4:one:same", result.Rows[0][0]) }
 				})
 			}
+			for _, expression := range []string{
+				"elementId(n) IN ['same']", "id(n) IN ['same']", "elementId(n) = 'same'",
+				"elementId(n) IN ['4:one:same','4:two:same','4:one:same']",
+				"elementId(n) IN ['4:one:same','same']",
+			} {
+				t.Run("composite seek/"+expression,func(t *testing.T) {
+					result,err := exec.Execute(ctx,"USE comp MATCH (n:P) WHERE "+expression+" RETURN count(DISTINCT n)",nil)
+					require.NoError(t,err)
+					require.Equal(t,[][]interface{}{{int64(2)}},result.Rows)
+				})
+			}
 		})
 	}
 }
@@ -70,6 +91,9 @@ func TestCompositeNativeGDSStreamConsumerMatrix(t *testing.T) {
 			for _, database := range []string{"one","two"} {
 				store, err := manager.GetStorage(database)
 				require.NoError(t, err)
+				// Predictions select non-neighbours. Keep this fixture as a
+				// three-node chain, with two hops from P to Q through T.
+				require.NoError(t,store.DeleteEdge("same-rel"))
 				_, err = store.CreateNode(&storage.Node{ID:"shared",Labels:[]string{"T"}})
 				require.NoError(t, err)
 				for _, start := range []storage.NodeID{"same","target"} {
@@ -80,15 +104,68 @@ func TestCompositeNativeGDSStreamConsumerMatrix(t *testing.T) {
 			_, err := exec.Execute(ctx,"USE comp CALL gds.graph.project('native_matrix','*','*')",nil)
 			require.NoError(t,err)
 			t.Cleanup(func(){ _,_ = exec.Execute(ctx,"USE comp CALL gds.graph.drop('native_matrix')",nil) })
+			const prefix = "USE comp CALL { USE comp.one MATCH (n:P) MATCH (z:Q) RETURN n,z } CALL { USE comp.two MATCH (m:P) MATCH (y:Q) RETURN m,y } "
+			for _, graph := range []string{"projection","stored"} {
+			for _, shape := range []string{"native","qualified"} {
 			for _, proc := range []string{"adamicAdar","commonNeighbors","resourceAllocation","preferentialAttachment","jaccard","predict"} {
 				for _, pair := range []struct{source,target,database string}{{"n","z","one"},{"m","y","two"}} {
-					t.Run(proc+"/"+pair.database,func(t *testing.T){
-						query := compositeIdentityQueryPrefix+"CALL gds.linkPrediction."+proc+".stream('native_matrix',{sourceNode:"+pair.source+",targetNodes:["+pair.target+"]}) YIELD node1,node2 RETURN node1,node2"
+					t.Run(graph+"/"+shape+"/"+proc+"/"+pair.database,func(t *testing.T){
+						source,target := pair.source,pair.target
+						if shape == "qualified" { source,target = "elementId("+source+")","elementId("+target+")" }
+						argument := ""
+						if graph == "projection" { argument = "'native_matrix'," }
+						query := prefix+"CALL gds.linkPrediction."+proc+".stream("+argument+"{sourceNode:"+source+",targetNodes:["+target+"]}) YIELD node1,node2 RETURN node1,node2"
 						result,err := exec.Execute(ctx,query,nil)
 						require.NoError(t,err)
 						require.Equal(t,[][]interface{}{{"4:"+pair.database+":same","4:"+pair.database+":target"}},result.Rows)
 					})
 				}
+			}
+			}
+			}
+		})
+	}
+}
+
+func TestCompositeGraphTraversalConsumerMatrix(t *testing.T) {
+	for _,explicit := range []bool{false,true} {
+		mode := "autocommit"
+		if explicit { mode = "explicit" }
+		t.Run(mode,func(t *testing.T) {
+			exec,_ := newCompositeIdentityExecutor(t,explicit)
+			ctx := context.Background()
+			for _,procedure := range []string{"dijkstra","aStar","allSimplePaths"} {
+				arguments := "n,m,'R','w'"
+				if procedure == "allSimplePaths" { arguments = "n,m,'R',3" }
+				result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"CALL apoc.algo."+procedure+"("+arguments+") YIELD path RETURN count(*)",nil)
+				require.NoError(t,err)
+				require.Equal(t,[][]interface{}{{int64(0)}},result.Rows,"different sources with the same local ID are not a zero-hop path")
+			}
+			for _,procedure := range []string{"expandConfig","spanningTree"} {
+				for _,start := range []string{"[n,m]","[elementId(n),elementId(m)]"} {
+					query := compositeIdentityQueryPrefix+"CALL apoc.path."+procedure+"("+start+",{relationshipFilter:'R>',minLevel:1,maxLevel:1}) YIELD path RETURN count(DISTINCT path)"
+					result,err := exec.Execute(ctx,query,nil)
+					require.NoError(t,err)
+					require.Equal(t,[][]interface{}{{int64(2)}},result.Rows)
+				}
+			}
+			for _,tc := range []struct{query string; want int64}{
+				{"CALL apoc.path.expand([n,m],'R>','',1,1) YIELD path RETURN count(DISTINCT path)",2},
+				{"CALL apoc.path.subgraphNodes([n,m],{relationshipFilter:'R>',maxLevel:1}) YIELD node RETURN count(DISTINCT node)",4},
+				{"CALL apoc.path.subgraphAll([n,m],{relationshipFilter:'R>',maxLevel:1}) YIELD nodes UNWIND nodes AS node RETURN count(DISTINCT node)",4},
+				{"CALL apoc.path.subgraphAll([n,m],{relationshipFilter:'R>',maxLevel:1}) YIELD relationships UNWIND relationships AS edge RETURN count(DISTINCT edge)",2},
+			} {
+				result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+tc.query,nil)
+				require.NoError(t,err)
+				require.Equal(t,[][]interface{}{{tc.want}},result.Rows)
+			}
+			for _,query := range []string{
+				"UNWIND [n,m] AS root CALL apoc.neighbors.tohop(root,'R>',1) YIELD node RETURN elementId(root),elementId(node) ORDER BY elementId(root)",
+				"UNWIND [n,m] AS root CALL apoc.neighbors.byhop(root,'R>',1) YIELD nodes UNWIND nodes AS node RETURN elementId(root),elementId(node) ORDER BY elementId(root)",
+			} {
+				result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+query,nil)
+				require.NoError(t,err)
+				require.Equal(t,[][]interface{}{{"4:one:same","4:one:target"},{"4:two:same","4:two:target"}},result.Rows)
 			}
 		})
 	}
