@@ -137,6 +137,15 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	var view staticTypeScope
 	stale := true
 	for _, clause := range clauses {
+		// An unresolved option candidate is validated as a normal projection
+		// whenever the engine's existing typed scope binds it. Otherwise defer
+		// the extension decision to the real execution frame, retaining input
+		// bindings for its permitted transparent-option interpretation.
+		if clause.embeddingCandidate != "" {
+			if _, bound := types[clause.embeddingCandidate]; !bound {
+				continue
+			}
+		}
 		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil {
 			return types, false, err
 		}

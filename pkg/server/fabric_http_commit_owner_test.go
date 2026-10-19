@@ -33,6 +33,15 @@ func TestReviewR7HTTPCommitOwner(t *testing.T) {
 			_, err = leaf.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Seed"}})
 			require.NoError(t, err)
 			require.NoError(t, server.dbManager.CreateCompositeDatabase("commitcomp", []multidb.ConstituentRef{{Alias: "l", DatabaseName: "idleblocked", Type: "local", AccessMode: "read_write"}}))
+			// Warm the public planner before measuring a sub-second COMMIT budget.
+			// Cold parser initialization is statement work and is independently bounded.
+			for i := 0; i < 2; i++ {
+				warm := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, "/db/commitcomp/tx/commit", strings.NewReader(`{"statements":[{"statement":"USE commitcomp.l MATCH (n:Seed) RETURN n"}]}`))
+				req.Header.Set("Authorization", token)
+				req.Header.Set("Content-Type", "application/json")
+				server.buildRouter().ServeHTTP(warm, req)
+			}
 			setter, ok := unwrapInnerStorage(leaf).(interface {
 				SetLifecycleController(storage.MVCCLifecycleController)
 			})

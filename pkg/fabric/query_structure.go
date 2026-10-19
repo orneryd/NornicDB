@@ -45,6 +45,7 @@ type QueryClause struct {
 	Scoped                                    bool
 	ScopeText                                 string
 	embeddingStart, embeddingEnd              int
+	EmbeddingCandidate                        string
 	ScopeNames                                []string
 	BodyOffset                                int
 	tree                                      antlr4.ParserRuleContext
@@ -513,7 +514,26 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		if c.Projection != nil {
 			c.Projection.Tail = strings.TrimSpace(r.text[min(c.Projection.itemsEnd, c.End):c.End])
 		}
+		// The documented nonterminal option sits after an updating clause and
+		// immediately before RETURN. This is syntax eligibility, not a scope
+		// decision: the existing pipeline frame will resolve the variable.
+		if c.Kind == "WITH" && len(q.Clauses) > 0 && c.Projection != nil {
+			previous := q.Clauses[len(q.Clauses)-1].Kind
+			updating := previous == "CREATE" || previous == "MERGE" || previous == "SET" || previous == "REMOVE" || previous == "DELETE" || previous == "DETACH DELETE" || previous == "FOREACH"
+			projection := c.Projection
+			if updating && len(projection.Items) == 1 && !projection.Star && !projection.Distinct && c.Predicate == "" && projection.Tail == "" {
+				item := projection.Items[0]
+				if !item.HasAlias && strings.EqualFold(item.Name, "embedding") && !strings.HasPrefix(strings.TrimSpace(item.Expression), "`") {
+					c.EmbeddingCandidate = item.Name
+				}
+			}
+		}
 		q.Clauses = append(q.Clauses, c)
+	}
+	for i := range q.Clauses {
+		if q.Clauses[i].EmbeddingCandidate != "" && (i+1 >= len(q.Clauses) || q.Clauses[i+1].Kind != "RETURN") {
+			q.Clauses[i].EmbeddingCandidate = ""
+		}
 	}
 	if q.Err == nil {
 		q.Err = q.validateUses(inCall)
@@ -1391,6 +1411,7 @@ func (r *structureReader) lower(q *QueryStructure) string {
 		start, end int
 		text       string
 	}
+	candidateNames := q.EmbeddingCandidateNames()
 	var names []edit
 	keywords := make(map[int]bool)
 	var syntaxEdits []edit
@@ -1419,7 +1440,7 @@ func (r *structureReader) lower(q *QueryStructure) string {
 		if symbol, ok := tree.(grammar.ISymbolContext); ok {
 			inName = true
 			kind := symbol.GetStart().GetTokenType()
-			if !inParameter && !inInvocation && kind != grammar.CypherParserID && kind != grammar.CypherParserESC_LITERAL {
+			if !candidateNames[symbol.GetStart().GetStart()] && !inParameter && !inInvocation && kind != grammar.CypherParserID && kind != grammar.CypherParserESC_LITERAL {
 				names = append(names, edit{r.start(symbol.GetStart()), r.end(symbol.GetStop()), "`" + strings.ReplaceAll(unquoteSyntaxName(symbol.GetText()), "`", "``") + "`"})
 			}
 		}
@@ -1468,4 +1489,36 @@ func (r *structureReader) lower(q *QueryStructure) string {
 		q.LocalEdits = append(q.LocalEdits, QueryTextEdit{previousEnd, len(r.text), ""})
 	}
 	return out.String()
+}
+
+// EmbeddingCandidateNames exposes grammar-owned candidate spans, without
+// predicting any variable scope. Callers keep them unresolved until execution.
+func (q *QueryStructure) EmbeddingCandidateNames() map[int]bool {
+	var names map[int]bool
+	var visit func(*QueryStructure)
+	visit = func(body *QueryStructure) {
+		for _, c := range body.Clauses {
+			if c.EmbeddingCandidate != "" && c.Projection != nil {
+				item := c.Projection.Items[0]
+				if names == nil {
+					names = make(map[int]bool)
+				}
+				names[item.tree.GetStart().GetStart()] = true
+			}
+			if c.Nested != nil {
+				visit(c.Nested)
+			}
+		}
+	}
+	visit(q)
+	return names
+}
+
+func (q *QueryStructure) HasEmbeddingCandidate() bool {
+	for _, clause := range q.Clauses {
+		if clause.EmbeddingCandidate != "" || clause.Nested != nil && clause.Nested.HasEmbeddingCandidate() {
+			return true
+		}
+	}
+	return false
 }
