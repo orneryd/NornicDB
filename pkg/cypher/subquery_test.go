@@ -3285,7 +3285,8 @@ RETURN n`)
 	require.NoError(t, err)
 	require.True(t, hasWith)
 	require.Equal(t, []string{"o", "t"}, withVars)
-	require.True(t, strings.HasPrefix(strings.TrimSpace(inner), "WITH o, t WHERE t IS NULL CREATE"), "inner body should preserve WITH ... WHERE clause semantics")
+	normalized, _ := canonicalizeQueryText(inner)
+	require.True(t, strings.HasPrefix(strings.TrimSpace(normalized), "WITH o, t WHERE t IS NULL CREATE"), "inner body should preserve WITH ... WHERE clause semantics")
 }
 
 func TestSubqueryHelpers_IterativeCallInTransactionsBranch(t *testing.T) {

@@ -613,7 +613,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	}
 	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
-	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
+	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params, recordBindings)
 	return columns, rows, true, err
 }
 
@@ -641,12 +641,22 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
 	ctx = withExecutionDatabase(ctx, dbName)
-	return c.executeFragmentQuery(ctx, exec, query, params)
+	return c.executeFragmentQuery(ctx, exec, query, params, recordBindings)
 }
 
-func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	query = fabric.LocalQuery(query)
+	query, names := canonicalizeQuotedVariablesWithBindings(query, recordBindings)
+	if names != nil {
+		params = names.parameterValues(params)
+		recordBindings = names.bindingValues(recordBindings)
+		ctx = withQuotedVariableNames(ctx, names)
+	}
+	previousBindings := exec.fabricRecordBindings
+	exec.fabricRecordBindings = recordBindings
+	defer func() { exec.fabricRecordBindings = previousBindings }()
 	result, err := exec.executeInternal(ctx, query, params)
+	result, err = names.restore(result, err, exec.parseReturnItems)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -740,10 +750,19 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 // (USE graph.byName(g)) for Fabric: values holds the statement's
 // parameters and the current row's variables.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
-	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
+		query, names := canonicalizeQuotedVariablesWithBindings("RETURN "+expression, values)
+		bindings, params := values, values
+		if names != nil {
+			bindings, params = names.bindingValues(values), names.parameterValues(values)
+		}
+		projection := fabric.ReadQueryStructure(query).ResultClause()
+		if projection == nil || projection.Projection == nil || len(projection.Projection.Items) != 1 {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
+		}
+		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), projection.Projection.Items[0].Expression, pipelineRow(bindings))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err

@@ -47,7 +47,7 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	// startsWithKeywordAtLocal boundaries
 	require.False(t, startsWithKeywordAtLocal("AMATCH", 1, "MATCH"))
 	require.False(t, startsWithKeywordAtLocal("MATCHED", 0, "MATCH"))
-	require.True(t, startsWithKeywordAtLocal(" MATCH ", 1, "MATCH"))
+	require.True(t, startsWithKeywordAtLocal(" MATCH (n) RETURN n ", 1, "MATCH"))
 	require.False(t, startsWithKeywordAtLocal("MATCH", -1, "MATCH"))
 
 	// The shared comma splitter preserves nesting/quotes and trims each field.
