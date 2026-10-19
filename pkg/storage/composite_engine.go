@@ -7,6 +7,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -141,10 +142,39 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 	defer c.mu.RUnlock()
 
 	var result []string
+	// Deduplicate aliases of the same physical database once, before reading
+	// data. Per-entity ID sets both collapse constituents and retain the graph.
+	type readSource struct {
+		engine   Engine
+		database string
+	}
+	seen := make(map[readSource]struct{})
 	for alias, mode := range c.accessModes {
 		if mode == "read" || mode == "read_write" {
 			// Check if constituent engine exists and is accessible
 			if engine, exists := c.constituents[alias]; exists && engine != nil {
+				database := DatabaseOf(engine)
+				source := engine
+				for {
+					wrapper, ok := source.(EngineUnwrapper)
+					if !ok {
+						break
+					}
+					inner := wrapper.GetInnerEngine()
+					if inner == nil || inner == source {
+						break
+					}
+					source = inner
+				}
+				// Value engines may contain slices/maps. Their identity cannot
+				// be a map key; retain their separate views in that case.
+				if reflect.TypeOf(source).Comparable() {
+					key := readSource{source, database}
+					if _, exists := seen[key]; exists {
+						continue
+					}
+					seen[key] = struct{}{}
+				}
 				result = append(result, alias)
 			}
 		}
@@ -661,7 +691,7 @@ func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
 // ============================================================================
 
 // GetNodesByLabel returns nodes with the given label from all constituents.
-// Duplicate nodes (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 // Returns empty slice if no readable constituents are available.
 func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	readConstituents := c.getConstituentsForRead()
@@ -670,7 +700,6 @@ func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 		return []*Node{}, nil
 	}
 
-	seen := make(map[string]bool)
 	var allNodes []*Node
 
 	for _, alias := range readConstituents {
@@ -685,13 +714,7 @@ func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 			return nil, err
 		}
 
-		// Deduplicate: only add nodes we haven't seen before
-		for _, node := range nodes {
-			if !seen[node.IdentityKey()] {
-				seen[node.IdentityKey()] = true
-				allNodes = append(allNodes, node)
-			}
-		}
+		allNodes = append(allNodes, nodes...)
 	}
 
 	return allNodes, nil
@@ -714,16 +737,11 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 		}
 		readers = append(readers, reader)
 	}
-	seen := make(map[string]struct{})
 	for _, reader := range readers {
 		err := reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
-			if _, exists := seen[node.IdentityKey()]; exists {
-				return nil
-			}
-			seen[node.IdentityKey()] = struct{}{}
 			return visit(node)
 		})
 		if err != nil {
@@ -762,10 +780,9 @@ func (c *CompositeEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 // GetOutgoingEdges returns outgoing edges from all constituents.
-// Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -779,23 +796,16 @@ func (c *CompositeEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
-		// Deduplicate: only add edges we haven't seen before
-		for _, edge := range edges {
-			if !seen[edge.IdentityKey()] {
-				seen[edge.IdentityKey()] = true
-				allEdges = append(allEdges, edge)
-			}
-		}
+		allEdges = append(allEdges, edges...)
 	}
 
 	return allEdges, nil
 }
 
 // GetIncomingEdges returns incoming edges from all constituents.
-// Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -809,23 +819,16 @@ func (c *CompositeEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
-		// Deduplicate: only add edges we haven't seen before
-		for _, edge := range edges {
-			if !seen[edge.IdentityKey()] {
-				seen[edge.IdentityKey()] = true
-				allEdges = append(allEdges, edge)
-			}
-		}
+		allEdges = append(allEdges, edges...)
 	}
 
 	return allEdges, nil
 }
 
 // GetEdgesBetween returns edges between two nodes from all constituents.
-// Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -839,13 +842,7 @@ func (c *CompositeEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
-		// Deduplicate: only add edges we haven't seen before
-		for _, edge := range edges {
-			if !seen[edge.IdentityKey()] {
-				seen[edge.IdentityKey()] = true
-				allEdges = append(allEdges, edge)
-			}
-		}
+		allEdges = append(allEdges, edges...)
 	}
 
 	return allEdges, nil
@@ -871,10 +868,9 @@ func (c *CompositeEngine) GetEdgeBetween(startID, endID NodeID, edgeType string)
 }
 
 // GetEdgesByType returns edges of the given type from all constituents.
-// Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -888,23 +884,16 @@ func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
-		// Deduplicate: only add edges we haven't seen before
-		for _, edge := range edges {
-			if !seen[edge.IdentityKey()] {
-				seen[edge.IdentityKey()] = true
-				allEdges = append(allEdges, edge)
-			}
-		}
+		allEdges = append(allEdges, edges...)
 	}
 
 	return allEdges, nil
 }
 
 // AllNodes returns all nodes from all constituents.
-// Duplicate nodes (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[string]bool)
 	var allNodes []*Node
 
 	for _, alias := range readConstituents {
@@ -918,23 +907,16 @@ func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
-		// Deduplicate: only add nodes we haven't seen before
-		for _, node := range nodes {
-			if !seen[node.IdentityKey()] {
-				seen[node.IdentityKey()] = true
-				allNodes = append(allNodes, node)
-			}
-		}
+		allNodes = append(allNodes, nodes...)
 	}
 
 	return allNodes, nil
 }
 
 // AllEdges returns all edges from all constituents.
-// Duplicate edges (same ID) are deduplicated - only the first occurrence is kept.
+// Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) AllEdges() ([]*Edge, error) {
 	readConstituents := c.getConstituentsForRead()
-	seen := make(map[string]bool)
 	var allEdges []*Edge
 
 	for _, alias := range readConstituents {
@@ -948,13 +930,7 @@ func (c *CompositeEngine) AllEdges() ([]*Edge, error) {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
-		// Deduplicate: only add edges we haven't seen before
-		for _, edge := range edges {
-			if !seen[edge.IdentityKey()] {
-				seen[edge.IdentityKey()] = true
-				allEdges = append(allEdges, edge)
-			}
-		}
+		allEdges = append(allEdges, edges...)
 	}
 
 	return allEdges, nil
