@@ -5,11 +5,14 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
+
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 )
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
+	ctx context.Context
 	ch     subscriptionChannel
 	database string
 	labels []string
@@ -125,6 +128,7 @@ func (b *EventBroker) SubscribeNodeCreatedInDatabase(ctx context.Context, databa
 	ch := newSubscriptionOwner[*models.Node]() // Buffered to prevent blocking
 
 	b.addSubscription(ctx, &b.nodeCreatedSubs, subscriptionInfo{
+		ctx: ctx,
 		ch:     ch,
 		database: database,
 		labels: labels,
@@ -145,6 +149,7 @@ func (b *EventBroker) SubscribeNodeUpdatedInDatabase(ctx context.Context, databa
 	ch := newSubscriptionOwner[*models.Node]()
 
 	b.addSubscription(ctx, &b.nodeUpdatedSubs, subscriptionInfo{
+		ctx: ctx,
 		ch:     ch,
 		database: database,
 		labels: labels,
@@ -166,6 +171,7 @@ func (b *EventBroker) SubscribeNodeDeletedInDatabase(ctx context.Context, databa
 	ch := newSubscriptionOwner[string]()
 
 	b.addSubscription(ctx, &b.nodeDeletedSubs, subscriptionInfo{
+		ctx: ctx,
 		ch:     ch,
 		database: database,
 		labels: labels,
@@ -186,6 +192,7 @@ func (b *EventBroker) SubscribeRelationshipCreatedInDatabase(ctx context.Context
 	ch := newSubscriptionOwner[*models.Relationship]()
 
 	b.addSubscription(ctx, &b.relationshipCreatedSubs, subscriptionInfo{
+		ctx: ctx,
 		ch:    ch,
 		database: database,
 		types: types,
@@ -206,6 +213,7 @@ func (b *EventBroker) SubscribeRelationshipUpdatedInDatabase(ctx context.Context
 	ch := newSubscriptionOwner[*models.Relationship]()
 
 	b.addSubscription(ctx, &b.relationshipUpdatedSubs, subscriptionInfo{
+		ctx: ctx,
 		ch:    ch,
 		database: database,
 		types: types,
@@ -227,6 +235,7 @@ func (b *EventBroker) SubscribeRelationshipDeletedInDatabase(ctx context.Context
 	ch := newSubscriptionOwner[string]()
 
 	b.addSubscription(ctx, &b.relationshipDeletedSubs, subscriptionInfo{
+		ctx: ctx,
 		ch:    ch,
 		database: database,
 		types: types,
@@ -271,7 +280,7 @@ func (b *EventBroker) PublishNodeCreatedInDatabase(database string, node *models
 
 	// Publish to all matching subscriptions
 	for _, sub := range subs {
-		if matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
+		if auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(*subscriptionOwner[*models.Node]); ok {
 				ch.TrySend(node)
 			}
@@ -292,7 +301,7 @@ func (b *EventBroker) PublishNodeUpdatedInDatabase(database string, node *models
 	subs := b.snapshot(&b.nodeUpdatedSubs)
 
 	for _, sub := range subs {
-		if matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
+		if auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(*subscriptionOwner[*models.Node]); ok {
 				ch.TrySend(node)
 			}
@@ -316,7 +325,7 @@ func (b *EventBroker) PublishNodeDeletedInDatabase(database, nodeID string) {
 
 	// Send to all subscriptions (can't filter by labels without node data)
 	for _, sub := range subs {
-		if !matchesDatabase(sub.database, database) {
+		if !(auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) {
 			continue
 		}
 		if ch, ok := sub.ch.(*subscriptionOwner[string]); ok {
@@ -338,7 +347,7 @@ func (b *EventBroker) PublishRelationshipCreatedInDatabase(database string, rel 
 	subs := b.snapshot(&b.relationshipCreatedSubs)
 
 	for _, sub := range subs {
-		if matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
+		if auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(*subscriptionOwner[*models.Relationship]); ok {
 				ch.TrySend(rel)
 			}
@@ -359,7 +368,7 @@ func (b *EventBroker) PublishRelationshipUpdatedInDatabase(database string, rel 
 	subs := b.snapshot(&b.relationshipUpdatedSubs)
 
 	for _, sub := range subs {
-		if matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
+		if auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(*subscriptionOwner[*models.Relationship]); ok {
 				ch.TrySend(rel)
 			}
@@ -383,7 +392,7 @@ func (b *EventBroker) PublishRelationshipDeletedInDatabase(database, relID strin
 
 	// Send to all subscriptions (can't filter by type without relationship data)
 	for _, sub := range subs {
-		if !matchesDatabase(sub.database, database) {
+		if !(auth.RequestDatabasePermissionAllowed(sub.ctx, sub.database, auth.PermRead) && matchesDatabase(sub.database, database)) {
 			continue
 		}
 		if ch, ok := sub.ch.(*subscriptionOwner[string]); ok {
