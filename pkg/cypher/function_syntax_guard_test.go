@@ -45,19 +45,24 @@ var callTextInput = regexp.MustCompile(`(?i)(expr|arg|param|signature|call|conte
 
 func alternateFunctionSyntax(body ast.Node) []string {
 	reasons := map[string]bool{}
- patterns:=map[string]bool{}
- for changed:=true;changed; {
-  changed=false
-  ast.Inspect(body,func(node ast.Node)bool {
-   assignment,ok:=node.(*ast.AssignStmt)
-   if !ok || len(assignment.Lhs)!=len(assignment.Rhs) {return true}
-   for index,left:=range assignment.Lhs {
-    name,ok:=left.(*ast.Ident)
-    if ok && !patterns[name.Name] && rawCallablePattern(assignment.Rhs[index],patterns) {patterns[name.Name]=true;changed=true}
-   }
-   return true
-  })
- }
+	patterns := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		ast.Inspect(body, func(node ast.Node) bool {
+			assignment, ok := node.(*ast.AssignStmt)
+			if !ok || len(assignment.Lhs) != len(assignment.Rhs) {
+				return true
+			}
+			for index, left := range assignment.Lhs {
+				name, ok := left.(*ast.Ident)
+				if ok && !patterns[name.Name] && rawCallablePattern(assignment.Rhs[index], patterns) {
+					patterns[name.Name] = true
+					changed = true
+				}
+			}
+			return true
+		})
+	}
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.ForStmt, *ast.RangeStmt:
@@ -91,8 +96,10 @@ func alternateFunctionSyntax(body ast.Node) []string {
 			default:
 				return true
 			}
-			if rawCallablePattern(n.Args[1],patterns) {reasons["independent function-prefix reader"]=true}
-   if expression, ok := n.Args[1].(*ast.BinaryExpr); ok && expression.Op == token.ADD {
+			if rawCallablePattern(n.Args[1], patterns) {
+				reasons["independent function-prefix reader"] = true
+			}
+			if expression, ok := n.Args[1].(*ast.BinaryExpr); ok && expression.Op == token.ADD {
 				if literal, ok := expression.Y.(*ast.BasicLit); ok {
 					value, _ := strconv.Unquote(literal.Value)
 					if value == "(" {
@@ -143,7 +150,7 @@ func TestFunctionSyntaxGuardDetectsAlternateReaders(t *testing.T) {
 		`package p; func f(s, name string) bool { return strings.Contains(s, name+"(") }`,
 		`package p; func f(expr string) int { return strings.IndexByte(expr, '(') }`,
 		`package p; func f(args string) []string { return strings.Split(args, ",") }`,
-  `package p; func f(q string) bool { prefix:="count("; alias:=prefix; return strings.Contains(q,alias) }`,
+		`package p; func f(q string) bool { prefix:="count("; alias:=prefix; return strings.Contains(q,alias) }`,
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), "mutant.go", source, 0)
 		require.NoError(t, err)
@@ -163,11 +170,16 @@ var functionGrammarBoundary = map[string]string{
 }
 
 func rawCallablePattern(node ast.Node, aliases map[string]bool) bool {
- found:=false
- ast.Inspect(node,func(child ast.Node)bool {
-  if literal,ok:=child.(*ast.BasicLit);ok && literal.Kind==token.STRING {value,_:=strconv.Unquote(literal.Value);found=found || rawFunctionPrefix.MatchString(value)}
-  if identifier,ok:=child.(*ast.Ident);ok {found=found || aliases[identifier.Name]}
-  return !found
- })
- return found
+	found := false
+	ast.Inspect(node, func(child ast.Node) bool {
+		if literal, ok := child.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+			value, _ := strconv.Unquote(literal.Value)
+			found = found || rawFunctionPrefix.MatchString(value)
+		}
+		if identifier, ok := child.(*ast.Ident); ok {
+			found = found || aliases[identifier.Name]
+		}
+		return !found
+	})
+	return found
 }

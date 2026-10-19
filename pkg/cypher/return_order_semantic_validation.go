@@ -244,9 +244,9 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 }
 
 func containsFunctionCallNamed(expression, expected string) bool {
-	syntax:=readFunctionSyntax(expression)
+	syntax := readFunctionSyntax(expression)
 	for index := 0; index < len(expression); {
-		call, ok := syntax.nextCall(index,true,false,false)
+		call, ok := syntax.nextCall(index, true, false, false)
 		if !ok {
 			break
 		}

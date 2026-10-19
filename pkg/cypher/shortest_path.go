@@ -23,10 +23,10 @@ import (
 const bfsCancelCheckMask = 0xFF
 
 func extractShortestPathCall(cypher string) (string, string, int, bool) {
-	syntax:=readFunctionSyntax(cypher)
+	syntax := readFunctionSyntax(cypher)
 	for _, name := range []string{"allShortestPaths", "shortestPath"} {
 		for index := 0; index < len(cypher); {
-			call, ok := syntax.nextCall(index,true,false,false)
+			call, ok := syntax.nextCall(index, true, false, false)
 			if !ok {
 				break
 			}
