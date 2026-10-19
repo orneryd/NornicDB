@@ -26,7 +26,7 @@ type BifrostClient struct {
 	ConnectedAt time.Time
 	LastPing    time.Time
 
-	mu sync.Mutex
+	mu      sync.Mutex
 	canRead func() bool
 }
 
@@ -68,12 +68,16 @@ func (b *Bifrost) registerClient(id string, w http.ResponseWriter, f http.Flushe
 		Flusher:     f,
 		ConnectedAt: time.Now(),
 		LastPing:    time.Now(),
-		canRead: canRead,
+		canRead:     canRead,
 	}
 	if initial != nil {
 		data, err := encodeBifrostMessage(*initial)
-		if err != nil { return err }
-		if err := client.write(data); err != nil { return err }
+		if err != nil {
+			return err
+		}
+		if err := client.write(data); err != nil {
+			return err
+		}
 	}
 	b.clients[id] = client
 	return nil
@@ -82,7 +86,9 @@ func (b *Bifrost) registerClient(id string, w http.ResponseWriter, f http.Flushe
 func (c *BifrostClient) write(data []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, err := c.Writer.Write(data); err != nil { return err }
+	if _, err := c.Writer.Write(data); err != nil {
+		return err
+	}
 	c.Flusher.Flush()
 	return nil
 }
@@ -199,7 +205,9 @@ func (b *Bifrost) broadcast(msg BifrostMessage) error {
 
 func encodeBifrostMessage(msg BifrostMessage) ([]byte, error) {
 	data, err := json.Marshal(msg)
-	if err != nil { return nil, fmt.Errorf("failed to marshal message: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal message: %w", err)
+	}
 	return []byte(fmt.Sprintf("data: %s\n\n", string(data))), nil
 }
 
