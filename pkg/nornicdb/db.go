@@ -1582,7 +1582,29 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	// embedded now, not after the retry delay (#1065).
 	defer db.wakeRelationshipEmbedding()
 
-	db.mu.Lock()
+	// Publication callbacks can acquire db.mu. Wait for their provider/write
+	// barrier BEFORE holding db.mu, then recheck the queue under the lifecycle
+	// lock. A concurrently created queue must be admitted through its barrier.
+	var queue *EmbedQueue
+	for {
+		db.mu.RLock()
+		queue = db.embedQueue
+		db.mu.RUnlock()
+		if queue != nil {
+			queue.providerWriteMu.Lock()
+		}
+		db.mu.Lock()
+		if queue == db.embedQueue {
+			break
+		}
+		db.mu.Unlock()
+		if queue != nil {
+			queue.providerWriteMu.Unlock()
+		}
+	}
+	if queue != nil {
+		defer queue.providerWriteMu.Unlock()
+	}
 
 	if db.baseStorage == nil {
 		// baseStorage is required for correctness (it’s the only engine that can see all namespaces).
@@ -1602,7 +1624,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
-		db.embedQueue.SetEmbedder(embedder)
+		db.embedQueue.setEmbedderUnderWriteBarrier(embedder)
 		log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
 			embedder.Model(), embedder.Dimensions())
 		db.mu.Unlock()
