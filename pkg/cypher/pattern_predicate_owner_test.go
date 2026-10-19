@@ -72,16 +72,20 @@ func TestPatternPredicateUsesExistsOwner(t *testing.T) {
 // over bound nodes, the shape the removed bound-pattern copy served.
 func BenchmarkWherePatternPredicate(b *testing.B) {
 	ctx := context.Background()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "benchmark"))
+	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "benchmark"), 0, 0)
 	if _, err := exec.Execute(ctx, "UNWIND range(1, 50) AS i CREATE (:S {i: i})-[:T]->(:U {i: i})", nil); err != nil {
 		b.Fatal(err)
 	}
 	const query = "MATCH (s:S), (u:U) WHERE s.i = u.i AND (s)-[:T]->(u) RETURN count(*) AS c"
+	result, err := exec.Execute(ctx, query, nil)
+	if err != nil || len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(50) {
+		b.Fatalf("expected 50 matching pairs: rows=%v err=%v", result, err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		result, err := exec.Execute(ctx, query, nil)
-		if err != nil || len(result.Rows) != 1 {
+		if err != nil || len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(50) {
 			b.Fatalf("rows=%v err=%v", result, err)
 		}
 	}
