@@ -76,8 +76,8 @@ func TestSearchStreamLifecycleCachePolicy(t *testing.T) {
 	params := map[string]any{"query": "transcript"}
 	first, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err)
-	second, err := exec.Execute(context.Background(), query, params)
-	require.NoError(t, err)
+	second := requireOwnedResultCacheHit(t, exec, first, func() (*ExecuteResult, error) {
+		return exec.Execute(context.Background(), query, params)
+	})
 	require.Len(t, second.Rows, 2)
-	require.Same(t, first, second)
 }
