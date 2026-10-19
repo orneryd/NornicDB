@@ -52,16 +52,24 @@ func TestWriteProcedureCallbackAtomicityAcrossCarriers(t *testing.T) {
 			exec := NewStorageExecutor(store)
 			fail := true
 			failure := errors.New("u5 callback rejected after write")
-			name := "u5tx.carrier"+carrier
+			name := "u5tx.carrier" + carrier
 			require.NoError(t, RegisterUserProcedure(ProcedureSpec{
-				Name: name, Signature: name+"() :: (value :: INTEGER)", Mode: ProcedureModeWrite,
+				Name: name, Signature: name + "() :: (value :: INTEGER)", Mode: ProcedureModeWrite,
 				Returns: []ProcedureColumn{{Name: "value", Type: "INTEGER"}},
 			}, func(ctx context.Context, nested *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
-				if carrier == "storage" { ctx = context.Background() }
-				if carrier == "context" { nested = exec }
+				if carrier == "storage" {
+					ctx = context.Background()
+				}
+				if carrier == "context" {
+					nested = exec
+				}
 				result, err := nested.Execute(ctx, "CREATE (:U5CarrierWrite) RETURN 1 AS value", nil)
-				if err != nil { return nil, err }
-				if fail { return nil, failure }
+				if err != nil {
+					return nil, err
+				}
+				if fail {
+					return nil, failure
+				}
 				return result, nil
 			}))
 			_, err := exec.Execute(context.Background(), "CALL "+name+"() YIELD value RETURN value", nil)
