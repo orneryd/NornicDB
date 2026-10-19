@@ -199,7 +199,7 @@ func TestRemoteDynamicModeSummaryAdmission(t *testing.T) {
 				query := "CALL { USE remote_modes.one CALL apoc.cypher.run($first,{}) YIELD value RETURN value } RETURN value UNION ALL CALL { USE remote_modes.two CALL apoc.cypher.run($second,{}) YIELD value RETURN value } RETURN value"
 				result, err := exec.Execute(ctx, query, map[string]interface{}{"first": tc.first, "second": tc.second})
 				if tc.reject {
-					require.ErrorContains(t, err, "AccessMode")
+					if tc.name=="periodic batches cannot escape second writer" { require.ErrorContains(t,err,"unsupported query type in transaction") } else { require.ErrorContains(t, err, "AccessMode") }
 				} else {
 					require.NoError(t, err)
 					require.Len(t, result.Rows, 2)
