@@ -139,13 +139,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 		}
 	}()
-	// A scoped executor shares the DB's provider lifetime as well as its
-	// publication. Keep it alive through chunking, inline embedding and RAG.
-	ctx, finishProviderUse, err := e.queryEmbedder.BeginUse(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer finishProviderUse()
 	// A result stream the caller passed is for this statement only, not for
 	// the statements it runs on its behalf (#939).
 	stream, ctx := takeResultStream(ctx)
