@@ -42,6 +42,9 @@ func TestQueryMemorySelectiveAccessSkipsDecoyEdges(t *testing.T) {
 		{"endpoint_property_seed", "MATCH (:Function {uid:'fn'})-[r]->() RETURN count(r)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Compile/cache parser plans before measuring execution allocation.
+			_, err := exec.Execute(ctx, tc.query, params)
+			require.NoError(t, err)
 			store.visited = 0
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
