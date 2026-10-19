@@ -348,10 +348,9 @@ func TestVectorSearchUsesCopiedReadsWhenMappingFails(t *testing.T) {
 	}
 }
 
-// HNSW construction without a lease looks vectors up inside IterateChunked,
-// which holds the read lock. After growth the query mapping cannot be
-// refreshed there; rows it does not cover are read with ReadAt instead of
-// waiting for the write lock.
+// HNSW construction without a lease looks vectors up inside IterateChunked.
+// A separate active query can hold the read lock, preventing mapping refresh
+// after growth. Unmapped rows must still use ReadAt without waiting for it.
 func TestVectorFileQueryReadsInsideIterationAfterGrowth(t *testing.T) {
 	v, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
@@ -360,7 +359,17 @@ func TestVectorFileQueryReadsInsideIterationAfterGrowth(t *testing.T) {
 	_, ok := v.GetVector("early")
 	require.True(t, ok)
 	require.NoError(t, v.Add("late", []float32{0, 1}))
-	// Before the fix this deadlocked: the nested lookup waited for the write lock.
+	readerReady, releaseReader, readerDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		v.mu.RLock()
+		close(readerReady)
+		<-releaseReader
+		v.mu.RUnlock()
+		close(readerDone)
+	}()
+	<-readerReady
+	finishReader := sync.OnceFunc(func() { close(releaseReader); <-readerDone })
+	defer finishReader()
 	require.NoError(t, v.IterateChunked(10, func([]string, [][]float32) error {
 		for _, id := range []string{"early", "late"} {
 			got, ok := v.GetVector(id)
@@ -377,6 +386,7 @@ func TestVectorFileQueryReadsInsideIterationAfterGrowth(t *testing.T) {
 		}
 		return nil
 	}))
+	finishReader()
 	got, ok := v.GetVector("late")
 	require.True(t, ok)
 	require.Equal(t, []float32{0, 1}, got)

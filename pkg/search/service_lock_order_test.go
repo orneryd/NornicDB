@@ -176,7 +176,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 				if closeService {
 					method = "(*Service).Close"
 				}
-				serviceLockWait(t, "retirement waiting on build or file store", func() bool { return serviceLockStack(method, "sync.(*RWMutex).Lock") })
+				serviceLockWait(t, "retirement waiting on build or file store", func() bool { return serviceLockStack(method, "sync.(*RWMutex)") })
 				staged <- vfs
 				return time.Time{}
 			}
