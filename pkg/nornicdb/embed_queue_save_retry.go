@@ -36,3 +36,23 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 	ew.writeEmbeddedNode(retained)
 	return nil, true
 }
+
+// claimNodeBatch keeps retained writes in the same bounded pass as provider
+// batches. Count attempts, including rejected writes, so a storage outage
+// cannot keep this pass alive indefinitely.
+func (ew *EmbedWorker) claimNodeBatch(limit int) ([]*storage.Node, bool) {
+	nodes := make([]*storage.Node, 0, limit)
+	progressed := false
+	for attempts := 0; attempts < limit; attempts++ {
+		node, advanced := ew.claimNextNodeResult()
+		progressed = progressed || advanced
+		if node == nil {
+			if advanced {
+				continue
+			}
+			break
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, progressed
+}

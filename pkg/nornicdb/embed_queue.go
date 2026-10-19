@@ -861,16 +861,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 	if limit < 1 {
 		limit = 1
 	}
-	nodes := make([]*storage.Node, 0, limit)
-	skipped := false
-	for len(nodes) < limit {
-		node, removed := ew.claimNextNodeResult()
-		if node == nil {
-			skipped = removed
-			break
-		}
-		nodes = append(nodes, node)
-	}
+	nodes, skipped := ew.claimNodeBatch(limit)
 	if len(nodes) == 0 {
 		return skipped
 	}
@@ -1087,16 +1078,7 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 	}
 
 	limit := ew.config.EmbedBatchSize
-	nodes := make([]*storage.Node, 0, limit)
-	skipped := false
-	for len(nodes) < limit {
-		node, removed := ew.claimNextNodeResult()
-		if node == nil {
-			skipped = removed
-			break
-		}
-		nodes = append(nodes, node)
-	}
+	nodes, skipped := ew.claimNodeBatch(limit)
 	if len(nodes) == 0 {
 		return skipped
 	}
