@@ -30,7 +30,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
- "context"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -359,9 +359,9 @@ func DefaultWALConfig() *WALConfig {
 // WAL provides write-ahead logging for durability.
 // Thread-safe for concurrent writes.
 type WAL struct {
-	lifecycleMu sync.Mutex
+	lifecycleMu      sync.Mutex
 	lifecyclePending map[uint64]string
-	mu sync.Mutex
+	mu               sync.Mutex
 	// syncMu serializes fsync syscalls without blocking Append. w.mu
 	// only guards Go-side state (bufio writer, encoder, segment
 	// bookkeeping) — the kernel-level fsync on w.file is independent
@@ -530,7 +530,9 @@ func (w *WAL) loadLastSequence() (uint64, error) {
 		return 0, nil
 	}
 	for _, entry := range entries {
-		if entry.Operation == OpNamespaceLifecycle { w.setNamespaceObligation(entry.Sequence, entry.Database, false) }
+		if entry.Operation == OpNamespaceLifecycle {
+			w.setNamespaceObligation(entry.Sequence, entry.Database, false)
+		}
 	}
 	return entries[len(entries)-1].Sequence, nil
 }
@@ -641,7 +643,9 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
 
-	if op == OpNamespaceLifecycle { w.setNamespaceObligation(seq, database, false) }
+	if op == OpNamespaceLifecycle {
+		w.setNamespaceObligation(seq, database, false)
+	}
 	w.entries.Add(1)
 	w.bytes.Add(alignedRecordLen)
 	w.totalWrites.Add(1)
@@ -799,7 +803,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
-	if op == OpNamespaceLifecycle { w.setNamespaceObligation(seq, database, false) }
+	if op == OpNamespaceLifecycle {
+		w.setNamespaceObligation(seq, database, false)
+	}
 	w.entries.Add(1)
 	w.bytes.Add(alignedRecordLen)
 	w.totalWrites.Add(1)
@@ -1306,9 +1312,13 @@ type Snapshot struct {
 // CreateSnapshot creates a point-in-time snapshot from the engine.
 func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
 	release, err := AdmitRecoverySnapshot(context.Background(), engine)
- if err != nil { return nil, err }
- defer release()
-	if err := w.checkNamespaceSnapshot(w.sequence.Load()); err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := w.checkNamespaceSnapshot(w.sequence.Load()); err != nil {
+		return nil, err
+	}
 	if w.closed.Load() {
 		return nil, ErrWALClosed
 	}
@@ -1516,7 +1526,9 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if err := w.checkNamespaceSnapshot(snapshotSeq); err != nil { return err }
+	if err := w.checkNamespaceSnapshot(snapshotSeq); err != nil {
+		return err
+	}
 
 	if w.retainsSegments() {
 		if err := w.rotateSegmentLocked(w.sequence.Load()); err != nil {
@@ -1692,7 +1704,9 @@ func (w *WAL) ApplyRetention(snapshotSeq uint64) error {
 }
 
 func (w *WAL) applyRetentionLocked(snapshotSeq uint64) error {
-	if err := w.checkNamespaceSnapshot(snapshotSeq); err != nil { return err }
+	if err := w.checkNamespaceSnapshot(snapshotSeq); err != nil {
+		return err
+	}
 	if snapshotSeq == 0 {
 		return nil
 	}

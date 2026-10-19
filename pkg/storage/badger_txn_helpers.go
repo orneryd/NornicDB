@@ -26,18 +26,20 @@ func (b *BadgerEngine) ensureOpen() error {
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginWrite(namespaces ...string) (func(), error) {
- return b.beginNamespaceMutation(context.Background(), namespaces, nil, false, namespacePublicationFresh)
+	return b.beginNamespaceMutation(context.Background(), namespaces, nil, false, namespacePublicationFresh)
 }
 
 // Replay already owns an acknowledged lifetime and may retire a sealed frontier.
 func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
- mode := namespacePublicationFresh
- if replay { mode = namespacePublicationReplay }
- return b.beginNamespaceMutation(context.Background(), nil, nil, false, mode)
+	mode := namespacePublicationFresh
+	if replay {
+		mode = namespacePublicationReplay
+	}
+	return b.beginNamespaceMutation(context.Background(), nil, nil, false, mode)
 }
 
 func (b *BadgerEngine) beginSchemaWrite(namespaces ...string) (func(), error) {
- return b.beginNamespaceMutation(context.Background(), namespaces, nil, true, namespacePublicationFresh)
+	return b.beginNamespaceMutation(context.Background(), namespaces, nil, true, namespacePublicationFresh)
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {

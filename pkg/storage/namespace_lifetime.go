@@ -1,7 +1,5 @@
 package storage
 
-
-
 // namespaceLifetimes is immutable after publication. Retirements survive a
 // same-name recreation. Catalog retirement is also persisted, so replaying an
 // older catalog snapshot cannot resurrect a dropped lifetime after restart.
@@ -61,5 +59,5 @@ func (tx *BadgerTransaction) checkNamespaceLifetimeLocked() error {
 }
 
 func (b *BadgerEngine) checkNamespaceLifetimeRevision(namespace string, revision uint64) error {
- return b.checkNamespaceAdmission(namespace, revision)
+	return b.checkNamespaceAdmission(namespace, revision)
 }

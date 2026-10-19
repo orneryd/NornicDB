@@ -52,8 +52,9 @@ func (b *BadgerEngine) admitNamespaceTasks(ctx context.Context, namespace string
 }
 
 func (b *BadgerEngine) withNamespaceSideStateWrite(entityID string, write func() error) error {
- return b.withNamespaceMutation(context.Background(), namespaceForSideStateID(entityID), write)
+	return b.withNamespaceMutation(context.Background(), namespaceForSideStateID(entityID), write)
 }
+
 // Raw index APIs have numeric owners, not a caller-supplied namespace hint.
 // Resolve their point IDs before admission; background batches additionally
 // hold RunNamespaceTask's logical lifetime across loading and follow-up work.
@@ -104,7 +105,9 @@ func (b *BadgerEngine) withNamespaceIndexWriteContext(ctx context.Context, keys 
 		}
 	}
 	scope := make([]string, 0, len(namespaces))
-	for namespace := range namespaces { scope = append(scope, namespace) }
+	for namespace := range namespaces {
+		scope = append(scope, namespace)
+	}
 	release, err := b.beginNamespaceMutation(ctx, scope, &revision, false, namespacePublicationFresh)
 	if err != nil {
 		return err

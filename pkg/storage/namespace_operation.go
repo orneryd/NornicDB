@@ -101,8 +101,12 @@ func (op *NamespaceDrop) physicalComplete(ctx context.Context, err error) error 
 		err = op.engine.persistNamespaceCompletion(op.namespace, op.nativeSequence)
 		if err == nil {
 			wal := op.nativeWAL
-			if wal == nil { wal = op.engine.bufferedCommitWAL }
-			if wal != nil { wal.setNamespaceObligation(op.nativeSequence, "", true) }
+			if wal == nil {
+				wal = op.engine.bufferedCommitWAL
+			}
+			if wal != nil {
+				wal.setNamespaceObligation(op.nativeSequence, "", true)
+			}
 		}
 	}
 	op.physicalDone, op.err = true, err
@@ -405,8 +409,9 @@ func (op *NamespaceDrop) finish(err error) error {
 }
 
 func (b *BadgerEngine) checkNamespaceOperation(namespace string) error {
- return b.checkNamespaceAdmission(namespace, b.namespaceLifetimeRevision())
+	return b.checkNamespaceAdmission(namespace, b.namespaceLifetimeRevision())
 }
+
 // All namespace-lifetime state has one writer: the exclusive publication owner.
 func (b *BadgerEngine) setNamespaceOperation(namespace string, op *NamespaceDrop) {
 	next := b.copyNamespaceLifetimes()

@@ -668,9 +668,13 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(txn *badger.Txn, node *Node, asO
 
 // RebuildTemporalIndexes recreates the temporal history and current-pointer indexes from stored nodes.
 func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
-	if ctx == nil { ctx = context.Background() }
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	releaseAdmission, err := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer releaseAdmission()
 
 	if err := b.ensureOpen(); err != nil {

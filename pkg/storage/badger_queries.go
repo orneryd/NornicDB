@@ -1728,9 +1728,15 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 		edges = edges[:edgeBetweenSelfHealMaxEdges]
 	}
 	scope := make([]string, 0, len(edges))
-	for _, edge := range edges { if edge != nil { scope = append(scope, namespaceForEdgeID(edge.ID)) } }
+	for _, edge := range edges {
+		if edge != nil {
+			scope = append(scope, namespaceForEdgeID(edge.ID))
+		}
+	}
 	release, err := b.beginNamespaceMutation(context.Background(), scope, nil, false, namespacePublicationFresh)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer release()
 
 	err = b.withUpdate(func(txn *badger.Txn) error {
@@ -1739,8 +1745,12 @@ func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 				continue
 			}
 			current, err := b.edgeFromTxn(txn, edge.ID)
-			if errors.Is(err, ErrNotFound) || errors.Is(err, badger.ErrKeyNotFound) { continue }
-			if err != nil { return err }
+			if errors.Is(err, ErrNotFound) || errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 			if err := b.writeEdgeBetweenIndexesInTxn(txn, current); err != nil {
 				return err
 			}

@@ -21,8 +21,10 @@ import (
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
 	release, err := AdmitRecoverySnapshot(context.Background(), b)
- if err != nil { return err }
- defer release()
+	if err != nil {
+		return err
+	}
+	defer release()
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -93,15 +95,19 @@ func (b *BadgerEngine) Restore(path string) error {
 // taking it, can't run in between; a closed engine has nothing to backfill.
 func (b *BadgerEngine) restartIndexBackfills() error {
 	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
- if err != nil { return err }
- defer release()
+	if err != nil {
+		return err
+	}
+	defer release()
 	return errors.Join(b.ensureEdgeBetweenIndex(), b.ensureLabelIndex())
 }
 
 // restoreOffline is Restore's work with writes and reads held off.
 func (b *BadgerEngine) restoreOffline(path string) error {
 	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, true, namespacePublicationFresh)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer release()
 
 	b.mu.RLock()

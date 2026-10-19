@@ -362,7 +362,9 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // serialization remains with the worker.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	releaseAdmission, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 	defer releaseAdmission()
 
 	if b.ensureOpen() != nil {

@@ -26,7 +26,9 @@ func (r *RaftReplicator) applyCommittedEntriesLocked() {
 			return
 		}
 		var entry *RaftLogEntry
-		if int(index) < len(r.log) { entry = r.log[index] }
+		if int(index) < len(r.log) {
+			entry = r.log[index]
+		}
 		r.logMu.RUnlock()
 		var err error
 		if entry != nil && entry.Command != nil {
@@ -38,6 +40,8 @@ func (r *RaftReplicator) applyCommittedEntriesLocked() {
 		r.logMu.Lock()
 		r.lastApplied = index
 		r.logMu.Unlock()
-		if future := r.takeApplyFuture(index); future != nil { future.resolve(err) }
+		if future := r.takeApplyFuture(index); future != nil {
+			future.resolve(err)
+		}
 	}
 }

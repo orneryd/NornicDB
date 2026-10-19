@@ -185,6 +185,11 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
  release, admissionErr := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
  if admissionErr != nil { return 0, admissionErr }
  defer release()
+ return b.rebuildLabelIndexAdmitted(ctx)
+}
+
+// Caller retains the canonical publication lease through this rebuild.
+func (b *BadgerEngine) rebuildLabelIndexAdmitted(ctx context.Context) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

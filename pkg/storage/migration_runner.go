@@ -1,7 +1,7 @@
 package storage
 
 import (
- "context"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,9 +69,11 @@ func (e *ErrStorageUpgradeRequired) Error() string {
 // Sets engine.storageVersion to the post-migration version so the
 // encode path can deterministically pick codecs from it.
 func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
- release, err := b.beginNamespaceMutation(context.Background(), nil, nil, true, namespacePublicationFresh)
- if err != nil { return err }
- defer release()
+	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, true, namespacePublicationFresh)
+	if err != nil {
+		return err
+	}
+	defer release()
 	currentVersion, err := b.readSchemaVersion()
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)

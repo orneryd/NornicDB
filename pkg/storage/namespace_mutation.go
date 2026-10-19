@@ -10,9 +10,9 @@ import (
 type namespacePublicationMode uint8
 
 const (
- namespacePublicationFresh namespacePublicationMode = iota
- namespacePublicationReplay
- namespacePublicationLifecycle
+	namespacePublicationFresh namespacePublicationMode = iota
+	namespacePublicationReplay
+	namespacePublicationLifecycle
 )
 
 // beginNamespaceMutation is the physical admission owner. Capture the logical
@@ -20,17 +20,28 @@ const (
 // Empty scope means whole-store maintenance; replay alone carries a previously
 // acknowledged publication and therefore may cross a prepared drain fence.
 func (b *BadgerEngine) beginNamespaceMutation(ctx context.Context, namespaces []string, revision *uint64, exclusive bool, mode namespacePublicationMode) (func(), error) {
- if ctx == nil { ctx = context.Background() }
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	begin := b.namespaceLifetimeRevision()
-	if revision != nil { begin = *revision }
+	if revision != nil {
+		begin = *revision
+	}
 	lock, unlock := b.writeBarrier.RLock, b.writeBarrier.RUnlock
-	if exclusive { lock, unlock = b.writeBarrier.Lock, b.writeBarrier.Unlock }
+	if exclusive {
+		lock, unlock = b.writeBarrier.Lock, b.writeBarrier.Unlock
+	}
 	release, err := util.LockContext(ctx, lock, unlock)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	b.mu.RLock()
 	closed := b.closed || (b.closing && mode != namespacePublicationReplay)
 	b.mu.RUnlock()
-	if closed { release(); return nil, ErrStorageClosed }
+	if closed {
+		release()
+		return nil, ErrStorageClosed
+	}
 	if mode == namespacePublicationFresh {
 		if len(namespaces) == 0 {
 			if prefixes := b.deletingPrefixes.Load(); prefixes != nil && len(*prefixes) != 0 {
@@ -43,7 +54,10 @@ func (b *BadgerEngine) beginNamespaceMutation(ctx context.Context, namespaces []
 			}
 		}
 		for _, namespace := range namespaces {
-			if err := b.checkNamespaceAdmission(namespace, begin); err != nil { release(); return nil, err }
+			if err := b.checkNamespaceAdmission(namespace, begin); err != nil {
+				release()
+				return nil, err
+			}
 		}
 	}
 	return release, nil
@@ -61,24 +75,32 @@ func (b *BadgerEngine) checkNamespaceAdmission(namespace string, revision uint64
 }
 
 func namespaceOfNode(node *Node) string {
-	if node == nil { return "" }
+	if node == nil {
+		return ""
+	}
 	return namespaceForNodeID(node.ID)
 }
 func namespaceOfEdge(edge *Edge) string {
-	if edge == nil { return "" }
+	if edge == nil {
+		return ""
+	}
 	return namespaceForEdgeID(edge.ID)
 }
 
 func (b *BadgerEngine) withNamespaceMutation(ctx context.Context, namespace string, write func() error) error {
 	release, err := b.beginNamespaceMutation(ctx, []string{namespace}, nil, false, namespacePublicationFresh)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer release()
 	return write()
 }
 
 func (b *BadgerEngine) withNamespaceMaintenance(ctx context.Context, write func() error) error {
 	release, err := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer release()
 	return write()
 }

@@ -124,11 +124,11 @@ type RaftReplicator struct {
 	leaderAddr  string
 
 	// Log (protected by logMu)
-	logMu       sync.RWMutex
+	logMu sync.RWMutex
 
 	// applyMu serializes state-machine application and discard cleanup.
 	// Metadata locks are released before either invokes storage.
-	applyMu sync.Mutex
+	applyMu     sync.Mutex
 	log         []*RaftLogEntry
 	commitIndex uint64
 	lastApplied uint64
@@ -1267,7 +1267,11 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 	// Check log consistency
 	r.logMu.Lock()
 	locked := true
-	defer func() { if locked { r.logMu.Unlock() } }()
+	defer func() {
+		if locked {
+			r.logMu.Unlock()
+		}
+	}()
 
 	// Check if we have the entry at PrevLogIndex with matching term
 	if req.PrevLogIndex > 0 {

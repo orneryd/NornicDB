@@ -2,8 +2,8 @@
 package storage
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 
@@ -104,7 +104,10 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 		// (PR #1043 item #2).
 		b.edgeTypeCountWriteMu.RUnlock()
 		releaseRepair, admissionErr := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
-		if admissionErr != nil { b.edgeTypeCountWriteMu.RLock(); return 0, admissionErr }
+		if admissionErr != nil {
+			b.edgeTypeCountWriteMu.RLock()
+			return 0, admissionErr
+		}
 		defer releaseRepair()
 		b.edgeTypeCountWriteMu.Lock()
 		repairErr := b.repairEdgeTypeCountLocked(namespace, edgeType)

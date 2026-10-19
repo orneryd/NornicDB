@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -259,7 +259,10 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 		// repaired it (PR #1043 item #2).
 		b.labelCountWriteMu.RUnlock()
 		releaseRepair, admissionErr := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
-		if admissionErr != nil { b.labelCountWriteMu.RLock(); return 0, admissionErr }
+		if admissionErr != nil {
+			b.labelCountWriteMu.RLock()
+			return 0, admissionErr
+		}
 		defer releaseRepair()
 		b.labelCountWriteMu.Lock()
 		repairErr := b.repairLabelCountLocked(namespace, label)

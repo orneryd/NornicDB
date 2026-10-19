@@ -67,7 +67,9 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, vecIndex *ve
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validateCollectionName(name, s.reserved); err != nil {
 		return err
 	}
@@ -155,7 +157,9 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 }
 
 func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_ = ctx
 	if name == "" {
 		return ErrCollectionNotFound
