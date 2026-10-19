@@ -11,15 +11,17 @@ import (
 
 type queryMemoryEdgeScanEngine struct {
 	*storage.NamespacedEngine
-	visited int
-	wholeVisited int
+	visited        int
+	wholeVisited   int
 	adjacencyReads int
 }
 
 func (s *queryMemoryEdgeScanEngine) StreamEdgesByType(ctx context.Context, kind string, visit func(*storage.Edge) error) error {
 	return s.NamespacedEngine.StreamEdgesByType(ctx, kind, func(edge *storage.Edge) error {
 		s.visited++
-		if kind == "" { s.wholeVisited++ }
+		if kind == "" {
+			s.wholeVisited++
+		}
 		return visit(edge)
 	})
 }
@@ -70,7 +72,9 @@ func TestQueryMemorySelectiveAccessSkipsDecoyEdges(t *testing.T) {
 			t.Logf("selective query: visited %d streamed edges, allocated %d bytes with 4000 decoys", store.visited, after.TotalAlloc-before.TotalAlloc)
 			require.Zero(t, store.wholeVisited, "selective plans must never read the graph-wide cursor")
 			require.LessOrEqual(t, store.visited, 1, "typed scans must only visit selected relationship types")
-			if tc.name == "label_seed" { require.Equal(t, 1, store.adjacencyReads) }
+			if tc.name == "label_seed" {
+				require.Equal(t, 1, store.adjacencyReads)
+			}
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20))
 		})
 	}
