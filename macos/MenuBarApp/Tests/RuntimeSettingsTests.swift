@@ -10,24 +10,27 @@ final class RuntimeSettingsTests: XCTestCase {
             "RunAtLoad": false,
             "EnvironmentVariables": ["NORNICDB_EMBEDDING_PROVIDER": "openai", "NORNICDB_EMBEDDING_MODEL": "text-embedding-3-small",
                 "NORNICDB_EMBEDDING_DIMENSIONS": "1536", "NORNICDB_EMBED_WORKER_NUM_WORKERS": "10",
-                "NORNICDB_EMBEDDING_API_KEY": "fixture-key", "CUSTOM_SETTING": "value with spaces",
+                "NORNICDB_EMBED_CHUNK_OVERLAP": "40", "NORNICDB_EMBEDDING_API_KEY": "fixture-key", "CUSTOM_SETTING": "value with spaces",
                 "NORNICDB_UPGRADE_STORAGE": "true"]])
         XCTAssertEqual(config.embeddingProvider, "openai")
         XCTAssertEqual(config.embeddingModel, "text-embedding-3-small")
         XCTAssertEqual(config.embeddingAPIKey, "fixture-key")
         XCTAssertEqual(config.embeddingDimensions, 1536)
         XCTAssertEqual(config.embeddingWorkers, 10)
+        XCTAssertEqual(config.embeddingChunkOverlap, 40)
         XCTAssertEqual(config.runtimeEnvironment, ["CUSTOM_SETTING": "value with spaces"])
-        XCTAssertEqual(config.runtimeArguments, ["--config", "/path with spaces/config.yaml", "$(touch /never-execute)"])
+        XCTAssertEqual(config.runtimeArguments, ["serve", "--config", "/path with spaces/config.yaml", "$(touch /never-execute)"])
         XCTAssertFalse(config.autoStartEnabled)
         config.embeddingModel = "new-model"
+        config.embeddingChunkOverlap = 60
         let plist = launchAgentPropertyList(config: config, homeDir: "/fixture")
         let env = plist["EnvironmentVariables"] as? [String: String]
         XCTAssertEqual(env?["NORNICDB_EMBEDDING_MODEL"], "new-model")
+        XCTAssertEqual(env?["NORNICDB_EMBED_CHUNK_OVERLAP"], "60")
         XCTAssertEqual(env?["NORNICDB_EMBED_WORKER_NUM_WORKERS"], "10")
         XCTAssertEqual(env?["CUSTOM_SETTING"], "value with spaces")
         XCTAssertNil(env?["NORNICDB_UPGRADE_STORAGE"])
-        XCTAssertEqual(plist["ProgramArguments"] as? [String], ["/usr/local/bin/nornicdb", "serve"] + config.runtimeArguments)
+        XCTAssertEqual(plist["ProgramArguments"] as? [String], ["/usr/local/bin/nornicdb"] + config.runtimeArguments)
         XCTAssertEqual(plist["RunAtLoad"] as? Bool, false)
         XCTAssertEqual(plist["KeepAlive"] as? Bool, false)
     }
@@ -102,7 +105,7 @@ final class RuntimeSettingsTests: XCTestCase {
         config.embeddingProvider = "openai"
         config.embeddingAPIKey = "fixture-key"
         config.runtimeEnvironment = ["CUSTOM": "a value with spaces"]
-        config.runtimeArguments = ["--config", "/config path/file.yaml"]
+        config.runtimeArguments = ["serve", "--config", "/config path/file.yaml"]
         try writeLaunchAgentPlist(config: config, to: path.path)
         let saved = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: path), format: nil) as? [String: Any])
         let restored = ConfigManager()
@@ -113,6 +116,13 @@ final class RuntimeSettingsTests: XCTestCase {
         XCTAssertEqual(restored.runtimeEnvironment["CUSTOM"], "a value with spaces")
         let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testArgumentsBeforeServeRetainTheirOrderOnRewrite() {
+        let arguments = ["/usr/local/bin/nornicdb", "--config", "/configuration path/custom.yaml", "serve", "--no-auth"]
+        let config = ConfigManager()
+        config.loadRuntimeSettings(["ProgramArguments": arguments])
+        XCTAssertEqual(launchAgentPropertyList(config: config, homeDir: "/fixture")["ProgramArguments"] as? [String], arguments)
     }
 
 }

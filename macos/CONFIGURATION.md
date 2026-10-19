@@ -25,7 +25,8 @@ ask for confirmation; Cancel leaves the service running unchanged.
 ## Advanced (optional)
 
 The Advanced tab is available during setup and in Settings. It supports named
-environment variables and an ordered argument list appended to `nornicdb serve`.
+environment variables and the ordered argument list passed to `nornicdb`. Keep the `serve` row to run
+the database; existing arguments before and after it retain their order.
 Each argument row is exactly one argument; put a flag and its separate value in
 separate rows. Spaces stay within a row. There is no shell evaluation, variable
 expansion, command substitution, or shell quoting step. Runtime arguments can
