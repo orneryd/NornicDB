@@ -44,7 +44,7 @@ type SnapshotVisitor interface {
 // WriteSnapshot writes lossless NDS2 v2 entity frames using streaming enumeration.
 // Its existing lightweight route does not fetch separately stored embeddings.
 func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options SnapshotOptions) error {
-	streamer, ok := engine.(StreamingEngine)
+	_, ok := engine.(StreamingEngine)
 	if !ok {
 		return ErrStreamingSnapshotUnsupported
 	}
@@ -61,12 +61,11 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 		return err
 	}
 
-	nodeStream := streamer.StreamNodes
-	if lightweight, ok := engine.(NodeWithoutEmbeddingsStreamer); ok {
-		nodeStream = lightweight.StreamNodesWithoutEmbeddings
-	}
+	// A snapshot holds what storage holds: the entities the visibility
+	// layer hides from reads are stored data too, and the WAL is truncated
+	// once the snapshot is written.
 	var nodeCount uint64
-	if err := nodeStream(ctx, func(node *Node) error {
+	if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{}, func(node *Node) error {
 		if err := writeSnapshotFrame(buffered, streamSnapshotNode, snapshotNodeVectorMetadata(node), maxRecordBytes); err != nil {
 			return err
 		}
@@ -76,7 +75,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 		return fmt.Errorf("stream snapshot nodes: %w", err)
 	}
 	var edgeCount uint64
-	if err := streamer.StreamEdges(ctx, func(edge *Edge) error {
+	if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
 		if err := writeSnapshotFrame(buffered, streamSnapshotEdge, edge, maxRecordBytes); err != nil {
 			return err
 		}

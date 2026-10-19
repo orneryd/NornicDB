@@ -349,7 +349,7 @@ func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 	if err != nil {
 		return id, err
 	}
-	created, getErr := t.Engine.GetNode(id)
+	created, getErr := storage.GetStoredNode(t.Engine, id)
 	if getErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return id, nil
@@ -376,7 +376,7 @@ func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
 	if !initialized {
 		return t.Engine.UpdateNode(node)
 	}
-	existing, getErr := t.Engine.GetNode(node.ID)
+	existing, getErr := storage.GetStoredNode(t.Engine, node.ID)
 	if getErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return t.Engine.UpdateNode(node)
@@ -389,7 +389,7 @@ func (t *sizeTrackingEngine) UpdateNode(node *storage.Node) error {
 	if err := t.Engine.UpdateNode(node); err != nil {
 		return err
 	}
-	updated, updatedErr := t.Engine.GetNode(node.ID)
+	updated, updatedErr := storage.GetStoredNode(t.Engine, node.ID)
 	if updatedErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return nil
@@ -416,7 +416,7 @@ func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
 	if !initialized {
 		return t.Engine.DeleteNode(id)
 	}
-	existing, getErr := t.Engine.GetNode(id)
+	existing, getErr := storage.GetStoredNode(t.Engine, id)
 	if getErr != nil {
 		// Nothing to track if the node doesn't exist.
 		return t.Engine.DeleteNode(id)
@@ -453,7 +453,7 @@ func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
 	if err := t.Engine.CreateEdge(edge); err != nil {
 		return err
 	}
-	created, getErr := t.Engine.GetEdge(edge.ID)
+	created, getErr := storage.GetStoredEdge(t.Engine, edge.ID)
 	if getErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return nil
@@ -480,7 +480,7 @@ func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
 	if !initialized {
 		return t.Engine.UpdateEdge(edge)
 	}
-	existing, getErr := t.Engine.GetEdge(edge.ID)
+	existing, getErr := storage.GetStoredEdge(t.Engine, edge.ID)
 	if getErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return t.Engine.UpdateEdge(edge)
@@ -493,7 +493,7 @@ func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
 	if err := t.Engine.UpdateEdge(edge); err != nil {
 		return err
 	}
-	updated, updatedErr := t.Engine.GetEdge(edge.ID)
+	updated, updatedErr := storage.GetStoredEdge(t.Engine, edge.ID)
 	if updatedErr != nil {
 		t.manager.markStorageSizeDirty(t.dbName)
 		return nil
@@ -520,7 +520,7 @@ func (t *sizeTrackingEngine) DeleteEdge(id storage.EdgeID) error {
 	if !initialized {
 		return t.Engine.DeleteEdge(id)
 	}
-	existing, getErr := t.Engine.GetEdge(id)
+	existing, getErr := storage.GetStoredEdge(t.Engine, id)
 	if getErr != nil {
 		return t.Engine.DeleteEdge(id)
 	}
@@ -595,12 +595,15 @@ func (t *sizeTrackingEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 	return nil
 }
 
+// connectedEdgeBytes sums the sizes of the relationships stored at id, those
+// the visibility layer hides from reads included: deleting the node removes
+// them all.
 func (t *sizeTrackingEngine) connectedEdgeBytes(id storage.NodeID) (int64, error) {
-	outgoing, err := t.Engine.GetOutgoingEdges(id)
+	outgoing, err := storage.GetStoredOutgoingEdges(t.Engine, id)
 	if err != nil {
 		return 0, localizedError(localization.MultidbStorageGetOutgoingEdgesFailed(err), err)
 	}
-	incoming, err := t.Engine.GetIncomingEdges(id)
+	incoming, err := storage.GetStoredIncomingEdges(t.Engine, id)
 	if err != nil {
 		return 0, localizedError(localization.MultidbStorageGetIncomingEdgesFailed(err), err)
 	}

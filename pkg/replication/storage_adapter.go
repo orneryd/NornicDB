@@ -509,7 +509,9 @@ func (a *StorageAdapter) applySetProperty(data []byte) error {
 	}
 
 	// Get node, update property, save
-	node, err := a.engine.GetNode(storage.NodeID(req.NodeID))
+	// A replicated write reaches the node whether or not the visibility
+	// layer hides it from reads.
+	node, err := storage.GetStoredNode(a.engine, storage.NodeID(req.NodeID))
 	if err != nil {
 		return err
 	}
@@ -864,14 +866,21 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
-	// Get all nodes and edges
-	nodes, err := a.engine.AllNodes()
-	if err != nil {
+	// Every stored node and edge: the ones the visibility layer hides from
+	// reads are replicated data too.
+	var nodes []*storage.Node
+	if err := storage.StreamStoredNodes(context.Background(), a.engine, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
+		nodes = append(nodes, node)
+		return nil
+	}); err != nil {
 		return localizedError(localization.ReplicationStorageGetAllNodesFailed(err), err)
 	}
 
-	edges, err := a.engine.AllEdges()
-	if err != nil {
+	var edges []*storage.Edge
+	if err := storage.StreamStoredEdgesByType(context.Background(), a.engine, "", func(edge *storage.Edge) error {
+		edges = append(edges, edge)
+		return nil
+	}); err != nil {
 		return localizedError(localization.ReplicationStorageGetAllEdgesFailed(err), err)
 	}
 

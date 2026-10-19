@@ -733,11 +733,13 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 		return "", ErrAlreadyExists
 	}
 
-	// Check if exists in storage (read from Badger)
+	// Check if exists in storage (read from Badger). Through the visibility
+	// layer, as before: whether creating an entity over a hidden one with
+	// its ID fails or replaces it is open (validateNewEdgeLocked).
 	skipExistenceCheck := tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID))
 	if !skipExistenceCheck {
 		if _, deleted := tx.deletedNodes[node.ID]; !deleted {
-			_, err := tx.getCommittedNodeLocked(node.ID)
+			_, err := tx.getCommittedNodeReadLocked(node.ID, true, visibleRead)
 			if err == nil {
 				return "", ErrAlreadyExists
 			}
@@ -1045,30 +1047,6 @@ func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID
 	return -1
 }
 
-// scanCommittedKeysWithPrefixLocked calls visit with every committed key
-// under prefix, as of the transaction's snapshot. The transaction's own
-// writes are buffered (pendingWrites / pendingDeletes) and reach badgerTx only
-// at commit, so the snapshot view reads the same keys as an iterator over
-// badgerTx; but a badgerTx iterator also merges badgerTx's pending writes
-// (MVCC history archives written during the transaction), which Badger
-// sorts every time an iterator opens. Deleting N nodes in one transaction
-// opened 2-3 iterators per node over up to N such writes: quadratic (#703).
-// The key passed to visit is only valid during the call.
-func (tx *BadgerTransaction) scanCommittedKeysWithPrefixLocked(prefix []byte, visit func(key []byte) error) error {
-	return tx.withSnapshotViewLocked(func(view *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		it := view.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			if err := visit(it.Item().Key()); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 // deleteNodeBuffered deletes a node and all its edges/embeddings, buffering all writes.
 // This is the buffering version of BadgerEngine.deleteNodeInTxn.
 func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (edgesDeleted int64, deletedEdgeIDs []EdgeID, err error) {
@@ -1123,38 +1101,19 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 	}
 	tx.bufferAdjustNodeLabelCounts(tx.namespace, deletedNode.Labels, nil)
 
-	// Delete outgoing edges (and track count). Lookup-only prefix — a
-	// missing numID means no outgoing edges were ever indexed.
-	if outPrefix := tx.engine.outgoingIndexPrefixString(nodeID); outPrefix != nil {
-		outCount, outIDs, err := tx.deleteEdgesWithPrefixBuffered(outPrefix, nodeID, deletedNode.Labels)
-		if err != nil {
-			return 0, nil, err
-		}
-		edgesDeleted += outCount
-		deletedEdgeIDs = append(deletedEdgeIDs, outIDs...)
-	}
-
-	// Delete incoming edges (and track count).
-	if inPrefix := tx.engine.incomingIndexPrefixString(nodeID); inPrefix != nil {
-		inCount, inIDs, err := tx.deleteEdgesWithPrefixBuffered(inPrefix, nodeID, deletedNode.Labels)
-		if err != nil {
-			return 0, nil, err
-		}
-		edgesDeleted += inCount
-		deletedEdgeIDs = append(deletedEdgeIDs, inIDs...)
-	}
-
-	// Edges staged (created) by this transaction are invisible to the
-	// committed-adjacency scans above. A relationship created earlier in the
-	// same transaction would otherwise survive its endpoint's deletion and
-	// commit validation would then reject the whole transaction with
-	// "invalid edge: start or end node not found" (#741).
-	pendingCount, pendingIDs, err := tx.deletePendingEdgesIncidentToBuffered(nodeID, deletedNode.Labels)
+	// Delete every relationship that connects the node (and track count),
+	// the hidden ones included (incidentEdgesLocked).
+	incident, err := tx.incidentEdgesLocked(nodeID)
 	if err != nil {
 		return 0, nil, err
 	}
-	edgesDeleted += pendingCount
-	deletedEdgeIDs = append(deletedEdgeIDs, pendingIDs...)
+	for _, edge := range incident {
+		if err := tx.bufferRemoveEdgeBookkeepingBuffered(edge, nodeID, deletedNode.Labels); err != nil {
+			return 0, nil, err
+		}
+		edgesDeleted++
+		deletedEdgeIDs = append(deletedEdgeIDs, edge.ID)
+	}
 
 	// Buffer pending embeddings index deletion
 	tx.bufferDelete(pendingEmbedKey(nodeID))
@@ -1166,38 +1125,126 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 	return edgesDeleted, deletedEdgeIDs, nil
 }
 
-// deletePendingEdgesIncidentToBuffered removes every edge this transaction has
-// staged (created) that is incident to the deleted node. The committed-
-// adjacency scans cannot see staged edges, so a relationship created earlier
-// in the same transaction would survive its endpoint's deletion and commit
-// validation would then reject the whole transaction with "invalid edge:
-// start or end node not found" (#741). The bookkeeping mirrors
-// deleteEdgesWithPrefixBuffered: index entries, counters, and pending state.
-func (tx *BadgerTransaction) deletePendingEdgesIncidentToBuffered(nodeID NodeID, deletedNodeLabels []string) (int64, []EdgeID, error) {
-	var deletedCount int64
-	var deletedIDs []EdgeID
-	for edgeID, edge := range tx.pendingEdges {
-		if edge.StartNode != nodeID && edge.EndNode != nodeID {
-			continue
-		}
-		if _, deleted := tx.deletedEdges[edgeID]; deleted {
-			continue
-		}
-		if err := tx.bufferRemoveEdgeBookkeepingBuffered(edge, nodeID, deletedNodeLabels); err != nil {
-			return 0, nil, err
-		}
-		deletedCount++
-		deletedIDs = append(deletedIDs, edgeID)
+// incidentEdgesLocked returns every relationship that connects nodeID as the
+// transaction sees storage, each once: its own pending relationships, the
+// write-behind buffer's acknowledged ones and the committed adjacency, less
+// those the transaction or an acknowledged buffered commit deleted.
+//
+// It is the transaction's one reader of a node's relationships for integrity
+// work: a node delete's cascade (deleteNodeBuffered), a non-DETACH delete's
+// commit check (resolveConnectedDeletesLocked), the positional counts a
+// relabel adjusts (incidentEdgeTypesTxLocked) and the DELETE checks above the
+// transaction (IncidentEdges). So it reads storage, not the visibility layer:
+// a relationship that on-demand suppression or knowledge-policy decay hides
+// from reads still connects its endpoints, and a delete that skipped it left
+// it dangling. Bodies come from the stored records, as the engine's own
+// cascade reads them (deleteEdgesWithPrefix).
+func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error) {
+	var edges []*Edge
+	listed := make(map[EdgeID]struct{})
+	include := func(edge *Edge) {
+		listed[edge.ID] = struct{}{}
+		edges = append(edges, edge)
 	}
-	return deletedCount, deletedIDs, nil
+	skip := func(edgeID EdgeID) bool {
+		if _, ok := listed[edgeID]; ok {
+			return true
+		}
+		// The transaction's deletes are buffered until commit, so a
+		// multi-node DETACH DELETE meets the same relationship from each
+		// endpoint.
+		if _, deleted := tx.deletedEdges[edgeID]; deleted {
+			return true
+		}
+		// An earlier transaction's acknowledged delete stays in the
+		// committed index until the flusher lands it.
+		return tx.engine.writeBehind != nil && tx.engine.writeBehind.EdgeDeleted(edgeID)
+	}
+
+	// Relationships this transaction created or rewrote: the committed index
+	// does not list the new ones (#741).
+	for edgeID, edge := range tx.pendingEdges {
+		if edge != nil && (edge.StartNode == nodeID || edge.EndNode == nodeID) && !skip(edgeID) {
+			include(edge)
+		}
+	}
+	// Acknowledged relationships the buffer has not flushed yet, read before
+	// the committed index so a flush between the two reads lists them there.
+	if wb := tx.engine.writeBehind; wb != nil {
+		for _, outgoing := range [...]bool{true, false} {
+			live, _, _ := wb.EdgeAdjacencyOverlay(nodeID, outgoing)
+			for _, edge := range live {
+				if !skip(edge.ID) {
+					include(copyEdge(edge))
+				}
+			}
+		}
+	}
+
+	committed := func(index, bodies *badger.Txn) error {
+		var edgeIDs []EdgeID
+		for _, prefix := range [...][]byte{tx.engine.outgoingIndexPrefixString(nodeID), tx.engine.incomingIndexPrefixString(nodeID)} {
+			// Lookup-only: a missing numID means no relationship was
+			// ever indexed there.
+			if prefix == nil {
+				continue
+			}
+			opts := badgerIteratorOptions()
+			opts.Prefix = prefix
+			it := index.NewIterator(opts)
+			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().Key())
+				if !ok {
+					continue
+				}
+				if edgeID, ok := tx.engine.idDict.lookupEdgeIDByNum(edgeNum); ok {
+					edgeIDs = append(edgeIDs, edgeID)
+				}
+			}
+			it.Close()
+		}
+		for _, edgeID := range edgeIDs {
+			if skip(edgeID) {
+				continue
+			}
+			edge, err := tx.engine.loadEdgeForAdjacencyTombstoneInTxn(bodies, edgeID)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			include(edge)
+		}
+		return nil
+	}
+	if tx.engine.writeBehind != nil {
+		// Read-committed, as every write-behind read is
+		// (getCommittedAdjacentEdgesLocked): the pinned snapshot predates
+		// flusher commits that landed after the transaction began, so it
+		// would list relationships a flushed delete already removed and miss
+		// ones a flush moved out of the buffer.
+		err := tx.engine.withView(func(view *badger.Txn) error {
+			return committed(view, view)
+		})
+		return edges, err
+	}
+	// The index is read through the snapshot view, not badgerTx: a badgerTx
+	// iterator also merges the transaction's MVCC history archives, which
+	// Badger sorts every time an iterator opens, and deleting N nodes opened
+	// iterators over up to N of them per node (#703). Bodies are read through
+	// badgerTx, so a peer's change to one conflicts with this transaction.
+	err := tx.withSnapshotViewLocked(func(view *badger.Txn) error {
+		return committed(view, tx.badgerTx)
+	})
+	return edges, err
 }
 
 // bufferRemoveEdgeBookkeepingBuffered buffers an edge's primary-key and index
 // deletions, marks it deleted, removes it from the pending set, and adjusts the
-// per-type and positional (label, type) counters. It is the single removal
-// bookkeeping path for both committed-adjacency deletions
-// (deleteEdgesWithPrefixBuffered) and staged-edge deletions
-// (deletePendingEdgesIncidentToBuffered, #741), so the two stay identical.
+// per-type and positional (label, type) counters, for each relationship a
+// node delete cascades (incidentEdgesLocked): committed, buffered or staged
+// (#741) alike.
 func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
 	tx.bufferDelete(edgeKey(edge.ID))
 	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
@@ -1235,95 +1282,6 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, del
 	}
 	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, -1)
 	return nil
-}
-
-// deleteEdgesWithPrefixBuffered deletes all edges with a given prefix, buffering writes.
-func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, deletedNodeID NodeID, deletedNodeLabels []string) (int64, []EdgeID, error) {
-	var edgeIDs []EdgeID
-	var captured map[EdgeID]*Edge
-	if tx.engine.writeBehind != nil {
-		var edges []*Edge
-		var err error
-		if len(prefix) > 0 && prefix[0] == prefixOutgoingIndex {
-			edges, err = tx.engine.GetOutgoingEdges(deletedNodeID)
-		} else {
-			edges, err = tx.engine.GetIncomingEdges(deletedNodeID)
-		}
-		if err != nil {
-			return 0, nil, err
-		}
-		captured = make(map[EdgeID]*Edge, len(edges))
-		for _, edge := range edges {
-			edgeIDs = append(edgeIDs, edge.ID)
-			captured[edge.ID] = edge
-		}
-	} else if err := tx.scanCommittedKeysWithPrefixLocked(prefix, func(key []byte) error {
-		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(key)
-		if !ok {
-			return nil
-		}
-		if edgeID, ok := tx.engine.idDict.lookupEdgeIDByNum(edgeNum); ok {
-			edgeIDs = append(edgeIDs, edgeID)
-		}
-		return nil
-	}); err != nil {
-		return 0, nil, err
-	}
-
-	var deletedCount int64
-	var deletedIDs []EdgeID
-	for _, edgeID := range edgeIDs {
-		// Buffered deletes are not visible through badgerTx until commit. A
-		// multi-node DETACH DELETE can therefore encounter the same relationship
-		// from each endpoint's adjacency index. Count and buffer each relationship
-		// once for the whole transaction.
-		if _, deleted := tx.deletedEdges[edgeID]; deleted {
-			continue
-		}
-
-		// Get edge to delete its indexes
-		edgeKey := edgeKey(edgeID)
-		var edge *Edge
-		if tx.engine.writeBehind != nil {
-			edge = captured[edgeID]
-		} else {
-			item, err := tx.badgerTx.Get(edgeKey)
-			if err == badger.ErrKeyNotFound {
-				continue
-			}
-			if err != nil {
-				return 0, nil, err
-			}
-
-			var edgeBytes []byte
-			if err := item.Value(func(val []byte) error {
-				edgeBytes = append([]byte{}, val...)
-				return nil
-			}); err != nil {
-				return 0, nil, err
-			}
-
-			edge, err = tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
-			if err != nil {
-				return 0, nil, err
-			}
-			edge.ID = edgeID
-		}
-
-		// The committed body is archived at commit (materializeMVCCCommit).
-
-		// Buffer edge and index deletions. Lookup-only: these num IDs
-		// must have existed at write time. The shared bookkeeping helper
-		// keeps this path identical to staged-edge deletion (#741).
-		if err := tx.bufferRemoveEdgeBookkeepingBuffered(edge, deletedNodeID, deletedNodeLabels); err != nil {
-			return 0, nil, err
-		}
-
-		deletedCount++
-		deletedIDs = append(deletedIDs, edgeID)
-	}
-
-	return deletedCount, deletedIDs, nil
 }
 
 // DeleteNode deletes a node from the transaction.
@@ -1410,6 +1368,29 @@ func (tx *BadgerTransaction) deleteNodeLocked(nodeID NodeID, oldNode *Node) erro
 	return nil
 }
 
+// IncidentEdges lists every relationship that connects nodeID as the
+// transaction sees storage, those the visibility layer hides included
+// (IncidentEdgeLister): the relationships a DETACH DELETE of the node
+// removes, and the ones that keep a non-DETACH DELETE from removing it.
+func (tx *BadgerTransaction) IncidentEdges(nodeID NodeID) ([]*Edge, error) {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return nil, err
+	}
+	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
+		return nil, err
+	}
+	edges, err := tx.incidentEdgesLocked(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	for i, edge := range edges {
+		edges[i] = copyEdge(edge)
+	}
+	return edges, nil
+}
+
 // DeleteConnectedNode deletes a node that relationships still connect, as a
 // non-DETACH DELETE does in Neo4j: the relationships stay, and the
 // transaction's commit fails (NodeStillConnectedError) unless they are
@@ -1473,20 +1454,14 @@ func (tx *BadgerTransaction) resolveConnectedDeletesLocked() error {
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		for _, direction := range [...]EdgeDirection{Outgoing, Incoming} {
-			committed, err := tx.getCommittedAdjacentEdgesLocked(id, direction)
-			if err != nil {
-				return err
-			}
-			remaining := tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
-				if direction == Outgoing {
-					return edge.StartNode == id
-				}
-				return edge.EndNode == id
-			})
-			if len(remaining) > 0 {
-				return &NodeStillConnectedError{NodeID: id, Namespace: tx.namespace}
-			}
+		// Every relationship counts, hidden ones too: the delete would
+		// otherwise remove them with the node (incidentEdgesLocked).
+		remaining, err := tx.incidentEdgesLocked(id)
+		if err != nil {
+			return err
+		}
+		if len(remaining) > 0 {
+			return &NodeStillConnectedError{NodeID: id, Namespace: tx.namespace}
 		}
 	}
 	for _, id := range ids {
@@ -1604,7 +1579,11 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted || (tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID))) {
 		return startLabels, endLabels, nil
 	}
-	_, err = tx.getCommittedEdgeLocked(edge.ID)
+	// Through the visibility layer, as before. A MERGEd relationship's ID
+	// derives from its endpoints and properties, so MERGE meets a hidden
+	// relationship with its ID here: whether that fails or replaces it is
+	// a knowledge-policy decision still open.
+	_, err = tx.getCommittedEdgeReadLocked(edge.ID, visibleRead)
 	if err == nil {
 		return nil, nil, ErrAlreadyExists
 	}
@@ -1947,7 +1926,7 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 		return copyNode(node), nil
 	}
 
-	return tx.getCommittedNodeLocked(nodeID)
+	return tx.getCommittedNodeReadLocked(nodeID, true, visibleRead)
 }
 
 // GetQueryNode implements QueryNodeReader inside the
@@ -1977,7 +1956,7 @@ func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
 	if node, exists := tx.pendingNodes[nodeID]; exists {
 		return copyNodeForCaller(node), nil
 	}
-	return tx.getCommittedNodeReadLocked(nodeID, false)
+	return tx.getCommittedNodeReadLocked(nodeID, false, visibleRead)
 }
 
 // GetNodeProjected implements ProjectedNodeReader inside the transaction: it
@@ -2152,7 +2131,7 @@ func (tx *BadgerTransaction) GetEdge(edgeID EdgeID) (*Edge, error) {
 		return copyEdge(edge), nil
 	}
 
-	return tx.getCommittedEdgeLocked(edgeID)
+	return tx.getCommittedEdgeReadLocked(edgeID, visibleRead)
 }
 
 // GetOutgoingEdges returns outgoing edges including pending transaction writes.
@@ -3269,14 +3248,20 @@ func (tx *BadgerTransaction) OperationCount() int {
 	return len(tx.operations) + len(tx.connectedDeletes)
 }
 
+// getCommittedNodeLocked reads a committed node for the transaction's own
+// work: a write's target, an endpoint, a constraint check, count
+// bookkeeping. It reads what storage holds, so a node the visibility layer
+// hides is found (storedRead). GetNode and GetQueryNode read the same way
+// through the visibility layer (getCommittedNodeReadLocked).
 func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error) {
-	return tx.getCommittedNodeReadLocked(nodeID, true)
+	return tx.getCommittedNodeReadLocked(nodeID, true, storedRead)
 }
 
-// getCommittedNodeReadLocked is getCommittedNodeLocked; with vectors false it
-// reads no separately stored embedding vector (GetQueryNode), and
-// a node already held in memory shares its vectors instead of copying them.
-func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors bool) (*Node, error) {
+// getCommittedNodeReadLocked reads a committed node through the visibility
+// layer when v applies it. With vectors false it reads no separately stored
+// embedding vector (GetQueryNode), and a node already held in memory shares
+// its vectors instead of copying them.
+func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors bool, v readVisibility) (*Node, error) {
 	copyRead := copyNode
 	if !vectors {
 		copyRead = copyNodeForCaller
@@ -3284,6 +3269,9 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
 	if tx.engine != nil && tx.engine.writeBehind != nil {
+		if v == storedRead {
+			return tx.engine.getNode(nodeID, storedRead)
+		}
 		if vectors {
 			return tx.engine.GetNode(nodeID)
 		}
@@ -3310,7 +3298,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
 	}
-	node, err := tx.engine.getNodeVisibleAtWithView(nodeID, tx.readTS, vectors, tx.withSnapshotViewLocked)
+	node, err := tx.engine.getNodeAtWithView(nodeID, tx.readTS, vectors, v, tx.withSnapshotViewLocked)
 	if err == ErrNotVisibleAtSnapshot {
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
@@ -3321,7 +3309,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 			// snapshot pinned before the flush can miss a committed node.
 			// The overlay covers still-buffered writes; a fresh
 			// latest-committed read covers the flush window.
-			if fresh, freshErr := tx.engine.GetNode(nodeID); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNode(nodeID, v); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -3344,7 +3332,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 			// The pinned snapshot may predate the flush of a node
 			// committed through the buffer (head and record both
 			// absent at pin time). A fresh read resolves it.
-			if fresh, freshErr := tx.engine.GetNode(nodeID); freshErr == nil {
+			if fresh, freshErr := tx.engine.getNode(nodeID, v); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -3406,11 +3394,22 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*No
 	return tx.engine.decodeNode(namespaceForNodeID(nodeID), nodeBytes)
 }
 
+// getCommittedEdgeLocked reads a committed relationship for the
+// transaction's own work: a write's target, a constraint check, count
+// bookkeeping. It reads what storage holds, so a relationship the visibility
+// layer hides is found (storedRead). GetEdge reads the same way through the
+// visibility layer (getCommittedEdgeReadLocked).
 func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error) {
+	return tx.getCommittedEdgeReadLocked(edgeID, storedRead)
+}
+
+// getCommittedEdgeReadLocked reads a committed relationship through the
+// visibility layer when v applies it.
+func (tx *BadgerTransaction) getCommittedEdgeReadLocked(edgeID EdgeID, v readVisibility) (*Edge, error) {
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
 	if tx.engine != nil && tx.engine.writeBehind != nil {
-		return tx.engine.GetEdge(edgeID)
+		return tx.engine.getEdge(edgeID, v)
 	}
 	if tx.readTS.IsZero() {
 		key := edgeKey(edgeID)
@@ -3430,7 +3429,7 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 		}
 		return tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
 	}
-	edge, err := tx.engine.getEdgeVisibleAtWithView(edgeID, tx.readTS, tx.withSnapshotViewLocked)
+	edge, err := tx.engine.getEdgeAtWithView(edgeID, tx.readTS, v, tx.withSnapshotViewLocked)
 	if err == ErrNotVisibleAtSnapshot {
 		// SI: edge head exists but isn't visible at our snapshot.
 		// Surface as ErrNotFound so callers can't observe peer
@@ -3440,7 +3439,7 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 			// head appears only when the flusher lands it, so a snapshot
 			// pinned before the flush can miss a committed edge. A fresh
 			// latest-committed read covers the flush window.
-			if fresh, freshErr := tx.engine.GetEdge(edgeID); freshErr == nil {
+			if fresh, freshErr := tx.engine.getEdge(edgeID, v); freshErr == nil {
 				return fresh, nil
 			}
 		}
@@ -3449,7 +3448,7 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 	if err == ErrNotFound && tx.engine.writeBehind != nil {
 		// The pinned snapshot may predate the flush of an edge committed
 		// through the buffer (head and record both absent at pin time).
-		if fresh, freshErr := tx.engine.GetEdge(edgeID); freshErr == nil {
+		if fresh, freshErr := tx.engine.getEdge(edgeID, v); freshErr == nil {
 			return fresh, nil
 		}
 	}
@@ -3492,14 +3491,14 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	if tx.readTS.IsZero() {
 		return tx.getCommittedEdgeLocked(edgeID)
 	}
-	edge, err := tx.engine.getEdgeVisibleAtWithView(edgeID, tx.readTS, tx.withSnapshotViewLocked)
+	edge, err := tx.engine.getEdgeAtWithView(edgeID, tx.readTS, storedRead, tx.withSnapshotViewLocked)
 	// A peer-created edge has no head at the pinned physical snapshot.
 	// Classify it using latest state just like a logically newer edge; never
 	// replace an existing snapshot body with that latest body.
 	if !errors.Is(err, ErrNotVisibleAtSnapshot) && !errors.Is(err, ErrNotFound) {
 		return edge, err
 	}
-	_, latestErr := tx.engine.GetEdgeLatestVisible(edgeID)
+	_, latestErr := tx.engine.getEdgeLatest(edgeID, storedRead)
 	switch {
 	case latestErr == nil:
 		// Live at latest-committed state: a write-write conflict, not a
@@ -3547,7 +3546,7 @@ func (tx *BadgerTransaction) labelScanScopeLocked() string {
 // rewrites are left out; the checks compare their pending versions
 // separately.
 func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*Node, error) {
-	nodes, err := tx.engine.GetNodesByLabel(label)
+	nodes, err := tx.engine.GetStoredNodesByLabel(label)
 	if err != nil {
 		return nil, err
 	}
@@ -3589,10 +3588,11 @@ func (tx *BadgerTransaction) nodeExists(nodeID NodeID) bool {
 	return visible
 }
 
-// visibleNodeLabelsLocked reports whether a node is visible to the
-// transaction (pending, or committed and visible at its snapshot, and not
-// deleted by it) and returns its labels, from the one read that decides it.
-// A failed read counts as not visible.
+// visibleNodeLabelsLocked reports whether a node exists for the transaction
+// (pending, or committed and visible at its snapshot, and not deleted by it)
+// and returns its labels, from the one read that decides it. The committed
+// read is a stored read: a node the visibility layer hides from user reads
+// is still a relationship's endpoint. A failed read counts as not visible.
 func (tx *BadgerTransaction) visibleNodeLabelsLocked(nodeID NodeID) ([]string, bool) {
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return nil, false
@@ -3843,7 +3843,7 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 		}
 		head, err := tx.endpointHead(nodeID)
 		if err == ErrNotFound {
-			if _, nodeErr := tx.engine.GetNode(nodeID); nodeErr == nil {
+			if _, nodeErr := tx.engine.GetStoredNode(nodeID); nodeErr == nil {
 				continue
 			} else if nodeErr == ErrNotFound {
 				return ErrInvalidEdge
@@ -4779,7 +4779,7 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 			if id == edge.ID || tx.committedEdgeSupersededLocked(id) {
 				continue
 			}
-			existing, err := tx.engine.GetEdge(id)
+			existing, err := tx.engine.GetStoredEdge(id)
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -4800,7 +4800,7 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 	if hook := getUniqueConstraintScanHook(); hook != nil {
 		hook()
 	}
-	existingEdges, err := tx.engine.GetEdgesByType(edge.Type)
+	existingEdges, err := tx.engine.GetStoredEdgesByType(edge.Type)
 	if err != nil {
 		return err
 	}
@@ -4875,7 +4875,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 	}
 
 	// Check against committed edges (filtered by namespace)
-	existingEdges, err := tx.engine.GetEdgesByType(edge.Type)
+	existingEdges, err := tx.engine.GetStoredEdgesByType(edge.Type)
 	if err != nil {
 		return err
 	}
@@ -4941,9 +4941,9 @@ func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, name
 	var committedEdges []*Edge
 	var err error
 	if c.Direction == "OUTGOING" {
-		committedEdges, err = tx.engine.GetOutgoingEdges(anchorNode)
+		committedEdges, err = tx.engine.GetStoredOutgoingEdges(anchorNode)
 	} else {
-		committedEdges, err = tx.engine.GetIncomingEdges(anchorNode)
+		committedEdges, err = tx.engine.GetStoredIncomingEdges(anchorNode)
 	}
 	if err != nil {
 		return err
@@ -5055,9 +5055,9 @@ func (tx *BadgerTransaction) validatePolicyOnNodeLabelChange(node *Node, oldNode
 		var edges []*Edge
 		var err error
 		if isOutgoing {
-			edges, err = tx.engine.GetOutgoingEdges(node.ID)
+			edges, err = tx.engine.GetStoredOutgoingEdges(node.ID)
 		} else {
-			edges, err = tx.engine.GetIncomingEdges(node.ID)
+			edges, err = tx.engine.GetStoredIncomingEdges(node.ID)
 		}
 		if err != nil {
 			return err
