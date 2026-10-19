@@ -73,8 +73,9 @@ type ProcedureSpec struct {
 	// handler resolves arguments normally; actual inner writes promote a
 	// Fabric participant at the shared execution boundary.
 	ExecutesStatements bool
-	// OwnsTransactions commits independent batches. Its WRITE contract still
-	// admits a Fabric writer, but a caller's statement cannot absorb its batches.
+	// OwnsTransactions owns autocommit batch boundaries. Native explicit
+	// transactions retain shipped folding; Fabric-managed scopes reject it
+	// before invocation because their rollback cannot undo committed batches.
 	OwnsTransactions bool
 }
 
