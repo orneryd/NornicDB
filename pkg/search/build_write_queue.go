@@ -1,6 +1,7 @@
 package search
 
 import (
+	"errors"
 	"math"
 	"reflect"
 	"runtime/debug"
@@ -54,6 +55,10 @@ import (
 //
 // A service with an index memory budget keeps waiting for buildMu, so a write
 // still returns the budget's real answer.
+//
+// An operational failure while installing an acknowledged write is returned
+// by BuildIndexes, including its final drain. Other accepted writes are still
+// installed in order, and the failed build does not publish readiness.
 
 // deferredIndexWrite is one operation prepared for the build sequence.
 type deferredIndexWrite struct {
@@ -139,33 +144,35 @@ func (s *Service) startBuildWrites() {
 // closes it. A build that another one waits for leaves the rest to it. Caller
 // owns buildMu and releases it next, so a write that finds the queue closed
 // waits only for that release.
-func (s *Service) endBuildWrites() {
+func (s *Service) endBuildWrites() error {
 	q := &s.buildWrites
 	q.mu.Lock()
 	q.owners--
 	if q.owners > 0 {
 		q.mu.Unlock()
-		return
+		return nil
 	}
 	q.open.Store(false)
 	q.deferring.Store(false)
 	writes := q.takeLocked(len(q.writes))
 	q.flagsQueued = false
 	q.mu.Unlock()
-	if s.applyBuildWrites(writes) && !s.buildInProgress.Load() {
+	changed, err := s.applyBuildWrites(writes)
+	if changed && err == nil && !s.buildInProgress.Load() {
 		s.schedulePersist()
 	}
+	return err
 }
 
 // completeBuildPopulation records that the build's baseline is installed and
 // installs every queued operation, administrative ones included, in order.
 // Caller is the build, before it saves the base indexes.
-func (s *Service) completeBuildPopulation() {
+func (s *Service) completeBuildPopulation() error {
 	q := &s.buildWrites
 	q.mu.Lock()
 	q.populated = true
 	q.mu.Unlock()
-	s.drainBuildWrites()
+	return s.drainBuildWrites()
 }
 
 // queueBuildWrite prepares write for the build that owns or awaits buildMu
@@ -450,10 +457,10 @@ func (s *Service) buildDefersWrites() bool {
 // baseline is installed it installs nothing; an atEnd operation, and
 // everything after it, waits for endBuildWrites. Caller owns buildMu (the
 // build) and holds no index lock.
-func (s *Service) drainBuildWrites() {
+func (s *Service) drainBuildWrites() error {
 	q := &s.buildWrites
 	if !q.open.Load() {
-		return
+		return nil
 	}
 	q.mu.Lock()
 	n := len(q.writes)
@@ -468,7 +475,8 @@ func (s *Service) drainBuildWrites() {
 	}
 	writes := q.takeLocked(n)
 	q.mu.Unlock()
-	s.applyBuildWrites(writes)
+	_, err := s.applyBuildWrites(writes)
+	return err
 }
 
 // takeLocked removes and returns the first n queued operations. Caller holds
@@ -488,7 +496,7 @@ func (q *buildWriteQueue) takeLocked(n int) []deferredIndexWrite {
 // applyBuildWrites installs operations in arrival order through the same
 // bodies the live entry points run. A write its valid hook reports superseded
 // is skipped. Caller owns buildMu.
-func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
+func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, resultErr error) {
 	for _, write := range writes {
 		if write.valid != nil && !write.valid() {
 			continue
@@ -512,10 +520,10 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) bool {
 			}
 		}
 		if err != nil {
-			s.logPrintf("⚠️ Search: queued index write failed: %v", err)
+			resultErr = errors.Join(resultErr, write.replayError(err))
 		}
 	}
-	return len(writes) > 0
+	return len(writes) > 0, resultErr
 }
 
 // copyQueuedNode makes a queued node independent of its caller, who may reuse
