@@ -1407,6 +1407,7 @@ ifeq ($(HOST_OS),darwin)
 	@if [ -f "macos/build/NornicDB.app/Contents/Resources/NornicDB.icns" ]; then \
 		echo '<key>CFBundleIconFile</key><string>NornicDB</string>' >> macos/build/NornicDB.app/Contents/Info.plist; \
 	fi
+	@echo '<key>LSMultipleInstancesProhibited</key><true/>' >> macos/build/NornicDB.app/Contents/Info.plist
 	@echo '<key>LSUIElement</key><true/>' >> macos/build/NornicDB.app/Contents/Info.plist
 	@echo '<key>NSHighResolutionCapable</key><true/>' >> macos/build/NornicDB.app/Contents/Info.plist
 	@echo '</dict></plist>' >> macos/build/NornicDB.app/Contents/Info.plist
