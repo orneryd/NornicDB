@@ -52,7 +52,7 @@ kernel void cosine_similarity_normalized(
     
     // Compute dot product for this embedding
     float dot = 0.0f;
-    uint base = gid * dimensions;
+    ulong base = (ulong)gid * dimensions;
     
     // Unrolled loop for common dimensions (1024)
     // Metal compiler will optimize this further
@@ -94,7 +94,7 @@ kernel void cosine_similarity_full(
     float normA = 0.0f;
     float normB = 0.0f;
     
-    uint base = gid * dimensions;
+    ulong base = (ulong)gid * dimensions;
     
     for (uint i = 0; i < dimensions; i++) {
         float a = embeddings[base + i];
@@ -279,7 +279,7 @@ kernel void normalize_vectors(
 {
     if (gid >= n) return;
     
-    uint base = gid * dimensions;
+    ulong base = (ulong)gid * dimensions;
     
     // Compute L2 norm
     float sum_sq = 0.0f;
@@ -315,7 +315,7 @@ kernel void batch_dot_product(
     if (gid >= n) return;
     
     float dot = 0.0f;
-    uint base = gid * dimensions;
+    ulong base = (ulong)gid * dimensions;
     
     // SIMD-friendly loop
     for (uint i = 0; i < dimensions; i++) {
@@ -341,7 +341,7 @@ kernel void euclidean_distance(
     if (gid >= n) return;
     
     float sum_sq = 0.0f;
-    uint base = gid * dimensions;
+    ulong base = (ulong)gid * dimensions;
     
     for (uint i = 0; i < dimensions; i++) {
         float diff = embeddings[base + i] - query[i];
@@ -393,12 +393,12 @@ kernel void hnsw_build_cosine_matrix(
     if (fid >= frontier_n || qid >= query_n) return;
 
     float dot = 0.0f;
-    uint fbase = fid * dimensions;
-    uint qbase = qid * dimensions;
+    ulong fbase = (ulong)fid * dimensions;
+    ulong qbase = (ulong)qid * dimensions;
     for (uint d = 0; d < dimensions; d++) {
         dot = fma(frontier[fbase + d], queries[qbase + d], dot);
     }
-    scores[qid * frontier_n + fid] = dot;
+    scores[(ulong)qid * frontier_n + fid] = dot;
 }
 
 // =============================================================================
@@ -424,7 +424,7 @@ kernel void hnsw_build_topk_rows(
         best_indices[i] = UINT_MAX;
     }
 
-    uint row = qid * frontier_n;
+    ulong row = (ulong)qid * frontier_n;
     for (uint fid = 0; fid < frontier_n; fid++) {
         float score = scores[row + fid];
         if (score > best_scores[k - 1] || (score == best_scores[k - 1] && fid < best_indices[k - 1])) {
@@ -439,7 +439,7 @@ kernel void hnsw_build_topk_rows(
         }
     }
 
-    uint out = qid * k;
+    ulong out = (ulong)qid * k;
     for (uint i = 0; i < k; i++) {
         topk_scores[out + i] = best_scores[i];
         topk_indices[out + i] = best_indices[i];

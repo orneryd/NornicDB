@@ -84,7 +84,7 @@ kernel void kmeans_compute_distances(
     
     // Compute squared euclidean distance
     float dist_sq = 0.0f;
-    uint emb_base = n * D;
+    ulong emb_base = (ulong)n * D;
     uint cent_base = k * D;
     
     // Unrolled loop for better performance (Metal compiler will optimize further)
@@ -110,7 +110,7 @@ kernel void kmeans_compute_distances(
     }
     
     // Store distance (row-major: distances[n * K + k])
-    distances[n * K + k] = dist_sq;
+    distances[(ulong)n * K + k] = dist_sq;
 }
 
 // =============================================================================
@@ -135,11 +135,11 @@ kernel void kmeans_assign_clusters(
     int old_cluster = old_assignments[gid];
     
     // Find minimum distance centroid
-    float min_dist = distances[gid * K];
+    float min_dist = distances[(ulong)gid * K];
     int nearest = 0;
     
     for (uint k = 1; k < K; k++) {
-        float d = distances[gid * K + k];
+        float d = distances[(ulong)gid * K + k];
         if (d < min_dist) {
             min_dist = d;
             nearest = int(k);
@@ -201,7 +201,7 @@ kernel void kmeans_accumulate_centroids(
     if (gid >= N) return;
     
     int cluster = assignments[gid];
-    uint emb_base = gid * D;
+    ulong emb_base = (ulong)gid * D;
     uint cent_base = cluster * D;
     
     // Atomically add this embedding to its cluster's centroid sum
@@ -339,7 +339,7 @@ kernel void kmeans_pp_distances(
     if (gid >= N) return;
     
     float min_dist_sq = INFINITY;
-    uint emb_base = gid * D;
+    ulong emb_base = (ulong)gid * D;
     
     // Find distance to nearest chosen centroid
     for (uint c = 0; c < num_chosen; c++) {
@@ -392,7 +392,7 @@ kernel void kmeans_update_affected_centroids(
     // Sum all embeddings assigned to this cluster
     for (uint n = 0; n < N; n++) {
         if (assignments[n] == int(cluster)) {
-            uint emb_base = n * D;
+            ulong emb_base = (ulong)n * D;
             for (uint d = 0; d < D; d++) {
                 sum[d] += embeddings[emb_base + d];
             }
