@@ -1020,12 +1020,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var err error
 			if clause.optional {
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text)
+					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text, result.Stats)
 					yielded = names
 					return rowsOut, names, handled, err
 				}, &ok)
 			} else {
-				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.text)
+				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.text, result.Stats)
 			}
 			if err != nil {
 				return nil, true, err
