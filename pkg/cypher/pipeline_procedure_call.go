@@ -126,11 +126,11 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			if err != nil {
 				return nil, nil, true, err
 			}
-			            // Count execution, not yielded rows or reuse of a shared result.
-            if result != nil && len(totals) > 0 {
-                addQueryStats(totals[0], result.Stats)
-            }
-            if !rowDependent && procedure.Spec.Mode == ProcedureModeRead {
+			// Count execution, not yielded rows or reuse of a shared result.
+			if result != nil && len(totals) > 0 {
+				addQueryStats(totals[0], result.Stats)
+			}
+			if !rowDependent && procedure.Spec.Mode == ProcedureModeRead {
 				shared = result
 			}
 		}
