@@ -5,7 +5,7 @@ import "github.com/dgraph-io/badger/v4"
 // readAdjacency captures both directions, including cached ID lists, at one
 // read point. Cache publication may overlap replay; the captured overlay still
 // owns every generation absent from the transaction.
-func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Edge, []*Edge, error) {
+func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, error) {
 	if nodeID == "" {
 		return nil, nil, ErrInvalidID
 	}
@@ -35,7 +35,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 	var outgoing, incoming []*Edge
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		var ok bool
-		outgoing, incoming, ok = b.cachedAdjacency(w, nodeID, wantOut, wantIn)
+		outgoing, incoming, ok = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v)
 		return ok, nil
 	}
 	err := b.withReadView(load, func(txn *badger.Txn) error {
@@ -51,7 +51,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 				}
 				if prefix != nil {
 					var err error
-					edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen)
+					edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
 					if err != nil {
 						return nil, err
 					}
@@ -72,7 +72,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 					if err != nil {
 						return nil, err
 					}
-					if edge != nil && !b.filterEdgeByDecay(edge, DecayScoringTime()) {
+					if edge != nil && !b.hidesEdge(v, edge, DecayScoringTime()) {
 						edges = append(edges, edge)
 					}
 				}
@@ -86,7 +86,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 				edges = visible
 			}
 			for _, edge := range d.live {
-				if !b.filterEdgeByDecay(edge, DecayScoringTime()) {
+				if !b.hidesEdge(v, edge, DecayScoringTime()) {
 					edges = append(edges, copyEdge(edge))
 				}
 			}
@@ -109,7 +109,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 
 // cachedAdjacency resolves a traversal as one captured operation. The edge cache
 // is locked once for both directions; only pending adjacency entries are copied.
-func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool) ([]*Edge, []*Edge, bool) {
+func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool) {
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
@@ -144,12 +144,12 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 			if edge == nil {
 				return nil, false
 			}
-			if !b.filterEdgeByDecay(edge, now) {
+			if !b.hidesEdge(v, edge, now) {
 				result = append(result, edge)
 			}
 		}
 		for _, edge := range live {
-			if !b.filterEdgeByDecay(edge, now) {
+			if !b.hidesEdge(v, edge, now) {
 				result = append(result, copyEdge(edge))
 			}
 		}
