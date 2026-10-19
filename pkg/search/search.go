@@ -843,6 +843,7 @@ type Service struct {
 	// buildWrites holds live writes handed to the build that owns or awaits
 	// buildMu (build_write_queue.go).
 	buildWrites buildWriteQueue
+	population  populationPersistence
 
 	// buildMu orders live node mutations and derived builds against full
 	// population/checkpoint restoration and vector-source clearing.
@@ -2215,6 +2216,7 @@ func (s *Service) setPersistenceEnabledNow(enabled bool) {
 	}
 	s.mu.Unlock()
 	s.indexMu.Unlock()
+	s.cleanupPopulationArtifacts()
 	s.persistRunMu.Unlock()
 }
 
@@ -2271,6 +2273,7 @@ func (s *Service) Close() error {
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
 	s.indexMu.Unlock()
+	s.cleanupPopulationArtifacts()
 	s.persistRunMu.Unlock()
 	s.publishClusterServing()
 	return nil
@@ -2281,7 +2284,7 @@ func (s *Service) Close() error {
 // so we only write after activity settles. No-ops during BuildIndexes (we save at end there).
 // Delay is NORNICDB_SEARCH_INDEX_PERSIST_DELAY_SEC (default 30).
 func (s *Service) schedulePersist() {
-	if !s.persistEnabled.Load() {
+	if !s.persistEnabled.Load() || !s.populationCanPersist() {
 		return
 	}
 	if s.buildInProgress.Load() {
@@ -2330,13 +2333,11 @@ func (s *Service) persistBaseIndexes() error {
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
-	if !s.persistEnabled.Load() {
+	if !s.persistEnabled.Load() || !s.populationMaySave() {
 		return nil
 	}
 	s.mu.RLock()
-	ftPath := s.fulltextIndexPath
-	vPath := s.vectorIndexPath
-	hnswPath := s.hnswIndexPath
+	ftPath, vPath, hnswPath := s.persistencePathsLocked()
 	vfs := s.vectorFileStore
 	s.mu.RUnlock()
 	if ftPath == "" && vPath == "" && hnswPath == "" {
@@ -2359,7 +2360,7 @@ func (s *Service) persistBaseIndexes() error {
 	if vPath != "" {
 		if vfs != nil {
 			s.persistVectorQueryMetadata(vfs)
-			if !s.buildInProgress.Load() {
+			if !s.buildInProgress.Load() && !s.population.active.Load() {
 				compacted, compErr := vfs.CompactIfNeeded()
 				if compErr != nil {
 					s.logPrintf("⚠️ Background persist: vector file store compaction failed for %s: %v", vPath, compErr)
@@ -2401,16 +2402,14 @@ func (s *Service) runPersistWithContext(ctx context.Context) {
 	}
 	s.persistRunMu.Lock()
 	defer s.persistRunMu.Unlock()
-	if !s.persistEnabled.Load() {
+	if !s.persistEnabled.Load() || !s.populationMaySave() {
 		return
 	}
 	if err := ctx.Err(); err != nil {
 		return
 	}
 	s.mu.RLock()
-	ftPath := s.fulltextIndexPath
-	vPath := s.vectorIndexPath
-	hnswPath := s.hnswIndexPath
+	ftPath, vPath, hnswPath := s.persistencePathsLocked()
 	vfs := s.vectorFileStore
 	s.mu.RUnlock()
 	if ftPath == "" && vPath == "" && hnswPath == "" {
@@ -3013,7 +3012,10 @@ func (s *Service) ensureVectorFileStore() {
 	if s.vectorFileStore != nil {
 		return
 	}
-	vfs, err := NewVectorFileStore(s.vectorIndexPath, dims)
+	s.mu.RLock()
+	_, vectorPath, _ := s.persistencePathsLocked()
+	s.mu.RUnlock()
+	vfs, err := NewVectorFileStore(vectorPath, dims)
 	if err != nil {
 		s.logPrintf("⚠️ VectorFileStore create failed (using in-memory index): %v", err)
 		return
@@ -3942,9 +3944,15 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
 	defer func() {
-		resultErr = s.endBuildWrites(resultErr)
+		if resultErr == nil {
+			resultErr = ctx.Err()
+		}
+		resultErr = s.endBuildWrites(ctx, resultErr)
 	}()
 	s.startBuildWrites()
+	if err := s.beginPopulationPersistence(); err != nil {
+		return err
+	}
 	snapshot, closeSnapshot, snapErr := s.openBuildSnapshot(ctx)
 	if snapErr != nil {
 		return snapErr
@@ -3964,6 +3972,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	s.hnswVectorsChanging.Store(true)
 	defer s.hnswVectorsChanging.Store(false)
 	s.resetANNForBuild()
+	s.resetIncompletePopulation()
 	s.indexChanged()
 	s.ready.Store(false)
 	s.buildInProgress.Store(true)
@@ -4073,8 +4082,14 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			s.logPrintf("📇 BuildIndexes: routing/k-means settings changed; forcing routing artifact rebuild")
 		}
 	}
+	if s.population.work.restart {
+		// An interrupted or failed source is never admitted by file count or
+		// settings compatibility. Reconstruct every source from storage.
+		forceFulltextRebuild, forceVectorRebuild = true, true
+		forceHNSWRebuild, forceRoutingRebuild = true, true
+	}
 
-	if fulltextPath != "" {
+	if fulltextPath != "" && !s.population.work.restart {
 		_ = s.fulltext().Load(fulltextPath)
 		if s.fulltext().Count() == 0 {
 			if info, statErr := security.RootedStat(fulltextPath); statErr == nil {
@@ -4084,7 +4099,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 	}
 	// Prefer file-backed vector store when .vec exists (low-RAM format); else legacy in-memory index.
-	if vectorPath != "" && s.vectorStorageMode != "memory" && s.vectorIndex != nil {
+	if vectorPath != "" && !s.population.work.restart && s.vectorStorageMode != "memory" && s.vectorIndex != nil {
 		if _, err := security.RootedStat(vectorPath + ".vec"); err == nil {
 			dims := s.vectorIndex.GetDimensions()
 			if dims <= 0 {
@@ -4301,6 +4316,12 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		s.logPrintf("📇 BuildIndexes: base indexes loaded; warmup will build HNSW (%s)", hnswWarmupReason)
 	}
 
+	if err := s.preparePopulationArtifacts(); err != nil {
+		return err
+	}
+	if w := s.population.work; w.prepared {
+		fulltextPath, vectorPath, hnswPath = w.working[0], w.working[1], w.working[2]
+	}
 	if skipIteration {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
 		// The indexes are restored: the population is complete.
@@ -4605,6 +4626,13 @@ func (s *Service) warmupDroppingFulltext(ctx context.Context, fulltextPath strin
 	if fulltextPath == "" {
 		s.warmupVectorPipeline(ctx, nil)
 		return nil
+	}
+	// A compatible, unchanged BM25 may still use the committed checkpoint;
+	// replacement saves use the private destination instead.
+	if w := s.population.work; w != nil && w.prepared {
+		if _, err := security.RootedStat(fulltextPath); os.IsNotExist(err) {
+			fulltextPath = w.canonical[0]
+		}
 	}
 	expectedFulltextCount := s.fulltext().Count()
 	s.fulltext().Clear()
