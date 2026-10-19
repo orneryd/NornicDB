@@ -19,7 +19,7 @@
 //		Model:      "bge-m3", // Resolves to /data/models/bge-m3.gguf
 //		Dimensions: 1024,
 //	}
-//	embedder, err := embed.NewLocalGGUF(config)
+//	embedder, err := embed.NewLocalGGUF(context.Background(), config)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
@@ -65,6 +65,9 @@ type LocalGGUFEmbedder struct {
 	closed        bool
 	stopWarmup    chan struct{}
 	warmupStopped chan struct{}
+	warmupStarted bool
+	closeOnce     sync.Once
+	closeErr      error
 
 	// Stats for monitoring
 	embedCount    atomic.Int64
@@ -105,7 +108,7 @@ func (e *LocalGGUFEmbedder) AttachMetrics(m *observability.EmbedMetrics) {
 //		Model:      "bge-m3",
 //		Dimensions: 1024,
 //	}
-//	embedder, err := embed.NewLocalGGUF(config)
+//	embedder, err := embed.NewLocalGGUF(context.Background(), config)
 //	if err != nil {
 //		// Model not found or failed to load
 //		log.Fatal(err)
@@ -114,7 +117,11 @@ func (e *LocalGGUFEmbedder) AttachMetrics(m *observability.EmbedMetrics) {
 //
 //	vec, _ := embedder.Embed(ctx, "semantic search")
 //	fmt.Printf("Dimensions: %d\n", len(vec)) // 1024
-func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
+//
+// The native model load itself cannot be interrupted, so ctx is checked before it
+// starts and after it returns: a model loaded after ctx ended is closed and
+// ctx's error returned.
+func NewLocalGGUF(ctx context.Context, config *Config) (*LocalGGUFEmbedder, error) {
 	// Resolve model path: model name → {modelsDir}/{name}.gguf
 	modelsDir := config.ModelsDir
 	if modelsDir == "" {
@@ -159,12 +166,20 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 		opts.Features.FlashAttn = config.FlashAttn
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	fmt.Printf("🧠 Loading local embedding model: %s\n", modelPath)
 	fmt.Printf("   GPU layers: %d (-1 = auto/all)\n", opts.GPULayers)
 
 	model, err := localllm.LoadModel(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load model %s: %w", modelPath, err)
+	}
+	if err := ctx.Err(); err != nil {
+		model.Close()
+		return nil, err
 	}
 
 	// Verify dimensions match if specified
@@ -184,49 +199,50 @@ func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
 		warmupStopped: make(chan struct{}),
 	}
 
-	// Start warmup goroutine to keep model in GPU memory
-	warmupInterval := config.WarmupInterval
-	if warmupInterval == 0 {
-		warmupInterval = 5 * time.Minute // Default: warmup every 5 minutes
-	}
-
-	if warmupInterval > 0 {
-		go embedder.warmupLoop(warmupInterval)
-		fmt.Printf("🔥 Model warmup enabled: every %v\n", warmupInterval)
-	}
+	embedder.startWarmup(config.WarmupInterval)
 
 	return embedder, nil
 }
 
-// warmupLoop periodically generates a dummy embedding to keep the model in GPU memory.
-// This prevents GPU memory eviction which would require reloading from disk.
-func (e *LocalGGUFEmbedder) warmupLoop(interval time.Duration) {
-	defer close(e.warmupStopped)
+// startWarmup owns launch, periodic work and completion of the model worker.
+// Called during construction, before the provider is published.
+func (e *LocalGGUFEmbedder) startWarmup(interval time.Duration) {
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+	if interval < 0 {
+		return
+	}
+	e.warmupStarted = true
+	go func() {
+		defer close(e.warmupStopped)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 
-	for {
-		select {
-		case <-e.stopWarmup:
-			return
-		case <-ticker.C:
-			// Check if we've had recent activity (no need to warmup if actively used)
-			lastEmbed := time.Unix(e.lastEmbedTime.Load(), 0)
-			if time.Since(lastEmbed) < interval/2 {
-				continue // Model was recently used, skip warmup
-			}
+		for {
+			select {
+			case <-e.stopWarmup:
+				return
+			case <-ticker.C:
+				// Check if we've had recent activity (no need to warmup if actively used)
+				lastEmbed := time.Unix(e.lastEmbedTime.Load(), 0)
+				if time.Since(lastEmbed) < interval/2 {
+					continue // Model was recently used, skip warmup
+				}
 
-			// Generate a dummy embedding to keep model warm
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_, err := e.embedWithRecovery(ctx, "warmup")
-			cancel()
+				// Generate a dummy embedding to keep model warm
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				_, err := e.embedWithRecovery(ctx, "warmup")
+				cancel()
 
-			if err != nil {
-				fmt.Printf("⚠️  Model warmup failed: %v\n", err)
+				if err != nil {
+					fmt.Printf("⚠️  Model warmup failed: %v\n", err)
+				}
 			}
 		}
-	}
+	}()
+	fmt.Printf("🔥 Model warmup enabled: every %v\n", interval)
 }
 
 // embedWithRecovery wraps the embed call with panic recovery.
@@ -454,31 +470,27 @@ func (e *LocalGGUFEmbedder) Stats() EmbedderStats {
 //
 // After Close is called, the embedder must not be used.
 func (e *LocalGGUFEmbedder) Close() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.closeOnce.Do(func() {
+		e.mu.Lock()
+		e.closed = true
+		started := e.warmupStarted
+		if e.stopWarmup != nil {
+			close(e.stopWarmup)
+		}
+		e.mu.Unlock()
 
-	if e.closed {
-		return nil
-	}
-	e.closed = true
-
-	// Stop warmup goroutine
-	close(e.stopWarmup)
-
-	// Wait for warmup to finish (with timeout)
-	select {
-	case <-e.warmupStopped:
-	case <-time.After(5 * time.Second):
-		fmt.Printf("⚠️  Warmup goroutine did not stop in time\n")
-	}
-
-	// Close the model
-	if e.model != nil {
-		fmt.Printf("🧠 Closing embedding model: %s\n", e.modelName)
-		fmt.Printf("   Total embeddings: %d\n", e.embedCount.Load())
-		fmt.Printf("   Total errors: %d\n", e.errorCount.Load())
-		fmt.Printf("   Total panics recovered: %d\n", e.panicCount.Load())
-		return e.model.Close()
-	}
-	return nil
+		// A negative interval never started a worker. A running worker must
+		// finish before its model is freed, without holding its read lock out.
+		if started {
+			<-e.warmupStopped
+		}
+		if e.model != nil {
+			fmt.Printf("🧠 Closing embedding model: %s\n", e.modelName)
+			fmt.Printf("   Total embeddings: %d\n", e.embedCount.Load())
+			fmt.Printf("   Total errors: %d\n", e.errorCount.Load())
+			fmt.Printf("   Total panics recovered: %d\n", e.panicCount.Load())
+			e.closeErr = e.model.Close()
+		}
+	})
+	return e.closeErr
 }

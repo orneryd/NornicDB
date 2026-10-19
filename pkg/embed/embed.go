@@ -959,7 +959,7 @@ func (e *OpenAIEmbedder) Backend() string {
 // Example:
 //
 //	config := embed.ResolveProviderConfig(&embed.Config{Provider: "orca", APIKey: apiKey})
-//	embedder, err := embed.NewEmbedder(config)
+//	embedder, err := embed.NewEmbedder(context.Background(), config)
 func ResolveProviderConfig(config *Config) *Config {
 	if config == nil {
 		return nil
@@ -1036,7 +1036,7 @@ func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfig
 //		config = embed.DefaultOllamaConfig()
 //	}
 //
-//	embedder, err := embed.NewEmbedder(config)
+//	embedder, err := embed.NewEmbedder(context.Background(), config)
 //	if err != nil {
 //		log.Fatal(err)
 //	}
@@ -1046,14 +1046,15 @@ func ResolveProviderConfigWithProvenance(config *Config, explicit ProviderConfig
 //
 // Returns an Embedder interface, or an error if the provider is unknown or
 // configuration is invalid (e.g., OpenAI without API key, local without model).
-func NewEmbedder(config *Config) (Embedder, error) {
+// Context cancellation prevents starting a native model load after shutdown.
+func NewEmbedder(ctx context.Context, config *Config) (Embedder, error) {
 	config = ResolveProviderConfig(config)
 	if config == nil {
 		return nil, fmt.Errorf("embedding config is required")
 	}
 	switch config.Provider {
 	case "local":
-		return NewLocalGGUF(config)
+		return NewLocalGGUF(ctx, config)
 	case "ollama":
 		return NewOllama(config), nil
 	case "openai":

@@ -238,7 +238,7 @@ func configureOllamaEmbedder(db *nornicdb.DB, provider, model, apiURL string, di
 	if apiURL != "" {
 		config.APIURL = apiURL
 	}
-	embedder, err := embed.NewEmbedder(config)
+	embedder, err := embed.NewEmbedder(context.Background(), config)
 	if err != nil {
 		return err
 	}

@@ -20,7 +20,9 @@ var errLocalLLMNotBuilt = errors.New("local GGUF embeddings not available: build
 // To enable local GGUF embedding support:
 //  1. Build llama.cpp: ./scripts/build-llama.sh
 //  2. Build with tag: go build -tags=localllm ./cmd/nornicdb
-func NewLocalGGUF(config *Config) (*LocalGGUFEmbedder, error) {
+//
+// NewLocalGGUF returns an error when localllm is not built in.
+func NewLocalGGUF(ctx context.Context, config *Config) (*LocalGGUFEmbedder, error) {
 	return nil, errLocalLLMNotBuilt
 }
 
