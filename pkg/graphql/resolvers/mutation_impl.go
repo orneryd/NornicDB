@@ -334,12 +334,13 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 		return nil, err
 	}
 
-	if err := r.authorizeEmbeddingWorker(ctx); err != nil {
-		return nil, err
-	}
 	regen := false
 	if regenerate != nil {
 		regen = *regenerate
+	}
+
+	if err := r.authorizeEmbeddingWorker(ctx, regen); err != nil {
+		return nil, err
 	}
 
 	// Clear and regenerate if requested

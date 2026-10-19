@@ -111,8 +111,9 @@ func BindRequestDatabaseRead(ctx context.Context, database string) (string, func
 		return database, refused
 	}
 	selection := database
-	if scope := RequestDatabaseScopeFromContext(ctx); scope != nil {
-		canonical, allowed := scope.Resolve(database)
+	scope := RequestDatabaseScopeFromContext(ctx)
+	if scope != nil {
+		canonical, allowed := scope.resolve(database)
 		if !allowed {
 			return database, refused
 		}
@@ -121,8 +122,18 @@ func BindRequestDatabaseRead(ctx context.Context, database string) (string, func
 	mode := RequestDatabaseAccessModeFromContext(ctx)
 	legacy, _ := ctx.Value(requestRBACKeyResolvedAccessResolver).(func(string) ResolvedAccess)
 	allows := RequestEntitlementResolverFromContext(ctx)
+	selected := normalizeDatabaseSelection(selection)
+	if selected == "" {
+		selected = database
+		if scope != nil && scope.defaultDatabase != "" {
+			selected = scope.defaultDatabase
+		}
+	}
 	return database, func() bool {
-		if mode != nil && (!mode.CanAccessDatabase(selection) || selection != database && !mode.CanAccessDatabase(database)) {
+		if mode != nil && (!mode.CanAccessDatabase(selected) || selected != database && !mode.CanAccessDatabase(database)) {
+			return false
+		}
+		if scope != nil && !scope.allowsSelection(selected, database) {
 			return false
 		}
 		if legacy != nil {
