@@ -112,6 +112,7 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 			}
 			require.NoError(t, err, "query=%s", tc.q)
 			stats := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile).seeks
+			require.Empty(t, ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile).unregistered, "runtime access must originate in the shared program")
 			require.NotEmpty(t, stats, "expected executed seek; rows=%v", actual.Rows)
 			for _, mode := range []string{"EXPLAIN", "PROFILE"} {
 				query := mode + " " + tc.q

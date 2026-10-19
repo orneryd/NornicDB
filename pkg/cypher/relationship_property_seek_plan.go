@@ -15,6 +15,20 @@ type relationshipSeekProfile struct {
 	fallbacks map[string]int64
 	templates map[string]*relationshipAccessSite
 	order     []string
+	unregistered map[string]int64 // testable invariant: runtime cannot invent a site
+}
+
+func recordUnregisteredRelationshipAccess(ctx context.Context, pattern, where string) {
+	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+	if profile == nil {
+		return
+	}
+	profile.mu.Lock()
+	defer profile.mu.Unlock()
+	if profile.unregistered == nil {
+		profile.unregistered = make(map[string]int64)
+	}
+	profile.unregistered[relationshipAccessID(pattern, where)]++
 }
 type relationshipSeekStats struct {
 	seek                      relationshipSeek
@@ -122,133 +136,15 @@ func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query str
 }
 
 func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, query string) []*relationshipAccessSite {
-	var sites []*relationshipAccessSite
-	seen := make(map[string]*relationshipAccessSite)
-	add := func(pattern, where string) {
-		if !patternHasRelationship(pattern) {
-			return
-		}
-		match := e.parseTraversalPattern(ctx, relationshipAccessPatternStructure(pattern))
-		access := e.relationshipAccessFor(ctx, pattern, match, where)
-		id := relationshipAccessID(pattern, where)
-		if site := seen[id]; site != nil {
-			site.occurrences++
-			return
-		}
-		site := &relationshipAccessSite{id: id, access: access, occurrences: 1}
-		seen[id] = site
-		sites = append(sites, site)
+	program := relationshipProgramFromContext(ctx, query)
+	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, program)
+	sites := make([]*relationshipAccessSite, 0, len(program.sites))
+	for _, template := range program.sites {
+		sites = append(sites, &relationshipAccessSite{
+			id: template.id, occurrences: template.occurrences,
+			access: e.relationshipAccessFor(ctx, template.pattern, template.where),
+		})
 	}
-	var statement func(string)
-	var expressions func(string)
-	properties := func(pattern string) {
-		for i := 0; i < len(pattern); i++ {
-			if pattern[i] == '\'' || pattern[i] == '"' || pattern[i] == '`' {
-				i = skipCypherQuotedText(pattern, i, pattern[i]) - 1
-				continue
-			}
-			if pattern[i] == '{' {
-				if end := findMatchingDelimiter(pattern, i, '{', '}'); end >= 0 {
-					expressions(pattern[i : end+1])
-					i = end
-				}
-			}
-		}
-	}
-	expressions = func(text string) {
-		for i := 0; i < len(text); i++ {
-			switch text[i] {
-			case '\'', '"', '`':
-				i = skipCypherQuotedText(text, i, text[i]) - 1
-				continue
-			}
-			if _, open, ok := subqueryExpressionKeywordAt(text, i); ok {
-				if end := findMatchingDelimiter(text, open, '{', '}'); end >= 0 {
-					body := strings.TrimSpace(text[open+1 : end])
-					if strings.HasPrefix(body, "(") {
-						body = "MATCH " + body
-					}
-					statement(body)
-					i = end
-					continue
-				}
-			}
-			if text[i] == '[' {
-				if end := findMatchingDelimiter(text, i, '[', ']'); end >= 0 {
-					if pattern, projection, ok := splitPatternComprehension(text[i : end+1]); ok {
-						split := relationshipAccessMatchWhere("MATCH " + pattern)
-						add(split.pattern, split.where)
-						properties(split.pattern)
-						expressions(split.where)
-						expressions(projection)
-						i = end
-						continue
-					}
-				}
-			}
-			if text[i] == '(' {
-				if end, ok := relationshipChainEnd(text, i, len(text)); ok {
-					add(text[i:end], "")
-					properties(text[i:end])
-					i = end - 1
-				}
-			}
-		}
-	}
-	statement = func(text string) {
-		// Scoped CALL bodies can retain their own USE inside a local Fabric
-		// fragment. Send that statement back to the existing graph planner,
-		// which strips USE and selects its storage; do not inherit the parent
-		// composite's schema or reconstruct the imported row.
-		if _, _, hasUse, err := parseUseClause(text, true); hasUse && err == nil && e.dbManager != nil {
-			sites = append(sites, e.relationshipFabricAccessSites(ctx, text)...)
-			return
-		}
-		if branches, _, _, ok := parseTopLevelUnionBranches(text); ok && len(branches) > 1 {
-			for _, branch := range branches {
-				statement(branch)
-			}
-			return
-		}
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(text)
-		if !ok {
-			expressions(text)
-			return
-		}
-		for _, clause := range clauses {
-			switch clause.kind {
-			case pipelineClauseCallSubquery:
-				body, _, _, _ := e.parseCallSubquery(clause.text)
-				statement(body)
-			case pipelineClauseForeach:
-				_, source, updates, err := parsePipelineForeach(clause.text)
-				if err == nil {
-					expressions(source)
-					for _, update := range updates {
-						statement(update.text)
-					}
-				}
-			case pipelineClauseCreate, pipelineClauseMerge:
-				properties(clause.text)
-			case pipelineClauseMatch, pipelineClauseOptionalMatch:
-				text := strings.TrimSpace(clause.text)
-				if clause.kind == pipelineClauseOptionalMatch {
-					text = strings.TrimSpace(text[len("OPTIONAL"):])
-				}
-				split := relationshipAccessMatchWhere(text)
-				for _, pattern := range splitTopLevelComma(split.pattern) {
-					add(pattern, split.where)
-				}
-				// Maps can contain graph expressions, but the pattern itself is
-				// already registered with its full predicate.
-				properties(split.pattern)
-				expressions(split.where)
-			default:
-				expressions(clause.text)
-			}
-		}
-	}
-	statement(query)
 	return sites
 }
 
