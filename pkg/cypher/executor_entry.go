@@ -98,6 +98,10 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	// Bind the caller's original text before normalization, parsing or routing
+	// can reject it. This final projection also covers malformed bare PASSWORD
+	// values that never reach an administration handler.
+	defer redactAdminCommandError(cypher, &retErr)
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement
