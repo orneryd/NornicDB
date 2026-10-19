@@ -15,6 +15,16 @@ NornicDB supports three replication modes to meet different availability and con
 | **Raft Cluster** | 3-5 | Strong | Production HA, consistent reads |
 | **Multi-Region** | 6+ | Configurable | Global distribution, disaster recovery |
 
+## Cluster upgrades
+
+Upgrade every node in a cluster before resuming replication with this version.
+Signed cluster messages always require a nonce and `SignatureV2`; old-format
+(v1 or nonce-less) messages are rejected. During a mixed-version window, peers
+reject messages and close connections: heartbeats, WAL replication, Raft consensus
+and forwarded writes across the version boundary fail. Plan a coordinated upgrade
+with a replication interruption. See [Securing Replication Traffic](../user-guides/clustering.md#securing-replication-traffic)
+for the operator-visible errors and replay-cache behavior.
+
 ## Architecture Diagram
 
 ```

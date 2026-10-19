@@ -16,9 +16,12 @@ func TestClusterTransport_HeartbeatRoundTrip(t *testing.T) {
 	defer cancel()
 
 	server := NewClusterTransport(&ClusterTransportConfig{
-		NodeID:   "server-1",
-		BindAddr: "127.0.0.1:0",
+		AuthSecret: []byte(replayTestSecret),
+		NodeID:     "server-1",
+		BindAddr:   "127.0.0.1:0",
 	})
+
+	defer server.Close()
 
 	var handled atomic.Bool
 	server.RegisterHandler(ClusterMsgHeartbeat, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
@@ -50,7 +53,8 @@ func TestClusterTransport_HeartbeatRoundTrip(t *testing.T) {
 		t.Fatalf("server did not start listening")
 	}
 
-	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-1"})
+	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-1", AuthSecret: []byte(replayTestSecret)})
+	defer client.Close()
 	conn, err := client.Connect(ctx, boundAddr)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -94,9 +98,12 @@ func TestClusterTransport_AllRPCSendersRoundTrip(t *testing.T) {
 	defer cancel()
 
 	server := NewClusterTransport(&ClusterTransportConfig{
-		NodeID:   "server-2",
-		BindAddr: "127.0.0.1:0",
+		AuthSecret: []byte(replayTestSecret),
+		NodeID:     "server-2",
+		BindAddr:   "127.0.0.1:0",
 	})
+
+	defer server.Close()
 
 	server.RegisterHandler(ClusterMsgWALBatch, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in []*WALEntry
@@ -158,7 +165,8 @@ func TestClusterTransport_AllRPCSendersRoundTrip(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-2"})
+	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-2", AuthSecret: []byte(replayTestSecret)})
+	defer client.Close()
 	conn, err := client.Connect(ctx, boundAddr)
 	require.NoError(t, err)
 	defer conn.Close()
