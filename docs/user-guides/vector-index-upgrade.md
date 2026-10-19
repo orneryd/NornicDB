@@ -4,6 +4,10 @@ The vector entry identity fix prevents one node's chunk, named or property
 vector from overwriting another node's vectors. It changes derived search
 indexes; the authoritative graph storage format is unchanged.
 
+These rollback steps apply to the release/v1.4.4 storage layout. Develop or
+canary builds can include independent storage migrations; this search fix
+does not establish downgrade safety for those builds.
+
 Before upgrading, stop the database cleanly and take the normal backup of its
 data directory. Start the fixed version with the same data directory. Search
 indexes written by 1.4.3 or an earlier 1.4.4 build are incompatible and are
