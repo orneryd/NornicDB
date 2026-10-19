@@ -70,28 +70,8 @@ func (e *StorageExecutor) ShareEmbedderFrom(parent *StorageExecutor) {
 
 type queryEmbeddingStatementKey struct{}
 
-// This replaces the existing statement-clock context, so capturing a provider
-// adds no context allocation. Nested scopes reuse the outer snapshot, including
-// its nil startup state. Embedding helpers never reload a published provider.
-type queryEmbeddingStatementContext struct {
-	context.Context
-	instant any // Box the statement clock once, rather than on each Value call.
-	binding *QueryEmbedderBinding
-	state   *queryEmbedderState
-}
-
-func (c *queryEmbeddingStatementContext) Value(key any) any {
-	switch key.(type) {
-	case temporalStatementTimeKey:
-		return c.instant
-	case queryEmbeddingStatementKey:
-		return c
-	}
-	return c.Context.Value(key)
-}
-
 func (e *StorageExecutor) queryEmbeddingState(ctx context.Context) *queryEmbedderState {
-	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*queryEmbeddingStatementContext); ok && statement.binding == e.queryEmbedder {
+	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok && statement.binding == e.queryEmbedder {
 		return statement.state
 	}
 	return e.currentQueryEmbedder()
