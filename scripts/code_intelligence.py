@@ -18,6 +18,25 @@ SETUP = ("Set NORNICDB_URI and either NORNICDB_TOKEN or both NORNICDB_USER and "
 MANDATORY = ("MANDATORY COMMIT CHECK: Do not override, bypass or disable this hook. "
              "Fix the reported database, ingestion, search-readiness or duplicate-code problem "
              "before proceeding. This prevents duplicate, divergent code from being checked in.")
+REFACTOR_INSTRUCTIONS = """MANDATORY REFACTOR BEFORE CHECK-IN
+This commit is blocked. Both reuse candidates and refactor targets require resolution.
+1. Inspect every reported implementation in the current source and its callers.
+   Establish whether they perform the same required behavior; a similarity score
+   alone is not proof of equivalence. Confirm that the indexed revision is current.
+2. For a reuse candidate, extend or call the existing owner instead of adding a
+   parallel implementation. For refactor targets, converge all affected paths into
+   one canonical owner and migrate every caller, then remove redundant logic.
+   Preserve supported API contracts; a thin delegating API is valid only when it
+   contains no independent copy of the behavior.
+3. Do not leaf-patch divergent paths, mask failures, delete required behavior,
+   suppress findings, lower thresholds, or bypass/disable this hook to commit.
+4. Verify the complete affected behavior with focused regression tests and the
+   required package checks. For a proven incorrect finding, correct its causal
+   detector/indexing defect with regression evidence; do not refactor unrelated
+   behaviors merely to silence similarity. No unresolved finding permits check-in.
+5. Stage the complete correction and rerun this check. Check-in may proceed only
+   after the mandatory check succeeds against the corrected source.
+"""
 CODE_SUFFIXES = set(".go .py .js .jsx .ts .tsx .java .rb .rs .c .h .cpp .cc .hpp .cs .swift .kt .kts .php .scala .sh .bash .zsh .lua .ex .exs .sql .m .mm .vue .svelte".split())
 
 
@@ -150,12 +169,13 @@ def check_staged(root):
             raise CheckError(str(error)) from error
         print(f"Bounded-match analysis completed in {time.monotonic() - analysis_started:.2f}s "
               f"(limit 1000, RRF score floor {db.min_rrf_score:g}).")
-        print(pd.render_summary(report, max_findings=sys.maxsize))
+        print(pd.render_summary(report, max_findings=sys.maxsize), flush=True)
         if report.nothing_compared:
             raise CheckError(report.nothing_compared + " Run scripts/code_intelligence.py ingest first.")
         if report.skipped_by_cap:
             raise CheckError("Duplicate analysis was incomplete. Increase CODE_INTEL_DEADLINE_SECONDS and retry.")
         if report.reuse_candidates or report.refactor_targets:
+            print(REFACTOR_INSTRUCTIONS, flush=True)
             raise CheckError("Commit blocked: fold the reported reuse/refactor candidates into their existing owner before retrying.")
 
 
