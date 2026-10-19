@@ -97,11 +97,14 @@ func TestEmbedWorkerProviderChangeDBLockOrder(t *testing.T) {
 	go func() { close(started); db.SetEmbedder(newMockEmbedder()); close(done) }()
 	<-started
 	select {
-	case <-done: t.Error("DB provider setter bypassed commit barrier")
-	case <-time.After(20*time.Millisecond):
+	case <-done:
+		t.Error("DB provider setter bypassed commit barrier")
+	case <-time.After(20 * time.Millisecond):
 	}
 	available := db.mu.TryRLock()
-	if available { db.mu.RUnlock() }
+	if available {
+		db.mu.RUnlock()
+	}
 	worker.providerWriteMu.RUnlock()
 	require.True(t, available, "DB lifecycle mutex must be available to blocked publication")
 	<-done
