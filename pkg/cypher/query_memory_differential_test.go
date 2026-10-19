@@ -70,7 +70,7 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					// differential isolates policy and transaction query views.
 					require.NoError(t, base.DeleteEdge("policy:internal-edge"))
 					if mode == "promotion" {
-						require.NoError(t, base.CreateEdge(&storage.Edge{ID: "policy:a-edge-2", StartNode: "policy:a", EndNode: "policy:b", Type: "REL"}))
+						require.NoError(t, base.CreateEdge(&storage.Edge{ID: "policy:a-edge-2", StartNode: "policy:a", EndNode: "policy:b", Type: "REL", Properties: map[string]interface{}{"marker": "visible"}}))
 					}
 					_, err := base.GetNode("policy:a")
 					require.NoError(t, err, "promotion control")
@@ -84,9 +84,9 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = base.Close() })
 					exec = NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "test"), 0, 0)
-					_, err = exec.Execute(ctx, "CREATE (:Fact {id:'a'})-[:REL]->(:Fact {id:'b'})", nil)
+					_, err = exec.Execute(ctx, "CREATE (:Fact {id:'a'})-[:REL {marker:'visible'}]->(:Fact {id:'b'})", nil)
 					require.NoError(t, err)
-					_, err = exec.Execute(ctx, "MATCH (a:Fact {id:'a'}), (b:Fact {id:'b'}) CREATE (a)-[:REL]->(b)", nil)
+					_, err = exec.Execute(ctx, "MATCH (a:Fact {id:'a'}), (b:Fact {id:'b'}) CREATE (a)-[:REL {marker:'visible'}]->(b)", nil)
 					require.NoError(t, err)
 				}
 				if transaction != "autocommit" {
@@ -94,7 +94,7 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
 					if transaction == "pending" {
-						_, err = exec.Execute(ctx, "CREATE (:Fact {id:'c',promote:true})-[:OTHER]->(:Fact {id:'d',promote:true})", nil)
+						_, err = exec.Execute(ctx, "CREATE (:Fact {id:'c',promote:true})-[:OTHER {marker:'visible'}]->(:Fact {id:'d',promote:true})", nil)
 						require.NoError(t, err)
 					}
 				}
