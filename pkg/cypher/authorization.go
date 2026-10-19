@@ -126,7 +126,7 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.
 func procedureNameAt(query string, offset int) (string, bool) {
- return lexicalProcedureNameAt(query,offset)
+	return lexicalProcedureNameAt(query, offset)
 }
 
 func isSchemaPermissionQuery(query string) bool {

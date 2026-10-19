@@ -244,8 +244,12 @@ func readFunctionSyntax(text string) *functionSyntax {
 						continue
 					}
 					parts, end := dottedNameParts(text, end, true)
-                    cursor := queryGapEnd(text,end)
-                    if cursor < len(text) && text[cursor] == '.' {index=end;previous=end-1;continue}
+					cursor := queryGapEnd(text, end)
+					if cursor < len(text) && text[cursor] == '.' {
+						index = end
+						previous = end - 1
+						continue
+					}
 					if strings.EqualFold(name, "CALL") {
 						call := functionCallSpan{name: called + parts, start: start, open: -1, next: cursor, procedure: true, syntax: syntax, group: -1}
 						if cursor < len(text) && text[cursor] == '(' {
@@ -446,24 +450,33 @@ func functionReadsVariable(text, name, variable string) bool {
 }
 
 func lexicalProcedureNameAt(text string, offset int) (string, bool) {
- start:=queryGapEnd(text,offset)
- for _,call:=range readFunctionSyntax(text).calls {
-  if call.start==start {return call.name,true}
- }
- // The registry's standalone-name protocol has no CALL keyword. Parse that
- // protocol through the same owner; whole-statement offsets never use it.
- if offset==0 {
-  for _,call:=range readFunctionSyntax("CALL "+text).calls {
-   if call.procedure && call.start==len("CALL ")+start {return call.name,true}
-  }
- }
- return "",false
+	start := queryGapEnd(text, offset)
+	for _, call := range readFunctionSyntax(text).calls {
+		if call.start == start {
+			return call.name, true
+		}
+	}
+	// The registry's standalone-name protocol has no CALL keyword. Parse that
+	// protocol through the same owner; whole-statement offsets never use it.
+	if offset == 0 {
+		for _, call := range readFunctionSyntax("CALL " + text).calls {
+			if call.procedure && call.start == len("CALL ")+start {
+				return call.name, true
+			}
+		}
+	}
+	return "", false
 }
 
 func containsProcedureCallNamed(text, expected string) bool {
- for _,call:=range readFunctionSyntax(text).calls {if call.procedure && strings.EqualFold(call.name,expected) {return true}}
- return false
+	for _, call := range readFunctionSyntax(text).calls {
+		if call.procedure && strings.EqualFold(call.name, expected) {
+			return true
+		}
+	}
+	return false
 }
+
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
 // at end, and where they end. Each name is read as the code that runs it
 // reads it: whitespace may stand around a dot only when spaced is set, for a
