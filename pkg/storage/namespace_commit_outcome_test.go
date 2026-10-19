@@ -39,7 +39,11 @@ func TestNamespaceDropJournalAdmissionIsCommitPoint(t *testing.T) {
 				require.NoError(t, old.Commit(), "failed preparation does not retire the old lifetime")
 			}
 			_, err = b.CreateNode(&Node{ID: "outcome_a:fresh"})
-			require.NoError(t, err)
+			if admitted {
+				require.ErrorIs(t, err, ErrConflict, "an admitted intrinsic failure keeps the target fenced")
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }

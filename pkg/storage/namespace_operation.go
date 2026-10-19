@@ -365,10 +365,15 @@ func (op *NamespaceDrop) chooseCatalogRevision() {
 // catalog readers need no lock owned by this operation.
 func (op *NamespaceDrop) finish(err error) error {
 	op.once.Do(func() {
+		// Intrinsic failure leaves this committed entry replayable. Resolve the
+		// caller's attempt, but keep physical and journal admission fenced until
+		// startup recovery completes it. Later callback/ACK errors do not make
+		// successful physical/catalog cleanup unsafe to publish.
+		intrinsicComplete := op.physicalDone && op.err == nil
 		if op.complete != nil {
 			err = errors.Join(err, op.complete())
 		}
-		if op.engine != nil {
+		if op.engine != nil && intrinsicComplete {
 			op.engine.writeBarrier.Lock()
 			op.engine.setNamespaceOperation(op.namespace, nil)
 			op.engine.writeBarrier.Unlock()
@@ -382,7 +387,7 @@ func (op *NamespaceDrop) finish(err error) error {
 		if op.resolved != nil {
 			op.resolved()
 		}
-		if op.releaseJournalAdmission != nil {
+		if op.releaseJournalAdmission != nil && intrinsicComplete {
 			op.releaseJournalAdmission()
 			op.releaseJournalAdmission = nil
 		}
