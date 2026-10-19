@@ -12,6 +12,13 @@ import (
 // operators to pipeline rows. It returns graph entities as bindings so every
 // later WITH, mutation, and RETURN clause continues through the same executor.
 func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	if source, supported, err := e.pipelineTraversalSource(ctx, pipelineRowsSource(rows), clause, hint); supported || err != nil {
+		if err != nil {
+			return nil, true, err
+		}
+		out, _ := materializePipelineSource(source)
+		return out, true, getExpressionFailure(ctx)
+	}
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
