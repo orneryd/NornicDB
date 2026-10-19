@@ -1395,9 +1395,8 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	if val, ok := row[expr]; ok {
 		return val, true
 	}
-	upperExpr := upperASCII(expr)
-	if strings.HasPrefix(upperExpr, "SIZE(") && strings.HasSuffix(expr, ")") {
-		value, ok := projectFromRow(row, strings.TrimSpace(expr[len("size("):len(expr)-1]))
+	if name, _, ok := parseFunctionCallWS(expr); ok && strings.EqualFold(name, "size") {
+		value, ok := projectFromRow(row, singleFunctionArgument(expr))
 		if !ok {
 			return nil, false
 		}

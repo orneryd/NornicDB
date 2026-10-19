@@ -1352,11 +1352,11 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		left := strings.TrimSpace(parts[0])
 		right := strings.TrimSpace(parts[1])
-		lowerLeft := lowerASCII(left)
-		if !strings.HasPrefix(lowerLeft, "elementid(") || !strings.HasSuffix(left, ")") {
+		functionName, _, _ := parseFunctionCallWS(left)
+		if !strings.EqualFold(functionName, "elementId") {
 			return rootSpec{}, false
 		}
-		whereVar := strings.TrimSpace(left[len("elementId(") : len(left)-1])
+		whereVar := singleFunctionArgument(left)
 		rowVar, rowField, ok := parseRowFieldRef(right)
 		if !ok || !strings.EqualFold(whereVar, varName) || !strings.EqualFold(rowVar, unwindVar) {
 			return rootSpec{}, false

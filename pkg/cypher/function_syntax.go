@@ -29,10 +29,12 @@ type functionCallSpan struct {
 	start, open int
 	syntax *functionSyntax
 	group int
+ next int
+ procedure bool
 }
 
 func (call functionCallSpan) close(text string) int {
-	if call.syntax == nil { return -1 }; return call.syntax.groups[call.group].close
+	if call.syntax == nil || call.group<0 { return -1 }; return call.syntax.groups[call.group].close
 }
 
 // functionCallAt reads a name at a known code position, including quoted and
@@ -52,7 +54,7 @@ func readFunctionIdentity(text string, at int) (functionCallSpan, bool) {
 	if open >= len(text) || text[open] != '(' {
 		return functionCallSpan{}, false
 	}
-	return functionCallSpan{name: name + parts, start: at, open: open}, true
+	return functionCallSpan{name: name + parts, start: at, open: open, next:open+1}, true
 }
 
 // nextFunctionCall is the lexical owner for static and runtime call readers.
@@ -67,9 +69,18 @@ func nextFunctionCallIn(text string, index int, descendSubqueries bool) (functio
 }
 
 func nextFunctionCallMode(text string, index int, descendSubqueries, syntaxNames bool) (functionCallSpan, bool) {
+ return nextCallSpanMode(text,index,descendSubqueries,false,syntaxNames)
+}
+
+func nextCallSpan(text string,index int,descendSubqueries,includeProcedures bool) (functionCallSpan,bool) {
+ return nextCallSpanMode(text,index,descendSubqueries,includeProcedures,false)
+}
+
+func nextCallSpanMode(text string, index int, descendSubqueries, includeProcedures, syntaxNames bool) (functionCallSpan, bool) {
  syntax:=readFunctionSyntax(text)
  for _,call:=range syntax.calls {
-  if call.start<index || precededByTypeAnnotation(text,call.start) || !syntaxNames && isNonFunctionSemanticKeyword(lowerASCII(call.name)) {continue}
+  if call.start<index || call.procedure && !includeProcedures {continue}
+  if !call.procedure && (precededByTypeAnnotation(text,call.start) || !syntaxNames && isNonFunctionSemanticKeyword(lowerASCII(call.name))) {continue}
   if !descendSubqueries {
    nested:=false
    for _,span:=range syntax.subqueries {if call.start>=span.start && call.start<span.end {nested=true;break}}
@@ -83,12 +94,12 @@ func nextFunctionCallMode(text string, index int, descendSubqueries, syntaxNames
 // code. Ordinary names use a backward token boundary plus functionCallAt;
 // quoted or qualified names fall back to the same whole-text lexical reader.
 func functionCallBeforeParen(text string, open int) (functionCallSpan, bool) {
- for _,call:=range readFunctionSyntax(text).calls {if call.open==open {return call,true}}
+ for _,call:=range readFunctionSyntax(text).calls {if call.open==open && !call.procedure {return call,true}}
  return functionCallSpan{},false
 }
 
 func functionCallAt(text string, at int) (functionCallSpan, bool) {
- for _,call:=range readFunctionSyntax(text).calls {if call.start==at {return call,true}}
+ for _,call:=range readFunctionSyntax(text).calls {if call.start==at && !call.procedure {return call,true}}
  return functionCallSpan{},false
 }
 // functionNameStartsAt prevents a builtin scanner from matching only the last
@@ -186,7 +197,16 @@ func readFunctionSyntax(text string) *functionSyntax {
    if text[index]!='`' {
     if _,open,ok:=subqueryExpressionKeywordAt(text,index); ok {subqueryOpen[open]=index}
     if strings.EqualFold(name,"CALL") || strings.EqualFold(name,"USE") {
-     index=skipCalledName(text,next); continue
+     start:=queryGapEnd(text,next)
+     called,end,named:=scanIdentifierToken(text,start)
+     if !named {index=next;continue}
+     parts,end:=dottedNameParts(text,end,true)
+     if strings.EqualFold(name,"CALL") {
+      cursor:=queryGapEnd(text,end)
+      call:=functionCallSpan{name:called+parts,start:start,open:-1,next:cursor,procedure:true,syntax:syntax,group:-1}
+      if cursor<len(text) && text[cursor]=='(' {call.open=cursor;call.next=cursor+1;pending[cursor]=call} else {syntax.calls=append(syntax.calls,call)}
+     }
+     index=end;continue
     }
    }
    if call,ok:=readFunctionIdentity(text,index); ok {
@@ -281,4 +301,16 @@ func (syntax *functionSyntax) splitDelimiter(delimiter rune) []string {
  }
  if value:=syntax.render(syntaxSpan{start,len(syntax.text)}); value!="" {parts=append(parts,value)}
  return parts
+}
+
+func parseFunctionCallArguments(text string) (string, []string, bool) {
+ call,ok:=functionCallAt(text,readFunctionSyntax(text).leading)
+ if !ok || call.close(text)<0 || queryGapEnd(text,call.close(text)+1)!=len(text) {return "",nil,false}
+ return call.name,call.arguments(nil),true
+}
+
+func singleFunctionArgument(text string) string {
+ _,arguments,ok:=parseFunctionCallArguments(text)
+ if !ok || len(arguments)!=1 {return ""}
+ return arguments[0]
 }

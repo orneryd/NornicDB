@@ -32,6 +32,7 @@ func TestFunctionSyntaxOwnerGuard(t *testing.T) {
 				continue
 			}
 			if reason := alternateFunctionSyntax(function.Body); reason != "" {
+                if reason == "independent quote/comma/group scanner" && functionGrammarBoundary[name+":"+function.Name.Name] != "" {continue}
 				t.Errorf("%s:%s: %s; consume functionSyntax instead", name, function.Name.Name, reason)
 			}
 		}
@@ -50,7 +51,8 @@ func alternateFunctionSyntax(body ast.Node) string {
 		case *ast.ForStmt, *ast.RangeStmt:
 			quote, comma, group := false, false, false
 			ast.Inspect(n, func(child ast.Node) bool {
-				literal, ok := child.(*ast.BasicLit)
+				if identifier, ok := child.(*ast.Ident); ok && (identifier.Name == "delim" || identifier.Name == "delimiter" || identifier.Name == "separator") {comma=true}
+                literal, ok := child.(*ast.BasicLit)
 				if !ok || literal.Kind != token.CHAR {
 					return true
 				}
@@ -60,7 +62,7 @@ func alternateFunctionSyntax(body ast.Node) string {
 				group = group || value == "(" || value == "[" || value == "{"
 				return true
 			})
-			if quote && comma && group {
+			if quote && comma && group && reason == "" {
 				reason = "independent quote/comma/group scanner"
 			}
 		case *ast.CallExpr:
@@ -90,4 +92,15 @@ func TestFunctionSyntaxGuardDetectsAlternateReaders(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, alternateFunctionSyntax(file.Decls[0].(*ast.FuncDecl).Body), source)
 	}
+}
+
+// These readers implement genuine graph/scope/parser protocols, not callable
+// identity or argument splitting. No call reader or generic splitter belongs
+// here. Raw function-prefix reading is forbidden even within these boundaries.
+var functionGrammarBoundary = map[string]string{
+ "parser.go:tokenize":"Execution parser emits grammar tokens, never function argument spans.",
+ "create.go:scanCreatePatterns":"Graph pattern grammar classifies node/relationship steps and offsets.",
+ "executor_subqueries.go:firstVariableOccurrence":"Scope diagnostic finds first free variable occurrence.",
+ "label_expression_rewrite.go:nameSingleNodePaths":"Graph path grammar supplies generated node names.",
+ "set_semantic_validation.go:expressionFreeVariables":"Scope grammar classifies local variable bindings.",
 }

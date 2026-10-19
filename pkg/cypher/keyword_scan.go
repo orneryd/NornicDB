@@ -352,10 +352,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 			return true
 		}
 	}
-	j := end
-	for j < len(s) && isASCIISpace(s[j]) {
-		j++
-	}
+	j := queryGapEnd(s,end)
 	if j < len(s) && s[j] == ':' {
 		return true // a map key: {set: 1}
 	}
