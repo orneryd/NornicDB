@@ -46,3 +46,16 @@ func TestFunctionSyntaxUncachedWholeTextWalk(t *testing.T) {
 	}))
 	require.Equal(t, 1024, count)
 }
+
+func TestFunctionSyntaxUnicodeTrivia(t *testing.T) {
+	for _, gap := range []string{"\u00a0", "\u2003", "/* ' , */\u00a0"} {
+		text := "custom" + gap + "." + gap + "fn" + gap + "(1,2)"
+		name, arguments, ok := parseFunctionCallArguments(text)
+		require.True(t, ok, text)
+		require.Equal(t, "custom.fn", name)
+		require.Equal(t, []string{"1", "2"}, arguments)
+		name, ok = canonicalCallableName("custom" + gap + "." + gap + "fn")
+		require.True(t, ok)
+		require.Equal(t, "custom.fn", name)
+	}
+}
