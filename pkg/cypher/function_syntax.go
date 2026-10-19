@@ -218,10 +218,12 @@ type syntaxGroup struct {
 	open, close                int
 	parent                     int
 	separators                 []int
-	punctuation                []int
 	argumentStart, argumentEnd int
 }
 type functionSyntax struct {
+	// Delimiter consumers read only the outer expression; nested arguments
+	// have their own spans and do not need duplicate punctuation inventories.
+	rootPunctuation []int
 	text       string
 	calls      []functionCallSpan
 	groups     []syntaxGroup
@@ -382,13 +384,13 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			if !argumentsOnly || group == 0 {
 				syntax.groups[group].separators = append(syntax.groups[group].separators, index)
 			}
-			if !argumentsOnly {
-				syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
+			if !argumentsOnly && group == 0 {
+				syntax.rootPunctuation = append(syntax.rootPunctuation, index)
 			}
 		default:
 			group := stack[len(stack)-1]
-			if !argumentsOnly {
-				syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
+			if !argumentsOnly && group == 0 {
+				syntax.rootPunctuation = append(syntax.rootPunctuation, index)
 			}
 		}
 		previous = index
@@ -499,7 +501,7 @@ func (syntax *functionSyntax) splitDelimiter(delimiter rune) []string {
 	}
 	var parts []string
 	start := 0
-	for _, at := range syntax.groups[0].punctuation {
+	for _, at := range syntax.rootPunctuation {
 		if rune(syntax.text[at]) == delimiter {
 			parts = append(parts, syntax.render(syntaxSpan{start, at}))
 			start = at + 1

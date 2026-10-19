@@ -658,7 +658,7 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 			subscript = true
 		}
 	}
-	for _, at := range syntax.groups[0].punctuation {
+	for _, at := range syntax.rootPunctuation {
 		if at > last && at > 0 && expression[at] == '.' && at+1 < len(expression) && isIdentStartByte(expression[at+1]) {
 			last = at
 			subscript = false
