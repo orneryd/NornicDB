@@ -165,14 +165,14 @@ func bareTransactionCommand(cypher string) string {
 }
 
 // parseTransactionStatement checks if query is BEGIN/COMMIT/ROLLBACK.
-func (e *StorageExecutor) parseTransactionStatement(cypher string, contexts ...context.Context) (*ExecuteResult, error) {
+func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	upper := upperASCII(strings.TrimSpace(cypher))
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
-		return e.handleBegin(contexts...)
+		return e.handleBegin(ctx)
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
-		return e.handleCommit()
+		return e.handleCommit(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
 		return e.handleRollback()
 	default:
@@ -301,7 +301,7 @@ func (e *StorageExecutor) handleBegin(contexts ...context.Context) (*ExecuteResu
 		logicalLifetime: logicalLifetime,
 		logicalDatabase: e.currentDatabaseName(),
 		tx:              tx,
-		engine:          engine,
+		engine:          e.storage,
 		active:          true,
 		txID:            tx.ID,
 	}
@@ -324,7 +324,7 @@ func (e *StorageExecutor) handleBegin(contexts ...context.Context) (*ExecuteResu
 }
 
 // handleCommit commits the active transaction.
-func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, error) {
 	if e.txContext == nil || !e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsNoActive(), nil)
 	}
@@ -351,7 +351,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
 		opCount = tx.OperationCount()
-		err = tx.Commit()
+		err = e.commitStorageTransaction(ctx, tx)
 	case *fabric.FabricTransaction:
 		err = e.txContext.logicalLifetime.Validate(e.txContext.logicalDatabase)
 		if err == nil {

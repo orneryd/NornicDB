@@ -891,7 +891,9 @@ func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
 
 // Flush rotates the active generation and drains every generation
 // synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
+// for ~2s it returns the last apply error. It returns once every generation
+// is applied and retired, which is when its listener notifications are
+// readied (BadgerEngine.FlushWriteBehind describes the barrier).
 func (w *WriteBehindBuffer) Flush() error {
 	w.rotate()
 	w.signal()
