@@ -80,7 +80,12 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 		_, err := engine.CreateNode(&storage.Node{ID: id})
 		require.NoError(t, err)
 	}
-	for key, value := range properties {
+	// UUID/vector are supported by the materialized format above but are
+	// not accepted by the stored-property validator. Exercise every registered
+	// kind the database accepts through the stored-body path here.
+	storedKinds := []string{"date", "local-time", "time", "local-datetime", "datetime", "duration", "point", "nested"}
+	for _, key := range storedKinds {
+		value := properties[key]
 		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID("nornic:" + key), StartNode: "nornic:a", EndNode: "nornic:b", Type: "TYPED",
 			Properties: map[string]any{"value": value}, VisibilitySuppressed: true}))
 	}
@@ -93,7 +98,7 @@ func TestRecoveryEncoderRegisteredPropertyKinds(t *testing.T) {
 	require.NoError(t, os.WriteFile(newPath, fast.Bytes(), 0644))
 	edgeSnapshot, err := storage.LoadSnapshot(newPath)
 	require.NoError(t, err)
-	require.Len(t, edgeSnapshot.Edges, len(properties), "hidden typed relationships remain recoverable")
+	require.Len(t, edgeSnapshot.Edges, len(storedKinds), "hidden typed relationships remain recoverable")
 }
 
 type registeredPropertySnapshotStream struct {

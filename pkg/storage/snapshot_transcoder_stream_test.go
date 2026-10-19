@@ -73,7 +73,11 @@ func snapshotFramesByID(t *testing.T, snapshot []byte) map[string][]byte {
 }
 
 func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
-	engine := newTestEngine(t)
+	// Persistent Badger supports value-log records above the in-memory
+	// engine's 64 KiB ceiling, including the large-value corpus member.
+	engine, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, id := range []NodeID{"test:a", "test:b", "other:a", "other:b"} {
 		_, err := engine.CreateNode(&Node{ID: id})
 		require.NoError(t, err)
@@ -95,7 +99,9 @@ func TestSnapshotTranscoderStoredStreamDifferential(t *testing.T) {
 	})
 	path := filepath.Join(t.TempDir(), "snapshot.nds")
 	require.NoError(t, SaveStreamingSnapshot(context.Background(), engine, path, SnapshotOptions{}))
-	recovered := newTestEngine(t)
+	recovered, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, recovered.Close()) })
 	_, status, err := RecoverIntoEngine(recovered, t.TempDir(), path)
 	require.NoError(t, err)
 	require.Equal(t, uint64(len(corpus)+1), status.SnapshotEdges)
