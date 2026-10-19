@@ -90,6 +90,10 @@ type relationshipSearch struct {
 	// beforeSave is a per-service persistence barrier used by tests.
 	beforeSave func()
 
+	// Directory durability follows storage's platform-specific contract.
+	// Tests can hold or fail this boundary without replacing file writes.
+	syncDirectory func(string) error
+
 	mu       sync.RWMutex
 	fulltext bm25Index
 	entries  map[string]*relationshipEntry
@@ -129,6 +133,8 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 		ready:    make(chan struct{}),
 		staged:   make(map[string]relationshipEntry),
 		done:     make(chan struct{}),
+
+		syncDirectory: storage.SyncDir,
 	})
 }
 
