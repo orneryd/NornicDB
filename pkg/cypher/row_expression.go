@@ -680,6 +680,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			dot += next + 1
 		}
+		if endpoint := endpointPropertyNode(strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
+			return endpoint.eval(e, values, nil)
+		}
 		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
 		if err != nil {
 			return nil, false, err
@@ -1936,6 +1939,10 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
 func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) interface{} {
+	return e.relationshipEndpointWithProperties(edge, end, nil)
+}
+
+func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge, end bool, properties []string) interface{} {
 	if edge == nil {
 		return nil
 	}
@@ -1950,6 +1957,15 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	id := edge.StartNode
 	if end {
 		id = edge.EndNode
+	}
+	if properties != nil {
+		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
+			node, err := reader.GetNodeProjected(id, properties)
+			if err != nil {
+				return nil
+			}
+			return node
+		}
 	}
 	node, err := e.getQueryNode(e.storage, id)
 	if err != nil {

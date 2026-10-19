@@ -302,6 +302,9 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipeline
 }
 
 func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, inputSource pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+	if source, supported, err := e.pipelineTraversalSource(ctx, inputSource, clause, hint); supported || err != nil {
+		return source, supported, err
+	}
 	plan, cached := pipelineNodeMatchSourcePlans.get(clause)
 	if !cached {
 		plan = e.compilePipelineNodeMatchSource(clause)
