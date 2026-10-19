@@ -434,3 +434,71 @@ func TestBuildConcurrentIndexFlagsReportTheirOwnChange(t *testing.T) {
 	require.NoError(t, <-built)
 	require.Equal(t, final, [2]bool{svc.bm25Enabled.Load(), svc.vectorEnabled.Load()})
 }
+
+// settledLiveHeap is the live heap once memory an earlier test released
+// meanwhile has been collected: two collections in a row that agree.
+func settledLiveHeap() uint64 {
+	runtime.GC()
+	last := liveHeapBytes()
+	for range 20 {
+		time.Sleep(10 * time.Millisecond)
+		runtime.GC()
+		next := liveHeapBytes()
+		if max(next, last)-min(next, last) < 32<<10 {
+			return next
+		}
+		last = next
+	}
+	return last
+}
+
+// TestBuildQueuedCopiesCountTheirHeap: the bytes the queue counts for a
+// queued copy cover what the copy takes on the heap, so the reservation
+// bounds what the queue retains. Measured over 4,000 queued copies of a
+// relationship-search update (a 1024-dimension vector property) and of a node
+// write (1 KiB of text, a vector and embedding metadata).
+func TestBuildQueuedCopiesCountTheirHeap(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
+	engine := newNodeSnapshotGateEngine(t)
+	node := buildWriteNode("nornic:counted", strings.Repeat("x", 1<<10), []float32{1, 0, 0})
+	node.EmbedMeta = map[string]any{"chunk_count": int64(1), "model": "m"}
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	svc := buildWriteService(t, engine, "", "v2", nil)
+	svc.EnableRelationshipSearch(nil)
+	t.Cleanup(func() { _ = svc.Close() })
+	t.Cleanup(engine.open)
+	built := startGatedBuild(t, engine, svc)
+	edge := &storage.Edge{ID: "nornic:counted", Type: "REL", Properties: map[string]any{"v": make([]float32, 1024)}}
+	const copies = 4000
+	for _, c := range []struct {
+		name  string
+		write func()
+	}{
+		{"relationship update", func() { svc.IndexRelationship(edge) }},
+		{"node write", func() {
+			// A fresh node, which the caller drops: what the queue holds is then
+			// all the copy retains, its text included.
+			fresh := storage.CopyNode(node)
+			fresh.Properties["text"] = strings.Repeat("x", 1<<10)
+			require.NoError(t, svc.IndexNode(fresh))
+		}},
+	} {
+		before := settledLiveHeap()
+		svc.buildWrites.mu.Lock()
+		counted := svc.buildWrites.bytes
+		svc.buildWrites.mu.Unlock()
+		for range copies {
+			c.write()
+		}
+		held := float64(int64(settledLiveHeap())-int64(before)) / copies
+		svc.buildWrites.mu.Lock()
+		perCopy := float64(svc.buildWrites.bytes-counted) / copies
+		svc.buildWrites.mu.Unlock()
+		t.Logf("%s: %.0f B on the heap, %.0f B counted", c.name, held, perCopy)
+		require.GreaterOrEqual(t, perCopy, held, "%s: the queue counts less than the copy holds", c.name)
+		require.LessOrEqual(t, perCopy, 1.25*held, "%s: the queue counts far more than the copy holds", c.name)
+	}
+	engine.open()
+	require.NoError(t, <-built)
+}
