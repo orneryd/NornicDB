@@ -52,6 +52,8 @@ func (e *StorageExecutor) projectVisibleQueryValue(value interface{}) interface{
 		out := *v
 		out.Properties = e.decayVisibleEdgeProperties(v)
 		return &out
+	case PathResult:
+		return *e.projectVisibleQueryValue(&v).(*PathResult)
 	case *PathResult:
 		if v == nil {
 			return v
