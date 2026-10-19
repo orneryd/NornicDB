@@ -156,7 +156,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	} else {
 		remoteExec = fabric.NewRemoteFragmentExecutor()
 		defer func() { _ = remoteExec.Close() }()
-		if prepared.hasRemote {
+		if len(prepared.remotes) != 0 {
 			if err := remoteExec.CaptureLogicalBegin(ctx, prepared.remotes, authToken); err != nil {
 				return nil, err
 			}
@@ -206,7 +206,6 @@ type fabricPreparedExec struct {
 	catalog   *fabric.Catalog
 	sessionDB string
 	fragment  fabric.Fragment
-	hasRemote bool
 	remotes   []*fabric.LocationRemote
 }
 
@@ -344,7 +343,6 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 		catalog:   catalog,
 		sessionDB: sessionDB,
 		fragment:  fragment,
-		hasRemote: len(remotes) != 0,
 		remotes:   remotes,
 	}, nil
 }
