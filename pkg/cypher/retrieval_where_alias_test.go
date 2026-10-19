@@ -40,7 +40,7 @@ func TestRetrievalWhereFunctionAliases(t *testing.T) {
 				query := "CALL " + procedure + "($request)"
 				read := func(predicate string) (*ExecuteResult, error) {
 					return exec.Execute(ctx, query, map[string]interface{}{
-						"request": map[string]interface{}{"query": "alias", "limit": int64(10), "where": predicate},
+						"request":    map[string]interface{}{"query": "alias", "limit": int64(10), "where": predicate},
 						"local_time": true, "spelling": "local_time()",
 					})
 				}
