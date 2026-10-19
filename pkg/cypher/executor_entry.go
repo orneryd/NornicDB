@@ -418,7 +418,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	rowsRewritten := false
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
-	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
+	fabricQuery = fabricQuery || e.shouldUseFabricPlanner(cypher)
+	if canonical, names := canonicalizeLocalQuotedVariables(cypher, fabricQuery); names != nil {
 		cypher = canonical
 		params = names.parameterValues(params)
 		ctx = withQuotedVariableNames(ctx, names)
