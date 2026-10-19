@@ -638,7 +638,7 @@ func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipel
 		for i, column := range columns {
 			values[i] = row[column]
 		}
-		if _, exists := seen.addTuple(values); exists {
+		if _, exists := seen.addTupleByContract(values, cypherEquivalenceContract); exists {
 			continue
 		}
 		if keys.reserveKey(values) != nil {
@@ -1333,7 +1333,7 @@ func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
 	var seen cypherValueIndex
 	unique := make([][]interface{}, 0, len(rows))
 	for _, row := range rows {
-		if _, exists := seen.addTuple(row); exists {
+		if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); exists {
 			continue
 		}
 		unique = append(unique, row)

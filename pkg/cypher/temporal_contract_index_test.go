@@ -12,14 +12,14 @@ func TestTemporalContractIndexAllocations(t *testing.T) {
 	stamp := time.Date(2024, 1, 2, 3, 4, 5, 6, time.UTC)
 	values := []interface{}{CypherDate{Time: stamp}, &CypherDate{Time: stamp}, CypherLocalTime{Time: stamp}, &CypherLocalTime{Time: stamp}, CypherTime{Time: stamp}, &CypherTime{Time: stamp}, CypherLocalDateTime{Time: stamp}, &CypherLocalDateTime{Time: stamp}, CypherDateTime{Time: stamp, ZoneID: "UTC"}, &CypherDateTime{Time: stamp, ZoneID: "UTC"}, stamp, &stamp, CypherDuration{Nanos: -500000000}, &CypherDuration{Seconds: -1, Nanos: 500000000}}
 	for _, contract := range []cypherComparisonContract{cypherValueEqualityContract, cypherEquivalenceContract} {
-		index := cypherValueIndex{contract: contract}
+		index := cypherValueIndex{}
 		for _, value := range values {
-			index.add(value)
+			index.addByContract(value, contract)
 		}
 		allocations := testing.AllocsPerRun(100, func() {
 			for _, value := range values {
-				index.add(value)
-				_, found := index.find(value)
+				index.addByContract(value, contract)
+				_, found := index.findByContract(value, contract)
 				if !found {
 					panic("missing temporal value")
 				}
@@ -29,10 +29,10 @@ func TestTemporalContractIndexAllocations(t *testing.T) {
 	}
 	for _, value := range []interface{}{int64(1), "one", float64(2)} {
 		index := cypherValueIndex{}
-		index.add(value)
+		index.addByContract(value, cypherEquivalenceContract)
 		require.Zero(t, testing.AllocsPerRun(100, func() {
-			index.add(value)
-			if _, found := index.find(value); !found {
+			index.addByContract(value, cypherEquivalenceContract)
+			if _, found := index.findByContract(value, cypherEquivalenceContract); !found {
 				panic("missing scalar")
 			}
 		}), "scalar fast path %T", value)

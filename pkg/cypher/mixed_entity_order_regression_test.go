@@ -232,7 +232,7 @@ func TestPathIdentityEqualityAndEquivalenceAcrossCarriers(t *testing.T) {
 	for _, left := range []interface{}{native, changed, wrapper} {
 		for _, right := range []interface{}{native, changed, wrapper} {
 			require.Equal(t, true, cypherEquality(left, right))
-			require.Equal(t, cypherEquivalenceKey(left), cypherEquivalenceKey(right))
+			require.Equal(t, cypherValueKey(left, cypherEquivalenceContract), cypherValueKey(right, cypherEquivalenceContract))
 		}
 	}
 	forged := map[string]interface{}{"_pathResult": "ordinary user property"}
@@ -274,7 +274,7 @@ func TestRemoteNilGraphCarriersKeepNullSortAndIdentity(t *testing.T) {
 		require.Nil(t, cypherEquality(value, value))
 		require.Zero(t, compareValuesForSort(value, nil))
 		require.Zero(t, compareValuesForSort(nil, value))
-		require.Equal(t, cypherEquivalenceKey(nil), cypherEquivalenceKey(value))
+		require.Equal(t, cypherValueKey(nil, cypherEquivalenceContract), cypherValueKey(value, cypherEquivalenceContract))
 	}
 }
 

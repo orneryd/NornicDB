@@ -11,7 +11,7 @@ import (
 // The coll.* list functions of Cypher 25 (#907), as Neo4j 2026.09 computes
 // them. They order values as ORDER BY does (compareValuesForSort: null after
 // everything, NaN after every number) and tell values apart as DISTINCT does
-// (cypherEquivalenceKey). A null list, index or depth gives null. Neo4j 5.26
+// (explicit equivalence keys). A null list, index or depth gives null. Neo4j 5.26
 // and Cypher 5 statements don't have them; NornicDB offers them in every
 // statement.
 
@@ -85,7 +85,7 @@ func fnCollDistinct(ctx cypherfn.Context, args []string) (interface{}, error) {
 	var seen cypherValueIndex
 	out := make([]interface{}, 0, len(list))
 	for _, item := range list {
-		if _, duplicate := seen.add(item); duplicate {
+		if _, duplicate := seen.addByContract(item, cypherEquivalenceContract); duplicate {
 			continue
 		}
 		out = append(out, item)

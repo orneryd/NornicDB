@@ -36,15 +36,15 @@ func TestCypherValueIndexCanonicalEquivalence(t *testing.T) {
 	for _, left := range values {
 		for _, right := range values {
 			var index cypherValueIndex
-			index.add(left)
-			_, duplicate := index.add(right)
-			require.Equal(t, cypherEquivalenceKey(left) == cypherEquivalenceKey(right), duplicate, "%#v vs %#v", left, right)
+			index.addByContract(left, cypherEquivalenceContract)
+			_, duplicate := index.addByContract(right, cypherEquivalenceContract)
+			require.Equal(t, cypherValueKey(left, cypherEquivalenceContract) == cypherValueKey(right, cypherEquivalenceContract), duplicate, "%#v vs %#v", left, right)
 			var collisions cypherValueIndex
-			collisions.addTupleValues(42, []interface{}{left})
-			_, duplicate = collisions.addTupleValues(42, []interface{}{right})
-			require.Equal(t, cypherEquivalenceKey(left) == cypherEquivalenceKey(right), duplicate, "forced collision: %#v vs %#v", left, right)
-			if cypherEquivalenceKey(left) == cypherEquivalenceKey(right) {
-				require.Equal(t, cypherEquivalenceHash(left), cypherEquivalenceHash(right), "equivalent values hash alike: %#v vs %#v", left, right)
+			collisions.addTupleValuesByContract(42, []interface{}{left}, cypherEquivalenceContract)
+			_, duplicate = collisions.addTupleValuesByContract(42, []interface{}{right}, cypherEquivalenceContract)
+			require.Equal(t, cypherValueKey(left, cypherEquivalenceContract) == cypherValueKey(right, cypherEquivalenceContract), duplicate, "forced collision: %#v vs %#v", left, right)
+			if cypherValueKey(left, cypherEquivalenceContract) == cypherValueKey(right, cypherEquivalenceContract) {
+				require.Equal(t, cypherValueHash(left, cypherEquivalenceContract), cypherValueHash(right, cypherEquivalenceContract), "equivalent values hash alike: %#v vs %#v", left, right)
 			}
 		}
 	}
@@ -52,29 +52,29 @@ func TestCypherValueIndexCanonicalEquivalence(t *testing.T) {
 
 func TestCypherValueIndexHashCollisions(t *testing.T) {
 	var index cypherValueIndex
-	position, exists := index.addTupleValues(42, []interface{}{int64(1), "a"})
+	position, exists := index.addTupleValuesByContract(42, []interface{}{int64(1), "a"}, cypherEquivalenceContract)
 	require.False(t, exists)
 	require.Equal(t, 0, position)
-	position, exists = index.addTupleValues(42, []interface{}{int64(2), "a"})
+	position, exists = index.addTupleValuesByContract(42, []interface{}{int64(2), "a"}, cypherEquivalenceContract)
 	require.False(t, exists)
 	require.Equal(t, 1, position)
-	position, exists = index.addTupleValues(42, []interface{}{int64(1)})
+	position, exists = index.addTupleValuesByContract(42, []interface{}{int64(1)}, cypherEquivalenceContract)
 	require.False(t, exists)
 	require.Equal(t, 2, position)
-	position, exists = index.addTupleValues(42, []interface{}{int64(1), "a"})
+	position, exists = index.addTupleValuesByContract(42, []interface{}{int64(1), "a"}, cypherEquivalenceContract)
 	require.True(t, exists)
 	require.Equal(t, 0, position)
 	var empty cypherValueIndex
-	_, exists = empty.addTuple(nil)
+	_, exists = empty.addTupleByContract(nil, cypherEquivalenceContract)
 	require.False(t, exists)
-	_, exists = empty.addTuple(nil)
+	_, exists = empty.addTupleByContract(nil, cypherEquivalenceContract)
 	require.True(t, exists)
 	var structural cypherValueIndex
-	_, exists = structural.addTupleValues(42, []interface{}{map[string]interface{}{"a": []interface{}{int64(1), nil}}})
+	_, exists = structural.addTupleValuesByContract(42, []interface{}{map[string]interface{}{"a": []interface{}{int64(1), nil}}}, cypherEquivalenceContract)
 	require.False(t, exists)
-	_, exists = structural.addTupleValues(42, []interface{}{map[string]interface{}{"a": []interface{}{1.0, nil}}})
+	_, exists = structural.addTupleValuesByContract(42, []interface{}{map[string]interface{}{"a": []interface{}{1.0, nil}}}, cypherEquivalenceContract)
 	require.True(t, exists)
-	_, exists = structural.addTupleValues(42, []interface{}{map[string]interface{}{"b": []interface{}{int64(1), nil}}})
+	_, exists = structural.addTupleValuesByContract(42, []interface{}{map[string]interface{}{"b": []interface{}{int64(1), nil}}}, cypherEquivalenceContract)
 	require.False(t, exists)
 }
 

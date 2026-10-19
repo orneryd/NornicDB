@@ -15,7 +15,7 @@ func TestTemporalCanonicalKeyAllocations(t *testing.T) {
 	allocations := testing.AllocsPerRun(100, func() {
 		clear(typed)
 		for _, value := range values {
-			key, ok := temporalEqualityParts(value)
+			key, ok := temporalIdentityParts(value, cypherValueEqualityContract)
 			if !ok {
 				panic("missing temporal key")
 			}
@@ -27,25 +27,25 @@ func TestTemporalCanonicalKeyAllocations(t *testing.T) {
 	require.Equal(t, 4, typed[temporalCanonicalKeySink])
 	require.Zero(t, allocations, "typed canonical keys/four datetime carriers")
 	index := cypherValueIndex{}
-	index.add(values[0])
+	index.addByContract(values[0], cypherEquivalenceContract)
 	allocations = testing.AllocsPerRun(100, func() {
 		clear(index.temporal)
 		index.count = 0
 		for _, value := range values {
-			index.add(value)
-			if _, found := index.find(value); !found {
+			index.addByContract(value, cypherEquivalenceContract)
+			if _, found := index.findByContract(value, cypherEquivalenceContract); !found {
 				panic("missing value")
 			}
-			if !cypherValuesEquivalent(value, values[0]) {
+			if !cypherValuesMatch(value, values[0], cypherEquivalenceContract) {
 				panic("unequal value")
 			}
-			_ = cypherEquivalenceHash(value)
+			_ = cypherValueHash(value, cypherEquivalenceContract)
 		}
 	})
 	require.Zero(t, allocations, "production lookup/four datetime carriers")
 	require.Equal(t, 1, index.count)
 	for _, value := range []interface{}{CypherDate{Time: stamp}, &CypherDate{Time: stamp}, CypherLocalTime{Time: stamp}, &CypherLocalTime{Time: stamp}, CypherTime{Time: stamp}, &CypherTime{Time: stamp}, CypherLocalDateTime{Time: stamp}, &CypherLocalDateTime{Time: stamp}, CypherDuration{Nanos: -500000000}, &CypherDuration{Seconds: -1, Nanos: 500000000}} {
-		require.Zero(t, testing.AllocsPerRun(100, func() { temporalCanonicalKeySink, _ = temporalEqualityParts(value) }), "%T", value)
+		require.Zero(t, testing.AllocsPerRun(100, func() { temporalCanonicalKeySink, _ = temporalIdentityParts(value, cypherValueEqualityContract) }), "%T", value)
 	}
 }
 
@@ -57,8 +57,15 @@ func TestTemporalContractKeyAllocations(t *testing.T) {
 	values := []interface{}{CypherDate{Time: stamp}, &CypherDate{Time: stamp}, CypherLocalTime{Time: stamp}, &CypherLocalTime{Time: stamp}, CypherTime{Time: stamp}, &CypherTime{Time: stamp}, CypherLocalDateTime{Time: stamp}, &CypherLocalDateTime{Time: stamp}, CypherDateTime{Time: stamp, ZoneID: "UTC"}, &CypherDateTime{Time: stamp, ZoneID: "UTC"}, stamp, &stamp, CypherDuration{Nanos: -500000000}, &CypherDuration{Seconds: -1, Nanos: 500000000}}
 	for _, contract := range []cypherComparisonContract{cypherValueEqualityContract, cypherEquivalenceContract} {
 		for _, value := range values {
+			if contract == cypherEquivalenceContract {
+				require.Zero(t, testing.AllocsPerRun(100, func() {
+					if !apocSameValue(value, value) {
+						panic("map.clean lost its own temporal occurrence")
+					}
+				}), "map.clean temporal key %T", value)
+			}
 			allocations := testing.AllocsPerRun(100, func() {
-				temporalCanonicalKeySink, _ = contract.temporalKey(value)
+				temporalCanonicalKeySink, _ = temporalIdentityParts(value, contract)
 				if equal, temporal := compareTemporalByContract(value, value, contract); !equal || !temporal {
 					panic("not equal")
 				}
@@ -72,8 +79,8 @@ func TestTemporalContractKeyAllocations(t *testing.T) {
 	late := CypherDateTime{Time: time.Unix(1729992600, 0).In(london), ZoneID: "Europe/London"}
 	for _, contract := range []cypherComparisonContract{cypherValueEqualityContract, cypherEquivalenceContract} {
 		keys := make(map[temporalValueKey]int)
-		left, _ := contract.temporalKey(early)
-		right, _ := contract.temporalKey(late)
+		left, _ := temporalIdentityParts(early, contract)
+		right, _ := temporalIdentityParts(late, contract)
 		keys[left]++
 		keys[right]++
 		require.Len(t, keys, map[cypherComparisonContract]int{cypherValueEqualityContract: 1, cypherEquivalenceContract: 2}[contract])
@@ -81,7 +88,7 @@ func TestTemporalContractKeyAllocations(t *testing.T) {
 		allocations := testing.AllocsPerRun(100, func() {
 			clear(keys)
 			for _, value := range overlapValues {
-				key, _ := contract.temporalKey(value)
+				key, _ := temporalIdentityParts(value, contract)
 				keys[key]++
 			}
 		})
