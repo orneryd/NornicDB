@@ -287,3 +287,15 @@ legacy detector MainTests are blocked during fixture commits by the global
 mandatory hook. `make verify-list BASE=origin/release/v1.4.4` and `make verify`
 with the same BASE stop at the temporary `plan` repository's missing ingestion
 record; downstream checks are unexecuted. These failures were not bypassed.
+
+### Resolving a blocked duplicate check
+
+Both reuse candidates and refactor targets block check-in. Read the hook's
+**MANDATORY REFACTOR BEFORE CHECK-IN** instructions: inspect current implementations
+and callers, reuse or extend the existing owner, consolidate duplicated behavior
+into one owner, migrate callers and remove redundant paths. Preserve required
+behavior and verify the integrated correction. Do not bypass the hook, weaken
+thresholds or silence findings. Similarity requires source inspection; a proven
+detector/indexing defect must itself be corrected with regression evidence rather
+than merging unrelated behavior. Stage the correction and rerun the mandatory
+check; unresolved findings prevent check-in.
