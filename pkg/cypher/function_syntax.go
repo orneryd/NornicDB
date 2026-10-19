@@ -573,7 +573,11 @@ func syntaxGroupClose(text string, open int) int {
 	low, high := 1, len(syntax.groups)
 	for low < high {
 		middle := low + (high-low)/2
-		if syntax.groups[middle].open < open { low = middle+1 } else { high = middle }
+		if syntax.groups[middle].open < open {
+			low = middle + 1
+		} else {
+			high = middle
+		}
 	}
 	if low < len(syntax.groups) && syntax.groups[low].open == open {
 		return syntax.groups[low].close

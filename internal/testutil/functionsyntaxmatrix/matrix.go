@@ -9,8 +9,8 @@ import (
 type Case struct{ ID, Query, Rows string }
 type family struct {
 	name, prefix, suffix string
-	args         []string
-	rows         string
+	args                 []string
+	rows                 string
 }
 
 func Cases() []Case {
