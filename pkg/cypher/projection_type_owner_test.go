@@ -14,7 +14,7 @@ func TestProjectionTypeScopeOwner(t *testing.T) {
 		"MATCH (n:ReviewNoNodes) WITH n.v * 1.0 AS x CALL (*) { WITH count(*) AS c RETURN [1,2][x] AS v } RETURN v",
 	} {
 		t.Run(query, func(t *testing.T) {
-			exec := newTestExecutor(t)
+			exec, _ := newTestExecutor(t)
 			require.Error(t, exec.validateMatchSemanticScopes(query, false))
 		})
 	}
