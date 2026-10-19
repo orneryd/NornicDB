@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -62,5 +63,36 @@ func TestRedactForLogCancellationDuringValidation(t *testing.T) {
 	}
 	if exec.hasCachedValidSyntax("RETURN 'private-value'", syntaxGrammarAccepted) {
 		t.Fatal("cancelled validation published a successful grammar verdict")
+	}
+}
+
+type cancelRedactionAtCheck struct {
+	context.Context
+	cancel         context.CancelFunc
+	checks, target int
+}
+
+func (c *cancelRedactionAtCheck) Err() error {
+	c.checks++
+	if c.checks == c.target {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestSlowQueryLogCancellationDuringLongToken(t *testing.T) {
+	for _, query := range []string{
+		"/*" + strings.Repeat("secret", 1<<18) + "*/ RETURN 1",
+		"RETURN '" + strings.Repeat("secret", 1<<18) + "'",
+	} {
+		exec, logged := captureSlowQueryLog(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		during := &cancelRedactionAtCheck{Context: ctx, cancel: cancel, target: len(query)/1024 + 32}
+		exec.emitSlowQueryLog(during, query, nil, time.Second)
+		cancel()
+		queries := logged()
+		if len(queries) != 1 || queries[0] != RedactedPlaceholder {
+			t.Fatalf("cancelled long-token scan logged %q", queries)
+		}
 	}
 }

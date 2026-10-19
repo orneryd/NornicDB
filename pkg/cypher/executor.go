@@ -1090,7 +1090,7 @@ func (e *StorageExecutor) emitSlowQueryLog(ctx context.Context, query string, pl
 	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
 		return
 	}
-	redacted := e.redactForLog(ctx, StripComments(query))
+	redacted := e.redactForLog(ctx, query)
 	hash := PlanHash(plan)
 	if plan == nil || plan.Root == nil {
 		// The normal (non-EXPLAIN/PROFILE) Execute() path never builds an
