@@ -41,7 +41,7 @@ func (call functionCallSpan) close(text string) int {
 // qualified components and trivia before "(". Whole-text consumers must use
 // nextFunctionCall so comments and string literals cannot become code.
 func readFunctionIdentity(text string, at, previous int) (functionCallSpan, bool) {
-	if at < 0 || at >= len(text) || at > 0 && isIdentByte(text[at-1]) || previous >= 0 && text[previous] == '.' ||
+	if at < 0 || at >= len(text) || at > 0 && previous == at-1 && isIdentByte(text[at-1]) || previous >= 0 && text[previous] == '.' ||
 		at > 0 && (text[at-1] == '$' || text[at-1] == ':' && !colonIsMapKeySeparator(text,at-1)) {
 		return functionCallSpan{}, false
 	}
@@ -193,6 +193,7 @@ func readFunctionSyntax(text string) *functionSyntax {
   if end:=queryCommentEnd(text,index); end>=0 {
    syntax.comments=append(syntax.comments,syntaxSpan{index,end}); index=end; continue
   }
+  if size:=queryWhitespaceAt(text,index);size>0 {index+=size;continue}
   if text[index]=='\'' || text[index]=='"' {
    index=skipCypherQuotedText(text,index,text[index]); previous=index-1; continue
   }
