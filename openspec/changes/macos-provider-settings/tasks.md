@@ -23,3 +23,5 @@
 
 - [x] Restore shared K-Means, memory decay and Auto-TLP switches in setup AI page and Settings AI features; show choices on Review.
 - [x] Close setup after launch submission and keep startup status yellow until actual readiness or process failure.
+
+- [x] Restore default local model download action directly in setup and Settings AI controls using the existing shared downloader.
