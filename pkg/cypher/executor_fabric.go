@@ -19,36 +19,12 @@ import (
 type fabricStatsAccumulatorKey struct{}
 type fabricPreparedExecKey struct{}
 
-type fabricStatsAccumulator struct {
-	mu    sync.Mutex
-	stats QueryStats
-}
-
-func (a *fabricStatsAccumulator) add(in *QueryStats) {
-	if a == nil || in == nil {
-		return
-	}
-	a.mu.Lock()
-	addQueryStats(&a.stats, in)
-	a.mu.Unlock()
-}
-
-func (a *fabricStatsAccumulator) snapshot() QueryStats {
-	if a == nil {
-		return QueryStats{}
-	}
-	a.mu.Lock()
-	out := a.stats
-	a.mu.Unlock()
-	return out
-}
-
-func fabricStatsAccumulatorFromContext(ctx context.Context) *fabricStatsAccumulator {
+func fabricStatsAccumulatorFromContext(ctx context.Context) *queryStatsAccumulator {
 	v := ctx.Value(fabricStatsAccumulatorKey{})
 	if v == nil {
 		return nil
 	}
-	acc, _ := v.(*fabricStatsAccumulator)
+	acc, _ := v.(*queryStatsAccumulator)
 	return acc
 }
 
@@ -152,7 +128,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		defer func() { _ = remoteExec.Close() }()
 	}
 
-	statsAcc := &fabricStatsAccumulator{}
+	statsAcc := &queryStatsAccumulator{}
 	ctx = context.WithValue(ctx, fabricStatsAccumulatorKey{}, statsAcc)
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
