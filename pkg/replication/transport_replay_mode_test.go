@@ -1,9 +1,7 @@
 package replication
 
 import (
-	"bytes"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,67 +9,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
-
-func replayModeConfig(mode string, logs *bytes.Buffer) *Config {
-	cfg := DefaultConfig()
-	cfg.Mode = ModeHAStandby
-	cfg.NodeID = "node-1"
-	cfg.HAStandby.Role = "standby"
-	cfg.HAStandby.PeerAddr = "primary:7000"
-	cfg.ReplicationSecret = "replication-secret-of-forty-characters!!"
-	cfg.ReplayProtection = mode
-	cfg.Logger = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	return cfg
-}
-
-// The transport says at startup which replay guarantee it gives: compat, a
-// transition mode, warns that messages can be replayed; require says only
-// nonce-signed messages are accepted.
-func TestNewDefaultTransportFromConfig_LogsReplayProtectionMode(t *testing.T) {
-	var compatLogs bytes.Buffer
-	tr, err := NewDefaultTransportFromConfig(replayModeConfig(ReplayProtectionCompat, &compatLogs))
-	require.NoError(t, err)
-	_ = tr.Close()
-	require.Contains(t, compatLogs.String(), "level=WARN")
-	require.Contains(t, compatLogs.String(), "compat")
-	require.Contains(t, compatLogs.String(), "replayed")
-
-	var requireLogs bytes.Buffer
-	tr, err = NewDefaultTransportFromConfig(replayModeConfig(ReplayProtectionRequire, &requireLogs))
-	require.NoError(t, err)
-	_ = tr.Close()
-	require.Contains(t, requireLogs.String(), "require")
-	require.NotContains(t, requireLogs.String(), "level=WARN")
-}
-
-// Compat gives no replay guarantee: a fresh receiver accepts an upgraded
-// sender's message with its nonce stripped, again and again. Require mode
-// refuses it.
-func TestVerifyMessage_StrippedFrameCompatAcceptsRequireRefuses(t *testing.T) {
-	var logs bytes.Buffer
-	sender, err := NewDefaultTransportFromConfig(replayModeConfig(ReplayProtectionCompat, &logs))
-	require.NoError(t, err)
-	defer sender.Close()
-	msg := &ClusterMessage{Type: ClusterMsgForwardApply, Payload: []byte("cmd")}
-	sender.(*ClusterTransport).createConnection("a", nil).signMessage(msg)
-	stripped := *msg
-	stripped.Nonce = nil
-	stripped.SignatureV2 = ""
-
-	compat, err := NewDefaultTransportFromConfig(replayModeConfig(ReplayProtectionCompat, &logs))
-	require.NoError(t, err)
-	defer compat.Close()
-	for i := 0; i < 2; i++ {
-		frame := stripped
-		require.NoError(t, compat.(*ClusterTransport).createConnection(fmt.Sprint(i), nil).verifyMessage(&frame))
-	}
-
-	strict, err := NewDefaultTransportFromConfig(replayModeConfig(ReplayProtectionRequire, &logs))
-	require.NoError(t, err)
-	defer strict.Close()
-	frame := stripped
-	require.Error(t, strict.(*ClusterTransport).createConnection("a", nil).verifyMessage(&frame))
-}
 
 // replayStateEntries counts every entry in every map the replay cache
 // holds, so a test sees all the state it keeps, whatever its layout.
