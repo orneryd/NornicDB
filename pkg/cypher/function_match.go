@@ -103,7 +103,7 @@ func extractFuncArgsLen(expr, funcName string) (string, int) {
 	if close < 0 || queryGapEnd(expr, close+1) != len(expr) {
 		return "", -1
 	}
-	return strings.TrimSpace(expr[call.open+1 : close]), call.open
+	return call.syntax.render(syntaxSpan{call.open+1,close}), call.open
 }
 
 // isFunctionCallWS is a whitespace-tolerant version of isFunctionCall.
@@ -141,7 +141,7 @@ func extractFuncArgsWithSuffix(expr, funcName string) (args string, suffix strin
 	if close < 0 {
 		return "", "", false
 	}
-	return strings.TrimSpace(expr[call.open+1 : close]), expr[close+1:], true
+	return call.syntax.render(syntaxSpan{call.open+1,close}), expr[close+1:], true
 }
 func isSpaceByte(b byte) bool {
 	switch b {

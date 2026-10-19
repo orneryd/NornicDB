@@ -670,9 +670,6 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 }
 
 func pipelineExpressionContainsAggregate(expr string) bool {
-	if strings.IndexByte(expr, '(') < 0 {
-		return false
-	}
 	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
 }
 

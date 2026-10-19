@@ -19,7 +19,7 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 	if close < 0 || queryGapEnd(expr, close+1) != len(expr) {
 		return "", "", false
 	}
-	return call.name, expr[call.open+1 : close], true
+	return call.name, call.syntax.source(syntaxSpan{call.open+1,close}), true
 }
 
 // functionCallSpan is the shared lexical identity of a call. Delimiter matching
@@ -251,7 +251,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 
 // render removes comments recorded by the lexer, never quoted data. A space
 // prevents tokens on either side of a removed comment from being concatenated.
-func (syntax *functionSyntax) render(span syntaxSpan) string {
+func (syntax *functionSyntax) source(span syntaxSpan) string {
  var out strings.Builder
  start:=span.start
  for _,comment:=range syntax.comments {
@@ -260,9 +260,9 @@ func (syntax *functionSyntax) render(span syntaxSpan) string {
   out.WriteString(syntax.text[start:comment.start]); out.WriteByte(' ')
   start=comment.end
  }
- if out.Cap()==0 {return strings.TrimSpace(syntax.text[span.start:span.end])}
+ if out.Cap()==0 {return syntax.text[span.start:span.end]}
  out.WriteString(syntax.text[start:span.end])
- return strings.TrimSpace(out.String())
+ return out.String()
 }
 
 func (syntax *functionSyntax) argumentSpans(group int) []syntaxSpan {
@@ -314,4 +314,14 @@ func singleFunctionArgument(text string) string {
  _,arguments,ok:=parseFunctionCallArguments(text)
  if !ok || len(arguments)!=1 {return ""}
  return arguments[0]
+}
+
+// firstProcedureCall adapts statement consumers to the same call inventory.
+func firstProcedureCall(text string) (functionCallSpan,bool) {
+ for _,call:=range readFunctionSyntax(text).calls {if call.procedure {return call,true}}
+ return functionCallSpan{},false
+}
+
+func (syntax *functionSyntax) render(span syntaxSpan) string {
+ return strings.TrimSpace(syntax.source(span))
 }

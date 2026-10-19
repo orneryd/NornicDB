@@ -51,7 +51,7 @@ func alternateFunctionSyntax(body ast.Node) string {
 		case *ast.ForStmt, *ast.RangeStmt:
 			quote, comma, group := false, false, false
 			ast.Inspect(n, func(child ast.Node) bool {
-				if identifier, ok := child.(*ast.Ident); ok && (identifier.Name == "delim" || identifier.Name == "delimiter" || identifier.Name == "separator") {comma=true}
+				if identifier, ok := child.(*ast.Ident); ok && (identifier.Name == "delim" || identifier.Name == "delimiter") {comma=true}
                 literal, ok := child.(*ast.BasicLit)
 				if !ok || literal.Kind != token.CHAR {
 					return true
