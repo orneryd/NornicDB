@@ -305,22 +305,12 @@ func clusterProfileFromTerms(terms *clusterTerms) map[string]float64 {
 }
 
 // nodeVectorIDsLocked lists a node's vector IDs from the node metadata
-// (callers hold indexMu): the node itself, chunks, named and property vectors.
+// (callers hold indexMu): the main entry, chunks, named and property vectors.
 func (s *Service) nodeVectorIDsLocked(nodeID string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	ids := []string{nodeID}
-	for _, id := range s.nodeChunkVectors[nodeID] {
-		if id != nodeID {
-			ids = append(ids, id)
-		}
-	}
-	for _, id := range s.nodeNamedVector[nodeID] {
-		ids = append(ids, id)
-	}
-	for _, id := range s.nodePropVector[nodeID] {
-		ids = append(ids, id)
-	}
+	var ids []string
+	s.forEachNodeVectorKeyLocked(nodeID, func(key string) { ids = append(ids, key) })
 	return ids
 }
 
