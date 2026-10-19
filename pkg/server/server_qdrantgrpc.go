@@ -18,28 +18,11 @@ import (
 	"google.golang.org/grpc"
 )
 
-// grpcDatabaseAccessMode keeps gRPC selections aligned with the existing graph
-// selection rules, including every database read by a composite collection.
-type grpcDatabaseAccessMode struct {
-	auth.DatabaseAccessMode
-	allows func(string) bool
-}
-
-func (m grpcDatabaseAccessMode) CanAccessDatabase(database string) bool { return m.allows(database) }
-
 func (s *Server) grpcDatabaseAccessForRoles(roles []string, database string) auth.ResolvedAccess {
-	targets, allowed := s.databaseReadTargets(database, s.GetDatabaseAccessModeForRoles(roles))
-	if !allowed {
-		return auth.ResolvedAccess{}
-	}
-	access := auth.ResolvedAccess{Read: true, Write: true}
-	for _, target := range targets {
-		resolved := s.GetResolvedAccessForRoles(roles, target)
-		access.Read = access.Read && resolved.Read
-		access.Write = access.Write && resolved.Write
-	}
+	_, access := s.databaseAccessForRoles(roles, database, s.GetDatabaseAccessModeForRoles(roles), true)
 	return access
 }
+
 func (s *Server) startQdrantGRPC() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,16 +109,7 @@ func (s *Server) startQdrantGRPC() error {
 	}
 	// Per-database RBAC: when auth is enabled, gRPC enforces same allowlist + privileges as HTTP/Bolt.
 	if s.isRBACEnforced() {
-		cfg.DatabaseAccessModeResolver = func(roles []string) auth.DatabaseAccessMode {
-			mode := s.GetDatabaseAccessModeForRoles(roles)
-			if mode == nil {
-				return nil
-			}
-			return grpcDatabaseAccessMode{DatabaseAccessMode: mode, allows: func(database string) bool {
-				_, allowed := s.databaseReadTargets(database, mode)
-				return allowed
-			}}
-		}
+		cfg.DatabaseAccessModeResolver = s.GetDatabaseAccessModeForRoles
 		cfg.ResolvedAccessResolver = s.grpcDatabaseAccessForRoles
 	}
 
