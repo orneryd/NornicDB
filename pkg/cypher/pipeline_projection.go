@@ -1275,7 +1275,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	stream.begin(named.Columns)
 	stopped := false
 	projected, completed := e.pipelineProjectPlainReturn(ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {
-		if !stream.emit(ctx, values) {
+		if !stream.emit(ctx, e, values) {
 			stopped = true
 			return false
 		}
