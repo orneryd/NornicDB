@@ -159,6 +159,45 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 	return s.GetResolvedAccessForRoles(claims.Roles, dbName)
 }
 
+// databaseReadTargets resolves the physical population of a direct reader.
+func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMode) ([]string, bool) {
+	physical, allowed := s.graphAccess(mode, database)
+	if !allowed {
+		return nil, false
+	}
+	if s.dbManager == nil {
+		return []string{physical}, true
+	}
+	if resolved, err := s.dbManager.ResolveDatabase(physical); err == nil {
+		physical = resolved
+	}
+	if mode != nil && !mode.CanAccessDatabase(physical) {
+		return nil, false
+	}
+	info, err := s.dbManager.GetDatabase(physical)
+	if err != nil || info.Type != "composite" {
+		return []string{physical}, true
+	}
+	targets := []string{physical}
+	for _, constituent := range info.Constituents {
+		if constituent.Type != "local" {
+			return nil, false
+		}
+		target, ok := s.graphAccess(mode, constituent.DatabaseName)
+		if !ok {
+			return nil, false
+		}
+		if resolved, err := s.dbManager.ResolveDatabase(target); err == nil {
+			target = resolved
+		}
+		if mode != nil && !mode.CanAccessDatabase(target) {
+			return nil, false
+		}
+		targets = append(targets, target)
+	}
+	return targets, true
+}
+
 // databaseReadAccess is the one check of whether the principal may read a
 // database through a route that reads it directly (search, similarity, the
 // graph routes): accessible is whether the database allowlist lets it use the
@@ -166,7 +205,7 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 // read privilege of a signed-in principal; a request without claims passes
 // the allowlist only when authentication is disabled).
 func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
-	dataDatabase, accessible := s.graphAccess(s.getDatabaseAccessMode(claims), dbName)
+	targets, accessible := s.databaseReadTargets(dbName, s.getDatabaseAccessMode(claims))
 	if !accessible {
 		return false, false
 	}
@@ -174,8 +213,12 @@ func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (acce
 	if claims != nil {
 		resolve = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
 	}
-	_, readable = auth.ResolveDatabaseReadAccess(nil, resolve, dataDatabase)
-	return true, readable
+	for _, target := range targets {
+		if _, allowed := auth.ResolveDatabaseReadAccess(nil, resolve, target); !allowed {
+			return true, false
+		}
+	}
+	return true, true
 }
 
 // authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
