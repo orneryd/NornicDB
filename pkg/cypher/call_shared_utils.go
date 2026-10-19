@@ -8,8 +8,8 @@ import (
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
-// (), [], {} groups and quoted strings. The parts are trimmed substrings of
-// input, so splitting copies no text.
+// (), [], {} groups, comments and quoted strings. Comment-free parts retain
+// source slices; comments are rendered from the lexical owner's recorded spans.
 func splitTopLevelComma(input string) []string {
 	var buffer [8]string
 	parts := appendTopLevelComma(buffer[:0], input)
@@ -23,8 +23,7 @@ func splitTopLevelComma(input string) []string {
 
 // appendTopLevelComma appends input's comma-separated parts outside quotes
 // and brackets, trimmed, to parts (splitTopLevelComma). A caller passing a
-// fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
-// allocating.
+// fixed-size buffer reuses its result storage and the immutable argument spans.
 func appendTopLevelComma(parts []string, input string) []string {
 	return readFunctionSyntax(input).appendArguments(parts, 0, false)
 }
