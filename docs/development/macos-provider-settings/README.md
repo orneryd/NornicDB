@@ -19,8 +19,8 @@ are read before service start, including failure propagation.
 
 ## Completed checks (October 18, 2026, America/Phoenix)
 
-- `swift test --package-path macos/MenuBarApp`: nine tests passed.
-- `swift test --enable-code-coverage --package-path macos/MenuBarApp`: nine tests
+- `swift test --package-path macos/MenuBarApp`: ten tests passed.
+- `swift test --enable-code-coverage --package-path macos/MenuBarApp`: ten tests
   passed; coverage artifact generated. This is focused coverage, not a claim of
   complete UI interaction coverage.
 - `python3 -m unittest discover -s macos/tests -v`: two tests passed against the
@@ -66,3 +66,20 @@ are read before service start, including failure propagation.
 No CI job was dispatched and no release branch was merged or tagged. Performance
 benchmarks are not applicable: this PR changes native configuration UI and installer
 scripts, not database query execution.
+
+## Native layout review
+
+These are offscreen native SwiftUI captures using fixture settings, not screenshots
+of private live credentials. They establish layout and native rendering, not mouse
+interaction or launchd behavior. The temporary capture harness was removed after
+review; ten deterministic configuration/startup regression tests remain.
+
+![Server and security setup](setup.png)
+
+![Independent AI services](services.png)
+
+![Optional Advanced startup settings](advanced.png)
+
+The first step now uses compact fields, disabled services show their saved provider
+and model, and Advanced has explicit optional value reveal. Argument rows retain
+all arguments after the binary, including the existing position of `serve`.
