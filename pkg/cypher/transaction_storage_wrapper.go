@@ -286,6 +286,20 @@ func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, e
 	return w.toUserNode(node), nil
 }
 
+// GetQueryNode implements storage.QueryNodeReader in the wrapper's
+// namespace (BadgerTransaction.GetQueryNode): the node with its embedding
+// metadata, without separately stored vectors.
+func (w *transactionStorageWrapper) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+	node, err := w.tx.GetQueryNode(w.prefixNodeID(id))
+	if err != nil {
+		return nil, err
+	}
+	if w.namespace == "" {
+		return node, nil
+	}
+	return w.toUserNode(node), nil
+}
+
 // GetNodeProjected implements storage.ProjectedNodeReader in the wrapper's
 // namespace, decoding only the requested properties (see
 // BadgerTransaction.GetNodeProjected). Traversals use it with an empty

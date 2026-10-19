@@ -202,6 +202,53 @@ RETURN text.locate(s.text, $quote, {line: $line, from: $partStart, to: $partEnd}
 
 To place many quotes in one long text passed as a parameter, bind it once (`WITH $text AS t UNWIND $citations AS c RETURN text.locate(t, c.quote, {line: c.line})`): a string parameter used directly in the per-row expression is re-read on every row.
 
+#### Text intervals and line positions in Cypher
+
+Spans stored as parallel lists (`starts`, `ends` and metadata such as `labels` or `roles`, half-open `[start, end)` in code points, as `substring` and `text.locate` count) need no function of their own. These statements return the same rows in Neo4j.
+
+Run the partition statement after a `MATCH` that binds `s`, for example `MATCH (s:Source {id: $id})`, with parameters `start` and `end`. Its lists may be unordered and overlapping: the interval with the earliest start owns the overlap, with the lower list index winning equal starts. A later interval contributes only its uncovered suffix. Empty intervals are ignored; empty or absent lists leave the whole span as `'own'`. The extra empty interval in the statement preserves a row for that case.
+
+```cypher
+// Intervals overlapping [start, stop), clipped to it, in list order with index and metadata;
+// an empty span [start, start) stands for [start, start + 1)
+WITH s, $start AS start, CASE WHEN $end > $start THEN $end ELSE $start + 1 END AS stop
+RETURN [i IN range(0, size(coalesce(s.starts, [])) - 1)
+        WHERE s.starts[i] < stop AND start < s.ends[i]
+        | {index: i, start: CASE WHEN start > s.starts[i] THEN start ELSE s.starts[i] END,
+           end: CASE WHEN stop < s.ends[i] THEN stop ELSE s.ends[i] END, label: s.labels[i]}] AS overlaps
+
+// [start, end) split into the intervals' clipped parts with their role, gaps as 'own'
+WITH s, $start AS start, $end AS end
+UNWIND [i IN range(0, size(coalesce(s.starts, [])) - 1) |
+        {start: s.starts[i], end: s.ends[i], role: s.roles[i], index: i}]
+       + [{start: end, end: end, index: -1}] AS part
+WITH s, start, end, part ORDER BY part.start, part.index
+WITH s, start, end, collect(part) AS intervals
+WITH start, end, reduce(acc = {position: start, parts: []}, part IN intervals |
+  CASE WHEN start >= end OR part.start >= part.end OR part.start >= end OR part.end <= acc.position THEN acc
+  ELSE {position: CASE WHEN part.end < end THEN part.end ELSE end END,
+        parts: acc.parts
+          + CASE WHEN acc.position < part.start
+                 THEN [{start: acc.position, end: part.start, role: 'own'}]
+                 ELSE [] END
+          + [{start: CASE WHEN part.start > acc.position THEN part.start ELSE acc.position END,
+              end: CASE WHEN part.end < end THEN part.end ELSE end END, role: part.role}]}
+  END) AS acc
+RETURN acc.parts + CASE WHEN acc.position < end THEN [{start: acc.position, end: end, role: 'own'}] ELSE [] END AS parts
+
+// The 1-based line, 0-based column and line text at a code-point offset
+WITH text, offset, substring(text, 0, offset) AS before
+WITH text, before, size(before) - size(replace(before, '\n', '')) AS breaks
+RETURN breaks + 1 AS line, size(last(split(before, '\n'))) AS column, split(text, '\n')[breaks] AS context
+
+// A span's lines as "n: line", numbered from first ('' gives "first: ")
+WITH split(substring(text, $start, $end - $start), '\n') AS lines, $first AS first
+RETURN reduce(out = '', i IN range(0, size(lines) - 1) |
+  out + CASE WHEN i = 0 THEN '' ELSE '\n' END + toString(first + i) + ': ' + lines[i]) AS numbered
+```
+
+Each overlap list scans all intervals, so a span costs O(intervals). For many spans over one source, bind the lists once (`WITH s.starts AS starts, s.ends AS ends UNWIND $spans AS q …`).
+
 ### ⏰ Date/Time Functions (4 functions)
 
 | Function      | What It Does                | Example              |

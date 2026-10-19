@@ -1496,7 +1496,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return
 		}
 		seen[id] = true
-		if node, getErr := store.GetNode(id); getErr == nil && node != nil {
+		if node, getErr := e.getQueryNode(store, id); getErr == nil && node != nil {
 			nodes = append(nodes, node)
 		}
 	}
@@ -1981,7 +1981,7 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 	}
 	if nextNode == nil {
 		var err error
-		nextNode, err = e.storage.GetNode(nextNodeID)
+		nextNode, err = e.getQueryNode(e.storage, nextNodeID)
 		if err != nil || nextNode == nil {
 			return nil, false
 		}

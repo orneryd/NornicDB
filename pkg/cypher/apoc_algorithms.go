@@ -148,7 +148,7 @@ func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interfac
 }
 
 func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]storage.NodeID, float64) {
-	endNode, err := e.storage.GetNode(endID)
+	endNode, err := e.getQueryNode(e.storage, endID)
 	if err != nil {
 		return nil, 0
 	}
@@ -164,7 +164,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 		}
 	}
 	heuristic := func(nodeID storage.NodeID) float64 {
-		node, err := e.storage.GetNode(nodeID)
+		node, err := e.getQueryNode(e.storage, nodeID)
 		if err != nil {
 			return 0
 		}
@@ -474,7 +474,7 @@ func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []int
 			if nodeID == startID {
 				continue
 			}
-			node, err := e.getStorage(ctx).GetNode(nodeID)
+			node, err := e.getQueryNode(e.getStorage(ctx), nodeID)
 			if err != nil {
 				return nil, err
 			}
@@ -570,7 +570,7 @@ func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []int
 		}
 		nodesList := make([]interface{}, 0, len(nodeIDs))
 		for _, nodeID := range nodeIDs {
-			node, err := e.getStorage(ctx).GetNode(nodeID)
+			node, err := e.getQueryNode(e.getStorage(ctx), nodeID)
 			if err != nil {
 				return nil, err
 			}

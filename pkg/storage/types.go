@@ -558,6 +558,18 @@ type NodeWithoutEmbeddingsReader interface {
 	GetNodeWithoutEmbeddings(id NodeID) (*Node, error)
 }
 
+// QueryNodeReader is an optional extension interface for the node a query
+// row carries: GetNode's visibility, labels, properties and the node's
+// settled embedding metadata (the worker sidecar's included, so
+// Node.HasChunkEmbeddings answers as on a full read), without reading
+// separately stored chunk vectors. Vectors already in memory may be present,
+// shared rather than copied; a caller that needs the vectors reads with
+// GetNode. Unlike NodeWithoutEmbeddingsReader, whose read leaves the sidecar
+// out, the metadata is the full read's.
+type QueryNodeReader interface {
+	GetQueryNode(id NodeID) (*Node, error)
+}
+
 // BatchNodeWithoutEmbeddingsReader is an optional extension interface for
 // fetching several nodes without stored embedding vectors in one storage
 // operation. Missing IDs are omitted from the returned map, matching
@@ -1310,6 +1322,20 @@ func (n *Node) GetDefaultEmbedding() []float32 {
 	}
 
 	return nil
+}
+
+// HasChunkEmbeddings reports whether the node has chunk embedding vectors:
+// loaded ones (a non-empty first chunk), or, when none are loaded, the stored
+// ones its embedding metadata counts (chunk_count), which an embedding-free
+// read (NodeWithoutEmbeddingsReader) leaves in storage.
+func (n *Node) HasChunkEmbeddings() bool {
+	if n == nil {
+		return false
+	}
+	if len(n.ChunkEmbeddings) > 0 {
+		return len(n.ChunkEmbeddings[0]) > 0
+	}
+	return chunkCountFromMeta(n.EmbedMeta) > 0
 }
 
 // =============================================================================

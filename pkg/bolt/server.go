@@ -224,8 +224,12 @@ type Server struct {
 	// (connectionId bolt-N).
 	nextConnectionID atomic.Uint64
 
-	executorsMu sync.RWMutex
-	executors   map[string]QueryExecutor
+	statementCacheIndex multidb.StatementCacheIndex
+	executorsMu         sync.RWMutex
+	executors           map[string]QueryExecutor
+	// Auth-scoped executors remain fresh; only their text caches live here.
+	statementCaches     *cypher.StatementCaches
+	statementCachesOnce sync.Once
 
 	// Query executor (injected dependency) - used if dbManager is nil
 	executor QueryExecutor
@@ -1090,6 +1094,11 @@ func (s *Server) Close() error {
 	s.closed.Store(true)
 	listener := s.listener
 	s.lifecycleMu.Unlock()
+	s.statementCacheIndex.Close()
+	s.executorsMu.Lock()
+	s.executors = nil
+	s.executorsMu.Unlock()
+	s.fallbackStatementCaches().Dispose()
 	s.stopDiscoveryRefresher()
 	if listener != nil {
 		return listener.Close()
@@ -2336,6 +2345,8 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 		return nil, fmt.Errorf("database manager not available")
 	}
 
+	s.server.bindStatementCacheIndex()
+
 	useAuthScopedResolver := false
 	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuthHeader) != "" {
 		_ = resolver
@@ -2344,7 +2355,7 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 
 	if !useAuthScopedResolver {
 		s.server.executorsMu.RLock()
-		if executor, ok := s.server.executors[dbName]; ok {
+		if executor, ok := s.server.executors[dbName]; ok && !boltExecutorCachesDisposed(executor) {
 			s.server.executorsMu.RUnlock()
 			return executor, nil
 		}
@@ -2371,9 +2382,13 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 	if s.server.executors == nil {
 		s.server.executors = make(map[string]QueryExecutor)
 	}
-	if existing, ok := s.server.executors[dbName]; ok {
+	if existing, ok := s.server.executors[dbName]; ok && !boltExecutorCachesDisposed(existing) {
 		s.server.executorsMu.Unlock()
 		return existing, nil
+	}
+	if !executor.StatementCacheSelectionValid() {
+		s.server.executorsMu.Unlock()
+		return nil, multidb.ErrDatabaseNotFound
 	}
 	s.server.executors[dbName] = dbExecutor
 	s.server.executorsMu.Unlock()
@@ -2433,6 +2448,14 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 	}
 
 	executor := cypher.NewStorageExecutor(storageEngine)
+	if manager, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+		if err := executor.UseDatabaseStatementCaches(manager, dbName); err != nil {
+			return nil, err
+		}
+	} else {
+		// Injected managers without catalog lifecycle use one bounded server owner.
+		executor.UseStatementCaches(s.server.fallbackStatementCaches())
+	}
 	if s.server.config != nil {
 		executor.SetLocalizationRenderer(s.server.config.Localizer)
 	}
@@ -2499,4 +2522,31 @@ func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, pa
 		}
 	}
 	return qr, nil
+}
+
+func (s *Server) fallbackStatementCaches() *cypher.StatementCaches {
+	s.statementCachesOnce.Do(func() { s.statementCaches = cypher.NewStatementCaches() })
+	return s.statementCaches
+}
+
+func boltExecutorCachesDisposed(executor QueryExecutor) bool {
+	adapter, ok := executor.(*boltQueryExecutorAdapter)
+	return ok && !adapter.executor.StatementCacheSelectionValid()
+}
+
+// One registration covers every cached execution view owned by this server.
+func (s *Server) bindStatementCacheIndex() {
+	manager, ok := s.dbManager.(*multidb.DatabaseManager)
+	if !ok {
+		return
+	}
+	s.statementCacheIndex.Bind(manager, func() {
+		s.executorsMu.Lock()
+		defer s.executorsMu.Unlock()
+		for name, executor := range s.executors {
+			if boltExecutorCachesDisposed(executor) {
+				delete(s.executors, name)
+			}
+		}
+	})
 }

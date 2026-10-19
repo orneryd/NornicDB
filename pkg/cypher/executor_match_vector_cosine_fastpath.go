@@ -1531,11 +1531,11 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 	startID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.StartNode)
 	endID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.EndNode)
 
-	startNode, err := e.storage.GetNode(startID)
+	startNode, err := e.getQueryNode(e.storage, startID)
 	if err != nil || startNode == nil {
 		return false
 	}
-	endNode, err := e.storage.GetNode(endID)
+	endNode, err := e.getQueryNode(e.storage, endID)
 	if err != nil || endNode == nil {
 		return false
 	}

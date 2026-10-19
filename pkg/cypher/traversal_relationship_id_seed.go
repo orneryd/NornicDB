@@ -52,7 +52,7 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	// The traversal trusts its seeds: each must match the start node's own
 	// labels and properties, as a bound start node does.
 	for _, id := range endpoints {
-		if node, getErr := store.GetNode(id); getErr == nil && node != nil && e.matchesEndPattern(node, &match.StartNode) {
+		if node, getErr := e.getQueryNode(store, id); getErr == nil && node != nil && e.matchesEndPattern(node, &match.StartNode) {
 			nodes = append(nodes, node)
 		}
 	}

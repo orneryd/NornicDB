@@ -44,6 +44,42 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// getQueryNode reads a node as query rows carry it: labels, properties and
+// embedding metadata, without the separately stored embedding vectors a row
+// never reads (n.has_embedding reads the metadata; storage.QueryNodeReader).
+// The transaction wrapper always reads it that way: a transaction's
+// UpdateNode reconciles embeddings against the stored node, so a row node
+// written back keeps them. Outside a transaction an engine's UpdateNode takes
+// the body as written and would clear them, so a store outside a transaction
+// reads it that way only for a statement that cannot write
+// (readOnlyQueryNodes); otherwise it reads the full node. Code that reads
+// vectors (link prediction, vector scoring, search indexing) reads with
+// GetNode.
+func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
+	if wrapper, ok := store.(*transactionStorageWrapper); ok {
+		return wrapper.GetQueryNode(id)
+	}
+	if e != nil && e.readOnlyQueryNodes {
+		if reader, ok := store.(storage.QueryNodeReader); ok {
+			return reader.GetQueryNode(id)
+		}
+	}
+	return store.GetNode(id)
+}
+
+// readsQueryNodesWithoutVectors reports whether an auto-commit statement
+// running without a transaction reads its row nodes without vectors: one
+// that matches nodes and cannot write. A write needs a write clause or a
+// procedure (CALL), which may write without one; both keep full reads, as
+// does a store without the query-node read.
+func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
+	if info == nil || !info.IsReadOnly || info.IsWriteQuery || !info.HasMatch || info.HasCall {
+		return false
+	}
+	_, ok := e.storage.(storage.QueryNodeReader)
+	return ok
+}
+
 type materializedAccessRecorder interface {
 	RecordMaterializedAccess(entityID string)
 }
@@ -137,7 +173,14 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		if id == "" {
 			return false
 		}
+	case PathResult:
+		return materializedPathResult(recorder, &v)
+	case *PathResult:
+		return materializedPathResult(recorder, v)
 	case map[string]interface{}:
+		if path, ok := cypherPathResultOf(v, v, true); ok {
+			return materializedPathResult(recorder, &path)
+		}
 		found := false
 		for _, nested := range v {
 			if materializedValue(recorder, nested) {
@@ -168,6 +211,33 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		recorder.RecordMaterializedAccess(id)
 	}
 	return true
+}
+
+// materializedPathResult visits the native entities carried by a local path.
+// The typed carrier is authoritative, so its public map fields are not walked
+// a second time.
+func materializedPathResult(recorder materializedAccessRecorder, path *PathResult) bool {
+	if path == nil {
+		return false
+	}
+	found := false
+	for _, node := range path.Nodes {
+		if materializedValue(recorder, node) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	for _, relationship := range path.Relationships {
+		if materializedValue(recorder, relationship) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 // nodeToMap converts a storage.Node to a map for result output.

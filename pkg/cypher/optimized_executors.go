@@ -426,7 +426,7 @@ func (e *StorageExecutor) getNodeCached(id storage.NodeID, cache map[storage.Nod
 	if node, exists := cache[id]; exists {
 		return node
 	}
-	node, err := e.storage.GetNode(id)
+	node, err := e.getQueryNode(e.storage, id)
 	if err != nil {
 		return nil
 	}

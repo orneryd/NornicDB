@@ -423,7 +423,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 	}
 	parserError := antlr.Validate(cypher)
 	if parserError == nil {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
+		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 		return nil
 	}
 	if err := e.validateSyntaxNornic(cypher); err != nil {
@@ -854,13 +854,28 @@ func hasValidStartKeyword(cypher string) bool {
 func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	e.syntaxValidationOnce.Do(func() {
 		if e.syntaxValidationCache == nil {
-			e.syntaxValidationCache = &syntaxValidationCache{max: 4096}
-			for i := range e.syntaxValidationCache.shards {
-				e.syntaxValidationCache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
-			}
+			e.syntaxValidationCache = newSyntaxValidationCache()
 		}
 	})
 	return e.syntaxValidationCache
+}
+
+// ShareStatementCachesFrom gives a fresh executor the source executor's
+// caches that depend only on the statement text: the syntax verdicts and
+// the upper-cased text. Configure it before executing queries. Protocol
+// transactions (Bolt and HTTP explicit transactions) build a new executor
+// per transaction; without the shared verdicts every statement in such a
+// transaction was validated again from scratch, which under
+// NORNICDB_PARSER=antlr is a full grammar parse of the statement.
+//
+//	transactionExecutor := NewStorageExecutor(databaseStorage)
+//	transactionExecutor.ShareStatementCachesFrom(databaseExecutor)
+func (e *StorageExecutor) ShareStatementCachesFrom(source *StorageExecutor) {
+	if source == nil || source == e {
+		return
+	}
+	e.UseStatementCaches(source.StatementCaches())
+	e.statementCacheScope = source.statementCacheScope
 }
 
 // The validators a statement text is cached as valid for: each marks only
@@ -869,6 +884,11 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 const (
 	syntaxValidNornic uint8 = 1 << iota
 	syntaxValidANTLR
+	// syntaxGrammarAccepted marks a text the ANTLR grammar itself accepted.
+	// It is not a validator: syntaxValidANTLR also covers NornicDB's
+	// extension statements, which the grammar rejects. The log redactor
+	// reads it on both parsers (redactForLog).
+	syntaxGrammarAccepted
 )
 
 // activeSyntaxValidator is the validator the configured parser selects.
@@ -883,23 +903,22 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) b
 	if cypher == "" {
 		return false
 	}
-	c := e.ensureSyntaxValidationCache()
-	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
-	sh.mu.RLock()
-	accepted := sh.cache[cypher]
-	sh.mu.RUnlock()
+	accepted := e.cachedSyntaxVerdict(cypher)
 	if accepted&validator != 0 {
 		return true
+	}
+	// Redaction reuses only an exact-text grammar verdict. Canonical
+	// literal variants remain valid only for the execution validators.
+	validator &^= syntaxGrammarAccepted
+	if validator == 0 {
+		return false
 	}
 	// Parser acceptance is structural: literal values never change it, so
 	// statements that differ only in literals share one cached verdict
 	// through the canonical form (PR #1043 #6). The canonical form is only
 	// computed on an exact-text miss.
 	if canonical, normalized := normalizeLiteralText(cypher); normalized {
-		csh := &c.shards[boundedCacheStringShardIndex(canonical)]
-		csh.mu.RLock()
-		accepted = csh.cache[canonical]
-		csh.mu.RUnlock()
+		accepted = e.cachedSyntaxVerdict(canonical)
 	}
 	return accepted&validator != 0
 }
@@ -908,22 +927,16 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) 
 	if cypher == "" {
 		return
 	}
-	c := e.ensureSyntaxValidationCache()
-	add := func(key string) {
-		sh := &c.shards[boundedCacheStringShardIndex(key)]
-		sh.mu.Lock()
-		if _, cached := sh.cache[key]; !cached && len(sh.cache) >= c.max/boundedCacheShardCount {
-			for k := range sh.cache {
-				delete(sh.cache, k)
-				break
-			}
-		}
-		sh.cache[key] |= validator
-		sh.mu.Unlock()
+	scopes, cacheable := e.cacheDependencyScopes(cypher)
+	if !cacheable {
+		return
 	}
-	add(cypher)
-	if canonical, normalized := normalizeLiteralText(cypher); normalized {
-		add(canonical)
+	add := func(key string, verdict uint8) { e.addSyntaxCacheEntry(key, verdict, scopes) }
+	add(cypher, validator)
+	if structural := validator &^ syntaxGrammarAccepted; structural != 0 {
+		if canonical, normalized := normalizeLiteralText(cypher); normalized {
+			add(canonical, structural)
+		}
 	}
 }
 

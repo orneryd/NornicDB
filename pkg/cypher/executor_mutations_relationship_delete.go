@@ -297,7 +297,7 @@ func (e *StorageExecutor) boundRelationshipDeleteTargetNode(
 	default:
 		return nil, false, nil
 	}
-	target, err := store.GetNode(targetID)
+	target, err := e.getQueryNode(store, targetID)
 	if err != nil || target == nil {
 		return nil, false, nil
 	}

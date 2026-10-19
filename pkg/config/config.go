@@ -756,10 +756,12 @@ type MemoryConfig struct {
 	// === Runtime Memory Management (Go runtime tuning) ===
 
 	// RuntimeLimit is the soft memory limit (GOMEMLIMIT) in bytes
-	// 0 = unlimited (Go manages automatically)
-	// Set to 80% of container memory for optimal performance
+	// 0 = unlimited (Go manages automatically). With RuntimeLimitStr "auto"
+	// (the default), ResolveRuntimeLimit derives it from the container's
+	// cgroup memory limit at startup, and clamps an explicit limit above it.
 	RuntimeLimit int64
-	// RuntimeLimitStr is the configured value in megabytes as a string (e.g., "500")
+	// RuntimeLimitStr is the configured value in megabytes as a string
+	// (e.g., "500"), "0" for unlimited or "auto"
 	RuntimeLimitStr string
 	// GCPercent controls GC aggressiveness (GOGC)
 	// 100 = default, lower = more aggressive (less memory, more CPU)
@@ -2074,7 +2076,7 @@ func LoadDefaults() *Config {
 	config.Memory.AutoLinksSimilarityThreshold = 0.82
 	config.Memory.KmeansMinEmbeddings = 100
 	config.Memory.KmeansClusterInterval = 15 * time.Minute // timer-based clustering every 15 min (skips if no changes)
-	config.Memory.RuntimeLimitStr = "0"
+	config.Memory.RuntimeLimitStr = RuntimeLimitAuto
 	config.Memory.RuntimeLimit = 0
 	config.Memory.GCPercent = 100
 	config.Memory.PoolEnabled = true
@@ -2734,7 +2736,7 @@ func applyEnvVars(config *Config) error {
 		config.Memory.AutoLinksSimilarityThreshold = v
 	}
 	if v := getEnv("NORNICDB_MEMORY_LIMIT", ""); v != "" {
-		runtimeLimit, err := ParseMemoryLimitMB(v)
+		runtimeLimit, err := ParseRuntimeLimit(v)
 		if err != nil {
 			return fmt.Errorf("invalid NORNICDB_MEMORY_LIMIT value %q: %w", v, err)
 		}
@@ -3725,7 +3727,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		config.Memory.AutoLinksSimilarityThreshold = yamlCfg.Memory.AutoLinksSimilarityThreshold
 	}
 	if yamlCfg.Memory.RuntimeLimit != "" {
-		runtimeLimit, err := ParseMemoryLimitMB(yamlCfg.Memory.RuntimeLimit)
+		runtimeLimit, err := ParseRuntimeLimit(yamlCfg.Memory.RuntimeLimit)
 		if err != nil {
 			return nil, fmt.Errorf("invalid memory.runtime_limit value %q: %w", yamlCfg.Memory.RuntimeLimit, err)
 		}
@@ -4327,6 +4329,15 @@ func normalizeTelemetryListen(v string) string {
 func generateDefaultSecret() string {
 	// In production, this should be explicitly set
 	return "CHANGE_ME_IN_PRODUCTION_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+}
+
+// ParseRuntimeLimit parses memory.runtime_limit: ParseMemoryLimitMB's
+// megabytes, or "auto" (0, resolved later by ResolveRuntimeLimit).
+func ParseRuntimeLimit(s string) (int64, error) {
+	if strings.EqualFold(strings.TrimSpace(s), RuntimeLimitAuto) {
+		return 0, nil
+	}
+	return ParseMemoryLimitMB(s)
 }
 
 // ParseMemoryLimitMB parses a memory limit value expressed in megabytes.
