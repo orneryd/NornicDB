@@ -89,7 +89,9 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 				_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(db + ":rejected")})
 				require.NoError(t, err)
 			}
-			require.ErrorIs(t, tracker.CommitTransaction(context.Background(), tx), injected)
+			commitErr := tracker.CommitTransaction(context.Background(), tx)
+			require.ErrorIs(t, commitErr, injected)
+			require.True(t, nornicerrors.IsCommitRolledBack(commitErr), "pre-commit read failures have a known rollback outcome")
 			require.False(t, tx.IsActive())
 			count, err := underlying.NodeCount()
 			require.NoError(t, err)
