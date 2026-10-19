@@ -664,7 +664,7 @@ func shallowValueBytes(value interface{}) int64 {
 // text: a false positive only binds the statement context for the budget.
 func expressionBuildsValues(expression string) bool {
 	lower := lowerASCII(expression)
-	if strings.Contains(lower, "range(") || strings.Contains(lower, "reduce(") {
+	if containsFunctionCallNamed(expression, "range") || containsFunctionCallNamed(expression, "reduce") {
 		return true
 	}
 	return strings.Contains(lower, "[") && strings.Contains(lower, " in ") &&
