@@ -98,7 +98,7 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
-	return e.execute(ctx, cypher, params, nil)
+	return e.execute(ctx, cypher, params, nil, true)
 }
 
 // executeRouted continues the same semantic statement through a transparent
@@ -109,10 +109,10 @@ func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, para
 	if statement, ok := ctx.Value(queryEmbeddingStatementKey{}).(*statementExecutionContext); ok {
 		outcome = statement.outcome
 	}
-	return e.execute(ctx, cypher, params, outcome)
+	return e.execute(ctx, cypher, params, outcome, false)
 }
 
-func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome) (result *ExecuteResult, retErr error) {
+func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement
@@ -218,8 +218,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	// The statement as the client sent it may not call NornicDB's internal
 	// functions; the rewrites below produce them (#1105).
-	if err := internalFunctionCallError(cypher); err != nil {
-		return nil, err
+	// Transparent routing continues already-admitted text, including generated
+	// functions. A public reentrant call still admits its own client text.
+	if clientText {
+		if err := internalFunctionCallError(cypher); err != nil {
+			return nil, err
+		}
 	}
 	// Comments and keyword spacing are canonical from here on; what the
 	// client sees (column names, messages, plans) is the text it sent (#740).
@@ -418,18 +422,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
 	}
 
-	// Label expressions in patterns become the label forms and WHERE
-	// predicates every route reads, once, here; the result's columns and
-	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
-	if err != nil {
-		return nil, err
-	}
-	if labelRewrite != nil {
-		rowsRewritten = true
-		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
-	}
 	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
 	// WITH * they stand for, once, here; errors are mapped back (#907).
 	if desugared, orderRewrite := desugarStandaloneOrderClauses(cypher); orderRewrite != nil {
@@ -547,6 +539,19 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
+	}
+	// Label expressions in patterns become the label forms and WHERE
+	// predicates the local evaluator reads. Route source Cypher first: remote
+	// evaluators do not implement our internal functions. The result's columns and
+	// errors are mapped back (#860).
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, err
+	}
+	if labelRewrite != nil {
+		rowsRewritten = true
+		cypher = desugared
+		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
 	}
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
