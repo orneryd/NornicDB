@@ -156,13 +156,13 @@ func TestExecutionDeterminismNestedParameterBindings(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	params := map[string]any{
 		"statement": "CALL db.rretrieve($request)",
-		"request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"},
-		"deadline": deadline.UnixMilli(),
+		"request":   map[string]any{"query": "transcript", "where": "timestamp() < $deadline"},
+		"deadline":  deadline.UnixMilli(),
 	}
 	first, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err)
 	require.Len(t, first.Rows, 2)
-	time.Sleep(time.Until(deadline.Add(100*time.Millisecond)))
+	time.Sleep(time.Until(deadline.Add(100 * time.Millisecond)))
 	second, err := exec.Execute(context.Background(), query, params)
 	require.NoError(t, err)
 	require.Empty(t, second.Rows, "nested execution retains the caller's actual predicate bindings")
