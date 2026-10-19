@@ -220,7 +220,7 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 	syntax := readFunctionSyntax(expr)
 	lastDot := -1
-	for _, at := range syntax.groups[0].punctuation {
+	for _, at := range syntax.rootPunctuation {
 		if expr[at] == '.' {
 			lastDot = at
 		}
