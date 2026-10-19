@@ -169,6 +169,12 @@ func commandNamespaces(cmd *Command, payload ...*commandPublicationPayload) ([]s
 		for _, id := range ids {
 			add(string(id))
 		}
+	case CmdTransaction:
+		replay, err := decodeManagedTransaction(cmd.Data)
+		if err != nil {
+			return nil, err
+		}
+		add(replay.Namespace + ":")
 	case CmdBatchWrite:
 		var batch struct{ Nodes, Edges [][]byte }
 		if err := decodeGob(cmd.Data, &batch); err != nil {

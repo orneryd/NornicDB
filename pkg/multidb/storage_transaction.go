@@ -11,7 +11,7 @@ import (
 // CommitTransaction admits and accounts for a raw transaction. Managed direct
 // writes enter the same owner with a storage-owned direct-write transaction.
 func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
-	return t.commitTransaction(ctx, tx)
+	return t.commitTransaction(ctx, storage.NewManagedTransaction(t.Engine, tx))
 }
 
 type accountingTransaction interface {
@@ -34,8 +34,12 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 		ctx = context.Background()
 	}
 	committed, commitAttempted := false, false
+	var reservation *accountingReservation
 	var release func()
 	defer func() {
+		if reservation != nil && !reservation.isPending() {
+			reservation.resolve(commitErr)
+		}
 		if release != nil {
 			release()
 		}
@@ -72,7 +76,7 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 		}
 		return err
 	}
-	if changes.Operations == 0 {
+	if changes.Operations == 0 && !changes.HasSchemaChanges {
 		// Read-only commits bypass write admission but still own cancellation
 		// cleanup, including the snapshot and any acquired MERGE key.
 		return commit(func() { committed = true }, nil)
@@ -92,7 +96,7 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 	needsExclusive := func(l *Limits, initialized bool) bool {
 		return initialized || (l != nil && (l.Storage.MaxNodes > 0 || l.Storage.MaxEdges > 0 || l.Storage.MaxBytes > 0 || l.Rate.MaxWritesPerSecond > 0))
 	}
-	exclusive := needsStaging || needsExclusive(limits, initialized)
+	exclusive := needsExclusive(limits, initialized)
 	for {
 		release, err = t.writeMu.acquire(ctx, exclusive, changes.HoldsMergeKey)
 		if err != nil {
@@ -112,6 +116,35 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 		release = nil
 		exclusive = true
 	}
+	if !exclusive {
+		if native, ok := tx.(*storage.ManagedWriteTransaction); ok && native.CanCommitNative() {
+			// Proposal admission never spans a consensus wait: an older queued
+			// command may need this same owner before this command can apply.
+			if !storage.IsManagedLocalApply(ctx) && storage.HasManagedWriteRouter(t.Engine) {
+				lifetime, err := t.nativeCommandLifetime(native)
+				if err != nil {
+					return nornicerrors.MarkCommitRolledBack(err)
+				}
+				ctx = storage.WithManagedCommandLifetime(ctx, lifetime)
+				release()
+				release = nil
+			}
+			ctx = storage.WithCommandAfterPublication(ctx, func() {
+				committed = true
+				if release != nil {
+					release()
+					release = nil
+				}
+			})
+			commitAttempted = true
+			err := native.CommitNative(ctx)
+			committed = err == nil || storage.MutationApplied(err)
+			if err != nil && !committed && !storage.MutationPending(err) {
+				return nornicerrors.MarkCommitRolledBack(err)
+			}
+			return err
+		}
+	}
 	if needsStaging {
 		if err := preparer.PrepareChanges(); err != nil {
 			return err
@@ -120,11 +153,11 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 	}
 	publish := func() {
 		committed = true
-		release()
-		release = nil
-	}
-	if !exclusive {
-		return commit(publish, func() {})
+		reservation.resolve(nil)
+		if release != nil {
+			release()
+			release = nil
+		}
 	}
 	trackBytes := initialized || (limits != nil && limits.Storage.MaxBytes > 0)
 	if trackBytes || (limits != nil && (limits.Storage.MaxNodes > 0 || limits.Storage.MaxEdges > 0)) {
@@ -144,12 +177,20 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 			return err
 		}
 	}
-	if err := batch.admit(t, limits, currentBytes); err != nil {
+	existing, _ := ctx.Value(accountingReservationKey{}).(*accountingReservation)
+	if err := batch.admit(t, limits, currentBytes, existing); err != nil {
 		return err
+	}
+	if existing != nil {
+		reservation = t.reserve(batch, existing)
+	}
+	if managed, ok := tx.(managedAccountingTransaction); ok && managed.RoutesManagedCommand() && !storage.IsManagedLocalApply(ctx) {
+		reservation = t.reserve(batch, existing)
+		managed.SetCommandLifetime(t.commandLifetime(managed, reservation))
 	}
 	// Match ordinary writes: one token per buffered storage operation, including
 	// deletes. Rejected attempts retain consumed rate tokens, not storage usage.
-	if limits != nil && limits.Rate.MaxWritesPerSecond > 0 {
+	if limits != nil && limits.Rate.MaxWritesPerSecond > 0 && !storage.IsManagedLocalApply(ctx) {
 		for i := 0; i < changes.Operations; i++ {
 			if err := checker.CheckWriteRate(); err != nil {
 				return nornicerrors.MarkCommitRolledBack(err)
@@ -160,6 +201,10 @@ func (t *sizeTrackingEngine) commitTransaction(ctx context.Context, tx accountin
 	if trackBytes {
 		manager, database, admitted := t.manager, t.dbName, batch
 		account = func() { manager.publishAccountingBatch(database, admitted, nil) }
+	}
+	if managed, ok := tx.(managedAccountingTransaction); ok && managed.RoutesManagedCommand() && !storage.IsManagedLocalApply(ctx) {
+		release()
+		release = nil
 	}
 	return commit(publish, account)
 }

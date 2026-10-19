@@ -83,8 +83,9 @@ type bufferedCommit struct {
 // CommitBuffer is one generation of buffered committed writes. It is
 // append-only while active and read-only while draining.
 type CommitBuffer struct {
-	readScopes map[string]struct{}
-	commits    []bufferedCommit
+	readScopes          map[string]struct{}
+	commits             []bufferedCommit
+	replicationVersions map[any][16]byte
 
 	nodes   map[NodeID]*Node
 	edges   map[EdgeID]*Edge
@@ -185,6 +186,22 @@ func (b *CommitBuffer) Commits() []bufferedCommit {
 // second copy is paid per operation.
 func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 	b.commits = append(b.commits, c)
+	if c.version.ReplicationID != ([16]byte{}) {
+		if b.replicationVersions == nil {
+			b.replicationVersions = make(map[any][16]byte)
+		}
+		for _, op := range c.ops {
+			switch op.Type {
+			case OpCreateNode, OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
+				b.replicationVersions[op.NodeID] = c.version.ReplicationID
+				for _, id := range op.DeletedEdgeIDs {
+					b.replicationVersions[id] = c.version.ReplicationID
+				}
+			case OpCreateEdge, OpUpdateEdge, OpDeleteEdge:
+				b.replicationVersions[op.EdgeID] = c.version.ReplicationID
+			}
+		}
+	}
 	for _, op := range c.ops {
 		visitOperationTotalCounts(op, b.totalCounts.add)
 		switch op.Type {

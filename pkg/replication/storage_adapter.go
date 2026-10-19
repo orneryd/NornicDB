@@ -3,7 +3,10 @@ package replication
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
+	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"os"
@@ -75,6 +78,7 @@ func NewStorageAdapter(engine storage.Engine) (*StorageAdapter, error) {
 // NewStorageAdapterWithWAL creates a new storage adapter with a custom WAL directory.
 // If walDir is empty, defaults to "data/replication/wal".
 func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAdapter, error) {
+	storage.EnableReplicatedVersions(engine)
 	if walDir == "" {
 		walDir = "data/replication/wal"
 	}
@@ -143,6 +147,18 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) error {
 	if cmd == nil {
 		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
+	}
+	if cmd.RequestID == "" {
+		// Legacy commands already carry a proposal timestamp. Derive their
+		// replay identity from the immutable wire body, rather than a peer's
+		// local clock. New managed commands supply a fresh request UUID.
+		hash := sha256.New()
+		hash.Write([]byte{byte(cmd.Type)})
+		var stamp [8]byte
+		binary.BigEndian.PutUint64(stamp[:], uint64(cmd.Timestamp.UnixNano()))
+		hash.Write(stamp[:])
+		hash.Write(cmd.Data)
+		cmd.RequestID = uuid.UUID(hash.Sum(nil)[:16]).String()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -225,9 +241,20 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 		return a.applyDeleteByPrefixContext(ctx, cmd.Data)
 	}
 
-	req, record, err := a.queueCommandWAL(cmd)
-	if err != nil {
-		return err
+	if cmd.RequestID != "" {
+		if token, tokenErr := uuid.Parse(cmd.RequestID); tokenErr == nil {
+			ctx = storage.WithCommandVersion(ctx, [16]byte(token))
+		}
+	}
+	var req *walWriteRequest
+	var record replicationWALRecord
+	var journalErr error
+	var publicationOnce sync.Once
+	publication := func() { publicationOnce.Do(func() { req, record, journalErr = a.queueCommandWAL(cmd) }) }
+	if cmd.managedWrite == nil && cmd.RequestID != "" {
+		if existing, ok := managedCommands.Load(commandIdentity(a.engine, cmd.RequestID)); ok {
+			cmd.managedWrite = existing.(*managedCommandWrite)
+		}
 	}
 
 	// Execute the command immediately (don't wait for WAL write)
@@ -235,22 +262,36 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 	var execErr error
 	localApply := false
 	if cmd.managedWrite != nil {
-		localApply, execErr = cmd.managedWrite.apply()
+		localApply, execErr = cmd.managedWrite.apply(context.WithoutCancel(ctx), publication)
 	}
 	if !localApply {
 		switch cmd.Type {
 		case CmdCreateNode:
-			_, execErr = a.engine.CreateNode(payload.node)
+			execErr = a.applyNativeCommand(ctx, storage.Operation{Type: storage.OpCreateNode, Node: payload.node}, publication)
 		case CmdUpdateNode:
-			execErr = a.engine.UpdateNode(payload.node)
+			execErr = a.applyNativeCommand(ctx, storage.Operation{Type: storage.OpUpdateNode, Node: payload.node}, publication)
 		case CmdDeleteNode:
-			execErr = a.applyDeleteNode(cmd.Data)
+			var deleted struct{ NodeID string }
+			if err := decodeGob(cmd.Data, &deleted); err != nil || deleted.NodeID == "" {
+				deleted.NodeID = string(cmd.Data)
+			}
+			execErr = a.applyNativeCommand(ctx, storage.Operation{Type: storage.OpDeleteNode, NodeID: storage.NodeID(deleted.NodeID)}, publication)
 		case CmdCreateEdge:
-			execErr = a.engine.CreateEdge(payload.edge)
+			execErr = a.applyNativeCommand(ctx, storage.Operation{Type: storage.OpCreateEdge, Edge: payload.edge}, publication)
 		case CmdUpdateEdge:
-			execErr = a.engine.UpdateEdge(payload.edge)
+			execErr = a.applyNativeCommand(ctx, storage.Operation{Type: storage.OpUpdateEdge, Edge: payload.edge}, publication)
+		case CmdTransaction:
+			var replay storage.ManagedReplay
+			replay, execErr = decodeManagedTransaction(cmd.Data)
+			if execErr == nil {
+				execErr = storage.ApplyManagedReplay(storage.WithCommandPublication(ctx, publication), a.engine, replay)
+			}
 		case CmdDeleteEdge:
-			execErr = a.applyDeleteEdge(cmd.Data)
+			var deletedEdge struct{ EdgeID string }
+			execErr = decodeGob(cmd.Data, &deletedEdge)
+			if execErr == nil {
+				execErr = a.applyNativeCommand(ctx, storage.Operation{Type: storage.OpDeleteEdge, EdgeID: storage.EdgeID(deletedEdge.EdgeID)}, publication)
+			}
 		case CmdDeleteByPrefix:
 			execErr = a.applyDeleteByPrefixContext(ctx, cmd.Data)
 		case CmdSetProperty:
@@ -260,9 +301,9 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 		case CmdCypher:
 			execErr = a.applyCypher(cmd.Data)
 		case CmdBulkCreateNodes:
-			execErr = a.applyBulkCreateNodes(cmd.Data)
+			execErr = a.applyManagedBulk(ctx, cmd, publication)
 		case CmdBulkCreateEdges:
-			execErr = a.applyBulkCreateEdges(cmd.Data)
+			execErr = a.applyManagedBulk(ctx, cmd, publication)
 		case CmdBulkDeleteNodes:
 			execErr = a.applyBulkDeleteNodes(cmd.Data)
 		case CmdBulkDeleteEdges:
@@ -270,6 +311,16 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 		default:
 			execErr = localizedError(localization.ReplicationStorageUnknownCommandType(uint8(cmd.Type)), nil)
 		}
+	}
+	if execErr != nil && !storage.MutationApplied(execErr) {
+		return execErr
+	}
+	// Compatibility commands without the native publication capability still
+	// journal only an accepted result. Managed CRUD and atomic transactions
+	// publish this record inside their ordered physical publication stage.
+	publication()
+	if journalErr != nil {
+		return &storage.AppliedMutationError{Cause: journalErr}
 	}
 
 	// Try to get position from async write (non-blocking, best-effort)
@@ -290,6 +341,57 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 	}
 
 	return execErr
+}
+
+func (a *StorageAdapter) applyNativeCommand(ctx context.Context, op storage.Operation, published func()) error {
+	if storage.SupportsNativeCommand(a.engine) {
+		return storage.ExecuteNativeCommand(ctx, a.engine, op, published)
+	}
+	switch op.Type {
+	case storage.OpCreateNode:
+		_, err := a.engine.CreateNode(op.Node)
+		return err
+	case storage.OpUpdateNode:
+		return a.engine.UpdateNode(op.Node)
+	case storage.OpCreateEdge:
+		return a.engine.CreateEdge(op.Edge)
+	case storage.OpUpdateEdge:
+		return a.engine.UpdateEdge(op.Edge)
+	case storage.OpDeleteNode:
+		return a.engine.DeleteNode(op.NodeID)
+	case storage.OpDeleteEdge:
+		return a.engine.DeleteEdge(op.EdgeID)
+	default:
+		return storage.ErrNotImplemented
+	}
+}
+
+func (a *StorageAdapter) applyManagedBulk(ctx context.Context, cmd *Command, published func()) error {
+	var encoded [][]byte
+	if err := decodeGob(cmd.Data, &encoded); err != nil {
+		return err
+	}
+	replay := storage.ManagedReplay{Bulk: true, Operations: make([]storage.Operation, len(encoded))}
+	for i, data := range encoded {
+		var err error
+		if cmd.Type == CmdBulkCreateNodes {
+			replay.Operations[i].Type = storage.OpCreateNode
+			replay.Operations[i].Node, err = decodeNodePayload(data)
+			if err == nil {
+				replay.Namespace, _, _ = storage.ParseDatabasePrefix(string(replay.Operations[i].Node.ID))
+			}
+		} else {
+			replay.Operations[i].Type = storage.OpCreateEdge
+			replay.Operations[i].Edge, err = decodeEdgePayload(data)
+			if err == nil {
+				replay.Namespace, _, _ = storage.ParseDatabasePrefix(string(replay.Operations[i].Edge.ID))
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return storage.ApplyManagedReplay(storage.WithCommandPublication(ctx, published), a.engine, replay)
 }
 
 // queueCommandWAL retains the existing async journal path and synchronous
@@ -873,6 +975,10 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
+	versions, err := storage.CaptureReplicationVersions(a.engine)
+	if err != nil {
+		return err
+	}
 	// Every stored node and edge: the ones the visibility layer hides from
 	// reads are replicated data too.
 	nodes, err := storage.CollectStoredNodes(context.Background(), a.engine)
@@ -888,11 +994,13 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 	snapshot := struct {
 		WALPosition        uint64
 		NamespaceLifetimes storage.NamespaceCatalogState
+		Versions           storage.ReplicationVersions
 		Nodes              []*storage.Node
 		Edges              []*storage.Edge
 	}{
 		WALPosition:        a.walPosition.Load(),
 		NamespaceLifetimes: storage.CaptureNamespaceCatalogState(a.engine),
+		Versions:           versions,
 		Nodes:              nodes,
 		Edges:              edges,
 	}
@@ -916,6 +1024,7 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	var snapshot struct {
 		WALPosition        uint64
 		NamespaceLifetimes storage.NamespaceCatalogState
+		Versions           storage.ReplicationVersions
 		Nodes              []*storage.Node
 		Edges              []*storage.Edge
 	}
@@ -942,6 +1051,9 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	}
 
 	// Restore WAL position
+	if err := storage.RestoreReplicationVersions(a.engine, snapshot.Versions); err != nil {
+		return err
+	}
 	a.walPosition.Store(snapshot.WALPosition)
 
 	return nil

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
@@ -53,6 +54,14 @@ func (v CypherLocalDateTime) TemporalTime() time.Time { return v.Time }
 func (v CypherDateTime) TemporalTime() time.Time      { return v.Time }
 
 func init() {
+	// The replication/WAL gob envelope must retain the same typed values
+	// as the durable property codec, including nested temporal lists.
+	gob.Register(CypherDate{})
+	gob.Register(CypherLocalTime{})
+	gob.Register(CypherTime{})
+	gob.Register(CypherLocalDateTime{})
+	gob.Register(CypherDateTime{})
+	gob.Register(&CypherDuration{})
 	registerTemporalTimeExtension(41, CypherDate{}, func(value CypherDate) time.Time { return value.Time }, func(value time.Time) CypherDate { return CypherDate{Time: value} })
 	registerTemporalTimeExtension(42, CypherLocalTime{}, func(value CypherLocalTime) time.Time { return value.Time }, func(value time.Time) CypherLocalTime { return CypherLocalTime{Time: value} })
 	registerTemporalTimeExtension(43, CypherTime{}, func(value CypherTime) time.Time { return value.Time }, func(value time.Time) CypherTime { return CypherTime{Time: value} })

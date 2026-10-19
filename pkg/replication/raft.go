@@ -215,6 +215,9 @@ type applyFuture struct {
 
 func (future *applyFuture) resolve(err error) {
 	future.resolveOnce.Do(func() {
+		if err != nil && future.index == 0 {
+			rejectManagedCommand(future.cmd, err)
+		}
 		future.errCh <- err
 		if future.doneCh != nil {
 			close(future.doneCh)
@@ -829,7 +832,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 			if op := future.cmd.namespaceDrop; op != nil {
 				op.Abort()
 			}
-			future.errCh <- err
+			future.resolve(err)
 			return
 		}
 	}
@@ -842,7 +845,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		if op := future.cmd.namespaceDrop; op != nil {
 			op.Abort()
 		}
-		future.errCh <- ErrNotLeader
+		future.resolve(ErrNotLeader)
 		return
 	}
 	if isNamespaceLifecycle(future.cmd) {
@@ -869,12 +872,12 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 				caller = context.Background()
 			}
 			if err := preparer.PrepareCommandContext(caller, future.cmd); err != nil {
-				future.errCh <- err
+				future.resolve(err)
 				return
 			}
 			future.cmd.namespaceDrop.DeferConsensusCompletion()
 		} else if future.cmd.namespaceDrop != nil {
-			future.errCh <- storage.ErrNotImplemented
+			future.resolve(storage.ErrNotImplemented)
 			return
 		}
 	}
@@ -900,6 +903,9 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		}
 		r.log = append(r.log, entry)
 		future.index = entry.Index
+		if future.cmd.managedWrite != nil {
+			future.cmd.managedWrite.admitted.Store(true)
+		}
 		future.term = term
 		r.logMu.Unlock()
 		return nil
@@ -910,7 +916,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 			caller = context.Background()
 		}
 		if err := op.Propose(caller, appendLog); err != nil {
-			future.errCh <- err
+			future.resolve(err)
 			return
 		}
 	} else {
@@ -1324,6 +1330,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 			if r.log[idx].Term != entry.Term {
 				// Conflict: delete this and all following entries
 				for _, discarded := range r.log[idx:] {
+					rejectManagedCommand(discarded.Command, ErrNotLeader)
 					if discarded.Command != nil && discarded.Command.namespaceDrop != nil {
 						discarded.Command.namespaceDrop.Abort()
 					}

@@ -16,6 +16,7 @@ func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *stor
 		// transaction's managed owner, not the request's original user graph.
 		engine = e.txContext.engine
 	}
+	wrapped := engine
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
@@ -30,5 +31,5 @@ func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *stor
 		}
 		engine = wrapper.GetInnerEngine()
 	}
-	return tx.CommitContext(ctx)
+	return storage.CommitWrappedTransaction(ctx, wrapped, tx)
 }

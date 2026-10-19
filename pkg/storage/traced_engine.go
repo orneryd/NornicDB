@@ -42,6 +42,35 @@ func (t *TracedEngine) getCtx() context.Context {
 // through the tracing decorator via the canonical EngineUnwrapper accessor.
 func (t *TracedEngine) GetInnerEngine() Engine { return t.Engine }
 
+func (t *TracedEngine) SupportsNativeCommand() bool { return SupportsNativeCommand(t.Engine) }
+
+// Keep the tracing decorator on the native command path, including its ordered
+// completion hook. Unsupported decorators deliberately retain staged execution.
+func (t *TracedEngine) NativeCommand(ctx context.Context, op Operation, published func()) error {
+	var name string
+	kind := "node"
+	switch op.Type {
+	case OpCreateNode:
+		name = "CreateNode"
+	case OpUpdateNode:
+		name = "UpdateNode"
+	case OpDeleteNode:
+		name = "DeleteNode"
+	case OpCreateEdge:
+		name, kind = "CreateEdge", "edge"
+	case OpUpdateEdge:
+		name, kind = "UpdateEdge", "edge"
+	case OpDeleteEdge:
+		name, kind = "DeleteEdge", "edge"
+	default:
+		return ErrNotImplemented
+	}
+	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage."+name,
+		trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attribute.String("kind", kind)))
+	defer span.End()
+	return ExecuteNativeCommand(ctx, t.Engine, op, published)
+}
+
 func (t *TracedEngine) CreateNode(node *Node) (NodeID, error) {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.CreateNode",
 		trace.WithSpanKind(trace.SpanKindInternal),

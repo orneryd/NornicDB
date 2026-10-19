@@ -29,9 +29,10 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	return id, err
 }
 
-func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
+func (b *BadgerEngine) createNode(node *Node, publication ...nativePublication) (NodeID, error) {
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
+			tx.setCommandPublication(publication)
 			_, err := tx.CreateNode(node)
 			return err
 		}); handled {
@@ -43,7 +44,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite(publication...)
 	if barrierErr != nil {
 		return "", barrierErr
 	}
@@ -88,7 +89,7 @@ func (b *BadgerEngine) createNode(node *Node) (NodeID, error) {
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	writeBody := func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
+		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now(), nativePublicationToken(publication))
 		if err != nil {
 			return err
 		}
@@ -385,9 +386,10 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	return b.orderBehindBufferedWrites(namespaceForNodeID(node.ID), func() error { return b.updateNode(node) })
 }
 
-func (b *BadgerEngine) updateNode(node *Node) error {
+func (b *BadgerEngine) updateNode(node *Node, publication ...nativePublication) error {
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
+			tx.setCommandPublication(publication)
 			return upsertNodeInTransaction(tx, node)
 		}); handled {
 			return err
@@ -395,7 +397,7 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite(publication...)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -440,7 +442,7 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	writeBody := func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
+		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now(), nativePublicationToken(publication))
 		if err != nil {
 			return err
 		}
@@ -681,15 +683,16 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	return b.orderBehindBufferedWrites(namespaceForNodeID(id), func() error { return b.deleteNode(id) })
 }
 
-func (b *BadgerEngine) deleteNode(id NodeID) error {
+func (b *BadgerEngine) deleteNode(id NodeID, publication ...nativePublication) error {
 	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+		tx.setCommandPublication(publication)
 		return tx.DeleteNode(id)
 	}); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite(publication...)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -735,7 +738,7 @@ func (b *BadgerEngine) deleteNode(id NodeID) error {
 		return keys
 	}
 	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
-		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
+		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now(), nativePublicationToken(publication))
 		if allocErr != nil {
 			return allocErr
 		}

@@ -709,6 +709,10 @@ type TemporalMaintenanceEngine interface {
 type MVCCVersion struct {
 	CommitTimestamp time.Time `json:"commit_timestamp"`
 	CommitSequence  uint64    `json:"commit_sequence"`
+	// ReplicationID identifies the command that produced this version, across
+	// peers whose local timestamps, sequences and physical read versions differ.
+	// It does not participate in local MVCC ordering.
+	ReplicationID [16]byte `json:"replication_id,omitempty"`
 }
 
 // IsZero reports whether the version is uninitialized.

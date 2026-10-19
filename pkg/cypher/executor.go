@@ -1907,6 +1907,9 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// subsequent Execute calls still benefit from the cross-query
 	// speedup. Tx isolation is preserved because each in-flight tx had
 	// its own clone; only post-commit entries graduate to the parent.
+	for _, action := range txWrapper.schemaCommitActions {
+		action()
+	}
 	txExec.promoteNodeLookupCacheTo(e)
 
 	return result, nil

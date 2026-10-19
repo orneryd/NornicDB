@@ -3,6 +3,7 @@ package multidb
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,10 +13,12 @@ import (
 // bytes in DatabaseManager metadata for O(1) reads.
 type sizeTrackingEngine struct {
 	storage.Engine
-	manager *DatabaseManager
-	dbName  string
-	checker *databaseLimitChecker
-	writeMu writeAdmission
+	manager       *DatabaseManager
+	dbName        string
+	checker       *databaseLimitChecker
+	writeMu       writeAdmission
+	reservationMu sync.Mutex
+	reserved      accountingBatch
 }
 
 var _ storage.Engine = (*sizeTrackingEngine)(nil)
@@ -47,7 +50,7 @@ func newSizeTrackingEngine(engine storage.Engine, manager *DatabaseManager, dbNa
 		wrapped.checker = checkers[0]
 	}
 	if manager != nil {
-		storage.RegisterAccountingOwner(engine, dbName, wrapped.prepareBaseAccounting)
+		storage.RegisterProjectedAccountingOwner(engine, dbName, wrapped.prepareBaseAccountingProjection)
 	}
 	return wrapped
 }

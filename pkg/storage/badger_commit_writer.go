@@ -148,7 +148,9 @@ func (cw *commitWriter) publication() *commitPublication {
 	ids, publish := cw.pendingEmbeddingIDs, cw.publish
 	cw.pendingEmbeddingIDs = nil
 	if len(ids) == 0 && publish == nil {
-		return nil
+		if cw.notification == nil || (cw.notification.publication == nil && cw.notification.afterPublication == nil) {
+			return nil
+		}
 	}
 	engine := cw.engine
 	p := &commitPublication{keys: cw.publishKeys, run: func() {
@@ -162,6 +164,16 @@ func (cw *commitWriter) publication() *commitPublication {
 		p.run = func() { publish(); cw.accounting() }
 	} else if !cw.replay {
 		cw.attachAccounting(p)
+	}
+	if cw.notification != nil && (cw.notification.publication != nil || cw.notification.afterPublication != nil) {
+		publish, complete := p.run, cw.notification.publication
+		p.run = func() {
+			publish()
+			if complete != nil {
+				complete()
+			}
+			cw.notification.published = true
+		}
 	}
 	return p
 }

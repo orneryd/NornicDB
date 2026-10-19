@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
@@ -398,6 +399,7 @@ func pointWithinBBox(point, lowerLeft, upperRight CypherPoint) (bool, bool) {
 }
 
 func init() {
+	gob.Register(CypherPoint{})
 	msgpack.RegisterExtEncoder(47, CypherPoint{}, func(_ *msgpack.Encoder, value reflect.Value) ([]byte, error) {
 		point := value.Interface().(CypherPoint)
 		data := make([]byte, 4+8*3)

@@ -110,9 +110,10 @@ func decodeMVCCAdjacencyRecord(data []byte) (mvccAdjacencyRecord, error) {
 // Legacy msgpack-encoded heads are still decodable via fallback so
 // existing data directories continue to work across the format change.
 const (
-	mvccHeadCompactVersion byte = 1
-	mvccHeadFlagTombstoned byte = 1 << 0
-	mvccHeadFlagHasFloor   byte = 1 << 1
+	mvccHeadCompactVersion  byte = 1
+	mvccHeadFlagTombstoned  byte = 1 << 0
+	mvccHeadFlagHasFloor    byte = 1 << 1
+	mvccHeadFlagReplication byte = 1 << 2
 
 	mvccHeadCompactMinLen  = 18
 	mvccHeadCompactFullLen = 34
@@ -132,6 +133,10 @@ func encodeMVCCHead(head MVCCHead) ([]byte, error) {
 	if hasFloor {
 		size = mvccHeadCompactFullLen
 	}
+	if head.Version.ReplicationID != ([16]byte{}) {
+		flags |= mvccHeadFlagReplication
+		size += 16
+	}
 	buf := make([]byte, size)
 	buf[0] = mvccHeadCompactVersion
 	buf[1] = flags
@@ -140,6 +145,9 @@ func encodeMVCCHead(head MVCCHead) ([]byte, error) {
 	if hasFloor {
 		binary.BigEndian.PutUint64(buf[18:26], uint64(head.FloorVersion.CommitTimestamp.UTC().UnixNano()))
 		binary.BigEndian.PutUint64(buf[26:34], head.FloorVersion.CommitSequence)
+	}
+	if flags&mvccHeadFlagReplication != 0 {
+		copy(buf[size-16:], head.Version.ReplicationID[:])
 	}
 	return buf, nil
 }
@@ -165,6 +173,16 @@ func decodeMVCCHead(data []byte) (MVCCHead, error) {
 				CommitTimestamp: time.Unix(0, int64(binary.BigEndian.Uint64(data[18:26]))).UTC(),
 				CommitSequence:  binary.BigEndian.Uint64(data[26:34]),
 			}
+		}
+		if flags&mvccHeadFlagReplication != 0 {
+			offset := mvccHeadCompactMinLen
+			if flags&mvccHeadFlagHasFloor != 0 {
+				offset = mvccHeadCompactFullLen
+			}
+			if len(data) < offset+16 {
+				return MVCCHead{}, fmt.Errorf("mvcc head missing replication version: %d bytes", len(data))
+			}
+			copy(head.Version.ReplicationID[:], data[offset:offset+16])
 		}
 		return normalizeMVCCHead(head), nil
 	}

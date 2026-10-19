@@ -107,7 +107,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// sequence counter pins the commit's place in history, so the flusher
 	// materializes heads that are already ordered against every later
 	// transaction's snapshot — no backdating or flush-time ordering games.
-	if version, err := tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now()); err != nil {
+	if version, err := tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now(), tx.commandVersion); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	} else {
@@ -159,6 +159,9 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	}
 	if accounting != nil {
 		accounting.publish(accounting.pairs, accounting.err)
+	}
+	if tx.commandPublication != nil {
+		tx.commandPublication()
 	}
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,
@@ -222,7 +225,7 @@ func (b *BadgerEngine) orderBehindBufferedWrites(namespace string, write func() 
 // writes no temporal index entries, which it knows only once it has buffered
 // them.
 func (tx *BadgerTransaction) bufferableLocked() bool {
-	return tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
+	return tx.engine.writeBehindEnabled() && tx.implicit && !tx.managedDirect && tx.schemaRuntime == nil &&
 		!tx.knowledgeSchemaDirty &&
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff)
 }

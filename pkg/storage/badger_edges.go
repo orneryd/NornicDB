@@ -21,9 +21,10 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	return b.orderBehindBufferedWrites(namespaceForEdgeID(edge.ID), func() error { return b.createEdge(edge) })
 }
 
-func (b *BadgerEngine) createEdge(edge *Edge) error {
+func (b *BadgerEngine) createEdge(edge *Edge, publication ...nativePublication) error {
 	if edge != nil {
 		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+			tx.setCommandPublication(publication)
 			return tx.CreateEdge(edge)
 		}); handled {
 			return err
@@ -31,7 +32,7 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite(publication...)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -113,7 +114,7 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 			}
 		}
 
-		version, err := b.allocateMVCCVersion(txn, dbName, time.Now())
+		version, err := b.allocateMVCCVersion(txn, dbName, time.Now(), nativePublicationToken(publication))
 		if err != nil {
 			return err
 		}
@@ -292,9 +293,10 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	return b.orderBehindBufferedWrites(namespaceForEdgeID(edge.ID), func() error { return b.updateEdge(edge) })
 }
 
-func (b *BadgerEngine) updateEdge(edge *Edge) error {
+func (b *BadgerEngine) updateEdge(edge *Edge, publication ...nativePublication) error {
 	if edge != nil {
 		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+			tx.setCommandPublication(publication)
 			return tx.UpdateEdge(edge)
 		}); handled {
 			return err
@@ -302,7 +304,7 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite(publication...)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -326,7 +328,7 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 	var oldType string
 	var oldEdge *Edge
 	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
+		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now(), nativePublicationToken(publication))
 		if err != nil {
 			return err
 		}
@@ -528,15 +530,16 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	return b.orderBehindBufferedWrites(namespaceForEdgeID(id), func() error { return b.deleteEdge(id) })
 }
 
-func (b *BadgerEngine) deleteEdge(id EdgeID) error {
+func (b *BadgerEngine) deleteEdge(id EdgeID, publication ...nativePublication) error {
 	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+		tx.setCommandPublication(publication)
 		return tx.DeleteEdge(id)
 	}); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	notification, release, barrierErr := b.beginNotifyingWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite(publication...)
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -565,7 +568,7 @@ func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 		}
 	}
 	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
-		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
+		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now(), nativePublicationToken(publication))
 		if err != nil {
 			return err
 		}

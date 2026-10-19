@@ -361,6 +361,7 @@ type BadgerEngine struct {
 	mvccByNamespaceMu    sync.RWMutex
 	mvccByNamespace      map[string]*namespaceMVCCState
 	mvccLegacyGlobalSeed uint64
+	replicatedVersions   atomic.Bool
 
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
@@ -1325,14 +1326,18 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // between commit and persistence loses at most the unflushed window of
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
-func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
+func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time, command ...[16]byte) (MVCCVersion, error) {
 	if err := b.checkNamespaceOperation(namespace); err != nil {
 		return MVCCVersion{}, err
 	}
 	if err := b.checkNamespacePublication(namespace); err != nil {
 		return MVCCVersion{}, err
 	}
-	return b.reserveMVCCVersion(txn, namespace, commitTime)
+	version, err := b.reserveMVCCVersion(txn, namespace, commitTime)
+	if len(command) > 0 && command[0] != ([16]byte{}) {
+		version.ReplicationID = command[0]
+	}
+	return version, err
 }
 
 // reserveMVCCVersion also serves replay of already acknowledged commits.
@@ -1347,10 +1352,14 @@ func (b *BadgerEngine) reserveMVCCVersion(txn *badger.Txn, namespace string, com
 	if err != nil {
 		return MVCCVersion{}, err
 	}
-	return MVCCVersion{
+	version := MVCCVersion{
 		CommitTimestamp: commitStamp,
 		CommitSequence:  seq,
-	}, nil
+	}
+	if b.replicatedVersions.Load() {
+		version.ReplicationID = newReplicationVersion()
+	}
+	return version, nil
 }
 
 // persistMVCCSequence writes the namespace's current sequence to disk in

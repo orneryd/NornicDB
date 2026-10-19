@@ -9,12 +9,31 @@ import "context"
 // Buffered commits invoke it at their acknowledged-publication boundary.
 func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, afterPublication func()) error {
 	if ctx != nil {
+		if after := CommandAfterPublicationFromContext(ctx); after != nil {
+			tx.commandAfterPublication = after
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 	}
 	tx.mu.Lock()
 	tx.commitCtx = ctx
+	if ctx != nil {
+		if token := CommandVersionFromContext(ctx); token != ([16]byte{}) {
+			tx.commandVersion = token
+		}
+	}
+	if ctx != nil {
+		if complete := CommandPublicationFromContext(ctx); complete != nil {
+			previous := tx.commandPublication
+			tx.commandPublication = func() {
+				if previous != nil {
+					previous()
+				}
+				complete()
+			}
+		}
+	}
 	tx.mu.Unlock()
 	defer func() {
 		tx.mu.Lock()
