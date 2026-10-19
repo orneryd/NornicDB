@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
 // PermissionRequirements describes the entitlements required to execute a query.
@@ -431,6 +433,13 @@ func withExecutionDatabase(ctx context.Context, database string) context.Context
 	return context.WithValue(ctx, databaseAuthorizationKey{}, authorization)
 }
 
+// GraphDatabaseResolver is the catalog view needed to resolve graph selections.
+// It accepts native typed constituent snapshots or the legacy generic adapter.
+type GraphDatabaseResolver interface {
+	IsCompositeDatabase(string) bool
+	ResolveDatabase(string) (string, error)
+}
+
 // AccessDatabases returns the databases a principal must be allowed to use
 // for a statement on database, the graph name it selects (a request or
 // session database, a USE, :USE or subquery USE, a composite constituent):
@@ -446,48 +455,79 @@ func withExecutionDatabase(ctx context.Context, database string) context.Context
 // manager may be nil (no database manager): the name alone. When the
 // composite's constituents can't be read, the list is the composite and the
 // error is returned with it.
-func AccessDatabases(manager DatabaseManagerInterface, database string) ([]string, error) {
+func AccessDatabases(manager GraphDatabaseResolver, database string) ([]string, error) {
+	selected, target, _, err := resolveGraphSelection(manager, database)
+	if err != nil {
+		return []string{selected}, err
+	}
+	if selected != target || selected != database {
+		return []string{selected, target}, nil
+	}
+	return []string{target}, nil
+}
+
+// resolveGraphSelection owns selection/target resolution for both list consumers
+// and direct graph checks. Remote graph names never resolve locally.
+func resolveGraphSelection(manager GraphDatabaseResolver, database string) (selected, target string, remote bool, err error) {
 	if manager == nil {
-		return []string{database}, nil
+		return database, database, false, nil
 	}
 	if dot := strings.IndexByte(database, '.'); dot > 0 && manager.IsCompositeDatabase(database[:dot]) {
 		composite := database[:dot]
-		constituents, err := manager.GetCompositeConstituents(composite)
-		if err != nil {
-			return []string{composite}, err
-		}
-		for _, item := range constituents {
-			if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
-				return []string{composite, ref.DatabaseName}, nil
+		// Native adapters can return typed snapshots without boxing each reference.
+		if typed, ok := manager.(interface {
+			GetCompositeConstituents(string) ([]multidb.ConstituentRef, error)
+		}); ok {
+			refs, err := typed.GetCompositeConstituents(composite)
+			if err != nil {
+				return composite, database, false, err
 			}
+			for _, ref := range refs {
+				if strings.EqualFold(ref.Alias, database[dot+1:]) {
+					return composite, ref.DatabaseName, ref.Type == "remote", nil
+				}
+			}
+		} else if legacy, ok := manager.(interface {
+			GetCompositeConstituents(string) ([]interface{}, error)
+		}); ok {
+			refs, err := legacy.GetCompositeConstituents(composite)
+			if err != nil {
+				return composite, database, false, err
+			}
+			for _, item := range refs {
+				if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
+					return composite, ref.DatabaseName, ref.Type == "remote", nil
+				}
+			}
+		} else {
+			return composite, database, false, errors.New("composite constituents unavailable")
 		}
-		return []string{composite, database}, nil
+		return composite, database, false, nil
 	}
-	if resolved, err := manager.ResolveDatabase(database); err == nil && resolved != database {
-		return []string{database, resolved}, nil
+	if resolved, err := manager.ResolveDatabase(database); err == nil {
+		return database, resolved, false, nil
 	}
-	return []string{database}, nil
+	return database, database, false, nil
 }
 
-// GraphAccess decides a request's or session's graph the way the executor
-// decides a graph a statement selects: allowed is whether canAccess allows
-// every database AccessDatabases lists for graph (a nil canAccess allows
-// all), and dataDatabase is the last one, the database graph's data is in,
-// whose privileges apply. When the databases can't be read (a composite's
-// constituents), access is refused. Bolt and HTTP use it for the database a
-// request names.
-func GraphAccess(manager DatabaseManagerInterface, graph string, canAccess func(database string) bool) (dataDatabase string, allowed bool) {
-	databases, err := AccessDatabases(manager, graph)
+// GraphAccess decides the selected and physical database using the same owner
+// as AccessDatabases, without allocating a list for a single graph decision.
+func GraphAccess(manager GraphDatabaseResolver, graph string, canAccess func(string) bool) (string, bool) {
+	database, _, allowed := GraphAccessTarget(manager, graph, canAccess)
+	return database, allowed
+}
+
+// GraphAccessTarget also identifies remote constituents, so direct readers do
+// not copy parent metadata again or reinterpret foreign names as local aliases.
+func GraphAccessTarget(manager GraphDatabaseResolver, graph string, canAccess func(string) bool) (database string, remote, allowed bool) {
+	selected, target, remote, err := resolveGraphSelection(manager, graph)
 	if err != nil {
-		return graph, false
+		return graph, remote, false
 	}
-	dataDatabase = databases[len(databases)-1]
-	for _, database := range databases {
-		if canAccess != nil && !canAccess(database) {
-			return dataDatabase, false
-		}
+	if canAccess != nil && (!canAccess(selected) || selected != target && !canAccess(target)) {
+		return target, remote, false
 	}
-	return dataDatabase, true
+	return target, remote, true
 }
 
 // authorizeSelectedDatabase owns the selection and permission decision for a
