@@ -62,8 +62,9 @@ func (e *observedRemoteEngine) Close() error {
 }
 
 func TestRemoteFactoryDecorators(t *testing.T) {
-	for _, commit := range []bool{true, false} {
-		t.Run(fmt.Sprint(commit), func(t *testing.T) {
+	for _, ending := range []string{"commit", "rollback", "early_rollback"} {
+		t.Run(ending, func(t *testing.T) {
+			commit := ending == "commit"
 			const password = "synthetic-decorator-password-491628"
 			var opens, queries, commits, rollbacks atomic.Int32
 			var remote *httptest.Server
@@ -136,6 +137,9 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 				require.Equal(t, [][]interface{}{{"decorated-result"}}, result.Rows)
 			}
 			cancelStatement()
+			if ending == "early_rollback" {
+				require.NoError(t, executor.RollbackParticipants(context.Background()))
+			}
 			if commit {
 				require.NoError(t, transaction.Commit(nil, nil))
 			} else {
@@ -155,6 +159,9 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 			}
 			require.NoError(t, executor.Close())
 			require.Equal(t, 1, wrapped.closes)
+			if !commit {
+				require.EqualValues(t, 1, rollbacks.Load(), "early rollback, coordinator rollback and close share one completion")
+			}
 		})
 	}
 }
