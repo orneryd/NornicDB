@@ -15,7 +15,10 @@ type procedureStatementStats struct {
 func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc registeredProcedure, query string, args []interface{}) (*ExecuteResult, error) {
 	totals := &procedureStatementStats{}
 	result, err := proc.Handler(context.WithValue(ctx, procedureStatementStatsKey{}, totals), e, query, args)
-	if err == nil && result != nil && totals.executed {
+	if err == nil && totals.executed {
+		if result == nil {
+			result = &ExecuteResult{}
+		}
 		result.Stats = totals.stats
 	}
 	return result, err
