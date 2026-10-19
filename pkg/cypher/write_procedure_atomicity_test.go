@@ -113,3 +113,44 @@ func TestWriteProcedureCallbackAtomicityAcrossCarriers(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteProcedureFabricRegistrationReload(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manager.Close() })
+	require.NoError(t, manager.CreateDatabase("reload_shard"))
+	require.NoError(t, manager.CreateCompositeDatabase("reload_comp", []multidb.ConstituentRef{{
+		Alias: "shard", DatabaseName: "reload_shard", Type: "local", AccessMode: "read_write",
+	}}))
+	store, err := manager.GetStorage("reload_comp")
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	const query = "CALL { USE reload_comp.shard CALL u5tx.reload() YIELD value RETURN value } RETURN value"
+	spec := ProcedureSpec{Name: "u5tx.reload", Signature: "u5tx.reload() :: (value :: INTEGER)", Mode: ProcedureModeRead,
+		Returns: []ProcedureColumn{{Name: "value", Type: "INTEGER"}}}
+	require.NoError(t, RegisterUserProcedure(spec, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+		return &ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{int64(1)}}}, nil
+	}))
+	_, err = exec.Execute(context.Background(), query, nil)
+	require.NoError(t, err)
+	spec.Mode = ProcedureModeWrite
+	reject := false
+	failure := errors.New("u5 reloaded procedure rejected")
+	require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
+		result, err := nested.Execute(ctx, "CREATE (:U5ReloadWrite) RETURN 1 AS value", nil)
+		if err != nil { return nil, err }
+		if reject { return nil, failure }
+		return result, nil
+	}))
+	_, err = exec.Execute(context.Background(), query, nil)
+	require.NoError(t, err)
+	reject = true
+	_, err = exec.Execute(context.Background(), query, nil)
+	require.ErrorContains(t, err, failure.Error())
+	shard, err := manager.GetStorage("reload_shard")
+	require.NoError(t, err)
+	nodes, err := shard.GetNodesByLabel("U5ReloadWrite")
+	require.NoError(t, err)
+	require.Len(t, nodes, 1, "successful call commits once; reloaded WRITE failure must roll back")
+}
