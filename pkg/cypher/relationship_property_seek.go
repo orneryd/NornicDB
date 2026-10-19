@@ -20,14 +20,9 @@ func withRelationshipSeekPredicate(ctx context.Context, pattern, where string) c
 	return context.WithValue(ctx, relationshipSeekPredicateKey{}, relationshipSeekPredicate{pattern: pattern, where: where})
 }
 
-func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, pattern string, match *TraversalMatch, where string, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
-	seekWhere := where
-	if original, ok := ctx.Value(relationshipSeekPredicateKey{}).(relationshipSeekPredicate); ok && original.pattern == pattern {
-		// The pipeline keeps outer-binding predicates for its joined-row filter.
-		// They can still supply an equality key evaluated in this incoming row.
-		seekWhere = original.where
-	}
-	seek, ok := e.relationshipAccessFor(ctx, pattern, seekWhere).resolve(ctx, e, match.Relationship.Properties)
+func (run relationshipAccessExecution) trySeek(ctx context.Context, match *TraversalMatch, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
+	e, pattern, seekWhere := run.executor, run.pattern, run.where
+	seek, ok := run.access.resolve(ctx, e, match.Relationship.Properties)
 	if !ok {
 		recordRelationshipSeekFallback(ctx, pattern, seekWhere, match.Relationship.Variable)
 		return nil, false, nil
@@ -102,8 +97,8 @@ func (e *StorageExecutor) tryRelationshipPropertySeek(ctx context.Context, patte
 			paths = append(paths, PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}, Length: 1})
 		}
 	}
-	if where != "" {
-		paths = e.filterPathsByWhere(ctx, paths, match, where, nil)
+	if run.physicalWhere != "" {
+		paths = e.filterPathsByWhere(ctx, paths, match, run.physicalWhere, nil)
 	}
 	if match.TraversalLimit > 0 && len(paths) > match.TraversalLimit {
 		paths = paths[:match.TraversalLimit]

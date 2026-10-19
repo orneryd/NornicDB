@@ -161,16 +161,12 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			boundStartNode := existing[matches.StartNode.variable]
 			boundEndNode := existing[matches.EndNode.variable]
 
-			var paths []PathResult
-			if boundStartNode != nil {
-				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
-				} else {
-					paths = e.traverseFromNode(ctx, boundStartNode, matches)
-				}
-			} else {
-				paths = e.traverseGraph(ctx, matches)
-			}
+			var start, end []*storage.Node
+			if boundStartNode != nil { start = []*storage.Node{boundStartNode} }
+			if boundEndNode != nil { end = []*storage.Node{boundEndNode} }
+			execution := e.relationshipExecutionFor(ctx, pattern, "")
+			paths, err := execution.paths(ctx, matches, start, end, nil)
+			if err != nil { recordExpressionFailure(ctx, err); return nil, nil }
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
 					continue

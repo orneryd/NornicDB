@@ -446,14 +446,8 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 		p.usedSymbols = true
 		return &labelExpression{kind: labelExpressionAny}, true
 	case '$':
-		// A dynamic label: $(e), $all(e), $any(e).
-		open, any := at+1, false
-		for _, function := range [...]string{"all", "any"} {
-			if at+1+len(function) < len(p.text) && strings.EqualFold(p.text[at+1:at+1+len(function)], function) && p.text[at+1+len(function)] == '(' {
-				open, any = at+1+len(function), function == "any"
-			}
-		}
-		if open >= len(p.text) || p.text[open] != '(' {
+		open, any, ok := dynamicLabelOpenAt(p.text, at)
+		if !ok {
 			return nil, false
 		}
 		closing := findMatchingDelimiter(p.text, open, '(', ')')
@@ -487,6 +481,20 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 	}
 	p.pos = end
 	return &labelExpression{kind: labelExpressionName, name: symbolicNameValue(written)}, true
+}
+
+// dynamicLabelOpenAt owns the token boundary used by label parsing, cache
+// dependencies and relationship-site compilation. A parameter is not a token.
+func dynamicLabelOpenAt(text string, at int) (open int, any, ok bool) {
+	if at < 0 || at+1 >= len(text) || text[at] != '$' { return 0, false, false }
+	open = at+1
+	for _, name := range [...]string{"all", "any"} {
+		end := at+1+len(name)
+		if end < len(text) && strings.EqualFold(text[at+1:end], name) && text[end] == '(' {
+			return end, name == "any", true
+		}
+	}
+	return open, false, text[open] == '('
 }
 
 // hasLabelExpressionOperator reports whether a label chain uses the label

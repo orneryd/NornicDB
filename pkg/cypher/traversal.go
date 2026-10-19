@@ -284,6 +284,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
 		matches.boundEndNodeID = endSeedNodes[0].ID
 	}
+	execution := e.relationshipExecutionFor(ctx, pattern, whereClause)
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
 		result.Columns = append(result.Columns, item.column())
@@ -312,7 +313,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// A plain relationship count is answered from the counters when they can
 	// (relationshipCountFromStore decides), instead of materializing paths.
 	if whereClause == "" && pathVariable == "" && len(returnItems) == 1 {
-		if count, ok, err := e.relationshipCountFromStore(ctx, matches, returnItems[0]); ok {
+		if count, ok, err := execution.count(ctx, matches, returnItems[0]); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -328,7 +329,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
 	if whereClause == "" && pathVariable == "" {
-		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
+		if rows, ok, err := execution.aggregate(ctx, matches, returnItems); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -397,52 +398,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	e.pushRelationshipEqualities(ctx, matches, whereClause)
 
-	// Execute traversal with optimized start nodes if available
-	var paths []PathResult
-	if seekPaths, sought, err := e.tryRelationshipPropertySeek(ctx, pattern, matches, whereClause, seedNodes, endSeedNodes); sought {
-		if err != nil {
-			return nil, err
-		}
-		paths = seekPaths
-	} else if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
-		// Final even when empty: a bound end node with no qualifying path must
-		// not fall through to the store-wide scan below.
-		paths = endSeededPaths
-	} else if len(optimizedStartNodes) > 0 {
-		// Use optimized start nodes for non-chained traversal. Chained traversal uses
-		// segment-aware expansion; feeding it through traverseGraphSequential can break
-		// semantics because it ignores segment topology.
-		if matches.IsChained && len(matches.Segments) > 1 {
-			paths = e.traverseChainedGraph(ctx, matches, optimizedStartNodes)
-		} else {
-			viewport, _ := TemporalViewportFromContext(ctx)
-			checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-			paths = e.traverseGraphSequential(ctx, matches, optimizedStartNodes, viewport, checker)
-		}
-		// Still need to apply WHERE clause filter (in case there are other conditions)
-		if whereClause != "" {
-			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
-		}
-	} else if matches.TraversalLimit > 0 && !matches.IsChained && len(matches.StartNode.properties) == 0 {
-		viewport, _ := TemporalViewportFromContext(ctx)
-		checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-		var streamed bool
-		var streamErr error
-		paths, streamed, streamErr = e.traverseGraphWithStreamingStartNodes(ctx, matches, viewport, checker)
-		if streamErr != nil {
-			return nil, streamErr
-		}
-		if !streamed {
-			paths = e.traverseGraph(ctx, matches)
-		}
-	} else {
-		// Normal traversal from all matching nodes
-		paths = e.traverseGraph(ctx, matches)
-		// Apply WHERE clause filter if present
-		if whereClause != "" {
-			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
-		}
-	}
+	paths, accessErr := execution.paths(ctx, matches, seedNodes, endSeedNodes, optimizedStartNodes)
+	if accessErr != nil { return nil, accessErr }
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
 		for _, path := range paths {
@@ -727,16 +684,12 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		return result, true, nil
 	}
 
-	reversed := reverseTraversalMatch(matches)
-	if reversed == nil {
-		return nil, false, nil
-	}
-
+	execution := e.relationshipExecutionFor(ctx, pattern, whereClause)
 	paths := make([]PathResult, 0, util.SafePreallocCap(len(seedNodes)))
 	for _, endNode := range seedNodes {
-		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
-		for _, reversedPath := range reversedPaths {
-			path := reversePathResult(reversedPath)
+		seededPaths, accessErr := execution.paths(ctx, matches, nil, []*storage.Node{endNode}, nil)
+		if accessErr != nil { return nil, true, accessErr }
+		for _, path := range seededPaths {
 			if whereClause != "" && !e.evaluateWhereOnPath(ctx, whereClause, e.buildPathContext(path, matches)) {
 				continue
 			}
@@ -1116,6 +1069,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 
 // TraversalMatch represents a parsed traversal pattern
 type TraversalMatch struct {
+	accessPattern string // original program template, retained by parsed-pattern caches
 	StartNode    nodePatternInfo
 	EndNode      nodePatternInfo
 	Relationship RelationshipPattern
@@ -1157,12 +1111,16 @@ func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern str
 	if hasQuantifiedGroup(pattern) {
 		return nil
 	}
+	source := pattern
 	pattern = normalizeAnonymousTraversalRelationships(pattern)
-	// First check if this is a chained pattern (has multiple relationship segments)
+	var match *TraversalMatch
 	if e.isChainedPattern(pattern) {
-		return e.parseChainedTraversalPattern(ctx, pattern)
+		match = e.parseChainedTraversalPattern(ctx, pattern)
+	} else {
+		match = e.parseTraversalPatternStateMachine(ctx, pattern)
 	}
-	return e.parseTraversalPatternStateMachine(ctx, pattern)
+	if match != nil { match.accessPattern = source }
+	return match
 }
 
 func normalizeAnonymousTraversalRelationships(pattern string) string {

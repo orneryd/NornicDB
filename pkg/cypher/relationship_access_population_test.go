@@ -1,6 +1,9 @@
 package cypher
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // The population crosses expression consumers with token spellings, predicate
 // sources and statement boundaries. It is independent of the program compiler.
@@ -20,6 +23,14 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 				add(name+"_"+write+"_bound_token", prefix+"WITH head(COLLECT { "+graph+"RETURN r.p }) AS token "+write+" (n:$"+token+"(token) {id:7}) RETURN labels(n)")
 			}
 		}
+		for _, write := range []string{"CREATE", "MERGE"} {
+			prefix := "WITH $x AS k WHERE EXISTS { MATCH ()-[r:T]->() WHERE r.p=k } "
+			add("generated_parameter_"+token+"_"+write+"_label", prefix+write+" (n:$"+token+"($x)) RETURN labels(n)")
+			add("generated_parameter_"+token+"_"+write+"_type", prefix+write+" ()-[s:$"+token+"($x)]->() RETURN type(s)")
+		}
+	}
+	for _, token := range []string{"", "all", "any", "ANY"} {
+		add("generated_match_"+token, "WITH $x AS k MATCH (n:$"+token+"(CASE WHEN EXISTS { MATCH ()-[r:T]->() WHERE r.p=k } THEN 'Key' ELSE 'Missing' END)) RETURN labels(n)")
 	}
 	for _, source := range []string{"'x'", "$x", "k"} {
 		for _, inline := range []bool{false, true} {
@@ -41,4 +52,14 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 		}
 	}
 	return cases
+}
+
+func relationshipAccessGeneratedRows(name string) [][]interface{} {
+	if strings.HasPrefix(name,"generated_anchor_COUNT_") { return [][]interface{}{{int64(1)}} }
+	if strings.HasPrefix(name,"generated_anchor_EXISTS_") { return [][]interface{}{{true}} }
+	if strings.HasPrefix(name,"generated_anchor_CALL_") || strings.HasSuffix(name,"_type") { return [][]interface{}{{"x"}} }
+	label := "x"
+	if strings.HasSuffix(name,"_exists") { label = "Made" }
+	if strings.HasPrefix(name,"generated_match_") { label = "Key" }
+	return [][]interface{}{{[]interface{}{label}}}
 }
