@@ -236,7 +236,14 @@ replay is available only while the stream is active. DISCARD with any valid
 same-owner/database qid succeeds after completion, a previous discard, expiry,
 invalidation or database drop. It never releases another stream's capacity.
 
-A failed or canceled page request also retires its stream. HTTP detects delivery
+If a PULL returns a cancellation or deadline-exceeded error during page
+production, the previously issued qid remains active. Retry that same qid with a
+fresh request/context to resume at the same position. The failed attempt does
+not advance the cursor or extend its fixed TTL. Other producer errors retire
+the stream and release its capacity.
+
+Once a produced page is handed to the transport, failed delivery retires its
+stream, including a disconnect or timeout during delivery. HTTP detects delivery
 failure outside the timeout middleware's response buffer. Successfully delivered
 qids remain usable across requests/connections until a terminal outcome or their
 fixed TTL. Abandoned catalog cursors invalidated by writes/backfill/policy changes
