@@ -181,7 +181,7 @@ func TestEmbedWorkerSaveRetryPreservesDocumentBatch(t *testing.T) {
 				}
 				wantAttempts := 32
 				if rejections > 1 {
-					wantAttempts = 17 // First repeated rejection ends the pass.
+					wantAttempts = 32 // Each due retry is attempted once; rejection is not progress.
 				}
 				require.Equal(t, wantAttempts, attempts, "one retry pass must remain bounded, including rejected retries")
 				require.Equal(t, 16, provider.GetEmbedCount())
