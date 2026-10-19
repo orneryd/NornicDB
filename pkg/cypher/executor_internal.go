@@ -27,9 +27,8 @@ import (
 // explicit transaction.
 func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
 	if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
-		// The returned statement summary already includes its descendants. Hide
-		// this collector during execution so descendants cannot be counted twice.
-		ctx = context.WithValue(ctx, procedureStatementStatsKey{}, (*procedureStatementStats)(nil))
+		// Every nested procedure installs its own invocation collector. Its
+		// completed summary enters this collector only through this result.
 		defer func() {
 			if err == nil && result != nil {
 				totals.executed = true
