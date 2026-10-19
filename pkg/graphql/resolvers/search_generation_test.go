@@ -20,7 +20,7 @@ func TestGraphQLExecutorFollowsSearchResetAndSharesCursors(t *testing.T) {
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		_, err := store.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("graphql-generation-%d", i)),
+			ID:         storage.NodeID(fmt.Sprintf("graphql-generation-%d", i)),
 			Properties: map[string]interface{}{"content": "shared cursor"},
 		})
 		require.NoError(t, err)
