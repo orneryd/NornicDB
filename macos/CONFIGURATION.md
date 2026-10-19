@@ -3,8 +3,7 @@
 The installer preserves `~/.nornicdb/config.yaml`,
 `~/.nornicdb/environment`, and
 `~/Library/LaunchAgents/com.nornicdb.server.plist` on upgrade. Both package
-editions and the developer installer use the same post-install script. An
-every installation opens setup to review the saved settings before starting
+editions and the developer installer use the same post-install script. Every installation opens setup to review the saved settings before starting
 the server. On fresh installs this also allows encryption to be configured before
 the first database write.
 An unfinished first-run marker is preserved.
@@ -15,12 +14,15 @@ Setup has three steps:
    automatic startup. Storage upgrade authorization is visible at the front of
    this page and again on Review, with the same selected state. Existing values
    are loaded; opening setup applies no preset.
-2. **Optional AI:** independently enable and configure Embeddings, Reranking,
+2. **Optional AI:** configure K-Means Clustering, Memory Decay and Auto-TLP, then independently enable and configure Embeddings, Reranking,
    and Heimdall. Each service has its own provider, model, endpoint and credential.
    Embeddings also expose dimensions, workers and chunking. Remote model IDs are
    kept exactly as entered; GGUF downloads apply to local models only.
 3. **Review:** inspect the selected services and startup overrides, then explicitly
-   save and start the service. Disabled services retain their saved settings.
+   save and start the service. The wizard closes after launch submission rather than
+   waiting for readiness. The tray stays yellow while the server process initializes,
+   turns green when health succeeds, and red when no server process is running.
+   Disabled services retain their saved settings.
 
 Settings uses the same AI and Advanced controls. Stop Server and Restart Server
 ask for confirmation; Cancel leaves the service running unchanged.
