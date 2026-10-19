@@ -542,6 +542,7 @@ def evaluate(candidate, hits, *, repo, retired, touched, min_similarity, cross_r
     # Copied bodies still qualify on code similarity, even if they also call it.
     owner_calls = owner_calls or {}
     reused = {hit.id for hit in hits if hit.id in owner_calls and hit.repo == repo
+              and "." not in hit.label.split("(", 1)[0]
               and similarity(candidate.body, hit.body)["score"] < min_similarity}
     standout = behavior_standout(candidate, [hit for hit in hits if hit.id not in reused],
                                  min_gap=semantic_min_gap, min_lead=semantic_min_lead,
