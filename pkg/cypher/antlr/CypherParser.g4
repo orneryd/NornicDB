@@ -600,7 +600,7 @@ invocationName
     ;
 
 functionInvocation
-    : invocationName LPAREN DISTINCT? expressionChain? RPAREN
+    : invocationName LPAREN (DISTINCT? expressionChain)? RPAREN
     | TRIM LPAREN (LEADING | TRAILING | BOTH)? expression? FROM expression RPAREN
     ;
 

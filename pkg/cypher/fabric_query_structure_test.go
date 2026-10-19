@@ -69,6 +69,7 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 		{"later_projection", "WITH 1 AS dummy, 7 AS %[1]s WITH dummy, %[1]s RETURN %[1]s AS k"},
 		{"expression", "WITH 7 AS %[1]s RETURN 0 + %[1]s AS k"},
 		{"function_argument", "WITH 7 AS %[1]s RETURN coalesce(%[1]s,0) AS k"},
+		{"single_function_argument", "WITH 7 AS %[1]s RETURN toInteger(%[1]s) AS k"},
 		{"predicate", "WITH 7 AS %[1]s WITH %[1]s WHERE %[1]s = 7 RETURN %[1]s AS k"},
 		{"unwind_binding", "UNWIND [7] AS %[1]s RETURN %[1]s AS k"},
 		{"foreach_binding", "FOREACH (%[1]s IN [7] | CREATE (:FabricStructureForeach {v:%[1]s})) RETURN 7 AS k"},
@@ -78,7 +79,7 @@ func TestFabricQueryStructureGeneratedNames(t *testing.T) {
 		{"predicate_binding", "RETURN CASE WHEN any(%[1]s IN [7] WHERE %[1]s=7) THEN 7 ELSE 0 END AS k"},
 		{"map_value", "WITH 7 AS %[1]s RETURN {v:%[1]s}.v AS k"},
 		{"map_shorthand", "WITH {v:0} AS m,7 AS %[1]s RETURN m{%[1]s}.%[1]s AS k"},
-		{"pattern_comprehension", "CREATE (s)-[:FabricCompRel]->(:FabricCompTarget {v:7}) RETURN [(s)-[:FabricCompRel]->(%[1]s) | %[1]s.v][0] AS k"},
+		{"pattern_comprehension", "CREATE (s)-[:FabricCompRel]->(:FabricCompTarget {v:7}) RETURN [(s)-[:FabricCompRel]->(%[1]s) | %[1]s.v] AS k"},
 		{"property_and_map_key", "WITH {%[1]s:7} AS m RETURN m.%[1]s AS k"},
 		{"map_projection", "WITH {%[1]s:7} AS m RETURN m{.%[1]s}.%[1]s AS k"},
 		{"pattern_binding", "MATCH (%[1]s:FabricStructureName) RETURN %[1]s.v AS k"},
@@ -162,7 +163,7 @@ func fabricCompareGrammarCase(t *testing.T, base *StorageExecutor, driver neo4j.
 			require.NoError(t, endErr)
 		}
 		require.NoError(t, err, "explicit=%v query=%s", explicit, query)
-		require.Equal(t,ref.Keys,result.Columns,"explicit=%v query=%s",explicit,query)
+		require.Equal(t, ref.Keys, result.Columns, "explicit=%v query=%s", explicit, query)
 		fabricStructureRows(t, result.Rows, string(want))
 	}
 }
