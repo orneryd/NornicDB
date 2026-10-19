@@ -123,6 +123,7 @@ func TestStatementStopsEachStageWithinBoundedWork(t *testing.T) {
 		{"unwind", fmt.Sprintf("UNWIND range(1, %d) AS x WITH bound.tick(x) AS y RETURN count(y) AS c", people)},
 		{"traversal", "MATCH (a:P)-[:NEXT]->(b:P) WHERE bound.tick(b.v) IS NOT NULL RETURN count(b) AS c"},
 		{"filter", "MATCH (n:P) WHERE bound.tick(n.v) IS NOT NULL RETURN n.v AS v"},
+		{"reduce", "RETURN reduce(s = 0, x IN range(1, 20000) | s + bound.tick(x)) AS v"},
 	}
 	// Each mode ends the statement at the trigger row and names the error
 	// it must then return.
@@ -158,7 +159,9 @@ func TestStatementStopsEachStageWithinBoundedWork(t *testing.T) {
 					clock = &boundedWorkClock{ctx: ctx, trigger: trigger, end: func() { mode.end(ctx, cancel, stage.cypher) }}
 					nonce++
 					result, err := exec.Execute(ctx, stage.cypher, map[string]interface{}{"nonce": nonce})
-					require.Error(t, err, "the statement returned a result after it was ended: %v", result)
+					resultRows := 0
+					if result != nil { resultRows = len(result.Rows) }
+					require.Error(t, err, "the statement returned %d rows after it was ended", resultRows)
 					mode.check(t, err)
 					rows, after := clock.counts()
 					require.GreaterOrEqual(t, rows, trigger, "the statement stopped before it was ended")

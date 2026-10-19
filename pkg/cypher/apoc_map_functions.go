@@ -31,7 +31,7 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 		return nil, err
 	}
 	if values[1] == nil {
-		return apocMapWithoutKeys(entries, nil, false), nil
+		return apocMapWithoutKeysForFunction(ctx, entries, nil, false)
 	}
 	key, isString := values[1].(string)
 	if !isString {
@@ -42,9 +42,9 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 		return nil, err
 	}
 	if _, present := entries[key]; !present {
-		return apocMapWithoutKeys(entries, nil, false), nil
+		return apocMapWithoutKeysForFunction(ctx, entries, nil, false)
 	}
-	return apocMapWithoutKeys(entries, map[string]struct{}{key: {}}, recursive), nil
+	return apocMapWithoutKeysForFunction(ctx, entries, map[string]struct{}{key: {}}, recursive)
 }
 
 // fnApocMapRemoveKeys is apoc.map.removeKeys(map, keys, config = {}). A key
@@ -68,11 +68,22 @@ func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, erro
 	}
 	keys := make(map[string]struct{}, len(items))
 	for _, item := range items {
+		if ctx.Cancellation != nil && !ctx.Cancellation.Continue() {
+			return nil, ctx.Cancellation.Err()
+		}
 		if key, isString := item.(string); isString {
 			keys[key] = struct{}{}
 		}
 	}
-	return apocMapWithoutKeys(entries, keys, recursive), nil
+	return apocMapWithoutKeysForFunction(ctx, entries, keys, recursive)
+}
+
+func apocMapWithoutKeysForFunction(ctx cypherfn.Context, entries map[string]interface{}, keys map[string]struct{}, recursive bool) (interface{}, error) {
+	result := apocMapWithoutKeysWithCancellation(entries, keys, recursive, ctx.Cancellation)
+	if ctx.Cancellation != nil && ctx.Cancellation.Err() != nil {
+		return nil, ctx.Cancellation.Err()
+	}
+	return result, nil
 }
 
 // apocMapArguments evaluates the (map, key or keys, config = {}) arguments
@@ -146,14 +157,21 @@ func apocMapValue(value interface{}) (map[string]interface{}, bool) {
 // drops a nested map or list left empty (an empty list too), as APOC does.
 // The top-level map is returned even when empty.
 func apocMapWithoutKeys(entries map[string]interface{}, keys map[string]struct{}, recursive bool) map[string]interface{} {
+	return apocMapWithoutKeysWithCancellation(entries, keys, recursive, nil)
+}
+
+func apocMapWithoutKeysWithCancellation(entries map[string]interface{}, keys map[string]struct{}, recursive bool, probe cypherfn.Cancellation) map[string]interface{} {
 	out := make(map[string]interface{}, len(entries))
 	for key, value := range entries {
+		if probe != nil && !probe.Continue() {
+			return nil
+		}
 		if _, removed := keys[key]; removed {
 			continue
 		}
 		if recursive {
 			if nested, isMap := apocMapValue(value); isMap {
-				nested = apocMapWithoutKeys(nested, keys, true)
+				nested = apocMapWithoutKeysWithCancellation(nested, keys, true, probe)
 				if len(nested) == 0 {
 					continue
 				}
@@ -161,8 +179,11 @@ func apocMapWithoutKeys(entries map[string]interface{}, keys map[string]struct{}
 			} else if items, isList := cypherListValue(value); isList {
 				kept := make([]interface{}, 0, len(items))
 				for _, item := range items {
+					if probe != nil && !probe.Continue() {
+						return nil
+					}
 					if nested, isMap := apocMapValue(item); isMap {
-						nested = apocMapWithoutKeys(nested, keys, true)
+						nested = apocMapWithoutKeysWithCancellation(nested, keys, true, probe)
 						if len(nested) == 0 {
 							continue
 						}

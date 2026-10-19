@@ -127,6 +127,11 @@ func rowConditionHolds(condition interface{}, evaluated bool, err error) (bool, 
 // with the accumulator and the variable bound in scope. A step or predicate
 // that can't be evaluated leaves the form unresolved.
 func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope map[string]interface{}, step, predicate func() (interface{}, bool, error)) (interface{}, bool, error) {
+	probe := rowPipelineCancellation(scope)
+	items := coerceToUnwindItemsWithCancellation(listValue, probe)
+	if probe != nil && probe.failed() != nil {
+		return nil, false, probe.failed()
+	}
 	bind := func(evaluate func() (interface{}, bool, error)) func(accumulator, item interface{}) (interface{}, error) {
 		return func(accumulator, item interface{}) (interface{}, error) {
 			scope[form.accumulator], scope[form.variable] = accumulator, item
@@ -138,7 +143,7 @@ func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope ma
 		}
 	}
 	budget := rowExpressionBudget(scope)
-	result, err := runReduceForm(&budget, form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate))
+	result, err := runReduceFormWithCancellation(&budget, form, accumulator, items, bind(step), bind(predicate), probe)
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}
