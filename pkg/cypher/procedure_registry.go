@@ -69,6 +69,9 @@ type ProcedureSpec struct {
 	Returns            []ProcedureColumn
 	MinArgs            int
 	MaxArgs            int
+	// ResultCache declares execution dependencies; an undeclared handler is
+	// opaque to the determinism owner and cannot supply cached results.
+	ResultCache ProcedureResultCache
 }
 
 // writes reports whether a call of the procedure changes the database: its
