@@ -199,7 +199,7 @@ func (g *vectorDomainGuard) argumentOffset(call *ast.CallExpr, fn *types.Func) i
 
 func domainBackend(recv string) bool {
 	switch recv {
-	case "VectorIndex", "VectorFileStore", "HNSWIndex", "EmbeddingIndex", "ClusterIndex", "IVFPQIndex", "vectorLookupGetter", "ivfpqExactOverflow", "annMutationOverlay", "vectorFileReadLease", "lexicalBandIndex", "GPUEmbeddingIndex", "Clustering", "clusterGeneration":
+	case "VectorIndex", "VectorFileStore", "HNSWIndex", "EmbeddingIndex", "ClusterIndex", "IVFPQIndex", "vectorLookupGetter", "ivfpqExactOverflow", "annMutationOverlay", "vectorFileReadLease", "lexicalBandIndex", "GPUEmbeddingIndex", "Clustering", "clusterGeneration", "HNSWCandidateGen", "VectorSearchPipeline", "candidateGeneratorWithLexicalEntries":
 		return true
 	}
 	return false
@@ -211,14 +211,32 @@ func domainBackend(recv string) bool {
 func domainVectorAPI(recv types.Type) bool {
 	for _, method := range []string{"Add", "Update", "GetVector", "GetRawVector"} {
 		obj, _, _ := types.LookupFieldOrMethod(recv, true, nil, method)
-		fn, ok := obj.(*types.Func); if !ok { continue }
+		fn, ok := obj.(*types.Func)
+		if !ok {
+			continue
+		}
 		sig := fn.Type().(*types.Signature)
-		if sig.Params().Len() == 0 { continue }
-		id, ok := sig.Params().At(0).Type().Underlying().(*types.Basic); if !ok || id.Kind() != types.String { continue }
+		if sig.Params().Len() == 0 {
+			continue
+		}
+		id, ok := sig.Params().At(0).Type().Underlying().(*types.Basic)
+		if !ok || id.Kind() != types.String {
+			continue
+		}
 		var vector types.Type
-		if (method == "Add" || method == "Update") && sig.Params().Len() > 1 { vector = sig.Params().At(1).Type() }
-		if (method == "GetVector" || method == "GetRawVector") && sig.Results().Len() > 0 { vector = sig.Results().At(0).Type() }
-		if vector != nil { if slice, ok := vector.Underlying().(*types.Slice); ok { if value, ok := slice.Elem().Underlying().(*types.Basic); ok && value.Kind() == types.Float32 { return true } } }
+		if (method == "Add" || method == "Update") && sig.Params().Len() > 1 {
+			vector = sig.Params().At(1).Type()
+		}
+		if (method == "GetVector" || method == "GetRawVector") && sig.Results().Len() > 0 {
+			vector = sig.Results().At(0).Type()
+		}
+		if vector != nil {
+			if slice, ok := vector.Underlying().(*types.Slice); ok {
+				if value, ok := slice.Elem().Underlying().(*types.Basic); ok && value.Kind() == types.Float32 {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
@@ -227,8 +245,9 @@ func domainVectorAPI(recv types.Type) bool {
 // the existing file-path APIs are exempt. New lookup/admission method names
 // therefore cannot silently disappear from the family inventory.
 func domainKeyMethod(method string) bool {
- return method != "Save" && method != "Load"
+	return method != "Save" && method != "Load"
 }
+
 // Explicit logical API contracts. Generic backend strings are already entry
 // identities; graph/fulltext identities remain nodes. These do not bless call
 // sites: every supplied argument is still derived and checked independently.
@@ -247,21 +266,32 @@ func domainParam(fn *types.Func, n int) vectorDomain {
 	}
 	if n == 1 {
 		switch name {
-		case "vectorEntryChunkIndexForNode":
+		case "vectorEntryChunkIndexForNode", "nodeHintForID":
 			return domainNode
 		case "entryHintForVectorID", "putEntryLexicalHint", "vectorEntryChunkIndex":
 			return domainEntry
-		case "clusterGeneration.graphAdd", "clusterGeneration.graphRemove":
+		case "clusterGeneration.graphAdd", "clusterGeneration.graphRemove", "Service.scoreVectorIDDot":
 			return domainEntry
 		}
 	}
-	if n == 3 && (name == "BuildIVFPQFromVectorStore" || name == "ivfpqCollectTrainingSample" || name == "Service.getOrBuildIVFPQIndex") { return domainEntry }
+		if n == 3 && (name == "BuildIVFPQFromVectorStore" || name == "ivfpqCollectTrainingSample" || name == "Service.getOrBuildIVFPQIndex") {
+		sig := fn.Type().(*types.Signature)
+		if slice, ok := sig.Params().At(n).Type().Underlying().(*types.Slice); ok {
+			if elem, ok := slice.Elem().Underlying().(*types.Basic); ok && elem.Kind() == types.String {
+				return domainEntry
+			}
+		}
+	}
 	sig := fn.Type().(*types.Signature)
 	if sig.Recv() != nil && (domainBackend(domainTypeName(sig.Recv().Type())) || domainVectorAPI(sig.Recv().Type())) && domainKeyMethod(fn.Name()) && n >= 0 && n < sig.Params().Len() {
 		t := sig.Params().At(n).Type().Underlying()
-		if basic, ok := t.(*types.Basic); ok && basic.Kind() == types.String { return domainEntry }
+		if basic, ok := t.(*types.Basic); ok && basic.Kind() == types.String {
+			return domainEntry
+		}
 		if slice, ok := t.(*types.Slice); ok {
-			if basic, ok := slice.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.String { return domainEntry }
+			if basic, ok := slice.Elem().Underlying().(*types.Basic); ok && basic.Kind() == types.String {
+				return domainEntry
+			}
 		}
 	}
 	return 0
@@ -276,7 +306,9 @@ func domainResult(fn *types.Func) vectorDomain {
 	case "vectorEntryIdentity", "vectorEntryID.entryKeyString", "VectorFileStore.IDs", "lexicalBandIndex.seeds", "loadIVFClusterMemberIDs", "clusterGeneration.members", "Clustering.MemberIDs", "Clustering.MemberIDsOf", "ClusterIndex.GetClusterMemberIDs", "ClusterIndex.GetClusterMemberIDsForCluster", "VectorIndex.GetAllVectors", "VectorIndex.GetAllIDs", "VectorFileStore.GetAllVectors", "VectorFileStore.GetAllIDs":
 		return domainEntry
 	}
-	if fn.Name() == "ScoreCandidates" { return domainEntry }
+	if fn.Name() == "ScoreCandidates" {
+		return domainEntry
+	}
 	return 0
 }
 
@@ -311,7 +343,14 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 		case "vectorQueryCandidateMeta.named", "vectorQueryCandidateMeta.properties", "vectorQueryCandidateMeta.chunks", "vectorBuildSeeds.compressedIDs":
 			return domainEntry
 		}
-		if field == "MatchID" { return domainEntry }; if field == "ID" || field == "id" { if d := g.infer(x.X); d != 0 { return d } }
+		if field == "MatchID" {
+			return domainEntry
+		}
+		if field == "ID" || field == "id" {
+			if d := g.infer(x.X); d != 0 {
+				return d
+			}
+		}
 		return g.env[g.object(x)]
 	case *ast.IndexExpr:
 		return g.infer(x.X)
@@ -359,7 +398,7 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 func (g *vectorDomainGuard) rangeDomains(e ast.Expr) (vectorDomain, vectorDomain) {
 	if sel, ok := e.(*ast.SelectorExpr); ok {
 		recv, name := g.field(sel)
-		if (recv == "VectorIndex" && (name == "vectors" || name == "rawVectors")) || (recv == "HNSWIndex" && name == "idToInternal") || (recv == "VectorFileStore" && name == "idToOrdinal") {
+		if (recv == "VectorIndex" && (name == "vectors" || name == "rawVectors")) || (recv == "HNSWIndex" && name == "idToInternal") || ((recv == "VectorFileStore" || recv == "vectorFileReadLease") && name == "idToOrdinal") {
 			return domainEntry, 0
 		}
 		if recv == "HNSWIndex" && name == "internalToID" {
@@ -407,7 +446,9 @@ func (g *vectorDomainGuard) closeDomains() {
 					for i, rhs := range x.Rhs {
 						if i < len(x.Lhs) {
 							g.bind(x.Lhs[i], g.infer(rhs))
-							if f := g.called(rhs); f != nil { g.aliases[g.object(x.Lhs[i])] = f }
+							if f := g.called(rhs); f != nil {
+								g.aliases[g.object(x.Lhs[i])] = f
+							}
 						}
 					}
 				case *ast.ValueSpec:
@@ -451,7 +492,13 @@ func (g *vectorDomainGuard) closeDomains() {
 				case *ast.FuncLit:
 					if domainFuncName(fn) == "hnswVectorChunkIterator" {
 						params := g.p.info.TypeOf(x).(*types.Signature).Params()
-						if params.Len() == 2 { if slice, ok := params.At(0).Type().Underlying().(*types.Slice); ok { if elem, ok := slice.Elem().Underlying().(*types.Basic); ok && elem.Kind() == types.String { g.env[params.At(0)] = domainEntry } } }
+						if params.Len() == 2 {
+							if slice, ok := params.At(0).Type().Underlying().(*types.Slice); ok {
+								if elem, ok := slice.Elem().Underlying().(*types.Basic); ok && elem.Kind() == types.String {
+									g.env[params.At(0)] = domainEntry
+								}
+							}
+						}
 					}
 					if domainFuncName(fn) == "Service.getVectorLookup" || domainFuncName(fn) == "Service.captureVectorLookupLocked" {
 						params := g.p.info.TypeOf(x).(*types.Signature).Params()
@@ -474,34 +521,57 @@ func (g *vectorDomainGuard) checkIdentitySyntax(where string, root ast.Node, own
 		case *ast.CallExpr:
 			if tn, ok := g.object(x.Fun).(*types.TypeName); ok && !owner {
 				switch domainTypeName(tn.Type()) {
-				case "vectorNodeID", "vectorEntryID": g.flag(where, "identity conversion outside vector_entry_key.go")
+				case "vectorNodeID", "vectorEntryID":
+					g.flag(where, "identity conversion outside vector_entry_key.go")
 				}
 				if basic, ok := tn.Type().Underlying().(*types.Basic); ok && basic.Kind() == types.String && len(x.Args) == 1 {
 					switch domainTypeName(g.p.info.TypeOf(x.Args[0])) {
-					case "vectorNodeID", "vectorEntryID": g.flag(where, "identity erasure outside vector_entry_key.go")
+					case "vectorNodeID", "vectorEntryID":
+						g.flag(where, "identity erasure outside vector_entry_key.go")
 					}
 				}
 			}
 		case *ast.MapType:
 			if typ := g.p.info.TypeOf(x); typ != nil {
 				m := typ.Underlying().(*types.Map)
-				if domainTypeName(m.Elem()) == "LexicalSeedHint" { g.flag(where, "raw string hint map reintroduces an ambiguous identity domain") }
+				if domainTypeName(m.Elem()) == "LexicalSeedHint" {
+					g.flag(where, "raw string hint map reintroduces an ambiguous identity domain")
+				}
 				if domainTypeName(m.Elem()) == "nodeLexicalHint" {
 					key := domainTypeName(m.Key())
 					_, parameter := m.Key().(*types.TypeParam)
-					if key != "vectorNodeID" && key != "vectorEntryID" && !(owner && parameter) { g.flag(where, "internal hint map has no typed key domain") }
+					if key != "vectorNodeID" && key != "vectorEntryID" && !(owner && parameter) {
+						g.flag(where, "internal hint map has no typed key domain")
+					}
 				}
 			}
 		case *ast.CompositeLit:
-			if !owner && domainTypeName(g.p.info.TypeOf(x)) == "nodeLexicalHint" && len(x.Elts) > 0 { g.flag(where, "constructs a document hint outside the key owner") }
+			if !owner && domainTypeName(g.p.info.TypeOf(x)) == "nodeLexicalHint" && len(x.Elts) > 0 {
+				g.flag(where, "constructs a document hint outside the key owner")
+			}
 			if !owner && domainTypeName(g.p.info.TypeOf(x)) == "LexicalSeedHint" {
-				for _, el := range x.Elts { if kv, ok := el.(*ast.KeyValueExpr); ok { if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "ID" && g.infer(kv.Value)&domainEntry != 0 { g.flag(where, "entry key assigned to a BM25 document hint") } } }
+				for _, el := range x.Elts {
+					if kv, ok := el.(*ast.KeyValueExpr); ok {
+						if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "ID" && g.infer(kv.Value)&domainEntry != 0 {
+							g.flag(where, "entry key assigned to a BM25 document hint")
+						}
+					}
+				}
 			}
 		case *ast.AssignStmt:
-			if owner { break }
+			if owner {
+				break
+			}
 			for i, lhs := range x.Lhs {
-				if i >= len(x.Rhs) { break }
-				if sel, ok := lhs.(*ast.SelectorExpr); ok { recv, field := g.field(sel); if (recv == "LexicalSeedHint" || recv == "nodeLexicalHint") && field == "ID" && g.infer(x.Rhs[i])&domainEntry != 0 { g.flag(where, "entry key assigned to a document hint") } }
+				if i >= len(x.Rhs) {
+					break
+				}
+				if sel, ok := lhs.(*ast.SelectorExpr); ok {
+					recv, field := g.field(sel)
+					if (recv == "LexicalSeedHint" || recv == "nodeLexicalHint") && field == "ID" && g.infer(x.Rhs[i])&domainEntry != 0 {
+						g.flag(where, "entry key assigned to a document hint")
+					}
+				}
 			}
 		}
 		return true
@@ -510,31 +580,52 @@ func (g *vectorDomainGuard) checkIdentitySyntax(where string, root ast.Node, own
 
 func (g *vectorDomainGuard) checkKeyCall(where string, call *ast.CallExpr, owner bool) {
 	fn := g.called(call.Fun)
-	if g.p.info.Types[call.Fun].IsType() { return } // a function-type conversion is not an invocation
+	if g.p.info.Types[call.Fun].IsType() {
+		return
+	} // a function-type conversion is not an invocation
 	if fn == nil {
 		if where == "Service.forEachNodeVectorKeyLocked" && len(call.Args) == 1 {
-			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "visit" && g.infer(call.Args[0]) != domainEntry { g.flag(where, "inventory callback receives a non-entry identity") }
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "visit" && g.infer(call.Args[0]) != domainEntry {
+				g.flag(where, "inventory callback receives a non-entry identity")
+			}
 		}
 		// VectorLookup is the backend's typed function contract, including
 		// callback values captured without a directly named method object.
 		if domainTypeName(g.p.info.TypeOf(call.Fun)) == "VectorLookup" && len(call.Args) > 0 {
 			g.population[where+" -> VectorLookup"] = true
-			if g.infer(call.Args[0]) != domainEntry { g.flag(where, "VectorLookup receives an unproved/non-entry identity") }
+			if g.infer(call.Args[0]) != domainEntry {
+				g.flag(where, "VectorLookup receives an unproved/non-entry identity")
+			}
 		}
 		return
 	}
 	name := domainFuncName(fn)
-	if decl := g.decls[fn]; decl != nil && filepath.Base(gFileName(g,decl)) == "vector_entry_key.go" { g.population[where+" -> "+name] = true }
+	if decl := g.decls[fn]; decl != nil && filepath.Base(gFileName(g, decl)) == "vector_entry_key.go" {
+		g.population[where+" -> "+name] = true
+	}
 	offset := g.argumentOffset(call, fn)
 	for i, arg := range call.Args {
-		if i < offset { continue }
-		want := domainParam(fn,i-offset)
-		if want == 0 { continue }
+		if i < offset {
+			continue
+		}
+		want := domainParam(fn, i-offset)
+		if g.p.info.Types[arg].IsNil() {
+			continue // an empty optional entry set carries no foreign identity
+		}
+		if want == 0 {
+			continue
+		}
 		g.population[where+" -> "+name] = true
-		if owner { continue } // only the owner performs domain conversion
+		if owner {
+			continue
+		} // only the owner performs domain conversion
 		got := g.infer(arg)
-		if got != 0 && got != want { g.flag(where,fmt.Sprintf("%s argument %d has domain %d, want %d",name,i,got,want)) }
-		if got == 0 && want == domainEntry { g.flag(where,fmt.Sprintf("unproved vector key at %s argument %d",name,i)) }
+		if got != 0 && got != want {
+			g.flag(where, fmt.Sprintf("%s argument %d has domain %d, want %d", name, i, got, want))
+		}
+		if got == 0 && want == domainEntry {
+			g.flag(where, fmt.Sprintf("unproved vector key at %s argument %d", name, i))
+		}
 	}
 }
 
@@ -561,9 +652,14 @@ func (g *vectorDomainGuard) run() {
 		owner := filepath.Base(vectorDomainFileNames[file]) == "vector_entry_key.go"
 		for _, decl := range file.Decls {
 			if _, ok := decl.(*ast.GenDecl); ok {
-				where := "declaration in "+filepath.Base(vectorDomainFileNames[file])
+				where := "declaration in " + filepath.Base(vectorDomainFileNames[file])
 				g.checkIdentitySyntax(where, decl, owner)
-				ast.Inspect(decl, func(n ast.Node) bool { if call, ok := n.(*ast.CallExpr); ok { g.checkKeyCall(where, call, owner) }; return true })
+				ast.Inspect(decl, func(n ast.Node) bool {
+					if call, ok := n.(*ast.CallExpr); ok {
+						g.checkKeyCall(where, call, owner)
+					}
+					return true
+				})
 			}
 		}
 	}
@@ -652,8 +748,12 @@ func TestVectorEntryDomainGuard(t *testing.T) {
 	require.NotEmpty(t, population)
 	for _, member := range []string{"Service.indexNodeLocked", "Service.removeNodeEntriesLocked", "Service.nodeVectorIDsLocked", "forEachNodeVectorEntry", "hnswOrderedVectorIndexPairs", "hnswVectorChunkIterator", "HNSWIndex.buildLexicalHintLocked", "EmbeddingIndex", "VectorIndex", "VectorFileStore"} {
 		found := false
-		for _, edge := range population { if strings.Contains(edge,member) { found = true } }
-		require.True(t,found,"missing family producer/consumer %s",member)
+		for _, edge := range population {
+			if strings.Contains(edge, member) {
+				found = true
+			}
+		}
+		require.True(t, found, "missing family producer/consumer %s", member)
 	}
 	require.Empty(t, violations, "node/vector domains must remain separate across the complete compiler-resolved family")
 }
@@ -674,16 +774,29 @@ func (s *Service) domainFixtureMethodExpression(id storage.NodeID) {
 }
 func domainFixtureWrongMap() map[string]LexicalSeedHint { return nil }
 var domainFixtureGlobal = func(s *Service, id storage.NodeID) { s.removeVectorLocked(string(id)) }
+func domainFixtureNodeLookup(pair hnswBuildPair) { nodeHintForID(nil, pair.id) }
+func (s *Service) domainFixtureHintBridge() { s.hnswIndex.SetBuildLexicalHints(nil) }
+type domainFixtureBackend struct{}
+func (*domainFixtureBackend) Add(string, []float32) error { return nil }
+func (*domainFixtureBackend) FutureLookup(string) ([]float32,bool) { return nil,false }
+func domainFixtureNewLookup(id storage.NodeID) {
+ backend := &domainFixtureBackend{}
+ backend.FutureLookup(string(id))
+}
 `
 
 func TestVectorEntryDomainGuardRejectsBypasses(t *testing.T) {
- g := newVectorDomainGuard(t, vectorDomainNegativeFixture)
- for _, name := range []string{"domainFixtureCast", "domainFixtureMethodValue", "domainFixtureMethodExpression", "domainFixtureWrongMap", "declaration in vector-domain-fixture.go"} {
-  found := false
-  for issue := range g.violations { if strings.Contains(issue,name) { found = true } }
-  require.True(t, found, "guard missed bypass %s", name)
- }
- for issue := range g.violations {
-  require.True(t,strings.Contains(issue,"domainFixture") || strings.Contains(issue,"vector-domain-fixture.go"), "production violation: %s", issue)
- }
+	g := newVectorDomainGuard(t, vectorDomainNegativeFixture)
+	for _, name := range []string{"domainFixtureCast", "domainFixtureMethodValue", "domainFixtureMethodExpression", "domainFixtureWrongMap", "domainFixtureNodeLookup", "domainFixtureHintBridge", "domainFixtureNewLookup", "declaration in vector-domain-fixture.go"} {
+		found := false
+		for issue := range g.violations {
+			if strings.Contains(issue, name) {
+				found = true
+			}
+		}
+		require.True(t, found, "guard missed bypass %s", name)
+	}
+	for issue := range g.violations {
+		require.True(t, strings.Contains(issue, "domainFixture") || strings.Contains(issue, "vector-domain-fixture.go"), "production violation: %s", issue)
+	}
 }
