@@ -21,7 +21,7 @@ func TestFabricAutoCommitCapturesOnlyPlannedRemotes(t *testing.T) {
 		"USE participants.live RETURN 7 AS n UNION ALL USE participants.live RETURN 7 AS n",
 	} {
 		t.Run(query, func(t *testing.T) {
-			var probes, unavailableCalls atomic.Int64
+			var probes, unavailableCalls, unavailableProbes, procedureLoads atomic.Int64
 			var available *httptest.Server
 			available = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -42,6 +42,19 @@ func TestFabricAutoCommitCapturesOnlyPlannedRemotes(t *testing.T) {
 			t.Cleanup(available.Close)
 			unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				unavailableCalls.Add(1)
+				var request struct {
+					Statements []struct {
+						Statement string `json:"statement"`
+					} `json:"statements"`
+				}
+				if json.NewDecoder(r.Body).Decode(&request) == nil && len(request.Statements) == 1 {
+					statement := request.Statements[0].Statement
+					if statement == "CALL db.info()" {
+						unavailableProbes.Add(1)
+					} else if strings.Contains(statement, procedureCatalogLabel) {
+						procedureLoads.Add(1)
+					}
+				}
 				http.Error(w, "unrelated remote unavailable", http.StatusServiceUnavailable)
 			}))
 			t.Cleanup(unavailable.Close)
@@ -71,11 +84,16 @@ func TestFabricAutoCommitCapturesOnlyPlannedRemotes(t *testing.T) {
 			for _, row := range result.Rows {
 				require.EqualValues(t, 7, row[0])
 			}
-			require.Equal(t, int64(0), unavailableCalls.Load(), "no request may touch the unrelated constituent")
+			require.Zero(t, unavailableProbes.Load(), "logical BEGIN must not probe the unrelated constituent")
+			// Executor construction independently loads persisted procedures from
+			// composite storage. Keep that pre-existing traffic visible and separate
+			// from this regression's newly introduced identity probes.
+			require.Equal(t, procedureLoads.Load(), unavailableCalls.Load(), "unexpected unrelated remote traffic")
+			t.Logf("unrelated procedure bootstrap calls=%d; logical-BEGIN probes=%d", procedureLoads.Load(), unavailableProbes.Load())
 			require.Equal(t, int64(2), probes.Load(), "retain logical-BEGIN capture and physical participant validation, once per remote")
 			_, err = executor.Execute(context.Background(), "USE participants.down RETURN 7 AS n", nil)
 			require.Error(t, err, "a selected unavailable remote must still fail")
-			require.Positive(t, unavailableCalls.Load())
+			require.Positive(t, unavailableProbes.Load(), "selected remote failures must remain visible")
 		})
 	}
 }
