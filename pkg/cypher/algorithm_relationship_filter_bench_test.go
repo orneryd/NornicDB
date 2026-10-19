@@ -24,7 +24,7 @@ func BenchmarkAlgorithmRelationshipFilters(b *testing.B) {
 			if kind == "L" {
 				step = 7
 			}
-			if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("%s%d", kind, i)), StartNode: storage.NodeID(fmt.Sprint(i)), EndNode: storage.NodeID(fmt.Sprint((i+step)%size)), Type: kind}); err != nil {
+			if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("%s%d", kind, i)), StartNode: storage.NodeID(fmt.Sprint(i)), EndNode: storage.NodeID(fmt.Sprint((i + step) % size)), Type: kind}); err != nil {
 				b.Fatal(err)
 			}
 		}
