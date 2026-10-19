@@ -92,37 +92,64 @@ func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
 	assert.Equal(t, []vectorEntryKind{vectorEntryNamed, vectorEntryMain, vectorEntryChunk, vectorEntryProperty}, kinds)
 }
 
-// An entry of the wrong dimension is rejected and logged while the node's
-// other entries are indexed (also into the GPU index), and re-indexing the
-// same node is never treated as unchanged.
-func TestIndexNodeSkipsMismatchedEntriesAndKeepsTheRest(t *testing.T) {
+// Release admission rejects an explicit dimension mismatch before mutation.
+// The rejection must preserve acknowledged entries in every destination, while
+// capacity estimation still charges only canonical entries of valid dimensions.
+func TestIndexNodeRejectsMismatchedEntriesBeforeMutation(t *testing.T) {
 	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
 	t.Cleanup(func() { _ = svc.Close() })
 	embCfg := gpu.DefaultEmbeddingIndexConfig(2)
 	embCfg.GPUEnabled = false
 	embCfg.AutoSync = false
 	svc.gpuEmbeddingIndex = gpu.NewEmbeddingIndex(nil, embCfg)
-	// The first stored vector fixes the dimension; seed it so map order cannot.
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "seed", ChunkEmbeddings: [][]float32{{0, 1}}}))
-	node := &storage.Node{
+	invalid := &storage.Node{
 		ID:              "n",
-		NamedEmbeddings: map[string][]float32{"wide": {1, 0, 0}, "v": {0, 1}},
+		NamedEmbeddings: map[string][]float32{"wide": {1, 0, 0}, "v": {1, 0}},
+		ChunkEmbeddings: [][]float32{{0, 1}},
+		Properties:      map[string]any{"text": "rejectedtoken"},
+	}
+	// A rejected create must not admit even its valid entries.
+	require.ErrorIs(t, svc.IndexNode(invalid), ErrDimensionMismatch)
+	require.Equal(t, 1, svc.EmbeddingCount())
+	require.Equal(t, 1, svc.gpuEmbeddingIndex.Count())
+	require.Empty(t, svc.nodeNamedVector["n"])
+	require.Empty(t, svc.nodeChunkVectors["n"])
+	_, exists := svc.fulltext().GetDocument("n")
+	require.False(t, exists)
+	valid := &storage.Node{
+		ID:              "n",
+		NamedEmbeddings: map[string][]float32{"v": {0, 1}},
 		ChunkEmbeddings: [][]float32{{1, 0}},
+		Properties:      map[string]any{"text": "originaltoken", "short": []float32{1}},
 	}
 	for range 2 {
-		require.NoError(t, svc.IndexNode(node))
-		assert.Equal(t, 3, svc.EmbeddingCount(), "the mismatched named vector is skipped")
+		require.NoError(t, svc.IndexNode(valid))
+		capacity := svc.indexCapacityByNode["n"]
+		revision := svc.indexRevision.Load()
+		require.ErrorIs(t, svc.IndexNode(invalid), ErrDimensionMismatch)
+		assert.Equal(t, revision, svc.indexRevision.Load(), "rejection must not publish a partial revision")
+		assert.Equal(t, capacity, svc.indexCapacityByNode["n"], "rejection must not replace capacity ownership")
+		assert.Equal(t, 3, svc.EmbeddingCount())
 		assert.Equal(t, map[string]string{"v": nodeNamedVectorKey("n", "v")}, svc.nodeNamedVector["n"])
-		assert.Equal(t, []string{"n"}, svc.nodeChunkVectors["n"])
+		assert.Equal(t, []string{nodeMainVectorKey("n")}, svc.nodeChunkVectors["n"])
 		assert.Equal(t, 3, svc.gpuEmbeddingIndex.Count())
+		for key, expected := range map[string][]float32{nodeMainVectorKey("n"): {1, 0}, nodeNamedVectorKey("n", "v"): {0, 1}, "seed": {0, 1}} {
+			got, ok := svc.getVectorLookup()(key)
+			require.True(t, ok)
+			assert.Equal(t, expected, got, "failed updates preserve the previous vector")
+		}
+		text, ok := svc.fulltext().GetDocument("n")
+		require.True(t, ok)
+		assert.Equal(t, "originaltoken", text)
 		svc.indexMu.RLock()
-		unchanged := svc.nodeVectorStateUnchangedLocked(node)
+		unchanged := svc.nodeVectorStateUnchangedLocked(invalid)
 		svc.indexMu.RUnlock()
-		assert.False(t, unchanged, "a node with a rejected entry never matches its indexed state")
+		assert.False(t, unchanged, "rejected entries must never match the indexed state")
 	}
 	svc.indexMu.RLock()
-	usage := svc.estimateNodeIndexCapacityLocked(node, nodeFulltext{})
+	usage := svc.estimateNodeIndexCapacityLocked(invalid, nodeFulltext{})
 	svc.indexMu.RUnlock()
 	assert.Equal(t, int64(len("n")+16+len(nodeNamedVectorKey("n", "v"))+16+len("n")+16), usage.vectorMetadata,
-		"the capacity estimate charges only the entries IndexNode stores")
+		"the capacity estimate charges only canonical entries with the destination dimension")
 }
