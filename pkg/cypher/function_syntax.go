@@ -20,10 +20,14 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 
 func standaloneFunctionCall(text string) (functionCallSpan, bool) {
 	// Absence is conclusive even inside quoted data: no call can open here.
-	if !strings.ContainsRune(text, '(') { return functionCallSpan{}, false }
+	if !strings.ContainsRune(text, '(') {
+		return functionCallSpan{}, false
+	}
 	syntax := readFunctionSyntax(text)
 	index := syntax.callIndex(syntax.leading)
-	if index >= len(syntax.calls) { return functionCallSpan{}, false }
+	if index >= len(syntax.calls) {
+		return functionCallSpan{}, false
+	}
 	call := syntax.calls[index]
 	if call.procedure || call.start != syntax.leading || call.close(text) < 0 || queryGapEnd(text, call.close(text)+1) != len(text) {
 		return functionCallSpan{}, false
@@ -211,10 +215,10 @@ func canonicalCallableName(text string) (string, bool) {
 // syntaxSpan uses byte offsets into immutable source text.
 type syntaxSpan struct{ start, end int }
 type syntaxGroup struct {
-	open, close int
-	parent      int
-	separators  []int
-	punctuation []int
+	open, close                int
+	parent                     int
+	separators                 []int
+	punctuation                []int
 	argumentStart, argumentEnd int
 }
 type functionSyntax struct {
@@ -229,7 +233,7 @@ type functionSyntax struct {
 }
 
 type functionSyntaxKey struct {
-	text string
+	text          string
 	argumentsOnly bool
 }
 
@@ -238,13 +242,13 @@ var functionSyntaxCache = newBoundedCache[functionSyntaxKey, *functionSyntax](51
 })
 
 func readFunctionSyntax(text string) *functionSyntax {
-	return readFunctionSyntaxFacts(text,false)
+	return readFunctionSyntaxFacts(text, false)
 }
 
 // Both entries use this one lexical pass. An argument-only consumer needs the
 // outer separators and comments, not retained call identities or inner groups.
 func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
-	key := functionSyntaxKey{text,argumentsOnly}
+	key := functionSyntaxKey{text, argumentsOnly}
 	if len(text) <= 16384 {
 		if syntax, ok := functionSyntaxCache.get(key); ok {
 			return syntax
@@ -254,13 +258,21 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 	// Counts are allocation hints only, never token classification. Bound the
 	// reservation so parentheses inside a large literal cannot inflate it.
 	parentheses := strings.Count(text, "(")
-	groups := parentheses+strings.Count(text,"[")+strings.Count(text,"{")
-	if parentheses > 64 { parentheses = 64 }
-	if groups > 64 { groups = 64 }
-	if !argumentsOnly && parentheses > 0 { syntax.calls = make([]functionCallSpan,0,parentheses) }
-	if argumentsOnly && groups > 3 { groups = 3 }
+	groups := parentheses + strings.Count(text, "[") + strings.Count(text, "{")
+	if parentheses > 64 {
+		parentheses = 64
+	}
+	if groups > 64 {
+		groups = 64
+	}
+	if !argumentsOnly && parentheses > 0 {
+		syntax.calls = make([]functionCallSpan, 0, parentheses)
+	}
+	if argumentsOnly && groups > 3 {
+		groups = 3
+	}
 	// Group zero represents the whole input, including argument-only inputs.
-	syntax.groups = make([]syntaxGroup,1,groups+1)
+	syntax.groups = make([]syntaxGroup, 1, groups+1)
 	syntax.groups[0] = syntaxGroup{open: -1, close: len(text), parent: -1}
 	stack := []int{0}
 	var pending functionCallSpan
@@ -280,7 +292,9 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 		}
 		if text[index] == '\'' || text[index] == '"' {
 			end := skipCypherQuotedText(text, index, text[index])
-			if !argumentsOnly { syntax.quoted = append(syntax.quoted, syntaxSpan{index, end}) }
+			if !argumentsOnly {
+				syntax.quoted = append(syntax.quoted, syntaxSpan{index, end})
+			}
 			index = end
 			previous = index - 1
 			continue
@@ -365,11 +379,17 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			}
 		case ',':
 			group := stack[len(stack)-1]
-			if !argumentsOnly || group == 0 { syntax.groups[group].separators = append(syntax.groups[group].separators, index) }
-			if !argumentsOnly { syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index) }
+			if !argumentsOnly || group == 0 {
+				syntax.groups[group].separators = append(syntax.groups[group].separators, index)
+			}
+			if !argumentsOnly {
+				syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
+			}
 		default:
 			group := stack[len(stack)-1]
-			if !argumentsOnly { syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index) }
+			if !argumentsOnly {
+				syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
+			}
 		}
 		previous = index
 		index++
@@ -377,7 +397,7 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 	totalArguments := 0
 	for index := range syntax.groups {
 		if shape := &syntax.groups[index]; shape.close >= 0 {
-			totalArguments += len(shape.separators)+1
+			totalArguments += len(shape.separators) + 1
 		}
 	}
 	syntax.arguments = make([]syntaxSpan, 0, totalArguments)
@@ -440,8 +460,8 @@ func (syntax *functionSyntax) appendArguments(parts []string, group int, keepEmp
 		return parts
 	}
 	if cap(parts)-len(parts) < len(spans) {
-		grown := make([]string,len(parts),len(parts)+len(spans))
-		copy(grown,parts)
+		grown := make([]string, len(parts), len(parts)+len(spans))
+		copy(grown, parts)
 		parts = grown
 	}
 	for index, span := range spans {
@@ -459,10 +479,12 @@ func (syntax *functionSyntax) appendArguments(parts []string, group int, keepEmp
 // rendered comment; the one span is the trimmed input, including quoted data.
 func appendFunctionArguments(parts []string, text string, keepEmpty bool) []string {
 	if !strings.ContainsRune(text, ',') && !strings.Contains(text, "/*") && !strings.Contains(text, "//") {
-		if value := strings.TrimSpace(text); value != "" { return append(parts,value) }
+		if value := strings.TrimSpace(text); value != "" {
+			return append(parts, value)
+		}
 		return parts
 	}
-	return readFunctionSyntaxFacts(text,true).appendArguments(parts,0,keepEmpty)
+	return readFunctionSyntaxFacts(text, true).appendArguments(parts, 0, keepEmpty)
 }
 
 func (call functionCallSpan) arguments(parts []string) []string {
@@ -503,7 +525,9 @@ func singleFunctionArgument(text string) string {
 		return ""
 	}
 	spans := call.syntax.argumentSpans(call.group)
-	if len(spans) != 1 { return "" }
+	if len(spans) != 1 {
+		return ""
+	}
 	return call.syntax.render(spans[0])
 }
 
