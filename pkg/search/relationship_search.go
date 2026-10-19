@@ -467,16 +467,16 @@ func normalizeVectorCopy(vector []float32) []float32 {
 	return out
 }
 
-func (s *Service) relationshipVectorsPath() string {
+func (s *Service) relationshipVectorsPath() (string, error) {
 	if s == nil || !s.persistEnabled.Load() || s.fulltextIndexPath == "" {
-		return ""
+		return "", nil
 	}
-	return s.fulltextIndexPath + relationshipVectorsFileSuffix
+	return filepath.Abs(s.fulltextIndexPath + relationshipVectorsFileSuffix)
 }
 
 func (s *Service) loadRelationshipVectors() map[string]*relationshipEntry {
-	path := s.relationshipVectorsPath()
-	if path == "" {
+	path, err := s.relationshipVectorsPath()
+	if err != nil || path == "" {
 		return nil
 	}
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
@@ -492,7 +492,10 @@ func (s *Service) loadRelationshipVectors() map[string]*relationshipEntry {
 }
 
 func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
-	path := s.relationshipVectorsPath()
+	path, err := s.relationshipVectorsPath()
+	if err != nil {
+		return err
+	}
 	if path == "" {
 		return nil
 	}
@@ -532,14 +535,7 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
 	if err == nil {
 		// The file sync orders its contents; the directory sync makes the
 		// replacement name durable before a reader is told it is complete.
-		var directory *security.RootedFile
-		directory, err = security.OpenRootedFile(filepath.Dir(path), os.O_RDONLY, 0)
-		if err == nil {
-			err = directory.Sync()
-			if closeErr := directory.Close(); err == nil {
-				err = closeErr
-			}
-		}
+		err = rs.syncDirectory(filepath.Dir(path))
 	}
 	if err != nil {
 		_ = security.RemoveRootedPath(temp)
