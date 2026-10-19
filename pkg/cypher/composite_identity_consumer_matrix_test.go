@@ -42,10 +42,10 @@ func TestCompositeIdentityConsumerMatrix(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 				})
-				t.Run("filtered native nodes/"+proc,func(t *testing.T) {
-					result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"CALL apoc.algo."+proc+"([n,z,m,y],['R'],{}) YIELD node RETURN count(DISTINCT node)",nil)
-					require.NoError(t,err)
-					require.Equal(t,[][]interface{}{{int64(4)}},result.Rows)
+				t.Run("filtered native nodes/"+proc, func(t *testing.T) {
+					result, err := exec.Execute(ctx, compositeIdentityQueryPrefix+"CALL apoc.algo."+proc+"([n,z,m,y],['R'],{}) YIELD node RETURN count(DISTINCT node)", nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
 				})
 			}
 			t.Run("community topology", func(t *testing.T) {
@@ -53,10 +53,13 @@ func TestCompositeIdentityConsumerMatrix(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 			})
-			for _,tc := range []struct{filter string; components int64}{{"['R']",2},{"[]",4}} {
-				result,err := exec.Execute(ctx,compositeIdentityQueryPrefix+"CALL apoc.algo.wcc([n,z,m,y],"+tc.filter+") YIELD node,componentId RETURN count(DISTINCT componentId)",nil)
-				require.NoError(t,err)
-				require.Equal(t,[][]interface{}{{tc.components}},result.Rows)
+			for _, tc := range []struct {
+				filter     string
+				components int64
+			}{{"['R']", 2}, {"[]", 4}} {
+				result, err := exec.Execute(ctx, compositeIdentityQueryPrefix+"CALL apoc.algo.wcc([n,z,m,y],"+tc.filter+") YIELD node,componentId RETURN count(DISTINCT componentId)", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{tc.components}}, result.Rows)
 			}
 			for _, tc := range []struct {
 				proc string
@@ -207,33 +210,40 @@ func TestCompositeGraphTraversalConsumerMatrix(t *testing.T) {
 }
 
 func TestCompositeEntityLookupConsumers(t *testing.T) {
-	for _,explicit := range []bool{false,true} {
-		t.Run(map[bool]string{false:"autocommit",true:"explicit"}[explicit],func(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "autocommit", true: "explicit"}[explicit], func(t *testing.T) {
 			ctx := context.Background()
-			for _,procedure := range []string{"kp.resolve","nornicdb.knowledgepolicy.resolve"} {
-				exec,manager := newCompositeIdentityExecutor(t,explicit)
-				store,err := manager.GetStorage("one")
-				require.NoError(t,err)
+			for _, procedure := range []string{"kp.resolve", "nornicdb.knowledgepolicy.resolve"} {
+				exec, manager := newCompositeIdentityExecutor(t, explicit)
+				store, err := manager.GetStorage("one")
+				require.NoError(t, err)
 				store.GetSchema().SetBindingTable(knowledgepolicy.NewBindingTable())
-				_,err = exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:one:same')",nil)
-				require.NoError(t,err)
-				_,err = exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:two:same')",nil)
-				require.Error(t,err,"a foreign entity cannot resolve against this database")
+				_, err = exec.Execute(ctx, "USE comp.one CALL "+procedure+"('4:one:same')", nil)
+				require.NoError(t, err)
+				_, err = exec.Execute(ctx, "USE comp.one CALL "+procedure+"('4:two:same')", nil)
+				require.Error(t, err, "a foreign entity cannot resolve against this database")
 			}
 			// Use a fresh executor after the expected error, since an explicit
 			// transaction is correctly poisoned by its first failed statement.
-			exec,manager := newCompositeIdentityExecutor(t,explicit)
-			for _,id := range []string{"4:two:same","4:one:same"} {
-				result,err := exec.Execute(ctx,"USE comp.one MATCH (n:P) WHERE elementId(n) = $id CREATE (n)-[:MATRIX_LINK]->(:Created) RETURN elementId(n)",map[string]interface{}{"id":id})
-				require.NoError(t,err)
-				if id == "4:two:same" { require.Empty(t,result.Rows) } else { require.Equal(t,[][]interface{}{{"4:one:same"}},result.Rows) }
+			exec, manager := newCompositeIdentityExecutor(t, explicit)
+			for _, id := range []string{"4:two:same", "4:one:same"} {
+				result, err := exec.Execute(ctx, "USE comp.one MATCH (n:P) WHERE elementId(n) = $id CREATE (n)-[:MATRIX_LINK]->(:Created) RETURN elementId(n)", map[string]interface{}{"id": id})
+				require.NoError(t, err)
+				if id == "4:two:same" {
+					require.Empty(t, result.Rows)
+				} else {
+					require.Equal(t, [][]interface{}{{"4:one:same"}}, result.Rows)
+				}
 			}
-			if explicit { _,err := exec.Execute(ctx,"COMMIT",nil); require.NoError(t,err) }
-			store,err := manager.GetStorage("one")
-			require.NoError(t,err)
-			nodes,err := store.GetNodesByLabel("Created")
-			require.NoError(t,err)
-			require.Len(t,nodes,1)
+			if explicit {
+				_, err := exec.Execute(ctx, "COMMIT", nil)
+				require.NoError(t, err)
+			}
+			store, err := manager.GetStorage("one")
+			require.NoError(t, err)
+			nodes, err := store.GetNodesByLabel("Created")
+			require.NoError(t, err)
+			require.Len(t, nodes, 1)
 		})
 	}
 }

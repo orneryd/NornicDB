@@ -281,10 +281,14 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 		lookupID, entityKind := parseKnowledgePolicyEntityID(entityID)
 		if entityKind != knowledgePolicyEntityAny {
 			kind := "4"
-			if entityKind == knowledgePolicyEntityEdge { kind = "5" }
-			var found,applicable bool
-			lookupID,found,applicable = e.entitySeekLookup(lookupID,kind,"elementId")
-			if !found || !applicable { return nil,localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID),nil) }
+			if entityKind == knowledgePolicyEntityEdge {
+				kind = "5"
+			}
+			var found, applicable bool
+			lookupID, found, applicable = e.entitySeekLookup(lookupID, kind, "elementId")
+			if !found || !applicable {
+				return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
+			}
 		}
 		if node, nodeErr := e.storage.GetNode(storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
 			createdNanos := node.CreatedAt.UnixNano()
