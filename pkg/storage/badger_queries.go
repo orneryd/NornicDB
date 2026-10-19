@@ -811,11 +811,6 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 				result[id] = node
 			}
 		}
-		// Copy only after every key is present. A miss must not copy the
-		// cached portion again when the captured transaction fills the batch.
-		for id, node := range result {
-			result[id] = copyForRead(node)
-		}
 		return true, nil
 	}
 	var states map[NodeID]bufferedEntityState
@@ -869,13 +864,18 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 				}
 			}
 			if !b.filterNodeByDecay(node, now) {
-				result[id] = copyForRead(node)
+				result[id] = node
 			}
 		}
 		return nil
 	}, readViewOptions{cached: cached, current: &current})
 	if err != nil {
 		return nil, err
+	}
+	// Selection completes at the captured view. Copy its immutable bodies
+	// afterwards, once, outside the buffer and cache locks.
+	for id, node := range result {
+		result[id] = copyForRead(node)
 	}
 	for _, node := range loaded {
 		b.cacheFillNode(gen, node)
