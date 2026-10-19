@@ -76,9 +76,13 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 				add(node.Args[0])
 			case *ast.CompositeLit:
 				array, ok := node.Type.(*ast.ArrayType)
-				if !ok { break }
+				if !ok {
+					break
+				}
 				kind, ok := array.Elt.(*ast.Ident)
-				if !ok || kind.Name != "routeSpec" { break }
+				if !ok || kind.Name != "routeSpec" {
+					break
+				}
 				for _, element := range node.Elts {
 					route, ok := element.(*ast.CompositeLit)
 					require.True(t, ok)
@@ -95,7 +99,9 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 		pattern := strings.Split(path, "/")
 		for exercised := range disposition {
 			parts := strings.Split(exercised, "/")
-			if len(parts) != len(pattern) { continue }
+			if len(parts) != len(pattern) {
+				continue
+			}
 			matches := true
 			for i, segment := range pattern {
 				if segment != parts[i] && !(strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") && parts[i] != "") {
