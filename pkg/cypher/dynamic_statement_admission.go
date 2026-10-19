@@ -15,16 +15,17 @@ type dynamicWriteAdmission func(context.Context, *StorageExecutor, string) error
 // after normalization and parameter installation. Procedure handlers have
 // already evaluated their arguments using the normal evaluator. Nested dynamic
 // calls execute through the same gate, with no argument-shape prediction.
-func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context, info *QueryInfo, statement string) error {
+func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context, statement string) error {
 	admit, hasAdmission := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission)
 	state, _ := ctx.Value(resolvedStatementModeKey{}).(*resolvedStatementMode)
 	if !hasAdmission && state == nil {
 		return nil
 	}
-	if info == nil {
-		info = e.analyzer.Analyze(statement)
+	contract, err := readStatementExecutionContract(statement)
+	if err != nil {
+		return err
 	}
-	if !statementWritesGraph(info, statement) {
+	if !contract.writes {
 		return nil
 	}
 	if state != nil {

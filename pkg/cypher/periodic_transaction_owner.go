@@ -6,6 +6,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 // A Fabric coordinator cannot undo independently committed batches. Reject
@@ -29,6 +30,7 @@ func (e *StorageExecutor) checkPeriodicTransactionScope(ctx context.Context, pro
 // independently owned batches. Auth, cancellation and statement values stay
 // on the same context; only the caller's pending storage is hidden.
 func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure string, run func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	callerContext := ctx
 	if err := e.checkPeriodicTransactionScope(ctx, procedure); err != nil {
 		return nil, err
 	}
@@ -45,16 +47,35 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	}
 	batch := e.cloneForStorage(store)
 	batch.txContext = nil
-	ctx = periodicBatchContext{Context: ctx}
+	ctx = periodicBatchContext{Context: txphase.Statements(ctx)}
 	ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 	ctx = context.WithValue(ctx, expressionOperandFailureKey{}, &expressionFailure{})
-	return batch.executeWithImplicitTransactionCallback(ctx, "CALL "+procedure, "CALL "+procedure, run)
+	result, err := batch.executeWithImplicitTransactionCallback(ctx, "CALL "+procedure, "CALL "+procedure, run)
+	if err != nil {
+		return result, err
+	}
+	// The implicit wrapper is still the same rollback owner. Its staged outer
+	// writes stay pending while the next clause reads the committed batch too.
+	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		if err := wrapper.tx.ResumeAfterIndependentCommit(); err != nil {
+			recordExpressionFailure(callerContext, err)
+			return nil, err
+		}
+		if wrapper.txNodeLookupCacheMu != nil {
+			wrapper.txNodeLookupCacheMu.Lock()
+			clear(wrapper.txNodeLookupCache)
+			wrapper.txNodeLookupCacheMu.Unlock()
+		}
+	}
+	return result, nil
 }
 
 type periodicBatchContext struct{ context.Context }
 
 func (ctx periodicBatchContext) Value(key interface{}) interface{} {
-	if key == ctxKeyTxStorage {
+	// A batch commits only itself. It neither completes the enclosing HTTP
+	// phase nor marks the enclosing running statement as already committed.
+	if key == ctxKeyTxStorage || key == (ctxKeyRunningTransaction{}) {
 		return nil
 	}
 	return ctx.Context.Value(key)

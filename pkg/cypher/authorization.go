@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
@@ -43,15 +44,13 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
 	query = classificationText(query)
-	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read:   true,
 		Schema: isSchemaPermissionQuery(query),
 		Admin:  isAdminPermissionQuery(query),
 	}
 	if !requirements.Schema && !requirements.Admin {
-		requirements.Write = keywords["CREATE"] || keywords["DELETE"] || keywords["SET"] ||
-			keywords["MERGE"] || keywords["REMOVE"]
+		requirements.Write = fabric.ReadQueryStructure(query).Writes()
 	}
 
 	// Every procedure the query calls counts, not just the first: a later
@@ -137,35 +136,6 @@ func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, strin
 		}
 	}
 	return false
-}
-
-// callsDataWriteProcedure uses the registered contract shared with authorization
-// to decide whether procedure calls need statement-level write atomicity.
-func callsDataWriteProcedure(query string, _ ...map[string]interface{}) bool {
-	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
-		return procedure.Mode == ProcedureModeWrite
-	})
-}
-
-// Statement execution is a capability, not a predicted WRITE vote. Native
-// statements need a rollback owner; Fabric promotes only at actual execution.
-func callsDynamicStatementProcedure(query string) bool {
-	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
-		return procedure.ExecutesStatements
-	})
-}
-
-func callsStatementTransactionProcedure(query string) bool {
-	return visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
-		return !procedure.OwnsTransactions && (procedure.Mode == ProcedureModeWrite || procedure.ExecutesStatements)
-	})
-}
-
-func statementWritesGraph(info *QueryInfo, query string) bool {
-	if matchKeywordAt(query, 0, "EXPLAIN") {
-		return false
-	}
-	return info.IsWriteQuery || info.HasCall && callsDataWriteProcedure(query)
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword

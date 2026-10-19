@@ -159,7 +159,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	// This is executable, normalized statement text with its actual parameter
 	// values installed. Nested dynamic handlers return through this same gate;
 	// no admission parser attempts to reconstruct their arguments.
-	if err := e.admitResolvedStatementWrite(ctx, nil, cypher); err != nil {
+	if err := e.admitResolvedStatementWrite(ctx, cypher); err != nil {
 		return nil, err
 	}
 

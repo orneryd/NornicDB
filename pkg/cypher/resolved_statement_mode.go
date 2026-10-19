@@ -41,18 +41,21 @@ func resolvedStatementModeResult(result *ExecuteResult, write bool) *ExecuteResu
 // Only CALL results need a resolved procedure mode beyond the ordinary query
 // summary. Conditional procedures share an observation with evaluated nested
 // execution; fixed procedure contracts need no extra context allocation.
-func (e *StorageExecutor) observeResolvedStatementMode(ctx context.Context, info *QueryInfo, statement string) (context.Context, func(*ExecuteResult) *ExecuteResult) {
-	if !info.HasCall {
-		return ctx, nil
+func (e *StorageExecutor) observeResolvedStatementMode(ctx context.Context, statement string) (context.Context, func(*ExecuteResult) *ExecuteResult, error) {
+	contract, err := readStatementExecutionContract(statement)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if !contract.calls {
+		return ctx, nil, nil
 	}
 	state, _ := ctx.Value(resolvedStatementModeKey{}).(*resolvedStatementMode)
-	if state == nil && callsDynamicStatementProcedure(statement) {
+	if state == nil && contract.dynamic {
 		state = &resolvedStatementMode{}
 		ctx = context.WithValue(ctx, resolvedStatementModeKey{}, state)
 	}
-	fixedWrite := statementWritesGraph(info, statement)
 	return ctx, func(result *ExecuteResult) *ExecuteResult {
-		write := fixedWrite || state != nil && state.write.Load()
+		write := contract.writes || state != nil && state.write.Load()
 		return resolvedStatementModeResult(result, write)
-	}
+	}, nil
 }
