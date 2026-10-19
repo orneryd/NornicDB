@@ -307,6 +307,15 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 				defer s.activeTxReqs.Add(-1)
 				next.ServeHTTP(w, r)
 			})
+			// Explicit COMMIT has one outcome owner. A response timeout cannot
+			// report failure while an admitted storage commit later succeeds.
+			// Keep the normal request timeout on every other transaction route;
+			// the server socket WriteTimeout remains a transport delivery limit.
+			parts := strings.Split(strings.TrimPrefix(path, "/db/"), "/")
+			if r.Method == http.MethodPost && len(parts) == 4 && parts[1] == "tx" && parts[3] == "commit" {
+				txWrapped.ServeHTTP(w, r)
+				return
+			}
 			http.TimeoutHandler(txWrapped, txTimeout, "request timeout: transaction busy").ServeHTTP(w, r)
 			return
 		default:
