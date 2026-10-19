@@ -521,6 +521,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 		"mode":               string(page.Mode), "ranked_count": int64(page.RankedCount),
 		"eligible_count": eligibleCount, "ranked_pool_exhausted": page.RankedPoolExhausted,
 		"collection_exhausted": page.CollectionExhausted, "completion": page.Completion,
+		"max_page_size": int64(page.MaxPageSize),
 	}
 	if page.QueryChunksTotal > 0 {
 		pageMap["query_chunks_searched"] = int64(page.QueryChunksSearched)
