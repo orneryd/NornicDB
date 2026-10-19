@@ -4249,21 +4249,10 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
 		nsPrefix := tx.namespace + ":"
 		for _, id := range idx.LookupFull(values...) {
-			if id == node.ID || tx.committedNodeSupersededLocked(id) || (tx.namespace != "" && !strings.HasPrefix(string(id), nsPrefix)) {
+			if id == node.ID || tx.committedNodeSupersededLocked(id) {
 				continue
 			}
-			existing, err := tx.engine.GetNode(id)
-			if err != nil || existing == nil || !hasLabel(existing.Labels, c.Label) {
-				continue
-			}
-			match := true
-			for i, prop := range c.Properties {
-				if v, ok := existing.Properties[prop]; !ok || !compareValues(v, values[i]) {
-					match = false
-					break
-				}
-			}
-			if match {
+			if existing := tx.engine.committedKeyHolder(id, tx.namespace, c.Label, c.Properties, node.Properties); existing != nil {
 				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
 				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 			}
@@ -4300,6 +4289,27 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	}
 
 	return nil
+}
+
+// committedKeyHolder returns candidate id's committed node when it belongs to
+// namespace, carries label and equals props exactly on every key property:
+// the check that turns a composite equality-index candidate into the key's
+// holder for commit validation and MERGE admission alike. Index buckets can be
+// coarser than equality (their numeric keys are float64).
+func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, properties []string, props map[string]interface{}) *Node {
+	if namespace != "" && !(len(id) > len(namespace) && strings.HasPrefix(string(id), namespace) && id[len(namespace)] == ':') {
+		return nil
+	}
+	existing, err := b.GetNode(id)
+	if err != nil || existing == nil || !hasLabel(existing.Labels, label) {
+		return nil
+	}
+	for _, prop := range properties {
+		if v, ok := existing.Properties[prop]; !ok || !compareValues(v, props[prop]) {
+			return nil
+		}
+	}
+	return existing
 }
 
 // scanForNodeKeyViolation performs a full database scan to check for NODE KEY violations
