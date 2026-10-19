@@ -21,16 +21,32 @@ func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 	subscriptions := resolver.Subscription()
 	broker := resolver.EventBroker
 	cases := []struct {
-		name string
+		name      string
 		subscribe func(context.Context) (any, error)
-		publish func(string, string)
+		publish   func(string, string)
 	}{
 		{"node-created", func(ctx context.Context) (any, error) { ch, err := subscriptions.NodeCreated(ctx, nil); return ch, err }, func(database, id string) { broker.PublishNodeCreatedInDatabase(database, &models.Node{ID: id}) }},
-		{"node-updated", func(ctx context.Context) (any, error) { ch, err := subscriptions.NodeUpdated(ctx, nil, nil); return ch, err }, func(database, id string) { broker.PublishNodeUpdatedInDatabase(database, &models.Node{ID: id}) }},
+		{"node-updated", func(ctx context.Context) (any, error) {
+			ch, err := subscriptions.NodeUpdated(ctx, nil, nil)
+			return ch, err
+		}, func(database, id string) { broker.PublishNodeUpdatedInDatabase(database, &models.Node{ID: id}) }},
 		{"node-deleted", func(ctx context.Context) (any, error) { ch, err := subscriptions.NodeDeleted(ctx, nil); return ch, err }, func(database, id string) { broker.PublishNodeDeletedInDatabase(database, id) }},
-		{"relationship-created", func(ctx context.Context) (any, error) { ch, err := subscriptions.RelationshipCreated(ctx, nil); return ch, err }, func(database, id string) { broker.PublishRelationshipCreatedInDatabase(database, &models.Relationship{ID: id}) }},
-		{"relationship-updated", func(ctx context.Context) (any, error) { ch, err := subscriptions.RelationshipUpdated(ctx, nil, nil); return ch, err }, func(database, id string) { broker.PublishRelationshipUpdatedInDatabase(database, &models.Relationship{ID: id}) }},
-		{"relationship-deleted", func(ctx context.Context) (any, error) { ch, err := subscriptions.RelationshipDeleted(ctx, nil); return ch, err }, func(database, id string) { broker.PublishRelationshipDeletedInDatabase(database, id) }},
+		{"relationship-created", func(ctx context.Context) (any, error) {
+			ch, err := subscriptions.RelationshipCreated(ctx, nil)
+			return ch, err
+		}, func(database, id string) {
+			broker.PublishRelationshipCreatedInDatabase(database, &models.Relationship{ID: id})
+		}},
+		{"relationship-updated", func(ctx context.Context) (any, error) {
+			ch, err := subscriptions.RelationshipUpdated(ctx, nil, nil)
+			return ch, err
+		}, func(database, id string) {
+			broker.PublishRelationshipUpdatedInDatabase(database, &models.Relationship{ID: id})
+		}},
+		{"relationship-deleted", func(ctx context.Context) (any, error) {
+			ch, err := subscriptions.RelationshipDeleted(ctx, nil)
+			return ch, err
+		}, func(database, id string) { broker.PublishRelationshipDeletedInDatabase(database, id) }},
 	}
 	for _, database := range []string{"nornic", "revocation_named"} {
 		for _, test := range cases {
@@ -40,7 +56,9 @@ func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				ctx = auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope(database, map[string]string{database: database}))
-				ctx = auth.WithRequestResolvedAccessResolver(ctx, func(selected string) auth.ResolvedAccess { return auth.ResolvedAccess{Read: selected == database && readable.Load()} })
+				ctx = auth.WithRequestResolvedAccessResolver(ctx, func(selected string) auth.ResolvedAccess {
+					return auth.ResolvedAccess{Read: selected == database && readable.Load()}
+				})
 				channel, err := test.subscribe(ctx)
 				require.NoError(t, err)
 				receive := func(timeout time.Duration) (any, bool) {
@@ -48,7 +66,9 @@ func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 						{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(channel)},
 						{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(time.After(timeout))},
 					})
-					if chosen != 0 || !open { return nil, false }
+					if chosen != 0 || !open {
+						return nil, false
+					}
 					return value.Interface(), true
 				}
 				test.publish(database, "before-revoke")
