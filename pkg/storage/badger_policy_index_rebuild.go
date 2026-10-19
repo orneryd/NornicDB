@@ -36,13 +36,13 @@ func (b *BadgerEngine) rebuildCaseSensitiveIndexes() error {
 	if err := b.migrateLegacyPolicyMetadata(ctx); err != nil {
 		return fmt.Errorf("move legacy policy metadata: %w", err)
 	}
-	if _, err := b.rebuildLabelIndex(ctx); err != nil {
+	if _, err := b.rebuildLabelIndexAdmitted(ctx); err != nil {
 		return fmt.Errorf("rebuild label index: %w", err)
 	}
 	if _, err := b.rebuildEdgeTypeIndex(ctx); err != nil {
 		return fmt.Errorf("rebuild edge-type index: %w", err)
 	}
-	if _, err := b.rebuildEdgeBetweenIndex(ctx); err != nil {
+	if _, err := b.rebuildEdgeBetweenIndexAdmitted(ctx); err != nil {
 		return fmt.Errorf("rebuild edge-between index: %w", err)
 	}
 	if err := b.dropDerivedPrefixes(0x18, 0x19); err != nil {

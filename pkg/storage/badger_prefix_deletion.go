@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
 )
 
 // checkNamespacePublication is the admission boundary for new MVCC commits,
@@ -56,7 +55,7 @@ func (b *BadgerEngine) addDeletingPrefix(prefix string) (func(), error) {
 }
 
 func (b *BadgerEngine) beginSchemaWriteContext(ctx context.Context) (func(), error) {
- return b.beginNamespaceMutation(ctx, nil, nil, true, namespacePublicationLifecycle)
+	return b.beginNamespaceMutation(ctx, nil, nil, true, namespacePublicationLifecycle)
 }
 
 // beginPrefixDeletion fences only the affected namespace(s), captures one
@@ -64,15 +63,15 @@ func (b *BadgerEngine) beginSchemaWriteContext(ctx context.Context) (func(), err
 // the exclusive barrier before replay. Later foreign generations cannot
 // extend the wait. Cancellation removes the fence without deleting data.
 func (b *BadgerEngine) beginPrefixDeletion(ctx context.Context, prefix string, operation ...*NamespaceDrop) (func(), error) {
- var release func()
- var err error
- if len(operation) != 0 && operation[0] != nil {
-  // Preparation already admitted this lifecycle and retains its target fence.
-  release, err = b.beginSchemaWriteContext(ctx)
- } else {
-  namespace, _, _ := strings.Cut(prefix, ":")
-  release, err = b.beginNamespaceMutation(ctx, []string{namespace}, nil, true, namespacePublicationFresh)
- }
+	var release func()
+	var err error
+	if len(operation) != 0 && operation[0] != nil {
+		// Preparation already admitted this lifecycle and retains its target fence.
+		release, err = b.beginSchemaWriteContext(ctx)
+	} else {
+		namespace, _, _ := strings.Cut(prefix, ":")
+		release, err = b.beginNamespaceMutation(ctx, []string{namespace}, nil, true, namespacePublicationFresh)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -679,7 +679,9 @@ func localEntityID(id string) string {
 // events are always kept: they are where db.cdc.current() stands.
 func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (int, error) {
 	releaseAdmission, err := b.beginNamespaceMutation(context.Background(), []string{namespace}, nil, false, namespacePublicationFresh)
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	defer releaseAdmission()
 
 	prefix := changeEventPrefix(namespace)

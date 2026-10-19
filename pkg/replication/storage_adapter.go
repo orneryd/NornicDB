@@ -872,9 +872,11 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
- release, err := storage.AdmitRecoverySnapshot(context.Background(), a.engine)
- if err != nil { return err }
- defer release()
+	release, err := storage.AdmitRecoverySnapshot(context.Background(), a.engine)
+	if err != nil {
+		return err
+	}
+	defer release()
 	// Every stored node and edge: the ones the visibility layer hides from
 	// reads are replicated data too.
 	nodes, err := storage.CollectStoredNodes(context.Background(), a.engine)

@@ -1,9 +1,9 @@
 package storage
 
 import (
- "context"
- "fmt"
- "github.com/orneryd/nornicdb/pkg/util"
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // WAL owns the replay obligations independently of graph snapshots. Only an
@@ -71,21 +71,35 @@ func checkNamespaceSnapshot(engine Engine) error {
 // complete. Wrapper WAL leases precede physical publication, matching mutation
 // admission. A caller already holding its WAL lease passes the inner engine.
 func AdmitRecoverySnapshot(ctx context.Context, engine Engine) (func(), error) {
- if ctx == nil { ctx = context.Background() }
- if wal,ok:=engine.(*WALEngine);ok {
-  releaseWAL,err:=util.LockContext(ctx,wal.mutationMu.Lock,wal.mutationMu.Unlock)
-  if err!=nil{return nil,err}
-  release,err:=AdmitRecoverySnapshot(ctx,wal.engine)
-  if err!=nil{releaseWAL();return nil,err}
-  return func(){release();releaseWAL()},nil
- }
- if wrapper,ok:=engine.(EngineUnwrapper);ok {
-  return AdmitRecoverySnapshot(ctx,wrapper.GetInnerEngine())
- }
- owner:=namespaceLifecycleOwner(engine)
- if owner==nil{return func(){},ctx.Err()}
- release,err:=owner.beginNamespaceMutation(ctx,nil,nil,false,namespacePublicationFresh)
- if err!=nil{return nil,err}
- if err:=checkNamespaceSnapshot(engine);err!=nil{release();return nil,err}
- return release,nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if wal, ok := engine.(*WALEngine); ok {
+		releaseWAL, err := util.LockContext(ctx, wal.mutationMu.Lock, wal.mutationMu.Unlock)
+		if err != nil {
+			return nil, err
+		}
+		release, err := AdmitRecoverySnapshot(ctx, wal.engine)
+		if err != nil {
+			releaseWAL()
+			return nil, err
+		}
+		return func() { release(); releaseWAL() }, nil
+	}
+	if wrapper, ok := engine.(EngineUnwrapper); ok {
+		return AdmitRecoverySnapshot(ctx, wrapper.GetInnerEngine())
+	}
+	owner := namespaceLifecycleOwner(engine)
+	if owner == nil {
+		return func() {}, ctx.Err()
+	}
+	release, err := owner.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkNamespaceSnapshot(engine); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }

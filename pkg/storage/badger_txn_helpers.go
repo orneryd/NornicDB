@@ -32,8 +32,10 @@ func (b *BadgerEngine) beginWrite(namespaces ...string) (func(), error) {
 // Replay already owns an acknowledged lifetime and may retire a sealed frontier.
 func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
 	mode := namespacePublicationFresh
- if replay { mode = namespacePublicationReplay }
- return b.beginNamespaceMutation(context.Background(), nil, nil, false, mode)
+	if replay {
+		mode = namespacePublicationReplay
+	}
+	return b.beginNamespaceMutation(context.Background(), nil, nil, false, mode)
 }
 
 func (b *BadgerEngine) beginSchemaWrite(namespaces ...string) (func(), error) {

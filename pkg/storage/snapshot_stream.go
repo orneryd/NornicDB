@@ -45,8 +45,10 @@ type SnapshotVisitor interface {
 // Its existing lightweight route does not fetch separately stored embeddings.
 func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options SnapshotOptions) error {
 	release, err := AdmitRecoverySnapshot(ctx, engine)
- if err != nil { return err }
- defer release()
+	if err != nil {
+		return err
+	}
+	defer release()
 	_, ok := engine.(StreamingEngine)
 	if !ok {
 		return ErrStreamingSnapshotUnsupported

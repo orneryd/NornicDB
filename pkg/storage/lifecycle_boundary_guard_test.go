@@ -38,7 +38,7 @@ func lifecycleGuardParse(t *testing.T, root string) *lifecycleGuardSource {
  paths := map[*ast.File]string{}
  err := filepath.WalkDir(root,func(path string, entry fs.DirEntry, err error) error {
   if err != nil { return err }
-  if entry.IsDir() || !strings.HasSuffix(path,".go") || strings.HasSuffix(path,"_test.go") { return nil }
+  if entry.IsDir() && filepath.Clean(path) != filepath.Clean(root) { return fs.SkipDir }; if entry.IsDir() || !strings.HasSuffix(path,".go") || strings.HasSuffix(path,"_test.go") { return nil }
   matched,err:=build.Default.MatchFile(filepath.Dir(path),filepath.Base(path))
   if err!=nil{return err};if !matched{return nil}
   file,err := parser.ParseFile(fset,path,nil,0)
@@ -166,8 +166,13 @@ func lifecycleGuardContextViolations(root string) ([]string,error) {
   if err!=nil{return err};if entry.IsDir() || !strings.HasSuffix(path,".go") || strings.HasSuffix(path,"_test.go"){return nil}
   file,err:=parser.ParseFile(token.NewFileSet(),path,nil,0);if err!=nil{return err}
   ast.Inspect(file,func(node ast.Node)bool {
-   if _,ok:=node.(*ast.GoStmt);ok{return false}
-   call,ok:=node.(*ast.CallExpr);if !ok{return true};name:=lifecycleGuardCallName(call)
+   // References also cover method values passed to another function or aliased
+   // before invocation; an async consumer remains part of the boundary.
+   name:=""
+   switch n:=node.(type) {
+   case *ast.SelectorExpr:name=n.Sel.Name
+   case *ast.CallExpr:if id,ok:=n.Fun.(*ast.Ident);ok{name=id.Name}
+   }
    if (strings.HasPrefix(name,"Create") || strings.HasPrefix(name,"Drop")) && strings.HasSuffix(name,"Database") {violations=append(violations,path+": context-free lifecycle "+name)}
    return true
   });return nil
@@ -195,6 +200,7 @@ func TestLifecycleMutationGuardRejectsNewEntry(t *testing.T) {
  source:=lifecycleGuardParse(t,root)
  got:=source.bypasses()
  if len(got)!=3{t.Fatal("new mutation populations escaped structural guard",got)}
- if err:=os.WriteFile(filepath.Join(root,"consumer.go"),[]byte("package storage;func NewlyAddedHandler(m any){m.DropDatabase(\"x\")}"),0600);err!=nil{t.Fatal(err)}
+ if err:=os.Mkdir(filepath.Join(root,"ingress"),0700);err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(filepath.Join(root,"ingress","consumer.go"),[]byte("package storage;func NewlyAddedHandler(m any){go func(){ drop:=m.DropDatabase; drop(\"x\") }()}"),0600);err!=nil{t.Fatal(err)}
  violations,err:=lifecycleGuardContextViolations(root);if err!=nil{t.Fatal(err)};if len(violations)!=1{t.Fatal("new context-free consumer escaped guard",violations)}
 }

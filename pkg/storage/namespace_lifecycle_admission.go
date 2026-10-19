@@ -40,7 +40,12 @@ func admitNamespaceCreation(ctx context.Context, engine Engine, namespace string
 	}
 	if owner, ok := engine.(interface{ namespaceLifetimeOwner() *BadgerEngine }); ok {
 		b := owner.namespaceLifetimeOwner()
-		release, err := b.beginNamespaceMutation(ctx, func() []string { if namespace == "" { return nil }; return []string{namespace} }(), nil, true, namespacePublicationFresh)
+		release, err := b.beginNamespaceMutation(ctx, func() []string {
+			if namespace == "" {
+				return nil
+			}
+			return []string{namespace}
+		}(), nil, true, namespacePublicationFresh)
 		if err != nil {
 			return nil, err
 		}

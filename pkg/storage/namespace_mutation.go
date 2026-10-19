@@ -10,9 +10,9 @@ import (
 type namespacePublicationMode uint8
 
 const (
- namespacePublicationFresh namespacePublicationMode = iota
- namespacePublicationReplay
- namespacePublicationLifecycle
+	namespacePublicationFresh namespacePublicationMode = iota
+	namespacePublicationReplay
+	namespacePublicationLifecycle
 )
 
 // beginNamespaceMutation is the physical admission owner. Capture the logical
@@ -20,7 +20,9 @@ const (
 // Empty scope means whole-store maintenance; replay alone carries a previously
 // acknowledged publication and therefore may cross a prepared drain fence.
 func (b *BadgerEngine) beginNamespaceMutation(ctx context.Context, namespaces []string, revision *uint64, exclusive bool, mode namespacePublicationMode) (func(), error) {
- if ctx == nil { ctx = context.Background() }
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	begin := b.namespaceLifetimeRevision()
 	if revision != nil {
 		begin = *revision

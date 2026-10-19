@@ -80,7 +80,9 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return s.CreateWithQuantization(ctx, name, dims, distance, nil)
 }
 
@@ -178,7 +180,9 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 }
 
 func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_ = ctx
 	if name == "" {
 		return ErrCollectionNotFound
