@@ -893,7 +893,9 @@ type Service struct {
 	// clusterStateMu guards the cluster generation (clusterGen) and the
 	// cluster index pointer; the generation's owner (cluster_generation.go)
 	// is the only writer. IVF-HNSW queries route and take graphs under its
-	// read lock. Lock order: pipelineMu -> indexMu -> clusterStateMu -> mu.
+	// read lock. Lock order: pipelineMu -> indexMu -> clusterStateMu -> mu
+	// -> vectorIndex.mu and vectorFileStore's lock, which are leaves: no path
+	// takes a Service lock while holding one.
 	clusterStateMu sync.RWMutex
 	clusterGen     *clusterGeneration
 	// clusterStaging records cluster admissions while a generation is being
@@ -3033,25 +3035,34 @@ func (s *Service) ensureVectorFileStore() {
 	// Build callers normally arrive with an empty in-memory index. If
 	// persistence was enabled after live ingestion began, migrate those vectors
 	// before publishing the file store so switching storage cannot lose data.
-	s.vectorIndex.mu.Lock()
-	for id, normalized := range s.vectorIndex.vectors {
+	// The caller's indexMu excludes every vector mutation, so a read lock is
+	// enough to copy them.
+	vi := s.vectorIndex
+	vi.mu.RLock()
+	for id, normalized := range vi.vectors {
 		value := normalized
-		if raw, ok := s.vectorIndex.rawVectors[id]; ok {
+		if raw, ok := vi.rawVectors[id]; ok {
 			value = raw
 		}
 		if err := vfs.Add(id, value); err != nil {
-			s.vectorIndex.mu.Unlock()
+			vi.mu.RUnlock()
 			_ = vfs.Close()
 			s.logPrintf("⚠️ VectorFileStore migration failed (using in-memory index): %v", err)
 			return
 		}
 	}
+	vi.mu.RUnlock()
+	// Publishing the store and emptying the in-memory index is one s.mu
+	// change, so a reader sees the vectors in exactly one of them. vi.mu is
+	// taken inside s.mu, the order every reader of the index uses (see
+	// clusterStateMu).
 	s.mu.Lock()
 	s.vectorFileStore = vfs
+	vi.mu.Lock()
+	vi.vectors = make(map[string][]float32)
+	vi.rawVectors = make(map[string][]float32)
+	vi.mu.Unlock()
 	s.mu.Unlock()
-	s.vectorIndex.vectors = make(map[string][]float32)
-	s.vectorIndex.rawVectors = make(map[string][]float32)
-	s.vectorIndex.mu.Unlock()
 }
 
 // lastWriteTime returns the last known write time for the underlying storage, if available.
