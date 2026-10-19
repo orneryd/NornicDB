@@ -59,4 +59,22 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 			})
 		}
 	}
+
+	// Reuse the same authenticated connection while selection policy changes.
+	// These checks must read the live allowlist, not a principal snapshot/cache.
+	for _, allowed := range []bool{false, true, false, true} {
+		databases := []string{"grpc_portfolio"}
+		if allowed {
+			databases = append(databases, "grpc_physical")
+		}
+		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, string(auth.RoleViewer), databases))
+		for _, selection := range []string{"grpc_physical", "grpc_portfolio.part", "grpc_portfolio"} {
+			_, err := points.Count(reader, &qpb.CountPoints{CollectionName: selection})
+			if allowed {
+				require.NoError(t, err, selection)
+			} else {
+				require.Equal(t, codes.PermissionDenied, status.Code(err), selection)
+			}
+		}
+	}
 }
