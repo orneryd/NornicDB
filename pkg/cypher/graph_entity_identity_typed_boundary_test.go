@@ -63,7 +63,7 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
         "package cypher\nimport storage \"github.com/orneryd/nornicdb/pkg/storage\"\n"+
         "type identityBoundaryAlias = storage.Node\n"+
         "func unrelatedIdentityReader(input *identityBoundaryAlias, relationship *storage.Edge) []string {\n"+
-        "candidate := input; inferred := relationship\n"+
+        "candidate := input; inferred := relationship; candidate.Database = inferred.Database\n"+
         "return []string{string(candidate.ID), string(inferred.ID), string(inferred.StartNode), string(inferred.EndNode)}\n}\n",0)
     if err!=nil {t.Fatal(err)}
     files=append(files,negative)
@@ -102,12 +102,7 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
         for selector, selection := range info.Selections {
             if selector.Pos() < file.Pos() || selector.End() > file.End() || selection.Kind() != types.FieldVal || !native(selection.Recv()) { continue }
             field := selection.Obj().Name()
-            if field != "ID" && field != "StartNode" && field != "EndNode" { continue }
-            if assignment, ok := parents[selector].(*ast.AssignStmt); ok {
-                writeOnly := false
-                for _, target := range assignment.Lhs { if target == selector && assignment.Tok == token.ASSIGN { writeOnly = true } }
-                if writeOnly { continue }
-            }
+            if field != "ID" && field != "Database" && field != "StartNode" && field != "EndNode" { continue }
             owner := "<initializer>"
             for parent := parents[selector]; parent != nil; parent = parents[parent] {
                 if function, ok := parent.(*ast.FuncDecl); ok { owner = function.Name.Name; break }
@@ -120,8 +115,8 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
         }
     }
     sort.Strings(findings)
-    if negativeFindings!=4 {t.Fatalf("typed identity guard missed its fresh aliased/inferred reader: caught %d/4 native field reads",negativeFindings)}
-    t.Log("negative control: all 4 native field reads caught through aliased and inferred receivers")
+    if negativeFindings!=6 {t.Fatalf("typed identity guard missed its fresh aliased/inferred reader or provenance write: caught %d/6 native identity field accesses",negativeFindings)}
+    t.Log("negative control: all 6 native identity accesses caught, including aliased/inferred readers and provenance writes")
     for _, finding := range findings { t.Log(finding) }
     if len(findings) != 0 { t.Fatalf("%d native identity consumers still bypass the owner", len(findings)) }
     t.Logf("complete compiler inventory: %d production files, no native identity owner bypasses", len(files)-1)

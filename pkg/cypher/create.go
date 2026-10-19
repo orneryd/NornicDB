@@ -282,10 +282,10 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	}
 	store := e.getStorage(ctx)
 	for _, node := range plan.nodes {
-		node.Database = storage.DatabaseOf(store)
+		if err:=bindNativeCreationSource(store,node); err!=nil {return err}
 	}
 	for _, edge := range plan.edges {
-		edge.Database = storage.DatabaseOf(store)
+		if err:=bindNativeCreationSource(store,edge); err!=nil {return err}
 	}
 	switch len(plan.nodes) {
 	case 0:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -451,6 +452,25 @@ func nativeEdgeStorageEndpoints(engine storage.Engine, edge *storage.Edge) (stor
     start,startOK:=edge.StartIdentity().NodeLookupID(engine)
     end,endOK:=edge.EndIdentity().NodeLookupID(engine)
     return start,end,startOK&&endOK
+}
+
+// A CREATE plan already carries any source selected by bound endpoints.
+// Supply a source only for a fresh unscoped value; a coordinator is never
+// authority to overwrite an existing physical provenance selection.
+func bindNativeCreationSource(engine storage.Engine, value interface{}) error {
+    switch entity:=value.(type) {
+    case *storage.Node:
+        if entity.Database=="" {entity.Database=storage.DatabaseOf(engine)}
+        if _,ok:=entity.Identity().NodeLookupID(engine); !ok {
+            return localizedStatusError("Neo.ClientError.Statement.EntityNotFound","EntityNotFound",localization.CypherProceduresNodeNotFound(entity.ElementID("")))
+        }
+    case *storage.Edge:
+        if entity.Database=="" {entity.Database=storage.DatabaseOf(engine)}
+        if _,ok:=entity.Identity().LookupID(engine,"5"); !ok {
+            return localizedStatusError("Neo.ClientError.Statement.EntityNotFound","EntityNotFound",localization.CypherProceduresRelationshipNotFound(entity.ElementID("")))
+        }
+    }
+    return nil
 }
 
 // Deleted entity views preserve physical provenance and relationship endpoints
