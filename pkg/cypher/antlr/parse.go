@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -124,8 +125,10 @@ func ValidateContext(ctx context.Context, query string) (retErr error) {
 	v := validatorPool.Get().(*pooledValidator)
 	v.errorListener.reset()
 	v.stream.ctx, v.stream.done = ctx, ctx.Done()
+	v.stream.deadline, v.stream.hasDeadline = ctx.Deadline()
 	defer func() {
 		v.stream.ctx, v.stream.done = nil, nil
+		v.stream.deadline, v.stream.hasDeadline = time.Time{}, false
 		validatorPool.Put(v)
 		if caught := recover(); caught != nil {
 			if canceled, ok := caught.(validationCancellation); ok {
@@ -173,12 +176,19 @@ func ValidateContext(ctx context.Context, query string) (retErr error) {
 // cancellation boundary without modifying generated grammar or runtime code.
 type validationTokenStream struct {
 	*antlr.CommonTokenStream
-	ctx  context.Context
-	done <-chan struct{}
+	ctx         context.Context
+	done        <-chan struct{}
+	deadline    time.Time
+	hasDeadline bool
 }
 type validationCancellation struct{ err error }
 
 func (s *validationTokenStream) check() {
+	// Context timers may run after their deadline under CPU load. Prediction
+	// must honor the same deadline without waiting for that timer goroutine.
+	if s.hasDeadline && !time.Now().Before(s.deadline) {
+		panic(validationCancellation{context.DeadlineExceeded})
+	}
 	if s.done != nil {
 		select {
 		case <-s.done:
