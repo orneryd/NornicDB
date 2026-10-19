@@ -15,7 +15,7 @@ func TestHeimdallReadRefusalPreservesAdmissionError(t *testing.T) {
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(_ string, permission auth.Permission) bool { return permission != auth.PermRead })
 	for _, call := range []struct {
 		name string
-		run func() error
+		run  func() error
 	}{
 		{"Stats", func() error { _, err := router.Stats(ctx, "tenant"); return err }},
 		{"Discover", func() error { _, err := router.Discover(ctx, "tenant", "text", nil, 1, 1); return err }},
