@@ -31,22 +31,24 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 			// load it, which also clears its cached results, and indexes a
 			// node shown again here too: the storage update event doesn't
 			// reach search while the server's GraphQL handler holds it.
-			if e.searchService == nil {
-				return nil
-			}
-			if suppressed {
-				_ = e.searchService.RemoveNode(id)
-			} else if reader, ok := engine.(storage.Engine); ok {
-				if node, err := reader.GetNode(id); err == nil {
-					_ = e.searchService.IndexNode(node)
-				}
+			// Storage hides a suppressed node, so the refresh removes it.
+			if svc := e.search(); svc != nil {
+				_ = svc.RefreshNode(id)
 			}
 			return nil
 		}
 	case *storage.Edge:
 		id := value.ID
 		apply = func(engine storage.ManualSuppressionEngine) error {
-			return engine.SetEdgeManuallySuppressed(id, suppressed)
+			if err := engine.SetEdgeManuallySuppressed(id, suppressed); err != nil {
+				return err
+			}
+			// As for a node: a hidden relationship leaves search now, so its
+			// vector doesn't take a top-k place, and a shown one returns.
+			if svc := e.search(); svc != nil {
+				_ = svc.RefreshEdge(id)
+			}
+			return nil
 		}
 	default:
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityEntityRequired(procedure), nil)

@@ -162,7 +162,7 @@ func (r *heimdallDBRouter) finishExecutor(dbName string, engine storage.Engine, 
 	// Reuse DB's cached search service instead of creating a new one.
 	if r.db != nil {
 		if searchSvc, err := r.db.GetOrCreateSearchService(dbName, engine); err == nil && searchSvc != nil {
-			exec.SetSearchService(searchSvc)
+			exec.SetSearchServiceResolver(dbName, r.db.SearchServiceResolver())
 		}
 	}
 
