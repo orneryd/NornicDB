@@ -19,10 +19,10 @@ type cypherFunctionSpec struct {
 	listed               bool
 	// userDefined lists the function as Neo4j lists a plugin's (isBuiltIn
 	// false), as for the APOC functions.
-	userDefined  bool
-	isDeprecated bool
-	deprecatedBy string
-cacheVolatility functionCacheVolatility
+	userDefined     bool
+	isDeprecated    bool
+	deprecatedBy    string
+	cacheVolatility functionCacheVolatility
 }
 
 // cypherFunctionCatalog is the built-in function table.

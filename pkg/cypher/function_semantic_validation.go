@@ -124,6 +124,17 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 	})
 }
 
+// forEachFunctionInvocation exposes the existing semantic scanner's argument
+// delimiter to the determinism owner without introducing another token walker.
+func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
+	return forEachSemanticCall(text, func(name, normalized string, arguments int, procedure bool) error {
+		if procedure {
+			return nil
+		}
+		return visit(name, normalized, arguments-1)
+	})
+}
+
 // forEachSemanticCall is the token-aware owner for function and procedure
 // detection. arguments is the position after the opening parenthesis (or the
 // end of a procedure name when its optional parentheses are absent).
