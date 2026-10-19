@@ -1958,12 +1958,17 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if edge == nil {
 		return nil
 	}
-	if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
-		return nil
-	}
 	id := edge.StartNode
 	if end {
 		id = edge.EndNode
+	}
+	edgeID := edge.ID
+	if _, composite := e.storage.(*storage.CompositeEngine); composite && edge.Database != "" {
+		edgeID = storage.EdgeID(edge.ElementID(""))
+		id = storage.NodeID(storage.NodeElementID(edge.Database, id))
+	}
+	if current, err := e.storage.GetEdge(edgeID); err != nil || current == nil {
+		return nil
 	}
 	node, err := e.getQueryNode(e.storage, id)
 	if err != nil {
