@@ -2049,16 +2049,13 @@ func (db *DB) RetryEmbeddingFailures(ctx context.Context, ids []storage.NodeID) 
 // by embedding workers. This prevents completion polling from observing an empty
 // durable queue while provider requests, retries, or batch bisection are active.
 func (db *DB) PendingEmbeddingsCount() int {
-	pending := 0
-	if db.baseStorage != nil {
-		if counter, ok := db.baseStorage.(interface{ PendingEmbeddingsCount() int }); ok {
-			pending = counter.PendingEmbeddingsCount()
-		}
-	}
 	if queue := db.GetEmbedQueue(); queue != nil {
-		pending += queue.Stats().InFlight
+		return queue.PendingEmbeddingsCount()
 	}
-	return pending
+	if counter, ok := db.baseStorage.(interface{ PendingEmbeddingsCount() int }); ok {
+		return counter.PendingEmbeddingsCount()
+	}
+	return 0
 }
 
 // WaitForEmbeddings waits for queued and claimed embedding work to drain.

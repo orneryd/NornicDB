@@ -84,6 +84,21 @@ type EmbeddingFailureStreamer interface {
 // exclusively, so body commits and their current-range cleanup cannot
 // interleave with this embedding-only write (#1228).
 func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	if node == nil {
+		return ErrInvalidData
+	}
+	notification := &commitNotification{}
+	err := commitEmbeddingOutcome(node, func() error { return b.persistNodeEmbeddingSidecar(node, notification) }, func(authoritative *Node) {
+		notification.ops = []Operation{{Type: OpUpdateNode, Node: authoritative}}
+		b.completeCommitNotification(notification)
+	})
+	if err != nil {
+		b.completeCommitNotification(notification)
+	}
+	return err
+}
+
+func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, notification *commitNotification) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
@@ -149,8 +164,6 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	notification := &commitNotification{}
-	defer b.completeCommitNotification(notification)
 	err = b.commitEmbeddingSidecar(node.ID, len(node.ChunkEmbeddings) > 0 || writeMeta, notification, func(cw *commitWriter) error {
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			before := node.UpdatedAt
@@ -190,7 +203,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	b.cacheDeleteNode(node.ID)
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
-	notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
+	// Publication belongs to commitEmbeddingOutcome.
 	return nil
 }
 
@@ -223,9 +236,23 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	if !b.sameEmbeddingSource(embedded, stored) {
 		return ErrEmbeddingSourceChanged
 	}
-	// Source-preserving body updates may advance the stamp while a provider
-	// request is in flight. Publish against the body validated by this txn.
-	embedded.UpdatedAt = stored.UpdatedAt
+	attempt := embedded.EmbeddingAttempt
+	failed, _ := embedded.EmbedMeta["embedding_failed"].(bool)
+	if attempt != nil && (failed || len(embedded.EmbedMeta) == 0) {
+		matches, err := attempt.BodyRevision.matches(b, txn, embedded.ID, item.Version())
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return ErrEmbeddingSourceChanged
+		}
+	}
+	vectors, meta := embedded.ChunkEmbeddings, embedded.EmbedMeta
+	*embedded = *stored
+	embedded.ChunkEmbeddings, embedded.EmbedMeta = vectors, meta
+	embedded.EmbeddingsStoredSeparately = false // Published vectors are already hydrated.
+	embedded.EmbeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+	embedded.EmbeddingAttempt = attempt
 	return nil
 }
 

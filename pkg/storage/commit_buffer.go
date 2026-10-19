@@ -190,6 +190,9 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
+				if c.version.CommitSequence != 0 {
+					op.Node.EmbeddingRevision = EmbeddingBodyRevision{bufferedSequence: c.version.CommitSequence}
+				}
 				b.clearEntityDeletion(bufferedNodeEntity, string(op.Node.ID))
 				b.nodes[op.Node.ID] = op.Node
 				b.indexNodeLabels(op.Node.ID, op.Node.Labels)

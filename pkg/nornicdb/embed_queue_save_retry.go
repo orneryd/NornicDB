@@ -162,7 +162,7 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 			labels: node.Labels, properties: node.Properties,
 			vectors: node.ChunkEmbeddings, meta: node.EmbedMeta,
 			identity: ew.nodeEmbeddingIdentity(provider),
-			epoch:    ew.claimedNodes[string(node.ID)],
+			epoch:    ew.claimedNodes[string(node.ID)].token.ProviderGeneration,
 		}
 	}
 	if retained.epoch != ew.embeddingEpoch.Load() {
@@ -191,14 +191,14 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 	terminal := ew.recordNodeFailureLocked(node, nil)
 	ew.claimMu.Unlock()
 	if terminal {
-		ew.markNodeEmbeddingFailed(node.ID, fmt.Errorf("embedding save retry limit reached"))
+		ew.markNodeEmbeddingFailed(node.ID, fmt.Errorf("embedding save retry limit reached"), node)
 	}
 }
 
 func (ew *EmbedWorker) validNodeClaimLocked(id storage.NodeID) bool {
 	ew.applyNodeUpdatesLocked()
-	epoch, claimed := ew.claimedNodes[string(id)]
-	return claimed && epoch == ew.embeddingEpoch.Load() && !ew.invalidatedClaims[id]
+	attempt, claimed := ew.claimedNodes[string(id)]
+	return claimed && attempt.token.ProviderGeneration == ew.embeddingEpoch.Load() && !attempt.invalidated
 }
 
 // Enqueue only journals IDs; it never waits for a storage claim to finish.
@@ -243,12 +243,9 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 			ew.addNodeToPendingEmbeddings(id)
 		}
 	}
-	for id := range ew.claimedNodes {
+	for id, attempt := range ew.claimedNodes {
 		if matches(id) {
-			if ew.invalidatedClaims == nil {
-				ew.invalidatedClaims = make(map[storage.NodeID]bool)
-			}
-			ew.invalidatedClaims[storage.NodeID(id)] = true
+			attempt.invalidated = true
 		}
 	}
 }
@@ -256,6 +253,7 @@ func (ew *EmbedWorker) applyNodeUpdatesLocked() {
 // All six provider dispatch routes and rejected saves converge on this owner.
 // MaxRetries counts DLQ retries after the initial attempt, never inline calls.
 func (ew *EmbedWorker) recordNodeFailureLocked(node *storage.Node, failure error) bool {
+	ew.failed.Add(1)
 	if ew.nodeRetries == nil {
 		ew.nodeRetries = make(map[storage.NodeID]*nodeEmbeddingRetry)
 	}
@@ -301,8 +299,6 @@ func (ew *EmbedWorker) recordNodeFailureLocked(node *storage.Node, failure error
 }
 
 func (ew *EmbedWorker) failNodeEmbedding(node *storage.Node, failure error) {
-	ew.providerWriteMu.RLock()
-	defer ew.providerWriteMu.RUnlock()
 	ew.claimMu.Lock()
 	valid := ew.validNodeClaimLocked(node.ID) && ew.ctx.Err() == nil
 	terminal := false
@@ -311,7 +307,7 @@ func (ew *EmbedWorker) failNodeEmbedding(node *storage.Node, failure error) {
 	}
 	ew.claimMu.Unlock()
 	if terminal {
-		ew.markNodeEmbeddingFailed(node.ID, failure)
+		ew.markNodeEmbeddingFailed(node.ID, failure, node)
 	}
 }
 
@@ -400,7 +396,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 	// same storage eligibility predicate, excluding the retry owner's IDs.
 	if _, indexed := ew.storage.(EmbeddingIndexManager); (blockedMain || !indexed) && len(ew.nodeRetries)+len(ew.claimedNodes) > 0 {
 		var fresh storage.NodeID
-		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{}, func(node *storage.Node) error {
+		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 			state := ew.nodeRetries[node.ID]
 			_, claimed := ew.claimedNodes[string(node.ID)]
 			if state != nil && !state.updatedAt.Equal(node.UpdatedAt) {
@@ -456,16 +452,16 @@ func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duratio
 // claimNextNodeResult reports progress for a deleted candidate or a retained
 // write attempt. All provider paths enter here, so none can re-embed a retained
 // result before its source has been checked.
-func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
-	return ew.claimNextNodeResultFrom(false)
+func (ew *EmbedWorker) claimNextNodeResult(selections ...embeddingSelection) (*storage.Node, bool) {
+	return ew.claimNextNodeResultFrom(false, ew.embeddingSelection(selections))
 }
 
-func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool) (*storage.Node, bool) {
+func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool, selections ...embeddingSelection) (*storage.Node, bool) {
 	// Rejected retained writes are not progress, but they are not an empty
 	// queue either. Continue selection within a bounded pass so healthy work
 	// reaches every dispatch route without waiting for a new wakeup.
 	for attempts := 0; attempts <= nodeEmbeddingRetryMaxCount; attempts++ {
-		node, progressed, attempted := ew.tryNextNodeResult(mainOnly)
+		node, progressed, attempted := ew.tryNextNodeResult(mainOnly, ew.embeddingSelection(selections))
 		if node != nil || progressed || !attempted {
 			return node, progressed
 		}
@@ -473,15 +469,15 @@ func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool) (*storage.Node, bo
 	return nil, false
 }
 
-func (ew *EmbedWorker) tryNextNodeResult(mainOnly bool) (*storage.Node, bool, bool) {
-	node, retained, progressed := ew.claimNextNodeSourceFrom(mainOnly)
+func (ew *EmbedWorker) tryNextNodeResult(mainOnly bool, selection embeddingSelection) (*storage.Node, bool, bool) {
+	node, retained, progressed := ew.claimNextNodeSourceFrom(mainOnly, selection)
 	if node == nil {
 		return nil, progressed, false
 	}
 	if retained == nil {
 		return node, false, false
 	}
-	provider, err := ew.resolveEmbedder(node.ID)
+	provider, err := ew.resolveAttemptEmbedder(node)
 	if err != nil || provider == nil || retained.epoch != ew.embeddingEpoch.Load() || retained.identity != ew.nodeEmbeddingIdentity(provider) {
 		ew.dropNodeEmbeddingRetry(node.ID)
 		return node, false, false // Regenerate through the current provider dispatch.
@@ -502,12 +498,12 @@ func (ew *EmbedWorker) tryNextNodeResult(mainOnly bool) (*storage.Node, bool, bo
 // claimNodeBatch keeps retained writes in the same bounded pass as provider
 // batches. Count attempts, including rejected writes, so a storage outage
 // cannot keep this pass alive indefinitely.
-func (ew *EmbedWorker) claimNodeBatch(limit int) ([]*storage.Node, bool) {
+func (ew *EmbedWorker) claimNodeBatch(limit int, selections ...embeddingSelection) ([]*storage.Node, bool) {
 	nodes := make([]*storage.Node, 0, limit)
 	progressed := false
 	for attempts := 0; attempts < limit; attempts++ {
 		// Finish the MAIN batch before selecting or saving any DLQ entry.
-		node, advanced := ew.claimNextNodeResultFrom(len(nodes) > 0)
+		node, advanced := ew.claimNextNodeResultFrom(len(nodes) > 0, ew.embeddingSelection(selections))
 		progressed = progressed || advanced
 		if node == nil {
 			if advanced {

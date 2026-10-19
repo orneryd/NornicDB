@@ -168,7 +168,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 // miss decode via decode, decay filter and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
 // copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node)) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), forceSnapshot ...bool) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -179,10 +179,11 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	}
 
 	b.nodeCacheMu.RLock()
-	if cached, ok := b.nodeCache[id]; ok {
+	if cached, ok := b.nodeCache[id]; ok && !(len(forceSnapshot) > 0 && forceSnapshot[0]) {
 		b.nodeCacheMu.RUnlock()
 		atomic.AddInt64(&b.cacheHits, 1)
 		nodeCopy := hitCopy(cached)
+		nodeCopy.embeddingOwner, nodeCopy.embeddingOwnerID = b, id
 		if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
 			return nil, ErrNotFound
 		}
@@ -204,6 +205,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 		return item.Value(func(val []byte) error {
 			var decodeErr error
 			node, decodeErr = decode(txn, val)
+			if node != nil {
+				node.EmbeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+				node.embeddingOwner, node.embeddingOwnerID = b, id
+			}
 			return decodeErr
 		})
 	})
@@ -224,6 +229,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
+	return b.getNodeSnapshot(id, false)
+}
+
+func (b *BadgerEngine) getNodeSnapshot(id NodeID, force bool) (*Node, error) {
 	// Write-behind overlay: acknowledged buffered writes are visible before
 	// the background flush lands them in Badger.
 	if b.writeBehind != nil {
@@ -240,6 +249,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 		},
 		copyNode,
 		b.cacheFillNode,
+		force,
 	)
 }
 

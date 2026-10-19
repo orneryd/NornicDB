@@ -119,7 +119,7 @@ func TestEmbedWorker_ProcessNextBatch_ShouldYieldBranch(t *testing.T) {
 	w.SetShouldYield(func() bool { return true })
 	didWork := w.processNextBatch()
 	require.False(t, didWork)
-	require.Equal(t, 1, w.QueueLen())
+	require.Equal(t, 1, len(w.trigger))
 }
 
 func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
