@@ -45,7 +45,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
-			require.NoError(t, tx.UpdateNode(&Node{ID:"test:a", Properties:map[string]any{"v":int64(9)}}))
+			require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(9)}}))
 			require.NoError(t, tx.Commit())
 			require.NoError(t, b.FlushWriteBehind())
 			value = 2
@@ -66,7 +66,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	var overlay []*Node
-	view, err := b.captureReadView(func(w *WriteBehindBuffer) { overlay, _ = w.allNodesOverlayLocked() }, readViewOptions{longLived:true})
+	view, err := b.captureReadView(func(w *WriteBehindBuffer) { overlay, _ = w.allNodesOverlayLocked() }, readViewOptions{longLived: true})
 	require.NoError(t, err)
 	require.Nil(t, view.txn)
 	require.Len(t, overlay, 2)
@@ -78,11 +78,13 @@ func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 			return nil
 		}))
 	}
-	done := make(chan error,1)
+	done := make(chan error, 1)
 	go func() { done <- b.Close() }()
 	select {
-	case err := <-done: require.NoError(t, err)
-	case <-time.After(3*time.Second): t.Fatal("long view pins engine Close")
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("long view pins engine Close")
 	}
 	require.ErrorIs(t, view.withView(func(*badger.Txn) error { return nil }), ErrStorageClosed)
 	view.Close()
@@ -92,15 +94,15 @@ func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 func TestSnapshotOverlayBusyCachedBatchAndAdjacency(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	// The committed part has hot caches; pending rows must shadow just their IDs.
-	require.NoError(t, b.CreateNode(&Node{ID:"other:unrelated"}))
-	for _, read := range []func([]NodeID)(map[NodeID]*Node,error){b.BatchGetNodes,b.BatchGetNodesWithoutEmbeddings} {
-		nodes, err := read([]NodeID{"test:a","test:b","test:new","test:gone","other:unrelated"})
+	require.NoError(t, b.CreateNode(&Node{ID: "other:unrelated"}))
+	for _, read := range []func([]NodeID) (map[NodeID]*Node, error){b.BatchGetNodes, b.BatchGetNodesWithoutEmbeddings} {
+		nodes, err := read([]NodeID{"test:a", "test:b", "test:new", "test:gone", "other:unrelated"})
 		require.NoError(t, err)
 		require.Len(t, nodes, 4)
 		require.Equal(t, int64(2), nodes["test:a"].Properties["v"])
 	}
 	edges, err := b.GetOutgoingEdges("test:a")
 	require.NoError(t, err)
-	require.Len(t, edges,1)
-	require.Equal(t, EdgeID("test:r"),edges[0].ID)
+	require.Len(t, edges, 1)
+	require.Equal(t, EdgeID("test:r"), edges[0].ID)
 }
