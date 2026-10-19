@@ -170,6 +170,11 @@ func (source *lifecycleGuardSource) raw(call *ast.CallExpr) bool {
 			return true
 		}
 	}
+ // An opaque external transaction can still commit through a nested raw
+ // handle. Missing optional export data must make that boundary stricter.
+ if receiver=="<nil>" || strings.Contains(receiver,"invalid type") {
+  switch name {case "Commit","NewWriteBatch":return true}
+ }
 	if strings.Contains(receiver, "managedBadgerDB") {
 		switch name {
 		case "Update", "DropPrefix", "DropAll", "Load":
@@ -316,6 +321,17 @@ func (source *lifecycleGuardSource) bypasses() []string {
 		if !fn.async && !ast.IsExported(fn.name) {
 			continue
 		}
+  // APIs taking an unmanaged raw DB belong to their external offline owner.
+  // They remain in the call graph: an engine method delegating to one still
+  // has to hold this engine's admission before reaching its physical sink.
+  rawDBInput:=false
+  if !fn.async && fn.decl.Recv==nil {
+   for _,param:=range fn.decl.Type.Params.List {ast.Inspect(param.Type,func(node ast.Node)bool {
+    if selector,ok:=node.(*ast.SelectorExpr);ok && selector.Sel.Name=="DB" {if pkg,ok:=selector.X.(*ast.Ident);ok && pkg.Name=="badger" {rawDBInput=true}}
+    return true
+   })}
+  }
+  if rawDBInput {continue}
 		if !fn.async && fn.decl.Recv != nil {
 			receiver := fn.decl.Recv.List[0].Type
 			if star, ok := receiver.(*ast.StarExpr); ok {
@@ -397,6 +413,7 @@ func TestLifecycleMutationGuardRejectsNewEntry(t *testing.T) {
  func (b *BadgerEngine) OrdinaryAdmittedMutation() error {release,_:=b.beginNamespaceMutation();defer release();return b.withUpdate()}
  func (b *BadgerEngine) NewlyAddedMutation() error {return b.withUpdate()}
  func (b *BadgerEngine) NewlyAddedPhysicalBypass() error {return b.db.DropPrefix()}
+ func (b *BadgerEngine) NewlyAddedOpaqueCommit() error {txn:=external.NewTxn();return txn.Commit()}
  func (b *BadgerEngine) NewlyAddedSiblingBypass() error {b.OrdinaryAdmittedMutation();return b.withUpdate()}
  func (b *BadgerEngine) launchBackground() {go func(){b.withUpdate()}()}
  `
@@ -405,7 +422,7 @@ func TestLifecycleMutationGuardRejectsNewEntry(t *testing.T) {
 	}
 	source := lifecycleGuardParse(t, root)
 	got := source.bypasses()
-	if len(got) != 4 {
+	if len(got) != 5 {
 		t.Fatal("new mutation populations escaped structural guard", got)
 	}
 	if err := os.Mkdir(filepath.Join(root, "ingress"), 0700); err != nil {
