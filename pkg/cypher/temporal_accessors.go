@@ -111,8 +111,12 @@ func formatZonedDateTimeString(value time.Time, zoneID string) string {
 // compareTemporalValues applies Neo4j temporal equality without depending on
 // Go location-pointer identity or the incidental representation of durations.
 func compareTemporalValues(left, right interface{}) (bool, bool) {
-	leftParts, leftOK := temporalEqualityParts(left)
-	rightParts, rightOK := temporalEqualityParts(right)
+	return compareTemporalByContract(left, right, cypherValueEqualityContract)
+}
+
+func compareTemporalByContract(left, right interface{}, contract cypherComparisonContract) (bool, bool) {
+	leftParts, leftOK := contract.temporalKey(left)
+	rightParts, rightOK := contract.temporalKey(right)
 	if !leftOK && !rightOK {
 		return false, false
 	}
@@ -233,17 +237,28 @@ func compareInt64(left, right int64) int {
 	return 0
 }
 
-// temporalEqualityKey is the canonical, comparable temporal identity. Keep it
+// temporalValueKey is the canonical, comparable temporal identity. Keep it
 // typed through equality, hashing and lookup: boxing parts or formatting a key
 // adds allocations to every temporal item in a collection.
-type temporalEqualityKey struct {
+type temporalValueKey struct {
 	kind   byte
 	parts  [7]int64
 	zone   string
 	offset int
 }
 
-func temporalEqualityParts(value interface{}) (temporalEqualityKey, bool) {
+// Equality ignores a named DATETIME's overlap offset. Equivalence retains it:
+// both civil timestamps are equal, but DISTINCT/grouping/set maps keep both.
+// Both contracts use the same normalization owner below.
+func temporalEqualityParts(value interface{}) (temporalValueKey, bool) {
+	return temporalIdentityParts(value, false)
+}
+
+func temporalEquivalenceParts(value interface{}) (temporalValueKey, bool) {
+	return temporalIdentityParts(value, true)
+}
+
+func temporalIdentityParts(value interface{}, equivalence bool) (temporalValueKey, bool) {
 	switch typed := value.(type) {
 	case CypherDate:
 		return dateEqualityParts(typed.Time)
@@ -270,16 +285,16 @@ func temporalEqualityParts(value interface{}) (temporalEqualityKey, bool) {
 			return localDateTimeEqualityParts(typed.Time)
 		}
 	case CypherDateTime:
-		return zonedDateTimeEqualityParts(typed.Time, typed.ZoneID)
+		return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, equivalence)
 	case *CypherDateTime:
 		if typed != nil {
-			return zonedDateTimeEqualityParts(typed.Time, typed.ZoneID)
+			return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, equivalence)
 		}
 	case time.Time:
-		return zonedDateTimeEqualityParts(typed, "")
+		return zonedDateTimeIdentityParts(typed, "", equivalence)
 	case *time.Time:
 		if typed != nil {
-			return zonedDateTimeEqualityParts(*typed, "")
+			return zonedDateTimeIdentityParts(*typed, "", equivalence)
 		}
 	case CypherDuration:
 		return durationEqualityParts(&typed)
@@ -288,17 +303,17 @@ func temporalEqualityParts(value interface{}) (temporalEqualityKey, bool) {
 			return durationEqualityParts(typed)
 		}
 	}
-	return temporalEqualityKey{}, false
+	return temporalValueKey{}, false
 }
 
-func dateEqualityParts(value time.Time) (temporalEqualityKey, bool) {
+func dateEqualityParts(value time.Time) (temporalValueKey, bool) {
 	year, month, day := value.Date()
-	return temporalEqualityKey{kind: 'd', parts: [7]int64{int64(year), int64(month), int64(day)}}, true
+	return temporalValueKey{kind: 'd', parts: [7]int64{int64(year), int64(month), int64(day)}}, true
 }
 
-func clockEqualityParts(kind byte, value time.Time) (temporalEqualityKey, bool) {
+func clockEqualityParts(kind byte, value time.Time) (temporalValueKey, bool) {
 	hour, minute, second := value.Clock()
-	key := temporalEqualityKey{kind: kind, parts: [7]int64{int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}
+	key := temporalValueKey{kind: kind, parts: [7]int64{int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}
 	// TIME is an offset time, even when projected from a named-zone datetime.
 	if kind == 't' {
 		_, key.offset = value.Zone()
@@ -306,13 +321,13 @@ func clockEqualityParts(kind byte, value time.Time) (temporalEqualityKey, bool) 
 	return key, true
 }
 
-func localDateTimeEqualityParts(value time.Time) (temporalEqualityKey, bool) {
+func localDateTimeEqualityParts(value time.Time) (temporalValueKey, bool) {
 	year, month, day := value.Date()
 	hour, minute, second := value.Clock()
-	return temporalEqualityKey{kind: 'L', parts: [7]int64{int64(year), int64(month), int64(day), int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}, true
+	return temporalValueKey{kind: 'L', parts: [7]int64{int64(year), int64(month), int64(day), int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}, true
 }
 
-func zonedDateTimeEqualityParts(value time.Time, zoneID string) (temporalEqualityKey, bool) {
+func zonedDateTimeIdentityParts(value time.Time, zoneID string, equivalence bool) (temporalValueKey, bool) {
 	key, _ := localDateTimeEqualityParts(value)
 	key.kind = 'D'
 	// Explicit region IDs include UTC and CET, which have no slash. A bare
@@ -323,15 +338,14 @@ func zonedDateTimeEqualityParts(value time.Time, zoneID string) (temporalEqualit
 	}
 	if zoneID != "" && zoneID != "Z" && zoneID[0] != '+' && zoneID[0] != '-' {
 		key.zone = zoneID
-	} else {
+	}
+	if key.zone == "" || equivalence {
 		_, key.offset = value.Zone()
 	}
-	// Named datetimes compare civil fields and region identity, including both
-	// occurrences of a fall-back overlap; their incidental offset is omitted.
 	return key, true
 }
 
-func durationEqualityParts(value *CypherDuration) (temporalEqualityKey, bool) {
+func durationEqualityParts(value *CypherDuration) (temporalValueKey, bool) {
 	seconds := value.Hours*3_600 + value.Minutes*60 + value.Seconds + value.Nanos/1_000_000_000
 	nanos := value.Nanos % 1_000_000_000
 	if nanos < 0 {
@@ -339,7 +353,7 @@ func durationEqualityParts(value *CypherDuration) (temporalEqualityKey, bool) {
 		nanos += 1_000_000_000
 	}
 	// Months, days and seconds remain independent groups: a day is not 24h.
-	return temporalEqualityKey{kind: 'u', parts: [7]int64{value.Years*12 + value.Months, value.Days, seconds, nanos}}, true
+	return temporalValueKey{kind: 'u', parts: [7]int64{value.Years*12 + value.Months, value.Days, seconds, nanos}}, true
 }
 
 // evaluateTemporalProperty reads a Cypher temporal field from its typed value.
