@@ -94,11 +94,13 @@ func (op *NamespaceDrop) physicalComplete(ctx context.Context, err error) error 
 		op.releasePublication()
 		op.releasePublication = nil
 	}
-	err = errors.Join(err, op.applyCatalogMutation())
-	if op.nativeSequence != 0 {
-		err = errors.Join(err, op.engine.persistNamespaceCompletion(op.namespace, op.nativeSequence))
+	err = errors.Join(op.err, err, op.applyCatalogMutation())
+	// Recovery may skip this journal entry only after intrinsic cleanup succeeds.
+	// External completion callbacks run later and cannot undo that checkpoint.
+	if err == nil && op.nativeSequence != 0 {
+		err = op.engine.persistNamespaceCompletion(op.namespace, op.nativeSequence)
 	}
-	op.physicalDone, op.err = true, errors.Join(op.err, err)
+	op.physicalDone, op.err = true, err
 	if (op.consensus || ctx.Value(deferredDropCompletionKey{}) == true) && op.complete != nil {
 		return op.Result(op.err)
 	}
