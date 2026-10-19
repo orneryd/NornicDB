@@ -52,7 +52,7 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	// Public pattern expressions cannot introduce an undefined variable.
 	for _, predicate := range []string{"(a)-[:KNOWS]->(c)", "exists((a)-[:KNOWS]->(c))"} {
 		_, err := exec.Execute(ctx, "MATCH (a:Person) WHERE "+predicate+" RETURN a", nil)
-		require.ErrorContains(t, err, "Variable c not defined", predicate)
+		require.ErrorContains(t, err, "variable c is not defined", predicate)
 	}
 
 	// Fallback expression evaluation branch.
