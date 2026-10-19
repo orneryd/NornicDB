@@ -21,19 +21,23 @@ func TestHTTPWriteProcedureStatementRollback(t *testing.T) {
 		Returns: []cypher.ProcedureColumn{{Name: "value", Type: "INTEGER"}},
 	}, func(ctx context.Context, exec *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {
 		_, err := exec.Execute(ctx, "CREATE (:U5HTTPWrite) RETURN 1 AS value", nil)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		return nil, failure
 	}))
 	require.NoError(t, cypher.RegisterUserProcedure(cypher.ProcedureSpec{
 		Name: "u5http.fail", Signature: "u5http.fail() :: (rejected :: INTEGER)", Mode: cypher.ProcedureModeRead,
 		Returns: []cypher.ProcedureColumn{{Name: "rejected", Type: "INTEGER"}},
-	}, func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) { return nil, failure }))
+	}, func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+		return nil, failure
+	}))
 	srv, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
 	peer := httptest.NewServer(srv.buildRouter())
 	t.Cleanup(peer.Close)
 	client := peer.Client()
-	client.Timeout = 10*time.Second
+	client.Timeout = 10 * time.Second
 	post := func(query string) TransactionResponse {
 		body, err := json.Marshal(map[string]interface{}{"statements": []interface{}{map[string]interface{}{
 			"statement": query, "parameters": map[string]interface{}{"statement": "CREATE (:U5HTTPWrite) RETURN 1 AS value"},
