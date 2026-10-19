@@ -854,3 +854,63 @@ func (s *BaseCypherParserListener) EnterReservedWord(ctx *ReservedWordContext) {
 
 // ExitReservedWord is called when production reservedWord is exited.
 func (s *BaseCypherParserListener) ExitReservedWord(ctx *ReservedWordContext) {}
+
+// EnterFabricScript is called when production fabricScript is entered.
+func (s *BaseCypherParserListener) EnterFabricScript(ctx *FabricScriptContext) {}
+
+// ExitFabricScript is called when production fabricScript is exited.
+func (s *BaseCypherParserListener) ExitFabricScript(ctx *FabricScriptContext) {}
+
+// EnterFabricBody is called when production fabricBody is entered.
+func (s *BaseCypherParserListener) EnterFabricBody(ctx *FabricBodyContext) {}
+
+// ExitFabricBody is called when production fabricBody is exited.
+func (s *BaseCypherParserListener) ExitFabricBody(ctx *FabricBodyContext) {}
+
+// EnterFabricClause is called when production fabricClause is entered.
+func (s *BaseCypherParserListener) EnterFabricClause(ctx *FabricClauseContext) {}
+
+// ExitFabricClause is called when production fabricClause is exited.
+func (s *BaseCypherParserListener) ExitFabricClause(ctx *FabricClauseContext) {}
+
+// EnterFabricUseClause is called when production fabricUseClause is entered.
+func (s *BaseCypherParserListener) EnterFabricUseClause(ctx *FabricUseClauseContext) {}
+
+// ExitFabricUseClause is called when production fabricUseClause is exited.
+func (s *BaseCypherParserListener) ExitFabricUseClause(ctx *FabricUseClauseContext) {}
+
+// EnterFabricCallSubquery is called when production fabricCallSubquery is entered.
+func (s *BaseCypherParserListener) EnterFabricCallSubquery(ctx *FabricCallSubqueryContext) {}
+
+// ExitFabricCallSubquery is called when production fabricCallSubquery is exited.
+func (s *BaseCypherParserListener) ExitFabricCallSubquery(ctx *FabricCallSubqueryContext) {}
+
+// EnterFabricCallScope is called when production fabricCallScope is entered.
+func (s *BaseCypherParserListener) EnterFabricCallScope(ctx *FabricCallScopeContext) {}
+
+// ExitFabricCallScope is called when production fabricCallScope is exited.
+func (s *BaseCypherParserListener) ExitFabricCallScope(ctx *FabricCallScopeContext) {}
+
+// EnterFabricLoadCsv is called when production fabricLoadCsv is entered.
+func (s *BaseCypherParserListener) EnterFabricLoadCsv(ctx *FabricLoadCsvContext) {}
+
+// ExitFabricLoadCsv is called when production fabricLoadCsv is exited.
+func (s *BaseCypherParserListener) ExitFabricLoadCsv(ctx *FabricLoadCsvContext) {}
+
+// EnterFabricInsertSt is called when production fabricInsertSt is entered.
+func (s *BaseCypherParserListener) EnterFabricInsertSt(ctx *FabricInsertStContext) {}
+
+// ExitFabricInsertSt is called when production fabricInsertSt is exited.
+func (s *BaseCypherParserListener) ExitFabricInsertSt(ctx *FabricInsertStContext) {}
+
+// EnterFabricNoDetachDeleteSt is called when production fabricNoDetachDeleteSt is entered.
+func (s *BaseCypherParserListener) EnterFabricNoDetachDeleteSt(ctx *FabricNoDetachDeleteStContext) {}
+
+// ExitFabricNoDetachDeleteSt is called when production fabricNoDetachDeleteSt is exited.
+func (s *BaseCypherParserListener) ExitFabricNoDetachDeleteSt(ctx *FabricNoDetachDeleteStContext) {}
+
+// EnterFabricOffsetSt is called when production fabricOffsetSt is entered.
+func (s *BaseCypherParserListener) EnterFabricOffsetSt(ctx *FabricOffsetStContext) {}
+
+// ExitFabricOffsetSt is called when production fabricOffsetSt is exited.
+func (s *BaseCypherParserListener) ExitFabricOffsetSt(ctx *FabricOffsetStContext) {}
