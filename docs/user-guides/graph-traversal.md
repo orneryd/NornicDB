@@ -319,7 +319,9 @@ RETURN node
 
 ## Centrality and Community Detection
 
-These algorithms run over the nodes their first argument gives (a label, as `['Person']` in the examples below, or a list of nodes; every node when it's omitted) and are useful for ranking, recommendation, and clustering workloads. They are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions): APOC has no `apoc.algo.pageRank` and the rest (GDS's are `gds.pageRank.stream` and so on), so a query that uses them runs only on NornicDB. The relationship-type list in the examples isn't applied yet (#1169).
+These algorithms run over the nodes their first argument gives (a label, as `['Person']` in the examples below, or a list of nodes; every node when it's omitted) and are useful for ranking, recommendation, and clustering workloads. They are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions): APOC has no `apoc.algo.pageRank` and the rest (GDS's are `gds.pageRank.stream` and so on), so a query that uses them runs only on NornicDB.
+
+All six accept `(nodes, relationshipTypes, config)`. The relationship filter is a list of exact, case-sensitive type names: `['KNOWS', 'WORKS_WITH']` includes either type, `[]` includes no relationships, and omitted/null or `['*']` includes every type. A missing type matches no relationships. The existing `(nodes, config)` form remains supported; for example, `apoc.algo.pageRank(['Person'], ['KNOWS'], {iterations: 5, dampingFactor: 0.5})` combines a filter with PageRank configuration. Louvain retains `weightProperty` in its config. Each algorithm retains its existing relationship direction and weighting behavior.
 
 ### PageRank
 
