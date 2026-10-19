@@ -176,6 +176,16 @@ func (m *DatabaseManager) hasLegacyRemoteCredentials() bool {
 			if err == nil && endpoint.User != nil {
 				return true
 			}
+			if err == nil {
+				legacy := false
+				_ = mapRemoteURLCredentials(endpoint, func(value string) (string, error) {
+					legacy = legacy || !isEncryptedRemoteCredential(value)
+					return value, nil
+				})
+				if legacy {
+					return true
+				}
+			}
 		}
 	}
 	return false

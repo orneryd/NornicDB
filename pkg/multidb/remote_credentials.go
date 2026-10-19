@@ -44,6 +44,14 @@ func (m *DatabaseManager) resolveRemoteCredentials(ref ConstituentRef, authToken
 		ref.User, ref.Password = "", ""
 	}
 	endpoint.User = nil
+	if err := mapRemoteURLCredentials(endpoint, func(value string) (string, error) {
+		if !isEncryptedRemoteCredential(value) {
+			return value, nil
+		}
+		return m.decryptStoredRemotePassword(value)
+	}); err != nil {
+		return ConstituentRef{}, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(ref.Alias, err), err)
+	}
 	ref.URI = endpoint.String()
 	return ref, nil
 }
@@ -72,6 +80,15 @@ func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInpu
 		ref.Password, _ = endpoint.User.Password()
 	}
 	endpoint.User = nil
+	err = mapRemoteURLCredentials(endpoint, func(value string) (string, error) {
+		if !newInput && isEncryptedRemoteCredential(value) {
+			return value, nil
+		}
+		return m.encryptRemoteCredential(value)
+	})
+	if err != nil {
+		return ConstituentRef{}, localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
+	}
 	ref.URI = endpoint.String()
 	if uriCredential || (ref.Password != "" && (newInput || !isEncryptedRemoteCredential(ref.Password))) {
 		if explicit {
@@ -85,6 +102,54 @@ func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInpu
 		}
 	}
 	return ref, nil
+}
+
+// mapRemoteURLCredentials preserves query spelling, ordering and repeated keys.
+// Display, persistence and runtime all use observability's canonical classifier.
+// Only credential values change; escaped delimiters remain part of their value.
+func mapRemoteURLCredentials(endpoint *url.URL, transform func(string) (string, error)) error {
+	mapQuery := func(query string) (string, error) {
+		parts := strings.Split(query, "&")
+		for i, part := range parts {
+			key, value, found := strings.Cut(part, "=")
+			decodedKey, err := url.QueryUnescape(key)
+			if err != nil {
+				return "", err
+			}
+			if !found || !observability.IsSensitiveURLQueryName(decodedKey) {
+				continue
+			}
+			decoded, err := url.QueryUnescape(value)
+			if err != nil {
+				return "", err
+			}
+			mapped, err := transform(decoded)
+			if err != nil {
+				return "", err
+			}
+			if mapped != decoded {
+				parts[i] = key + "=" + url.QueryEscape(mapped)
+			}
+		}
+		return strings.Join(parts, "&"), nil
+	}
+	query, err := mapQuery(endpoint.RawQuery)
+	if err != nil {
+		return err
+	}
+	endpoint.RawQuery = query
+	if fragment := endpoint.EscapedFragment(); strings.Contains(fragment, "=") {
+		mapped, err := mapQuery(fragment)
+		if err != nil {
+			return err
+		}
+		endpoint.Fragment, err = url.PathUnescape(mapped)
+		if err != nil {
+			return err
+		}
+		endpoint.RawFragment = mapped
+	}
+	return nil
 }
 
 type remoteCredentialCipher struct {
