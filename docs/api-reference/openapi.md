@@ -101,6 +101,13 @@ To authenticate in Swagger UI:
 - `GET /nornicdb/decay` - Memory decay statistics
 - Embedding management endpoints
 
+For continuation PULLs, cancellation or a deadline-exceeded error during page
+production keeps the previously issued `qid` active. Retry the same `qid` in a
+fresh request at the same position before its fixed expiry. Other producer
+errors retire it, as does failed delivery of a produced page. This applies to
+the search endpoint and Cypher continuation procedures over HTTP; see
+[Stream lifetime](../user-guides/search-continuation.md#stream-lifetime).
+
 ### Graph (Nornic Extensions)
 
 - `POST /nornicdb/graph/{database}/neighborhood` - Build a neighborhood subgraph from `node_ids`

@@ -218,7 +218,11 @@ same token is also emitted as additive `durable_qid` metadata on the `RUN`
 `SUCCESS` message when a continuation-enabled `db.retrieve` call has more
 results. Standard clients can continue reading `page.qid`; extension-aware
 clients may read `durable_qid` without changing numeric Bolt `PULL` behavior.
-See [Search Continuation](../user-guides/search-continuation.md).
+Cancellation or deadline expiry during page production keeps the previously
+issued durable token active for retry at the same position with a fresh request,
+subject to its fixed TTL. Other producer errors retire it; failed delivery of a
+produced page also retires it. See
+[Stream lifetime](../user-guides/search-continuation.md#stream-lifetime).
 
 **Reset / attention**
 
