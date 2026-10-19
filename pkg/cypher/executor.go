@@ -1623,7 +1623,7 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(cypher)
-	needsTransaction := info.IsWriteQuery || (matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
+	needsTransaction := statementNeedsTransaction(info, cypher)
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
@@ -1643,6 +1643,13 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+}
+
+// statementNeedsTransaction keeps write clauses and registered WRITE procedures
+// under the same statement rollback owner. tx.setMetaData also needs a transaction.
+func statementNeedsTransaction(info *QueryInfo, cypher string) bool {
+	return info.IsWriteQuery || (info.HasCall && callsDataWriteProcedure(cypher)) ||
+		(matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
 }
 
 // executeWithImplicitTransaction wraps a write query in a single implicit
