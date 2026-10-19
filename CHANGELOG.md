@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- macOS installer/settings: preserve existing provider configuration and launch overrides across upgrades; configure independent AI services, review setup in three steps, and confirm server stop/restart actions.
+
 - Avoid allocating and filling an unused predicate scope for streaming WITH
   projections without WHERE; preserve ordered WITH scope handling (#1472).
 
