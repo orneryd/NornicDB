@@ -692,7 +692,7 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		return err
 	}
 	asOf := time.Now().UTC()
-	if err := StreamNodesWithFallback(ctx, b, 1000, func(node *Node) error {
+	if err := StreamStoredNodes(ctx, b, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -785,7 +785,7 @@ func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPr
 	}
 	now := time.Now().UTC()
 	groups := make(map[string][]*temporalPruneGroup)
-	err := StreamNodesWithFallback(ctx, b, 1000, func(node *Node) error {
+	err := StreamStoredNodes(ctx, b, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

@@ -1434,6 +1434,17 @@ func (e *snapshotEncodeErrorEngine) AllEdges() ([]*storage.Edge, error) {
 	return nil, nil
 }
 
+// The snapshot streams stored nodes: the fake serves AllNodes' node.
+func (e *snapshotEncodeErrorEngine) StreamNodesWithOptions(_ context.Context, _ storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	nodes, _ := e.AllNodes()
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func TestTransport_WireReadWriteHelpers(t *testing.T) {
 	t.Parallel()
 
