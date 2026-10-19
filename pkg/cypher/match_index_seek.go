@@ -35,41 +35,38 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 	return normalizePropValue(value), true
 }
 
-// idEqualityLookup reads a WHERE that is one id(<variable>) = <value> or
-// elementId(<variable>) = <value> comparison: the variable, and the storage
-// ID the value names (an element ID's payload; elementKind is "4" for nodes,
-// "5" for relationships). empty is true when the value is null, not a string
-// or blank, which matches nothing; ok is false for any other WHERE.
-func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, elementKind string) (variable, lookupID string, empty, ok bool) {
+// idEqualitySyntax reads the immutable part of one id(<variable>) = <value>
+// or elementId(<variable>) = <value> comparison. Evaluation of expression
+// remains with the row owner.
+func idEqualitySyntax(whereClause string) (variable, expression, kind string, ok bool) {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
-		return "", "", false, false
+		return "", "", "", false
 	}
 
 	upper := upperASCII(clause)
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
-		return "", "", false, false
+		return "", "", "", false
 	}
 
 	eqIdx := strings.Index(clause, "=")
 	if eqIdx <= 0 {
-		return "", "", false, false
+		return "", "", "", false
 	}
 	// Ignore >=, <=, !=, <>
 	if prev := clause[eqIdx-1]; prev == '!' || prev == '<' || prev == '>' {
-		return "", "", false, false
+		return "", "", "", false
 	}
 	if eqIdx+1 < len(clause) && clause[eqIdx+1] == '=' {
-		return "", "", false, false
+		return "", "", "", false
 	}
 
 	left := strings.TrimSpace(clause[:eqIdx])
 	right := strings.TrimSpace(clause[eqIdx+1:])
 	if left == "" || right == "" {
-		return "", "", false, false
+		return "", "", "", false
 	}
 
-	kind := ""
 	lowerLeft := lowerASCII(left)
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
@@ -79,13 +76,26 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 		kind = "elementId"
 		variable = strings.TrimSpace(left[10 : len(left)-1])
 	default:
-		return "", "", false, false
+		return "", "", "", false
 	}
 	if variable == "" {
+		return "", "", "", false
+	}
+	return variable, right, kind, true
+}
+
+// idEqualityLookup resolves idEqualitySyntax against the current row: the
+// storage ID the value names (elementKind is "4" for nodes and "5" for
+// relationships). empty is true when the value is null, not a string or
+// blank, which matches nothing; ok is false for another WHERE or an unbound
+// expression.
+func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, elementKind string) (variable, lookupID string, empty, ok bool) {
+	variable, expression, kind, ok := idEqualitySyntax(whereClause)
+	if !ok {
 		return "", "", false, false
 	}
 
-	rawVal, constant := e.indexSeekConstant(ctx, right)
+	rawVal, constant := e.indexSeekConstant(ctx, expression)
 	if !constant {
 		return "", "", false, false
 	}

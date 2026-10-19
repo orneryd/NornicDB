@@ -19,6 +19,7 @@ type relationshipAccess struct {
 	expressions  [][]string
 	inline       map[string]bool
 	vector       *relationshipVectorAccess
+	id           *relationshipIDAccess
 }
 
 type relationshipAccessKey struct {
@@ -63,7 +64,7 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 	reader, available := e.getStorage(ctx).(storage.RelationshipPropertySeeker)
 	viewport, _ := TemporalViewportFromContext(ctx)
 	if !available || !reader.RelationshipPropertySeeksAvailable() || viewport.Enabled() {
-		return &relationshipAccess{variable: template.syntax.variable}
+		return &relationshipAccess{variable: template.syntax.variable, id: template.syntax.id}
 	}
 	plans, _ := ctx.Value(relationshipAccessPlansKey{}).(*relationshipAccessPlans)
 	if plans == nil {
@@ -88,6 +89,7 @@ type relationshipAccessSyntax struct {
 	variable, relType string
 	expressions       map[string]string
 	inline            map[string]bool
+	id                *relationshipIDAccess
 }
 
 func compileRelationshipAccessSyntax(pattern, where string) relationshipAccessSyntax {
@@ -100,7 +102,22 @@ func compileRelationshipAccessSyntax(pattern, where string) relationshipAccessSy
 		return syntax
 	}
 	syntax.variable = match.Relationship.Variable
-	if match.IsChained || match.Relationship.VariableLength || match.Relationship.MinHops != 1 || match.Relationship.MaxHops != 1 || len(match.Relationship.Types) != 1 {
+	if match.IsChained || match.Relationship.VariableLength || match.Relationship.MinHops != 1 || match.Relationship.MaxHops != 1 {
+		return syntax
+	}
+	if variable, expression, kind, ok := idEqualitySyntax(where); ok && variable == syntax.variable {
+		independent := true
+		for _, name := range expressionFreeVariables(expression) {
+			if name == syntax.variable {
+				independent = false
+				break
+			}
+		}
+		if independent {
+			syntax.id = &relationshipIDAccess{kind: kind, expression: expression, estimatedRows: 1}
+		}
+	}
+	if len(match.Relationship.Types) != 1 {
 		return syntax
 	}
 	syntax.relType = match.Relationship.Types[0]
@@ -142,7 +159,7 @@ func compileRelationshipAccessSyntax(pattern, where string) relationshipAccessSy
 
 func (e *StorageExecutor) planRelationshipAccess(ctx context.Context, template *relationshipAccessTemplate) *relationshipAccess {
 	syntax := &template.syntax
-	access := &relationshipAccess{variable: syntax.variable, inline: syntax.inline}
+	access := &relationshipAccess{variable: syntax.variable, inline: syntax.inline, id: syntax.id}
 	if len(syntax.expressions) == 0 {
 		return access
 	}

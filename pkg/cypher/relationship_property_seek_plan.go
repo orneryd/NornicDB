@@ -132,6 +132,27 @@ func recordRelationshipVectorAccess(ctx context.Context, pattern, where, variabl
 	stats.rows += rows
 }
 
+func recordRelationshipIDAccess(ctx context.Context, pattern, where, variable string, access *relationshipIDAccess, lookups, candidates, rows int64) {
+	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+	if profile == nil || access == nil {
+		return
+	}
+	profile.mu.Lock()
+	defer profile.mu.Unlock()
+	id := GetUseDatabaseFromContext(ctx) + "\x00" + relationshipAccessID(pattern, where)
+	site := profile.accessSite(id, variable)
+	site.graph = GetUseDatabaseFromContext(ctx)
+	site.access.id = access
+	stats := profile.sites[id+"\x00"+access.kind]
+	if stats == nil {
+		stats = &relationshipSeekStats{variable: variable}
+		profile.sites[id+"\x00"+access.kind] = stats
+	}
+	stats.lookups += lookups
+	stats.candidates += candidates
+	stats.rows += rows
+}
+
 type relationshipAccessSite struct {
 	id          string
 	access      *relationshipAccess
@@ -261,7 +282,16 @@ func (e *StorageExecutor) annotateSingleRelationshipAccess(ctx context.Context, 
 	operator.EstimatedRows = 100
 	operator.Description = "Relationship scan"
 	operator.Arguments["accessOccurrences"] = template.occurrences
-	if access.vector != nil {
+	if access.id != nil {
+		operator.OperatorType = "RelationshipByIdSeek"
+		if access.id.kind == "elementId" {
+			operator.OperatorType = "RelationshipByElementIdSeek"
+		}
+		operator.Description = fmt.Sprintf("Relationship %s seek", access.id.kind)
+		operator.EstimatedRows = access.id.estimatedRows
+		operator.Arguments["expression"] = access.id.expression
+		operator.Arguments["runtimeKeyCheck"] = "resolve against incoming row; scan fallback for an unbound or invalid ID"
+	} else if access.vector != nil {
 		vector := access.vector
 		operator.OperatorType = "RelationshipVectorIndexSeek"
 		operator.Description = fmt.Sprintf("Vector seek on :%s(%s) using %s", vector.relType, vector.property, vector.index)
@@ -315,6 +345,28 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 			fallbacks = profile.fallbacks[site.id]
 		}
 		var alternatives []*PlanOperator
+		if access.id != nil {
+			operatorType := "RelationshipByIdSeek"
+			if access.id.kind == "elementId" {
+				operatorType = "RelationshipByElementIdSeek"
+			}
+			op := &PlanOperator{OperatorType: operatorType, Description: fmt.Sprintf("Relationship %s seek", access.id.kind), Identifiers: []string{access.variable}, EstimatedRows: access.id.estimatedRows, Arguments: map[string]interface{}{
+				"expression": access.id.expression, "accessOccurrences": site.occurrences,
+				"runtimeKeyCheck": "resolve against incoming row; scan fallback for an unbound or invalid ID",
+			}}
+			if plan.Mode == ModeProfile && profile != nil {
+				stats := profile.sites[site.id+"\x00"+access.id.kind]
+				if stats != nil {
+					op.ActualRows = stats.rows
+					op.DBHits = stats.lookups + stats.candidates
+					op.Arguments["idLookups"] = stats.lookups
+					op.Arguments["relationshipCandidates"] = stats.candidates
+				}
+				delete(op.Arguments, "accessOccurrences")
+				op.Arguments["accessAttempts"] = site.occurrences
+			}
+			alternatives = append(alternatives, op)
+		}
 		if access.vector != nil {
 			vector := access.vector
 			op := &PlanOperator{OperatorType: "RelationshipVectorIndexSeek", Description: fmt.Sprintf("Vector seek on :%s(%s) using %s", vector.relType, vector.property, vector.index), Identifiers: []string{access.variable}, EstimatedRows: vector.estimatedRows, Arguments: map[string]interface{}{
@@ -360,7 +412,7 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 			}
 			alternatives = append(alternatives, op)
 		}
-		if access.vector == nil && (len(alternatives) == 0 || fallbacks > 0) {
+		if access.id == nil && access.vector == nil && (len(alternatives) == 0 || fallbacks > 0) {
 			scan := &PlanOperator{OperatorType: "Expand", Description: "Relationship scan", Identifiers: []string{access.variable}, EstimatedRows: 100, Arguments: map[string]interface{}{"accessOccurrences": site.occurrences}}
 			if fallbacks > 0 {
 				delete(scan.Arguments, "accessOccurrences")

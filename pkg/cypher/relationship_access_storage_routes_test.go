@@ -105,9 +105,21 @@ func TestRelationshipAccessProgramOwnsIDAndSelectedPathRoutes(t *testing.T) {
 	}{
 		{
 			name: "element_id_seed",
-			query: "MATCH ()-[r:ROUTE]->() WHERE elementId(r)=$id AND r.p='x' RETURN r.p",
-			operator: "RelationshipIndexSeek", estimate: 10,
+			query: "MATCH ()-[r:ROUTE]->() WHERE elementId(r)=$id RETURN r.p",
+			operator: "RelationshipByElementIdSeek", estimate: 1,
 			params: map[string]interface{}{"id": idResult.Rows[0][0]}, rows: [][]interface{}{{"x"}},
+		},
+		{
+			name: "anchored_element_id_exists",
+			query: "MATCH (a:RouteNode {id:'a'}) RETURN EXISTS { MATCH (a)-[r:ROUTE]->() WHERE elementId(r)=$id }",
+			operator: "RelationshipByElementIdSeek", estimate: 1,
+			params: map[string]interface{}{"id": idResult.Rows[0][0]}, rows: [][]interface{}{{true}},
+		},
+		{
+			name: "anchored_element_id_count",
+			query: "MATCH (a:RouteNode {id:'a'}) RETURN COUNT { MATCH (a)-[r:ROUTE]->() WHERE elementId(r)=$id }",
+			operator: "RelationshipByElementIdSeek", estimate: 1,
+			params: map[string]interface{}{"id": idResult.Rows[0][0]}, rows: [][]interface{}{{int64(1)}},
 		},
 		{
 			name: "shortest_path",
@@ -163,6 +175,18 @@ func TestRelationshipAccessProgramOwnsIDAndSelectedPathRoutes(t *testing.T) {
 			}
 		})
 	}
+	t.Run("removed_element_id_site", func(t *testing.T) {
+		tc := cases[0]
+		ctx := context.WithValue(context.Background(), relationshipAccessProgramKey{}, &relationshipAccessProgram{query: tc.query, byID: map[string]*relationshipAccessTemplate{}})
+		ctx = withRelationshipSeekProfile(context.WithValue(ctx, profileExecutionKey{}, true))
+		actual, err := e.Execute(ctx, tc.query, tc.params)
+		require.NoError(t, err)
+		require.Equal(t, tc.rows, actual.Rows)
+		require.NotEmpty(t, ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile).unregistered)
+		explain, err := e.Execute(ctx, "EXPLAIN "+tc.query, tc.params)
+		require.NoError(t, err)
+		require.Nil(t, relationshipPlanOperator(explain.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipByElementIdSeek"))
+	})
 	t.Run("removed_selected_path_site", func(t *testing.T) {
 		var selected struct {
 			query string

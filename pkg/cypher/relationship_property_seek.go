@@ -20,6 +20,78 @@ func withRelationshipSeekPredicate(ctx context.Context, pattern, where string) c
 	return context.WithValue(ctx, relationshipSeekPredicateKey{}, relationshipSeekPredicate{pattern: pattern, where: where})
 }
 
+func (run relationshipAccessExecution) tryID(ctx context.Context, match *TraversalMatch, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
+	access := run.access.id
+	if access == nil {
+		return nil, false, nil
+	}
+	e := run.executor
+	variable, lookupID, empty, ok := e.idEqualityLookup(ctx, run.physicalWhere, "5")
+	if !ok || variable != match.Relationship.Variable {
+		return nil, false, nil
+	}
+	if empty {
+		recordRelationshipIDAccess(ctx, run.pattern, run.where, match.Relationship.Variable, access, 0, 0, 0)
+		return nil, true, nil
+	}
+	edge, err := e.getStorage(ctx).GetEdge(storage.EdgeID(lookupID))
+	if err != nil || edge == nil {
+		recordRelationshipIDAccess(ctx, run.pattern, run.where, match.Relationship.Variable, access, 1, 0, 0)
+		return nil, true, nil
+	}
+	if !e.edgeTypeMatches(edge.Type, match.Relationship.Types) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
+		recordRelationshipIDAccess(ctx, run.pattern, run.where, match.Relationship.Variable, access, 1, 1, 0)
+		return nil, true, nil
+	}
+	seedAllows := func(seeds []*storage.Node, id storage.NodeID) bool {
+		if len(seeds) == 0 {
+			return true
+		}
+		for _, node := range seeds {
+			if node.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	orientations := [][2]storage.NodeID{{edge.StartNode, edge.EndNode}}
+	switch match.Relationship.Direction {
+	case "incoming":
+		orientations[0] = [2]storage.NodeID{edge.EndNode, edge.StartNode}
+	case "both":
+		if edge.StartNode != edge.EndNode {
+			orientations = append(orientations, [2]storage.NodeID{edge.EndNode, edge.StartNode})
+		}
+	}
+	traversal := e.newTraversalContext(ctx, nil, &match.Relationship)
+	var paths []PathResult
+	for _, endpoints := range orientations {
+		if !seedAllows(startSeeds, endpoints[0]) || !seedAllows(endSeeds, endpoints[1]) {
+			continue
+		}
+		if match.boundEndNodeID != "" && endpoints[1] != match.boundEndNodeID {
+			continue
+		}
+		start, loaded := e.loadTraversalEndpointNode(traversal, endpoints[0])
+		if !loaded || !e.matchesEndPattern(start, &match.StartNode) {
+			continue
+		}
+		end, loaded := e.loadTraversalEndpointNode(traversal, endpoints[1])
+		if !loaded || !e.matchesEndPattern(end, &match.EndNode) {
+			continue
+		}
+		paths = append(paths, PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}, Length: 1})
+	}
+	if run.physicalWhere != "" {
+		paths = e.filterPathsByWhere(ctx, paths, match, run.physicalWhere, nil)
+	}
+	if match.TraversalLimit > 0 && len(paths) > match.TraversalLimit {
+		paths = paths[:match.TraversalLimit]
+	}
+	recordRelationshipIDAccess(ctx, run.pattern, run.where, match.Relationship.Variable, access, 1, 1, int64(len(paths)))
+	return paths, true, nil
+}
+
 func (run relationshipAccessExecution) trySeek(ctx context.Context, match *TraversalMatch, startSeeds, endSeeds []*storage.Node) ([]PathResult, bool, error) {
 	e, pattern, seekWhere := run.executor, run.pattern, run.where
 	seek, ok := run.access.resolve(ctx, e, match.Relationship.Properties)

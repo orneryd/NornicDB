@@ -73,7 +73,6 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			return nil, true, err
 		}
 		if !handled {
-			execution := e.relationshipExecutionFor(rowCtx, materializedPattern, physicalWhere)
 			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
 			if seedRejected {
 				// The bound node fails the pattern's own labels or inline
@@ -83,16 +82,6 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
 				rowHint.earlyLimit = hint.earlyLimit
 				rowHint.readTail = hint.readTail
-			}
-			if startSeedNodes == nil && endSeedNodes == nil {
-				// A relationship pinned by id / elementId starts from its
-				// endpoints, not from every node.
-				if seeds, none, pinned := execution.idSeedNodes(rowCtx); pinned {
-					if none {
-						continue
-					}
-					startSeedNodes = seeds
-				}
 			}
 			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {

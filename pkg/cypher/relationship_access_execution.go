@@ -20,6 +20,11 @@ type relationshipVectorAccess struct {
 	estimatedRows            int64
 }
 
+type relationshipIDAccess struct {
+	kind, expression string
+	estimatedRows     int64
+}
+
 type relationshipVectorProbeKey struct{}
 type relationshipVectorProbe struct {
 	planOnly          bool
@@ -159,7 +164,10 @@ func (run relationshipAccessExecution) undirectedIncidentEdges(ctx context.Conte
 }
 
 func (run relationshipAccessExecution) anchoredCount(ctx context.Context, match *TraversalMatch, seed *storage.Node, values map[string]interface{}, first bool) (int64, bool) {
-	paths, sought, err := run.trySeek(ctx, match, []*storage.Node{seed}, nil)
+	paths, sought, err := run.tryID(ctx, match, []*storage.Node{seed}, nil)
+	if !sought && err == nil {
+		paths, sought, err = run.trySeek(ctx, match, []*storage.Node{seed}, nil)
+	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return 0, true
@@ -175,6 +183,9 @@ func (run relationshipAccessExecution) anchoredCount(ctx context.Context, match 
 // bound endpoints and therefore also constrain a relationship-index result.
 func (run relationshipAccessExecution) paths(ctx context.Context, match *TraversalMatch, start, end, optimizedStart []*storage.Node) ([]PathResult, error) {
 	e := run.executor
+	if paths, sought, err := run.tryID(ctx, match, start, end); sought || err != nil {
+		return paths, err
+	}
 	if paths, sought, err := run.trySeek(ctx, match, start, end); sought || err != nil {
 		return paths, err
 	}
