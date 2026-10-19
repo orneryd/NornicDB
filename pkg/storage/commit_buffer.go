@@ -83,6 +83,7 @@ type bufferedCommit struct {
 // CommitBuffer is one generation of buffered committed writes. It is
 // append-only while active and read-only while draining.
 type CommitBuffer struct {
+	readScopes map[string]struct{}
 	commits []bufferedCommit
 
 	nodes   map[NodeID]*Node
@@ -354,6 +355,9 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // detail of the caller.
 type WriteBehindBuffer struct {
 	mu       sync.RWMutex
+	readScopes sync.Map
+	readEpoch atomic.Uint64
+	readTracking bool
 	active   *CommitBuffer
 	draining []*CommitBuffer
 	opCount  int
@@ -450,6 +454,7 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 		interval = 50 * time.Millisecond
 	}
 	w := &WriteBehindBuffer{
+		readTracking: true,
 		active:      newCommitBuffer(),
 		interval:    interval,
 		curInterval: interval,
@@ -508,6 +513,8 @@ func (w *WriteBehindBuffer) signal() {
 // AppendNode appends a committed node write to the active generation.
 func (w *WriteBehindBuffer) AppendNode(n *Node) {
 	w.mu.Lock()
+	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
+	w.markReadScopeLocked(string(n.ID))
 	w.active.addNode(n)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
@@ -520,6 +527,8 @@ func (w *WriteBehindBuffer) AppendNode(n *Node) {
 // AppendEdge appends a committed edge write to the active generation.
 func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
 	w.mu.Lock()
+	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
+	w.markReadScopeLocked(string(e.ID))
 	w.active.addEdge(e)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
@@ -532,6 +541,8 @@ func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
 // AppendDelete appends a committed delete to the active generation.
 func (w *WriteBehindBuffer) AppendDelete(key string) {
 	w.mu.Lock()
+	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
+	w.markReadScopeLocked(key)
 	w.active.addDelete(key)
 	w.opCount++
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
@@ -546,6 +557,8 @@ func (w *WriteBehindBuffer) AppendDelete(key string) {
 // counts every operation toward the size threshold.
 func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 	w.mu.Lock()
+	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
+	w.markCommitReadScopesLocked(c)
 	w.active.AddCommit(c)
 	w.opCount += len(c.ops) + len(c.writes) + len(c.deletes)
 	if w.opCount < 1 {
@@ -729,6 +742,7 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
 	if len(w.draining) > 0 && w.draining[0] == buf {
 		w.draining = w.draining[1:]
+		w.retireReadScopesLocked(buf)
 	}
 
 	// The generation's writes are committed: the schema's committed index
@@ -758,6 +772,9 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	// buffer returns its memory and the next lookup rebuilds it lazily.
 	if w.pendingIndex != nil && w.pendingIndex.empty() {
 		w.pendingIndex = nil
+	}
+	if w.opCount == 0 && len(w.draining) == 0 {
+		w.readEpoch.Store((w.readEpoch.Load() + 2) &^ 1)
 	}
 	w.mu.Unlock()
 }
