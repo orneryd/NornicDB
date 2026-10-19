@@ -25,12 +25,16 @@ func TestRemoteQueryCredentialPersistence(t *testing.T) {
 				for _, key := range []string{"password", "api_key", "X-Amz-Signature"} {
 					require.Equal(t, []string{secret, secret}, endpoint.Query()[key])
 				}
+				fragment, err := url.ParseQuery(endpoint.Fragment)
+				require.NoError(t, err)
+				require.Equal(t, []string{secret, secret}, fragment["token"])
 				require.Equal(t, "keep", endpoint.Query().Get("region"))
 				return storage.NewMemoryEngine(), nil
 			}
 			manager, err := NewDatabaseManager(inner, cfg)
 			require.NoError(t, err)
 			ref := ConstituentRef{Alias: "r", Type: "remote", DatabaseName: "remote", AccessMode: "read", URI: "http://example.test?region=keep&password=" + secret + "&password=" + secret + "&api_key=" + secret + "&api_key=" + secret + "&X-Amz-Signature=" + secret + "&X-Amz-Signature=" + secret}
+			ref.URI += "#token=" + secret + "&token=" + secret
 			if legacy {
 				manager.databases["probe"] = &DatabaseInfo{Name: "probe", Type: "composite", Status: "online", Constituents: []ConstituentRef{ref}}
 				node, err := storage.NewNamespacedEngine(inner, "system").GetNode(storage.NodeID(metadataNodeID))
