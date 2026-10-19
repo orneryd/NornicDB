@@ -80,7 +80,6 @@ func (a *queryStatsAccumulator) snapshot() QueryStats {
 	return out
 }
 
-
 type queryStatsAccumulatorKey struct{}
 
 func queryStatsAccumulatorFromContext(ctx context.Context) *queryStatsAccumulator {
@@ -91,4 +90,3 @@ func queryStatsAccumulatorFromContext(ctx context.Context) *queryStatsAccumulato
 	acc, _ := v.(*queryStatsAccumulator)
 	return acc
 }
-

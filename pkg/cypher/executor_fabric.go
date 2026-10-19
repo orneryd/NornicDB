@@ -16,7 +16,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-
 type fabricPreparedExecKey struct{}
 
 func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
