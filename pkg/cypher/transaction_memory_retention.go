@@ -91,36 +91,36 @@ func (r *memoryRetention) reserveSlots(n int, slotBytes int64) error {
 }
 
 // reserveValue reserves a value the operator keeps.
-func (r *memoryRetention) reserveValue(value interface{}, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveValue(value interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	return r.account.growValue(value, probe)
+	return r.account.growValue(value)
 }
 
 // reserveCollected reserves a value collect() appends to its list: a list or
 // map it already counted (collect($big), a value every row shares) counts
 // as the slot that references it, any other in full.
-func (r *memoryRetention) reserveCollected(value interface{}, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveCollected(value interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	switch value.(type) {
 	case []interface{}, []string, []int64, []float64, []float32, map[string]interface{}:
-		return r.account.grow(r.estimator().columnBytes(memoryCollectColumn, value, probe))
+		return r.account.grow(r.estimator().columnBytes(memoryCollectColumn, value))
 	}
-	return r.account.growValue(value, probe)
+	return r.account.growValue(value)
 }
 
 // memoryCollectColumn is the column collected values are counted in.
 const memoryCollectColumn = "\x00collect"
 
 // reserveRow reserves a binding row the operator keeps (or a copy of it).
-func (r *memoryRetention) reserveRow(row pipelineRow, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveRow(row pipelineRow) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	return r.account.grow(r.estimator().rowBytes(row, probe))
+	return r.account.grow(r.estimator().rowBytes(row))
 }
 
 // reserveDerivedRow reserves a row the operator built from source, a row
@@ -128,7 +128,7 @@ func (r *memoryRetention) reserveRow(row pipelineRow, probe *pipelineCancellatio
 // binding it carries from source unchanged counts as its slot, any other in
 // full. An operator that runs once per input row would otherwise count the
 // values every input row shares once per run.
-func (r *memoryRetention) reserveDerivedRow(source, row pipelineRow, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveDerivedRow(source, row pipelineRow) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
@@ -139,7 +139,7 @@ func (r *memoryRetention) reserveDerivedRow(source, row pipelineRow, probe *pipe
 			size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + valueSlotBytes
 			continue
 		}
-		size += rows.bindingBytes(name, value, probe)
+		size += rows.bindingBytes(name, value)
 	}
 	return r.account.grow(size)
 }
@@ -172,33 +172,33 @@ func sameBindingValue(a, b interface{}) bool {
 
 // reserveStoredRow reserves a row of values the operator stores by itself
 // (a percentile's inputs): each value in full.
-func (r *memoryRetention) reserveStoredRow(row map[string]interface{}, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveStoredRow(row map[string]interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
 	size := int64(pipelineRowExtraBytes + mapHeaderBytes)
 	for name, value := range row {
-		size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + estimateValueBytes(value, probe)
+		size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + estimateValueBytes(value)
 	}
 	return r.account.grow(size)
 }
 
 // reserveGroup reserves a new aggregation group: its first row, its key and
 // its states.
-func (r *memoryRetention) reserveGroup(row pipelineRow, key []interface{}, states int, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveGroup(row pipelineRow, key []interface{}, states int) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	return r.account.grow(r.estimator().rowBytes(row, probe) + r.keyBytes(key, probe) + int64(states)*aggregateStateBytes)
+	return r.account.grow(r.estimator().rowBytes(row) + r.keyBytes(key) + int64(states)*aggregateStateBytes)
 }
 
 // reserveKey reserves a key the operator indexes (a DISTINCT key): its
 // slots, and its values as a row's are counted.
-func (r *memoryRetention) reserveKey(key []interface{}, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveKey(key []interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	return r.account.grow(r.keyBytes(key, probe) + mapEntryBytes)
+	return r.account.grow(r.keyBytes(key) + mapEntryBytes)
 }
 
 // reserveSortKey reserves a sort key's value, evaluated for holder's row,
@@ -206,7 +206,7 @@ func (r *memoryRetention) reserveKey(key []interface{}, probe *pipelineCancellat
 // value holder binds (ORDER BY a projected list or string) counts in the
 // row. Any other (range(i, i + 9999), a string it built, a property's value)
 // counts in full.
-func (r *memoryRetention) reserveSortKey(value interface{}, holder pipelineRow, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveSortKey(value interface{}, holder pipelineRow) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
@@ -219,17 +219,17 @@ func (r *memoryRetention) reserveSortKey(value interface{}, holder pipelineRow, 
 			return nil
 		}
 	}
-	return r.account.grow(r.account.scope.knownLists().valueBytes(value, probe) - valueSlotBytes)
+	return r.account.grow(r.account.scope.knownLists().valueBytes(value) - valueSlotBytes)
 }
 
 // keyBytes is the estimated size of a key copied from a row's values: a
 // list or map the operator already counted (a value every group or row
 // shares) counts as its slot.
-func (r *memoryRetention) keyBytes(key []interface{}, probe *pipelineCancellation) int64 {
+func (r *memoryRetention) keyBytes(key []interface{}) int64 {
 	rows := r.estimator()
 	size := int64(valueSlotBytes + sliceHeaderBytes)
 	for _, value := range key {
-		size += rows.columnBytes(memoryKeyColumn, value, probe)
+		size += rows.columnBytes(memoryKeyColumn, value)
 	}
 	return size
 }
@@ -250,27 +250,27 @@ func (r *memoryRetention) noteCollected(values []interface{}) {
 // before it is built: outer's values in full the first time a merged row is
 // built on outer (outerBindingBytes), inner's as slots. inner is a row the
 // operator charged when it built it.
-func (r *memoryRetention) reserveMergedRow(outer, inner pipelineRow, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveMergedRow(outer, inner pipelineRow) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	return r.account.grow(int64(pipelineRowExtraBytes+mapHeaderBytes) + r.outerBindingBytes(outer, probe) + sharedBindingBytes(inner))
+	return r.account.grow(int64(pipelineRowExtraBytes+mapHeaderBytes) + r.outerBindingBytes(outer) + sharedBindingBytes(inner))
 }
 
 // reserveExtendedRow reserves the row extending outer with columns bound
 // to values, before it is built: outer's values in full the first time a row
 // is built on outer (outerBindingBytes), then values in full, or as slots
 // when values is nil (the operator charged them where it got them).
-func (r *memoryRetention) reserveExtendedRow(outer pipelineRow, columns []string, values []interface{}, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveExtendedRow(outer pipelineRow, columns []string, values []interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	size := int64(pipelineRowExtraBytes+mapHeaderBytes) + r.outerBindingBytes(outer, probe)
+	size := int64(pipelineRowExtraBytes+mapHeaderBytes) + r.outerBindingBytes(outer)
 	for index, column := range columns {
 		if values == nil {
 			size += mapEntryBytes + stringHeaderBytes + int64(len(column)) + valueSlotBytes
 		} else if index < len(values) {
-			size += r.estimator().bindingBytes(column, values[index], probe)
+			size += r.estimator().bindingBytes(column, values[index])
 		}
 	}
 	return r.account.grow(size)
@@ -281,7 +281,7 @@ func (r *memoryRetention) reserveExtendedRow(outer pipelineRow, columns []string
 // rows outer belongs to give their charge back once the rows built on them
 // replace them (rowGenerations). Every further row built on the same outer
 // row shares its values and counts their slots.
-func (r *memoryRetention) outerBindingBytes(outer pipelineRow, probe *pipelineCancellation) int64 {
+func (r *memoryRetention) outerBindingBytes(outer pipelineRow) int64 {
 	identity := reflect.ValueOf(outer).UnsafePointer()
 	if identity != nil && identity == r.outer {
 		return sharedBindingBytes(outer)
@@ -290,22 +290,22 @@ func (r *memoryRetention) outerBindingBytes(outer pipelineRow, probe *pipelineCa
 	rows := r.estimator()
 	var size int64
 	for name, value := range outer {
-		size += rows.bindingBytes(name, value, probe)
+		size += rows.bindingBytes(name, value)
 	}
 	return size
 }
 
 // reserveResultRow reserves a result row the operator keeps.
-func (r *memoryRetention) reserveResultRow(values []interface{}, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveResultRow(values []interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	return r.account.grow(estimateResultRowBytes(values, r.account.scope.knownLists(), probe))
+	return r.account.grow(estimateResultRowBytes(values, r.account.scope.knownLists()))
 }
 
 // reserveTraversalRow reserves an OPTIONAL MATCH candidate row (its node,
 // relationship and value bindings), before it is kept.
-func (r *memoryRetention) reserveTraversalRow(row traversalOptRow, probe *pipelineCancellation) error {
+func (r *memoryRetention) reserveTraversalRow(row traversalOptRow) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
@@ -318,7 +318,7 @@ func (r *memoryRetention) reserveTraversalRow(row traversalOptRow, probe *pipeli
 	}
 	rows := r.estimator()
 	for name, value := range row.values {
-		size += rows.bindingBytes(name, value, probe)
+		size += rows.bindingBytes(name, value)
 	}
 	return r.account.grow(size)
 }
@@ -352,14 +352,14 @@ func (r *memoryRetention) owned(rows []pipelineRow) []pipelineRow {
 // LIMIT reslice, and WHERE filters in place, so the array they came in still
 // holds the rows dropped, which would stay live past their charge. Either
 // way they are declared owned. false: the charge went over a limit.
-func (r *memoryRetention) keep(rows []pipelineRow, reserved int, probe *pipelineCancellation) ([]pipelineRow, bool) {
+func (r *memoryRetention) keep(rows []pipelineRow, reserved int) ([]pipelineRow, bool) {
 	if r == nil || r.account.scope == nil {
 		return rows, true
 	}
 	if len(rows) != reserved {
 		r.release()
 		for _, row := range rows {
-			if r.reserveRow(row, probe) != nil {
+			if r.reserveRow(row) != nil {
 				return nil, false
 			}
 		}
@@ -462,11 +462,11 @@ func (g *rowGenerations) next(rows []pipelineRow) {
 // charge charges rows a clause built, every row in full with its carried
 // values, and declares them owned. Rows their operator already charged in
 // full (owned) are not charged again.
-func (g *rowGenerations) charge(rows []pipelineRow, probe *pipelineCancellation) error {
+func (g *rowGenerations) charge(rows []pipelineRow) error {
 	if g.scope == nil || g.scope.ownsRows(rows) {
 		return nil
 	}
-	if err := g.scope.growRows(rows, probe); err != nil {
+	if err := g.scope.growRows(rows); err != nil {
 		return err
 	}
 	g.scope.ownRows(rows)
@@ -613,7 +613,7 @@ func (b *expressionBudget) checkList() error {
 // holdAccumulator holds a reduce accumulator after a step. A list
 // accumulator grows by its new elements (acc + [x]): those are sized as
 // they come, so a step costs what it added, not the whole list.
-func (b *expressionBudget) holdAccumulator(accumulator interface{}, probe *pipelineCancellation) error {
+func (b *expressionBudget) holdAccumulator(accumulator interface{}) error {
 	if !b.active() {
 		return nil
 	}
@@ -623,7 +623,7 @@ func (b *expressionBudget) holdAccumulator(accumulator interface{}, probe *pipel
 			b.counted, b.elementBytes = 0, 0
 		}
 		for _, element := range list[b.counted:] {
-			b.elementBytes += estimateValueBytes(element, probe)
+			b.elementBytes += estimateValueBytes(element)
 		}
 		b.counted = len(list)
 		size = valueSlotBytes + sliceHeaderBytes + int64(cap(list)-len(list))*valueSlotBytes + b.elementBytes

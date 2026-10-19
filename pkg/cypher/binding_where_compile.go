@@ -623,7 +623,7 @@ func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate
 				return truthUnknown
 			}
 			comparableSet, nonComparable := buildComparableMembershipIndex(items)
-			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items, nil), nil)
+			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items))
 		}
 	}
 	if negate {
@@ -636,11 +636,11 @@ func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate
 
 // membershipTruth is the three-valued result of `actual IN list` for a list
 // indexed by buildComparableMembershipIndex (which leaves out null items).
-func membershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, probe *pipelineCancellation) cypherTruth {
-	return indexedMembershipTruth(actual, comparableSet, nonComparable, hasNull, cypherEquality, probe)
+func membershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool) cypherTruth {
+	return indexedMembershipTruth(actual, comparableSet, nonComparable, hasNull, cypherEquality)
 }
 
-func listHasNull(items []interface{}, probe *pipelineCancellation) bool {
+func listHasNull(items []interface{}) bool {
 	for _, item := range items {
 		if item == nil {
 			return true
@@ -656,13 +656,13 @@ func (e *StorageExecutor) makeCompiledBindingMembershipPredicate(leftResolver bi
 // staticMembershipTruth is membership in a literal list, indexed once.
 func staticMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{}, bool)](e *StorageExecutor, left L, items []interface{}) func(R, map[string]interface{}) cypherTruth {
 	comparableSet, nonComparable := buildComparableMembershipIndex(items)
-	hasNull := listHasNull(items, nil)
+	hasNull := listHasNull(items)
 	return func(row R, params map[string]interface{}) cypherTruth {
 		leftValue, ok := left(row, params)
 		if !ok {
 			return truthUnknown
 		}
-		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, nil)
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull)
 	}
 }
 
@@ -699,15 +699,15 @@ func paramMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{}
 		}
 		firstElement := firstInterfaceElement(items)
 		comparableSet, nonComparable, hasNull := cache.get(items, firstElement)
-		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, nil)
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull)
 	}
 }
 
 func (cache *bindingParamMembershipCache) get(items []interface{}, firstElement *interface{}) (map[interface{}]struct{}, []interface{}, bool) {
-	return cache.getValidated(items, nil)
+	return cache.getValidated(items)
 }
 
-func (cache *bindingParamMembershipCache) getValidated(items []interface{}, probe *pipelineCancellation) (map[interface{}]struct{}, []interface{}, bool) {
+func (cache *bindingParamMembershipCache) getValidated(items []interface{}) (map[interface{}]struct{}, []interface{}, bool) {
 	cache.Lock()
 	defer cache.Unlock()
 	unchanged := cache.comparable != nil && len(cache.snapshot) == len(items)
@@ -725,7 +725,7 @@ func (cache *bindingParamMembershipCache) getValidated(items []interface{}, prob
 	}
 	if !unchanged {
 		cache.comparable, cache.nonComparable = buildComparableMembershipIndex(items)
-		cache.hasNull = listHasNull(items, probe)
+		cache.hasNull = listHasNull(items)
 		cache.snapshot = append(cache.snapshot[:0], items...)
 	}
 	return cache.comparable, cache.nonComparable, cache.hasNull
@@ -831,7 +831,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 			if node == nil {
 				return nil, false
 			}
-			return getBindingNodeValue(e.queryVisibleValue(node, nil).(*storage.Node), property)
+			return getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), property)
 		}, true
 	}
 	if isValidIdentifier(clause) {

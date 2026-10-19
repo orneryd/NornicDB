@@ -347,7 +347,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if n == nil {
 					continue
 				}
-				if e.nodeMatchesProps(n, np.properties, contextPipelineProbe(ctx)) {
+				if e.nodeMatchesProps(n, np.properties) {
 					filtered = append(filtered, n)
 				}
 			}
@@ -978,10 +978,10 @@ func branchLeadingWithImport(branch string, outer func(string) bool, collectName
 // of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
 // import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(branch string, names []string, probe *pipelineCancellation) []string {
+func unscopedBranchLocals(branch string, names []string) []string {
 	var locals []string
 	for _, name := range names {
-		if branchDeclaresVariable(branch, name, probe) {
+		if branchDeclaresVariable(branch, name) {
 			locals = append(locals, name)
 		}
 	}
@@ -994,8 +994,8 @@ func unscopedBranchLocals(branch string, names []string, probe *pipelineCancella
 // (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
 // outer variable applies only to a name the branch reads first (#907).
-func branchDeclaresVariable(branch, variable string, probe *pipelineCancellation) bool {
-	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch), probe)
+func branchDeclaresVariable(branch, variable string) bool {
+	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
 	if !ok {
 		return false
 	}

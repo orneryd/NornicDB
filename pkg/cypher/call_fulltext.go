@@ -55,7 +55,7 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
-func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
 		Rows:    [][]interface{}{},
@@ -179,7 +179,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}, prob
 		if !matchesLabels(node, targetLabels) {
 			continue
 		}
-		doc := buildNodeFulltextDoc(node, targetProperties, probe)
+		doc := buildNodeFulltextDoc(node, targetProperties)
 		if doc == nil {
 			continue
 		}
@@ -244,18 +244,18 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}, prob
 // token count is captured for length normalization. Returns nil if the
 // node has no content in any indexed property (empty-doc filter is
 // preserved from the pre-parser path).
-func buildNodeFulltextDoc(node *storage.Node, properties []string, probe *pipelineCancellation) *ftDoc {
+func buildNodeFulltextDoc(node *storage.Node, properties []string) *ftDoc {
 	if node == nil {
 		return nil
 	}
-	return buildFulltextDocFromProperties(node.Properties, extractTextContent(node, properties), probe)
+	return buildFulltextDocFromProperties(node.Properties, extractTextContent(node, properties))
 }
 
 // buildFulltextDocFromProperties builds the shared ftDoc: every non-empty
 // property becomes a lowercased search field with its raw value preserved,
 // and the entity-specific content string supplies the searchable body. The
 // node and edge builders differ only in how they extract that content.
-func buildFulltextDocFromProperties(properties map[string]interface{}, content string, probe *pipelineCancellation) *ftDoc {
+func buildFulltextDocFromProperties(properties map[string]interface{}, content string) *ftDoc {
 	props := make(map[string]string, len(properties))
 	rawProps := make(map[string]string, len(properties))
 	for k, v := range properties {

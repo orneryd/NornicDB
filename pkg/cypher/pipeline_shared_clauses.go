@@ -37,11 +37,11 @@ func cypherGrammarVersion(query string) string {
 	return version
 }
 
-func usesSharedGrammarClauses(query string, probe *pipelineCancellation) bool {
+func usesSharedGrammarClauses(query string) bool {
 	if isSchemaCommandStatement(query) {
 		return false
 	}
-	clauses, ok := pipelineClausesFor(query, probe)
+	clauses, ok := pipelineClausesFor(query)
 	if !ok {
 		return false
 	}
@@ -52,7 +52,7 @@ func usesSharedGrammarClauses(query string, probe *pipelineCancellation) bool {
 		}
 		if clause.kind == pipelineClauseCallSubquery {
 			start, end := strings.Index(clause.text, "{"), strings.LastIndex(clause.text, "}")
-			if start >= 0 && end > start && usesSharedGrammarClauses(clause.text[start+1:end], probe) {
+			if start >= 0 && end > start && usesSharedGrammarClauses(clause.text[start+1:end]) {
 				return true
 			}
 		}
@@ -114,7 +114,7 @@ func sharedClauseSyntaxError(message string) error {
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message)
 }
 
-func bindPipelineLet(scope *semanticBindingScope, clause string, probe *pipelineCancellation) error {
+func bindPipelineLet(scope *semanticBindingScope, clause string) error {
 	projections, err := parsePipelineLet(clause)
 	if err != nil {
 		return err
@@ -125,7 +125,7 @@ func bindPipelineLet(scope *semanticBindingScope, clause string, probe *pipeline
 	return nil
 }
 
-func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values map[string]string, clause pipelineClause, cypher25 bool, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values map[string]string, clause pipelineClause, cypher25 bool) error {
 	input := staticTypeScope{kinds: scope, values: values, complete: true, cypher25: cypher25}
 	if clause.kind == pipelineClauseFilter {
 		expression := pipelineFilterExpression(clause.text)
@@ -138,7 +138,7 @@ func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values 
 		if err := undefinedExpressionVariable(scope, expression); err != nil {
 			return err
 		}
-		return e.validateStaticClauseTypes(clause, input, probe)
+		return e.validateStaticClauseTypes(clause, input)
 	}
 	projections, err := parsePipelineLet(clause.text)
 	if err != nil {
@@ -151,11 +151,11 @@ func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values 
 		if err := undefinedExpressionVariable(scope, projection.expression); err != nil {
 			return err
 		}
-		if err := validateStaticFunctionVariables(projection.expression, input, probe); err != nil {
+		if err := validateStaticFunctionVariables(projection.expression, input); err != nil {
 			return err
 		}
 	}
-	return e.validateStaticOperatorTypes(clause, input, nil, nil, probe)
+	return e.validateStaticOperatorTypes(clause, input, nil, nil)
 }
 
 func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input pipelineRowSource, clause pipelineClause) (pipelineRowSource, error) {

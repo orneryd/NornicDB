@@ -60,7 +60,7 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 	// An administration command needs admin whatever it calls; otherwise
 	// the admin procedures the query calls are listed for procedure grants.
 	adminCommand := requirements.Admin
-	for _, procedure := range registeredProceduresForCalls(query, nil) {
+	for _, procedure := range registeredProceduresForCalls(query) {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
 			requirements.Write = true
@@ -95,8 +95,8 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // YIELD, in a CALL { } / EXISTS { } / COUNT { } subquery, ...). CALL inside
 // string literals and comments is not a clause. Backticked name parts are
 // unquoted, as the executor resolves them.
-func registeredProceduresForCalls(query string, probe *pipelineCancellation) []ProcedureSpec {
-	ensureBuiltInProceduresRegistered(probe)
+func registeredProceduresForCalls(query string) []ProcedureSpec {
+	ensureBuiltInProceduresRegistered()
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
@@ -735,7 +735,7 @@ func (p PrincipalAccess) Allows(graph, permission string) bool {
 // RegisteredProcedureForCall resolves a CALL statement through the canonical
 // procedure registry without exposing handlers to callers.
 func RegisteredProcedureForCall(query string) (ProcedureSpec, bool) {
-	ensureBuiltInProceduresRegistered(nil)
+	ensureBuiltInProceduresRegistered()
 	procedure, found := globalProcedureRegistry.Get(extractProcedureName(query))
 	if !found {
 		return ProcedureSpec{}, false

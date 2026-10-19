@@ -19,7 +19,7 @@ func (e *StorageExecutor) systemProcedureScope(ctx context.Context) (context.Con
 	if !strings.EqualFold(e.currentDatabaseName(), "system") {
 		return ctx, e
 	}
-	return withoutTransactionStorage{ctx}, e.cloneWithStorage(systemGraphView{Engine: e.storage}, contextPipelineProbe(ctx))
+	return withoutTransactionStorage{ctx}, e.cloneWithStorage(systemGraphView{Engine: e.storage})
 }
 
 // withoutTransactionStorage is ctx without the transaction storage wrapper

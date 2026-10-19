@@ -85,10 +85,10 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return e.generateUUID(), true, true, nil
 	case "toupper", "tolower", "tostring", "tostringornull", "tointeger", "toint", "tointegerornull", "tofloat", "tofloatornull", "toboolean", "tobooleanornull":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values, probe)
+		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
 	case "substring", "left", "right", "replace", "split", "tail":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values, probe)
+		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
 	case "lpad", "rpad":
 		arguments, ok := args()
@@ -111,7 +111,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		result, padErr := padRowStringWithCancellation(text, length, padding, name == "lpad", probe)
 		return result, true, padErr == nil, padErr
 	case "format":
-		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values, probe)
+		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true, nil

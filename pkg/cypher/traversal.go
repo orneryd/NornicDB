@@ -329,7 +329,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
 	if whereClause == "" && pathVariable == "" {
-		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems, probe); ok {
+		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -363,7 +363,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				usedPropertyIndex = true
 			}
 			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(matches.StartNode, whereClause, probe); idxErr == nil && used {
+				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(matches.StartNode, whereClause); idxErr == nil && used {
 					optimizedStartNodes = nodes
 					usedPropertyIndex = true
 				}
@@ -459,7 +459,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			rows := make([]traversalOptRow, 0, len(paths))
 			for _, path := range paths {
 				pathContext := e.buildPathContext(path, matches)
-				rows = append(rows, traversalOptRow{values: e.pathContextValues(pathContext, probe)})
+				rows = append(rows, traversalOptRow{values: e.pathContextValues(pathContext)})
 			}
 			aggregated, err := e.aggregateTraversalOptionalRows(ctx, rows, returnItems)
 			if err != nil {
@@ -735,7 +735,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 	for _, endNode := range seedNodes {
 		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
 		for _, reversedPath := range reversedPaths {
-			path := reversePathResult(reversedPath, contextPipelineProbe(ctx))
+			path := reversePathResult(reversedPath)
 			if whereClause != "" && !e.evaluateWhereOnPath(ctx, whereClause, e.buildPathContext(path, matches)) {
 				continue
 			}
@@ -824,7 +824,7 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 			if probe.stopped() {
 				return nil, false
 			}
-			paths = append(paths, reversePathResult(reversedPath, probe))
+			paths = append(paths, reversePathResult(reversedPath))
 		}
 	}
 	if whereClause != "" {
@@ -852,7 +852,7 @@ func reverseTraversalMatch(match *TraversalMatch) *TraversalMatch {
 	return &reversed
 }
 
-func reversePathResult(path PathResult, probe *pipelineCancellation) PathResult {
+func reversePathResult(path PathResult) PathResult {
 	reversedNodes := make([]*storage.Node, len(path.Nodes))
 	for i := range path.Nodes {
 		reversedNodes[len(path.Nodes)-1-i] = path.Nodes[i]
@@ -892,7 +892,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 	}
 
 	if len(seedNodes) > limit {
-		if topK, ok := e.selectTopKNodesByOrder(seedNodes, nodePattern.variable, orderExpr, limit, contextPipelineProbe(ctx)); ok {
+		if topK, ok := e.selectTopKNodesByOrder(seedNodes, nodePattern.variable, orderExpr, limit); ok {
 			seedNodes = topK
 		}
 	}
@@ -1096,7 +1096,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 				continue
 			}
 			seen[key] = struct{}{}
-			if memory.reserveCollected(val, contextPipelineProbe(ctx)) != nil || memory.reserveValue(key, contextPipelineProbe(ctx)) != nil {
+			if memory.reserveCollected(val) != nil || memory.reserveValue(key) != nil {
 				break
 			}
 			collected = append(collected, val)
@@ -1105,7 +1105,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
 			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
-			if memory.reserveCollected(val, contextPipelineProbe(ctx)) != nil {
+			if memory.reserveCollected(val) != nil {
 				break
 			}
 			collected = append(collected, val)
@@ -1486,7 +1486,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	if len(match.StartNode.properties) > 0 || len(match.StartNode.labels) > 0 {
 		var filtered []*storage.Node
 		for _, n := range startNodes {
-			if e.pipelineNodeMatchesPattern(n, match.StartNode, contextPipelineProbe(ctx)) {
+			if e.pipelineNodeMatchesPattern(n, match.StartNode) {
 				filtered = append(filtered, n)
 			}
 		}
@@ -1654,7 +1654,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
 
-		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, contextPipelineProbe(ctx))
+		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 		traversalCtx.memory.close()
 		results = append(results, paths...)
 		if remaining > 0 {
@@ -1733,7 +1733,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
 
-				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, probe)
+				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 				workerPaths = append(workerPaths, paths...)
 			}
 
@@ -1835,7 +1835,7 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 
 			// Join paths: combine current path with each segment path
 			for _, segPath := range segPaths {
-				if !repeatableElements(ctx) && pathResultsReuseRelationship(path, segPath, probe) {
+				if !repeatableElements(ctx) && pathResultsReuseRelationship(path, segPath) {
 					continue
 				}
 				// Create extended path
@@ -1925,7 +1925,7 @@ func chainPositionNode(path PathResult, position int) *storage.Node {
 	return path.Nodes[offset]
 }
 
-func pathResultsReuseRelationship(left, right PathResult, probe *pipelineCancellation) bool {
+func pathResultsReuseRelationship(left, right PathResult) bool {
 	for _, leftRelationship := range left.Relationships {
 		for _, rightRelationship := range right.Relationships {
 			if leftRelationship != nil && rightRelationship != nil && leftRelationship.ID == rightRelationship.ID {
@@ -1938,17 +1938,17 @@ func pathResultsReuseRelationship(left, right PathResult, probe *pipelineCancell
 
 // traverseFromNode traverses from a specific node rather than finding start nodes by label
 func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
-	if !e.traversalStartMatches(startNode, match.StartNode, contextPipelineProbe(traversalCtx)) {
+	if !e.traversalStartMatches(startNode, match.StartNode) {
 		return nil
 	}
 	ctx := e.newMatchTraversalContext(traversalCtx, startNode, match, &match.Relationship)
 	ctx.endNodeID = match.boundEndNodeID
-	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode, contextPipelineProbe(traversalCtx))
+	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 }
 
 // traversalStartMatches reports whether a traversal's start node matches its
 // pattern's labels and properties.
-func (e *StorageExecutor) traversalStartMatches(startNode *storage.Node, pattern nodePatternInfo, probe *pipelineCancellation) bool {
+func (e *StorageExecutor) traversalStartMatches(startNode *storage.Node, pattern nodePatternInfo) bool {
 	if len(pattern.labels) > 0 {
 		found := false
 		for _, label := range startNode.Labels {
@@ -1966,7 +1966,7 @@ func (e *StorageExecutor) traversalStartMatches(startNode *storage.Node, pattern
 			return false
 		}
 	}
-	return len(pattern.properties) == 0 || e.nodeMatchesProps(startNode, pattern.properties, probe)
+	return len(pattern.properties) == 0 || e.nodeMatchesProps(startNode, pattern.properties)
 }
 
 // newMatchTraversalContext is newTraversalContext for one segment of match,
@@ -2058,7 +2058,7 @@ func (e *StorageExecutor) findPaths(
 	pathEdges []*storage.Edge,
 	depth int,
 	endPattern *nodePatternInfo,
-probe *pipelineCancellation) []PathResult {
+) []PathResult {
 	var results []PathResult
 
 	// Every frame and sibling expansion must observe cancellation. Sampling
@@ -2079,7 +2079,7 @@ probe *pipelineCancellation) []PathResult {
 
 	// Check if current path meets minimum length and endpoint requirements
 	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentNode.ID == ctx.endNodeID) {
-		if e.matchesEndPattern(currentNode, endPattern, probe) {
+		if e.matchesEndPattern(currentNode, endPattern) {
 			// A path the expansion keeps counts against the statement's
 			// memory limit; going over cancels the statement (#1343).
 			if err := ctx.memoryRetention().reservePath(len(pathNodes), len(pathEdges)); err != nil {
@@ -2147,7 +2147,7 @@ probe *pipelineCancellation) []PathResult {
 				}
 			}
 		}
-		if len(ctx.relProperties) > 0 && !e.edgeMatchesProps(edge, ctx.relProperties, probe) {
+		if len(ctx.relProperties) > 0 && !e.edgeMatchesProps(edge, ctx.relProperties) {
 			continue
 		}
 
@@ -2190,7 +2190,7 @@ probe *pipelineCancellation) []PathResult {
 		copy(newPathEdges, pathEdges)
 		newPathEdges[len(pathEdges)] = edge
 
-		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern, probe)
+		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
 		results = append(results, subPaths...)
 
 		// Unmark for sibling paths.
@@ -2201,7 +2201,7 @@ probe *pipelineCancellation) []PathResult {
 }
 
 // matchesEndPattern checks if a node matches the end pattern requirements
-func (e *StorageExecutor) matchesEndPattern(node *storage.Node, pattern *nodePatternInfo, probe *pipelineCancellation) bool {
+func (e *StorageExecutor) matchesEndPattern(node *storage.Node, pattern *nodePatternInfo) bool {
 	if pattern == nil {
 		return true
 	}
@@ -2223,7 +2223,7 @@ func (e *StorageExecutor) matchesEndPattern(node *storage.Node, pattern *nodePat
 	}
 
 	// Check properties
-	return e.nodeMatchesProps(node, pattern.properties, probe)
+	return e.nodeMatchesProps(node, pattern.properties)
 }
 
 // PathContext holds node/relationship mappings for expression evaluation
@@ -2238,7 +2238,7 @@ type PathContext struct {
 
 // pathContextValues returns the path's variables as row values: nodes and
 // relationships as themselves, named paths as the pipeline's path maps.
-func (e *StorageExecutor) pathContextValues(pathCtx PathContext, probe *pipelineCancellation) map[string]interface{} {
+func (e *StorageExecutor) pathContextValues(pathCtx PathContext) map[string]interface{} {
 	values := make(map[string]interface{}, len(pathCtx.nodes)+len(pathCtx.rels)+len(pathCtx.paths))
 	for name, node := range pathCtx.nodes {
 		if node != nil {
@@ -2252,7 +2252,7 @@ func (e *StorageExecutor) pathContextValues(pathCtx PathContext, probe *pipeline
 	}
 	for name, path := range pathCtx.paths {
 		if path != nil {
-			values[name] = e.pathContextRowValue(path, probe)
+			values[name] = e.pathContextRowValue(path)
 		}
 	}
 	return values
@@ -2267,7 +2267,7 @@ func relationshipOnlyPath(path *PathResult) bool {
 
 // relationshipListValue is a variable-length relationship variable's Cypher
 // value: its relationships in path order.
-func relationshipListValue(relationships []*storage.Edge, probe *pipelineCancellation) []interface{} {
+func relationshipListValue(relationships []*storage.Edge) []interface{} {
 	values := make([]interface{}, len(relationships))
 	for index, relationship := range relationships {
 		values[index] = relationship
@@ -2278,9 +2278,9 @@ func relationshipListValue(relationships []*storage.Edge, probe *pipelineCancell
 // pathContextEntryValue is a path context entry's value for the path-context
 // expression evaluator: a variable-length relationship variable is its list
 // of relationships, a named path the evaluator's path map.
-func pathContextEntryValue(path *PathResult, probe *pipelineCancellation) interface{} {
+func pathContextEntryValue(path *PathResult) interface{} {
 	if relationshipOnlyPath(path) {
-		return relationshipListValue(path.Relationships, probe)
+		return relationshipListValue(path.Relationships)
 	}
 	return map[string]interface{}{
 		"_pathResult": path,
@@ -2293,9 +2293,9 @@ func pathContextEntryValue(path *PathResult, probe *pipelineCancellation) interf
 // pathContextRowValue is a path context entry's value for the row
 // evaluator: a variable-length relationship variable is its list of
 // relationships, a named path the pipeline's path map (#882).
-func (e *StorageExecutor) pathContextRowValue(path *PathResult, probe *pipelineCancellation) interface{} {
+func (e *StorageExecutor) pathContextRowValue(path *PathResult) interface{} {
 	if relationshipOnlyPath(path) {
-		return relationshipListValue(path.Relationships, probe)
+		return relationshipListValue(path.Relationships)
 	}
 	return e.pathToMap(*path)
 }
@@ -2421,7 +2421,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 				}
 			}
 		}
-		values := e.pathContextValues(context, probe)
+		values := e.pathContextValues(context)
 		bindParameterRow(ctx, values)
 		if where.holds(e, ctx, values) {
 			filtered = append(filtered, path)
@@ -2433,7 +2433,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 // evaluateWhereOnPath evaluates a WHERE condition against a path context.
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
 func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause string, pathCtx PathContext) bool {
-	values := e.pathContextValues(pathCtx, contextPipelineProbe(ctx))
+	values := e.pathContextValues(pathCtx)
 	bindParameterRow(ctx, values)
 	return e.evaluateRowPredicate(ctx, strings.TrimSpace(whereClause), values)
 }

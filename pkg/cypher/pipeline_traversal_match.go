@@ -103,8 +103,8 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 				return nil, true, err
 			}
 		}
-		e.normalizeSetMatchRowsToNodes(result, store, cancellation)
-		e.normalizeSetMatchRowsToEdges(result, store, cancellation)
+		e.normalizeSetMatchRowsToNodes(result, store)
+		e.normalizeSetMatchRowsToEdges(result, store)
 		var rowWhere *preparedRowPredicate
 		if materializedWhere != "" {
 			rowWhere = prepareRowPredicate(materializedWhere)
@@ -197,14 +197,14 @@ func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, patter
 		return nil, nil, false
 	}
 	if node, ok := pipelineBoundNode(row, matches.StartNode.variable); ok {
-		if !e.matchesEndPattern(node, &matches.StartNode, contextPipelineProbe(ctx)) {
+		if !e.matchesEndPattern(node, &matches.StartNode) {
 			return nil, nil, true
 		}
 		startSeedNodes = []*storage.Node{node}
 	}
 	if !matches.IsChained {
 		if node, ok := pipelineBoundNode(row, matches.EndNode.variable); ok {
-			if !e.matchesEndPattern(node, &matches.EndNode, contextPipelineProbe(ctx)) {
+			if !e.matchesEndPattern(node, &matches.EndNode) {
 				return nil, nil, true
 			}
 			endSeedNodes = []*storage.Node{node}

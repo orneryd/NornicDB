@@ -92,7 +92,7 @@ func (m labelPatternMode) clause() string {
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool, probe *pipelineCancellation) (string, *queryRewrite, error) {
+func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
@@ -101,7 +101,7 @@ func desugarLabelExpressions(query string, params map[string]interface{}, cypher
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
-	if err := r.statement(0, len(query), probe); err != nil {
+	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
 	if len(r.edits) == 0 {
@@ -334,7 +334,7 @@ func isGeneratedVariable(name string) bool {
 // withoutGeneratedColumns returns result without the columns of generated
 // variables, which a * projection over every binding lists; a copy when it
 // has any, so a cached result is never changed.
-func withoutGeneratedColumns(result *ExecuteResult, probe *pipelineCancellation) *ExecuteResult {
+func withoutGeneratedColumns(result *ExecuteResult) *ExecuteResult {
 	if result == nil {
 		return nil
 	}
@@ -483,7 +483,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 }
 
 // statement rewrites the clauses of query[start:end].
-func (r *labelExpressionRewriter) statement(start, end int, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) statement(start, end int) error {
 	clauses := r.clauses(start, end)
 	for i := 0; i < len(clauses); i++ {
 		clause := clauses[i]
@@ -498,7 +498,7 @@ func (r *labelExpressionRewriter) statement(start, end int, probe *pipelineCance
 			// WHERE (an EXISTS body) counts toward it too.
 			outer := r.syntax
 			r.syntax = &labelSyntaxScope{}
-			err := r.patternWithWhere(clause.bodyStart, clause.end, whereStart, whereEnd, probe)
+			err := r.patternWithWhere(clause.bodyStart, clause.end, whereStart, whereEnd)
 			scope := r.syntax
 			r.syntax = outer
 			if err != nil {
@@ -530,18 +530,18 @@ func (r *labelExpressionRewriter) statement(start, end int, probe *pipelineCance
 			if clause.keyword == "MERGE" {
 				mode = labelPatternMerge
 			}
-			if _, err := r.pattern(clause.bodyStart, clause.end, mode, probe); err != nil {
+			if _, err := r.pattern(clause.bodyStart, clause.end, mode); err != nil {
 				return err
 			}
 		case "FOREACH":
-			if err := r.foreach(clause.bodyStart, clause.end, probe); err != nil {
+			if err := r.foreach(clause.bodyStart, clause.end); err != nil {
 				return err
 			}
 		case "ON":
 			// ON CREATE SET / ON MATCH SET: the SET clause follows.
 		default:
 			r.writeItems = clause.keyword == "SET" || clause.keyword == "REMOVE"
-			err := r.expression(clause.bodyStart, clause.end, probe)
+			err := r.expression(clause.bodyStart, clause.end)
 			r.writeItems = false
 			if err != nil {
 				return err
@@ -555,15 +555,15 @@ func (r *labelExpressionRewriter) statement(start, end int, probe *pipelineCance
 // body query[whereStart:whereEnd] (whereStart < 0: none). The predicates the
 // pattern's label expressions become are ANDed in front of the WHERE body,
 // which is parenthesised when it has a top-level OR or XOR.
-func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, whereEnd int, probe *pipelineCancellation) error {
-	prefixes, err := r.pathPrefixes(start, end, probe)
+func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, whereEnd int) error {
+	prefixes, err := r.pathPrefixes(start, end)
 	if err != nil {
 		return err
 	}
 	r.nameSingleNodePaths(start, end)
 	outerVariables := r.patternVariables
 	r.patternVariables = declaredPatternVariables(r.query[prefixes.patternStart:prefixes.patternEnd])
-	predicates, err := r.pattern(prefixes.patternStart, prefixes.patternEnd, labelPatternMatch, probe)
+	predicates, err := r.pattern(prefixes.patternStart, prefixes.patternEnd, labelPatternMatch)
 	r.patternVariables = outerVariables
 	if err != nil {
 		return err
@@ -592,9 +592,9 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 	}
 	switch {
 	case whereStart >= 0 && len(predicates) > 0:
-		return r.whereWithPredicates(whereStart, whereEnd, predicates, probe)
+		return r.whereWithPredicates(whereStart, whereEnd, predicates)
 	case whereStart >= 0:
-		return r.expression(whereStart, whereEnd, probe)
+		return r.expression(whereStart, whereEnd)
 	case len(predicates) > 0:
 		at := trimRightIndex(r.query, start, end)
 		r.edit(at, at, " WHERE "+strings.Join(predicates, " AND "))
@@ -604,15 +604,15 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 
 // pattern rewrites the elements of the pattern query[start:end] and returns
 // the predicates its label expressions become (MATCH only).
-func (r *labelExpressionRewriter) pattern(start, end int, mode labelPatternMode, probe *pipelineCancellation) ([]string, error) {
+func (r *labelExpressionRewriter) pattern(start, end int, mode labelPatternMode) ([]string, error) {
 	var predicates []string
-	if err := r.patternElements(start, end, mode, &predicates, probe); err != nil {
+	if err := r.patternElements(start, end, mode, &predicates); err != nil {
 		return nil, err
 	}
 	return predicates, nil
 }
 
-func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatternMode, predicates *[]string, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	for i := start; i < end; i++ {
 		c := q[i]
@@ -632,7 +632,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 			inner := skipASCIISpaces(q, i+1, close)
 			if inner < close && q[inner] == '(' && mode == labelPatternMatch && quantifiedGroupAt(q, close, end) {
 				// A quantified group's predicates are its own WHERE's.
-				if err := r.quantifiedGroup(i, close, probe); err != nil {
+				if err := r.quantifiedGroup(i, close); err != nil {
 					return err
 				}
 			} else if inner < close && q[inner] == '(' || i > start && isIdentByte(q[i-1]) {
@@ -646,10 +646,10 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 						stop = i + 1 + where
 					}
 				}
-				if err := r.patternElements(i+1, stop, mode, predicates, probe); err != nil {
+				if err := r.patternElements(i+1, stop, mode, predicates); err != nil {
 					return err
 				}
-			} else if err := r.element(i, close, false, false, mode, predicates, probe); err != nil {
+			} else if err := r.element(i, close, false, false, mode, predicates); err != nil {
 				return err
 			}
 			i = close
@@ -660,7 +660,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				return nil
 			}
 			quantifier, at, quantified := quantifierAfterArrow(q, close, end)
-			if err := r.element(open, close, true, quantified, mode, predicates, probe); err != nil {
+			if err := r.element(open, close, true, quantified, mode, predicates); err != nil {
 				return err
 			}
 			i = close
@@ -691,7 +691,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 // element rewrites the node (or relationship) pattern query[open:close+1]:
 // its variable, then : or IS and a label chain, and its own WHERE (#878).
 // quantified marks a relationship followed by a quantifier (#864).
-func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) element(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	i := skipASCIISpaces(q, open+1, close)
 	variable, variableEnd := "", i
@@ -700,7 +700,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 		i = skipASCIISpaces(q, end, close)
 	}
 	if where := elementWhereIndex(q, open, close); where >= 0 {
-		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates, probe); err != nil {
+		if err := r.elementWhere(open, where, close, variable, relationship, quantified, mode, predicates); err != nil {
 			return err
 		}
 		close = trimRightIndex(q, open+1, where)
@@ -729,7 +729,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	r.syntax.note(chain, q[textStart:close], relationship, viaIS)
 	rest := skipASCIISpaces(q, chainEnd, close)
 	if relationship {
-		return r.relationshipElement(open, chainStart, chainEnd, rest, close, variable, viaIS, chain, quantified, mode, predicates, probe)
+		return r.relationshipElement(open, chainStart, chainEnd, rest, close, variable, viaIS, chain, quantified, mode, predicates)
 	}
 	if viaIS && chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedIs(chain.expr.String()))
@@ -738,7 +738,7 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 		return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedColon(chain.expr.String()))
 	}
 	if chain.dynamic {
-		resolved, constant, err := r.resolveDynamicChain(chain, mode, probe)
+		resolved, constant, err := r.resolveDynamicChain(chain, mode)
 		if err != nil {
 			return err
 		}
@@ -914,7 +914,7 @@ func elementWhereIndex(q string, open, close int) int {
 // reads the iteration variable under the relationship's own name. Neo4j
 // rejects the predicate on a * variable-length relationship and in CREATE or
 // MERGE.
-func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]string, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable string, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	element := "Node"
 	if relationship {
@@ -926,7 +926,7 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 	if relationship && indexOutsideQuotes(q[open+1:where], '*') >= 0 {
 		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateVariableLength())
 	}
-	predicate, err := r.rewrittenPredicate(strings.TrimSpace(q[where+len("WHERE") : close]), probe)
+	predicate, err := r.rewrittenPredicate(strings.TrimSpace(q[where+len("WHERE") : close]))
 	if err != nil {
 		return err
 	}
@@ -944,9 +944,9 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 // predicates and comprehensions rewritten, for a predicate elementWhere
 // moves out of its element: the moved text isn't read again (#1181). Its
 // generated variables continue the statement's.
-func (r *labelExpressionRewriter) rewrittenPredicate(predicate string, probe *pipelineCancellation) (string, error) {
+func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
 	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
-	if err := sub.expression(0, len(predicate), probe); err != nil {
+	if err := sub.expression(0, len(predicate)); err != nil {
 		return "", err
 	}
 	r.generated = sub.generated
@@ -961,14 +961,14 @@ func (r *labelExpressionRewriter) rewrittenPredicate(predicate string, probe *pi
 // (query[chainStart:chainEnd]; rest is where the length or properties
 // start). A quantified relationship's type expression applies to each of its
 // relationships (#864).
-func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd, rest, close int, variable string, viaIS bool, chain labelChain, quantified bool, mode labelPatternMode, predicates *[]string) error {
 	q := r.query
 	if chain.colons {
 		return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonConjunction())
 	}
 	variableLength := rest < close && q[rest] == '*'
 	if chain.dynamic {
-		resolved, constant, err := r.resolveDynamicChain(chain, mode, probe)
+		resolved, constant, err := r.resolveDynamicChain(chain, mode)
 		if err != nil {
 			return err
 		}
@@ -1045,11 +1045,11 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 // a literal or a parameter. constant is false when a term's value depends on
 // the rows; the chain is then read when the rows are. $any() is only for
 // MATCH.
-func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode labelPatternMode, probe *pipelineCancellation) (*labelExpression, bool, error) {
+func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode labelPatternMode) (*labelExpression, bool, error) {
 	if chain.dynamicAny && mode != labelPatternMatch {
 		return nil, false, labelExpressionSyntaxError(localization.CypherCoreDynamicAnyInWritePattern())
 	}
-	return chain.expr.resolveDynamic(r.resolveConstant, probe)
+	return chain.expr.resolveDynamic(r.resolveConstant)
 }
 
 // resolveConstant reads a dynamic term's expression when its value is known
@@ -1057,7 +1057,7 @@ func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode lab
 // SyntaxError, staticDynamicTokenError) or a supplied parameter.
 func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{}, bool, error) {
 	expression = strings.TrimSpace(expression)
-	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel, nil); err != nil {
+	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
 		return nil, false, err
 	}
 	if strings.HasPrefix(expression, "$") {
@@ -1176,11 +1176,11 @@ func mayAssignAnonymousNodePath(query string) bool {
 }
 
 // foreach rewrites FOREACH (x IN list | clauses).
-func (r *labelExpressionRewriter) foreach(start, end int, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) foreach(start, end int) error {
 	q := r.query
 	open := skipASCIISpaces(q, start, end)
 	if open >= end || q[open] != '(' {
-		return r.expression(start, end, probe)
+		return r.expression(start, end)
 	}
 	close := findMatchingDelimiter(q[:end], open, '(', ')')
 	if close < 0 {
@@ -1188,18 +1188,18 @@ func (r *labelExpressionRewriter) foreach(start, end int, probe *pipelineCancell
 	}
 	bar := topLevelByteIndex(q, open+1, close, '|')
 	if bar < 0 {
-		return r.expression(open+1, close, probe)
+		return r.expression(open+1, close)
 	}
-	if err := r.expression(open+1, bar, probe); err != nil {
+	if err := r.expression(open+1, bar); err != nil {
 		return err
 	}
-	return r.statement(bar+1, close, probe)
+	return r.statement(bar+1, close)
 }
 
 // expression rewrites the expression query[start:end]: the subqueries, pattern
 // predicates and pattern comprehensions in it, and its IS label tests; it
 // rejects a colon test that mixes colons with label expression symbols.
-func (r *labelExpressionRewriter) expression(start, end int, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) expression(start, end int) error {
 	q := r.query
 	for i := start; i < end; i++ {
 		c := q[i]
@@ -1217,10 +1217,10 @@ func (r *labelExpressionRewriter) expression(start, end int, probe *pipelineCanc
 				return nil
 			}
 			if r.opensSubquery(i) {
-				if err := r.subquery(i+1, close, probe); err != nil {
+				if err := r.subquery(i+1, close); err != nil {
 					return err
 				}
-			} else if err := r.expression(i+1, close, probe); err != nil {
+			} else if err := r.expression(i+1, close); err != nil {
 				return err
 			}
 			i = close
@@ -1229,16 +1229,16 @@ func (r *labelExpressionRewriter) expression(start, end int, probe *pipelineCanc
 			if close < 0 {
 				return nil
 			}
-			if handled, err := r.comprehension(i, close, probe); err != nil {
+			if handled, err := r.comprehension(i, close); err != nil {
 				return err
 			} else if !handled {
-				if err := r.expression(i+1, close, probe); err != nil {
+				if err := r.expression(i+1, close); err != nil {
 					return err
 				}
 			}
 			i = close
 		case c == '(':
-			next, err := r.parenthesised(start, i, end, probe)
+			next, err := r.parenthesised(start, i, end)
 			if err != nil {
 				return err
 			}
@@ -1453,14 +1453,14 @@ func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 // subquery rewrites a subquery body query[start:end]: a statement, or a
 // pattern with an optional WHERE (EXISTS { (n)-->(m) WHERE … }), which
 // becomes a MATCH when its label expressions add predicates.
-func (r *labelExpressionRewriter) subquery(start, end int, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) subquery(start, end int) error {
 	q := r.query
 	first := skipASCIISpaces(q, start, end)
 	if first >= end {
 		return nil
 	}
 	if q[first] != '(' && !startsPathAssignment(q, first, end) {
-		return r.statement(start, end, probe)
+		return r.statement(start, end)
 	}
 	patternEnd, whereStart := end, -1
 	for _, clause := range r.clauses(first, end) {
@@ -1470,13 +1470,13 @@ func (r *labelExpressionRewriter) subquery(start, end int, probe *pipelineCancel
 		}
 	}
 	mark := len(r.edits)
-	predicates, err := r.pattern(first, patternEnd, labelPatternMatch, probe)
+	predicates, err := r.pattern(first, patternEnd, labelPatternMatch)
 	if err != nil {
 		return err
 	}
 	if len(predicates) == 0 {
 		if whereStart >= 0 {
-			return r.expression(whereStart, end, probe)
+			return r.expression(whereStart, end)
 		}
 		return nil
 	}
@@ -1487,12 +1487,12 @@ func (r *labelExpressionRewriter) subquery(start, end int, probe *pipelineCancel
 		r.edit(at, at, " WHERE "+strings.Join(predicates, " AND "))
 		return nil
 	}
-	return r.whereWithPredicates(whereStart, end, predicates, probe)
+	return r.whereWithPredicates(whereStart, end, predicates)
 }
 
 // whereWithPredicates ANDs predicates in front of the WHERE body
 // query[start:end] and rewrites the body.
-func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates []string, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates []string) error {
 	q := r.query
 	bodyStart := skipASCIISpaces(q, start, end)
 	bodyEnd := trimRightIndex(q, bodyStart, end)
@@ -1503,7 +1503,7 @@ func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates
 		prefix += "("
 	}
 	r.edit(bodyStart, bodyStart, prefix)
-	if err := r.expression(bodyStart, bodyEnd, probe); err != nil {
+	if err := r.expression(bodyStart, bodyEnd); err != nil {
 		return err
 	}
 	if wrap {
@@ -1515,7 +1515,7 @@ func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates
 // parenthesised handles the ( at query[open] in an expression: a pattern
 // predicate ((n)-->(:A|B), also as exists(…)'s argument), or a group or
 // call whose inside is an expression. It returns where scanning resumes.
-func (r *labelExpressionRewriter) parenthesised(start, open, end int, probe *pipelineCancellation) (int, error) {
+func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, error) {
 	q := r.query
 	close := findMatchingDelimiter(q[:end], open, '(', ')')
 	if close < 0 {
@@ -1524,9 +1524,9 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int, probe *pip
 	call := open > start && isIdentByte(q[open-1])
 	if !call {
 		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
-			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1, probe)
+			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
 		}
-		if next, handled, err := r.expressionLabelTest(open, open, close, end, probe); handled {
+		if next, handled, err := r.expressionLabelTest(open, open, close, end); handled {
 			return next, err
 		}
 	} else {
@@ -1534,7 +1534,7 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int, probe *pip
 		for subject > start && (isIdentByte(q[subject-1]) || q[subject-1] == '.') {
 			subject--
 		}
-		if next, handled, err := r.expressionLabelTest(subject, open, close, end, probe); handled {
+		if next, handled, err := r.expressionLabelTest(subject, open, close, end); handled {
 			return next, err
 		}
 		// exists((n)-->(m)): the argument as the predicate.
@@ -1545,11 +1545,11 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int, probe *pip
 		inner := skipASCIISpaces(q, open+1, close)
 		if strings.EqualFold(q[nameStart:open], "exists") {
 			if chainEnd, ok := relationshipChainEnd(r.query, inner, close); ok && skipASCIISpaces(q, chainEnd, close) == close {
-				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close, probe)
+				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close)
 			}
 		}
 	}
-	return close + 1, r.expression(open+1, close, probe)
+	return close + 1, r.expression(open+1, close)
 }
 
 // expressionLabelTest rewrites a label test on the expression
@@ -1560,7 +1560,7 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int, probe *pip
 // follows, or when the parenthesis is a dynamic label's ($(e), $any(e),
 // $all(e)) or stands in a label chain (n:$(e):B); an expression that itself
 // holds a rewrite is left as it was.
-func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close, end int, probe *pipelineCancellation) (int, bool, error) {
+func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close, end int) (int, bool, error) {
 	q := r.query
 	if strings.HasPrefix(q[subjectStart:open], "$") || (subjectStart > 0 && (q[subjectStart-1] == '$' || q[subjectStart-1] == ':')) {
 		return 0, false, nil
@@ -1584,7 +1584,7 @@ func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close,
 		return 0, false, nil
 	}
 	mark := len(r.edits)
-	if err := r.expression(open+1, close, probe); err != nil {
+	if err := r.expression(open+1, close); err != nil {
 		return 0, true, err
 	}
 	if len(r.edits) != mark {
@@ -1602,9 +1602,9 @@ func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close,
 // patternPredicate rewrites the pattern predicate query[start:end]. When its
 // label expressions add predicates it becomes EXISTS { MATCH … WHERE … }; a
 // call exists(…) around it (query[callStart:callClose+1]) is replaced.
-func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callClose int, probe *pipelineCancellation) error {
+func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callClose int) error {
 	mark := len(r.edits)
-	predicates, err := r.pattern(start, end, labelPatternMatch, probe)
+	predicates, err := r.pattern(start, end, labelPatternMatch)
 	if err != nil || len(predicates) == 0 {
 		return err
 	}
@@ -1621,7 +1621,7 @@ func (r *labelExpressionRewriter) patternPredicate(start, end, callStart, callCl
 
 // comprehension rewrites the pattern comprehension query[open:close+1]
 // ([(n)-->(m:A|B) WHERE … | m.x]); handled is false for any other list.
-func (r *labelExpressionRewriter) comprehension(open, close int, probe *pipelineCancellation) (bool, error) {
+func (r *labelExpressionRewriter) comprehension(open, close int) (bool, error) {
 	q := r.query
 	i := skipASCIISpaces(q, open+1, close)
 	if startsPathAssignment(q, i, close) {
@@ -1643,22 +1643,22 @@ func (r *labelExpressionRewriter) comprehension(open, close int, probe *pipeline
 	if bar < 0 {
 		return false, nil
 	}
-	predicates, err := r.pattern(i, chainEnd, labelPatternMatch, probe)
+	predicates, err := r.pattern(i, chainEnd, labelPatternMatch)
 	if err != nil {
 		return true, err
 	}
 	switch {
 	case whereStart >= 0 && len(predicates) > 0:
-		err = r.whereWithPredicates(whereStart, bar, predicates, probe)
+		err = r.whereWithPredicates(whereStart, bar, predicates)
 	case whereStart >= 0:
-		err = r.expression(whereStart, bar, probe)
+		err = r.expression(whereStart, bar)
 	case len(predicates) > 0:
 		r.edit(chainEnd, chainEnd, " WHERE "+strings.Join(predicates, " AND "))
 	}
 	if err != nil {
 		return true, err
 	}
-	return true, r.expression(bar+1, close, probe)
+	return true, r.expression(bar+1, close)
 }
 
 // projectionBar finds the | before a pattern comprehension's projection in

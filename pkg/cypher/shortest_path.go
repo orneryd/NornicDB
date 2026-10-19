@@ -93,7 +93,7 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 	}
 	findAll := strings.EqualFold(funcName, "allShortestPaths")
 	start, end := nodes[startVariable], nodes[endVariable]
-	if start == nil || end == nil || !e.matchesEndPattern(start, &match.StartNode, contextPipelineProbe(ctx)) || !e.matchesEndPattern(end, &match.EndNode, contextPipelineProbe(ctx)) {
+	if start == nil || end == nil || !e.matchesEndPattern(start, &match.StartNode) || !e.matchesEndPattern(end, &match.EndNode) {
 		return nil, true, nil
 	}
 	row := pipelineRow{startVariable: start, endVariable: end}
@@ -175,7 +175,7 @@ func (e *StorageExecutor) pathToMapContext(ctx context.Context, path PathResult)
 // whichever shape the value has. The "nodes" / "rels" keys are read only when
 // "_pathResult" is absent. hasNodes / hasRelationships report whether the
 // value carried them.
-func pathValueParts(path map[string]interface{}, probe *pipelineCancellation) (nodes, relationships []interface{}, hasNodes, hasRelationships bool) {
+func pathValueParts(path map[string]interface{}) (nodes, relationships []interface{}, hasNodes, hasRelationships bool) {
 	var result *PathResult
 	switch typed := path["_pathResult"].(type) {
 	case PathResult:

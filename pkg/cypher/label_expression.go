@@ -633,14 +633,14 @@ func cypherStringLiteral(text string) string {
 // conjunction of the names, $any(e) by their disjunction. constant is false,
 // with no expression, when resolve can't read some term before the rows
 // exist (its value depends on them).
-func (x *labelExpression) resolveDynamic(resolve func(expression string) (value interface{}, constant bool, err error), probe *pipelineCancellation) (resolved *labelExpression, constant bool, err error) {
+func (x *labelExpression) resolveDynamic(resolve func(expression string) (value interface{}, constant bool, err error)) (resolved *labelExpression, constant bool, err error) {
 	switch x.kind {
 	case labelExpressionDynamic:
 		value, constant, err := resolve(x.expression)
 		if err != nil || !constant {
 			return nil, false, err
 		}
-		names, err := dynamicLabelNames(value, probe)
+		names, err := dynamicLabelNames(value)
 		if err != nil {
 			return nil, false, err
 		}
@@ -659,7 +659,7 @@ func (x *labelExpression) resolveDynamic(resolve func(expression string) (value 
 	case labelExpressionNot, labelExpressionAnd, labelExpressionOr:
 		operands := make([]*labelExpression, 0, len(x.operands))
 		for _, operand := range x.operands {
-			resolvedOperand, constant, err := operand.resolveDynamic(resolve, probe)
+			resolvedOperand, constant, err := operand.resolveDynamic(resolve)
 			if err != nil || !constant {
 				return nil, false, err
 			}

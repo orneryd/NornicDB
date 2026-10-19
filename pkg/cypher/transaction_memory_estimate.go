@@ -28,15 +28,15 @@ const (
 )
 
 // estimateValueBytes is the estimated size of a value a statement keeps.
-func estimateValueBytes(value interface{}, probe *pipelineCancellation) int64 {
+func estimateValueBytes(value interface{}) int64 {
 	observeSizing()
 	if estimateObserver != nil {
 		estimateObserver()
 	}
-	return estimateValueBytesAt(value, 0, probe)
+	return estimateValueBytesAt(value, 0)
 }
 
-func estimateValueBytesAt(value interface{}, depth int, probe *pipelineCancellation) int64 {
+func estimateValueBytesAt(value interface{}, depth int) int64 {
 	if depth > maxEstimateDepth {
 		return unknownValueBytes
 	}
@@ -50,7 +50,7 @@ func estimateValueBytesAt(value interface{}, depth int, probe *pipelineCancellat
 	case []interface{}:
 		total := valueSlotBytes + sliceHeaderBytes + int64(cap(v)-len(v))*valueSlotBytes
 		for _, element := range v {
-			total += estimateValueBytesAt(element, depth+1, probe)
+			total += estimateValueBytesAt(element, depth+1)
 		}
 		return total
 	case []string:
@@ -68,7 +68,7 @@ func estimateValueBytesAt(value interface{}, depth int, probe *pipelineCancellat
 	case map[string]interface{}:
 		total := int64(valueSlotBytes + mapHeaderBytes)
 		for key, element := range v {
-			total += mapEntryBytes + stringHeaderBytes + int64(len(key)) + estimateValueBytesAt(element, depth+1, probe)
+			total += mapEntryBytes + stringHeaderBytes + int64(len(key)) + estimateValueBytesAt(element, depth+1)
 		}
 		return total
 	case *storage.Node, *storage.Edge, storage.Node, storage.Edge:
@@ -113,22 +113,22 @@ const (
 )
 
 // rowBytes is the estimated size of row.
-func (r *rowEstimator) rowBytes(row pipelineRow, probe *pipelineCancellation) int64 {
+func (r *rowEstimator) rowBytes(row pipelineRow) int64 {
 	observeSizing()
 	total := int64(pipelineRowExtraBytes + mapHeaderBytes)
 	for name, value := range row {
-		total += r.bindingBytes(name, value, probe)
+		total += r.bindingBytes(name, value)
 	}
 	return total
 }
 
 // bindingBytes is the estimated size of one binding of a row.
-func (r *rowEstimator) bindingBytes(name string, value interface{}, probe *pipelineCancellation) int64 {
-	return mapEntryBytes + stringHeaderBytes + int64(len(name)) + r.columnBytes(name, value, probe)
+func (r *rowEstimator) bindingBytes(name string, value interface{}) int64 {
+	return mapEntryBytes + stringHeaderBytes + int64(len(name)) + r.columnBytes(name, value)
 }
 
 // columnBytes is the estimated size of a value in a row's column.
-func (r *rowEstimator) columnBytes(column string, value interface{}, probe *pipelineCancellation) int64 {
+func (r *rowEstimator) columnBytes(column string, value interface{}) int64 {
 	var identity unsafe.Pointer
 	var length int
 	switch v := value.(type) {
@@ -147,10 +147,10 @@ func (r *rowEstimator) columnBytes(column string, value interface{}, probe *pipe
 			identity, length = reflect.ValueOf(v).UnsafePointer(), len(v)
 		}
 	default:
-		return estimateValueBytes(value, probe)
+		return estimateValueBytes(value)
 	}
 	if identity == nil {
-		return estimateValueBytes(value, probe)
+		return estimateValueBytes(value)
 	}
 	key := sizedValueKey{data: identity, length: length}
 	if _, counted := r.shared[key]; counted {
@@ -161,7 +161,7 @@ func (r *rowEstimator) columnBytes(column string, value interface{}, probe *pipe
 			r.shared = make(map[sizedValueKey]struct{})
 		}
 		r.shared[key] = struct{}{}
-		return r.known.sizedValue(identity, length, value, probe)
+		return r.known.sizedValue(identity, length, value)
 	}
 	for index := 0; index < r.count; index++ {
 		if r.columns[index].name == column {
@@ -169,23 +169,23 @@ func (r *rowEstimator) columnBytes(column string, value interface{}, probe *pipe
 				return valueSlotBytes + sliceHeaderBytes
 			}
 			r.columns[index].identity = identity
-			return r.known.sizedValue(identity, length, value, probe)
+			return r.known.sizedValue(identity, length, value)
 		}
 	}
 	if r.count < rowEstimatorColumns {
 		r.columns[r.count].name, r.columns[r.count].identity = column, identity
 		r.count++
 	}
-	return r.known.sizedValue(identity, length, value, probe)
+	return r.known.sizedValue(identity, length, value)
 }
 
 // estimateResultRowBytes is the estimated size of a result row; lists
 // known's collect() counted are sized from what it counted.
-func estimateResultRowBytes(row []interface{}, known *transactionMemoryTracker, probe *pipelineCancellation) int64 {
+func estimateResultRowBytes(row []interface{}, known *transactionMemoryTracker) int64 {
 	observeSizing()
 	total := int64(pipelineRowExtraBytes + sliceHeaderBytes)
 	for _, value := range row {
-		total += known.valueBytes(value, probe)
+		total += known.valueBytes(value)
 	}
 	return total
 }

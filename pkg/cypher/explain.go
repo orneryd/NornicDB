@@ -97,11 +97,11 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 // executeExplain returns the execution plan without executing the query
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
 	if indexASCIIFold(query, "shortestpath") >= 0 {
-		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25", contextPipelineProbe(ctx)); err != nil {
+		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
 		}
 	}
-	plan, err := e.buildExecutionPlan(query, contextPipelineProbe(ctx))
+	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
@@ -117,7 +117,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 // executeProfile executes the query and returns the plan with statistics
 func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*ExecuteResult, error) {
 	// Build the plan first
-	plan, err := e.buildExecutionPlan(query, contextPipelineProbe(ctx))
+	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
@@ -164,14 +164,14 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 }
 
 // buildExecutionPlan creates an execution plan for a query
-func (e *StorageExecutor) buildExecutionPlan(query string, probe *pipelineCancellation) (*ExecutionPlan, error) {
+func (e *StorageExecutor) buildExecutionPlan(query string) (*ExecutionPlan, error) {
 	plan := &ExecutionPlan{
 		Query: query,
 		Mode:  ModeNormal,
 	}
 
 	// Analyze query and build operator tree
-	root, err := e.analyzeQuery(query, probe)
+	root, err := e.analyzeQuery(query)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func (e *StorageExecutor) buildExecutionPlan(query string, probe *pipelineCancel
 }
 
 // analyzeQuery analyzes a Cypher query and builds the operator tree
-func (e *StorageExecutor) analyzeQuery(query string, probe *pipelineCancellation) (*PlanOperator, error) {
+func (e *StorageExecutor) analyzeQuery(query string) (*PlanOperator, error) {
 	// Build operators in query clause order (Neo4j-style plan chain).
 	type plannedClause struct {
 		idx int
@@ -196,7 +196,7 @@ func (e *StorageExecutor) analyzeQuery(query string, probe *pipelineCancellation
 	}
 
 	if idx := findKeywordIndex(query, "MATCH"); idx >= 0 {
-		add(idx, e.analyzeMatchClause(query, probe))
+		add(idx, e.analyzeMatchClause(query))
 	}
 	if idx := findKeywordIndex(query, "CALL"); idx >= 0 {
 		add(idx, e.analyzeCallClause(query))
@@ -287,7 +287,7 @@ func (e *StorageExecutor) analyzeQuery(query string, probe *pipelineCancellation
 }
 
 // analyzeMatchClause analyzes a MATCH clause and returns appropriate operators
-func (e *StorageExecutor) analyzeMatchClause(query string, probe *pipelineCancellation) *PlanOperator {
+func (e *StorageExecutor) analyzeMatchClause(query string) *PlanOperator {
 	upper := upperASCII(query)
 
 	// Check for shortestPath
@@ -318,19 +318,19 @@ func (e *StorageExecutor) analyzeMatchClause(query string, probe *pipelineCancel
 			Description:   "Expand relationships",
 			EstimatedRows: 100,
 			Children: []*PlanOperator{
-				e.analyzeNodeScan(query, probe),
+				e.analyzeNodeScan(query),
 			},
 		}
 	}
 
 	// Simple node scan
-	return e.analyzeNodeScan(query, probe)
+	return e.analyzeNodeScan(query)
 }
 
 // analyzeNodeScan determines the type of node scan needed.
 // When the storage schema is available, it checks for actual index existence
 // and reports index usage or rejection reasons in the plan arguments.
-func (e *StorageExecutor) analyzeNodeScan(query string, probe *pipelineCancellation) *PlanOperator {
+func (e *StorageExecutor) analyzeNodeScan(query string) *PlanOperator {
 	// Check for label in pattern (n:Label)
 	if label, ok := extractFirstNodeLabelFromQuery(query); ok {
 
@@ -340,7 +340,7 @@ func (e *StorageExecutor) analyzeNodeScan(query string, probe *pipelineCancellat
 				"label": label,
 			}
 			// Check actual index availability from schema.
-			e.annotateIndexDiagnostics(args, label, query, probe)
+			e.annotateIndexDiagnostics(args, label, query)
 
 			return &PlanOperator{
 				OperatorType:  "NodeIndexSeek",
@@ -354,7 +354,7 @@ func (e *StorageExecutor) analyzeNodeScan(query string, probe *pipelineCancellat
 		args := map[string]interface{}{
 			"label": label,
 		}
-		e.annotateIndexDiagnostics(args, label, query, probe)
+		e.annotateIndexDiagnostics(args, label, query)
 
 		return &PlanOperator{
 			OperatorType:  "NodeByLabelScan",
@@ -377,7 +377,7 @@ func (e *StorageExecutor) analyzeNodeScan(query string, probe *pipelineCancellat
 // annotateIndexDiagnostics adds index usage/rejection diagnostics to the plan
 // operator arguments. This makes tuning deterministic by exposing whether an
 // index was available, which properties are indexed, and why it was rejected.
-func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, label, query string, probe *pipelineCancellation) {
+func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, label, query string) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		args["indexStatus"] = "no_schema"
@@ -781,7 +781,7 @@ func Neo4jPlanMap(plan *ExecutionPlan, profile bool) map[string]any {
 	if plan == nil {
 		return nil
 	}
-	return neo4jPlanOperatorMap(plan.Root, profile, nil)
+	return neo4jPlanOperatorMap(plan.Root, profile)
 }
 
 // profileExecutionKey marks PROFILE's inner execution so it neither serves nor
@@ -795,7 +795,7 @@ func profileExecutionBypassesCache(ctx context.Context) bool {
 	return bypass
 }
 
-func neo4jPlanOperatorMap(op *PlanOperator, profile bool, probe *pipelineCancellation) map[string]any {
+func neo4jPlanOperatorMap(op *PlanOperator, profile bool) map[string]any {
 	if op == nil {
 		return nil
 	}
@@ -817,7 +817,7 @@ func neo4jPlanOperatorMap(op *PlanOperator, profile bool, probe *pipelineCancell
 	if len(op.Children) > 0 {
 		children := make([]map[string]any, 0, len(op.Children))
 		for _, child := range op.Children {
-			if childMap := neo4jPlanOperatorMap(child, profile, probe); childMap != nil {
+			if childMap := neo4jPlanOperatorMap(child, profile); childMap != nil {
 				children = append(children, childMap)
 			}
 		}

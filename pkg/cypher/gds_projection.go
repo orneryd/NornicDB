@@ -164,7 +164,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...co
 	if err != nil {
 		return nil, err
 	}
-	configuration, err := gdsProjectConfiguration(procedure, args, nodeSpecs, relSpecs, probe)
+	configuration, err := gdsProjectConfiguration(procedure, args, nodeSpecs, relSpecs)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...co
 // and nodeProperties / relationshipProperties, which every node or
 // relationship projection then projects. It is the configuration as
 // gds.graph.list reports it.
-func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, relSpecs []gdsElementSpec, probe *pipelineCancellation) (map[string]interface{}, error) {
+func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, relSpecs []gdsElementSpec) (map[string]interface{}, error) {
 	options, err := optionalProcedureMap(procedure, args, 3, "configuration")
 	if err != nil {
 		return nil, err
@@ -204,7 +204,7 @@ func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, re
 	if err != nil {
 		return nil, err
 	}
-	readConcurrency, err := c.integer("readConcurrency", "Integer", 1, 1<<31-1, 4, false, probe)
+	readConcurrency, err := c.integer("readConcurrency", "Integer", 1, 1<<31-1, 4, false)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +293,7 @@ func gdsProjectionSpecs(value interface{}, kind string, contexts ...context.Cont
 			case string:
 				spec.element = entry
 			case map[string]interface{}:
-				if err := spec.read(entry, kind, nameKey, probe); err != nil {
+				if err := spec.read(entry, kind, nameKey); err != nil {
 					return nil, err
 				}
 			default:
@@ -321,7 +321,7 @@ func gdsProjectionSpecs(value interface{}, kind string, contexts ...context.Cont
 }
 
 // read applies a projection entry's settings map.
-func (spec *gdsElementSpec) read(entry map[string]interface{}, kind, nameKey string, probe *pipelineCancellation) error {
+func (spec *gdsElementSpec) read(entry map[string]interface{}, kind, nameKey string) error {
 	allowed := []string{nameKey, "properties"}
 	if kind == "relationship" {
 		allowed = append(allowed, "orientation", "aggregation", "indexInverse")
@@ -724,7 +724,7 @@ func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string,
 			properties[key] = exact
 		}
 	}
-	projection.schema = gdsGraphSchema(nodeSpecs, relSpecs, schemaTypes, contextPipelineProbe(ctx))
+	projection.schema = gdsGraphSchema(nodeSpecs, relSpecs, schemaTypes)
 	return projection, nil
 }
 
@@ -756,13 +756,13 @@ func mergeParallelProperties(kept, properties map[string]float64, specs []gdsPro
 // is one, a list a List of Integer or of Float (schema types are keyed
 // by label and property); a relationship property is a Float, as GDS stores
 // them.
-func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string, probe *pipelineCancellation) map[string]interface{} {
-	return gdsProjectionSchema(nodeSpecs, relSpecs, nodePropertyTypes, "PERSISTENT", probe)
+func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string) map[string]interface{} {
+	return gdsProjectionSchema(nodeSpecs, relSpecs, nodePropertyTypes, "PERSISTENT")
 }
 
 // gdsProjectionSchema is the single schema renderer for both import forms.
 // Aggregation relationships are TRANSIENT; native ones are PERSISTENT.
-func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string, relationshipPersistence string, probe *pipelineCancellation) map[string]interface{} {
+func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string, relationshipPersistence string) map[string]interface{} {
 	nodes := make(map[string]interface{})
 	for _, spec := range nodeSpecs {
 		properties, _ := nodes[spec.name].(map[string]interface{})
@@ -777,7 +777,7 @@ func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes
 			case kind == "List of Integer" || kind == "List of Float":
 				properties[property.key] = kind + " (DefaultValue(null), PERSISTENT)"
 			case kind == "Float" || property.defaultValue != nil && !integral:
-				properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN", probe) + "), PERSISTENT)"
+				properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN") + "), PERSISTENT)"
 			default:
 				defaultText := "-9223372036854775808"
 				if integral {
@@ -797,7 +797,7 @@ func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes
 			if aggregation == "DEFAULT" {
 				aggregation = "NONE"
 			}
-			properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN", probe) + "), " + relationshipPersistence + ", Aggregation." + aggregation + ")"
+			properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN") + "), " + relationshipPersistence + ", Aggregation." + aggregation + ")"
 		}
 		relationships[spec.name] = properties
 		direction := "DIRECTED"
@@ -810,7 +810,7 @@ func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes
 }
 
 // gdsDefaultText is a Float default as GDS prints it (1.0, 0.5), or none.
-func gdsDefaultText(value interface{}, none string, probe *pipelineCancellation) string {
+func gdsDefaultText(value interface{}, none string) string {
 	exact, _, present, _ := gdsConvertPropertyValue(value, "Float", false, gdsStoredValue)
 	if !present {
 		return none
@@ -846,7 +846,7 @@ func javaDoubleText(value float64) string {
 // the columns GDS gives, without degreeDistribution. Its memory use isn't
 // measured: memoryUsage is "" and sizeInBytes -1, as GDS reports an
 // unmeasured graph.
-func gdsGraphInfo(projection *GraphProjection, probe *pipelineCancellation) map[string]interface{} {
+func gdsGraphInfo(projection *GraphProjection) map[string]interface{} {
 	density := 0.0
 	if n := float64(projection.NodeCount); n > 1 {
 		density = float64(projection.RelationshipCount) / (n * (n - 1))
@@ -880,7 +880,7 @@ var gdsDropColumns = []string{
 
 // gdsDegreeDistribution is the projection's out-degree distribution as GDS
 // reports it: min, max, mean and percentiles.
-func gdsDegreeDistribution(projection *GraphProjection, probe *pipelineCancellation) map[string]interface{} {
+func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
 	degrees := make([]int64, len(projection.NodeIDs))
 	// With no labels, types or property requested the shared selector cannot
 	// fail. Count every projected direction, including parallel edges and loops.
@@ -944,7 +944,7 @@ func appendUnique(values []string, value string) []string {
 // callGdsGraphList implements CALL gds.graph.list([graphName]) as GDS does
 // (#1161): this database's projections, or the one named, with GDS's
 // columns.
-func (e *StorageExecutor) callGdsGraphList(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, error) {
 	name, err := optionalProcedureString("gds.graph.list", args, 0, "graphName", "")
 	if err != nil {
 		return nil, err
@@ -955,8 +955,8 @@ func (e *StorageExecutor) callGdsGraphList(args []interface{}, probe *pipelineCa
 		if name != "" && projection.Name != name {
 			continue
 		}
-		info := gdsGraphInfo(projection, probe)
-		info["degreeDistribution"] = gdsDegreeDistribution(projection, probe)
+		info := gdsGraphInfo(projection)
+		info["degreeDistribution"] = gdsDegreeDistribution(projection)
 		row := make([]any, len(columns))
 		for i, column := range columns {
 			row[i] = info[column]
@@ -1036,7 +1036,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 			continue
 		}
 		delete(graphProjections, key)
-		info := gdsGraphInfo(projection, probe)
+		info := gdsGraphInfo(projection)
 		row := make([]any, len(gdsDropColumns))
 		for i, column := range gdsDropColumns {
 			row[i] = info[column]
@@ -1111,7 +1111,7 @@ func (c *gdsConfig) typeError(key, expected string) error {
 
 // gdsConfigIntegerValue is the common integer configuration reader. Native
 // GDS requires integer values; APOC retains integral-number coercion.
-func gdsConfigIntegerValue(value interface{}, coerce bool, probe *pipelineCancellation) (int64, bool) {
+func gdsConfigIntegerValue(value interface{}, coerce bool) (int64, bool) {
 	if !isIntegerProcedureValue(value) {
 		if !coerce {
 			return 0, false
@@ -1132,7 +1132,7 @@ func gdsConfigIntegerValue(value interface{}, coerce bool, probe *pipelineCancel
 // gdsScalarNumber supplies numeric configuration values through the projected
 // value converter, without the import bound. Configuration readers keep their
 // own type-error messages.
-func gdsScalarNumber(value interface{}, probe *pipelineCancellation) (float64, bool) {
+func gdsScalarNumber(value interface{}) (float64, bool) {
 	exact, _, ok, err := gdsConvertPropertyValue(value, "Float", false, gdsConfigurationValue)
 	if ok && err == nil {
 		return exact.(float64), true
@@ -1142,17 +1142,17 @@ func gdsScalarNumber(value interface{}, probe *pipelineCancellation) (float64, b
 
 // integer is key's INTEGER value, at least min: fallback when absent, or an
 // error when mandatory.
-func (c *gdsConfig) integer(key, expected string, min, max, fallback int64, mandatory bool, probe *pipelineCancellation) (int64, error) {
+func (c *gdsConfig) integer(key, expected string, min, max, fallback int64, mandatory bool) (int64, error) {
 	return c.integerWithErrors(key, min, max, fallback, mandatory,
 		func() error { return c.typeError(key, expected) },
 		func(number int64) error {
 			return localizedError(localization.CypherGraphProceduresConfigValueOutOfRange(key, strconv.FormatInt(number, 10), fmt.Sprintf("[%d, %d]", min, max)), nil)
-		}, probe)
+		})
 }
 
 // integerWithErrors owns integer and range validation. GDS's aggregation
 // concurrency has its own messages and no native int32 upper bound.
-func (c *gdsConfig) integerWithErrors(key string, min, max, fallback int64, mandatory bool, typeError func() error, rangeError func(int64) error, probe *pipelineCancellation) (int64, error) {
+func (c *gdsConfig) integerWithErrors(key string, min, max, fallback int64, mandatory bool, typeError func() error, rangeError func(int64) error) (int64, error) {
 	value := c.value(key)
 	if value == nil {
 		if mandatory {
@@ -1160,7 +1160,7 @@ func (c *gdsConfig) integerWithErrors(key string, min, max, fallback int64, mand
 		}
 		return fallback, nil
 	}
-	number, integer := gdsConfigIntegerValue(value, false, probe)
+	number, integer := gdsConfigIntegerValue(value, false)
 	if !integer {
 		return 0, typeError()
 	}
@@ -1171,12 +1171,12 @@ func (c *gdsConfig) integerWithErrors(key string, min, max, fallback int64, mand
 }
 
 // number is key's numeric value, fallback when absent.
-func (c *gdsConfig) number(key, expected string, fallback float64, probe *pipelineCancellation) (float64, error) {
+func (c *gdsConfig) number(key, expected string, fallback float64) (float64, error) {
 	value := c.value(key)
 	if value == nil {
 		return fallback, nil
 	}
-	number, ok := gdsScalarNumber(value, probe)
+	number, ok := gdsScalarNumber(value)
 	if !ok {
 		return 0, c.typeError(key, expected)
 	}

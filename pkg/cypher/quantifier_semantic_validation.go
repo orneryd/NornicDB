@@ -8,7 +8,7 @@ import (
 // validateStaticQuantifierTypes rejects predicates that apply numeric
 // operators to statically non-numeric list elements. This is a compile-time
 // Cypher type error rather than a null-producing runtime expression.
-func validateStaticQuantifierTypes(cypher string, probe *pipelineCancellation) error {
+func validateStaticQuantifierTypes(cypher string) error {
 	options := defaultKeywordScanOpts()
 	options.SkipParens = false
 	options.SkipBrackets = false
@@ -28,7 +28,7 @@ func validateStaticQuantifierTypes(cypher string, probe *pipelineCancellation) e
 			if close < 0 {
 				continue
 			}
-			if err := validateStaticQuantifierCall(cypher[open+1 : close], probe); err != nil {
+			if err := validateStaticQuantifierCall(cypher[open+1 : close]); err != nil {
 				return err
 			}
 		}
@@ -36,7 +36,7 @@ func validateStaticQuantifierTypes(cypher string, probe *pipelineCancellation) e
 	return nil
 }
 
-func validateStaticQuantifierCall(inner string, probe *pipelineCancellation) error {
+func validateStaticQuantifierCall(inner string) error {
 	inner = StripComments(inner)
 	inIndex := findKeywordIndexInContext(inner, "IN")
 	if inIndex <= 0 {

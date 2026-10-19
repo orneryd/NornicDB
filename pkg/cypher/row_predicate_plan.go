@@ -86,7 +86,7 @@ func (scope compiledRowScope) lookup(name string) (interface{}, bool) {
 	return nil, false
 }
 
-func (scope compiledRowScope) materialize(probe *pipelineCancellation) map[string]interface{} {
+func (scope compiledRowScope) materialize() map[string]interface{} {
 	var row map[string]interface{}
 	if scope.values != nil {
 		row = *scope.values
@@ -124,10 +124,10 @@ func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) 
 func (operand *rowOperand) evaluateWithCancellation(e *StorageExecutor, scope compiledRowScope, probe *pipelineCancellation) (plannedRowValue, bool, error) {
 	scope.executor = e
 	if operand.compiled == nil {
-		value, ok := operand.resolveScope(scope, probe)
+		value, ok := operand.resolveScope(scope)
 		if !ok && operand.kind == rowOperandPropertyChain {
 			if base, bound := scope.lookup(operand.variable); bound {
-				return plannedRowValue{}, false, rowPropertyChainTypeError(base, operand.chain, probe)
+				return plannedRowValue{}, false, rowPropertyChainTypeError(base, operand.chain)
 			}
 		}
 		integer, isInteger := cypherIntegerOperand(value)
@@ -196,10 +196,10 @@ func (handler nullEvaluationHandler) evaluate(value interface{}) bool {
 // doesn't bind the operand's variable or parameter; the caller then evaluates
 // the part as text, as evaluateRowExpression would resolve it further.
 func (o *rowOperand) resolve(values map[string]interface{}) (interface{}, bool) {
-	return o.resolveScope(compiledRowScope{values: &values}, nil)
+	return o.resolveScope(compiledRowScope{values: &values})
 }
 
-func (o *rowOperand) resolveScope(scope compiledRowScope, probe *pipelineCancellation) (interface{}, bool) {
+func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
 	switch o.kind {
 	case rowOperandLiteral:
 		return o.literal, true
@@ -209,7 +209,7 @@ func (o *rowOperand) resolveScope(scope compiledRowScope, probe *pipelineCancell
 			return nil, false
 		}
 		if scope.executor != nil {
-			base = scope.executor.queryVisibleValue(base, probe)
+			base = scope.executor.queryVisibleValue(base)
 		}
 		if o.directProperty {
 			return rowPropertyValue(base, o.chain)
@@ -611,9 +611,9 @@ func (memberships *compiledRowMemberships) prepareWithCancellation(part *rowPred
 		return
 	}
 	if part.membership != nil {
-		if value, ok := part.right.resolveScope(scope, probe); ok {
+		if value, ok := part.right.resolveScope(scope); ok {
 			if items, ok := cypherListValueWithCancellation(value, probe); ok {
-				comparable, nonComparable, hasNull := part.membership.getValidated(items, probe)
+				comparable, nonComparable, hasNull := part.membership.getValidated(items)
 				if probe != nil && probe.err != nil {
 					return
 				}
@@ -746,8 +746,8 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 			truth, _ := cypherBooleanTruth(part.operator.evaluateWithCancellation(leftValue, rightValue, probe))
 			return truth, nil
 		}
-		left, leftOK := part.left.resolveScope(scope, probe)
-		right, rightOK := part.right.resolveScope(scope, probe)
+		left, leftOK := part.left.resolveScope(scope)
+		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
 			return e.rowPredicatePartTextTruth(ctx, part, scope)
 		}
@@ -757,15 +757,15 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		truth, _ := cypherBooleanTruth(part.operator.evaluateWithCancellation(left, right, probe))
 		return truth, nil
 	case rowPredicateString:
-		left, leftOK := part.left.resolveScope(scope, probe)
-		right, rightOK := part.right.resolveScope(scope, probe)
+		left, leftOK := part.left.resolveScope(scope)
+		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
 			return e.rowPredicatePartTextTruth(ctx, part, scope)
 		}
 		truth, _ := cypherBooleanTruth(rowStringPredicateValue(left, right, part.stringPredicate))
 		return truth, nil
 	case rowPredicateIn:
-		needle, needleOK := part.left.resolveScope(scope, probe)
+		needle, needleOK := part.left.resolveScope(scope)
 		if !needleOK {
 			return e.rowPredicatePartTextTruth(ctx, part, scope)
 		}
@@ -775,22 +775,22 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 			case string, bool:
 				indexed = true
 				if prepared := memberships.find(part); prepared != nil && len(prepared.nonComparable) == 0 {
-					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull, probe), nil
+					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull), nil
 				}
 			}
 		}
-		haystack, haystackOK := part.right.resolveScope(scope, probe)
+		haystack, haystackOK := part.right.resolveScope(scope)
 		if !haystackOK {
 			return e.rowPredicatePartTextTruth(ctx, part, scope)
 		}
 		if indexed {
 			if items, ok := cypherListValueWithCancellation(haystack, probe); ok {
-				comparable, nonComparable, hasNull := part.membership.getValidated(items, probe)
+				comparable, nonComparable, hasNull := part.membership.getValidated(items)
 				if probe != nil && probe.err != nil {
 					return truthUnknown, probe.err
 				}
 				if len(nonComparable) == 0 {
-					return membershipTruth(needle, comparable, nil, hasNull, probe), nil
+					return membershipTruth(needle, comparable, nil, hasNull), nil
 				}
 			}
 		}
@@ -804,7 +804,7 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		truth, _ := cypherBooleanTruth(member)
 		return truth, nil
 	case rowPredicateIsNull, rowPredicateIsNotNull:
-		value, ok := part.left.resolveScope(scope, probe)
+		value, ok := part.left.resolveScope(scope)
 		if !ok {
 			return e.rowPredicatePartTextTruth(ctx, part, scope)
 		}
@@ -828,7 +828,7 @@ func (e *StorageExecutor) rowPredicatePartTextTruth(ctx context.Context, part *r
 // reads) whether it holds. As an operand of an AND / OR it runs with its own
 // error slot where the policy asks for one (part.isolation).
 func (e *StorageExecutor) rowPredicatePartText(ctx context.Context, part *rowPredicatePart, scope compiledRowScope) (interface{}, error) {
-	values := rowValuesWithStatementContext(ctx, part.text, scope.materialize(contextPipelineProbe(ctx)))
+	values := rowValuesWithStatementContext(ctx, part.text, scope.materialize())
 	var resolve func(context.Context, map[string]interface{}) (interface{}, bool, error)
 	if !part.predicateOnly {
 		resolve = func(_ context.Context, values map[string]interface{}) (interface{}, bool, error) {

@@ -218,7 +218,7 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, quer
 		if e.dbManager != nil {
 			// Resolve shell selections before the statement starts, including
 			// selections with no following query. Reuse USE's canonical resolver.
-			_, resolved, err := e.scopedExecutorForUse(dbName, GetAuthTokenFromContext(ctx), contextPipelineProbe(ctx))
+			_, resolved, err := e.scopedExecutorForUse(dbName, GetAuthTokenFromContext(ctx))
 			if err != nil {
 				return nil, ctx, nerrors.MarkCompileTime(err)
 			}
@@ -514,7 +514,7 @@ func shellParamsBucket(ctx context.Context) string {
 
 // cloneShellParamsByToken copies every per-caller shell-param bucket for a
 // derived executor (a request-scoped clone; each clone serves one caller).
-func cloneShellParamsByToken(e *StorageExecutor, probe *pipelineCancellation) map[string]map[string]interface{} {
+func cloneShellParamsByToken(e *StorageExecutor) map[string]map[string]interface{} {
 	e.shellParamsMu.RLock()
 	defer e.shellParamsMu.RUnlock()
 	if len(e.shellParamsByToken) == 0 {

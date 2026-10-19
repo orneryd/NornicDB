@@ -136,12 +136,12 @@ func staticArithmeticTypeName(expression string) string {
 // as the expression failure of ctx, so it fails the statement instead of
 // evaluating to null.
 func functionEvaluationFailure(ctx context.Context, err error) {
-	recordExpressionFailure(ctx, functionEvaluationError(err, contextPipelineProbe(ctx)))
+	recordExpressionFailure(ctx, functionEvaluationError(err))
 }
 
 // functionEvaluationError is the statement error for an error a registry
 // function returned, with Neo4j's status and message, for either evaluator.
-func functionEvaluationError(err error, probe *pipelineCancellation) error {
+func functionEvaluationError(err error) error {
 	var selection *cypherfn.GraphSelectionContextError
 	if errors.As(err, &selection) {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.Message{Fallback: selection.Error()})
@@ -162,7 +162,7 @@ func functionEvaluationError(err error, probe *pipelineCancellation) error {
 	if errors.As(err, &count) {
 		err = functionParameterCountError(count.Function, count.TooMany)
 	}
-	return typeMismatchFromFunctionError(err, probe)
+	return typeMismatchFromFunctionError(err)
 }
 
 // errRowArgumentUnresolved stops a registry function whose argument the row
@@ -173,7 +173,7 @@ var errRowArgumentUnresolved = errors.New("row argument unresolved")
 // and GDS's functions (isGDSFunctionName) in the row evaluator with their one
 // implementation, the function registry (pkg/cypher/fn), and its errors as
 // the other evaluator reports them.
-func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
 	var args []string
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
@@ -198,7 +198,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, functionEvaluationError(err, probe)
+		return nil, false, functionEvaluationError(err)
 	}
 	return value, true, nil
 }

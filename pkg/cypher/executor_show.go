@@ -125,7 +125,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 	if schema != nil {
 		constraintStatements := map[string]interface{}{}
 		for _, constraint := range schema.GetAllConstraints() {
-			constraintStatements[constraint.Name] = showConstraintCreateStatement(constraint, probe)
+			constraintStatements[constraint.Name] = showConstraintCreateStatement(constraint)
 		}
 		indexes := schema.GetIndexes()
 		rows = make([][]interface{}, 0, len(indexes))
@@ -166,16 +166,16 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 			var labelsOrTypes []string
 			if l, ok := idxMap["label"].(string); ok && l != "" {
 				labelsOrTypes = []string{l}
-			} else if labels := showStringList(idxMap["labels"], probe); len(labels) > 0 {
+			} else if labels := showStringList(idxMap["labels"]); len(labels) > 0 {
 				labelsOrTypes = labels
-			} else if types := showStringList(idxMap["relationshipTypes"], probe); len(types) > 0 {
+			} else if types := showStringList(idxMap["relationshipTypes"]); len(types) > 0 {
 				labelsOrTypes = types
 				entityType = string(storage.ConstraintEntityRelationship)
 			}
 			if labelsOrTypes == nil {
 				labelsOrTypes = []string{}
 			}
-			properties := showStringList(idxMap["properties"], probe)
+			properties := showStringList(idxMap["properties"])
 			if p, ok := idxMap["property"].(string); ok && p != "" && len(properties) == 0 {
 				properties = []string{p}
 			}
@@ -200,7 +200,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 				owningConstraint = oc
 				createStatement = constraintStatements[oc]
 			} else {
-				createStatement = showIndexCreateStatement(idxType, name, entityType, labelsOrTypes, properties, config, probe)
+				createStatement = showIndexCreateStatement(idxType, name, entityType, labelsOrTypes, properties, config)
 			}
 
 			// NornicDB doesn't track index reads: lastRead, readCount and
@@ -323,7 +323,7 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 				policyMode = constraint.PolicyMode
 			}
 			rows = append(rows, row(index+1, constraint.Name, constraint.Type, constraint.EffectiveEntityType(), constraint.Label, constraint.Properties,
-				ownedIndex, nil, showConstraintCreateStatement(*constraint, contextPipelineProbe(ctx)), direction, maxCount, sourceLabel, targetLabel, policyMode))
+				ownedIndex, nil, showConstraintCreateStatement(*constraint), direction, maxCount, sourceLabel, targetLabel, policyMode))
 		}
 	}
 
@@ -353,7 +353,7 @@ func showConstraintTypeCypher25(typeName string) string {
 }
 
 // showStringList reads a string list from a schema listing value.
-func showStringList(value interface{}, probe *pipelineCancellation) []string {
+func showStringList(value interface{}) []string {
 	switch v := value.(type) {
 	case []string:
 		return append([]string(nil), v...)
@@ -394,14 +394,14 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 	if err != nil {
 		return nil, err
 	}
-	sortShowRowsByName(result, contextPipelineProbe(ctx))
+	sortShowRowsByName(result)
 	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
 }
 
 // sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
 // every SHOW command (indexes and constraints by name, not creation order).
 // A listing without a string name column keeps its order.
-func sortShowRowsByName(result *ExecuteResult, probe *pipelineCancellation) {
+func sortShowRowsByName(result *ExecuteResult) {
 	column := -1
 	for i, name := range result.Columns {
 		if name == "name" {
@@ -476,7 +476,7 @@ func withShowDefaultColumns(result *ExecuteResult, defaults []string) *ExecuteRe
 }
 
 // projectShowColumns keeps columns of result, in that order.
-func projectShowColumns(result *ExecuteResult, columns []string, probe *pipelineCancellation) *ExecuteResult {
+func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult {
 	index := make(map[string]int, len(result.Columns))
 	for i, column := range result.Columns {
 		index[column] = i
@@ -521,7 +521,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	head := showCommandHead(query)
 	if len(head) == len(query) {
 		if defaults != nil {
-			return projectShowColumns(result, defaults, probe), nil
+			return projectShowColumns(result, defaults), nil
 		}
 		return result, nil
 	}
@@ -542,7 +542,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		tail = "YIELD * WHERE " + where
 		if defaults != nil {
-			result = projectShowColumns(result, defaults, probe)
+			result = projectShowColumns(result, defaults)
 		}
 	}
 	body := strings.TrimSpace(tail[len("YIELD"):])
@@ -674,7 +674,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			}
 		}
 		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx), probe); err != nil {
+		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
 			return nil, nornicerrors.MarkCompileTime(err)
 		}
 		clauses.WriteString("WITH * WHERE " + where + " ")
@@ -793,7 +793,7 @@ func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*
 
 // executeShowProcedures handles SHOW PROCEDURES command
 func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	ensureBuiltInProceduresRegistered(contextPipelineProbe(ctx))
+	ensureBuiltInProceduresRegistered()
 	registered := ListRegisteredProcedures()
 	procedures := make([][]interface{}, 0, len(registered))
 	for _, p := range registered {

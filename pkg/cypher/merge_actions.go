@@ -239,27 +239,27 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		}
 		for _, content := range [...]string{shape.startContent, shape.endContent} {
 			if _, properties := splitNodePatternProperties("(" + content + ")"); properties != "" {
-				if err := validateMergePatternProperties(e.parseMergeProperties(ctx, properties, nodeContext, relContext), "node", contextPipelineProbe(ctx)); err != nil {
+				if err := validateMergePatternProperties(e.parseMergeProperties(ctx, properties, nodeContext, relContext), "node"); err != nil {
 					return nil, nil, false, err
 				}
 			}
 		}
 		if shape.relProps != "" {
-			if err := validateMergePatternProperties(e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext), "relationship", contextPipelineProbe(ctx)); err != nil {
+			if err := validateMergePatternProperties(e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext), "relationship"); err != nil {
 				return nil, nil, false, err
 			}
 		}
 	}
 	// The match is the statement rewrite's MATCH: a property map reading
 	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
-	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25", contextPipelineProbe(ctx))
+	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, nil, false, err
 	}
 	// MERGE identity is stored identity, unlike the visible inline MATCH view.
 	// A private executor keeps this distinction local to the identity lookup;
 	// returned bindings remain raw for writes and the outer query projects them.
-	identity := e.cloneWithStorage(e.storage, contextPipelineProbe(ctx))
+	identity := e.cloneWithStorage(e.storage)
 	identity.storedPropertyIdentity = true
 	matched, err := identity.pipelineMatchRows(ctx, row, match)
 	if err != nil {

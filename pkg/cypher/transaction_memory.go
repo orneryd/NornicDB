@@ -296,13 +296,13 @@ func (t *transactionMemoryTracker) knownListBytes(values []interface{}) (int64, 
 
 // valueBytes is estimateValueBytes, with the lists collect() counted sized
 // from what it counted.
-func (t *transactionMemoryTracker) valueBytes(value interface{}, probe *pipelineCancellation) int64 {
+func (t *transactionMemoryTracker) valueBytes(value interface{}) int64 {
 	if list, ok := value.([]interface{}); ok {
 		if bytes, known := t.knownListBytes(list); known {
 			return bytes
 		}
 	}
-	return estimateValueBytes(value, probe)
+	return estimateValueBytes(value)
 }
 
 type transactionMemoryFailure struct{ err error }
@@ -535,14 +535,14 @@ func (s *memoryScope) give(n int64) {
 }
 
 // growRows adds the estimated size of rows (rowEstimator).
-func (s *memoryScope) growRows(rows []pipelineRow, probe *pipelineCancellation) error {
+func (s *memoryScope) growRows(rows []pipelineRow) error {
 	if s == nil {
 		return nil
 	}
 	estimate := rowEstimator{known: s.tracker}
 	var total int64
 	for _, row := range rows {
-		total += estimate.rowBytes(row, probe)
+		total += estimate.rowBytes(row)
 	}
 	return s.grow(total)
 }
@@ -593,7 +593,7 @@ func (a *memoryAccount) grow(n int64) error {
 }
 
 // growValue spends the estimated size of value.
-func (a *memoryAccount) growValue(value interface{}, probe *pipelineCancellation) error {
+func (a *memoryAccount) growValue(value interface{}) error {
 	if a.scope == nil {
 		return nil
 	}
@@ -604,7 +604,7 @@ func (a *memoryAccount) growValue(value interface{}, probe *pipelineCancellation
 	case string:
 		return a.grow(valueSlotBytes + stringHeaderBytes + int64(len(v)))
 	}
-	return a.grow(estimateValueBytes(value, probe))
+	return a.grow(estimateValueBytes(value))
 }
 
 func (a *memoryAccount) refill(n int64) error {
@@ -646,14 +646,14 @@ func (a *memoryAccount) close() {
 // handOver ends a nested execution that started at mark and whose caller
 // keeps rows: what the execution took goes back, and the rows count. The
 // tracker keeps its pool reservations until the statement ends.
-func (s *memoryScope) handOver(mark int64, rows [][]interface{}, probe *pipelineCancellation) error {
+func (s *memoryScope) handOver(mark int64, rows [][]interface{}) error {
 	if s == nil {
 		return nil
 	}
 	s.releaseSince(mark)
 	var total int64
 	for _, row := range rows {
-		total += estimateResultRowBytes(row, s.tracker, probe)
+		total += estimateResultRowBytes(row, s.tracker)
 	}
 	return s.grow(total)
 }
@@ -702,9 +702,9 @@ const (
 // data and length elements: from collect()'s count or the statement's size
 // cache when known, walked (and cached, a list of values or strings)
 // otherwise.
-func (t *transactionMemoryTracker) sizedValue(data unsafe.Pointer, length int, value interface{}, probe *pipelineCancellation) int64 {
+func (t *transactionMemoryTracker) sizedValue(data unsafe.Pointer, length int, value interface{}) int64 {
 	if t == nil || length < sizedValueMin {
-		return t.valueBytes(value, probe)
+		return t.valueBytes(value)
 	}
 	if list, ok := value.([]interface{}); ok {
 		if bytes, known := t.knownListBytes(list); known {
@@ -713,7 +713,7 @@ func (t *transactionMemoryTracker) sizedValue(data unsafe.Pointer, length int, v
 	}
 	key, cacheable := heldListKeyOf(value)
 	if !cacheable {
-		return estimateValueBytes(value, probe)
+		return estimateValueBytes(value)
 	}
 	t.knownMu.Lock()
 	cached, found := t.sizes[key]
@@ -721,7 +721,7 @@ func (t *transactionMemoryTracker) sizedValue(data unsafe.Pointer, length int, v
 	if found && cached.list.holds(data) {
 		return cached.bytes
 	}
-	bytes := estimateValueBytes(value, probe)
+	bytes := estimateValueBytes(value)
 	t.knownMu.Lock()
 	if t.sizes == nil {
 		t.sizes = make(map[heldListKey]heldListSize)

@@ -191,7 +191,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		position, exists := grouping.addTuple(values)
 		if !exists {
 			// A group keeps its first row, its key and its states (#1343).
-			if run.memory.reserveGroup(row, values, len(templates), probe) != nil {
+			if run.memory.reserveGroup(row, values, len(templates)) != nil {
 				run.valid = false
 				return false
 			}
@@ -643,7 +643,7 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		}
 		// A percentile keeps every input; each counts against the statement's
 		// memory limit before it is kept (#1343).
-		if state.memory.reserveStoredRow(stored, probe) != nil {
+		if state.memory.reserveStoredRow(stored) != nil {
 			return false
 		}
 		state.percentileRows = appendPipelineItem(state.percentileRows, stored, probe)
@@ -674,7 +674,7 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		}
 		// The value counts once: collect's list keeps the same value and
 		// counts it below.
-		if state.name != "collect" && state.memory.reserveValue(value, probe) != nil {
+		if state.name != "collect" && state.memory.reserveValue(value) != nil {
 			return false
 		}
 	}
@@ -682,7 +682,7 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 	case "count":
 		state.count++
 	case "collect":
-		if state.memory.reserveCollected(value, probe) != nil {
+		if state.memory.reserveCollected(value) != nil {
 			return false
 		}
 		state.values = appendPipelineItem(state.values, value, probe)

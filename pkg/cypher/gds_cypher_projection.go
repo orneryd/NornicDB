@@ -80,7 +80,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	if !ok {
 		return nil, localizedError(localization.CypherGraphProceduresConfigValueType("graphName", "String", gdsJavaType(rows[0].graphName)), nil)
 	}
-	configuration, undirected, inverse, err := gdsAggregationConfiguration(rows[0].config, probe)
+	configuration, undirected, inverse, err := gdsAggregationConfiguration(rows[0].config)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		}
 	}
 	projection.finishCounts()
-	projection.schema = gdsAggregationSchema(projection, undirected, probe)
+	projection.schema = gdsAggregationSchema(projection, undirected)
 
 	query := statementTextFromContext(ctx)
 	configuration["query"] = query
@@ -329,7 +329,7 @@ func gdsAggregationLabels(value interface{}, key, variable string) ([]string, er
 // readConcurrency, jobId and logProgress, other keys ignored as GDS ignores
 // them. It returns the configuration as GDS reports it, the undirected
 // types (nil for none) and the inverse-indexed types.
-func gdsAggregationConfiguration(value interface{}, probe *pipelineCancellation) (map[string]interface{}, []string, []string, error) {
+func gdsAggregationConfiguration(value interface{}) (map[string]interface{}, []string, []string, error) {
 	configuration := map[string]interface{}{
 		"inverseIndexedRelationshipTypes": []interface{}{}, "undirectedRelationshipTypes": []interface{}{},
 		"readConcurrency": int64(4), "logProgress": true,
@@ -369,7 +369,7 @@ func gdsAggregationConfiguration(value interface{}, probe *pipelineCancellation)
 		},
 		func(number int64) error {
 			return localizedError(localization.CypherGraphProceduresConcurrencyBelowOne(strconv.FormatInt(number, 10)), nil)
-		}, probe)
+		})
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -390,7 +390,7 @@ func gdsAggregationConfiguration(value interface{}, probe *pipelineCancellation)
 // gdsAggregationSchema is an aggregation projection's schema as GDS reports
 // it: node properties PERSISTENT, relationship properties TRANSIENT, and no
 // relationship types when there are no relationships.
-func gdsAggregationSchema(projection *GraphProjection, undirected []string, probe *pipelineCancellation) map[string]interface{} {
+func gdsAggregationSchema(projection *GraphProjection, undirected []string) map[string]interface{} {
 	var nodes, relationships []gdsElementSpec
 	schemaTypes := make(map[string]string)
 	for _, label := range projection.Labels {
@@ -411,7 +411,7 @@ func gdsAggregationSchema(projection *GraphProjection, undirected []string, prob
 		}
 		relationships = append(relationships, spec)
 	}
-	return gdsProjectionSchema(nodes, relationships, schemaTypes, "TRANSIENT", probe)
+	return gdsProjectionSchema(nodes, relationships, schemaTypes, "TRANSIENT")
 }
 
 // gdsNeo4jValueType is the Neo4j value type GDS's relationshipType message

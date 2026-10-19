@@ -223,13 +223,13 @@ func (types typeScope) adoptKinds(kinds matchSemanticScope) {
 
 // projectTypeScope is the typeScope a WITH clause projects from types: each
 // item's operand by its alias, every variable for WITH *.
-func projectTypeScope(types typeScope, cypher25 bool, clause string, probe *pipelineCancellation) typeScope {
-	return projectTypeScopeIn(types, types.static(cypher25), clause, probe)
+func projectTypeScope(types typeScope, cypher25 bool, clause string) typeScope {
+	return projectTypeScopeIn(types, types.static(cypher25), clause)
 }
 
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
-func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string, probe *pipelineCancellation) typeScope {
+func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) typeScope {
 	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	input.complete = false
 	projected := make(typeScope)
@@ -248,7 +248,7 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string, p
 		if name == "" {
 			continue
 		}
-		operand := projectedOperand(types, input, expression, probe)
+		operand := projectedOperand(types, input, expression)
 		if simpleSemanticIdentifier(name) == "" {
 			// Unaliased, a column is named by its text (WITH {a: 1}); only a
 			// name binds a variable whose members are known.
@@ -268,7 +268,7 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string, p
 // any other expression the type the static operator check gives it (a
 // literal, arithmetic, a function's result, CASE, a comparison, a map
 // projection, a comprehension, a subscript or slice of a typed list).
-func projectedOperand(types typeScope, input staticTypeScope, expression string, probe *pipelineCancellation) staticOperand {
+func projectedOperand(types typeScope, input staticTypeScope, expression string) staticOperand {
 	expression = strings.TrimSpace(expression)
 	if strings.EqualFold(expression, "null") {
 		return staticOperand{}
@@ -280,7 +280,7 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string,
 		return operandOfKind(kind)
 	}
 	if function, arguments, call := parseFunctionCallWS(expression); call {
-		if operand, typed := projectedFunctionOperand(types, input, lowerASCII(function), arguments, probe); typed {
+		if operand, typed := projectedFunctionOperand(types, input, lowerASCII(function), arguments); typed {
 			return operand
 		}
 		// A function's own result type needs no look at its arguments:
@@ -292,7 +292,7 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string,
 	if name, argument, _, aggregate := parsePipelineAggregate(expression); aggregate {
 		switch name {
 		case "collect":
-			if element := projectedOperand(types, input, argument, probe).typeName(); element != "" && element != "Null" {
+			if element := projectedOperand(types, input, argument).typeName(); element != "" && element != "Null" {
 				return knownOperand(listOfType(element))
 			}
 			return knownOperand("List<T>")
@@ -312,14 +312,14 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string,
 		}
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if operand, typed := projectedListOperand(types, input, inner, probe); typed {
+		if operand, typed := projectedListOperand(types, input, inner); typed {
 			return operand
 		}
 	}
 	if receiver, index, subscript, postfix := staticPostfixSplit(expression); postfix && subscript {
 		// An element of a typed list ([n, o][0], nodes(p)[0]) has its
 		// element type; a slice is the list's type.
-		list := projectedOperand(types, input, receiver, probe)
+		list := projectedOperand(types, input, receiver)
 		if element := elementOfType(list.typeName()); element != "" {
 			if _, _, slice := staticSliceBounds(index); slice {
 				return list
@@ -327,7 +327,7 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string,
 			return typedOperand(element)
 		}
 	}
-	operand, err := (staticOperatorChecker{scope: input}).check(expression, probe)
+	operand, err := (staticOperatorChecker{scope: input}).check(expression)
 	if err != nil {
 		return staticOperand{}
 	}
@@ -338,21 +338,21 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string,
 // a list's element type (a node of a List<Node>, an Integer of a
 // List<Integer>), a known non-list value itself (UNWIND 5), unknown for a
 // list of unknown elements.
-func unwoundOperand(types typeScope, input staticTypeScope, clause string, probe *pipelineCancellation) staticOperand {
-	return listElementOperand(types, input, unwindSourceExpression(clause), probe)
+func unwoundOperand(types typeScope, input staticTypeScope, clause string) staticOperand {
+	return listElementOperand(types, input, unwindSourceExpression(clause))
 }
 
 // listElementOperand is the static type of an element of list (UNWIND's
 // variable, a comprehension's or quantifier's local; localBindingKind).
-func listElementOperand(types typeScope, input staticTypeScope, list string, probe *pipelineCancellation) staticOperand {
-	operand := projectedOperand(types, input, list, probe)
+func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
+	operand := projectedOperand(types, input, list)
 	if element := elementOfType(operand.typeName()); element != "" {
 		return typedOperand(element)
 	}
 	if operand.kind != "" && !strings.Contains(operand.kind, "List<") {
 		return operand
 	}
-	if typeName := staticListElementType(list, probe); typeName != "" {
+	if typeName := staticListElementType(list); typeName != "" {
 		return knownOperand(typeName)
 	}
 	if matchFuncStartAndSuffix(strings.TrimSpace(list), "range") {
@@ -363,15 +363,15 @@ func listElementOperand(types typeScope, input staticTypeScope, list string, pro
 
 // projectMatchSemanticScope is the binding-kind view of the variables a WITH
 // clause projects (projectTypeScope).
-func projectMatchSemanticScope(input matchSemanticScope, clause string, probe *pipelineCancellation) matchSemanticScope {
+func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSemanticScope {
 	scope := staticTypeScope{kinds: input}
-	return projectTypeScopeIn(typeScopeOf(scope), scope, clause, probe).kinds()
+	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).kinds()
 }
 
 // projectStaticValueTypes is the value-type view of the variables a WITH
 // clause projects (projectTypeScope).
 func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]string {
-	return projectTypeScopeIn(typeScopeOf(scope), scope, clause, nil).static(scope.cypher25).values
+	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(scope.cypher25).values
 }
 
 // projectStaticValueMembers is, in a Cypher 25 statement, the member-type
@@ -380,7 +380,7 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 	if !scope.cypher25 {
 		return nil
 	}
-	return projectTypeScopeIn(typeScopeOf(scope), scope, clause, nil).static(true).members
+	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(true).members
 }
 
 // carryStaticSubqueryImports models both possible global-aggregate rows. A
@@ -474,14 +474,14 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool, probe *pipelineCancellation) (typeScope, error) {
+func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
 	initial, scoped, ok := callSubqueryImports(callText, outer)
 	if !ok {
 		return nil, nil
 	}
 	var returned typeScope
 	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch, probe)
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
 		if !ok || len(clauses) == 0 {
 			continue
 		}
@@ -495,17 +495,17 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 			retained = maps.Clone(initial)
 			_, importing, _ = branchLeadingWithImport(branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
 			if importing {
-				for name := range projectTypeScope(initial, cypher25, clauses[0].text, probe) {
+				for name := range projectTypeScope(initial, cypher25, clauses[0].text) {
 					delete(retained, name)
 				}
 			}
 			for name := range retained {
-				if branchDeclaresVariable(branch, name, probe) {
+				if branchDeclaresVariable(branch, name) {
 					delete(retained, name)
 				}
 			}
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained}, probe)
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
 		if err != nil {
 			if !scoped {
 				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
@@ -521,7 +521,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		last := clauses[len(clauses)-1]
 		if len(branches) == 1 && complete && last.kind == pipelineClauseReturn {
 			returnClause := strings.TrimSpace(last.text)
-			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]), probe)
+			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
 		}
 	}
 	return returned, nil
@@ -531,12 +531,12 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 // follows from its arguments: coalesce of arguments of one type (open when
 // one is null), nodes / relationships of a path, startNode / endNode,
 // head / last of a typed list. typed is false for any other call.
-func projectedFunctionOperand(types typeScope, input staticTypeScope, function, arguments string, probe *pipelineCancellation) (staticOperand, bool) {
+func projectedFunctionOperand(types typeScope, input staticTypeScope, function, arguments string) (staticOperand, bool) {
 	switch function {
 	case "coalesce":
 		operand := staticOperand{}
 		for index, argument := range splitTopLevelComma(arguments) {
-			typed := projectedOperand(types, input, argument, probe)
+			typed := projectedOperand(types, input, argument)
 			if typed.typeName() == "" || (index > 0 && typed.typeName() != operand.typeName()) {
 				return staticOperand{}, true
 			}
@@ -550,7 +550,7 @@ func projectedFunctionOperand(types typeScope, input staticTypeScope, function, 
 	case "startnode", "endnode":
 		return knownOperand("Node"), true
 	case "head", "last":
-		if element := elementOfType(projectedOperand(types, input, arguments, probe).kind); element != "" {
+		if element := elementOfType(projectedOperand(types, input, arguments).kind); element != "" {
 			return typedOperand(element), true
 		}
 	}
@@ -566,9 +566,9 @@ func projectedFunctionOperand(types typeScope, input staticTypeScope, function, 
 // List<List<Integer>>), or of that element's type when it projects nothing
 // ([at IN l WHERE …]). typed is false when the elements' types differ or
 // aren't known.
-func projectedListOperand(types typeScope, input staticTypeScope, inner string, probe *pipelineCancellation) (staticOperand, bool) {
+func projectedListOperand(types typeScope, input staticTypeScope, inner string) (staticOperand, bool) {
 	if variable, listExpression, _, projection, comprehension := parseListComprehension(inner); comprehension {
-		element := listElementOperand(types, input, listExpression, probe)
+		element := listElementOperand(types, input, listExpression)
 		if strings.TrimSpace(projection) == "" {
 			if typeName := element.typeName(); typeName != "" && typeName != "Null" {
 				return knownOperand(listOfType(typeName)), true
@@ -580,7 +580,7 @@ func projectedListOperand(types typeScope, input staticTypeScope, inner string, 
 			scope[name] = operand
 		}
 		scope[variable] = element
-		projected := projectedOperand(scope, scope.static(input.cypher25), projection, probe).typeName()
+		projected := projectedOperand(scope, scope.static(input.cypher25), projection).typeName()
 		if projected == "" || projected == "Null" {
 			return staticOperand{}, false
 		}
@@ -591,7 +591,7 @@ func projectedListOperand(types typeScope, input staticTypeScope, inner string, 
 	}
 	element := ""
 	for _, item := range splitTopLevelComma(inner) {
-		typed := projectedOperand(types, input, item, probe).typeName()
+		typed := projectedOperand(types, input, item).typeName()
 		if typed == "Map" {
 			typed = "Map, Node or Relationship"
 		}

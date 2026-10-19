@@ -213,7 +213,7 @@ func gdsLosslessLong(value float64) bool {
 // Integer reads preserve Long values exactly and refuse other property types;
 // Double reads use GDS's NaN missing-value sentinel (including Long.MIN_VALUE).
 // An empty requested type reads the property's exact projected storage type.
-func (p *GraphProjection) nodePropertyValue(id, key, requested string, probe *pipelineCancellation) (interface{}, error) {
+func (p *GraphProjection) nodePropertyValue(id, key, requested string) (interface{}, error) {
 	kind := p.NodePropertyTypes[key]
 	if requested == "" {
 		requested = kind

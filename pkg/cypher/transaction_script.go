@@ -112,7 +112,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 
 	switch action {
 	case "COMMIT":
-		if _, err := e.handleCommit(contextPipelineProbe(ctx)); err != nil {
+		if _, err := e.handleCommit(); err != nil {
 			return nil, err
 		}
 		return result, nil
@@ -170,7 +170,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return nil, e.abortTransaction(ctx, err)
 	}
 
-	if _, err := e.handleCommit(contextPipelineProbe(ctx)); err != nil {
+	if _, err := e.handleCommit(); err != nil {
 		return nil, err
 	}
 	return projected, nil

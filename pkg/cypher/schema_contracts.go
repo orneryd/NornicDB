@@ -235,7 +235,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	// label.
 	for _, name := range newNames {
 		if index, owned := schema.ConstraintPropertyIndex(name); owned {
-			if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties, contextPipelineProbe(ctx)); err != nil {
+			if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties); err != nil {
 				return nil, true, err
 			}
 		}

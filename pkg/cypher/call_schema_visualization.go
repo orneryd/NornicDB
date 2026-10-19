@@ -34,7 +34,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	virtualNodes := make([]*storage.Node, 0, len(labels))
 	virtualByLabel := make(map[string]*storage.Node, len(labels))
 	for _, label := range sortedStringSet(labels) {
-		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label, probe)
+		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label)
 		node := &storage.Node{
 			ID:         storage.NodeID("-" + strconv.Itoa(len(virtualNodes)+1)),
 			Labels:     []string{label},
@@ -86,7 +86,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}, nil
 }
 
-func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label string, probe *pipelineCancellation) ([]string, []string) {
+func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label string) ([]string, []string) {
 	indexes := []string{}
 	constraints := []string{}
 	ownedIndexes := make(map[string]bool)
@@ -94,7 +94,7 @@ func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label strin
 		if constraint.EffectiveEntityType() != storage.ConstraintEntityNode {
 			continue
 		}
-		if statement, ok := showConstraintCreateStatement(constraint, probe).(string); ok {
+		if statement, ok := showConstraintCreateStatement(constraint).(string); ok {
 			constraints = append(constraints, statement)
 		}
 		ownedIndexes[constraint.OwnedIndex] = true

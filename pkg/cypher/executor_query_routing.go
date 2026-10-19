@@ -52,10 +52,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)
 	}
-	if scoped := e.withStatementPropertyViews(cypher, contextPipelineProbe(ctx)); scoped != nil {
+	if scoped := e.withStatementPropertyViews(cypher); scoped != nil {
 		return scoped.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
-	defer func() { e.projectQueryResultProperties(result, contextPipelineProbe(ctx)) }()
+	defer func() { e.projectQueryResultProperties(result) }()
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && err == nil {
 			result, err = nil, recorded
@@ -105,7 +105,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
 			!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
 			!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
-			if _, ok := canExecuteAsPipeline(cypher, contextPipelineProbe(ctx)); ok {
+			if _, ok := canExecuteAsPipeline(cypher); ok {
 				return e.executeRequiredPipeline(ctx, cypher)
 			}
 		}
@@ -459,7 +459,7 @@ func (e *StorageExecutor) validateSyntaxANTLRWithCancellation(cypher string, cyp
 	if err := e.validateSyntaxNornic(cypher); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher, cypher25, probe); err != nil {
+	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := validateKnownFunctions(cypher); err != nil {

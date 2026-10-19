@@ -92,7 +92,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := nodeSimilarityRows(projection, graph, config, contextPipelineProbe(ctx))
+	rows, err := nodeSimilarityRows(projection, graph, config)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 	if err != nil {
 		return config, err
 	}
-	if config.cutoff, err = c.number("similarityCutoff", "Double", config.cutoff, contextPipelineProbe(ctx)); err != nil {
+	if config.cutoff, err = c.number("similarityCutoff", "Double", config.cutoff); err != nil {
 		return config, err
 	}
 	if config.cutoff < 0 || config.cutoff > 1 || math.IsNaN(config.cutoff) {
@@ -118,11 +118,11 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 	// An explicit cutoff of 0 keeps the pairs that share nothing, as GDS
 	// does (#1197 review); the default keeps only pairs sharing a neighbour.
 	config.includeZero = c.has("similarityCutoff") && config.cutoff == 0
-	degreeCutoff, err := c.integer("degreeCutoff", "Integer", 1, 1<<31-1, 1, false, contextPipelineProbe(ctx))
+	degreeCutoff, err := c.integer("degreeCutoff", "Integer", 1, 1<<31-1, 1, false)
 	if err != nil {
 		return config, err
 	}
-	upperDegreeCutoff, err := c.integer("upperDegreeCutoff", "Integer", 1, 1<<31-1, 1<<31-1, false, contextPipelineProbe(ctx))
+	upperDegreeCutoff, err := c.integer("upperDegreeCutoff", "Integer", 1, 1<<31-1, 1<<31-1, false)
 	if err != nil {
 		return config, err
 	}
@@ -137,7 +137,7 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 		key           string
 		min, fallback int64
 	}{{"topK", 1, 10}, {"bottomK", 1, 10}, {"topN", 0, 0}, {"bottomN", 0, 0}} {
-		value, err := c.integer(limit.key, "Integer", limit.min, 1<<31-1, limit.fallback, false, contextPipelineProbe(ctx))
+		value, err := c.integer(limit.key, "Integer", limit.min, 1<<31-1, limit.fallback, false)
 		if err != nil {
 			return config, err
 		}
@@ -179,7 +179,7 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 	if config.relationshipTypes, err = c.names("relationshipTypes"); err != nil {
 		return config, err
 	}
-	if _, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false, contextPipelineProbe(ctx)); err != nil {
+	if _, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false); err != nil {
 		return config, err
 	}
 	if _, err := c.jobID(); err != nil {
@@ -325,7 +325,7 @@ func nodeSimilarityNeighbors(graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
 	return neighbors, incoming
 }
 
-func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig, probe *pipelineCancellation) ([][]interface{}, error) {
+func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) ([][]interface{}, error) {
 	size := len(graph.nodes)
 	neighbors, incoming := nodeSimilarityNeighbors(graph)
 	eligible := func(node int) bool {
@@ -333,7 +333,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 		return degree >= config.degreeCutoff && degree <= config.upperDegreeCutoff
 	}
 	weighted := config.weightRequested || config.weightProperty != ""
-	component, err := nodeSimilarityComponents(proj, graph, config, probe)
+	component, err := nodeSimilarityComponents(proj, graph, config)
 	if err != nil {
 		return nil, err
 	}
@@ -405,13 +405,13 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 // projected property's value, or its connected component (the
 // relationships read both ways); nil without useComponents. Nodes without
 // the property share one component, the property's default, as in GDS.
-func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig, probe *pipelineCancellation) ([]int64, error) {
+func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) ([]int64, error) {
 	size := len(graph.nodes)
 	component := make([]int64, size)
 	switch {
 	case config.componentProperty != "":
 		for i, id := range graph.nodes {
-			value, err := proj.nodePropertyValue(id, config.componentProperty, "Integer", probe)
+			value, err := proj.nodePropertyValue(id, config.componentProperty, "Integer")
 			if err != nil {
 				return nil, err
 			}

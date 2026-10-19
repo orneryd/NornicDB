@@ -59,7 +59,7 @@ func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expres
 		if !ok {
 			return nil, false
 		}
-		props[expression.key] = normalizePropValue(value, contextPipelineProbe(ctx))
+		props[expression.key] = normalizePropValue(value)
 	}
 	return props, true
 }
@@ -120,13 +120,13 @@ func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor
 // pipelinePropertiesKey is a key for a node pattern's evaluated properties:
 // equal for equal maps (relationshipMergeIdentityValuesKey's encoding). ok
 // is false for a value that key can't encode.
-func pipelinePropertiesKey(props map[string]interface{}, probe *pipelineCancellation) (string, bool) {
+func pipelinePropertiesKey(props map[string]interface{}) (string, bool) {
 	keys := make([]string, 0, len(props))
 	for key := range props {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	encoded, ok := relationshipMergeIdentityValuesKey(props, keys, probe)
+	encoded, ok := relationshipMergeIdentityValuesKey(props, keys)
 	if !ok {
 		return "", false
 	}

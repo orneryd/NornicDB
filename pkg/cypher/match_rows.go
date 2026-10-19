@@ -43,7 +43,7 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 			} else if edge, ok := edgeMap[varName]; ok {
 				receiver = edge
 			}
-			if value, supported := rowPropertyValue(e.queryVisibleValue(receiver, nil), propName); supported && value != nil {
+			if value, supported := rowPropertyValue(e.queryVisibleValue(receiver), propName); supported && value != nil {
 				return value
 			}
 			continue
@@ -635,7 +635,7 @@ func splitOutsideParens(s string, delim rune) []string {
 // filterNodesByProperties filters nodes to only include those matching ALL specified properties.
 // This is used for MATCH pattern property filtering like MATCH (n:Label {prop: value}).
 // Uses parallel execution for large datasets (>1000 nodes) for improved performance.
-func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props map[string]interface{}, probe *pipelineCancellation) []*storage.Node {
+func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props map[string]interface{}) []*storage.Node {
 	if len(props) == 0 {
 		return nodes
 	}
@@ -643,7 +643,7 @@ func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props m
 	// The node-pattern property test (nodePropertiesMatch) is the one owner
 	// of pattern-property equality.
 	filterFn := func(node *storage.Node) bool {
-		return e.nodeMatchesProps(node, props, probe)
+		return e.nodeMatchesProps(node, props)
 	}
 
 	// Use parallel filtering for large datasets

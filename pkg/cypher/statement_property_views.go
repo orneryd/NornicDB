@@ -27,15 +27,15 @@ type edgePropertyViewBody struct {
 	properties map[string]interface{}
 }
 
-func (e *StorageExecutor) withStatementPropertyViews(query string, probe *pipelineCancellation) *StorageExecutor {
+func (e *StorageExecutor) withStatementPropertyViews(query string) *StorageExecutor {
 	if e.statementPropertyViews != nil || !e.queryPropertyDecayEnabled() {
 		return nil
 	}
 	requirements := QueryPermissionRequirements(query)
-	if requirements.Write || requirements.Schema || requirements.Admin || !isCacheableReadQuery(query, probe) {
+	if requirements.Write || requirements.Schema || requirements.Admin || !isCacheableReadQuery(query) {
 		return nil
 	}
-	scoped := e.cloneWithStorage(e.storage, probe)
+	scoped := e.cloneWithStorage(e.storage)
 	scoped.statementPropertyViews = &statementPropertyViews{projection: storage.NewQueryResultProjection(e.storage)}
 	return scoped
 }

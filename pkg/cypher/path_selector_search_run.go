@@ -361,7 +361,7 @@ func (s *pathSearch) reachable(p int32, depth int) bool {
 // nextLevel adds the level one longer than the last: the products a path
 // (a walk that repeats no relationship) of that length reaches. It reports
 // whether there is one.
-func (s *pathSearch) nextLevel(probe *pipelineCancellation) bool {
+func (s *pathSearch) nextLevel() bool {
 	if s.ctx.Err() != nil {
 		return false
 	}
@@ -421,7 +421,7 @@ func (s *pathSearch) nextLevel(probe *pipelineCancellation) bool {
 				}
 				entry.witness = &pathSearchLink{product: from.product, step: pred.step, prev: link}
 				return false
-			}, probe)
+			})
 		}
 		if entry.witness != nil {
 			live = append(live, entry)
@@ -445,7 +445,7 @@ func (s *pathSearch) nextLevel(probe *pipelineCancellation) bool {
 // back to the first; it stops when yield returns false. It returns whether
 // it was not stopped, whether it found a path, and, when it found none, the
 // relationships of used that blocked it.
-func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]struct{}, hops []pathSearchHop, yield func([]pathSearchHop) bool, probe *pipelineCancellation) (bool, bool, []storage.EdgeID) {
+func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]struct{}, hops []pathSearchHop, yield func([]pathSearchHop) bool) (bool, bool, []storage.EdgeID) {
 	if s.ctx.Err() != nil {
 		return false, false, nil
 	}
@@ -485,7 +485,7 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 			}
 			used[id] = struct{}{}
 		}
-		keepGoing, foundBelow, below := s.trails(depth-1, pred.entry, used, append(hops, pathSearchHop{product: from.product, step: pred.step}), yield, probe)
+		keepGoing, foundBelow, below := s.trails(depth-1, pred.entry, used, append(hops, pathSearchHop{product: from.product, step: pred.step}), yield)
 		if !s.repeatable {
 			delete(used, id)
 		}
@@ -546,7 +546,7 @@ type pathSearchTarget struct {
 
 // trace offers the paths to entry of the level at depth to take, until it
 // returns false; one path (need 1) is the entry's witness first.
-func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearchPath) bool, probe *pipelineCancellation) {
+func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearchPath) bool) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -569,13 +569,13 @@ func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearc
 			return false
 		}
 		return take(path)
-	}, probe)
+	})
 }
 
 // run searches from source and returns the rows of the selected paths to
 // each end node; bind makes a path's row and reports whether the path
 // counts (holds the pattern's predicates that apply to whole paths).
-func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func(pathSearchPath) (pipelineRow, bool), probe *pipelineCancellation) []pipelineRow {
+func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
 	if s.ctx.Err() != nil {
 		return nil
 	}
@@ -614,7 +614,7 @@ func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func
 					found++
 				}
 				return groups || found < need
-			}, probe)
+			})
 			switch {
 			case groups && found > 0:
 				target.remaining--
@@ -622,7 +622,7 @@ func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func
 				target.remaining -= found
 			}
 		}
-		if s.ctx.Err() != nil || s.done(targets) || s.maxLength >= 0 && depth >= s.maxLength || !s.nextLevel(probe) {
+		if s.ctx.Err() != nil || s.done(targets) || s.maxLength >= 0 && depth >= s.maxLength || !s.nextLevel() {
 			return rows
 		}
 	}

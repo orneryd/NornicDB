@@ -20,7 +20,7 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	if listValue == nil {
 		return nil, true, nil
 	}
-	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate), nil)
+	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate))
 	// rowReduceLoop is shared with the compiled row programs; the step
 	// closure samples this statement's cancellation once per element, as
 	// runReduceFormWithCancellation does.

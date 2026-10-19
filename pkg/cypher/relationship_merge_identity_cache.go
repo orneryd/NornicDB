@@ -39,14 +39,14 @@ func newRelationshipMergeIdentityCache() *relationshipMergeIdentityCache {
 }
 
 // relationships is findRelationshipsForMerge through the cache.
-func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}, probe *pipelineCancellation) ([]*storage.Edge, error) {
+func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error) {
 	if c == nil || mergeIdentityCacheDisabled {
-		return findRelationshipsForMerge(store, startID, endID, relType, matchProps, probe)
+		return findRelationshipsForMerge(store, startID, endID, relType, matchProps)
 	}
-	if relationshipMergeIdentityContainsNaN(matchProps, probe) {
+	if relationshipMergeIdentityContainsNaN(matchProps) {
 		return nil, nil
 	}
-	keys := sortedIdentityKeys(matchProps, probe)
+	keys := sortedIdentityKeys(matchProps)
 	entryKey := relationshipMergeIdentityEntryKey(startID, endID, relType, keys)
 	entry, ok := c.entries[entryKey]
 	if !ok {
@@ -56,11 +56,11 @@ func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, sta
 		}
 		entry = &relationshipMergeIdentityEntry{keys: keys, byKey: make(map[string][]*storage.Edge, len(edges))}
 		for _, edge := range edges {
-			entry.add(edge, probe)
+			entry.add(edge)
 		}
 		c.entries[entryKey] = entry
 	}
-	key, ok := relationshipMergeIdentityValuesKey(matchProps, keys, probe)
+	key, ok := relationshipMergeIdentityValuesKey(matchProps, keys)
 	if !ok {
 		return nil, nil
 	}
@@ -69,13 +69,13 @@ func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, sta
 
 // created records a relationship the MERGE created (and nothing else
 // changed) in its pair's entries.
-func (c *relationshipMergeIdentityCache) created(edge *storage.Edge, probe *pipelineCancellation) {
+func (c *relationshipMergeIdentityCache) created(edge *storage.Edge) {
 	if c == nil || edge == nil {
 		return
 	}
 	for entryKey, entry := range c.entries {
 		if entryKey == relationshipMergeIdentityEntryKey(edge.StartNode, edge.EndNode, edge.Type, entry.keys) {
-			entry.add(edge, probe)
+			entry.add(edge)
 		}
 	}
 }
@@ -87,13 +87,13 @@ func (c *relationshipMergeIdentityCache) reset() {
 	}
 }
 
-func (entry *relationshipMergeIdentityEntry) add(edge *storage.Edge, probe *pipelineCancellation) {
-	if key, ok := relationshipMergeIdentityValuesKey(edge.Properties, entry.keys, probe); ok {
+func (entry *relationshipMergeIdentityEntry) add(edge *storage.Edge) {
+	if key, ok := relationshipMergeIdentityValuesKey(edge.Properties, entry.keys); ok {
 		entry.byKey[key] = append(entry.byKey[key], edge)
 	}
 }
 
-func sortedIdentityKeys(props map[string]interface{}, probe *pipelineCancellation) []string {
+func sortedIdentityKeys(props map[string]interface{}) []string {
 	keys := make([]string, 0, len(props))
 	for key := range props {
 		keys = append(keys, key)
@@ -116,18 +116,18 @@ func relationshipMergeIdentityEntryKey(startID, endID storage.NodeID, relType st
 // (-0.0 and 0.0, 1.0 and 1) canonically equal, and positiveZero does the same
 // for a FLOAT kept as float32. ok is false when a key is
 // missing or a value contains NaN: such properties match nothing.
-func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []string, probe *pipelineCancellation) (string, bool) {
+func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []string) (string, bool) {
 	var key strings.Builder
 	for _, name := range keys {
 		value, ok := props[name]
 		if !ok {
 			return "", false
 		}
-		normalized := normalizeRelationshipMergeIdentityValue(value, probe)
-		if relationshipMergeIdentityContainsNaN(normalized, probe) {
+		normalized := normalizeRelationshipMergeIdentityValue(value)
+		if relationshipMergeIdentityContainsNaN(normalized) {
 			return "", false
 		}
-		encoded, err := json.Marshal(canonicalUnwindMergeValue(positiveZero(normalized, probe), probe))
+		encoded, err := json.Marshal(canonicalUnwindMergeValue(positiveZero(normalized)))
 		if err != nil {
 			return "", false
 		}
@@ -139,7 +139,7 @@ func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []str
 
 // positiveZero replaces a negative float32 zero in value with a positive one:
 // the two compare equal, but their canonical forms differ.
-func positiveZero(value interface{}, probe *pipelineCancellation) interface{} {
+func positiveZero(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case float32:
 		if typed == 0 {
@@ -148,7 +148,7 @@ func positiveZero(value interface{}, probe *pipelineCancellation) interface{} {
 	case []interface{}:
 		var out []interface{}
 		for i, item := range typed {
-			if fixed := positiveZero(item, probe); !isSameZero(fixed, item) {
+			if fixed := positiveZero(item); !isSameZero(fixed, item) {
 				if out == nil {
 					out = append([]interface{}(nil), typed...)
 				}
@@ -161,7 +161,7 @@ func positiveZero(value interface{}, probe *pipelineCancellation) interface{} {
 	case map[string]interface{}:
 		var out map[string]interface{}
 		for key, item := range typed {
-			if fixed := positiveZero(item, probe); !isSameZero(fixed, item) {
+			if fixed := positiveZero(item); !isSameZero(fixed, item) {
 				if out == nil {
 					out = make(map[string]interface{}, len(typed))
 					for k, v := range typed {

@@ -129,7 +129,7 @@ func toFloat32(v interface{}) (float32, bool) {
 	return float32(f), ok
 }
 
-func toStringSlice(v interface{}, probe *pipelineCancellation) []string {
+func toStringSlice(v interface{}) []string {
 	switch t := v.(type) {
 	case []string:
 		return t

@@ -93,14 +93,14 @@ func simplePropertyWrites(before map[string]interface{}, key string, value inter
 // x = props (replace true) on an entity with properties before.
 func mapWrites(before, props map[string]interface{}, replace bool) int {
 	var writes setWrites
-	writes.mapEntries(before, props, replace, nil)
+	writes.mapEntries(before, props, replace)
 	return writes.count
 }
 
 // mapEntries records x += props (replace false) or x = props (replace true)
 // on an entity whose properties before the assignment are before. props
 // holds the map's entries, nulls included.
-func (w *setWrites) mapEntries(before, props map[string]interface{}, replace bool, probe *pipelineCancellation) {
+func (w *setWrites) mapEntries(before, props map[string]interface{}, replace bool) {
 	w.endRun()
 	for key, value := range props {
 		if value != nil {

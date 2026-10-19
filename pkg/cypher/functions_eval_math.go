@@ -309,7 +309,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 				return value
 			}
 			if pathMap, ok := innerVal.(map[string]interface{}); ok {
-				if nodesList, _, hasNodes, _ := pathValueParts(pathMap, probe); hasNodes {
+				if nodesList, _, hasNodes, _ := pathValueParts(pathMap); hasNodes {
 					return nodesList
 				}
 			}
@@ -356,7 +356,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 				return value
 			}
 			if pathMap, ok := innerVal.(map[string]interface{}); ok {
-				if _, relationshipsList, _, hasRelationships := pathValueParts(pathMap, probe); hasRelationships {
+				if _, relationshipsList, _, hasRelationships := pathValueParts(pathMap); hasRelationships {
 					return relationshipsList
 				}
 			}
@@ -1029,7 +1029,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 
 		// Use point-in-polygon algorithm
-		return pointInPolygon(px, py, polygonPoints, probe)
+		return pointInPolygon(px, py, polygonPoints)
 	}
 
 	// point.contains(polygon, point) - check if polygon contains point
@@ -1067,7 +1067,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 
 		// Use point-in-polygon algorithm
-		return pointInPolygon(px, py, polygonPoints, probe)
+		return pointInPolygon(px, py, polygonPoints)
 	}
 
 	// ========================================
@@ -1150,7 +1150,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		pathValues = make(map[string]interface{}, len(paths))
 		for name, path := range paths {
 			if path != nil {
-				pathValues[name] = e.pathContextRowValue(path, probe)
+				pathValues[name] = e.pathContextRowValue(path)
 			}
 		}
 	}
@@ -1202,7 +1202,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		}
 		value, ok := e.evaluateQuantifierPredicate(ctx, predicate, values)
 		return value, ok, getExpressionFailure(ctx)
-	}, probe)
+	})
 	if probe.err != nil {
 		// The probe recorded the cancellation when it observed it.
 		return nil
@@ -1281,7 +1281,7 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	budget := expressionBudgetOf(ctx)
 	result, _, err := rowComprehensionLoop(&budget, items, func(item interface{}) {
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
-	}, holds, project, probe)
+	}, holds, project)
 	if probe.err != nil {
 		// The probe recorded the cancellation when it observed it.
 		return nil

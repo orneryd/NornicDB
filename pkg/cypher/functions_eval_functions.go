@@ -119,15 +119,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			originalEval := fnCtx.Eval
 			fnCtx.Eval = func(expression string) (interface{}, error) {
 				value, err := originalEval(expression)
-				return e.queryVisibleValue(value, probe), err
+				return e.queryVisibleValue(value), err
 			}
 			fnCtx.Nodes = make(map[string]*storage.Node, len(nodes))
 			for key, node := range nodes {
-				fnCtx.Nodes[key] = e.queryVisibleValue(node, probe).(*storage.Node)
+				fnCtx.Nodes[key] = e.queryVisibleValue(node).(*storage.Node)
 			}
 			fnCtx.Rels = make(map[string]*storage.Edge, len(rels))
 			for key, rel := range rels {
-				fnCtx.Rels[key] = e.queryVisibleValue(rel, probe).(*storage.Edge)
+				fnCtx.Rels[key] = e.queryVisibleValue(rel).(*storage.Edge)
 			}
 		}
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
@@ -207,7 +207,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 					return int64(distance)
 				}
 			}
-			if nodesList, _, hasNodes, _ := pathValueParts(v, probe); hasNodes {
+			if nodesList, _, hasNodes, _ := pathValueParts(v); hasNodes {
 				return int64(len(nodesList))
 			}
 		}
@@ -228,7 +228,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			varName := inner[:dotIdx]
 			propName := inner[dotIdx+1:]
 			if node, ok := nodes[varName]; ok {
-				_, exists := e.queryEntityProperties(node, probe)[propName]
+				_, exists := e.queryEntityProperties(node)[propName]
 				return exists
 			}
 		}
@@ -634,7 +634,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				if text, isText := input.(string); isText && text == strings.TrimSpace(argument) && !isWholeCypherQuotedString(text) {
 					input = nil
 				}
-				if err := temporalConstructorError(function, input, probe); err != nil {
+				if err := temporalConstructorError(function, input); err != nil {
 					recordExpressionFailure(ctx, err)
 				}
 			}
@@ -940,7 +940,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			propName := strings.Trim(args[1], "'\"")
 			return apocCollSortNodesByPropertyWithCancellation(listVal, propName, func(value interface{}, property string) interface{} {
-				result, _ := rowPropertyValue(e.queryVisibleValue(value, probe), property)
+				result, _ := rowPropertyValue(e.queryVisibleValue(value), property)
 				return result
 			}, probe)
 		}
@@ -1246,5 +1246,5 @@ func evaluateListAccessFunctionWithCancellation(function string, value interface
 		expected = "a string or a list"
 	}
 	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-		localization.CypherCoreFunctionArgumentInvalid(function, expected, neo4jValueRepr(value, probe)))
+		localization.CypherCoreFunctionArgumentInvalid(function, expected, neo4jValueRepr(value)))
 }

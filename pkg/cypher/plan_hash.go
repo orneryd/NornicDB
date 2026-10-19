@@ -64,7 +64,7 @@ func PlanHash(plan *ExecutionPlan) string {
 		return "0000000000000000"
 	}
 	h := fnv.New64a()
-	canonicalizePlan(h, plan.Root, nil)
+	canonicalizePlan(h, plan.Root)
 	return fmt.Sprintf("%016x", h.Sum64())
 }
 
@@ -106,7 +106,7 @@ func StatementShapeHash(redactedQuery string) string {
 // Field order is locked: OperatorType | Description | Identifiers | Arguments | Children.
 // Argument map iteration is stabilized via sorted keys; values use a typed
 // prefix byte to defeat type ambiguity.
-func canonicalizePlan(h interface{ Write([]byte) (int, error) }, op *PlanOperator, probe *pipelineCancellation) {
+func canonicalizePlan(h interface{ Write([]byte) (int, error) }, op *PlanOperator) {
 	if op == nil {
 		return
 	}
@@ -139,7 +139,7 @@ func canonicalizePlan(h interface{ Write([]byte) (int, error) }, op *PlanOperato
 	h.Write([]byte{planSepField})
 
 	for _, child := range op.Children {
-		canonicalizePlan(h, child, probe)
+		canonicalizePlan(h, child)
 		h.Write([]byte{planSepChild})
 	}
 }

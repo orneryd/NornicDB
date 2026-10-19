@@ -8,11 +8,11 @@ import (
 // pipelineProcedureCallsAreClauses reports whether every CALL in the statement
 // is a top-level procedure call. Unknown procedures are admitted so execution
 // can report their classified lookup error even when no rows reach the call.
-func pipelineProcedureCallsAreClauses(cypher string, probe *pipelineCancellation) bool {
+func pipelineProcedureCallsAreClauses(cypher string) bool {
 	if !containsFold(cypher, "CALL") || hasCallSubqueryPattern(cypher) {
 		return false
 	}
-	ensureBuiltInProceduresRegistered(probe)
+	ensureBuiltInProceduresRegistered()
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
 		procedure, found := globalProcedureRegistry.Get(extractProcedureName(cypher[position:]))
 		if found && procedure.Spec.Mode != ProcedureModeRead && !procedure.Spec.writes() && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
@@ -138,7 +138,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 					if probe.stopped() {
 						return nil, nil, false, probe.failed()
 					}
-					if err := retention.reserveResultRow(record, probe); err != nil {
+					if err := retention.reserveResultRow(record); err != nil {
 						return nil, nil, true, err
 					}
 				}
@@ -148,7 +148,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			}
 		}
 		if yieldIndex < 0 {
-			if err := retention.reserveExtendedRow(row, nil, nil, probe); err != nil {
+			if err := retention.reserveExtendedRow(row, nil, nil); err != nil {
 				return nil, nil, true, err
 			}
 			out = append(out, row)
@@ -166,7 +166,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 				return nil, nil, true, probe.err
 			}
 			// The record's values counted when the call returned it.
-			if err := retention.reserveExtendedRow(row, result.Columns, nil, probe); err != nil {
+			if err := retention.reserveExtendedRow(row, result.Columns, nil); err != nil {
 				return nil, nil, true, err
 			}
 			next := make(pipelineRow, len(row)+len(result.Columns))

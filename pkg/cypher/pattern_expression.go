@@ -299,13 +299,13 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluateRowExpressionWithContext extends the allocation-conscious row
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
-func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow, probe *pipelineCancellation) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := values[expr]; bound && !isLiteralKeyword(expr) {
 		return value, true
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base, probe), chain); resolved {
+			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain); resolved {
 				return value, true
 			}
 		}
@@ -367,7 +367,7 @@ func rowContextShapeOf(expr string) *rowContextShape {
 }
 
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow, cancellation ...*pipelineCancellation) (interface{}, bool) {
-	if value, bound := e.evaluateBoundRowValue(expr, values, contextPipelineProbe(ctx)); bound {
+	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 		return value, true
 	}
 	return e.evaluateRowExpressionShaped(ctx, expr, rowContextShapeOf(expr), values, false, cancellation...)
@@ -454,7 +454,7 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 		// A row variable, or a plain property chain on one (e.uuid),
 		// resolves without the graph-expression checks below, which can't
 		// match it.
-		if value, bound := e.evaluateBoundRowValue(expr, values, probe); bound {
+		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 			return value, true
 		}
 	}
@@ -520,7 +520,7 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 		// such as [, ] is a syntax error, not a value). Subquery expressions
 		// were evaluated above.
 		trimmed := shape.trimmed
-		nodes, rels := entityScopesFromValues(values, probe)
+		nodes, rels := entityScopesFromValues(values)
 		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)
 		if getExpressionFailure(ctx) != nil {
 			return nil, false
@@ -584,25 +584,25 @@ func (scope *rowEvaluationScope) release() {
 }
 
 func (scope *rowEvaluationScope) evaluate(ctx context.Context, e *StorageExecutor, expr string, cancellation ...*pipelineCancellation) (interface{}, bool) {
-	if value, bound := e.evaluateBoundRowValue(expr, scope.row, contextPipelineProbe(ctx)); bound {
+	if value, bound := e.evaluateBoundRowValue(expr, scope.row); bound {
 		return value, true
 	}
 	shape := rowContextShapeOf(expr)
-	values, prepared := scope.valuesFor(shape, contextPipelineProbe(ctx))
+	values, prepared := scope.valuesFor(shape)
 	return e.evaluateRowExpressionShaped(ctx, expr, shape, values, prepared, cancellation...)
 }
 
 // valuesFor is the map an expression of shape is evaluated on: the row
 // with what evaluateRowExpressionWithContext would add to it, and true, or
 // the row and false.
-func (scope *rowEvaluationScope) valuesFor(shape *rowContextShape, probe *pipelineCancellation) (pipelineRow, bool) {
+func (scope *rowEvaluationScope) valuesFor(shape *rowContextShape) (pipelineRow, bool) {
 	if rowEvaluationScopesDisabled.Load() || !shape.rowOnly {
 		return scope.row, false
 	}
 	binds := len(scope.bindings) > 0 || len(scope.parameters) > 0
 	if shape.brace && scope.failure != nil {
 		if !scope.keyedBuilt {
-			scope.keyed = scope.fill(scope.keyed, probe)
+			scope.keyed = scope.fill(scope.keyed)
 			scope.keyed["\x00mapKeyOrders"] = scope.failure
 			scope.keyedBuilt = true
 		}
@@ -612,7 +612,7 @@ func (scope *rowEvaluationScope) valuesFor(shape *rowContextShape, probe *pipeli
 		return scope.row, false
 	}
 	if !scope.plainBuilt {
-		scope.plain = scope.fill(scope.plain, probe)
+		scope.plain = scope.fill(scope.plain)
 		scope.plainBuilt = true
 	}
 	return scope.plain, true
@@ -620,7 +620,7 @@ func (scope *rowEvaluationScope) valuesFor(shape *rowContextShape, probe *pipeli
 
 // fill refills values with the row, then the value bindings and parameters
 // the row doesn't bind, as evaluateRowExpressionWithContext binds them.
-func (scope *rowEvaluationScope) fill(values pipelineRow, probe *pipelineCancellation) pipelineRow {
+func (scope *rowEvaluationScope) fill(values pipelineRow) pipelineRow {
 	if values == nil {
 		values = rowEvaluationScopeMaps.Get().(pipelineRow)
 	} else {

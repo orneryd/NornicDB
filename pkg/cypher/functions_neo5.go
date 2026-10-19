@@ -23,7 +23,7 @@ import (
 // cypherFunctionCatalog. Results and errors follow Neo4j 5.26: null in,
 // null out; an argument of a type the signature excludes is the "Type
 // mismatch: expected … but was …" SyntaxError (cypherfn.TypeMismatchError).
-func init(probe *pipelineCancellation) {
+func init() {
 	cypherfn.Register("radians", fnRadians)
 	cypherfn.Register("pi", fnMathConstant("pi", math.Pi))
 	cypherfn.Register("e", fnMathConstant("e", math.E))
@@ -74,7 +74,7 @@ func init(probe *pipelineCancellation) {
 		cypherfn.Register(name, singleValueFunction(name, fn))
 	}
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
-		cypherfn.Register(name, fnStringOperation(name, probe))
+		cypherfn.Register(name, fnStringOperation(name))
 	}
 	for _, name := range []string{"tointeger", "toint", "tofloat", "toboolean", "tostring"} {
 		convert := map[string]versionedConversion{
@@ -82,9 +82,9 @@ func init(probe *pipelineCancellation) {
 			"tofloat": sameInEveryVersion(convertToFloatOrNull), "toboolean": sameInEveryVersion(convertToBooleanOrNull),
 			"tostring": convertToStringInVersion,
 		}[name]
-		cypherfn.Register(name, fnScalarConversion(name, convert, false, probe))
+		cypherfn.Register(name, fnScalarConversion(name, convert, false))
 		if name != "toint" {
-			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true, probe))
+			cypherfn.Register(name+"ornull", fnScalarConversion(name, convert, true))
 		}
 	}
 }
@@ -312,7 +312,7 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return items, nil
 }
 
-func fnStringOperation(name string, probe *pipelineCancellation) cypherfn.Func {
+func fnStringOperation(name string) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		minimum, maximum := 2, 2
 		if name == "substring" {
@@ -339,7 +339,7 @@ func fnStringOperation(name string, probe *pipelineCancellation) cypherfn.Func {
 		}
 		if name == "split" {
 			if delimiters, isList := values[1].([]interface{}); isList {
-				return splitAtAnyDelimiter(name, text, delimiters, probe)
+				return splitAtAnyDelimiter(name, text, delimiters)
 			}
 		}
 		if name == "replace" || name == "split" {
@@ -410,7 +410,7 @@ func sameInEveryVersion(convert func(interface{}) interface{}) versionedConversi
 	return func(value interface{}, _ bool) interface{} { return convert(value) }
 }
 
-func fnScalarConversion(name string, convert versionedConversion, orNull bool, probe *pipelineCancellation) cypherfn.Func {
+func fnScalarConversion(name string, convert versionedConversion, orNull bool) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
@@ -419,9 +419,9 @@ func fnScalarConversion(name string, convert versionedConversion, orNull bool, p
 		if err != nil || value == nil {
 			return nil, err
 		}
-		if !orNull && !validConversionArgument(name, value, ctx.Cypher25, probe) {
+		if !orNull && !validConversionArgument(name, value, ctx.Cypher25) {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
-				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value, probe)))
+				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value)))
 		}
 		return convert(value, ctx.Cypher25), nil
 	}
@@ -506,7 +506,7 @@ func fnIsNaN(ctx cypherfn.Context, args []string) (interface{}, error) {
 // the list winning at a position; an empty delimiter cuts between
 // characters, an empty list leaves the text whole, a null delimiter gives
 // null and any other non-string one is a type error.
-func splitAtAnyDelimiter(function, text string, delimiters []interface{}, probe *pipelineCancellation) (interface{}, error) {
+func splitAtAnyDelimiter(function, text string, delimiters []interface{}) (interface{}, error) {
 	separators := make([]string, 0, len(delimiters))
 	for _, delimiter := range delimiters {
 		if delimiter == nil {
@@ -674,7 +674,7 @@ func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
 // string, 'leading' included, both ends; a null specification is a
 // TypeError. In Cypher 25 (Neo4j 2026.09) it is matched in any case, a null
 // specification is null and any other text an ArgumentError.
-func trimSpecificationForm(ctx cypherfn.Context, args []string, probe *pipelineCancellation) (interface{}, error) {
+func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil {
 		return nil, err
@@ -686,7 +686,7 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string, probe *pipelineC
 	specification, isString := values[0].(string)
 	if !isString {
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid("trim", "a String", neo4jValueRepr(values[0], probe)))
+			localization.CypherCoreFunctionArgumentInvalid("trim", "a String", neo4jValueRepr(values[0])))
 	}
 	text, _, err := stringArgument("trim", values, len(values)-1)
 	if err != nil {
@@ -729,7 +729,7 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string, probe *pipelineC
 
 func fnTrim(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) == 2 || len(args) == 3 {
-		return trimSpecificationForm(ctx, args, nil)
+		return trimSpecificationForm(ctx, args)
 	}
 	if len(args) != 1 {
 		return nil, argumentCountError("trim", "1 to 3", len(args))

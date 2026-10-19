@@ -486,8 +486,8 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 	edges, _ := e.storage.AllEdges()
 
 	export := map[string]interface{}{
-		"nodes":         e.nodesToExportFormat(nodes, contextPipelineProbe(ctx)),
-		"relationships": e.edgesToExportFormat(edges, contextPipelineProbe(ctx)),
+		"nodes":         e.nodesToExportFormat(nodes),
+		"relationships": e.edgesToExportFormat(edges),
 	}
 
 	jsonData, err := json.MarshalIndent(export, "", "  ")
@@ -511,7 +511,7 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 			filePath,
 			len(nodes),
 			len(edges),
-			e.countProperties(nodes, edges, contextPipelineProbe(ctx)),
+			e.countProperties(nodes, edges),
 			string(jsonData),
 		}},
 	}, nil
@@ -734,7 +734,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 // Helper functions
 // =============================================================================
 
-func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node, probe *pipelineCancellation) []map[string]interface{} {
+func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(nodes))
 	for i, node := range nodes {
 		result[i] = map[string]interface{}{
@@ -746,7 +746,7 @@ func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node, probe *pipe
 	return result
 }
 
-func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge, probe *pipelineCancellation) []map[string]interface{} {
+func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(edges))
 	for i, edge := range edges {
 		result[i] = map[string]interface{}{
@@ -760,7 +760,7 @@ func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge, probe *pipe
 	return result
 }
 
-func (e *StorageExecutor) countProperties(nodes []*storage.Node, edges []*storage.Edge, probe *pipelineCancellation) int {
+func (e *StorageExecutor) countProperties(nodes []*storage.Node, edges []*storage.Edge) int {
 	count := 0
 	for _, node := range nodes {
 		count += len(node.Properties)

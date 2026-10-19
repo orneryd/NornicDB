@@ -69,7 +69,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 		return nil, false, nil
 	}
 
-	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types[0], nil)
+	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types[0])
 	if err != nil {
 		return nil, false, err
 	}

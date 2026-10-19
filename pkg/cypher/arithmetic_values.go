@@ -237,17 +237,17 @@ func isNonNumericArithmeticOperand(v interface{}) bool {
 // TypeError: operand types known at compile time were rejected before the
 // statement ran). Context-aware evaluators record it
 // (recordExpressionFailure); the value helpers return null for it.
-func arithmeticError(op byte, left, right interface{}, probe *pipelineCancellation) error {
+func arithmeticError(op byte, left, right interface{}) error {
 	if divisionByZero(op, left, right) {
 		return divisionByZeroError()
 	}
 	if left == nil || right == nil {
 		return nil
 	}
-	if err := durationScaleError(op, left, right, probe); err != nil {
+	if err := durationScaleError(op, left, right); err != nil {
 		return err
 	}
-	if err := runtimeArithmeticTypeError(op, left, right, probe); err != nil {
+	if err := runtimeArithmeticTypeError(op, left, right); err != nil {
 		return err
 	}
 	if _, _, err := numericArithmetic(op, left, right); err != nil {

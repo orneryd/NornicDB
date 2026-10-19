@@ -87,7 +87,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 				if !probe.check() {
 					return nil, true, probe.err
 				}
-				if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths, probe) {
+				if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
 					filtered = append(filtered, row)
 				}
 			}
@@ -177,7 +177,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			}
 			var nodes []*storage.Node
 			if value, bound := row[pattern.variable]; bound {
-				if node, typed := value.(*storage.Node); typed && node != nil && e.pipelineNodeMatchesPattern(node, pattern, probe) {
+				if node, typed := value.(*storage.Node); typed && node != nil && e.pipelineNodeMatchesPattern(node, pattern) {
 					nodes = []*storage.Node{node}
 				}
 			} else {
@@ -195,7 +195,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
 		}
-		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where, probe)
+		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
 		for _, combination := range combinations {
 			if !probe.check() {
 				return nil, true, probe.err
@@ -218,14 +218,14 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	return out, true, nil
 }
 
-func pipelineProductPathsUnique(row pipelineRow, variables []string, probe *pipelineCancellation) bool {
+func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
 	seen := make(map[storage.EdgeID]struct{})
 	for _, variable := range variables {
 		value, ok := row[variable].(map[string]interface{})
 		if !ok {
 			return false
 		}
-		_, relationships, _, ok := pathValueParts(value, probe)
+		_, relationships, _, ok := pathValueParts(value)
 		if !ok {
 			return false
 		}

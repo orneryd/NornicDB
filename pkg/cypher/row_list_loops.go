@@ -12,7 +12,7 @@ import "context"
 // row copied once, its variables (extra of them) rebound per element. A body
 // with a subquery (localSubqueries) evaluates it per element, only where
 // reached, so the scope is a local subquery scope (localSubqueryScope).
-func rowElementScope(values map[string]interface{}, extra int, localSubqueries bool, probe *pipelineCancellation) map[string]interface{} {
+func rowElementScope(values map[string]interface{}, extra int, localSubqueries bool) map[string]interface{} {
 	scope := make(map[string]interface{}, len(values)+extra)
 	for name, value := range values {
 		scope[name] = value
@@ -28,7 +28,7 @@ func rowElementScope(values map[string]interface{}, extra int, localSubqueries b
 // rowQuantifierLoop is all / any / none / single(variable IN items WHERE
 // predicate), folded by quantifierFold. An unevaluated predicate leaves the
 // quantifier unresolved; an evaluated value uses the shared predicate contract.
-func rowQuantifierLoop(function string, items []interface{}, bind func(interface{}), predicate func() (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
+func rowQuantifierLoop(function string, items []interface{}, bind func(interface{}), predicate func() (interface{}, bool, error)) (interface{}, bool, error) {
 	fold := quantifierFold{function: function}
 	for _, item := range items {
 		bind(item)
@@ -59,7 +59,7 @@ func rowQuantifierLoop(function string, items []interface{}, bind func(interface
 // (budget, #1343): its capacity before it is made, its values as they are
 // added, checked every comprehensionCheckEvery elements. It is given back
 // once built; the row or list that keeps it counts it there.
-func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error), probe *pipelineCancellation) (interface{}, bool, error) {
+func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error)) (interface{}, bool, error) {
 	if budget.active() {
 		if err := budget.beginList(len(items)); err != nil {
 			return nil, false, err

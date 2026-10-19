@@ -105,14 +105,14 @@ func newApocExpansion(uniqueness string) *apocExpansion {
 // apocNodes reads an apoc.path node argument (the start, or a config node
 // list): a node, an element id, or a list of them; null is none. An id that
 // matches no node fails, as in APOC.
-func (e *StorageExecutor) apocNodes(argument string, value interface{}, probe *pipelineCancellation) ([]*storage.Node, error) {
+func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*storage.Node, error) {
 	switch typed := value.(type) {
 	case nil:
 		return nil, nil
 	case []interface{}:
 		var nodes []*storage.Node
 		for _, item := range typed {
-			more, err := e.apocNodes(argument, item, probe)
+			more, err := e.apocNodes(argument, item)
 			if err != nil {
 				return nil, err
 			}
@@ -189,7 +189,7 @@ func apocBoolean(value interface{}) bool {
 // a boolean setting, fails for minLevel, maxLevel and limit, and leaves any
 // other setting at its default; uniqueness is read only when readUniqueness
 // (expandConfig), and a limit below -1 fails.
-func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interface{}, readUniqueness bool, probe *pipelineCancellation) error {
+func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interface{}, readUniqueness bool) error {
 	sequence, beginAtStart := "", true
 	for key, value := range config {
 		switch key {
@@ -247,7 +247,7 @@ func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interfac
 				x.uniqueness = strings.ToUpper(text)
 			}
 		case "endNodes", "terminatorNodes", "allowlistNodes", "whitelistNodes", "denylistNodes", "blacklistNodes":
-			nodes, err := e.apocNodes(key, value, probe)
+			nodes, err := e.apocNodes(key, value)
 			if err != nil {
 				return err
 			}
@@ -450,7 +450,7 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 // apocSteps lists the relationships the filter steps follow from node: no
 // steps follow every relationship. The path algorithms (dijkstra, aStar,
 // allSimplePaths) read their relTypesAndDirections through it too (#1185).
-func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep, probe *pipelineCancellation) []*storage.Edge {
+func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
@@ -567,7 +567,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			if err != nil {
 				return nil, err
 			}
-			edges := e.apocSteps(step.node.ID, filter, probe)
+			edges := e.apocSteps(step.node.ID, filter)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
 				if probe.stopped() {
@@ -658,10 +658,10 @@ var (
 
 // apocExpansionFromArguments builds the expansion of a (start, config)
 // procedure call from its evaluated arguments.
-func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedure apocPathProcedure, probe *pipelineCancellation) (*apocExpansion, error) {
+func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedure apocPathProcedure) (*apocExpansion, error) {
 	x := newApocExpansion(procedure.uniqueness)
 	if len(args) > 0 {
-		starts, err := e.apocNodes("the start node", args[0], probe)
+		starts, err := e.apocNodes("the start node", args[0])
 		if err != nil {
 			return nil, err
 		}
@@ -678,7 +678,7 @@ func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedu
 				return nil, localizedError(localization.CypherCoreApocPathMinLevel(procedure.name), nil)
 			}
 		}
-		if err := x.configure(e, config, procedure.configurable, probe); err != nil {
+		if err := x.configure(e, config, procedure.configurable); err != nil {
 			return nil, err
 		}
 	}
@@ -704,7 +704,7 @@ func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, ro
 // callApocPathExpandConfig implements apoc.path.expandConfig(start, config)
 // :: (path).
 func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathExpandConfigProcedure, contextPipelineProbe(ctx))
+	x, err := e.apocExpansionFromArguments(args, apocPathExpandConfigProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -725,7 +725,7 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 	if len(args) > 0 {
 		start[0] = args[0]
 	}
-	x, err := e.apocExpansionFromArguments(start, apocPathExpandProcedure, contextPipelineProbe(ctx))
+	x, err := e.apocExpansionFromArguments(start, apocPathExpandProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -735,7 +735,7 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 // callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
 // config) :: (node).
 func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphNodesProcedure, contextPipelineProbe(ctx))
+	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphNodesProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -745,7 +745,7 @@ func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []
 // callApocPathSpanningTree implements apoc.path.spanningTree(start, config)
 // :: (path): a path from the start to every node reached once.
 func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathSpanningTreeProcedure, contextPipelineProbe(ctx))
+	x, err := e.apocExpansionFromArguments(args, apocPathSpanningTreeProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -757,7 +757,7 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 // relationship between two of them.
 func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	probe := contextPipelineProbe(ctx)
-	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure, probe)
+	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure)
 	if err != nil {
 		return nil, err
 	}

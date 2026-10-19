@@ -35,11 +35,11 @@ func (s *semanticBindingScope) contains(name string) bool {
 // any of the specialized CREATE executors. It intentionally consumes the same
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
-func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 bool, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isCreateSchemaOrAdministrationCommand(cypher) {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher, probe)
+	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
@@ -57,7 +57,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 b
 		case pipelineClauseWith:
 			scope = projectedBindingScope(scope, clause.text)
 		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text, probe); err != nil {
+			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:

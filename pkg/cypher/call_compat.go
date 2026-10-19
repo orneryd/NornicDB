@@ -309,7 +309,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(statementCtx con
 		if !matchesRelationshipTypes(edge, targetTypes) {
 			continue
 		}
-		doc := buildEdgeFulltextDoc(edge, targetProperties, probe)
+		doc := buildEdgeFulltextDoc(edge, targetProperties)
 		if doc == nil {
 			continue
 		}
@@ -366,11 +366,11 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(statementCtx con
 }
 
 // buildEdgeFulltextDoc mirrors buildNodeFulltextDoc for relationships.
-func buildEdgeFulltextDoc(edge *storage.Edge, properties []string, probe *pipelineCancellation) *ftDoc {
+func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
 	if edge == nil {
 		return nil
 	}
-	return buildFulltextDocFromProperties(edge.Properties, extractEdgeTextContent(edge, properties, probe), probe)
+	return buildFulltextDocFromProperties(edge.Properties, extractEdgeTextContent(edge, properties))
 }
 
 // edgeHasNonEmptyProperty mirrors nodeHasNonEmptyProperty: the
@@ -445,7 +445,7 @@ func edgePropertiesContain(edge *storage.Edge, targetProperties []string, lowerQ
 	return false
 }
 
-func extractEdgeTextContent(edge *storage.Edge, properties []string, probe *pipelineCancellation) string {
+func extractEdgeTextContent(edge *storage.Edge, properties []string) string {
 	if edge == nil {
 		return ""
 	}
@@ -786,7 +786,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity, contextPipelineProbe(ctx)); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
 		if err := schema.AddVectorIndexForEntity(indexName, token, property, int(dimension), similarity, entity); err != nil {
@@ -826,18 +826,18 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	labels, err := requiredProcedureStringList(procedure, args, 1, "labels", contextPipelineProbe(ctx))
+	labels, err := requiredProcedureStringList(procedure, args, 1, "labels")
 	if err != nil {
 		return nil, err
 	}
-	properties, err := requiredProcedureStringList(procedure, args, 2, "properties", contextPipelineProbe(ctx))
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
 	if err != nil {
 		return nil, err
 	}
 
 	// Create fulltext index using schema manager
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode, contextPipelineProbe(ctx)); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
 			return err
 		}
 		return schema.AddFulltextIndex(indexName, labels, properties)
@@ -860,18 +860,18 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 	if err != nil {
 		return nil, err
 	}
-	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes", contextPipelineProbe(ctx))
+	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes")
 	if err != nil {
 		return nil, err
 	}
-	properties, err := requiredProcedureStringList(procedure, args, 2, "properties", contextPipelineProbe(ctx))
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
 	if err != nil {
 		return nil, err
 	}
 
 	// Create fulltext index using schema manager
 	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship, contextPipelineProbe(ctx)); err != nil {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
 			return err
 		}
 		return schema.AddFulltextRelationshipIndex(indexName, relTypes, properties)

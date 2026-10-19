@@ -387,7 +387,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 // (runPipelineClauses) whose input rows are the procedure's yielded rows. It
 // declines (ok false) when a tail clause isn't a pipeline clause.
 func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
-	clauses, ok := pipelineClausesFor(tail, contextPipelineProbe(ctx))
+	clauses, ok := pipelineClausesFor(tail)
 	if !ok || len(clauses) == 0 {
 		return nil, false, nil
 	}
@@ -1564,7 +1564,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	}
 
 	// Registry-first path: canonical procedure contract for built-ins and UDFs.
-	ensureBuiltInProceduresRegistered(contextPipelineProbe(ctx))
+	ensureBuiltInProceduresRegistered()
 	procName := extractProcedureName(callCypher)
 	if proc, found := globalProcedureRegistry.Get(procName); found {
 		hasTail := strings.TrimSpace(tailCypher) != ""
@@ -1621,7 +1621,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	)
 }
 
-func (e *StorageExecutor) callDbLabels(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 	nodes, err := e.storage.AllNodes()
 	if err != nil {
 		return nil, err
@@ -1656,7 +1656,7 @@ func sortedStringSet(set map[string]bool) []string {
 	return members
 }
 
-func (e *StorageExecutor) callDbRelationshipTypes(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return nil, err
@@ -1677,7 +1677,7 @@ func (e *StorageExecutor) callDbRelationshipTypes(probe *pipelineCancellation) (
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbIndexes(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 	// Get indexes from schema manager
 	schema := e.storage.GetSchema()
 	indexes := schema.GetIndexes()
@@ -1818,19 +1818,19 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
 	return &ExecuteResult{
 		Columns: []string{"nodes", "relationships", "labels", "relationshipTypes"},
 		Rows: [][]interface{}{
-			{nodeCount, edgeCount, e.countLabels(probe), e.countRelTypes(probe)},
+			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
 		},
 	}, nil
 }
 
-func (e *StorageExecutor) countLabels(probe *pipelineCancellation) int {
+func (e *StorageExecutor) countLabels() int {
 	nodes, err := e.storage.AllNodes()
 	if err != nil {
 		return 0
@@ -1844,7 +1844,7 @@ func (e *StorageExecutor) countLabels(probe *pipelineCancellation) int {
 	return len(labelSet)
 }
 
-func (e *StorageExecutor) countRelTypes(probe *pipelineCancellation) int {
+func (e *StorageExecutor) countRelTypes() int {
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return 0
@@ -1912,7 +1912,7 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 	return e.callDbSchemaVisualizationWithContext(context.Background())
 }
 
-func (e *StorageExecutor) callDbSchemaNodeProperties(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	nodes, _ := e.storage.AllNodes()
 
 	// Collect properties per label
@@ -1942,7 +1942,7 @@ func (e *StorageExecutor) callDbSchemaNodeProperties(probe *pipelineCancellation
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbSchemaRelProperties(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	edges, _ := e.storage.AllEdges()
 
 	// Collect properties per relationship type
@@ -1970,7 +1970,7 @@ func (e *StorageExecutor) callDbSchemaRelProperties(probe *pipelineCancellation)
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbPropertyKeys(probe *pipelineCancellation) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 	nodes, _ := e.storage.AllNodes()
 	edges, _ := e.storage.AllEdges()
 
@@ -1997,8 +1997,8 @@ func (e *StorageExecutor) callDbPropertyKeys(probe *pipelineCancellation) (*Exec
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbmsProcedures(probe *pipelineCancellation) (*ExecuteResult, error) {
-	ensureBuiltInProceduresRegistered(probe)
+func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {
+	ensureBuiltInProceduresRegistered()
 	registered := ListRegisteredProcedures()
 	procedures := make([][]interface{}, 0, len(registered))
 	for _, p := range registered {

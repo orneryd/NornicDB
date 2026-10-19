@@ -32,7 +32,7 @@ func fnFormat(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, err
 	}
 	if template, isString := values[0].(string); isString {
-		return formatPrintf(template, values[1:], nil)
+		return formatPrintf(template, values[1:])
 	}
 	if len(values) > 2 {
 		return nil, functionParameterCountError("format", true)
@@ -235,7 +235,7 @@ var temporalPatternTypeNames = map[string]string{
 // pattern. A null input or pattern gives null; an input that isn't a string
 // is ProcedureCallFailed, a pattern that isn't a string a type mismatch, and
 // text the pattern doesn't read as the type a SyntaxError.
-func constructTemporalWithPattern(kind string, input, pattern interface{}, probe *pipelineCancellation) (interface{}, error) {
+func constructTemporalWithPattern(kind string, input, pattern interface{}) (interface{}, error) {
 	if input == nil || pattern == nil {
 		return nil, nil
 	}
@@ -246,7 +246,7 @@ func constructTemporalWithPattern(kind string, input, pattern interface{}, probe
 	}
 	patternText, isString := pattern.(string)
 	if !isString {
-		return nil, typeMismatchFromFunctionError(&cypherfn.TypeMismatchError{Function: kind, Expected: "String", Value: pattern}, probe)
+		return nil, typeMismatchFromFunctionError(&cypherfn.TypeMismatchError{Function: kind, Expected: "String", Value: pattern})
 	}
 	typeName := temporalPatternTypeNames[kind]
 	if value, ok := parseTemporalPattern(kind, text, patternText); ok {
@@ -264,7 +264,7 @@ func constructTemporalWithPattern(kind string, input, pattern interface{}, probe
 // A null value gives null. A verb without its value, a value without its
 // verb, a value its verb can't print and any other verb (%*d, %[1]d, %z) are
 // errors, never text in the result.
-func formatPrintf(template string, values []interface{}, probe *pipelineCancellation) (interface{}, error) {
+func formatPrintf(template string, values []interface{}) (interface{}, error) {
 	for _, value := range values {
 		if value == nil {
 			return nil, nil
@@ -295,7 +295,7 @@ func formatPrintf(template string, values []interface{}, probe *pipelineCancella
 			verbs++
 			continue
 		}
-		argument, err := formatPrintfArgument(template[start:i+1], verb, values[verbs], probe)
+		argument, err := formatPrintfArgument(template[start:i+1], verb, values[verbs])
 		if err != nil {
 			return nil, err
 		}
@@ -312,7 +312,7 @@ func formatPrintf(template string, values []interface{}, probe *pipelineCancella
 // formatPrintfArgument is value as verb prints it, or the error for a value
 // verb can't print.
 // formatPrintfCollection is display text for format(), never query source.
-func formatPrintfCollection(value interface{}, probe *pipelineCancellation) string {
+func formatPrintfCollection(value interface{}) string {
 	switch typed := value.(type) {
 	case string:
 		return quoteCypherStringLiteral(typed)
@@ -321,7 +321,7 @@ func formatPrintfCollection(value interface{}, probe *pipelineCancellation) stri
 	case []interface{}:
 		parts := make([]string, len(typed))
 		for index, item := range typed {
-			parts[index] = formatPrintfCollection(item, probe)
+			parts[index] = formatPrintfCollection(item)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case map[string]interface{}:
@@ -330,7 +330,7 @@ func formatPrintfCollection(value interface{}, probe *pipelineCancellation) stri
 			if !isSimpleCypherName(key) {
 				key = quoteCypherStringLiteral(key)
 			}
-			parts = append(parts, key+": "+formatPrintfCollection(item, probe))
+			parts = append(parts, key+": "+formatPrintfCollection(item))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:
@@ -338,14 +338,14 @@ func formatPrintfCollection(value interface{}, probe *pipelineCancellation) stri
 	}
 }
 
-func formatPrintfArgument(spec string, verb byte, value interface{}, probe *pipelineCancellation) (interface{}, error) {
+func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{}, error) {
 	switch verb {
 	case 's', 'q', 'v':
 		switch typed := value.(type) {
 		case string:
 			return typed, nil
 		case []interface{}, map[string]interface{}:
-			return formatPrintfCollection(typed, probe), nil
+			return formatPrintfCollection(typed), nil
 		}
 		return formatCypherValueString(value), nil
 	case 'd', 'b', 'o', 'c', 'U', 'x', 'X':
@@ -367,7 +367,7 @@ func formatPrintfArgument(spec string, verb byte, value interface{}, probe *pipe
 		return nil, formatTemplateVerbInvalid(spec)
 	}
 	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(value, probe)))
+		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(value)))
 }
 
 func formatTemplateVerbInvalid(spec string) error {

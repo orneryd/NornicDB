@@ -8,7 +8,7 @@ import (
 // validateStaticPropertySubscripts type-checks every subscript in text
 // (receiver[key], receiver[from..to]), wherever it appears, with scope's
 // static types. The rules are staticOperatorChecker.checkPostfix's.
-func validateStaticPropertySubscripts(text string, scope staticTypeScope, probe *pipelineCancellation) error {
+func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
 	// The scan reads raw text, local variables included ([x IN l | x[0]]),
 	// so it can't tell an undefined variable.
 	scope.complete = false
@@ -35,14 +35,14 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope, probe 
 		if !isOperandExpressionText(receiver) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
 			continue
 		}
-		if _, err := checker.checkPostfix(receiver, text[index+1:end], true, probe); err != nil {
+		if _, err := checker.checkPostfix(receiver, text[index+1:end], true); err != nil {
 			// The subscript may read a variable an enclosing expression
 			// binds itself ([r IN l | r[0]]), not the clause's.
 			local, shadowed := withoutLocalVariables(scope, text, index)
 			if !shadowed {
 				return err
 			}
-			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(receiver, text[index+1:end], true, probe); err != nil {
+			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(receiver, text[index+1:end], true); err != nil {
 				return err
 			}
 		}

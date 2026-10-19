@@ -218,16 +218,16 @@ func parseVectorTypeMember(rest string) (cypherTypeMember, bool) {
 }
 
 // matches reports whether value is of the type.
-func (spec cypherTypeSpec) matches(value interface{}, probe *pipelineCancellation) bool {
+func (spec cypherTypeSpec) matches(value interface{}) bool {
 	for _, member := range spec.members {
-		if member.matches(value, probe) {
+		if member.matches(value) {
 			return true
 		}
 	}
 	return false
 }
 
-func (member cypherTypeMember) matches(value interface{}, probe *pipelineCancellation) bool {
+func (member cypherTypeMember) matches(value interface{}) bool {
 	if value == nil {
 		switch member.name {
 		case "NULL":
@@ -235,7 +235,7 @@ func (member cypherTypeMember) matches(value interface{}, probe *pipelineCancell
 		case "NOTHING":
 			return false
 		case "UNION":
-			return !member.notNull && member.element.matches(nil, probe)
+			return !member.notNull && member.element.matches(nil)
 		}
 		return !member.notNull
 	}
@@ -245,9 +245,9 @@ func (member cypherTypeMember) matches(value interface{}, probe *pipelineCancell
 	case "NOTHING", "NULL":
 		return false
 	case "UNION":
-		return member.element.matches(value, probe)
+		return member.element.matches(value)
 	case "PROPERTY VALUE":
-		return isCypherPropertyValue(value, probe)
+		return isCypherPropertyValue(value)
 	case "VECTOR":
 		vector, err := vectorArgument(value)
 		return err == nil && (member.vectorType == nil || *member.vectorType == vector.Type) &&
@@ -258,7 +258,7 @@ func (member cypherTypeMember) matches(value interface{}, probe *pipelineCancell
 			return false
 		}
 		for _, item := range items {
-			if !member.element.matches(item, probe) {
+			if !member.element.matches(item) {
 				return false
 			}
 		}
@@ -275,7 +275,7 @@ var propertyValueTypeNames = map[string]bool{
 
 // isCypherPropertyValue reports whether value is a PROPERTY VALUE: a
 // storable scalar, or a list of storable scalars of one type.
-func isCypherPropertyValue(value interface{}, probe *pipelineCancellation) bool {
+func isCypherPropertyValue(value interface{}) bool {
 	if cypherValueKindOf(value) != valueKindList {
 		return propertyValueTypeNames[cypherTypeSystemName(value)]
 	}
@@ -293,8 +293,8 @@ func isCypherPropertyValue(value interface{}, probe *pipelineCancellation) bool 
 
 // evaluateTypePredicate applies a parsed type predicate to the operand's
 // value.
-func evaluateTypePredicate(value interface{}, negated bool, spec cypherTypeSpec, probe *pipelineCancellation) bool {
-	matched := spec.matches(value, probe)
+func evaluateTypePredicate(value interface{}, negated bool, spec cypherTypeSpec) bool {
+	matched := spec.matches(value)
 	if negated {
 		return !matched
 	}

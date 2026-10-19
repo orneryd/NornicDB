@@ -31,7 +31,7 @@ var neo4jDatabaseOptions = map[string]bool{
 // it: txLogEnrichment is OFF, DIFF or FULL (case-insensitive, stored upper
 // case). Another option Neo4j defines is not supported; any other name is
 // unknown. Both are Neo4j's ArgumentError.
-func databaseOptionValue(key string, value interface{}, probe *pipelineCancellation) (string, error) {
+func databaseOptionValue(key string, value interface{}) (string, error) {
 	if key != txLogEnrichmentOption {
 		if neo4jDatabaseOptions[key] {
 			return "", localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", localization.CypherAdminDatabaseOptionUnsupported(key))
@@ -44,7 +44,7 @@ func databaseOptionValue(key string, value interface{}, probe *pipelineCancellat
 		return upper, nil
 	}
 	return "", localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
-		localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(value, probe), "'OFF', 'DIFF', 'FULL'"))
+		localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(value), "'OFF', 'DIFF', 'FULL'"))
 }
 
 // splitDatabaseOptions cuts a CREATE DATABASE statement at its OPTIONS
@@ -65,7 +65,7 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 	}
 	options := make(map[string]string)
 	for key, raw := range fields {
-		value, err := databaseOptionValue(key, raw, contextPipelineProbe(ctx))
+		value, err := databaseOptionValue(key, raw)
 		if err != nil {
 			return "", nil, err
 		}
@@ -130,10 +130,10 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 	}
 	value := ""
 	if !remove {
-		if value, err = databaseOptionValue(key, e.parseValue(ctx, valueText), contextPipelineProbe(ctx)); err != nil {
+		if value, err = databaseOptionValue(key, e.parseValue(ctx, valueText)); err != nil {
 			return nil, true, err
 		}
-	} else if _, err := databaseOptionValue(key, "OFF", contextPipelineProbe(ctx)); err != nil {
+	} else if _, err := databaseOptionValue(key, "OFF"); err != nil {
 		return nil, true, err
 	}
 	resolved, resolveErr := e.dbManager.ResolveDatabase(name)

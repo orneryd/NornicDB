@@ -410,7 +410,7 @@ func (qc *QueryCache) Stats() (hits, misses int64, size int) {
 // cacheKey is the query and its parameters encoded in full
 // (statementCacheKey): entries are keyed by the whole key, never a hash.
 func (qc *QueryCache) cacheKey(cypher string, params map[string]interface{}) string {
-	return statementCacheKey(cypher, params, nil)
+	return statementCacheKey(cypher, params)
 }
 
 // moveToFront moves key to front of LRU list.
@@ -552,7 +552,7 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
-	return sc.get(resultCacheEntryKey(cypher, params, nil))
+	return sc.get(resultCacheEntryKey(cypher, params))
 }
 
 func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
@@ -609,7 +609,7 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
 func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration, labels []string) {
-	sc.putWithLabels(resultCacheEntryKey(cypher, params, nil), result, ttl, labels)
+	sc.putWithLabels(resultCacheEntryKey(cypher, params), result, ttl, labels)
 }
 
 func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
@@ -617,11 +617,11 @@ func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl 
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
-	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0, nil)
+	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0)
 }
 
-func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64, probe *pipelineCancellation) {
-	entities := resultHasMaterializedEntities(result, probe)
+func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -873,8 +873,8 @@ func extractLabelsFromQuery(cypher string) []string {
 // (statementCacheKey), so an entry is served only for the same statement
 // text and the same parameter values (#729). Normalizing the text keeps
 // formatting, whitespace and a trailing semicolon from defeating a hit.
-func resultCacheEntryKey(cypher string, params map[string]interface{}, probe *pipelineCancellation) string {
-	return statementCacheKey(normalizeQuery(trimTrailingStatementDelimiters(cypher)), params, probe)
+func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
+	return statementCacheKey(normalizeQuery(trimTrailingStatementDelimiters(cypher)), params)
 }
 
 // =============================================================================

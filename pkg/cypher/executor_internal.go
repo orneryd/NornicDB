@@ -76,7 +76,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 			return nil, preparationProbe.err
 		}
 	}
-	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25", preparationProbe)
+	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	e.statementAdmitted(ctx)
-	if err := e.systemDatabaseWriteError(cypher, preparationProbe); err != nil {
+	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
 	}
 
@@ -175,13 +175,13 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25", contextPipelineProbe(ctx)); err != nil {
+	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
-	if err := validateStaticPropertyAccessParameters(cypher, params, contextPipelineProbe(ctx)); err != nil {
+	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25", contextPipelineProbe(ctx)); err != nil {
+	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {

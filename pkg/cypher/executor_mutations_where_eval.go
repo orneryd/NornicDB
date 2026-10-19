@@ -171,7 +171,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	s = strings.TrimSpace(s)
 
 	if v, ok := resolveParamPathRef(ctx, s); ok {
-		return normalizePropValue(v, contextPipelineProbe(ctx))
+		return normalizePropValue(v)
 	}
 
 	// Handle arrays: [0.1, 0.2, 0.3]. An expression over a list literal
@@ -182,7 +182,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	}
 	if strings.HasPrefix(s, "[") {
 		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
-			return normalizePropValue(evaluated, contextPipelineProbe(ctx))
+			return normalizePropValue(evaluated)
 		}
 	}
 	// Handle map literals: {key: value}
@@ -221,7 +221,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 
 	if e.hasArithmeticOperator(s) {
 		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
-			return normalizePropValue(evaluated, contextPipelineProbe(ctx))
+			return normalizePropValue(evaluated)
 		}
 	}
 
@@ -251,7 +251,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	return s
 }
 
-func cloneStringAnyMap(src map[string]interface{}, probe *pipelineCancellation) map[string]interface{} {
+func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
 	dst := make(map[string]interface{}, len(src))
 	for k, v := range src {
 		dst[k] = v

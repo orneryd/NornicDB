@@ -72,7 +72,7 @@ func schemaProperties(variable string, properties []string) string {
 
 // showIndexCreateStatement is the statement that recreates a standalone
 // index, in Neo4j's form.
-func showIndexCreateStatement(indexType, name, entityType string, labelsOrTypes, properties []string, config map[string]interface{}, probe *pipelineCancellation) string {
+func showIndexCreateStatement(indexType, name, entityType string, labelsOrTypes, properties []string, config map[string]interface{}) string {
 	pattern, variable := schemaPattern(entityType, labelsOrTypes)
 	statement := "CREATE " + indexType + " INDEX " + quoteSchemaName(name) + " FOR " + pattern + " ON "
 	if indexType == "FULLTEXT" {
@@ -81,14 +81,14 @@ func showIndexCreateStatement(indexType, name, entityType string, labelsOrTypes,
 		statement += "(" + schemaProperties(variable, properties) + ")"
 	}
 	if len(config) > 0 {
-		statement += " OPTIONS {indexConfig: " + schemaConfigLiteral(config, probe) + "}"
+		statement += " OPTIONS {indexConfig: " + schemaConfigLiteral(config) + "}"
 	}
 	return statement
 }
 
 // schemaConfigLiteral writes an index configuration map as Neo4j prints it
 // in a createStatement: {`key`: value,`key2`: value2}, keys in order.
-func schemaConfigLiteral(config map[string]interface{}, probe *pipelineCancellation) string {
+func schemaConfigLiteral(config map[string]interface{}) string {
 	keys := make([]string, 0, len(config))
 	for key := range config {
 		keys = append(keys, key)
@@ -146,7 +146,7 @@ func showConstraintType(constraintType storage.ConstraintType, entityType storag
 // constraint: Neo4j's form for Neo4j's constraint types, and the documented
 // NornicDB form (docs/neo4j-migration/cypher-compatibility.md) for
 // temporal no-overlap, domain, cardinality and endpoint policy constraints.
-func showConstraintCreateStatement(c storage.Constraint, probe *pipelineCancellation) interface{} {
+func showConstraintCreateStatement(c storage.Constraint) interface{} {
 	head := "CREATE CONSTRAINT " + quoteSchemaName(c.Name) + " FOR "
 	entityType := c.EffectiveEntityType()
 	pattern, variable := schemaPattern(string(entityType), []string{c.Label})

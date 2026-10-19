@@ -52,18 +52,18 @@ var pipelineCreateTemplates = newBoundedCache[string, *pipelineCreateTemplate](5
 // property-map body. Anything else (path assignments, inline endpoint
 // definitions, parameter maps, dynamic labels/types, multiple types) makes
 // the template unusable and the general route stays authoritative.
-func (e *StorageExecutor) pipelineCreateTemplateFor(clause string, probe *pipelineCancellation) *pipelineCreateTemplate {
+func (e *StorageExecutor) pipelineCreateTemplateFor(clause string) *pipelineCreateTemplate {
 	if template, ok := pipelineCreateTemplates.get(clause); ok {
 		return template
 	}
-	template := e.buildPipelineCreateTemplate(pipelineClauseBody(clause, "CREATE"), probe)
+	template := e.buildPipelineCreateTemplate(pipelineClauseBody(clause, "CREATE"))
 	pipelineCreateTemplates.put(clause, template)
 	return template
 }
 
 // buildPipelineCreateTemplate parses one CREATE pattern body into node and
 // edge templates. usable=false on any unsupported shape.
-func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string, probe *pipelineCancellation) *pipelineCreateTemplate {
+func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineCreateTemplate {
 	template := &pipelineCreateTemplate{}
 	fragments := splitTopLevelComma(pattern)
 	for _, raw := range fragments {
@@ -103,7 +103,7 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string, probe *pip
 		for _, expression := range node.properties {
 			keys[expression.key] = nil
 		}
-		if err := validateCreatePropertyKeys("", keys, probe); err != nil {
+		if err := validateCreatePropertyKeys("", keys); err != nil {
 			return template
 		}
 	}
@@ -112,7 +112,7 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string, probe *pip
 		for _, expression := range edge.properties {
 			keys[expression.key] = nil
 		}
-		if err := validateCreatePropertyKeys("", keys, probe); err != nil {
+		if err := validateCreatePropertyKeys("", keys); err != nil {
 			return template
 		}
 	}
@@ -291,7 +291,7 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 				rollback()
 				return nil, false, nil
 			}
-			if err := validatePropertyValues(props, probe); err != nil {
+			if err := validatePropertyValues(props); err != nil {
 				rollback()
 				return nil, false, err
 			}
@@ -346,7 +346,7 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 				rollback()
 				return nil, false, nil
 			}
-			if err := validatePropertyValues(props, probe); err != nil {
+			if err := validatePropertyValues(props); err != nil {
 				rollback()
 				return nil, false, err
 			}

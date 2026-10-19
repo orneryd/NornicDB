@@ -121,14 +121,14 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, contextPipelineProbe(ctx))
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	if !hasIndex {
 		return nil, false
 	}
 
 	scoreExprIsAlias := make([]bool, len(returnItems))
 	scoreExprIsAlias[cosineIdx] = true
-	projectedProps, projectionOK := nodeProjectionPropertiesForVectorFastPath(varName, vectorProp, returnItems, scoreExprIsAlias, preWhereClause, preWhereNotNullProp, matchProps, contextPipelineProbe(ctx))
+	projectedProps, projectionOK := nodeProjectionPropertiesForVectorFastPath(varName, vectorProp, returnItems, scoreExprIsAlias, preWhereClause, preWhereNotNullProp, matchProps)
 	if !projectionOK {
 		projectedProps = nil
 	}
@@ -157,7 +157,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
 	}
 	for _, hit := range nodeScores {
-		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps, contextPipelineProbe(ctx)) {
+		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
 			continue
 		}
 		if preWhereClause != "" {
@@ -352,11 +352,11 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	for i := range returnItems {
 		scoreExprIsAlias[i] = strings.EqualFold(strings.TrimSpace(returnItems[i].expr), scoreRef)
 	}
-	projectedProps, projectionOK := nodeProjectionPropertiesForVectorFastPath(varName, vectorProp, returnItems, scoreExprIsAlias, preWhereClause, preWhereNotNullProp, matchProps, contextPipelineProbe(ctx))
+	projectedProps, projectionOK := nodeProjectionPropertiesForVectorFastPath(varName, vectorProp, returnItems, scoreExprIsAlias, preWhereClause, preWhereNotNullProp, matchProps)
 	if !projectionOK {
 		projectedProps = nil
 	}
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode, contextPipelineProbe(ctx))
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
 		if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -385,7 +385,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
 	}
 	for _, hit := range nodeScores {
-		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps, contextPipelineProbe(ctx)) {
+		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
 			continue
 		}
 		if preWhereClause != "" {
@@ -549,7 +549,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, contextPipelineProbe(ctx))
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
 	if !hasIndex {
 		return nil, false
 	}
@@ -702,7 +702,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship, contextPipelineProbe(ctx))
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
 	if !hasIndex {
 		return nil, false
 	}
@@ -893,7 +893,7 @@ func (e *StorageExecutor) getNodeForVectorHit(id storage.NodeID, projectedProps 
 	return e.storage.GetNode(id)
 }
 
-func nodeProjectionPropertiesForVectorFastPath(varName string, vectorProp string, returnItems []returnItem, scoreExprIsAlias []bool, preWhereClause string, preWhereNotNullProp string, matchProps map[string]interface{}, probe *pipelineCancellation) ([]string, bool) {
+func nodeProjectionPropertiesForVectorFastPath(varName string, vectorProp string, returnItems []returnItem, scoreExprIsAlias []bool, preWhereClause string, preWhereNotNullProp string, matchProps map[string]interface{}) ([]string, bool) {
 	props := make(map[string]struct{}, util.SafePreallocSum(len(matchProps), len(returnItems)))
 	for prop := range matchProps {
 		props[prop] = struct{}{}
@@ -1358,7 +1358,7 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 	return limit, true
 }
 
-func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType, probe *pipelineCancellation) (string, bool) {
+func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
 	if schema == nil {
 		return "", false
 	}

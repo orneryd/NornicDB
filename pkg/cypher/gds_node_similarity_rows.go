@@ -38,7 +38,7 @@ type similarityRowsConfig struct {
 
 // callNornicSimilarityStream implements
 // nornicdb.similarity.stream(rows, configuration).
-func callNornicSimilarityStream(args []interface{}, probe *pipelineCancellation) (*ExecuteResult, error) {
+func callNornicSimilarityStream(args []interface{}) (*ExecuteResult, error) {
 	const procedure = "nornicdb.similarity.stream"
 	value := procedureArgument(args, 0)
 	if value == nil {
@@ -52,18 +52,18 @@ func callNornicSimilarityStream(args []interface{}, probe *pipelineCancellation)
 	if err != nil {
 		return nil, err
 	}
-	config, err := readSimilarityRowsConfig(options, probe)
+	config, err := readSimilarityRowsConfig(options)
 	if err != nil {
 		return nil, err
 	}
-	incidence, err := readSimilarityIncidence(items, probe)
+	incidence, err := readSimilarityIncidence(items)
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: similarityRowsScores(incidence, config, probe)}, nil
+	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: similarityRowsScores(incidence, config)}, nil
 }
 
-func readSimilarityRowsConfig(options map[string]interface{}, probe *pipelineCancellation) (similarityRowsConfig, error) {
+func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsConfig, error) {
 	config := similarityRowsConfig{metric: "JACCARD", cutoff: 1e-42}
 	c, err := newGDSConfig(options, similarityRowsConfigKeys...)
 	if err != nil {
@@ -106,7 +106,7 @@ func readSimilarityRowsConfig(options map[string]interface{}, probe *pipelineCan
 			return config, localizedError(localization.CypherGraphProceduresInvalidRowSimilarityMetric(metric), nil)
 		}
 	}
-	if config.cutoff, err = c.number("similarityCutoff", "Double", config.cutoff, probe); err != nil {
+	if config.cutoff, err = c.number("similarityCutoff", "Double", config.cutoff); err != nil {
 		return config, err
 	}
 	// Resource allocation sums weights, so its scores have no upper bound.
@@ -118,12 +118,12 @@ func readSimilarityRowsConfig(options map[string]interface{}, probe *pipelineCan
 		return config, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("similarityCutoff", javaDoubleText(config.cutoff), "[0.00, "+upperText+"]"), nil)
 	}
 	config.includeZero = c.has("similarityCutoff") && config.cutoff == 0
-	topK, err := c.integer("topK", "Integer", 1, 1<<31-1, 10, false, probe)
+	topK, err := c.integer("topK", "Integer", 1, 1<<31-1, 10, false)
 	if err != nil {
 		return config, err
 	}
 	config.topK = int(topK)
-	maxHolders, err := c.integer("maxHolders", "Integer", 0, 1<<31-1, 0, false, probe)
+	maxHolders, err := c.integer("maxHolders", "Integer", 0, 1<<31-1, 0, false)
 	if err != nil {
 		return config, err
 	}
@@ -167,7 +167,7 @@ func (w *similarityWeight) resolve(fallback float64) float64 {
 // A weight that is null, NaN or infinite (1.0 / 0 for a thing nobody holds)
 // drops its row's thing; its source stays a source. Repeated (source, thing)
 // rows are one, with the largest weight given.
-func readSimilarityIncidence(items []interface{}, probe *pipelineCancellation) (*similarityIncidence, error) {
+func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) {
 	incidence := &similarityIncidence{things: make(map[string]map[string]*similarityWeight), nodes: make(map[string]interface{})}
 	remember := func(id string, value interface{}) {
 		if _, isID := value.(string); !isID && !isIntegerProcedureValue(value) {
@@ -212,7 +212,7 @@ func readSimilarityIncidence(items []interface{}, probe *pipelineCancellation) (
 			return nil, localizedError(localization.CypherGraphProceduresSimilarityRowNode(position, "thing", gdsJavaType(row["thing"])), nil)
 		}
 		remember(string(thing), row["thing"])
-		number, isNumber := gdsScalarNumber(value, probe)
+		number, isNumber := gdsScalarNumber(value)
 		switch {
 		case !hasWeight:
 		case value == nil || isNumber && (math.IsNaN(number) || math.IsInf(number, 0)):
@@ -318,7 +318,7 @@ func similaritySourceVector(neighbors [][]gdsEdge, members []int) []gdsEdge {
 // the node-similarity kernel gds.nodeSimilarity uses: most similar first,
 // ties by the tieBreakProperty, then by id; zero rows when no source node is
 // in the rows. Only the returned rows' shared lists are built.
-func similarityRowsScores(incidence *similarityIncidence, config similarityRowsConfig, probe *pipelineCancellation) [][]interface{} {
+func similarityRowsScores(incidence *similarityIncidence, config similarityRowsConfig) [][]interface{} {
 	excluded := make(map[int]bool, len(config.sources))
 	var members []int
 	for i, id := range config.sources {

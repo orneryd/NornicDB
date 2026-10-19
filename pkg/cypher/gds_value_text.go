@@ -27,9 +27,9 @@ func gdsJavaValueText(value interface{}, propertyValue bool, contexts ...context
 		}
 		return text
 	case float64:
-		return gdsDefaultText(typed, "", probe)
+		return gdsDefaultText(typed, "")
 	case float32:
-		return gdsDefaultText(float64(typed), "", probe)
+		return gdsDefaultText(float64(typed), "")
 	case map[string]interface{}:
 		keys, literalOrder := gdsMapLiteralKeys(typed, contexts...)
 		if !literalOrder {

@@ -608,7 +608,7 @@ func staticFormatArguments(expressions []string) []staticArgumentType {
 // the function's TypeError. It scans the statement only when a parameter
 // follows an opening parenthesis or a comma, so parameterized statements on
 // hot paths cost one byte scan.
-func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool, probe *pipelineCancellation) error {
+func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
 	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
 		return nil
 	}
@@ -624,7 +624,7 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 		if parameter, bound := unwound[expression]; bound {
 			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
 			// types it: radians(x) for s = 'xy' is a type mismatch.
-			operand := staticParameterOperand(params[parameter], probe)
+			operand := staticParameterOperand(params[parameter])
 			if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
 				return nil
 			}
@@ -638,7 +638,7 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 			return nil
 		}
 		// A missing parameter (nil) has no static type.
-		operand := staticParameterOperand(params[name], probe)
+		operand := staticParameterOperand(params[name])
 		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
 			return nil
 		}
@@ -794,9 +794,9 @@ func staticMemberAccessBase(expression string) (string, bool) {
 // staticExpressionType is the static type of expression in scope: a
 // literal's type or a variable's, or in a Cypher 25 statement a known
 // member's (m.a for m bound to {a: 2}).
-func (scope staticTypeScope) staticExpressionType(expression string, probe *pipelineCancellation) string {
+func (scope staticTypeScope) staticExpressionType(expression string) string {
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params, probe)
+		return propertyAccessExpressionType(expression, scope.values, scope.params)
 	}
 	if typeName := staticLiteralTypeName(expression); typeName != "" {
 		return typeName
@@ -805,14 +805,14 @@ func (scope staticTypeScope) staticExpressionType(expression string, probe *pipe
 		return scope.typeOf(variable)
 	}
 	if _, member := staticMemberAccessBase(expression); member && scope.cypher25 {
-		if operand, err := (staticOperatorChecker{scope: scope}).check(expression, probe); err == nil {
+		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil {
 			return operand.typeName()
 		}
 		return ""
 	}
 	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
 	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
-		operand, err := (staticOperatorChecker{scope: scope}).check(expression, probe)
+		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
 		if err == nil {
 			if name := operand.typeName(); name != "" {
 				return name
@@ -831,13 +831,13 @@ func (scope staticTypeScope) staticExpressionType(expression string, probe *pipe
 // one clause. A variable the clause binds itself (a list comprehension,
 // reduce, any / all / none / single) shadows the scope where it is bound
 // (localVariableShadowsAt) and is not checked there.
-func validateStaticFunctionVariables(text string, scope staticTypeScope, probe *pipelineCancellation) error {
-	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope }, probe)
+func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
+	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
 }
 
 // validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
 // the scope built only when a function has a variable argument.
-func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope, probe *pipelineCancellation) error {
+func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
 	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
 		variable := simpleSemanticIdentifier(expression)
@@ -881,7 +881,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		// The shared CASE result-type owner combines branches before checking
 		// the signature: reject only when no result type fits, otherwise
 		// retain runtime validation of the selected branch.
-		typeName := scope.staticExpressionType(expression, probe)
+		typeName := scope.staticExpressionType(expression)
 		if property {
 			// A node's or relationship's property is a property value,
 			// never an entity or a map (labels(n.x), id(n.x), point(n.x)
@@ -919,24 +919,24 @@ func entityPropertyRead(expression string) (string, bool) {
 
 // unwindStaticValueType is the element type of an UNWIND over a list literal
 // (UNWIND [1, 2] AS x binds an Integer), or "".
-func unwindStaticValueType(clause string, probe *pipelineCancellation) string {
+func unwindStaticValueType(clause string) string {
 	body := strings.TrimSpace(clause[len("UNWIND"):])
 	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
 		body = strings.TrimSpace(body[:asIndex])
 	}
-	return staticListElementType(body, probe)
+	return staticListElementType(body)
 }
 
 // staticListElementType is the element type of a list expression whose
 // elements are typed before the statement runs, "" otherwise.
-func staticListElementType(body string, probe *pipelineCancellation) string {
+func staticListElementType(body string) string {
 	if elementType := literalListElementType(body); elementType != "" {
 		return elementType
 	}
 	// A list of computed expressions of one known type ([date('2020-01-01'),
 	// date('2021-01-01')]) binds that type, as Neo4j types it before the
 	// statement runs; a mixed list ([1, date(…)]) binds no static type.
-	return uniformListElementType(body, probe)
+	return uniformListElementType(body)
 }
 
 // literalListElementType is the element type of a list literal of literals,
@@ -961,7 +961,7 @@ func literalListElementType(body string) string {
 // has (a literal's, or a computed element's as the operator check infers it),
 // "" when the text isn't a list literal, an element's type is
 // unknown or several types, or the elements differ.
-func uniformListElementType(list string, probe *pipelineCancellation) string {
+func uniformListElementType(list string) string {
 	inner, isList := stripEnclosingRowDelimiter(strings.TrimSpace(list), '[', ']')
 	if !isList || strings.TrimSpace(inner) == "" {
 		return ""
@@ -979,7 +979,7 @@ func uniformListElementType(list string, probe *pipelineCancellation) string {
 		if typeName == "" {
 			// A computed element (date('…')) keeps the type the operator check
 			// infers for it, as a WITH projection does.
-			if operand, err := (staticOperatorChecker{}).check(element, probe); err == nil && operand.known() {
+			if operand, err := (staticOperatorChecker{}).check(element); err == nil && operand.known() {
 				typeName = operand.kind
 			}
 		}

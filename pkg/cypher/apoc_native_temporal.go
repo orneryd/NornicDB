@@ -54,7 +54,7 @@ var nativeAPOCNamedPatterns = map[string]string{
 	"year_month_day":                    "yyyy-MM-dd",
 }
 
-func nativeAPOCTemporalFormat(args []interface{}, probe *pipelineCancellation) (interface{}, error) {
+func nativeAPOCTemporalFormat(args []interface{}) (interface{}, error) {
 	const name = "apoc.temporal.format"
 	value := args[0]
 	pattern := "yyyy-MM-dd"
@@ -105,7 +105,7 @@ func nativeAPOCTemporalFormat(args []interface{}, probe *pipelineCancellation) (
 		}
 		return nativeAPOCDurationFormat(duration, pattern), nil
 	}
-	return nativeAPOCJavaText(value, probe), nil
+	return nativeAPOCJavaText(value), nil
 }
 
 func nativeAPOCISOBasePattern(name string) (string, bool) {
@@ -293,7 +293,7 @@ func nativeAPOCDurationFormat(duration *CypherDuration, pattern string) string {
 	return out.String()
 }
 
-func nativeAPOCJavaText(value interface{}, probe *pipelineCancellation) string {
+func nativeAPOCJavaText(value interface{}) string {
 	if value == nil {
 		return "null"
 	}
@@ -305,14 +305,14 @@ func nativeAPOCJavaText(value interface{}, probe *pipelineCancellation) string {
 		sort.Strings(keys)
 		parts := make([]string, len(keys))
 		for i, key := range keys {
-			parts[i] = key + "=" + nativeAPOCJavaText(object[key], probe)
+			parts[i] = key + "=" + nativeAPOCJavaText(object[key])
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	}
 	if list, ok := toInterfaceSlice(value); ok {
 		parts := make([]string, len(list))
 		for i, v := range list {
-			parts[i] = nativeAPOCJavaText(v, probe)
+			parts[i] = nativeAPOCJavaText(v)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	}

@@ -24,7 +24,7 @@ var gdsStreamNodeIDColumns = map[string][]string{
 
 // gdsStreamHandler wraps a GDS stream's handler so its node ids leave
 // through the projection's renderer; other procedures are unchanged.
-func gdsStreamHandler(procedure string, handler ProcedureHandler, probe *pipelineCancellation) ProcedureHandler {
+func gdsStreamHandler(procedure string, handler ProcedureHandler) ProcedureHandler {
 	columns, ok := gdsStreamNodeIDColumns[procedure]
 	if !ok {
 		return handler
@@ -39,7 +39,7 @@ func gdsStreamHandler(procedure string, handler ProcedureHandler, probe *pipelin
 		// stream read the stored graph.
 		if projection := result.gdsProjection; projection != nil {
 			result.gdsProjection = nil
-			projection.renderNodeIDs(result, columns, probe)
+			projection.renderNodeIDs(result, columns)
 		}
 		return result, nil
 	}
@@ -47,7 +47,7 @@ func gdsStreamHandler(procedure string, handler ProcedureHandler, probe *pipelin
 
 // renderNodeIDs renders the result's node-id columns, and the nodeId of the
 // maps a list column holds, through nodeIDValue.
-func (p *GraphProjection) renderNodeIDs(result *ExecuteResult, columns []string, probe *pipelineCancellation) {
+func (p *GraphProjection) renderNodeIDs(result *ExecuteResult, columns []string) {
 	var indexes []int
 	for i, column := range result.Columns {
 		for _, name := range columns {

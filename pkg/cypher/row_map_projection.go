@@ -64,7 +64,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
-	properties, hasProperties := rowProjectionPropertiesWithCancellation(e.queryVisibleValue(base, probe), probe)
+	properties, hasProperties := rowProjectionPropertiesWithCancellation(e.queryVisibleValue(base), probe)
 	if probe != nil && probe.err != nil {
 		return nil, true, false, probe.err
 	}
@@ -72,7 +72,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 		if _, isPath := cypherPathElements(base); isPath {
 			return nil, true, false, runtimeTypeError("Type mismatch: expected a map but was Path")
 		}
-		return nil, true, false, propertyAccessTypeError(base, probe)
+		return nil, true, false, propertyAccessTypeError(base)
 	}
 	result := make(map[string]interface{})
 	if inner == "" {

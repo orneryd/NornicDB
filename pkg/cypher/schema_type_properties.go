@@ -62,7 +62,7 @@ type schemaTypeProperty struct {
 	types   map[string]bool
 }
 
-func (category *schemaTypeCategory) add(properties map[string]interface{}, cypher25 bool, probe *pipelineCancellation) {
+func (category *schemaTypeCategory) add(properties map[string]interface{}, cypher25 bool) {
 	category.members++
 	for name, value := range properties {
 		property := category.properties[name]
@@ -71,7 +71,7 @@ func (category *schemaTypeCategory) add(properties map[string]interface{}, cyphe
 			category.properties[name] = property
 		}
 		property.members++
-		property.types[schemaPropertyTypeName(value, cypher25, probe)] = true
+		property.types[schemaPropertyTypeName(value, cypher25)] = true
 	}
 }
 
@@ -96,7 +96,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		for _, node := range all {
 			labels := append([]string(nil), node.Labels...)
 			sort.Strings(labels)
-			category(schemaTypeKey(labels), labels).add(node.Properties, cypher25, contextPipelineProbe(ctx))
+			category(schemaTypeKey(labels), labels).add(node.Properties, cypher25)
 		}
 	} else {
 		all, err := e.storage.AllEdges()
@@ -104,7 +104,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 			return nil, err
 		}
 		for _, edge := range all {
-			category(schemaTypeKey([]string{edge.Type}), nil).add(edge.Properties, cypher25, contextPipelineProbe(ctx))
+			category(schemaTypeKey([]string{edge.Type}), nil).add(edge.Properties, cypher25)
 		}
 	}
 
@@ -158,7 +158,7 @@ func schemaTypeKey(names []string) string {
 // ZONED DATETIME NOT NULL, LIST<INTEGER NOT NULL> NOT NULL; an empty list
 // is LIST<NOTHING> NOT NULL). A list of integers and floats is a float
 // list, as Neo4j stores it.
-func schemaPropertyTypeName(value interface{}, cypher25 bool, probe *pipelineCancellation) string {
+func schemaPropertyTypeName(value interface{}, cypher25 bool) string {
 	kind := cypherValueKindOf(value)
 	if kind != valueKindList {
 		if cypher25 {

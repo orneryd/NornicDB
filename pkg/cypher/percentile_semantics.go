@@ -66,7 +66,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 			if _, exists := seen.add(value); exists {
 				continue
 			}
-			if retention.reserveValue(value, probe) != nil {
+			if retention.reserveValue(value) != nil {
 				return nil, false
 			}
 		}

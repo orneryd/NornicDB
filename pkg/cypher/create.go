@@ -195,11 +195,11 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 
 			// Property keys follow the map-key rule (a symbolic name, or a
 			// backtick-quoted name holding any character).
-			if err := validateCreatePropertyKeys("["+relStr+"]", relProps, contextPipelineProbe(ctx)); err != nil {
+			if err := validateCreatePropertyKeys("["+relStr+"]", relProps); err != nil {
 				return nil, err
 			}
 
-			if err := validatePropertyValues(relProps, contextPipelineProbe(ctx)); err != nil {
+			if err := validatePropertyValues(relProps); err != nil {
 				return nil, err
 			}
 
@@ -326,7 +326,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		}
 		e.notifyNodeMutated(string(node.ID))
 		addOptimisticNodeID(result, node.ID)
-		countCreatedEntity(result.Stats, node.Labels, node.Properties, probe)
+		countCreatedEntity(result.Stats, node.Labels, node.Properties)
 	}
 	result.Stats.NodesCreated += len(plan.nodes)
 	for _, edge := range plan.edges {
@@ -335,7 +335,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		}
 		e.notifyEdgeMutated(string(edge.ID))
 		addOptimisticRelationshipID(result, edge.ID)
-		countCreatedEntity(result.Stats, nil, edge.Properties, probe)
+		countCreatedEntity(result.Stats, nil, edge.Properties)
 	}
 	result.Stats.RelationshipsCreated += len(plan.edges)
 	return nil
@@ -451,7 +451,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	// SECURITY: Validate property keys and values. Keys follow the map-key
 	// rule (a symbolic name, or a backtick-quoted name holding any
 	// character).
-	if err := validateCreatePropertyKeys(pattern, nodePattern.properties, probe); err != nil {
+	if err := validateCreatePropertyKeys(pattern, nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
 	for key, val := range nodePattern.properties {
@@ -462,7 +462,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 		}
 	}
-	if err := validatePropertyValues(nodePattern.properties, probe); err != nil {
+	if err := validatePropertyValues(nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
 	if err := e.validateNoTextFallthrough(ctx, pattern, nodePattern.properties, nodes, relationships); err != nil {
@@ -605,7 +605,7 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 			delete(properties, key)
 			continue
 		}
-		properties[key] = normalizePropValue(value, contextPipelineProbe(ctx))
+		properties[key] = normalizePropValue(value)
 	}
 }
 
@@ -923,9 +923,9 @@ func createParameterProperties(ctx context.Context, parameter string) (map[strin
 	properties, isMap := toStringAnyMapWithCancellation(value, contextPipelineProbe(ctx))
 	if !isMap {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
-			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value, contextPipelineProbe(ctx)).display))
+			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))
 	}
-	return cloneNodePropertiesMap(properties, contextPipelineProbe(ctx)), nil
+	return cloneNodePropertiesMap(properties), nil
 }
 
 // findAllKeywordPositions finds all positions of a keyword in the query
@@ -1159,7 +1159,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 		nodes    []*storage.Node
 	},
 	whereClause string,
-probe *pipelineCancellation) ([]map[string]*storage.Node, bool) {
+) ([]map[string]*storage.Node, bool) {
 	if len(patternMatches) < 2 || strings.TrimSpace(whereClause) == "" {
 		return nil, false
 	}
@@ -1637,7 +1637,7 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 // (holding any character) in the pattern text. Only a key that is neither
 // is checked on the text by validateStaticMapKeys, which reports it, so a
 // pattern with plain keys isn't scanned again.
-func validateCreatePropertyKeys(text string, properties map[string]interface{}, probe *pipelineCancellation) error {
+func validateCreatePropertyKeys(text string, properties map[string]interface{}) error {
 	for key := range properties {
 		if isValidIdentifier(key) || strings.Contains(text, "`"+strings.ReplaceAll(key, "`", "``")+"`") {
 			continue

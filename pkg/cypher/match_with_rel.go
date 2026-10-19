@@ -160,10 +160,10 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	// projections: a nested "properties" key does not turn a map into an entity.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if receiver, bound := values[variable]; bound {
-			visible := e.queryVisibleValue(receiver, contextPipelineProbe(ctx))
+			visible := e.queryVisibleValue(receiver)
 			value, supported := evaluateRowPropertyChain(visible, chain)
 			if !supported {
-				recordExpressionFailure(ctx, rowPropertyChainTypeError(visible, chain, contextPipelineProbe(ctx)))
+				recordExpressionFailure(ctx, rowPropertyChainTypeError(visible, chain))
 			}
 			return value
 		}
@@ -190,7 +190,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	}
 
 	ctx = withValueBindings(ctx, values)
-	nodes, rels := entityScopesFromValues(values, contextPipelineProbe(ctx))
+	nodes, rels := entityScopesFromValues(values)
 	if value, recognized := e.evaluateExpressionWithContextDefined(ctx, expr, nodes, rels); recognized {
 		return value
 	}
@@ -211,7 +211,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 // a computed values map into node/relationship scopes for the shared evaluator.
 // Rows without entities keep nil scopes, so the common scalar row path stays
 // allocation-free.
-func entityScopesFromValues(values map[string]interface{}, probe *pipelineCancellation) (map[string]*storage.Node, map[string]*storage.Edge) {
+func entityScopesFromValues(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
 	var nodes map[string]*storage.Node
 	var rels map[string]*storage.Edge
 	for name, val := range values {

@@ -46,36 +46,36 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		// value-dependent: LIMIT 2-3 and LIMIT 5-1 share one canonical form,
 		// yet only the latter is a non-negative integer. Re-evaluate them on
 		// this text before returning (monster retest part 3).
-		return e.validateStaticPaginationExpressions(cypher, contextPipelineProbe(ctx))
+		return e.validateStaticPaginationExpressions(cypher)
 	}
-	if err := e.validateCallSubqueryScopes(cypher, cypher25, contextPipelineProbe(ctx)); err != nil {
+	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := validateListComprehensionVariables(cypher); err != nil {
 		return err
 	}
-	if err := validateStaticQuantifierTypes(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := validateStaticQuantifierTypes(cypher); err != nil {
 		return err
 	}
 	if err := validateStaticFunctionArguments(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateStaticPaginationExpressions(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := e.validateStaticPaginationExpressions(cypher); err != nil {
 		return err
 	}
-	if err := validateWithProjectionSemantics(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := validateWithProjectionSemantics(cypher); err != nil {
 		return err
 	}
-	if err := validateAggregatingProjectionScopes(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := validateAggregatingProjectionScopes(cypher); err != nil {
 		return err
 	}
-	if err := validateExistsSubqueryClauseComposition(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := validateExistsSubqueryClauseComposition(cypher); err != nil {
 		return err
 	}
-	if err := validatePatternExpressionPlacement(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := validatePatternExpressionPlacement(cypher); err != nil {
 		return err
 	}
-	if err := validateStaticPropertyAccessTypes(cypher, contextPipelineProbe(ctx)); err != nil {
+	if err := validateStaticPropertyAccessTypes(cypher); err != nil {
 		return err
 	}
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
@@ -96,7 +96,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateDuplicateReturnColumnName(cypher, names); err != nil {
 		return err
 	}
-	if clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher, contextPipelineProbe(ctx)); ok {
+	if clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher); ok {
 		pendingUpdate := false
 		for _, clause := range clauses {
 			if pendingUpdate && clause.kind == pipelineClauseCall {
@@ -150,13 +150,13 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 			}
 		}
 	}
-	if err := e.validateCreateSemanticScopes(cypher, cypher25, contextPipelineProbe(ctx)); err != nil {
+	if err := e.validateCreateSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateMergeSemanticScopes(cypher, cypher25, contextPipelineProbe(ctx)); err != nil {
+	if err := e.validateMergeSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher, cypher25, contextPipelineProbe(ctx)); err != nil {
+	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
@@ -230,7 +230,7 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names
 // leading WITH vars. An undefined variable in a subquery update clause is
 // therefore rejected before any route runs the subquery. CALL (*) and a body
 // starting with WITH * import the whole outer scope and are not checked here.
-func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
 	if !containsFold(cypher, "CALL") {
 		return nil
 	}
@@ -287,7 +287,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 				if index > 0 {
 					continue
 				}
-				if clauses, ok := splitPipelineClauses(branch, probe); ok && len(clauses) > 0 {
+				if clauses, ok := splitPipelineClauses(branch); ok && len(clauses) > 0 {
 					projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
 					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0 {
 						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
@@ -310,14 +310,14 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
 		if scoped && len(scope.names) == 0 {
-			if err := e.validateMatchSemanticScopes(body, cypher25, probe); err != nil {
+			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
 				return err
 			}
 		}
 		if err := e.validateSetSemanticScopes(body, retained...); err != nil {
 			return err
 		}
-		if err := e.validateCallSubqueryScopes(body, cypher25, probe); err != nil {
+		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
 			return err
 		}
 	}
@@ -383,8 +383,8 @@ func hasUnexpectedIdentifierAfterNumber(expression string) bool {
 	return false
 }
 
-func validateWithProjectionSemantics(cypher string, probe *pipelineCancellation) error {
-	clauses, ok := splitPipelineClauses(cypher, probe)
+func validateWithProjectionSemantics(cypher string) error {
+	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
@@ -456,8 +456,8 @@ func containsMalformedCreateClauseToken(expression string) bool {
 // expression only tests whether its pattern exists: it is valid wherever a
 // boolean is expected (maskPredicatePatterns), and never as a value of its
 // own in a projection or an updating expression (Neo4j 5.26.30, #907).
-func validatePatternExpressionPlacement(cypher string, probe *pipelineCancellation) error {
-	clauses, ok := splitPipelineClauses(cypher, probe)
+func validatePatternExpressionPlacement(cypher string) error {
+	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
@@ -665,7 +665,7 @@ func invalidPatternExpressionPlacementError() error {
 	)
 }
 
-func validateExistsSubqueryClauseComposition(cypher string, probe *pipelineCancellation) error {
+func validateExistsSubqueryClauseComposition(cypher string) error {
 	for index := 0; index < len(cypher); index++ {
 		name, next, ok := scanIdentifierToken(cypher, index)
 		if !ok || !strings.EqualFold(name, "exists") {
@@ -680,7 +680,7 @@ func validateExistsSubqueryClauseComposition(cypher string, probe *pipelineCance
 			continue
 		}
 		body := cypher[open+1 : close]
-		if clauses, parsed := splitPipelineClauses(body, probe); parsed {
+		if clauses, parsed := splitPipelineClauses(body); parsed {
 			for _, clause := range clauses {
 				switch clause.kind {
 				case pipelineClauseCreate, pipelineClauseDelete, pipelineClauseMerge, pipelineClauseRemove, pipelineClauseSet:

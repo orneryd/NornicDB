@@ -15,15 +15,15 @@ type paginationExpression struct {
 // statement's WITH and RETURN clauses. Each UNION branch has its own SKIP /
 // LIMIT, so the branches are read one by one; otherwise the last RETURN of a
 // branch would run into the next branch (LIMIT 2 UNION ALL MATCH …).
-func extractPaginationExpressions(cypher string, probe *pipelineCancellation) []paginationExpression {
+func extractPaginationExpressions(cypher string) []paginationExpression {
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		var result []paginationExpression
 		for _, branch := range branches {
-			result = append(result, extractPaginationExpressions(branch, probe)...)
+			result = append(result, extractPaginationExpressions(branch)...)
 		}
 		return result
 	}
-	clauses, ok := splitPipelineClauses(cypher, probe)
+	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
@@ -45,7 +45,7 @@ func extractPaginationExpressions(cypher string, probe *pipelineCancellation) []
 	return result
 }
 
-func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
 	braces := newSubqueryBraceScanner(cypher, 0)
 	// Check original subquery bodies before imported variables are replaced
 	// with their row values. A substituted integer is still a row dependency.
@@ -62,7 +62,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string, pro
 		case '{':
 			if braces.at(index) {
 				if close := findMatchingDelimiter(cypher, index, '{', '}'); close >= 0 {
-					if err := e.validateStaticPaginationExpressions(cypher[index+1 : close], probe); err != nil {
+					if err := e.validateStaticPaginationExpressions(cypher[index+1 : close]); err != nil {
 						return err
 					}
 					index = close
@@ -70,7 +70,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string, pro
 			}
 		}
 	}
-	for _, pagination := range extractPaginationExpressions(cypher, probe) {
+	for _, pagination := range extractPaginationExpressions(cypher) {
 		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
 			return err
 		}
@@ -123,7 +123,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 	}
 	values := make(pipelineRow, len(params))
 	bindParameterRow(ctx, values)
-	for _, pagination := range extractPaginationExpressions(cypher, contextPipelineProbe(ctx)) {
+	for _, pagination := range extractPaginationExpressions(cypher) {
 		if !strings.Contains(pagination.value, "$") {
 			continue
 		}

@@ -57,7 +57,7 @@ func (cache *semanticValidationCache) add(query string) {
 // contract before routing. Keeping this validation ahead of every physical
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
-func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
@@ -80,7 +80,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 	if cached {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher, probe)
+	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
 		return nil
 	}
@@ -95,7 +95,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 		case pipelineClauseWith:
 			scope = projectedBindingScope(scope, clause.text)
 		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text, probe); err != nil {
+			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
@@ -103,7 +103,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text, cypher25, probe); err != nil {
+			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -137,7 +137,7 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 // cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
 // value may not read a node or relationship the same MERGE creates
 // (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
 	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
@@ -212,7 +212,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 		scope.bind(pathVariable)
 	}
-	if err := e.validateMergeActionScopes(scope, clause, probe); err != nil {
+	if err := e.validateMergeActionScopes(scope, clause); err != nil {
 		return err
 	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
@@ -226,11 +226,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	return nil
 }
 
-func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string, probe *pipelineCancellation) error {
+func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
 	parts := splitMergeClauseActions(mergeClauseBody(clause))
 	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
 		for index := 0; index < clauses.len(); index++ {
-			if err := e.validateSetClauseScope(scope, clauses.set(index), probe); err != nil {
+			if err := e.validateSetClauseScope(scope, clauses.set(index)); err != nil {
 				return err
 			}
 		}
@@ -330,7 +330,7 @@ func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool 
 // value can't identify an entity (null or NaN) with Neo4j's SemanticError,
 // then checks the values are storable (validatePropertyValues). entity
 // ("node" or "relationship") names the pattern element in the message.
-func validateMergePatternProperties(properties map[string]interface{}, entity string, probe *pipelineCancellation) error {
+func validateMergePatternProperties(properties map[string]interface{}, entity string) error {
 	for property, value := range properties {
 		switch {
 		case value == nil:
@@ -343,7 +343,7 @@ func validateMergePatternProperties(properties map[string]interface{}, entity st
 				localization.CypherMergePropertyValueNotMergeable(entity, "NaN", property))
 		}
 	}
-	return validatePropertyValues(properties, probe)
+	return validatePropertyValues(properties)
 }
 
 func mergeVariableAlreadyBoundError(variable string) error {

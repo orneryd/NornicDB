@@ -222,7 +222,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -247,7 +247,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 				return nil, err
 			}
-			if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+			if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 				return nil, err
 			}
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -270,7 +270,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -301,7 +301,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -324,7 +324,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 				if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 					return nil, err
 				}
-				if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+				if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 					return nil, err
 				}
 				return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -344,7 +344,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 				return nil, err
 			}
 			schema := e.storage.GetSchema()
-			if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+			if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 				return nil, err
 			}
 			if err := storage.RefreshUniqueConstraintValuesForEngine(e.storage, schema); err != nil {
@@ -375,7 +375,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 				return nil, err
 			}
-			if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+			if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 				return nil, err
 			}
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -437,7 +437,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -463,7 +463,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -506,7 +506,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
 			return nil, err
 		}
-		if err := e.addSchemaConstraint(constraint, ifNotExists, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addSchemaConstraint(constraint, ifNotExists); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -684,7 +684,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			entityType = storage.ConstraintEntityRelationship
 			label = parsed.relationshipType
 		}
-		create, err := e.admitIndexCreation(cypher, indexName, "RANGE", label, parsed.properties, entityType, contextPipelineProbe(ctx))
+		create, err := e.admitIndexCreation(cypher, indexName, "RANGE", label, parsed.properties, entityType)
 		if err != nil {
 			return nil, err
 		}
@@ -706,7 +706,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}
 
-		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
 			return nil, err
 		}
 
@@ -720,7 +720,7 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 			propsJoined := strings.Join(parsed.properties, "_")
 			indexName = fmt.Sprintf("index_%s_%s", parsed.label, propsJoined)
 		}
-		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties, contextPipelineProbe(ctx)); err != nil {
+		if err := e.addPropertyIndex(indexName, parsed.label, parsed.properties); err != nil {
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -2146,7 +2146,7 @@ func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
 // and IN seeks then use it inside transactions as they use an index of its
 // own. A constraint whose fill fails is dropped again, since a half-filled
 // index would make seeks drop rows.
-func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifNotExists bool, probe *pipelineCancellation) error {
+func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifNotExists bool) error {
 	schema := e.storage.GetSchema()
 	_, existed := schema.ConstraintPropertyIndex(constraint.Name)
 	registered := schema.HasConstraintNamed(constraint.Name)
@@ -2165,7 +2165,7 @@ func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifN
 	if existed || !owned {
 		return nil
 	}
-	if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties, probe); err != nil {
+	if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties); err != nil {
 		_ = schema.DropConstraint(constraint.Name)
 		return err
 	}
@@ -2178,7 +2178,7 @@ func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifN
 // would list its nodes twice. A new index whose fill fails is dropped again:
 // index lookups trust an index to hold every node with the value, so a
 // half-filled one would drop rows.
-func (e *StorageExecutor) addPropertyIndex(name, label string, properties []string, probe *pipelineCancellation) error {
+func (e *StorageExecutor) addPropertyIndex(name, label string, properties []string) error {
 	schema := e.storage.GetSchema()
 	_, existed := schema.GetCompositeIndex(name)
 	if err := schema.AddCompositeIndex(name, label, properties); err != nil {
@@ -2187,7 +2187,7 @@ func (e *StorageExecutor) addPropertyIndex(name, label string, properties []stri
 	if existed {
 		return nil
 	}
-	if err := e.backfillCompositeIndex(name, label, properties, probe); err != nil {
+	if err := e.backfillCompositeIndex(name, label, properties); err != nil {
 		_ = schema.DropIndex(name)
 		return err
 	}
@@ -2198,7 +2198,7 @@ func (e *StorageExecutor) addPropertyIndex(name, label string, properties []stri
 // label's stored nodes. A new index whose fill fails is dropped by
 // addPropertyIndex / addSchemaConstraint, since index lookups trust an index
 // to hold every matching node.
-func (e *StorageExecutor) backfillCompositeIndex(name, label string, properties []string, probe *pipelineCancellation) error {
+func (e *StorageExecutor) backfillCompositeIndex(name, label string, properties []string) error {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil
@@ -2324,7 +2324,7 @@ func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher
 		entityType = storage.ConstraintEntityRelationship
 		targets = parsed.relationshipTypes
 	}
-	create, err := e.admitIndexCreationForTargets(cypher, parsed.indexName, "FULLTEXT", targets, parsed.properties, entityType, contextPipelineProbe(ctx))
+	create, err := e.admitIndexCreationForTargets(cypher, parsed.indexName, "FULLTEXT", targets, parsed.properties, entityType)
 	if err != nil {
 		return nil, err
 	}
@@ -2516,7 +2516,7 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	if parsed.isRelationship {
 		entityType = storage.ConstraintEntityRelationship
 	}
-	create, err := e.admitIndexCreation(cypher, indexName, "VECTOR", label, parsed.properties, entityType, contextPipelineProbe(ctx))
+	create, err := e.admitIndexCreation(cypher, indexName, "VECTOR", label, parsed.properties, entityType)
 	if err != nil {
 		return nil, err
 	}

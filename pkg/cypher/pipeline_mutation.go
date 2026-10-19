@@ -37,7 +37,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			}
 		} else if value, evaluated, err := e.evaluateRowValueProbed(strings.TrimSpace(expression), pipelineRow{}, contextPipelineProbe(ctx)); err != nil {
 			return nil, true, err
-		} else if evaluated && !isDeleteTargetValue(value, probe) {
+		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"InvalidArgumentType",
@@ -59,7 +59,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			if !ok {
 				return nil, true, deleteUndefinedVariableError(expression)
 			}
-			if !isDeleteTargetValue(value, probe) {
+			if !isDeleteTargetValue(value) {
 				return nil, true, newSemanticError(
 					"Neo.ClientError.Statement.TypeError",
 					"InvalidArgumentType",
@@ -70,7 +70,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		projected.Rows = append(projected.Rows, values)
 	}
-	nodeIDs, edgeIDs := collectDeleteMutationTargets(projected, probe)
+	nodeIDs, edgeIDs := collectDeleteMutationTargets(projected)
 	store := e.getStorage(ctx)
 	// A node relationships still connect is deleted for now and checked at
 	// commit, when the transaction can hold it (connectedNodeDeletes); a
@@ -79,10 +79,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	if !detach {
 		if _, deferred := store.(storage.ConnectedNodeDeleter); deferred {
 			var err error
-			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs, probe); err != nil {
+			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs); err != nil {
 				return nil, true, err
 			}
-		} else if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs, probe); err != nil {
+		} else if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -139,7 +139,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	if deleted == nil {
 		deleted = &deletedEntities{}
 	}
-	deleted.add(nodeIDs, deletedEdges, probe)
+	deleted.add(nodeIDs, deletedEdges)
 	e.replaceDeletedEntityViews(rows, deleted)
 	return stats, true, nil
 }
@@ -200,10 +200,10 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				if err != nil {
 					return nil, true, err
 				}
-				before := cloneStringAnyMap(node.Properties, contextPipelineProbe(ctx))
+				before := cloneStringAnyMap(node.Properties)
 				written := simplePropertyWrites(node.Properties, simpleProperty, value)
 				setNodeProperty(node, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError, contextPipelineProbe(ctx)); err != nil {
+				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -213,10 +213,10 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				if err != nil {
 					return nil, true, err
 				}
-				before := cloneStringAnyMap(relationship.Properties, contextPipelineProbe(ctx))
+				before := cloneStringAnyMap(relationship.Properties)
 				written := simplePropertyWrites(relationship.Properties, simpleProperty, value)
 				setRelationshipProperty(relationship, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError, contextPipelineProbe(ctx)); err != nil {
+				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -229,7 +229,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if !handled || err != nil {
 			return nil, handled, err
 		}
-		if err := e.persistSetEntities(store, states, stats, wrapSetError, contextPipelineProbe(ctx)); err != nil {
+		if err := e.persistSetEntities(store, states, stats, wrapSetError); err != nil {
 			return nil, true, err
 		}
 	}
@@ -338,7 +338,7 @@ func pipelineSetTargetVariables(assignments []string) []string {
 
 // changedPropertyCount is the SET counting rule: the number of properties
 // added, replaced with a different value or removed between before and after.
-func changedPropertyCount(before, after map[string]interface{}, probe *pipelineCancellation) int {
+func changedPropertyCount(before, after map[string]interface{}) int {
 	changed := 0
 	for key, value := range after {
 		if old, exists := before[key]; !exists || !samePropertyValue(old, value) {
@@ -494,7 +494,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			// template is parsed from the clause text, so a clause with
 			// row-dependent dynamic labels or types keeps the general route,
 			// which plans the resolved pattern instead.
-			if template := e.pipelineCreateTemplateFor(clause.text, contextPipelineProbe(ctx)); template != nil && template.usable {
+			if template := e.pipelineCreateTemplateFor(clause.text); template != nil && template.usable {
 				var err error
 				paths, planned, err = template.plan(ctx, e, newRow, nodes, edges, plan)
 				if err != nil {
@@ -566,7 +566,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		// The clause parsed once: a row whose relationship already exists
 		// is its matches, without rendering and parsing the row's text.
 		if pattern, startNode, endNode, templated := template.pattern(ctx, e, row); templated {
-			matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, pattern, startNode, endNode, contextPipelineProbe(ctx))
+			matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, pattern, startNode, endNode)
 			if findErr != nil {
 				return nil, nil, findErr
 			}
@@ -652,7 +652,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
 						return nil, nil, err
 					}
-					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties, contextPipelineProbe(ctx))
+					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr
 					}
@@ -694,7 +694,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			startNode := nodeContext[relationshipPattern.startVariable]
 			endNode := nodeContext[relationshipPattern.endVariable]
 			if startNode != nil && endNode != nil {
-				matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode, contextPipelineProbe(ctx))
+				matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
 				if findErr != nil {
 					return nil, nil, findErr
 				}
@@ -761,13 +761,13 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				if created != nil && relationshipPattern.relVariable != "" {
 					matches = []*storage.Edge{created}
 					if onCreateSet == "" {
-						identities.created(created, contextPipelineProbe(ctx))
+						identities.created(created)
 					} else {
 						identities.reset()
 					}
 				} else {
 					identities.reset()
-					found, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode, contextPipelineProbe(ctx))
+					found, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
 					if findErr != nil {
 						return nil, nil, findErr
 					}
@@ -863,7 +863,7 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 	invalid := func() error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
 	}
-	variable, listExpr, updates, err := parsePipelineForeach(clause, contextPipelineProbe(ctx))
+	variable, listExpr, updates, err := parsePipelineForeach(clause)
 	if err != nil {
 		return nil, err
 	}
@@ -909,11 +909,11 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 // expected Map, Node or Relationship"). A source of unknown type, null
 // included, is checked when the SET runs (setPropertyMapValue), as in Neo4j
 // (#907).
-func setSourceTypeError(property, operator, source string, types map[string]string, params map[string]interface{}, probe *pipelineCancellation) error {
+func setSourceTypeError(property, operator, source string, types map[string]string, params map[string]interface{}) error {
 	if property != "" || (operator != "=" && operator != "+=") {
 		return nil
 	}
-	switch typeName := propertyAccessExpressionType(source, types, params, probe); typeName {
+	switch typeName := propertyAccessExpressionType(source, types, params); typeName {
 	case "", "Map", "Node", "Relationship":
 		return nil
 	default:
@@ -925,7 +925,7 @@ func setSourceTypeError(property, operator, source string, types map[string]stri
 // SET clause whose source is a variable or parameter, with the static types
 // of the variables in scope. Literal sources are checked with each item's
 // scope check (validateSetClauseScope), in item order, as Neo4j reports them.
-func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}, probe *pipelineCancellation) error {
+func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "SET") {
 		body = body[len("SET"):]
@@ -935,7 +935,7 @@ func setClauseSourceTypeError(clause string, types map[string]string, params map
 		if staticLiteralTypeName(source) != "" {
 			continue
 		}
-		if err := setSourceTypeError(property, operator, source, types, params, probe); err != nil {
+		if err := setSourceTypeError(property, operator, source, types, params); err != nil {
 			return err
 		}
 	}

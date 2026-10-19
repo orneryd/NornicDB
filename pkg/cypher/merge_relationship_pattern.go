@@ -139,16 +139,16 @@ func findParsedMergeRelationships(
 	pattern *mergeRelationshipPattern,
 	startNode *storage.Node,
 	endNode *storage.Node,
-probe *pipelineCancellation) ([]*storage.Edge, error) {
+) ([]*storage.Edge, error) {
 	lookupStart, lookupEnd := startNode, endNode
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode
 	}
-	matches, err := cache.relationships(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties, probe)
+	matches, err := cache.relationships(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
 	if err != nil || pattern.direction != mergeRelationshipUndirected {
 		return matches, err
 	}
-	reverse, err := cache.relationships(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties, probe)
+	reverse, err := cache.relationships(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
 	if err != nil {
 		return nil, err
 	}

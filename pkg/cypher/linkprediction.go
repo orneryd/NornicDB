@@ -273,7 +273,7 @@ func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, args
 // This is a NornicDB extension that combines topological and semantic signals,
 // but follows Neo4j GDS naming conventions for compatibility.
 func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args, contextPipelineProbe(ctx))
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +328,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 // degree counts relationships, a parallel one again and a self-loop once
 // (#1192).
 func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, args []interface{}, algorithm string) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args, contextPipelineProbe(ctx))
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +507,7 @@ var linkPredictionConfigKeys = []string{
 // '*' for every type), topK (at least 1), algorithm, topologyWeight,
 // semanticWeight and minThreshold (#1185). Keys match whatever their case;
 // another key, or a value of the wrong type, is refused as GDS refuses it.
-func linkPredictionConfigFromArguments(args []interface{}, probe *pipelineCancellation) (*linkPredictionConfig, error) {
+func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfig, error) {
 	config := &linkPredictionConfig{
 		Algorithm:      "adamic_adar",
 		TopologyWeight: 0.5,
@@ -554,7 +554,7 @@ func linkPredictionConfigFromArguments(args []interface{}, probe *pipelineCancel
 	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {
 		return nil, err
 	}
-	topK, err := c.integer("topK", "Integer", 1, 1<<31-1, 10, false, probe)
+	topK, err := c.integer("topK", "Integer", 1, 1<<31-1, 10, false)
 	if err != nil {
 		return nil, err
 	}
@@ -564,13 +564,13 @@ func linkPredictionConfigFromArguments(args []interface{}, probe *pipelineCancel
 	} else if ok {
 		config.Algorithm = algorithm
 	}
-	if config.TopologyWeight, err = c.number("topologyWeight", "Double", config.TopologyWeight, probe); err != nil {
+	if config.TopologyWeight, err = c.number("topologyWeight", "Double", config.TopologyWeight); err != nil {
 		return nil, err
 	}
-	if config.SemanticWeight, err = c.number("semanticWeight", "Double", config.SemanticWeight, probe); err != nil {
+	if config.SemanticWeight, err = c.number("semanticWeight", "Double", config.SemanticWeight); err != nil {
 		return nil, err
 	}
-	if config.MinThreshold, err = c.number("minThreshold", "Double", 0, probe); err != nil {
+	if config.MinThreshold, err = c.number("minThreshold", "Double", 0); err != nil {
 		return nil, err
 	}
 	if config.SourceNode == "" {

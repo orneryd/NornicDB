@@ -136,7 +136,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 	}
 	if strings.HasPrefix(upperRest, "MATCH") {
 		normalized := normalizeMultiMatchWhereClauses(plan.remainder)
-		if canApplySetBasedUnwindRewrite(normalized, plan.items, probe) {
+		if canApplySetBasedUnwindRewrite(normalized, plan.items) {
 			if rewritten, ok := rewriteUnwindCorrelationToIn(normalized, plan.variable, "__unwind_items"); ok {
 				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
 				params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
@@ -177,7 +177,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 
 func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
 	probe := contextPipelineProbe(ctx)
-	clauses, ok, _ := parsePipelineClauses(query, probe)
+	clauses, ok, _ := parsePipelineClauses(query)
 	if !ok {
 		return nil, false, nil
 	}
@@ -239,7 +239,7 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 		findKeywordIndexInContext(query, "SET") >= 0 ||
 		findKeywordIndexInContext(query, "DELETE") >= 0 ||
 		findKeywordIndexInContext(query, "REMOVE") >= 0 ||
-		!unwindItemsAreDistinctComparable(plan.items, probe) {
+		!unwindItemsAreDistinctComparable(plan.items) {
 		return nil, false, nil
 	}
 	returnIndex := findKeywordIndexInContext(query, "RETURN")

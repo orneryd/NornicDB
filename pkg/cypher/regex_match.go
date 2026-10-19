@@ -20,7 +20,7 @@ import (
 //
 // Operands whose type is known before the statement runs ('x' =~ 1) are
 // rejected earlier with a SyntaxError (validateStaticOperatorTypes).
-func cypherRegexMatch(text, pattern interface{}, probe *pipelineCancellation) (interface{}, error) {
+func cypherRegexMatch(text, pattern interface{}) (interface{}, error) {
 	if text == nil || pattern == nil {
 		return nil, nil
 	}
@@ -30,7 +30,7 @@ func cypherRegexMatch(text, pattern interface{}, probe *pipelineCancellation) (i
 	}
 	patternString, patternOK := pattern.(string)
 	if !patternOK {
-		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreRegexPatternTypeMismatch(neo4jValueRepr(pattern, probe)))
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreRegexPatternTypeMismatch(neo4jValueRepr(pattern)))
 	}
 	re, err := GetCachedRegex(anchoredRegexPattern(patternString))
 	if err != nil {

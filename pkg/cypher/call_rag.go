@@ -38,7 +38,7 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 	}
 
 	query := stringOr(req["query"], stringOr(req["text"], ""))
-	candidates, err := parseRerankCandidates(firstPresent(req, "candidates", "rows", "results"), contextPipelineProbe(ctx))
+	candidates, err := parseRerankCandidates(firstPresent(req, "candidates", "rows", "results"))
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 	if v, ok := toInt(req["top_k"]); ok && v > 0 {
 		params.TopK = v
 	}
-	if stops := toStringSlice(req["stop_tokens"], contextPipelineProbe(ctx)); len(stops) > 0 {
+	if stops := toStringSlice(req["stop_tokens"]); len(stops) > 0 {
 		params.StopTokens = stops
 	}
 
@@ -119,7 +119,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 	)
 
 	if messagesRaw, ok := req["messages"]; ok {
-		msgs := toChatMessages(messagesRaw, contextPipelineProbe(ctx))
+		msgs := toChatMessages(messagesRaw)
 		if len(msgs) == 0 {
 			return nil, localizedError(localization.CypherSubqueriesInferMessagesEmpty(), nil)
 		}
@@ -219,7 +219,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			return nil, localizedError(localization.SearchGraphContinuation(), nil)
 		}
 		opts.Graph = true
-		opts.RelationshipTypes = toStringSlice(firstPresent(req, "relationshipTypes", "relationship_types"), contextPipelineProbe(ctx))
+		opts.RelationshipTypes = toStringSlice(firstPresent(req, "relationshipTypes", "relationship_types"))
 		if nPresent {
 			graphPage, opts.Limit = true, n
 		}
@@ -231,11 +231,11 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		}
 		continuationRequested = false
 	}
-	failClosed, err := applyRetrievalPolicyOptions(opts, req, contextPipelineProbe(ctx))
+	failClosed, err := applyRetrievalPolicyOptions(opts, req)
 	if err != nil {
 		return nil, err
 	}
-	if types := toStringSlice(firstPresent(req, "types", "labels"), contextPipelineProbe(ctx)); len(types) > 0 {
+	if types := toStringSlice(firstPresent(req, "types", "labels")); len(types) > 0 {
 		opts.Types = types
 	}
 	// where: a Cypher predicate on each candidate, bound as node, with the
@@ -285,7 +285,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		opts.RerankMinScore = v
 	}
 
-	embedding, suppliedEmbedding, err := resolveSuppliedRetrieveEmbedding(req, failClosed, contextPipelineProbe(ctx))
+	embedding, suppliedEmbedding, err := resolveSuppliedRetrieveEmbedding(req, failClosed)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page, contextPipelineProbe(ctx)), nil
+		return executeSearchContinuationPage(page), nil
 	}
 	if mode == search.SearchContinuationID {
 		page, continuationErr := ensureSearchService(nil).SearchTextContinuation(
@@ -333,7 +333,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page, contextPipelineProbe(ctx)), nil
+		return executeSearchContinuationPage(page), nil
 	}
 	if useConfiguredRerank && svc != nil {
 		opts.RerankEnabled = svc.RerankerAvailable(ctx)
@@ -356,7 +356,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page, contextPipelineProbe(ctx)), nil
+			return executeSearchContinuationPage(page), nil
 		}
 		response, err = service.Search(ctx, query, embedding, opts)
 	} else {
@@ -377,7 +377,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 				}
 				// An empty, non-finite or wrong-dimension vector is a failed
 				// embedding (query_embedding_failed), not a missing one.
-				if dimensions := queryEmbedderDimensions(embedder); !usableEmbedding(embedding, contextPipelineProbe(ctx)) || dimensions > 0 && len(embedding) != dimensions {
+				if dimensions := queryEmbedderDimensions(embedder); !usableEmbedding(embedding) || dimensions > 0 && len(embedding) != dimensions {
 					unusable := localizedError(localization.CypherCoreEmbeddingNoOutput(), nil)
 					if failClosed {
 						return nil, failClosedEmbeddingUnavailable(unusable)
@@ -413,7 +413,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page, contextPipelineProbe(ctx)), nil
+			return executeSearchContinuationPage(page), nil
 		}
 		response, err = search.SearchTextChunksWithErrorPolicy(
 			ctx,
@@ -470,7 +470,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	return result, nil
 }
 
-func executeSearchContinuationPage(page *search.SearchContinuationPage, probe *pipelineCancellation) *ExecuteResult {
+func executeSearchContinuationPage(page *search.SearchContinuationPage) *ExecuteResult {
 	results := make([]interface{}, 0, len(page.Results))
 	for index := range page.Results {
 		result := page.Results[index]
@@ -555,7 +555,7 @@ func searchContinuationOwner(ctx context.Context) string {
 	return "embedded"
 }
 
-func applyRetrievalPolicyOptions(opts *search.SearchOptions, req map[string]interface{}, probe *pipelineCancellation) (bool, error) {
+func applyRetrievalPolicyOptions(opts *search.SearchOptions, req map[string]interface{}) (bool, error) {
 	failClosed, err := parseFailClosed(req)
 	if err != nil {
 		return false, err
@@ -580,7 +580,7 @@ func applyRetrievalPolicyOptions(opts *search.SearchOptions, req map[string]inte
 	if value, ok := toBool(firstPresent(req, "fallbackEnabled", "fallback_enabled")); ok {
 		opts.FallbackEnabled = &value
 	}
-	opts.Filters = parseRetrievalFilters(firstPresent(req, "filters", "propertyFilters", "property_filters"), probe)
+	opts.Filters = parseRetrievalFilters(firstPresent(req, "filters", "propertyFilters", "property_filters"))
 	if failClosed {
 		if err := validateFailClosedNumericPolicy(req); err != nil {
 			return true, err
@@ -608,7 +608,7 @@ var (
 	errRetrieveEmbeddingInvalid    = errors.New("query embedding is empty or non-finite")
 )
 
-func resolveSuppliedRetrieveEmbedding(req map[string]interface{}, failClosed bool, probe *pipelineCancellation) ([]float32, bool, error) {
+func resolveSuppliedRetrieveEmbedding(req map[string]interface{}, failClosed bool) ([]float32, bool, error) {
 	raw, present := policyPresent(req, "embedding", "queryEmbedding", "query_embedding")
 	if !present {
 		return nil, false, nil
@@ -619,11 +619,11 @@ func resolveSuppliedRetrieveEmbedding(req map[string]interface{}, failClosed boo
 		}
 		return nil, false, nil
 	}
-	embedding, err := parseRetrieveEmbedding(raw, failClosed, probe)
+	embedding, err := parseRetrieveEmbedding(raw, failClosed)
 	if err != nil {
 		return nil, false, failClosedEmbeddingUnavailable(err)
 	}
-	if usableEmbedding(embedding, probe) {
+	if usableEmbedding(embedding) {
 		return embedding, true, nil
 	}
 	if failClosed {
@@ -636,14 +636,14 @@ func failClosedEmbeddingUnavailable(cause error) error {
 	return localizedError(localization.CypherSubqueriesRAGFailClosedEmbeddingUnavailable(cause), cause)
 }
 
-func parseRetrieveEmbedding(raw interface{}, failClosed bool, probe *pipelineCancellation) ([]float32, error) {
+func parseRetrieveEmbedding(raw interface{}, failClosed bool) ([]float32, error) {
 	if !failClosed {
 		return toFloat32Slice(raw), nil
 	}
-	return strictNumericEmbedding(raw, probe)
+	return strictNumericEmbedding(raw)
 }
 
-func strictNumericEmbedding(raw interface{}, probe *pipelineCancellation) ([]float32, error) {
+func strictNumericEmbedding(raw interface{}) ([]float32, error) {
 	switch val := raw.(type) {
 	case []float32:
 		return val, nil
@@ -680,7 +680,7 @@ func queryEmbedderDimensions(embedder QueryEmbedder) int {
 	return 0
 }
 
-func usableEmbedding(values []float32, probe *pipelineCancellation) bool {
+func usableEmbedding(values []float32) bool {
 	if len(values) == 0 {
 		return false
 	}
@@ -746,7 +746,7 @@ func validateFailClosedNumericPolicy(req map[string]interface{}) error {
 	return nil
 }
 
-func parseRetrievalFilters(raw interface{}, probe *pipelineCancellation) map[string][]string {
+func parseRetrievalFilters(raw interface{}) map[string][]string {
 	filters, ok := raw.(map[string]interface{})
 	if !ok || len(filters) == 0 {
 		return nil
@@ -819,7 +819,7 @@ func ragProcedureRequest(procedure string, args []interface{}) (map[string]inter
 	return optionalProcedureMap(procedure, args, 0, "request")
 }
 
-func toChatMessages(v interface{}, probe *pipelineCancellation) []heimdall.ChatMessage {
+func toChatMessages(v interface{}) []heimdall.ChatMessage {
 	items, ok := v.([]interface{})
 	if !ok {
 		return nil
@@ -840,7 +840,7 @@ func toChatMessages(v interface{}, probe *pipelineCancellation) []heimdall.ChatM
 	return out
 }
 
-func parseRerankCandidates(raw interface{}, probe *pipelineCancellation) ([]search.RerankCandidate, error) {
+func parseRerankCandidates(raw interface{}) ([]search.RerankCandidate, error) {
 	items, ok := raw.([]interface{})
 	if !ok {
 		return nil, nil
@@ -881,7 +881,7 @@ func continuationResultMetadata(value any) map[string]any {
 // RETURN <where> AS …, and taken back from it.
 func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
 	const prefix, suffix = "RETURN ", " AS __nornic_where"
-	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25", contextPipelineProbe(ctx))
+	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return "", err
 	}
