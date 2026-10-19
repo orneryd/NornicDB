@@ -5,6 +5,7 @@ import (
 
  "github.com/orneryd/nornicdb/pkg/fabric"
  "github.com/orneryd/nornicdb/pkg/localization"
+ "github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Independent commits cannot be absorbed by a caller or undone by a remote
@@ -12,7 +13,7 @@ import (
 // before invoking its handler when an atomic transaction already owns it.
 func (e *StorageExecutor) checkPeriodicTransactionScope(ctx context.Context, procedure string) error {
  _,distributed:=fabric.FabricTransactionFromContext(ctx)
- if e.inTransaction(ctx) || distributed {
+ if e.inTransaction(ctx) || distributed || storage.CoordinatorOwnsTransaction(ctx) || e.txContext != nil && e.txContext.coordinatorOwned {
   return localizedStatusError("Neo.ClientError.Transaction.TransactionTypeNotSupported","PeriodicRequiresAutocommit",localization.CypherTransactionsQueryInTransactionUnsupported("CALL "+procedure))
  }
  return nil

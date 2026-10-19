@@ -49,13 +49,15 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 			return
 		}
 		if len(parts) == 3 && r.Method == http.MethodPost {
+			var openRequest struct { TransactionMetadata map[string]interface{} `json:"tx_metadata"` }
+			if err := json.NewDecoder(r.Body).Decode(&openRequest); err != nil { reply(nil, err); return }
 			store, err := remote.GetStorage(parts[1])
 			if err != nil {
 				reply(nil, err)
 				return
 			}
 			exec := NewStorageExecutor(store)
-			if _, err = exec.Execute(r.Context(), "BEGIN", nil); err != nil {
+			if _, err = exec.Execute(WithTransactionMetadata(r.Context(), openRequest.TransactionMetadata), "BEGIN", nil); err != nil {
 				reply(nil, err)
 				return
 			}
