@@ -178,22 +178,27 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 		return nil, err
 	}
 
-	b.nodeCacheMu.RLock()
-	if cached, ok := b.nodeCache[id]; ok && readCache && b.writeBehind == nil {
-		b.nodeCacheMu.RUnlock()
-		atomic.AddInt64(&b.cacheHits, 1)
-		nodeCopy := hitCopy(cached)
-		if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
-			return nil, ErrNotFound
-		}
-		return nodeCopy, nil
-	}
-	b.nodeCacheMu.RUnlock()
-	atomic.AddInt64(&b.cacheMisses, 1)
-
 	gen := b.nodeCacheGen.current()
 	var state bufferedEntityState
 	var node *Node
+	loaded := false
+	cached := func(w *WriteBehindBuffer) (bool, error) {
+		node = nil
+		if w != nil {
+			state := w.entityStateLocked(bufferedNodeEntity, string(id))
+			if state.found {
+				if state.deleted { return true, ErrNotFound }
+				node = hitCopy(state.node)
+				return true, nil
+			}
+		}
+		if !readCache { return false, nil }
+		b.nodeCacheMu.RLock()
+		value, found := b.nodeCache[id]
+		if found { node = hitCopy(value) }
+		b.nodeCacheMu.RUnlock()
+		return found, nil
+	}
 	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
 		if state.found {
 			if state.deleted {
@@ -209,9 +214,10 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 		if err != nil {
 			return err
 		}
+		loaded = true
 		node, err = decode(txn, item)
 		return err
-	})
+	}, readViewOptions{scope: namespaceForNodeID(id), cached: cached})
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +227,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 	if b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
-	if cacheFill != nil && b.writeBehind == nil {
+	if loaded && cacheFill != nil {
 		cacheFill(gen, node)
 	}
 	return node, nil
@@ -318,7 +324,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
-	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, false)
+	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, true)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
