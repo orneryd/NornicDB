@@ -172,7 +172,7 @@ type Config struct {
 	// Collection name = database name. Called with the principal's roles from context;
 	// CanAccessDatabase(collectionName) is checked before opening the collection.
 	DatabaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
-	// ResolvedAccessResolver, when set, is used for write RPCs: ResolvedAccess.Write
+	// ResolvedAccessResolver, when set, gates read and write RPCs: ResolvedAccess.Write
 	// for (roles, collectionName) must be true or the request is denied.
 	ResolvedAccessResolver func(roles []string, dbName string) auth.ResolvedAccess
 }
@@ -243,6 +243,9 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 	if s.databaseAccessModeResolver == nil {
 		return nil
 	}
+	if admitted, ok := ctx.Value(contextKeyDatabaseAdmission{}).(*authenticatedUnaryContext); ok && admitted.admitted && admitted.server == s && admitted.database == database && admitted.write == write {
+		return nil
+	}
 	claims, _ := ctx.Value(contextKeyClaims{}).(*auth.JWTClaims)
 	var roles []string
 	if claims != nil {
@@ -252,20 +255,27 @@ func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write
 	if mode == nil {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
 	}
-	var resolve func(string) auth.ResolvedAccess
-	if s.resolvedAccessResolver != nil {
-		resolve = func(database string) auth.ResolvedAccess { return s.resolvedAccessResolver(roles, database) }
+	var accessible bool
+	var access auth.ResolvedAccess
+	if combined, ok := mode.(interface {
+		ResolveDatabaseAccess(string, bool) (bool, auth.ResolvedAccess)
+	}); ok {
+		accessible, access = combined.ResolveDatabaseAccess(database, write)
+	} else {
+		accessible = mode.CanAccessDatabase(database)
+		access = auth.ResolvedAccess{Read: true, Write: true}
+		if accessible && s.resolvedAccessResolver != nil {
+			access = s.resolvedAccessResolver(roles, database)
+		}
 	}
-	accessible, readable := auth.ResolveDatabaseReadAccess(mode, resolve, database)
 	if !accessible {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
 	}
-	if !write && !readable {
+	if !write && !access.Read {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
 	}
-	if write && s.resolvedAccessResolver != nil {
-		ra := resolve(database)
-		if !ra.Write {
+	if write {
+		if !access.Write {
 			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
 		}
 	}
@@ -344,13 +354,47 @@ func (s *Server) authorizeRequestDatabase(ctx context.Context, req interface{}, 
 			if key == "Snapshots/Delete" {
 				write = true
 			}
-			return s.AllowDatabaseAccess(ctx, selected.GetCollectionName(), write)
+			database := selected.GetCollectionName()
+			if err := s.AllowDatabaseAccess(ctx, database, write); err != nil {
+				return err
+			}
+			// The service dispatch is part of this same unary operation. Preserve
+			// its admission only for this exact server, selection and operation.
+			if request, ok := ctx.Value(contextKeyDatabaseAdmission{}).(*authenticatedUnaryContext); ok && request.server == s {
+				request.database, request.write, request.admitted = database, write, true
+			}
+			return nil
 		}
 	}
 	return nil
 }
 
 type contextKeyClaims struct{}
+
+// authenticatedUnaryContext carries the claims and completed admission through
+// one unary dispatch, without allocating another context or a per-request map.
+// Admission is set before dispatch and immutable while the handler runs. It is
+// never installed on streams or retained for subscription delivery.
+type contextKeyDatabaseAdmission struct{}
+type authenticatedUnaryContext struct {
+	context.Context
+	server   *Server
+	claims   *auth.JWTClaims
+	database string
+	write    bool
+	admitted bool
+}
+
+func (c *authenticatedUnaryContext) Value(key interface{}) interface{} {
+	switch key.(type) {
+	case contextKeyClaims:
+		return c.claims
+	case contextKeyDatabaseAdmission:
+		return c
+	default:
+		return c.Context.Value(key)
+	}
+}
 
 // NewServer creates a new Qdrant gRPC server.
 //
@@ -577,7 +621,7 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 					if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 						return nil, err
 					}
-					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+					ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
 					if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
 						return nil, err
 					}
@@ -604,7 +648,7 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 	if err := s.authorizeMethod(ctx, info.FullMethod, claims); err != nil {
 		return nil, err
 	}
-	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	ctx = &authenticatedUnaryContext{Context: ctx, server: s, claims: claims}
 	if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
 		return nil, err
 	}

@@ -105,6 +105,26 @@ func (s *Server) isRBACEnforced() bool {
 	return !auth.AuthenticationDisabled(s.auth)
 }
 
+// serverDatabaseAccessMode binds roles to the live allowlist and the existing
+// direct-operation admission owner. No map or permission result is copied.
+type serverDatabaseAccessMode struct {
+	server *Server
+	roles  []string
+}
+
+func (m *serverDatabaseAccessMode) CanSeeDatabase(database string) bool {
+	return m.CanAccessDatabase(database)
+}
+func (m *serverDatabaseAccessMode) CanAccessDatabase(database string) bool {
+	if !m.server.isRBACEnforced() {
+		return true
+	}
+	return m.server.allowlistStore != nil && m.server.allowlistStore.CanAccessDatabaseForRoles(m.roles, database)
+}
+func (m *serverDatabaseAccessMode) ResolveDatabaseAccess(database string, write bool) (bool, auth.ResolvedAccess) {
+	return m.server.databaseAccessForRoles(m.roles, database, m, write)
+}
+
 // getDatabaseAccessMode returns the per-database access mode for the given principal (claims).
 // When auth is disabled returns Full; when unauthenticated returns DenyAll;
 // when allowlist is loaded returns allowlist-based mode for claims.Roles.
@@ -116,7 +136,7 @@ func (s *Server) getDatabaseAccessMode(claims *auth.JWTClaims) auth.DatabaseAcce
 		return auth.DenyAllDatabaseAccessMode
 	}
 	if s.allowlistStore != nil {
-		return auth.NewAllowlistDatabaseAccessMode(s.allowlistStore.Allowlist(), claims.Roles)
+		return &serverDatabaseAccessMode{server: s, roles: claims.Roles}
 	}
 	return auth.DenyAllDatabaseAccessMode
 }
@@ -131,7 +151,7 @@ func (s *Server) GetDatabaseAccessModeForRoles(roles []string) auth.DatabaseAcce
 		return auth.DenyAllDatabaseAccessMode
 	}
 	if s.allowlistStore != nil {
-		return auth.NewAllowlistDatabaseAccessMode(s.allowlistStore.Allowlist(), roles)
+		return &serverDatabaseAccessMode{server: s, roles: roles}
 	}
 	return auth.DenyAllDatabaseAccessMode
 }
@@ -160,59 +180,44 @@ func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.R
 }
 
 // databaseReadTargets resolves the physical population of a direct reader.
-func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMode) ([]string, bool) {
-	physical, allowed := s.graphAccess(mode, database)
+func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMode, targets []string) ([]string, bool) {
+	var manager cypher.GraphDatabaseResolver
+	if s.dbManager != nil {
+		manager = s.dbManager
+	}
+	var canAccess func(string) bool
+	if mode != nil {
+		canAccess = mode.CanAccessDatabase
+	}
+	physical, remote, allowed := cypher.GraphAccessTarget(manager, database, canAccess)
 	if !allowed {
 		return nil, false
 	}
-	if s.dbManager == nil {
-		return []string{physical}, true
+	if s.dbManager == nil || remote {
+		return append(targets, physical), true
 	}
-
-	// A remote constituent is a graph selection in the existing policy, not
-	// a local catalog name. In particular a same-named local alias must not
-	// redirect its authorization. GraphAccess checks its composite and target.
-	if dot := strings.IndexByte(database, '.'); dot > 0 && s.dbManager.IsCompositeDatabase(database[:dot]) {
-		info, err := s.dbManager.GetDatabase(database[:dot])
-		if err != nil {
-			return nil, false
-		}
-		for _, ref := range info.Constituents {
-			if strings.EqualFold(ref.Alias, database[dot+1:]) && ref.Type == "remote" {
-				return []string{physical}, true
-			}
-		}
-	}
-	// Ordinary names and aliases are already canonical. Only a dotted local
-	// constituent can name a further local alias.
+	// A dotted local constituent may name a local alias. Remote names above
+	// keep their foreign identity even when a local alias has the same spelling.
 	if strings.Contains(database, ".") {
-		physical, allowed = s.graphAccess(mode, physical)
+		physical, allowed = cypher.GraphAccess(manager, physical, canAccess)
 		if !allowed {
 			return nil, false
 		}
 	}
 	if !s.dbManager.IsCompositeDatabase(physical) {
-		return []string{physical}, true
+		return append(targets, physical), true
 	}
-	info, err := s.dbManager.GetDatabase(physical)
+	refs, err := s.dbManager.GetCompositeConstituents(physical)
 	if err != nil {
 		return nil, false
 	}
-	targets := []string{physical}
-	// Resolve the already-read references without copying the parent metadata
-	// again for each constituent. GraphAccess owns both selection decisions;
-	// only local names participate in local catalog alias resolution.
-	for _, ref := range info.Constituents {
+	targets = append(targets, physical)
+	for _, ref := range refs {
 		var target string
-		var allowed bool
 		switch ref.Type {
 		case "local":
-			target, allowed = s.graphAccess(mode, ref.DatabaseName)
+			target, allowed = cypher.GraphAccess(manager, ref.DatabaseName, canAccess)
 		case "remote":
-			var canAccess func(string) bool
-			if mode != nil {
-				canAccess = mode.CanAccessDatabase
-			}
 			target, allowed = cypher.GraphAccess(nil, ref.DatabaseName, canAccess)
 		default:
 			return nil, false
@@ -228,20 +233,37 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 // databaseReadAccess is the shared decision for HTTP routes that read database
 // data directly instead of executing an authorized Cypher statement.
 func (s *Server) databaseReadAccess(claims *auth.JWTClaims, dbName string) (accessible, readable bool) {
-	targets, accessible := s.databaseReadTargets(dbName, s.getDatabaseAccessMode(claims))
-	if !accessible {
-		return false, false
-	}
-	var resolve func(string) auth.ResolvedAccess
+	var roles []string
 	if claims != nil {
-		resolve = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
+		roles = claims.Roles
+	}
+	accessible, access := s.databaseAccessForRoles(roles, dbName, s.getDatabaseAccessMode(claims), false)
+	return accessible, access.Read
+}
+
+// databaseAccessForRoles evaluates the existing selection and per-database
+// privileges over one resolved target population. HTTP, request read callbacks
+// and gRPC share this decision; no authorization result survives the operation.
+func (s *Server) databaseAccessForRoles(roles []string, database string, mode auth.DatabaseAccessMode, write bool) (bool, auth.ResolvedAccess) {
+	var buffer [8]string
+	targets, allowed := s.databaseReadTargets(database, mode, buffer[:0])
+	if !allowed {
+		return false, auth.ResolvedAccess{}
+	}
+	access := auth.ResolvedAccess{Read: true, Write: true}
+	if !s.isRBACEnforced() {
+		return true, access
 	}
 	for _, target := range targets {
-		if _, allowed := auth.ResolveDatabaseReadAccess(nil, resolve, target); !allowed {
-			return true, false
+		if !write {
+			access.Read = auth.DatabaseReadAllowed(roles, target, s.privilegesStore, s.roleEntitlementsStore) && access.Read
+			continue
 		}
+		resolved := s.GetResolvedAccessForRoles(roles, target)
+		access.Read = access.Read && resolved.Read
+		access.Write = access.Write && resolved.Write
 	}
-	return true, true
+	return true, access
 }
 
 // authorizeDatabaseRead refuses, with Neo4j's Forbidden status, a request
@@ -314,8 +336,8 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	// Heimdall, MCP and plugins authorize through them.
 	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
 		if permission == auth.PermRead {
-			_, readable := s.databaseReadAccess(claims, database)
-			return readable
+			_, access := s.databaseAccessForRoles(claims.Roles, database, databaseAccessMode, false)
+			return access.Read
 		}
 		return s.principalAccess(claims).Allows(database, string(permission))
 	})
@@ -482,9 +504,9 @@ func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
 // graphAccess reports whether mode allows graph and the database its data
 // is in (cypher.GraphAccess). A nil mode allows every database.
 func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
-	var manager cypher.DatabaseManagerInterface
+	var manager cypher.GraphDatabaseResolver
 	if s.dbManager != nil {
-		manager = &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}
+		manager = s.dbManager
 	}
 	var canAccess func(string) bool
 	if mode != nil {
