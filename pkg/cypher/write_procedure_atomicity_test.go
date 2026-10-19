@@ -44,3 +44,37 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteProcedureCallbackAtomicityAcrossCarriers(t *testing.T) {
+	for _, carrier := range []string{"both", "storage", "context"} {
+		t.Run(carrier, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "u5_carrier")
+			exec := NewStorageExecutor(store)
+			fail := true
+			failure := errors.New("u5 callback rejected after write")
+			name := "u5tx.carrier"+carrier
+			require.NoError(t, RegisterUserProcedure(ProcedureSpec{
+				Name: name, Signature: name+"() :: (value :: INTEGER)", Mode: ProcedureModeWrite,
+				Returns: []ProcedureColumn{{Name: "value", Type: "INTEGER"}},
+			}, func(ctx context.Context, nested *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
+				if carrier == "storage" { ctx = context.Background() }
+				if carrier == "context" { nested = exec }
+				result, err := nested.Execute(ctx, "CREATE (:U5CarrierWrite) RETURN 1 AS value", nil)
+				if err != nil { return nil, err }
+				if fail { return nil, failure }
+				return result, nil
+			}))
+			_, err := exec.Execute(context.Background(), "CALL "+name+"() YIELD value RETURN value", nil)
+			require.ErrorContains(t, err, failure.Error())
+			nodes, err := store.GetNodesByLabel("U5CarrierWrite")
+			require.NoError(t, err)
+			require.Empty(t, nodes)
+			fail = false
+			_, err = exec.Execute(context.Background(), "CALL "+name+"() YIELD value RETURN value", nil)
+			require.NoError(t, err)
+			nodes, err = store.GetNodesByLabel("U5CarrierWrite")
+			require.NoError(t, err)
+			require.Len(t, nodes, 1, "successful callback commits exactly once")
+		})
+	}
+}
