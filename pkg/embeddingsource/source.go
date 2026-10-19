@@ -62,10 +62,66 @@ func (s Source) Metadata() string {
 	return b.String()
 }
 
-// Read decodes an immutable snapshot. Unsupported or malformed present records
-// never fall back to a narrower legacy source definition. Counts and lengths
-// are bounded by the record itself before allocating or slicing.
-func Read(meta map[string]any) (s Source, present, valid bool) {
+// Keys is an immutable, validated view of encoded property names. Iterators
+// borrow the persisted string; no shared mutable cache or selector slices exist.
+type Keys struct {
+	data  string
+	count int
+}
+// KeyIterator traverses validated names without allocation.
+type KeyIterator struct {
+	data          string
+	at, remaining int
+}
+
+// Iterator starts an independent traversal of the names.
+func (k Keys) Iterator() KeyIterator { return KeyIterator{data: k.data, remaining: k.count} }
+// Contains reports whether a name belongs to this set.
+func (k Keys) Contains(key string) bool {
+	it := k.Iterator()
+	for value, ok := it.Next(); ok; value, ok = it.Next() {
+		if value == key {
+			return true
+		}
+	}
+	return false
+}
+// Empty reports whether no names were recorded.
+func (k Keys) Empty() bool { return k.count == 0 }
+func (k Keys) slice() []string {
+	keys := make([]string, k.count)
+	it := k.Iterator()
+	for i := range keys {
+		keys[i], _ = it.Next()
+	}
+	return keys
+}
+// Next returns the next name, or false after the last name.
+func (it *KeyIterator) Next() (string, bool) {
+	if it.remaining == 0 {
+		return "", false
+	}
+	n := 0
+	for it.data[it.at] != ':' {
+		n = n*10 + int(it.data[it.at]-'0')
+		it.at++
+	}
+	it.at++
+	key := it.data[it.at : it.at+n]
+	it.at += n
+	it.remaining--
+	return key, true
+}
+
+// View is a zero-allocation interpretation of a validated immutable record.
+type View struct {
+	Text, AllProperties, IncludeLabels bool
+	Include, Exclude, Properties       Keys
+}
+
+// ReadView is the sole decoder. Unsupported or malformed present records never
+// fall back to legacy source semantics. All lengths are checked before slicing.
+func ReadView(meta map[string]any) (s View, present, valid bool) {
 	raw, present := meta[MetaKey]
 	if !present {
 		return s, false, true
@@ -100,21 +156,20 @@ func Read(meta map[string]any) (s Source, present, valid bool) {
 		return s, true, false
 	}
 	s.Text, s.AllProperties, s.IncludeLabels = flags&1 != 0, flags&2 != 0, flags&4 != 0
-	read := func() ([]string, bool) {
+	read := func() (Keys, bool) {
 		n, ok := number()
 		if !ok || n > len(data)-at {
-			return nil, false
+			return Keys{}, false
 		}
-		keys := make([]string, n)
-		for i := range keys {
+		start := at
+		for i := 0; i < n; i++ {
 			length, ok := number()
 			if !ok || length > len(data)-at {
-				return nil, false
+				return Keys{}, false
 			}
-			keys[i] = data[at : at+length]
 			at += length
 		}
-		return keys, true
+		return Keys{data: data[start:at], count: n}, true
 	}
 	if s.Include, ok = read(); !ok {
 		return s, true, false
@@ -126,4 +181,15 @@ func Read(meta map[string]any) (s Source, present, valid bool) {
 		return s, true, false
 	}
 	return s, true, at == len(data)
+}
+
+// Read materializes an independently mutable Source for callers that need it.
+// The storage hot path uses ReadView and never constructs selector slices.
+func Read(meta map[string]any) (s Source, present, valid bool) {
+	view, present, valid := ReadView(meta)
+	if !present || !valid {
+		return s, present, valid
+	}
+	return Source{Text: view.Text, AllProperties: view.AllProperties, IncludeLabels: view.IncludeLabels,
+		Include: view.Include.slice(), Exclude: view.Exclude.slice(), Properties: view.Properties.slice()}, true, true
 }

@@ -159,6 +159,8 @@ func TestEmbedWorkerRetryOwnerInvalidatesInFlightRetention(t *testing.T) {
 	worker.claimMu.Lock()
 	require.Empty(t, worker.embeddingRetries, "a rejected in-flight old-generation result must not refill retention")
 	worker.claimMu.Unlock()
+	require.Zero(t, queue.attempts["node-000"], "a superseded provider result is now rejected before storage")
+	queue.rejections = 0
 	require.True(t, worker.processNextBatch())
 	saved, err := queue.GetNode("node-000")
 	require.NoError(t, err)

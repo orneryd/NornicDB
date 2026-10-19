@@ -78,11 +78,15 @@ func (b *BadgerEngine) embeddingTextPolicyOrDefault() EmbeddingTextPolicy {
 // Writers that decide themselves whether to keep a node's embeddings use it
 // with the engine's policy (#963).
 func (p EmbeddingTextPolicy) SameSource(x, y *Node) bool {
-	if p.IncludeLabels && !sameLabelSet(x.Labels, y.Labels) {
+	return sameEmbeddingTextSource(x, y, p.IncludeLabels, p.FeedsText)
+}
+
+func sameEmbeddingTextSource(x, y *Node, includeLabels bool, feedsText func(string) bool) bool {
+	if includeLabels && !sameLabelSet(x.Labels, y.Labels) {
 		return false
 	}
 	for name, value := range x.Properties {
-		if !p.FeedsText(name) {
+		if !feedsText(name) {
 			continue
 		}
 		other, ok := y.Properties[name]
@@ -91,7 +95,7 @@ func (p EmbeddingTextPolicy) SameSource(x, y *Node) bool {
 		}
 	}
 	for name := range y.Properties {
-		if _, ok := x.Properties[name]; !ok && p.FeedsText(name) {
+		if _, ok := x.Properties[name]; !ok && feedsText(name) {
 			return false
 		}
 	}

@@ -8,6 +8,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestManagedEmbeddingSourceSelectorAllocations(t *testing.T) {
+	source := &Node{Properties: map[string]any{"text": "same", "id": "consumed"}, EmbedMeta: map[string]any{embeddingsource.MetaKey: (embeddingsource.Source{Text: true, Include: []string{"text"}, Properties: []string{"id"}}).Metadata()}}
+	current := &Node{Properties: map[string]any{"text": "same", "id": "consumed", "unconsumed": "new"}}
+	require.Zero(t, testing.AllocsPerRun(100, func() {
+		if !EmbeddingSourceMatches(source, current, EmbeddingTextPolicy{}) {
+			panic("source changed")
+		}
+	}), "preserving comparisons must not allocate selector slices")
+}
+
 func TestManagedEmbeddingSourceTransaction(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)

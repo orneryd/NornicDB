@@ -91,13 +91,16 @@ type EmbedWorker struct {
 	// are not guaranteed to become visible immediately.
 	claimMu      sync.Mutex
 	claimedNodes map[string]uint64
+	// Provider setters linearize against sidecar commit and publication.
+	providerWriteMu sync.RWMutex
 
 	// embeddingRetries holds generated payloads after rejected writes. claimMu
 	// protects ownership; a claim retries persistence before calling a provider.
 	embeddingRetries   map[storage.NodeID]*retainedNodeEmbedding
 	retryMaxCount      int // zero uses the shared owner default
 	retryMaxBytes      int64
-	retryBudgetBlocked bool // claimMu; cleared only when capacity is released or invalidated
+	retryBudgetBlocked bool      // claimMu; cleared only when capacity is released or invalidated
+	retryAdmissionAt   time.Time // claimMu; bounded wait when no payload can be retained
 
 	embeddingEpoch atomic.Uint64
 	retryTurn      bool // claimMu alternates due retries with fresh work.
@@ -261,6 +264,8 @@ func (ew *EmbedWorker) StartWorkers() {
 // SetEmbedder sets or updates the embedder (for async initialization).
 // This allows the worker to start before the model is loaded.
 func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+	ew.providerWriteMu.Lock()
+	defer ew.providerWriteMu.Unlock()
 	ew.mu.Lock()
 	ew.embedder = embedder
 	ew.embeddingEpoch.Add(1)
@@ -282,6 +287,8 @@ func (ew *EmbedWorker) currentEmbedder() embed.Embedder {
 // SetEmbedderResolver selects a provider for a fully-qualified node ID. This
 // supports per-database model spaces without coupling the worker to a provider.
 func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+	ew.providerWriteMu.Lock()
+	defer ew.providerWriteMu.Unlock()
 	ew.mu.Lock()
 	ew.embedderResolver = resolver
 	ew.embeddingEpoch.Add(1)
@@ -1269,6 +1276,17 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 
 // writeEmbeddedNode is shared by first writes and retained-result retries.
 func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node, provider embed.Embedder, retained *retainedNodeEmbedding) bool {
+	ew.providerWriteMu.RLock()
+	defer ew.providerWriteMu.RUnlock()
+	ew.claimMu.Lock()
+	epoch, claimed := ew.claimedNodes[string(node.ID)]
+	validEpoch := claimed && epoch == ew.embeddingEpoch.Load()
+	ew.claimMu.Unlock()
+	if !validEpoch {
+		ew.dropNodeEmbeddingRetry(node.ID)
+		ew.addNodeToPendingEmbeddings(node.ID)
+		return true
+	}
 	// The worker writes ONLY the embedding key space (chunk vectors plus the
 	// metadata record): no node-record transaction, no MVCC version, no
 	// UpdatedAt bump. The writeback lands only while the stored node still

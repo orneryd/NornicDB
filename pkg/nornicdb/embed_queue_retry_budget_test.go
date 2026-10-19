@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -68,10 +69,15 @@ func TestEmbedWorkerRetryBudgetOversized(t *testing.T) {
 		require.False(t, worker.processNextBatch())
 	}
 	require.Equal(t, 1, provider.GetEmbedCount())
-	require.True(t, worker.retryBudgetBlocked)
-	worker.SetEmbedder(provider) // Explicit invalidation permits a new configuration attempt.
-	require.True(t, worker.processNextBatch(), "invalidation releases oversized-result backpressure")
+	require.False(t, worker.retryBudgetBlocked, "no retained owner exists to release a capacity latch")
+	require.False(t, worker.retryAdmissionAt.IsZero())
+	worker.retryAdmissionAt = time.Time{}
+	queue := worker.storage.(*rejectingSidecarQueue)
+	queue.rejections = 0
+	require.True(t, worker.processNextBatch(), "a first unretainable result must recover after bounded backoff")
 	require.Equal(t, 2, provider.GetEmbedCount())
+	worker.SetEmbedder(provider) // Explicit invalidation permits a new configuration attempt.
+	require.True(t, worker.retryAdmissionAt.IsZero(), "invalidation also clears admission backoff")
 }
 
 func TestEmbedWorkerRetryBudgetChargesPayload(t *testing.T) {
