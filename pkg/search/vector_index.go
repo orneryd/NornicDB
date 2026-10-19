@@ -448,8 +448,14 @@ func (v *VectorIndex) GetVector(id string) ([]float32, bool) {
 // vector, so a reference remains safe after the read lock is released.
 func (v *VectorIndex) getVectorRef(id string) ([]float32, bool) {
 	v.mu.RLock()
-	vec, exists := v.vectors[id]
+	vec, exists := v.getVectorRefLocked(id)
 	v.mu.RUnlock()
+	return vec, exists
+}
+
+// getVectorRefLocked borrows a vector while the caller holds v.mu for reading.
+func (v *VectorIndex) getVectorRefLocked(id string) ([]float32, bool) {
+	vec, exists := v.vectors[id]
 	return vec, exists && len(vec) > 0
 }
 

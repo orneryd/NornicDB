@@ -481,39 +481,64 @@ func (c *CPUExactScorer) scoreCandidateValues(ctx context.Context, query []float
 	if c.getter == nil {
 		return nil, nil
 	}
-	normalizedQuery := vector.Normalize(query)
 	if vfs, ok := c.getter.(*VectorFileStore); ok {
-		return vfs.scoreCandidatesDot(ctx, normalizedQuery, candidates)
+		return vfs.scoreCandidatesDot(ctx, vector.Normalize(query), candidates)
 	}
 	scored := make([]ScoredCandidate, 0, len(candidates))
+	if len(candidates) == 0 {
+		return scored, nil
+	}
+	err := c.withVectorScores(ctx, query, func(read vectorScoreReader) error {
+		for _, candidate := range candidates {
+			score, ok, err := read(candidate.ID)
+			if err != nil {
+				return err
+			}
+			if ok {
+				scored = append(scored, ScoredCandidate{ID: candidate.ID, Score: score})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return scored, nil
+}
 
-	for _, cand := range candidates {
+type vectorScoreReader func(string) (float64, bool, error)
+
+// withVectorScores owns CPU value computation for both batch output and
+// direct node accumulation. An in-memory batch borrows the index once; its
+// callback reads no Service state while holding that read lock.
+func (c *CPUExactScorer) withVectorScores(ctx context.Context, query []float32, visit func(vectorScoreReader) error) error {
+	if c.getter == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	normalizedQuery := vector.Normalize(query)
+	lookup := c.getter.GetVector
+	if index, ok := c.getter.(*VectorIndex); ok {
+		index.mu.RLock()
+		defer index.mu.RUnlock()
+		lookup = index.getVectorRefLocked
+	}
+	return visit(func(id string) (float64, bool, error) {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return 0, false, ctx.Err()
 		default:
 		}
-
-		var vec []float32
-		var exists bool
-		if index, ok := c.getter.(*VectorIndex); ok {
-			vec, exists = index.getVectorRef(cand.ID) // read-only: no copy
-		} else {
-			vec, exists = c.getter.GetVector(cand.ID)
+		vec, ok := lookup(id)
+		if !ok {
+			return 0, false, nil
 		}
-		if !exists {
-			continue // Skip candidates that no longer exist
-		}
-
-		// Exact cosine similarity: dot product of normalized vectors
-		score := vector.DotProduct(normalizedQuery, vec)
-		scored = append(scored, ScoredCandidate{
-			ID:    cand.ID,
-			Score: float64(score),
-		})
-	}
-
-	return scored, nil
+		return float64(vector.DotProduct(normalizedQuery, vec)), true, nil
+	})
 }
 
 // GPUExactScorer implements ExactScorer using GPU-accelerated exact scoring.
@@ -911,6 +936,11 @@ func (p *VectorSearchPipeline) scoreStageBatch(ctx context.Context, query []floa
 		}
 		byNode = members(ids)
 	}
+	if cpu, ok := p.exactScorer.(*CPUExactScorer); ok {
+		if _, fileScored := cpu.getter.(*VectorFileStore); !fileScored {
+			return exactScoreError(p.scoreCPUStageBatch(ctx, query, batch, byNode, cpu))
+		}
+	}
 	capacity := 0
 	for _, n := range batch {
 		capacity += max(1+len(n.extra), len(byNode[n.id]))
@@ -939,11 +969,71 @@ func (p *VectorSearchPipeline) scoreStageBatch(ctx context.Context, query []floa
 	}
 	for _, s := range scored {
 		n := owner[s.ID]
-		if n != nil && (!n.scored || s.Score > n.best.Score) {
-			n.best, n.scored = s, true
+		if n != nil {
+			recordStageScore(n, s.ID, s.Score)
 		}
 	}
 	return nil
+}
+
+// recordStageScore is the single writer of a scored node's best member.
+func recordStageScore(node *stageNode, id string, score float64) {
+	if !node.scored || score > node.best.Score {
+		node.best, node.scored = ScoredCandidate{ID: id, Score: score}, true
+	}
+}
+
+// scoreCPUStageBatch feeds values straight into the node accumulator. The
+// common one-surfaced-vector case needs no expanded candidate slice, owner
+// map or member-score slice. Additional surfaced vectors use a node-local
+// set to keep the same vector from being scored twice.
+func (p *VectorSearchPipeline) scoreCPUStageBatch(ctx context.Context, query []float32, batch []*stageNode, byNode map[string][]string, cpu *CPUExactScorer) error {
+	return cpu.withVectorScores(ctx, query, func(read vectorScoreReader) error {
+		for _, node := range batch {
+			score := func(id string) error {
+				value, ok, err := read(id)
+				if err == nil && ok {
+					recordStageScore(node, id, value)
+				}
+				return err
+			}
+			if len(node.extra) == 0 {
+				if err := score(node.first.ID); err != nil {
+					return err
+				}
+				for _, id := range byNode[node.id] {
+					if id != node.first.ID {
+						if err := score(id); err != nil {
+							return err
+						}
+					}
+				}
+				continue
+			}
+			seen := make(map[string]struct{}, max(1+len(node.extra), len(byNode[node.id])))
+			scoreOnce := func(id string) error {
+				if _, ok := seen[id]; ok {
+					return nil
+				}
+				seen[id] = struct{}{}
+				return score(id)
+			}
+			if err := scoreOnce(node.first.ID); err != nil {
+				return err
+			}
+			for _, candidate := range node.extra {
+				if err := scoreOnce(candidate.ID); err != nil {
+					return err
+				}
+			}
+			for _, id := range byNode[node.id] {
+				if err := scoreOnce(id); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 // pushBestScores keeps the best k scores in a min-heap (scores[0] lowest);
@@ -984,6 +1074,13 @@ func pushBestScores(scores []float64, score float64, k int) []float64 {
 	}
 }
 
+func exactScoreError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return localizedError(localization.SearchExactScoringFailed(err), err)
+}
+
 // scoreFinal scores the pool with the pipeline's exact scorer.
 func (p *VectorSearchPipeline) scoreFinal(ctx context.Context, query []float32, pool []Candidate) ([]ScoredCandidate, error) {
 	var scored []ScoredCandidate
@@ -994,7 +1091,7 @@ func (p *VectorSearchPipeline) scoreFinal(ctx context.Context, query []float32, 
 		scored, err = p.exactScorer.ScoreCandidates(ctx, query, pool)
 	}
 	if err != nil {
-		return nil, localizedError(localization.SearchExactScoringFailed(err), err)
+		return nil, exactScoreError(err)
 	}
 	return scored, nil
 }
