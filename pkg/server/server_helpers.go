@@ -303,12 +303,12 @@ func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) canReadAllDatabases(r *http.Request) bool {
-	return s.canReadAllDatabasesWith(s.databaseReadPredicate(getClaims(r)))
+	return s.canReadAllDatabasesWith(s.databaseReadPredicate(getClaims(r)), false)
 }
 
-func (s *Server) canReadAllDatabasesWith(canRead func(string) bool) bool {
+func (s *Server) canReadAllDatabasesWith(canRead func(string) bool, includeSystem bool) bool {
 	for _, database := range s.dbManager.ListDatabaseNames() {
-		if database == "system" {
+		if !includeSystem && database == "system" {
 			continue
 		}
 		if !canRead(database) {
