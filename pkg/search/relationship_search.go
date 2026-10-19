@@ -366,7 +366,13 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		}
 		rs.mu.Unlock()
 	}()
-	for ctx.Err() == nil {
+	// A batch must finish even while writes keep arriving, otherwise its
+	// staged results would never reach persistence or become searchable.
+	// New writes leave a wake queued for the next batch.
+	rs.mu.RLock()
+	batchSize := len(rs.pending)
+	rs.mu.RUnlock()
+	for processed := 0; processed < batchSize && ctx.Err() == nil; processed++ {
 		rs.mu.Lock()
 		var id string
 		var reported *storage.Edge
