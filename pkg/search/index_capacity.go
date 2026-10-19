@@ -198,7 +198,7 @@ func (s *Service) nodeVectorResidentLocked(nodeID string) int64 {
 // vectorNonNodeResidentLocked preserves relationship and other resident usage
 // when replacing the complete node source. Caller holds indexMu.
 func (s *Service) vectorNonNodeResidentLocked() int64 {
-	bytes := s.vectorResidentBytes
+	bytes := s.vectorResidentBytes - s.vectorUnownedBytes
 	for _, usage := range s.indexCapacityByNode {
 		bytes -= usage.vectorResident
 	}
@@ -222,6 +222,7 @@ func (s *Service) checkVectorSourceCapacityLocked(store *VectorFileStore) error 
 // live-ingestion capacity record. Only ID/size metadata is allocated here.
 func (s *Service) reconcileVectorSourceCapacityLocked(memory *VectorIndex) {
 	resident := s.vectorNonNodeResidentLocked()
+	s.vectorUnownedBytes = 0
 	for id, usage := range s.indexCapacityByNode {
 		usage.vectorResident = 0
 		s.indexCapacityByNode[id] = usage
@@ -249,6 +250,8 @@ func (s *Service) reconcileVectorSourceCapacityLocked(memory *VectorIndex) {
 			usage := s.indexCapacityByNode[owner]
 			usage.vectorResident += bytes
 			s.indexCapacityByNode[owner] = usage
+		} else {
+			s.vectorUnownedBytes += bytes
 		}
 		// An undecodable entry is still resident payload, but its bytes are not
 		// a graph node ID. Charge it globally without inventing a node owner.
@@ -298,6 +301,8 @@ func (s *Service) releaseNodeIndexCapacityLocked(nodeID string) {
 // and keeps its existing charges until normal node replacement or removal.
 // Caller holds indexMu.
 func (s *Service) clearVectorIndexCapacityLocked() {
+	s.vectorResidentBytes -= s.vectorUnownedBytes
+	s.vectorUnownedBytes = 0
 	for nodeID, usage := range s.indexCapacityByNode {
 		if usage.bm25Resident == 0 && usage.bm25Metadata == 0 {
 			s.releaseNodeIndexCapacityLocked(nodeID)

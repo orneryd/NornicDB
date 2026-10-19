@@ -54,16 +54,21 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 		assert.Equal(t, nodeChunkVectorKey("doc", 1), candidates[0].ID)
 	}
 
-	// Capacity reconciliation still charges an undecodable resident key, to
-	// the key itself, so the totals stay exact.
+	// Capacity charges an undecodable entry globally without inventing a node
+	// owner. Reconciliation replaces that source charge instead of adding it.
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.vectorIndex.Add(undecodableVectorKey, []float32{1, 0}))
 	svc.indexMu.Lock()
 	svc.reconcileVectorSourceCapacityLocked(svc.vectorIndex)
 	svc.indexMu.Unlock()
-	assert.Positive(t, svc.indexCapacityByNode[undecodableVectorKey].vectorResident)
-	assert.Equal(t, svc.indexCapacityByNode[undecodableVectorKey].vectorResident, svc.vectorResidentBytes)
+	assert.NotContains(t, svc.indexCapacityByNode, undecodableVectorKey)
+	assert.Equal(t, int64(8), svc.vectorResidentBytes)
+	svc.indexMu.Lock()
+	svc.reconcileVectorSourceCapacityLocked(svc.vectorIndex)
+	svc.indexMu.Unlock()
+	assert.NotContains(t, svc.indexCapacityByNode, undecodableVectorKey)
+	assert.Equal(t, int64(8), svc.vectorResidentBytes, "reconciliation is idempotent")
 }
 
 // forEachNodeVectorEntry stops as soon as its callback does, in every entry

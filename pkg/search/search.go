@@ -811,6 +811,7 @@ type Service struct {
 	indexCapacityByEdge    map[string]indexCapacityUsage
 	bm25ResidentBytes      int64
 	vectorResidentBytes    int64
+	vectorUnownedBytes     int64 // unowned entries in the replaceable node source
 	bm25MetadataBytes      int64
 	vectorMetadataBytes    int64
 	logger                 *slog.Logger
