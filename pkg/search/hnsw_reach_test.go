@@ -74,6 +74,7 @@ func newHNSWFixture(t *testing.T, dims, m int, entry string, nodes []hnswFixture
 		index.internalToID = append(index.internalToID, node.id)
 		index.idToInternal[node.id] = uint32(i)
 		index.deleted = append(index.deleted, false)
+		index.liveOrder = append(index.liveOrder, uint32(i))
 		index.liveCount++
 	}
 	for i, node := range nodes {
@@ -609,6 +610,19 @@ func TestHNSWPopulationWideScanVisitsOnlyLiveVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, baseline.polls, churned.polls, "scan work must follow the live IDs, not the tombstone slots")
+	// Real removals: the scan's list stays within twice the live vectors.
+	index = NewHNSWIndex(2, DefaultHNSWConfig())
+	for i := 0; i < 2000; i++ {
+		require.NoError(t, index.Add(fmt.Sprintf("v-%04d", i), []float32{1, float32(i) / 2000}))
+	}
+	for i := 0; i < 1990; i++ {
+		index.Remove(fmt.Sprintf("v-%04d", i))
+		require.LessOrEqual(t, len(index.liveOrder), 2*index.liveCount+1)
+	}
+	results, exhausted, err := index.searchWithEfExhaustion(context.Background(), []float32{1, 0}, 10, -1, 10)
+	require.NoError(t, err)
+	require.True(t, exhausted)
+	require.Len(t, results, 10)
 }
 
 // BenchmarkHNSWPopulationWideScan is a search as wide as the live population
