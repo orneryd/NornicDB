@@ -686,12 +686,19 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	}
 
 	terminalCtx := context.WithoutCancel(beginCtx)
+	if c.base.txContext != nil {
+		if tx, ok := c.base.txContext.tx.(*fabric.FabricTransaction); ok {
+			terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
+		}
+	}
 	commitFn := func(_ *fabric.SubTransaction) error {
 		_, err := txExec.Execute(terminalCtx, "COMMIT", nil)
 		return err
 	}
 	rollbackFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(terminalCtx, "ROLLBACK", nil)
+		// Local storage rollback has no context API. Always release its state;
+		// the protocol terminal owner bounds its wait independently.
+		_, err := txExec.Execute(context.WithoutCancel(terminalCtx), "ROLLBACK", nil)
 		return err
 	}
 	if err := c.bindCallbacksOnce(sub, commitFn, rollbackFn); err != nil {
