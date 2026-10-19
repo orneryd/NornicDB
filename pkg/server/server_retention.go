@@ -27,11 +27,15 @@ func (s *Server) registerRetentionRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request) *retention.Manager {
+	permissions := []auth.Permission{auth.PermRead, auth.PermAdmin}
+	if r.Method != http.MethodGet {
+		permissions = append(permissions, auth.PermWrite)
+	}
 	if r.URL.Path == "/admin/retention/sweep" {
 		if !s.authorizeAllDatabaseOperation(w, r) {
 			return nil
 		}
-	} else if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+	} else if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), permissions...) {
 		return nil
 	}
 	rm := s.db.GetRetentionManager()
