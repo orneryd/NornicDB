@@ -62,11 +62,10 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			if err := sm.ReplaceFromDefinition(&def); err != nil {
 				return fmt.Errorf("schema: apply %q: %w", namespace, err)
 			}
-			sm.SetPersister(func(def *SchemaDefinition) error {
-				return b.persistSchemaDefinition(namespace, def)
-			})
+			sm.SetPersister(b.namespaceSchemaPersister(namespace))
+			lifetime := b.CaptureNamespaceTask()
 			sm.SetKnowledgePolicyChangedHook(func() {
-				_ = b.ReconcileDecaySuppression(namespace)
+				_ = b.ReconcileDecaySuppression(namespace, lifetime)
 			})
 
 			loadedSchemas = append(loadedSchemas, loaded{namespace: namespace, schema: sm})
@@ -112,26 +111,46 @@ func parseSchemaNamespaceFromKey(key []byte) (string, bool) {
 }
 
 func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefinition) error {
-	if namespace == "" {
-		return fmt.Errorf("schema: namespace is required")
-	}
-	if def == nil {
-		return fmt.Errorf("schema: definition is required")
-	}
+	return b.namespaceSchemaPersister(namespace)(def)
+}
 
-	// Normalize version.
-	if def.Version == 0 {
-		def.Version = schemaDefinitionVersion
-	}
+func (b *BadgerEngine) namespaceSchemaPersister(namespace string) func(*SchemaDefinition) error {
+	revision := b.namespaceLifetimeRevision()
+	return func(def *SchemaDefinition) error {
+		release, err := b.beginWrite()
+		if err != nil {
+			return err
+		}
+		defer release()
+		if state := b.namespaceLifetimes.Load(); state != nil && state.retired[namespace] > revision {
+			// A detached SchemaManager retains its documented local behavior;
+			// its retired persister can never recreate durable schema state.
+			return nil
+		}
+		if err := b.checkNamespaceOperation(namespace); err != nil {
+			return err
+		}
+		if namespace == "" {
+			return fmt.Errorf("schema: namespace is required")
+		}
+		if def == nil {
+			return fmt.Errorf("schema: definition is required")
+		}
 
-	blob, err := json.Marshal(def)
-	if err != nil {
-		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
-	}
+		// Normalize version.
+		if def.Version == 0 {
+			def.Version = schemaDefinitionVersion
+		}
 
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(schemaKey(namespace), blob)
-	})
+		blob, err := json.Marshal(def)
+		if err != nil {
+			return fmt.Errorf("schema: marshal %q: %w", namespace, err)
+		}
+
+		return b.withUpdate(func(txn *badger.Txn) error {
+			return txn.Set(schemaKey(namespace), blob)
+		})
+	}
 }
 
 // dropNamespaceSchema removes a namespace's schema from memory and disk, so a
@@ -145,10 +164,7 @@ func (b *BadgerEngine) dropNamespaceSchema(namespace string) error {
 	b.resetRelationshipUniqueIndexes()
 
 	b.schemasMu.Lock()
-	if sm := b.schemas[namespace]; sm != nil {
-		sm.SetPersister(nil)
-		delete(b.schemas, namespace)
-	}
+	delete(b.schemas, namespace)
 	b.schemasMu.Unlock()
 
 	if err := b.withUpdate(func(txn *badger.Txn) error {
@@ -290,11 +306,10 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	sm := b.schemas[namespace]
 	if sm == nil {
 		sm = NewSchemaManager()
-		sm.SetPersister(func(def *SchemaDefinition) error {
-			return b.persistSchemaDefinition(namespace, def)
-		})
+		sm.SetPersister(b.namespaceSchemaPersister(namespace))
+		lifetime := b.CaptureNamespaceTask()
 		sm.SetKnowledgePolicyChangedHook(func() {
-			_ = b.ReconcileDecaySuppression(namespace)
+			_ = b.ReconcileDecaySuppression(namespace, lifetime)
 		})
 		b.schemas[namespace] = sm
 	}

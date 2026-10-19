@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Replicator is the unified interface for all replication modes.
@@ -87,6 +88,8 @@ type Command struct {
 
 	// RequestID for idempotency/deduplication.
 	RequestID string
+	// Process-local lifecycle state is deliberately absent from the wire/WAL.
+	namespaceDrop *storage.NamespaceDrop
 }
 
 // CommandType identifies the type of write operation.

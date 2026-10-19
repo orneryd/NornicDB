@@ -94,6 +94,7 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 }
 
 func (e *StorageExecutor) executeViaFabric(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	ctx = storage.WithLogicalNamespaceBegin(ctx, storage.CaptureNamespaceLifetimes(e.storage))
 	tx := fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
 	return e.executeViaFabricWithTx(ctx, cypher, params, tx, true)
 }
@@ -117,6 +118,11 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
 	catalog := prepared.catalog
+	if e.txContext != nil && e.txContext.active {
+		ctx = storage.WithLogicalNamespaceBegin(ctx, e.txContext.logicalLifetime)
+	} else if storage.LogicalNamespaceBegin(ctx) == nil {
+		ctx = storage.WithLogicalNamespaceBegin(ctx, storage.CaptureNamespaceLifetimes(e.storage))
+	}
 
 	authToken := GetAuthTokenFromContext(ctx)
 	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
@@ -150,6 +156,15 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	} else {
 		remoteExec = fabric.NewRemoteFragmentExecutor()
 		defer func() { _ = remoteExec.Close() }()
+		if prepared.hasRemote {
+			locations, err := e.logicalRemoteLocations()
+			if err != nil {
+				return nil, err
+			}
+			if err := remoteExec.CaptureLogicalBegin(ctx, locations, authToken); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	statsAcc := &fabricStatsAccumulator{}
@@ -894,6 +909,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 
 	txExec := NewStorageExecutor(engine)
 	txExec.ShareStatementCachesFrom(c.base)
+	txExec.inheritedNamespaceLifetime = storage.LogicalNamespaceBegin(ctx)
 	txExec.deferFlush = c.base.deferFlush
 	txExec.ShareEmbedderFrom(c.base)
 	txExec.searchService = c.base.searchService
@@ -983,4 +999,22 @@ func fabricGraphReferenceError(err error) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
 	}
 	return err
+}
+
+func (e *StorageExecutor) logicalRemoteLocations() ([]*fabric.LocationRemote, error) {
+	if e.dbManager == nil || !e.sessionIsComposite() {
+		return nil, nil
+	}
+	refs, err := e.dbManager.GetCompositeConstituents(e.currentDatabaseName())
+	if err != nil {
+		return nil, err
+	}
+	var locations []*fabric.LocationRemote
+	for _, raw := range refs {
+		ref, ok := toConstituentRef(raw)
+		if ok && strings.EqualFold(ref.Type, "remote") {
+			locations = append(locations, &fabric.LocationRemote{DBName: ref.DatabaseName, URI: ref.URI, AuthMode: ref.AuthMode, User: ref.User, Password: ref.Password})
+		}
+	}
+	return locations, nil
 }

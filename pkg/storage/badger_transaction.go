@@ -66,6 +66,7 @@ type BadgerTransaction struct {
 	beginSnapshot map[string]MVCCVersion
 	// Capture retirement at BEGIN, not when the namespace is lazily selected.
 	beginNamespaceRevision uint64
+	logicalNamespace       string
 	// CommitVersion is assigned once for a successful commit that mutates storage.
 	CommitVersion MVCCVersion
 

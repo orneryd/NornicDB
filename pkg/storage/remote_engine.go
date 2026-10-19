@@ -18,6 +18,10 @@ import (
 // Compile-time interface assertion.
 var _ Engine = (*RemoteEngine)(nil)
 
+// RemoteRequestTimeout bounds a detached remote participant cleanup by the
+// same request deadline as the remote transport.
+const RemoteRequestTimeout = 30 * time.Second
+
 // RemoteEngineConfig configures a remote storage engine.
 //
 // The URI field determines the transport protocol:
