@@ -230,7 +230,9 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 				}
 			}
 			result.Rows = append(result.Rows, []interface{}{section, map[string]interface{}{
-				"query":              query,
+				// Keep the original collector key for accounting, but publish
+				// diagnostic text through the same literal policy as query logs.
+				"query":              e.redactForLog(query),
 				"queryExecutionPlan": nil,
 				"estimatedRows":      nil,
 				"invocations":        copies,
