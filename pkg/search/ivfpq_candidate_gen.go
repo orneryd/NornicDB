@@ -92,7 +92,7 @@ func (g *IVFPQCandidateGen) searchCandidatesWithEvidence(ctx context.Context, qu
 	routed := complete || len(base) < limit
 	// List members' PQ scores are within the index's residual bound of the
 	// exact ones; overflow and overlay vectors are scored exactly.
-	bound := g.index.scoreBound()
+	bound := g.index.queryScoreBound(query)
 	if g.overlay == nil {
 		return base, candidateEvidence{exhausted: complete, routedComplete: routed}.withBound(bound), nil
 	}
