@@ -20,7 +20,20 @@ type ManagedWriteTransaction struct {
 	journal   *WALEngine
 	op        Operation
 	batch     []Operation
+	router    ManagedWriteRouter
 }
+
+// ManagedWriteRouter preserves non-transparent write wrappers. The callback is
+// the already-admitted local transaction, invoked only at local command apply;
+// a forwarded command instead uses the remote engine's accounting owner.
+type ManagedWriteRouter interface {
+	CommitManagedWrite(context.Context, []Operation, bool, func() error) error
+}
+
+// A replication wait can end before its admitted command is applied. The
+// accounting owner must preserve that outcome instead of marking a timeout as
+// a known rollback of the logical write.
+func (m *ManagedWriteTransaction) CommitMayBePending() bool { return m.router != nil }
 
 // NewManagedWrite defers a direct write's snapshot and staging until the commit
 // owner holds admission. Direct calls retain their serialized write semantics;
@@ -62,6 +75,9 @@ func (m *ManagedWriteTransaction) PrepareChanges() error {
 	engine := m.engine
 	var journal *WALEngine
 	for engine != nil {
+		if router, ok := engine.(ManagedWriteRouter); ok && m.router == nil {
+			m.router = router
+		}
 		if wal, ok := engine.(*WALEngine); ok {
 			journal = wal
 		}
@@ -163,7 +179,9 @@ func (m *ManagedWriteTransaction) stage(op Operation) error {
 		if op.Node.CreatedAt.IsZero() {
 			op.Node.CreatedAt = prior.CreatedAt
 		}
-		return tx.UpdateNode(op.Node)
+		tx.mu.Lock()
+		defer tx.mu.Unlock()
+		return tx.updateNodeLocked(op.Node, prior, true)
 	case OpDeleteNode:
 		m.op.NodeID = ns.prefixNodeID(op.NodeID)
 		return tx.DeleteNode(m.op.NodeID)
@@ -205,7 +223,9 @@ func (m *ManagedWriteTransaction) stage(op Operation) error {
 		if err := ns.GetSchema().RegisterTokens(nil, []string{op.Edge.Type}); err != nil {
 			return err
 		}
-		return tx.UpdateEdge(op.Edge)
+		tx.mu.Lock()
+		defer tx.mu.Unlock()
+		return tx.updateEdgeLocked(op.Edge, true)
 	case OpDeleteEdge:
 		m.op.EdgeID = ns.prefixEdgeID(op.EdgeID)
 		return tx.DeleteEdge(m.op.EdgeID)
@@ -234,6 +254,36 @@ func namespacedManagedOperation(ns *NamespacedEngine, op Operation) Operation {
 // and before attempting a physical commit. Its release covers publication;
 // an error here is still a known pre-commit failure at the accounting owner.
 func (m *ManagedWriteTransaction) PrepareCommit(ctx context.Context) (func(), error) {
+	if m.router != nil {
+		// Native WAL belongs to local apply, after wrapper admission, rather
+		// than a proposal that replication might reject or forward elsewhere.
+		return func() {}, nil
+	}
+	return m.prepareJournal(ctx)
+}
+
+func (m *ManagedWriteTransaction) CommitContextWithPublication(ctx context.Context, published func()) error {
+	if m.router == nil {
+		return m.BadgerTransaction.CommitContextWithPublication(ctx, published)
+	}
+	ops := m.batch
+	if ops == nil {
+		ops = []Operation{m.op}
+	}
+	return m.router.CommitManagedWrite(ctx, ops, m.batch != nil, func() error {
+		// Replication invokes local apply only after its command admission.
+		// Ending the caller's ACK wait cannot cancel that committed command.
+		applyContext := context.WithoutCancel(ctx)
+		release, err := m.prepareJournal(applyContext)
+		if err != nil {
+			return err
+		}
+		defer release()
+		return m.BadgerTransaction.CommitContextWithPublication(applyContext, published)
+	})
+}
+
+func (m *ManagedWriteTransaction) prepareJournal(ctx context.Context) (func(), error) {
 	if m.journal == nil {
 		return func() {}, nil
 	}
