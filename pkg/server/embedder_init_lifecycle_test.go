@@ -99,6 +99,9 @@ func TestDBCloseJoinsEmbedderInit(t *testing.T) {
 	s.embedderRetryMaxBackoff = time.Hour
 	entered := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	allowConstructor := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(allowConstructor)
 	var constructorReturned atomic.Bool
 	built := &closeTrackingEmbedder{countingEmbedder: countingEmbedder{dims: 4}}
 	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
@@ -130,7 +133,7 @@ func TestDBCloseJoinsEmbedderInit(t *testing.T) {
 	default:
 	}
 
-	close(release)
+	allowConstructor()
 	select {
 	case err := <-closeDone:
 		require.NoError(t, err)
