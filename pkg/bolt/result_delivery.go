@@ -25,7 +25,7 @@ func (s *Session) abandonContinuationResults() {
 		}
 	}
 }
-func (s *Session) flushResultDelivery(stream resultStream, complete bool) error {
+func (s *Session) flushResultDelivery(statementID int64, stream resultStream, complete bool) error {
 	if err := s.flushIfPending(); err != nil {
 		if stream.delivery != nil {
 			stream.delivery.Fail()
@@ -38,6 +38,7 @@ func (s *Session) flushResultDelivery(stream resultStream, complete bool) error 
 			stream.delivery.Fail()
 		}
 	}
+	s.updateResultStream(statementID, stream, !complete)
 	return nil
 }
 
