@@ -58,12 +58,12 @@ func cacheableReadQuery(cypher string, depth int) bool {
 
 	// Non-deterministic / time-sensitive builtins.
 	// Keep this intentionally small and conservative; add more as we support them.
-	if containsFunctionCallNamed(upper, "RAND") ||
-		containsFunctionCallNamed(upper, "RANDOMUUID") ||
-		containsFunctionCallNamed(upper, "DATETIME") ||
-		containsFunctionCallNamed(upper, "DATE") ||
-		containsFunctionCallNamed(upper, "TIME") ||
-		containsFunctionCallNamed(upper, "TIMESTAMP") {
+	if containsFunctionCallNamed(cypher, "RAND") ||
+		containsFunctionCallNamed(cypher, "RANDOMUUID") ||
+		containsFunctionCallNamed(cypher, "DATETIME") ||
+		containsFunctionCallNamed(cypher, "DATE") ||
+		containsFunctionCallNamed(cypher, "TIME") ||
+		containsFunctionCallNamed(cypher, "TIMESTAMP") {
 		return false
 	}
 

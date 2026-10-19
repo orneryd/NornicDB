@@ -228,11 +228,25 @@ type functionSyntax struct {
 	leading    int
 }
 
-var functionSyntaxCache = newBoundedCache[string, *functionSyntax](512, boundedCacheStringShardIndex)
+type functionSyntaxKey struct {
+	text string
+	argumentsOnly bool
+}
+
+var functionSyntaxCache = newBoundedCache[functionSyntaxKey, *functionSyntax](512, func(key functionSyntaxKey) int {
+	return boundedCacheStringShardIndex(key.text)
+})
 
 func readFunctionSyntax(text string) *functionSyntax {
+	return readFunctionSyntaxFacts(text,false)
+}
+
+// Both entries use this one lexical pass. An argument-only consumer needs the
+// outer separators and comments, not retained call identities or inner groups.
+func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
+	key := functionSyntaxKey{text,argumentsOnly}
 	if len(text) <= 16384 {
-		if syntax, ok := functionSyntaxCache.get(text); ok {
+		if syntax, ok := functionSyntaxCache.get(key); ok {
 			return syntax
 		}
 	}
@@ -243,7 +257,8 @@ func readFunctionSyntax(text string) *functionSyntax {
 	groups := parentheses+strings.Count(text,"[")+strings.Count(text,"{")
 	if parentheses > 64 { parentheses = 64 }
 	if groups > 64 { groups = 64 }
-	if parentheses > 0 { syntax.calls = make([]functionCallSpan,0,parentheses) }
+	if !argumentsOnly && parentheses > 0 { syntax.calls = make([]functionCallSpan,0,parentheses) }
+	if argumentsOnly && groups > 3 { groups = 3 }
 	// Group zero represents the whole input, including argument-only inputs.
 	syntax.groups = make([]syntaxGroup,1,groups+1)
 	syntax.groups[0] = syntaxGroup{open: -1, close: len(text), parent: -1}
@@ -252,6 +267,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 	hasPending := false
 	subqueryOpen := make(map[int]int)
 	previous := -1
+	suppressedNameEnd := 0
 	for index := 0; index < len(text); {
 		if end := queryCommentEnd(text, index); end >= 0 {
 			syntax.comments = append(syntax.comments, syntaxSpan{index, end})
@@ -264,13 +280,17 @@ func readFunctionSyntax(text string) *functionSyntax {
 		}
 		if text[index] == '\'' || text[index] == '"' {
 			end := skipCypherQuotedText(text, index, text[index])
-			syntax.quoted = append(syntax.quoted, syntaxSpan{index, end})
+			if !argumentsOnly { syntax.quoted = append(syntax.quoted, syntaxSpan{index, end}) }
 			index = end
 			previous = index - 1
 			continue
 		}
 		if name, next, ok := callableIdentifierToken(text, index); ok {
-			if text[index] != '`' {
+			if argumentsOnly || index < suppressedNameEnd {
+				index, previous = next, next-1
+				continue
+			}
+			if text[index] != '`' && (previous < 0 || text[previous] != '.') {
 				if _, open, ok := subqueryExpressionKeywordAt(text, index); ok {
 					subqueryOpen[open] = index
 				}
@@ -285,8 +305,8 @@ func readFunctionSyntax(text string) *functionSyntax {
 					parts, end := dottedNameParts(text, end, true)
 					cursor := queryGapEnd(text, end)
 					if cursor < len(text) && text[cursor] == '.' {
-						index = end
-						previous = end - 1
+						suppressedNameEnd = end
+						index, previous = next, next-1
 						continue
 					}
 					if strings.EqualFold(name, "CALL") {
@@ -299,8 +319,8 @@ func readFunctionSyntax(text string) *functionSyntax {
 							syntax.calls = append(syntax.calls, call)
 						}
 					}
-					index = end
-					previous = end - 1
+					suppressedNameEnd = end
+					index, previous = next, next-1
 					continue
 				}
 			}
@@ -334,6 +354,10 @@ func readFunctionSyntax(text string) *functionSyntax {
 				if opening == '(' && text[index] == ')' || opening == '[' && text[index] == ']' || opening == '{' && text[index] == '}' {
 					syntax.groups[group].close = index
 					stack = stack[:len(stack)-1]
+					if argumentsOnly {
+						syntax.groups = syntax.groups[:group]
+						break
+					}
 					if start, ok := subqueryOpen[syntax.groups[group].open]; ok {
 						syntax.subqueries = append(syntax.subqueries, syntaxSpan{start, index + 1})
 					}
@@ -341,11 +365,11 @@ func readFunctionSyntax(text string) *functionSyntax {
 			}
 		case ',':
 			group := stack[len(stack)-1]
-			syntax.groups[group].separators = append(syntax.groups[group].separators, index)
-			syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
+			if !argumentsOnly || group == 0 { syntax.groups[group].separators = append(syntax.groups[group].separators, index) }
+			if !argumentsOnly { syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index) }
 		default:
 			group := stack[len(stack)-1]
-			syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
+			if !argumentsOnly { syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index) }
 		}
 		previous = index
 		index++
@@ -372,7 +396,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 		shape.argumentEnd = len(syntax.arguments)
 	}
 	if len(text) <= 16384 {
-		functionSyntaxCache.put(text, syntax)
+		functionSyntaxCache.put(key, syntax)
 	}
 	return syntax
 }
@@ -438,7 +462,7 @@ func appendFunctionArguments(parts []string, text string, keepEmpty bool) []stri
 		if value := strings.TrimSpace(text); value != "" { return append(parts,value) }
 		return parts
 	}
-	return readFunctionSyntax(text).appendArguments(parts,0,keepEmpty)
+	return readFunctionSyntaxFacts(text,true).appendArguments(parts,0,keepEmpty)
 }
 
 func (call functionCallSpan) arguments(parts []string) []string {
