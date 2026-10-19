@@ -1663,7 +1663,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 // statementNeedsTransaction keeps write clauses and registered WRITE procedures
 // under the same statement rollback owner. tx.setMetaData also needs a transaction.
 func statementNeedsTransaction(info *QueryInfo, cypher string, parameters ...map[string]interface{}) bool {
-	return info.IsWriteQuery || (info.HasCall && (callsDataWriteProcedure(cypher) || callsDynamicStatementProcedure(cypher))) ||
+	return info.IsWriteQuery || (info.HasCall && callsStatementTransactionProcedure(cypher)) ||
 		(matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
 }
 
