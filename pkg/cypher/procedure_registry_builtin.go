@@ -960,10 +960,10 @@ func registerBuiltInProcedureLiteral(name, signature, description string, mode P
 // argument in the same registry that declares ordinary WRITE procedures.
 func registerStatementProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, paramsIndex int, handler ProcedureHandler) {
 	registerProcedure(ProcedureSpec{
-		Name:name, Signature:signature, Description:description, Mode:mode,
-		WorksOnSystem:worksOnSystem, MinArgs:minArgs, MaxArgs:maxArgs,
-		Statement:&ProcedureStatement{QueryIndex:0,ParamsIndex:paramsIndex},
-	},handler)
+		Name: name, Signature: signature, Description: description, Mode: mode,
+		WorksOnSystem: worksOnSystem, MinArgs: minArgs, MaxArgs: maxArgs,
+		Statement: &ProcedureStatement{QueryIndex: 0, ParamsIndex: paramsIndex},
+	}, handler)
 }
 
 // registerAdminBuiltInProcedureLiteral is registerBuiltInProcedureLiteral
