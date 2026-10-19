@@ -4,7 +4,7 @@ import SwiftUI
 /// rewritten as filenames, and disabling a service leaves its configuration intact.
 struct AIServiceSettingsView: View {
     @ObservedObject var config: ConfigManager
-    let downloadModels: () -> Void
+    let downloadModel: (DefaultLocalModel) -> Void
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -15,7 +15,8 @@ struct AIServiceSettingsView: View {
                 ServiceProviderEditor(title: "Embeddings", enabled: $config.embeddingsEnabled,
                     provider: $config.embeddingProvider, model: $config.embeddingModel,
                     endpoint: $config.embeddingURL, apiKey: $config.embeddingAPIKey,
-                    providers: ["local", "ollama", "openai", "orca", "voyage"])
+                    providers: ["local", "ollama", "openai", "orca", "voyage"],
+                    defaultModel: .embeddings, downloadModel: downloadModel)
                 if config.embeddingsEnabled {
                     if AppleMLEmbedder.isAvailable() {
                         Toggle("Use local Apple Intelligence adapter (512 dimensions)", isOn: $config.useAppleIntelligence)
@@ -38,14 +39,13 @@ struct AIServiceSettingsView: View {
                 ServiceProviderEditor(title: "Reranking", enabled: $config.searchRerankEnabled,
                     provider: $config.searchRerankProvider, model: $config.searchRerankModel,
                     endpoint: $config.searchRerankURL, apiKey: $config.searchRerankAPIKey,
-                    providers: ["local", "ollama", "openai", "http"])
+                    providers: ["local", "ollama", "openai", "http"],
+                    defaultModel: .reranking, downloadModel: downloadModel)
                 ServiceProviderEditor(title: "Heimdall assistant", enabled: $config.heimdallEnabled,
                     provider: $config.heimdallProvider, model: $config.heimdallModel,
                     endpoint: $config.heimdallURL, apiKey: $config.heimdallAPIKey,
-                    providers: ["local", "ollama", "openai", "orca", "vllm", "litellm"])
-                Button("Download default local models…", action: downloadModels)
-                Text("Downloads BGE-M3, BGE reranker and Qwen for local Embeddings, Reranking and Heimdall. Choose their filenames in the model fields above. Remote provider settings are preserved.")
-                    .font(.caption).foregroundColor(.secondary)
+                    providers: ["local", "ollama", "openai", "orca", "vllm", "litellm"],
+                    defaultModel: .inference, downloadModel: downloadModel)
                 Text("Local models: \(config.modelsPath)")
                     .font(.caption).foregroundColor(.secondary)
             }.padding()
@@ -61,6 +61,8 @@ struct ServiceProviderEditor: View {
     @Binding var endpoint: String
     @Binding var apiKey: String
     let providers: [String]
+    let defaultModel: DefaultLocalModel
+    let downloadModel: (DefaultLocalModel) -> Void
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
@@ -73,6 +75,9 @@ struct ServiceProviderEditor: View {
                         ForEach(Array(Set(providers + [provider])).sorted(), id: \.self) { Text($0).tag($0) }
                     }
                     TextField(provider == "local" ? "GGUF filename" : "Model ID", text: $model)
+                    if provider == "local" {
+                        Button("Download default model (\(defaultModel.filename))…") { downloadModel(defaultModel) }
+                    }
                     if provider != "local" {
                         TextField("API endpoint (provider default when empty)", text: $endpoint)
                         SecureField("API key (or configure its environment variable in Advanced)", text: $apiKey)

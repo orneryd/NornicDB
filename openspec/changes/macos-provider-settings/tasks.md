@@ -29,3 +29,5 @@
 - [x] Remove activation-triggered wizard routing; explicit Settings closes setup without clearing pending review, and app reopen respects an already visible window.
 
 - [x] Add search continuation capacity to shared AI features, load YAML/ENV, persist YAML/LaunchAgent and track Settings edits; zero disables continuation.
+
+- [x] Scope inline downloads to each enabled Local service; share single-model downloader with tray batch action, stage downloads before replacing valid models, test selection and failed-download preservation.

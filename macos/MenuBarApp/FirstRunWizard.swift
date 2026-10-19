@@ -32,7 +32,7 @@ struct FirstRunWizard: View {
             } else if currentStep == 0 {
                 ServerSecuritySetupView(config: config)
             } else if currentStep == 1 {
-                AIServiceSettingsView(config: config, downloadModels: { appDelegate.downloadModels() })
+                AIServiceSettingsView(config: config, downloadModel: { appDelegate.downloadModel($0) })
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
