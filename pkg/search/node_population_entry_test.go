@@ -284,14 +284,47 @@ func TestPopulationOrderRelationshipPhaseReadsWithTheNodeSnapshot(t *testing.T) 
 	require.Equal(t, serial, run(true), "the relationship phase read storage written after the build's node snapshot")
 }
 
+// nodeReadParkEngine parks the population before it reads its nodes, through the
+// engine or through its snapshot: storage changed while it is parked is
+// after the population's read point only if the snapshot already holds it.
+type nodeReadParkEngine struct {
+	*storage.MemoryEngine
+	entered, release chan struct{}
+	once, opened     sync.Once
+}
+
+func newNodeReadParkEngine(t *testing.T) *nodeReadParkEngine {
+	t.Helper()
+	e := &nodeReadParkEngine{MemoryEngine: storage.NewMemoryEngine(), entered: make(chan struct{}), release: make(chan struct{})}
+	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
+	return e
+}
+
+func (e *nodeReadParkEngine) open() { e.opened.Do(func() { close(e.release) }) }
+func (e *nodeReadParkEngine) park() { e.once.Do(func() { close(e.entered); <-e.release }) }
+
+func (e *nodeReadParkEngine) IterateNodes(fn func(*storage.Node) bool) error {
+	e.park()
+	return e.MemoryEngine.IterateNodes(fn)
+}
+
+func (e *nodeReadParkEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
+	inner, err := e.MemoryEngine.OpenReadSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &hookedReadSnapshot{ReadSnapshotView: inner, beforeNodes: func() error { e.park(); return nil }}, nil
+}
+
 // TestPopulationOrderBaselineIsOneStoragePoint: the build reads its nodes and its
 // relationships through one storage snapshot. A node and its relationship
-// changed together in one transaction after the snapshot opened, whose index
+// changed together in one transaction after the snapshot opened (the build is
+// parked before its node read), whose index
 // calls follow a queued change that turns both indexes off, keep the pair
 // they had at the snapshot: never the new node text with the old vector.
 func TestPopulationOrderBaselineIsOneStoragePoint(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	engine := newSnapshotGateEngine(t)
+	engine := newNodeReadParkEngine(t)
 	buildWriteEdgeEndpoints(t, engine)
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "oldterm"}})
 	require.NoError(t, err)
@@ -299,7 +332,13 @@ func TestPopulationOrderBaselineIsOneStoragePoint(t *testing.T) {
 	svc := populationOrderService(t, engine, "", "v2", nil)
 	t.Cleanup(func() { _ = svc.Close() })
 	t.Cleanup(engine.open)
-	built := startGatedBuild(t, engine, svc)
+	built := make(chan error, 1)
+	go func() { built <- svc.BuildIndexes(context.Background()) }()
+	select {
+	case <-engine.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the build did not read its nodes")
+	}
 	svc.SetIndexFlags(false, false)
 	node := &storage.Node{ID: "nornic:doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "newterm"}}
 	edge := &storage.Edge{ID: "nornic:rel", StartNode: "nornic:s", EndNode: "nornic:e", Type: "REL", Properties: map[string]any{"v": []float32{0, 1, 0}}}
