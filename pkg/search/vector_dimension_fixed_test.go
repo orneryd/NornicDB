@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -113,4 +114,176 @@ func TestAdoptingCollectionDimensionsUpdatesClusterBackend(t *testing.T) {
 	pipeline, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
 	require.IsType(t, &IVFHNSWCandidateGen{}, pipeline.candidateGen)
+}
+
+// AdmitsVectorDimensions answers what IndexNode accepts: a fixed index only
+// its own dimension, an unfixed empty one any dimension (the first vector sets
+// it), an unfixed one holding vectors only theirs, and a service with vector
+// search off every dimension.
+func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
+	fixed := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	fixed.FixVectorDimensions()
+	require.True(t, fixed.AdmitsVectorDimensions(8))
+	require.False(t, fixed.AdmitsVectorDimensions(4))
+	require.ErrorIs(t, fixed.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
+	require.True(t, fixed.AdmitsVectorDimensions(0), "a write without vectors has nothing to reject")
+
+	unfixed := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	require.True(t, unfixed.AdmitsVectorDimensions(4), "the first vector sets an empty index's dimension")
+	require.NoError(t, unfixed.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}))
+	require.True(t, unfixed.AdmitsVectorDimensions(4))
+	require.False(t, unfixed.AdmitsVectorDimensions(8))
+	require.ErrorIs(t, unfixed.IndexNode(&storage.Node{ID: "eight", NamedEmbeddings: map[string][]float32{"default": make([]float32, 8)}}), ErrDimensionMismatch)
+
+	fixed.SetIndexFlags(true, false)
+	require.True(t, fixed.AdmitsVectorDimensions(4), "vector search off indexes no vectors")
+
+	var none *Service
+	require.True(t, none.AdmitsVectorDimensions(4))
+	fixed.mu.Lock()
+	fixed.vectorIndex = nil
+	fixed.mu.Unlock()
+	fixed.SetIndexFlags(true, true)
+	require.False(t, fixed.AdmitsVectorDimensions(8), "a fixed service without an index indexes nothing")
+
+	// A file-backed store holding vectors decides the dimension, as it does
+	// for IndexNode, even when the in-memory index is empty and unfixed.
+	stored := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = vfs.Close() })
+	require.NoError(t, vfs.Add("two", []float32{1, 0}))
+	stored.indexMu.Lock()
+	stored.vectorFileStore = vfs
+	stored.indexMu.Unlock()
+	require.True(t, stored.AdmitsVectorDimensions(2))
+	require.False(t, stored.AdmitsVectorDimensions(4))
+	require.ErrorIs(t, stored.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
+}
+
+// A file-backed store decides the dimension even when it is empty: vectors
+// are written to it, and its records keep the size it was created with. An
+// unfixed service whose last vector was removed therefore neither adopts a
+// new dimension nor reports success for a vector it cannot store.
+func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetPersistenceEnabled(true)
+	t.Cleanup(func() { _ = svc.Close() })
+	eight := make([]float32, 8)
+	eight[0] = 1
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "previous", NamedEmbeddings: map[string][]float32{"default": eight}}))
+	require.NoError(t, svc.RemoveNode("previous"))
+	require.Zero(t, svc.EmbeddingCount())
+	svc.mu.RLock()
+	require.NotNil(t, svc.vectorFileStore, "the vector went to the file-backed store")
+	svc.mu.RUnlock()
+
+	require.False(t, svc.AdmitsVectorDimensions(4))
+	require.ErrorIs(t, svc.IndexNode(&storage.Node{ID: "four", NamedEmbeddings: map[string][]float32{"default": {1, 0, 0, 0}}}), ErrDimensionMismatch)
+	require.Equal(t, 8, svc.VectorIndexDimensions(), "an empty file-backed store is not re-dimensioned")
+	require.Zero(t, svc.EmbeddingCount())
+
+	require.True(t, svc.AdmitsVectorDimensions(8))
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "eight", NamedEmbeddings: map[string][]float32{"default": eight}}))
+	require.Equal(t, 1, svc.EmbeddingCount())
+}
+
+// Moving in-memory vectors into a new file-backed store takes vectorIndex.mu
+// inside s.mu, as dimension admission does: AdmitsVectorDimensions holds s.mu
+// while it counts the index's vectors for a mismatched dimension, so a
+// migration that held vectorIndex.mu while waiting for s.mu deadlocked a
+// Qdrant write of another dimension.
+func TestFileStoreMigrationDoesNotDeadlockDimensionAdmission(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	t.Cleanup(func() { _ = svc.Close() })
+	require.NoError(t, svc.vectorIndex.Add("live", []float32{1, 0}))
+	// Persistence enabled after live ingestion began: the next index
+	// mutation migrates the in-memory vector to disk. Nothing else here takes
+	// s.mu for writing, so a pending writer below is the migration.
+	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetPersistenceEnabled(true)
+
+	// Admission of a 3-dimensional write between its two steps: s.mu held,
+	// the index count (read only on a dimension mismatch) next.
+	svc.mu.RLock()
+	migrated := make(chan struct{})
+	go func() {
+		svc.indexMu.Lock()
+		svc.ensureVectorFileStore()
+		svc.indexMu.Unlock()
+		close(migrated)
+	}()
+	// The migration reaches publication: its s.mu.Lock is pending, which
+	// makes new read locks fail.
+	require.Eventually(t, func() bool {
+		if svc.mu.TryRLock() {
+			svc.mu.RUnlock()
+			return false
+		}
+		return true
+	}, 5*time.Second, time.Millisecond)
+	admitted := make(chan bool, 1)
+	go func() { admitted <- svc.activeVectorDimensions() == 3 || svc.vectorDimensionsAdoptable() }()
+	var admits, deadlocked bool
+	select {
+	case admits = <-admitted:
+	case <-time.After(2 * time.Second):
+		deadlocked = true
+	}
+	// Release admission's lock either way so no goroutine is stranded.
+	svc.mu.RUnlock()
+	select {
+	case <-migrated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("migration did not finish after admission released s.mu")
+	}
+	if deadlocked {
+		<-admitted
+		t.Fatal("admission's index read waited on the migration, which waited on admission's s.mu")
+	}
+	require.False(t, admits, "a 2-dimensional index holding a vector admits no 3-dimensional write")
+
+	svc.mu.RLock()
+	vfs := svc.vectorFileStore
+	svc.mu.RUnlock()
+	require.NotNil(t, vfs, "the migration published the file-backed store")
+	require.True(t, vfs.Has("live"), "the in-memory vector moved to the file-backed store")
+	require.Equal(t, 1, svc.EmbeddingCount())
+	require.True(t, svc.AdmitsVectorDimensions(2))
+	require.False(t, svc.AdmitsVectorDimensions(3))
+}
+
+// Retiring the file-backed store (persistence turned off, the service closed)
+// changes s.vectorFileStore under s.mu, as publishing it does, so readers
+// holding s.mu (VectorIndexDimensions, search) are ordered against it. The
+// reader and the retirement share no other lock, so under -race a retirement
+// that skips s.mu is reported whichever runs first.
+func TestRetiringFileStoreHoldsServiceLock(t *testing.T) {
+	for _, retire := range []struct {
+		name string
+		run  func(*Service)
+	}{
+		{"SetPersistenceEnabled(false)", func(s *Service) { s.SetPersistenceEnabled(false) }},
+		{"Close", func(s *Service) { _ = s.Close() }},
+	} {
+		t.Run(retire.name, func(t *testing.T) {
+			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+			t.Cleanup(func() { _ = svc.Close() })
+			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetPersistenceEnabled(true)
+			svc.indexMu.Lock()
+			svc.ensureVectorFileStore()
+			svc.indexMu.Unlock()
+			require.Equal(t, 2, svc.VectorIndexDimensions())
+
+			read := make(chan int, 1)
+			go func() { read <- svc.VectorIndexDimensions() }()
+			retire.run(svc)
+			require.Equal(t, 2, <-read, "the store or the in-memory index, both 2-dimensional")
+			svc.mu.RLock()
+			require.Nil(t, svc.vectorFileStore)
+			svc.mu.RUnlock()
+		})
+	}
 }

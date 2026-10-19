@@ -104,9 +104,11 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 		if err != nil {
 			tb.Fatal(err)
 		}
+		svc.pipelineMu.Lock()
 		svc.indexMu.Lock()
 		svc.applyTransitionSwapLocked(strategyModeHNSW, hnswIndex, vi, vfs)
 		svc.indexMu.Unlock()
+		svc.pipelineMu.Unlock()
 		if svc.currentPipelineStrategy() != strategyModeHNSW {
 			tb.Fatalf("expected HNSW strategy, got %s", svc.currentPipelineStrategy())
 		}

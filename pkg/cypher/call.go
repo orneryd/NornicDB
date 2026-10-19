@@ -1377,28 +1377,32 @@ func splitPathAssignment(patternPart string) (string, string, bool) {
 	return left, right, true
 }
 
+// isIdentifierReferenced compares identifier tokens with a binding's decoded
+// name. scanIdentifierToken owns identifier decoding, including doubled
+// backticks; matching raw query bytes loses those imported bindings.
+// This is a conservative name check, not a scope or variable-role analysis.
 func isIdentifierReferenced(query, identifier string) bool {
 	if strings.TrimSpace(identifier) == "" {
 		return false
 	}
-	q := query
-	id := identifier
-	idLen := len(id)
-	if idLen == 0 || len(q) < idLen {
-		return false
-	}
-	for i := 0; i <= len(q)-idLen; i++ {
-		if q[i:i+idLen] != id {
+	for index := 0; index < len(query); {
+		if query[index] == '\'' || query[index] == '"' {
+			index = skipCypherQuotedText(query, index, query[index])
 			continue
 		}
-		if i > 0 && isIdentByte(q[i-1]) {
+		if end := queryCommentEnd(query, index); end > index {
+			index = end
 			continue
 		}
-		end := i + idLen
-		if end < len(q) && isIdentByte(q[end]) {
+		name, end, ok := scanIdentifierToken(query, index)
+		if !ok || (query[index] != '`' && index > 0 && isIdentByte(query[index-1])) {
+			index++
 			continue
 		}
-		return true
+		if name == identifier {
+			return true
+		}
+		index = end
 	}
 	return false
 }

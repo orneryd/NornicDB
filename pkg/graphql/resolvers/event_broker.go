@@ -10,7 +10,7 @@ import (
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	ch     interface{} // Channel (type varies by subscription type)
+	ch     subscriptionChannel
 	labels []string
 	types  []string
 	id     *string
@@ -28,6 +28,7 @@ type subscriptionInfo struct {
 //   - Uses RWMutex for concurrent access
 //   - Channels are buffered (size: 10) to prevent blocking
 //   - Non-blocking publishes (drops events if channel full)
+//   - Each channel owner serializes sending and closure, including stale snapshots
 //
 // Example:
 //
@@ -50,6 +51,9 @@ type EventBroker struct {
 	searchStreamSubs []subscriptionInfo
 
 	mu sync.RWMutex
+
+	// afterSnapshot is a test barrier, set before starting publishers.
+	afterSnapshot func()
 }
 
 // NewEventBroker creates a new event broker for GraphQL subscriptions.
@@ -108,124 +112,113 @@ func matchesFilter(labels []string, types []string, id *string, eventLabels []st
 // Returns a channel that will receive events for nodes matching the label filter.
 // If labels is empty, receives all node created events.
 func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string) <-chan *models.Node {
-	ch := make(chan *models.Node, 10) // Buffered to prevent blocking
+	ch := newSubscriptionOwner[*models.Node]() // Buffered to prevent blocking
 
-	b.mu.Lock()
-	b.nodeCreatedSubs = append(b.nodeCreatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.nodeCreatedSubs, subscriptionInfo{
 		ch:     ch,
 		labels: labels,
-	})
-	b.mu.Unlock()
-
-	// Cleanup on context cancellation
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeNodeCreated(ch)
-	}()
+	})
 
-	return ch
+	return ch.Events()
 }
 
 // SubscribeNodeUpdated subscribes to node updated events.
 // Returns a channel that will receive events for nodes matching the ID or label filter.
 func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labels []string) <-chan *models.Node {
-	ch := make(chan *models.Node, 10)
+	ch := newSubscriptionOwner[*models.Node]()
 
-	b.mu.Lock()
-	b.nodeUpdatedSubs = append(b.nodeUpdatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.nodeUpdatedSubs, subscriptionInfo{
 		ch:     ch,
 		labels: labels,
 		id:     id,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeNodeUpdated(ch)
-	}()
+	})
 
-	return ch
+	return ch.Events()
 }
 
 // SubscribeNodeDeleted subscribes to node deleted events.
 // Returns a channel that will receive node IDs for deleted nodes matching the label filter.
 func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string) <-chan string {
-	ch := make(chan string, 10)
+	ch := newSubscriptionOwner[string]()
 
-	b.mu.Lock()
-	b.nodeDeletedSubs = append(b.nodeDeletedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.nodeDeletedSubs, subscriptionInfo{
 		ch:     ch,
 		labels: labels,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeNodeDeleted(ch)
-	}()
+	})
 
-	return ch
+	return ch.Events()
 }
 
 // SubscribeRelationshipCreated subscribes to relationship created events.
 // Returns a channel that will receive events for relationships matching the type filter.
 func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []string) <-chan *models.Relationship {
-	ch := make(chan *models.Relationship, 10)
+	ch := newSubscriptionOwner[*models.Relationship]()
 
-	b.mu.Lock()
-	b.relationshipCreatedSubs = append(b.relationshipCreatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.relationshipCreatedSubs, subscriptionInfo{
 		ch:    ch,
 		types: types,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeRelationshipCreated(ch)
-	}()
+	})
 
-	return ch
+	return ch.Events()
 }
 
 // SubscribeRelationshipUpdated subscribes to relationship updated events.
 // Returns a channel that will receive events for relationships matching the ID or type filter.
 func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *string, types []string) <-chan *models.Relationship {
-	ch := make(chan *models.Relationship, 10)
+	ch := newSubscriptionOwner[*models.Relationship]()
 
-	b.mu.Lock()
-	b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.relationshipUpdatedSubs, subscriptionInfo{
 		ch:    ch,
 		types: types,
 		id:    id,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeRelationshipUpdated(ch)
-	}()
+	})
 
-	return ch
+	return ch.Events()
 }
 
 // SubscribeRelationshipDeleted subscribes to relationship deleted events.
 // Returns a channel that will receive relationship IDs for deleted relationships matching the type filter.
 func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []string) <-chan string {
-	ch := make(chan string, 10)
+	ch := newSubscriptionOwner[string]()
 
-	b.mu.Lock()
-	b.relationshipDeletedSubs = append(b.relationshipDeletedSubs, subscriptionInfo{
+	b.addSubscription(ctx, &b.relationshipDeletedSubs, subscriptionInfo{
 		ch:    ch,
 		types: types,
-	})
-	b.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
+	}, func() {
 		b.unsubscribeRelationshipDeleted(ch)
-	}()
+	})
 
-	return ch
+	return ch.Events()
+}
+
+// addSubscription registers the owner before starting its cancellation watcher.
+// Closing the owner also ends the watcher, even for a background context.
+func (b *EventBroker) addSubscription(ctx context.Context, subscriptions *[]subscriptionInfo, sub subscriptionInfo, unsubscribe func()) {
+	b.mu.Lock()
+	*subscriptions = append(*subscriptions, sub)
+	b.mu.Unlock()
+	sub.ch.watch(ctx, unsubscribe)
+}
+
+// snapshot copies the subscription list; entries retain their channel owner.
+func (b *EventBroker) snapshot(subscriptions *[]subscriptionInfo) []subscriptionInfo {
+	b.mu.RLock()
+	subs := append([]subscriptionInfo(nil), (*subscriptions)...)
+	b.mu.RUnlock()
+	if b.afterSnapshot != nil {
+		b.afterSnapshot()
+	}
+	return subs
 }
 
 // PublishNodeCreated publishes a node created event to all matching subscribers.
@@ -234,20 +227,13 @@ func (b *EventBroker) PublishNodeCreated(node *models.Node) {
 		return
 	}
 
-	b.mu.RLock()
-	subs := make([]subscriptionInfo, len(b.nodeCreatedSubs))
-	copy(subs, b.nodeCreatedSubs)
-	b.mu.RUnlock()
+	subs := b.snapshot(&b.nodeCreatedSubs)
 
 	// Publish to all matching subscriptions
 	for _, sub := range subs {
 		if matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
-			if ch, ok := sub.ch.(chan *models.Node); ok {
-				select {
-				case ch <- node:
-				default:
-					// Channel full - drop event to prevent blocking
-				}
+			if ch, ok := sub.ch.(*subscriptionOwner[*models.Node]); ok {
+				ch.TrySend(node)
 			}
 		}
 	}
@@ -259,19 +245,12 @@ func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
 		return
 	}
 
-	b.mu.RLock()
-	subs := make([]subscriptionInfo, len(b.nodeUpdatedSubs))
-	copy(subs, b.nodeUpdatedSubs)
-	b.mu.RUnlock()
+	subs := b.snapshot(&b.nodeUpdatedSubs)
 
 	for _, sub := range subs {
 		if matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
-			if ch, ok := sub.ch.(chan *models.Node); ok {
-				select {
-				case ch <- node:
-				default:
-					// Channel full - drop event
-				}
+			if ch, ok := sub.ch.(*subscriptionOwner[*models.Node]); ok {
+				ch.TrySend(node)
 			}
 		}
 	}
@@ -285,19 +264,12 @@ func (b *EventBroker) PublishNodeDeleted(nodeID string) {
 		return
 	}
 
-	b.mu.RLock()
-	subs := make([]subscriptionInfo, len(b.nodeDeletedSubs))
-	copy(subs, b.nodeDeletedSubs)
-	b.mu.RUnlock()
+	subs := b.snapshot(&b.nodeDeletedSubs)
 
 	// Send to all subscriptions (can't filter by labels without node data)
 	for _, sub := range subs {
-		if ch, ok := sub.ch.(chan string); ok {
-			select {
-			case ch <- nodeID:
-			default:
-				// Channel full - drop event
-			}
+		if ch, ok := sub.ch.(*subscriptionOwner[string]); ok {
+			ch.TrySend(nodeID)
 		}
 	}
 }
@@ -308,19 +280,12 @@ func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
 		return
 	}
 
-	b.mu.RLock()
-	subs := make([]subscriptionInfo, len(b.relationshipCreatedSubs))
-	copy(subs, b.relationshipCreatedSubs)
-	b.mu.RUnlock()
+	subs := b.snapshot(&b.relationshipCreatedSubs)
 
 	for _, sub := range subs {
 		if matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
-			if ch, ok := sub.ch.(chan *models.Relationship); ok {
-				select {
-				case ch <- rel:
-				default:
-					// Channel full - drop event
-				}
+			if ch, ok := sub.ch.(*subscriptionOwner[*models.Relationship]); ok {
+				ch.TrySend(rel)
 			}
 		}
 	}
@@ -332,19 +297,12 @@ func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
 		return
 	}
 
-	b.mu.RLock()
-	subs := make([]subscriptionInfo, len(b.relationshipUpdatedSubs))
-	copy(subs, b.relationshipUpdatedSubs)
-	b.mu.RUnlock()
+	subs := b.snapshot(&b.relationshipUpdatedSubs)
 
 	for _, sub := range subs {
 		if matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
-			if ch, ok := sub.ch.(chan *models.Relationship); ok {
-				select {
-				case ch <- rel:
-				default:
-					// Channel full - drop event
-				}
+			if ch, ok := sub.ch.(*subscriptionOwner[*models.Relationship]); ok {
+				ch.TrySend(rel)
 			}
 		}
 	}
@@ -358,98 +316,91 @@ func (b *EventBroker) PublishRelationshipDeleted(relID string) {
 		return
 	}
 
-	b.mu.RLock()
-	subs := make([]subscriptionInfo, len(b.relationshipDeletedSubs))
-	copy(subs, b.relationshipDeletedSubs)
-	b.mu.RUnlock()
+	subs := b.snapshot(&b.relationshipDeletedSubs)
 
 	// Send to all subscriptions (can't filter by type without relationship data)
 	for _, sub := range subs {
-		if ch, ok := sub.ch.(chan string); ok {
-			select {
-			case ch <- relID:
-			default:
-				// Channel full - drop event
-			}
+		if ch, ok := sub.ch.(*subscriptionOwner[string]); ok {
+			ch.TrySend(relID)
 		}
 	}
 }
 
 // Unsubscribe methods remove channels from subscriptions
 
-func (b *EventBroker) unsubscribeNodeCreated(ch chan *models.Node) {
+func (b *EventBroker) unsubscribeNodeCreated(ch *subscriptionOwner[*models.Node]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for i, sub := range b.nodeCreatedSubs {
-		if subCh, ok := sub.ch.(chan *models.Node); ok && subCh == ch {
+		if subCh, ok := sub.ch.(*subscriptionOwner[*models.Node]); ok && subCh == ch {
 			b.nodeCreatedSubs = slices.Delete(b.nodeCreatedSubs, i, i+1)
-			close(ch)
+			ch.Close()
 			return
 		}
 	}
 }
 
-func (b *EventBroker) unsubscribeNodeUpdated(ch chan *models.Node) {
+func (b *EventBroker) unsubscribeNodeUpdated(ch *subscriptionOwner[*models.Node]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for i, sub := range b.nodeUpdatedSubs {
-		if subCh, ok := sub.ch.(chan *models.Node); ok && subCh == ch {
+		if subCh, ok := sub.ch.(*subscriptionOwner[*models.Node]); ok && subCh == ch {
 			b.nodeUpdatedSubs = slices.Delete(b.nodeUpdatedSubs, i, i+1)
-			close(ch)
+			ch.Close()
 			return
 		}
 	}
 }
 
-func (b *EventBroker) unsubscribeNodeDeleted(ch chan string) {
+func (b *EventBroker) unsubscribeNodeDeleted(ch *subscriptionOwner[string]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for i, sub := range b.nodeDeletedSubs {
-		if subCh, ok := sub.ch.(chan string); ok && subCh == ch {
+		if subCh, ok := sub.ch.(*subscriptionOwner[string]); ok && subCh == ch {
 			b.nodeDeletedSubs = slices.Delete(b.nodeDeletedSubs, i, i+1)
-			close(ch)
+			ch.Close()
 			return
 		}
 	}
 }
 
-func (b *EventBroker) unsubscribeRelationshipCreated(ch chan *models.Relationship) {
+func (b *EventBroker) unsubscribeRelationshipCreated(ch *subscriptionOwner[*models.Relationship]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for i, sub := range b.relationshipCreatedSubs {
-		if subCh, ok := sub.ch.(chan *models.Relationship); ok && subCh == ch {
+		if subCh, ok := sub.ch.(*subscriptionOwner[*models.Relationship]); ok && subCh == ch {
 			b.relationshipCreatedSubs = slices.Delete(b.relationshipCreatedSubs, i, i+1)
-			close(ch)
+			ch.Close()
 			return
 		}
 	}
 }
 
-func (b *EventBroker) unsubscribeRelationshipUpdated(ch chan *models.Relationship) {
+func (b *EventBroker) unsubscribeRelationshipUpdated(ch *subscriptionOwner[*models.Relationship]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for i, sub := range b.relationshipUpdatedSubs {
-		if subCh, ok := sub.ch.(chan *models.Relationship); ok && subCh == ch {
+		if subCh, ok := sub.ch.(*subscriptionOwner[*models.Relationship]); ok && subCh == ch {
 			b.relationshipUpdatedSubs = slices.Delete(b.relationshipUpdatedSubs, i, i+1)
-			close(ch)
+			ch.Close()
 			return
 		}
 	}
 }
 
-func (b *EventBroker) unsubscribeRelationshipDeleted(ch chan string) {
+func (b *EventBroker) unsubscribeRelationshipDeleted(ch *subscriptionOwner[string]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	for i, sub := range b.relationshipDeletedSubs {
-		if subCh, ok := sub.ch.(chan string); ok && subCh == ch {
+		if subCh, ok := sub.ch.(*subscriptionOwner[string]); ok && subCh == ch {
 			b.relationshipDeletedSubs = slices.Delete(b.relationshipDeletedSubs, i, i+1)
-			close(ch)
+			ch.Close()
 			return
 		}
 	}
@@ -458,42 +409,16 @@ func (b *EventBroker) unsubscribeRelationshipDeleted(ch chan string) {
 // Close closes all subscription channels and cleans up resources.
 func (b *EventBroker) Close() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
-	// Close all channels
-	for _, sub := range b.nodeCreatedSubs {
-		if ch, ok := sub.ch.(chan *models.Node); ok {
-			close(ch)
-		}
+	// Close every owner, including channels retained by publisher snapshots.
+	lists := [][]subscriptionInfo{
+		b.nodeCreatedSubs, b.nodeUpdatedSubs, b.nodeDeletedSubs,
+		b.relationshipCreatedSubs, b.relationshipUpdatedSubs, b.relationshipDeletedSubs,
+		b.searchStreamSubs,
 	}
-	for _, sub := range b.nodeUpdatedSubs {
-		if ch, ok := sub.ch.(chan *models.Node); ok {
-			close(ch)
-		}
-	}
-	for _, sub := range b.nodeDeletedSubs {
-		if ch, ok := sub.ch.(chan string); ok {
-			close(ch)
-		}
-	}
-	for _, sub := range b.relationshipCreatedSubs {
-		if ch, ok := sub.ch.(chan *models.Relationship); ok {
-			close(ch)
-		}
-	}
-	for _, sub := range b.relationshipUpdatedSubs {
-		if ch, ok := sub.ch.(chan *models.Relationship); ok {
-			close(ch)
-		}
-	}
-	for _, sub := range b.relationshipDeletedSubs {
-		if ch, ok := sub.ch.(chan string); ok {
-			close(ch)
-		}
-	}
-	for _, sub := range b.searchStreamSubs {
-		if ch, ok := sub.ch.(chan *models.SearchResult); ok {
-			close(ch)
+	for _, subs := range lists {
+		for _, sub := range subs {
+			sub.ch.Close()
 		}
 	}
 
@@ -505,4 +430,13 @@ func (b *EventBroker) Close() {
 	b.relationshipUpdatedSubs = make([]subscriptionInfo, 0)
 	b.relationshipDeletedSubs = make([]subscriptionInfo, 0)
 	b.searchStreamSubs = make([]subscriptionInfo, 0)
+	b.mu.Unlock()
+
+	// A watcher may already be waiting for b.mu to unsubscribe. Join after
+	// releasing that lock so shutdown cannot deadlock with cancellation.
+	for _, subs := range lists {
+		for _, sub := range subs {
+			sub.ch.wait()
+		}
+	}
 }

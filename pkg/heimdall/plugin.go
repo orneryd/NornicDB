@@ -82,6 +82,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/util/eventchannel"
 )
 
 // DefaultActionInputSchema is the MCP-compatible JSON Schema when an action
@@ -1697,11 +1698,19 @@ func CallSynthesisHooks(ctx *SynthesisContext) string {
 
 // dbEventDispatcher manages asynchronous delivery of database events to plugins.
 type dbEventDispatcher struct {
+	// lifecycleMu keeps restart out until Stop has joined and swept its generation.
+	lifecycleMu sync.Mutex
+
 	mu           sync.RWMutex
 	running      bool
 	events       chan *DatabaseEvent
 	done         chan struct{}
 	pluginQueues map[string]*pluginEventQueue
+
+	ingressDone chan struct{}
+
+	// afterQueueSnapshot is a test barrier, set before starting publishers.
+	afterQueueSnapshot func()
 }
 
 var globalEventDispatcher = &dbEventDispatcher{
@@ -1717,13 +1726,18 @@ const (
 type pluginEventQueue struct {
 	name string
 	hook DatabaseEventHook
-	ch   chan *DatabaseEvent
+	ch   *eventchannel.Channel[*DatabaseEvent]
 }
 
 // StartEventDispatcher starts the background event dispatcher.
 // This should be called when Heimdall is initialized.
 func StartEventDispatcher() {
-	d := globalEventDispatcher
+	globalEventDispatcher.start()
+}
+
+func (d *dbEventDispatcher) start() {
+	d.lifecycleMu.Lock()
+	defer d.lifecycleMu.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -1734,14 +1748,17 @@ func StartEventDispatcher() {
 	d.running = true
 	d.events = make(chan *DatabaseEvent, 1000)
 	d.done = make(chan struct{})
+	d.ingressDone = make(chan struct{})
 	d.pluginQueues = make(map[string]*pluginEventQueue)
+	events, generation, ingressDone := d.events, d.done, d.ingressDone
 
 	go func() {
+		defer close(ingressDone)
 		for {
 			select {
-			case event := <-d.events:
-				dispatchEventToPlugins(event)
-			case <-d.done:
+			case event := <-events:
+				d.dispatchEventToPlugins(event, generation)
+			case <-generation:
 				return
 			}
 		}
@@ -1750,24 +1767,36 @@ func StartEventDispatcher() {
 
 // StopEventDispatcher stops the background event dispatcher.
 func StopEventDispatcher() {
-	d := globalEventDispatcher
+	globalEventDispatcher.stop()
+}
+
+func (d *dbEventDispatcher) stop() {
+	d.lifecycleMu.Lock()
+	defer d.lifecycleMu.Unlock()
 	d.mu.Lock()
-	defer d.mu.Unlock()
 
 	if !d.running {
+		d.mu.Unlock()
 		return
 	}
 
 	d.running = false
 	close(d.done)
+	ingressDone := d.ingressDone
+	d.mu.Unlock()
+	// Retire the producer before sweeping its queues. An in-flight dispatch
+	// can finish, but its generation can no longer create a queue.
+	<-ingressDone
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	for _, queue := range d.pluginQueues {
-		close(queue.ch)
+		queue.ch.Close()
 	}
 	d.pluginQueues = make(map[string]*pluginEventQueue)
 }
 
 // dispatchEventToPlugins sends an event to all plugins that implement DatabaseEventHook.
-func dispatchEventToPlugins(event *DatabaseEvent) {
+func (d *dbEventDispatcher) dispatchEventToPlugins(event *DatabaseEvent, generation <-chan struct{}) {
 	if !HeimdallPluginsInitialized() {
 		return
 	}
@@ -1776,7 +1805,7 @@ func dispatchEventToPlugins(event *DatabaseEvent) {
 	for _, p := range plugins {
 		// Check if plugin implements DatabaseEventHook
 		if hook, ok := p.Plugin.(DatabaseEventHook); ok {
-			globalEventDispatcher.enqueueEvent(p.Plugin.Name(), hook, event)
+			d.enqueueEventForGeneration(p.Plugin.Name(), hook, event, generation)
 		}
 	}
 }
@@ -1786,27 +1815,33 @@ func (d *dbEventDispatcher) ensurePluginQueueForPlugin(lp *LoadedHeimdallPlugin)
 		return
 	}
 	if hook, ok := lp.Plugin.(DatabaseEventHook); ok {
-		d.ensurePluginQueue(lp.Plugin.Name(), hook)
+		d.mu.RLock()
+		generation := d.done
+		d.mu.RUnlock()
+		d.ensurePluginQueue(lp.Plugin.Name(), hook, generation)
 	}
 }
 
-func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHook) {
+func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHook, generation <-chan struct{}) *pluginEventQueue {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if _, ok := d.pluginQueues[name]; ok {
-		return
+	if !d.running || generation != d.done {
+		return nil
+	}
+	if queue := d.pluginQueues[name]; queue != nil {
+		return queue
 	}
 
 	queue := &pluginEventQueue{
 		name: name,
 		hook: hook,
-		ch:   make(chan *DatabaseEvent, defaultDatabaseEventQueue),
+		ch:   eventchannel.New[*DatabaseEvent](defaultDatabaseEventQueue),
 	}
 	d.pluginQueues[name] = queue
 
 	go func(q *pluginEventQueue) {
-		for event := range q.ch {
+		for event := range q.ch.Events() {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
@@ -1817,22 +1852,27 @@ func (d *dbEventDispatcher) ensurePluginQueue(name string, hook DatabaseEventHoo
 			}()
 		}
 	}(queue)
+	return queue
 }
 
 func (d *dbEventDispatcher) enqueueEvent(name string, hook DatabaseEventHook, event *DatabaseEvent) {
-	d.ensurePluginQueue(name, hook)
-
 	d.mu.RLock()
-	queue := d.pluginQueues[name]
+	generation := d.done
 	d.mu.RUnlock()
+	d.enqueueEventForGeneration(name, hook, event, generation)
+}
+
+func (d *dbEventDispatcher) enqueueEventForGeneration(name string, hook DatabaseEventHook, event *DatabaseEvent, generation <-chan struct{}) {
+	queue := d.ensurePluginQueue(name, hook, generation)
 	if queue == nil {
 		return
 	}
+	if d.afterQueueSnapshot != nil {
+		d.afterQueueSnapshot()
+	}
 
-	select {
-	case queue.ch <- event:
-	default:
-		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full for %s, dropping event: %s", name, event.Type)
+	if !queue.ch.TrySend(event) {
+		logHeimdallPrintf(slog.LevelWarn, "[Heimdall] DatabaseEvent queue full or closed for %s, dropping event: %s", name, event.Type)
 	}
 }
 
@@ -1843,6 +1883,7 @@ func EmitDatabaseEvent(event *DatabaseEvent) {
 	d := globalEventDispatcher
 	d.mu.RLock()
 	running := d.running
+	events := d.events
 	d.mu.RUnlock()
 
 	if !running {
@@ -1856,7 +1897,7 @@ func EmitDatabaseEvent(event *DatabaseEvent) {
 
 	// Non-blocking send
 	select {
-	case d.events <- event:
+	case events <- event:
 		// Event queued successfully
 	default:
 		// Queue full - drop event with warning

@@ -118,7 +118,7 @@ func cypherEqualityValue(left, right interface{}) interface{} {
 		return true
 	}
 
-	if equal, temporal := compareTemporalValues(left, right); temporal {
+	if equal, temporal := compareTemporalByContract(left, right, cypherValueEqualityContract); temporal {
 		return equal
 	}
 	if equal, point := comparePointValues(left, right); point {

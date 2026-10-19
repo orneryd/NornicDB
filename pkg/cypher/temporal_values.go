@@ -564,6 +564,14 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 }
 
 func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
+	// Public parameters may carry a pointer to any typed temporal value.
+	// Project the value before reading its source date, clock and offset.
+	if pointer := reflect.ValueOf(value); pointer.IsValid() && pointer.Kind() == reflect.Ptr {
+		if pointer.IsNil() {
+			return nil, false
+		}
+		value = pointer.Elem().Interface()
+	}
 	date, hasDate := temporalBaseDate(value)
 	clock, zoned, hasTime := temporalTimeParts(value)
 	switch kind {
@@ -579,7 +587,11 @@ func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
 		if hasTime {
 			location := time.UTC
 			if zoned {
-				location = clock.Location()
+				// A TIME carries the offset at the source instant. Reusing a
+				// region on the placeholder date can select a different DST
+				// or historical offset (for example St John's in summer).
+				_, offset := clock.Zone()
+				location = time.FixedZone("", offset)
 			}
 			return CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, true
 		}

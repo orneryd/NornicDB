@@ -11,10 +11,9 @@ import (
 // Platforms without mappings, and files the platform would not map, retain
 // the existing ReadAt implementation.
 //
-// The mapping is refreshed only when the write lock is free at once: callers
-// may already hold the read lock (HNSW construction looks vectors up inside
-// IterateChunked), so waiting for it would deadlock. Rows the current mapping
-// does not cover are read with ReadAt until a later query refreshes it.
+// Refresh only when the write lock is free at once, so a query does not wait
+// behind an append just to establish its optional mapping. Rows the current
+// mapping does not cover use ReadAt until a later query refreshes it.
 func (v *VectorFileStore) lockQueryRead() error {
 	v.mu.RLock()
 	if !vectorFileMappingSupported || v.closed || v.file == nil || v.nextOrdinal == 0 ||

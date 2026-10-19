@@ -115,9 +115,10 @@ func TestIVFHNSWPublicQueriesSpanGrowthDrivenReclustering(t *testing.T) {
 	}
 }
 
-// A dimension change (first vector of a new dimension while the in-memory
-// index is empty, as with file-backed vectors) can replace the cluster index
-// while a clustering generation is built. That generation describes the
+// A dimension change can replace the cluster index while a clustering
+// generation is built: here persistence is turned off, which drops the
+// file-backed store and leaves the in-memory index empty, so the next vector
+// of a new dimension sets it. That generation describes the
 // retired population and is discarded, never published.
 func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	t.Setenv("NORNICDB_GPU_BACKEND", "cpu")
@@ -142,7 +143,21 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	original := svc.clusterIndex
 	require.Zero(t, svc.vectorIndex.Count(), "file-backed vectors leave the in-memory index empty")
 
-	ivfHNSWBuildHook = func() { svc.maybeAutoSetVectorDimensions(dimensions + 1) }
+	ivfHNSWBuildHook = func() {
+		// Stage an administrative call from its own operation, while clustering
+		// owns shared build access. Retirement joins base builds, not this reader.
+		changed := make(chan struct{})
+		go func() {
+			svc.SetPersistenceEnabled(false)
+			svc.maybeAutoSetVectorDimensions(dimensions + 1)
+			close(changed)
+		}()
+		select {
+		case <-changed:
+		case <-time.After(5 * time.Second):
+			t.Fatal("persistence retirement waited for the clustering reader")
+		}
+	}
 	t.Cleanup(func() { ivfHNSWBuildHook = nil })
 	require.NoError(t, svc.TriggerClustering(ctx))
 
