@@ -931,6 +931,9 @@ func registerAdminBuiltInProcedureLiteral(name, signature, description string, m
 }
 
 func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
+	if dependencies, declared := builtinProcedureResultCache[spec.Name]; declared {
+		spec.ResultCache = dependencies
+	}
 	arguments, returnSignature := functionSignatureDescriptions(spec.Signature)
 	if len(spec.Params) == 0 {
 		for index, argument := range arguments {
