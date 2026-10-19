@@ -119,9 +119,9 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 	ids := make([]string, 0, len(nodeIDs))
 	for _, nodeID := range nodeIDs {
 		chunks := s.nodeChunkVectors[nodeID]
-		if len(chunks) > 0 && chunks[0] == nodeID {
+		if len(chunks) > 0 && chunks[0] == nodeMainVectorKey(nodeID) {
 			// Preserve the existing document anchor when it is indexed directly.
-			ids = append(ids, nodeID)
+			ids = append(ids, nodeMainVectorKey(nodeID))
 			continue
 		}
 		start := len(ids)
@@ -133,7 +133,7 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 			ids = append(ids, id)
 		}
 		if len(ids) == start {
-			ids = append(ids, nodeID)
+			ids = append(ids, nodeMainVectorKey(nodeID))
 		}
 		// Map iteration must not change ranked construction order across backends.
 		slices.Sort(ids[start:])

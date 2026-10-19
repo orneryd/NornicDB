@@ -47,7 +47,7 @@ func pointNode(id string, vec []float32, props map[string]any) *storage.Node {
 // query without one leaves the configured preset.
 func TestVectorQueryNodesWithOptions_HNSWEfReachesCandidateGeneration(t *testing.T) {
 	svc := newOptionsTestService(t, 2, pointNode("n1", []float32{1, 0}, nil))
-	gen := &efRecordingGen{cands: []Candidate{{ID: "n1-named-default", Score: 1}}}
+	gen := &efRecordingGen{cands: []Candidate{{ID: nodeNamedVectorKey("n1", "default"), Score: 1}}}
 	svc.pipelineMu.Lock()
 	svc.vectorPipeline = NewVectorSearchPipeline(gen, NewCPUExactScorer(svc.vectorIndex))
 	svc.pipelineMu.Unlock()
@@ -151,7 +151,7 @@ func TestVectorQueryNodesWithOptions_WhereFindsSelectiveMatch(t *testing.T) {
 
 func TestVectorQueryExactBypassesApproximateGenerator(t *testing.T) {
 	svc := newOptionsTestService(t, 2, pointNode("best", []float32{1, 0}, nil), pointNode("other", []float32{0, 1}, nil))
-	gen := &efRecordingGen{cands: []Candidate{{ID: "other-named-default", Score: 0}}}
+	gen := &efRecordingGen{cands: []Candidate{{ID: nodeNamedVectorKey("other", "default"), Score: 0}}}
 	svc.pipelineMu.Lock()
 	svc.vectorPipeline = NewVectorSearchPipeline(gen, NewCPUExactScorer(svc.vectorIndex))
 	svc.pipelineMu.Unlock()

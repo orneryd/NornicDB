@@ -37,7 +37,7 @@ func r12MoveWithinCluster(t *testing.T, f *cgFixture) (string, string, []float32
 	}
 	vec := []float32{0.55, 0.55, 0.55, 0.55}
 	vec[topic] = 1
-	node, err := f.engine.GetNode(storage.NodeID(decodeVectorKey(id).node))
+	node, err := f.engine.GetNode(storage.NodeID(vectorOwnerForTest(t, id)))
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{vec}
 	require.NoError(t, f.write(node))
@@ -79,7 +79,7 @@ func TestClusterGenerationRestoreRefreshesRetainedCoordinates(t *testing.T) {
 	before, err := f.svc.VectorQueryNodesWithOptions(context.Background(), vec, VectorQuerySpec{Limit: 1}, nil)
 	require.NoError(t, err)
 	require.Len(t, before, 1)
-	require.Equal(t, decodeVectorKey(id).node, before[0].ID)
+	require.Equal(t, vectorOwnerForTest(t, id), before[0].ID)
 
 	r11Restore(t, f, path)
 	cid, ok := f.svc.clusterGen.routing.ClusterOf(id)
@@ -90,7 +90,7 @@ func TestClusterGenerationRestoreRefreshesRetainedCoordinates(t *testing.T) {
 	after, err := f.svc.VectorQueryNodesWithOptions(context.Background(), vec, VectorQuerySpec{Limit: 1}, nil)
 	require.NoError(t, err)
 	require.Len(t, after, 1)
-	require.Equal(t, decodeVectorKey(id).node, after[0].ID, "the public self-neighbour query keeps its top result after restore")
+	require.Equal(t, vectorOwnerForTest(t, id), after[0].ID, "the public self-neighbour query keeps its top result after restore")
 }
 
 // Members whose vectors did not change are kept as saved (not re-inserted),
