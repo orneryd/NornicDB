@@ -61,11 +61,20 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 
 	h := &hiddenDeleteServer{db: db, server: server}
 	switch route {
-	case "http":
+	case "http", "http-explicit":
 		token := "Bearer " + getAuthToken(t, authenticator, "admin")
 		h.run = func(t *testing.T, statement string) hiddenDeleteOutcome {
 			t.Helper()
-			recorder := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
+			endpoint := "/db/nornic/tx/commit"
+			if route == "http-explicit" {
+				opened := makeRequest(t, server, http.MethodPost, "/db/nornic/tx", map[string]any{"statements": []any{}}, token)
+				var transaction TransactionResponse
+				require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &transaction))
+				require.Empty(t, transaction.Errors)
+				require.NotEmpty(t, transaction.Commit)
+				endpoint = transaction.Commit
+			}
+			recorder := makeRequest(t, server, http.MethodPost, endpoint, map[string]any{
 				"statements": []map[string]any{{"statement": statement, "includeStats": true}},
 			}, token)
 			require.Contains(t, []int{http.StatusOK, http.StatusAccepted}, recorder.Code, recorder.Body.String())
@@ -92,7 +101,7 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 			return outcome
 		}
 		h.close = func() {}
-	case "bolt":
+	case "bolt", "bolt-explicit":
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		boltServer := bolt.NewWithDatabaseManager(&bolt.Config{ReadBufferSize: 8192, WriteBufferSize: 8192}, nil, server.dbManager)
@@ -106,7 +115,17 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 			ctx := context.Background()
 			session := driver.NewSession(ctx, neo4jdriver.SessionConfig{DatabaseName: "nornic"})
 			defer session.Close(ctx)
-			result, err := session.Run(ctx, statement, nil)
+			var explicit neo4jdriver.ExplicitTransaction
+			var result neo4jdriver.ResultWithContext
+			var err error
+			if route == "bolt-explicit" {
+				explicit, err = session.BeginTransaction(ctx)
+				require.NoError(t, err)
+				defer explicit.Close(ctx)
+				result, err = explicit.Run(ctx, statement, nil)
+			} else {
+				result, err = session.Run(ctx, statement, nil)
+			}
 			var outcome hiddenDeleteOutcome
 			if err == nil {
 				for result.Next(ctx) {
@@ -117,6 +136,9 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 					outcome.nodesDeleted = summary.Counters().NodesDeleted()
 					outcome.relationshipsDeleted = summary.Counters().RelationshipsDeleted()
 				}
+			}
+			if err == nil && explicit != nil {
+				err = explicit.Commit(ctx)
 			}
 			if err != nil {
 				var status *neo4jdriver.Neo4jError
