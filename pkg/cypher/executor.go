@@ -1869,19 +1869,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 }
 
 func stripWithEmbeddingSuffix(cypher string) (string, bool) {
-	idx := findKeywordIndex(cypher, "WITH EMBEDDING")
-	if idx < 0 {
-		return cypher, false
-	}
-	before := strings.TrimSpace(cypher[:idx])
-	after := strings.TrimSpace(cypher[idx+len("WITH EMBEDDING"):])
-	if before == "" {
-		return cypher, false
-	}
-	if after == "" {
-		return before, true
-	}
-	return strings.TrimSpace(before + " " + after), true
+	return fabric.StripEmbeddingOption(cypher)
 }
 
 func maxInt(a, b int) int {
