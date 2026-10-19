@@ -89,12 +89,23 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // string literals and comments is not a clause. Backticked name parts are
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
+	var procedures []ProcedureSpec
+	visitRegisteredProcedureCalls(query,func(procedure ProcedureSpec,_ string) bool {
+		procedures = append(procedures,procedure)
+		return false
+	})
+	return procedures
+}
+
+// visitRegisteredProcedureCalls is the registry-backed CALL reader shared by
+// authorization and transaction admission. A true visit stops the scan without
+// materializing a list of complete procedure specifications.
+func visitRegisteredProcedureCalls(query string,visit func(ProcedureSpec,string)bool) bool {
 	ensureBuiltInProceduresRegistered()
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
-	var procedures []ProcedureSpec
 	for from := 0; from < len(query); {
 		at := keywordIndexFrom(query, "CALL", from, opts)
 		if at < 0 {
@@ -106,7 +117,7 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
 		}
 		if procedure, found := globalProcedureRegistry.Get(name); found {
-			procedures = append(procedures, procedure.Spec)
+			if visit(procedure.Spec,query[at:]) { return true }
 			continue
 		}
 		// Execution resolves exact names. Preserve conservative authorization
@@ -115,22 +126,55 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 		// require different permissions. An exact match above remains decisive.
 		for _, procedure := range globalProcedureRegistry.List() {
 			if strings.EqualFold(name, procedure.Name) {
-				procedures = append(procedures, procedure)
+				if visit(procedure,query[at:]) { return true }
 			}
 		}
 	}
-	return procedures
+	return false
 }
 
 // callsDataWriteProcedure uses the registered contract shared with authorization
 // to decide whether procedure calls need statement-level write atomicity.
-func callsDataWriteProcedure(query string) bool {
-	for _, procedure := range registeredProceduresForCalls(query) {
-		if procedure.Mode == ProcedureModeWrite {
-			return true
+func callsDataWriteProcedure(query string,parameters ...map[string]interface{}) bool {
+	var params map[string]interface{}
+	if len(parameters)>0 { params = parameters[0] }
+	return procedureCallsWriteData(query,params,0)
+}
+
+func procedureCallsWriteData(query string,params map[string]interface{},depth int) bool {
+	return visitRegisteredProcedureCalls(query,func(procedure ProcedureSpec,call string) bool {
+		if procedure.Mode == ProcedureModeWrite { return true }
+		contract := procedure.Statement
+		if contract == nil { return false }
+		if depth >= 16 { return true }
+		arguments := explicitProcedureArgumentTexts(call)
+		if contract.QueryIndex >= len(arguments) { return true }
+		statement,known := procedureStatementText(arguments[contract.QueryIndex],params)
+		// Row-dependent or otherwise unresolved executable text may write. It
+		// must enter the statement owner before evaluating that expression.
+		if !known { return true }
+		if analyzeQuery(classificationText(statement)).IsWriteQuery { return true }
+		var innerParams map[string]interface{}
+		if index := contract.ParamsIndex; index >= 0 && index < len(arguments) {
+			expression := strings.TrimSpace(arguments[index])
+			if strings.HasPrefix(expression,"$") {
+				if value,ok := resolveSetMergeSourceFromParams(params,expression[1:]); ok { innerParams,_ = value.(map[string]interface{}) }
+			}
+		}
+		return procedureCallsWriteData(statement,innerParams,depth+1)
+	})
+}
+
+func procedureStatementText(expression string,params map[string]interface{}) (string,bool) {
+	expression = strings.TrimSpace(expression)
+	if isWholeCypherQuotedString(expression) { return decodeCypherQuotedString(expression) }
+	if strings.HasPrefix(expression,"$") {
+		if value,ok := resolveSetMergeSourceFromParams(params,expression[1:]); ok {
+			statement,ok := value.(string)
+			return statement,ok
 		}
 	}
-	return false
+	return "",false
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword
