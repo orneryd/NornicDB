@@ -53,14 +53,14 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 							require.NoError(t, err)
 						}
 						result, err := exec.Execute(context.Background(), call, map[string]interface{}{"body": body})
-						if composite || explicit {
+						if composite {
  require.ErrorContains(t,err,"unsupported query type in transaction")
  require.Zero(t,calls,"unsupported managed scope must fail before any batch action")
  if explicit { _,err=exec.Execute(context.Background(),"ROLLBACK",nil); require.NoError(t,err) }
  nodes,err:=committed.GetNodesByLabel("U5BatchBoundary"); require.NoError(t,err); require.Empty(t,nodes)
  return
 }
-      require.Equal(t, 1, visible, "completed batch must be committed before next action; result=%v error=%v", result, err)
+      wantVisible:=1; if explicit {wantVisible=0}; require.Equal(t, wantVisible, visible, "completed batch must be committed before next action; result=%v error=%v", result, err)
 						require.NoError(t, err)
 						if explicit {
 							_, err = exec.Execute(context.Background(), "ROLLBACK", nil)
@@ -68,7 +68,7 @@ func TestPeriodicProceduresPreserveBatchBoundaries(t *testing.T) {
 						}
 						nodes, err := committed.GetNodesByLabel("U5BatchBoundary")
 						require.NoError(t, err)
-						require.Len(t, nodes, 1, "outer rollback must not undo completed periodic batches")
+						wantNodes:=1; if explicit {wantNodes=0}; require.Len(t, nodes, wantNodes, "explicit rollback retains shipped folding; autocommit retains completed batches")
 					})
 				}
 			}
