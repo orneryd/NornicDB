@@ -1,0 +1,16 @@
+- [x] Create fix/macos-provider-settings from origin/release/v1.4.4; preserve paused #1487.
+- [x] Identify installer environment/first-run resets and settings provider/model coercion.
+- [x] Confirm three-step a-la-carte layout and loading existing settings on install.
+- [x] Reproduce config loss with focused tests before changing its owner.
+- [x] Preserve upgrade config/environment/LaunchAgent and unify installer postinstall logic.
+- [x] Support and display existing per-service providers/settings without remote GGUF coercion.
+- [x] Share independent AI controls in Settings/setup; implement three-step review and confirmations.
+- [x] Add shared optional Advanced tab in setup/Settings; load and preserve existing environment/runtime arguments, validate and apply at startup.
+- [x] Nine focused Swift tests, two isolated installer tests, shell syntax checks, native app/server builds, Lite/Full packages.
+- [x] Install rebuilt app/server; verify restored config/environment/plist hashes unchanged and live OpenAI configuration.
+- [ ] Complete required verification: make targets hit global hook/fixture integration; last rerun canceled to stop temporary main-ref ingestion. Five newly created fixture DBs removed via API.
+- [ ] Validate latest packaged postinstall GUI-domain correction on a new privileged install (second authentication canceled).
+- [ ] Rebuild/reinstall, restore local OpenAI settings, re-embed nornicdbcode.
+- [ ] Publish separate release PR and verification evidence; resume #1487.
+
+- [ ] Clarify the maintainer's additional macOS PR requirement (latest message ended at “we also need to”).

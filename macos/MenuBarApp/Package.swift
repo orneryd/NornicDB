@@ -21,12 +21,16 @@ let package = Package(
             path: ".",
             exclude: [
                 "ConfigParserTest.swift",
+                "Tests",
                 "EmbeddingServerTest.swift",
                 "EmbeddingServerSettingsView.swift",
                 "test-embedding-server.sh",
             ],
             sources: [
                 "NornicDBMenuBar.swift",
+                "ConfigManager.swift",
+                "ServiceSettingsViews.swift",
+                "FirstRunWizard.swift",
                 "FileIndexer.swift",
                 "FileIndexerWindow.swift",
                 "FileIndexerSupport.swift",
@@ -35,5 +39,6 @@ let package = Package(
                 "EmbeddingServer.swift",
             ]
         ),
+        .testTarget(name: "NornicDBTests", dependencies: ["NornicDB"], path: "Tests"),
     ]
 )
