@@ -98,9 +98,10 @@ func (p EmbeddingTextPolicy) SameSource(x, y *Node) bool {
 	return true
 }
 
-// sameEmbeddingSource is SameSource under the engine's policy.
+// sameEmbeddingSource uses the recorded consumed source, with the engine text
+// policy for legacy vectors that have no descriptor.
 func (b *BadgerEngine) sameEmbeddingSource(x, y *Node) bool {
-	return b.embeddingTextPolicyOrDefault().SameSource(x, y)
+	return EmbeddingSourceMatches(x, y, b.embeddingTextPolicyOrDefault())
 }
 
 // embeddingSourceJudge is an engine that decides whether two copies of a
@@ -122,7 +123,7 @@ func dropStaleCarriedEmbeddings(judge Engine, prev, node *Node) {
 	if prev == nil || len(prev.EmbedMeta) == 0 || len(node.ChunkEmbeddings) == 0 || !sameChunkEmbeddings(node.ChunkEmbeddings, prev.ChunkEmbeddings) {
 		return
 	}
-	same := defaultEmbeddingTextPolicy.SameSource(prev, node)
+	same := EmbeddingSourceMatches(prev, node, defaultEmbeddingTextPolicy)
 	if engine, ok := UnwrapEngine(judge).(embeddingSourceJudge); ok {
 		same = engine.sameEmbeddingSource(prev, node)
 	}

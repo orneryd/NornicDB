@@ -142,7 +142,7 @@ func TestEmbedWorkerSaveRetryRetainsProviderResult(t *testing.T) {
 				}
 				require.Equal(t, 1, published)
 				wantCalls := calls
-				if change != "unchanged" {
+				if change != "unchanged" && (change != "properties" || mode == "property" || mode == "property-batch") {
 					wantCalls *= 2
 				}
 				require.Equal(t, wantCalls, provider.GetEmbedCount(), "retry must retain unchanged results and discard changed sources")

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -1336,6 +1337,9 @@ func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
 	if result == nil {
 		return meta
 	}
+	if result.Source != nil {
+		meta[embeddingsource.MetaKey] = result.Source.Metadata()
+	}
 	if result.ChunkerVersion != "" {
 		meta["chunker_version"] = result.ChunkerVersion
 	}
@@ -1367,6 +1371,21 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 	}
 	for key, value := range providerMeta {
 		node.EmbedMeta[key] = value
+	}
+	// Bind the provider's consumed inputs to the text policy used to build this
+	// request. Carry this record unchanged through retries and storage.
+	consumed, present, _ := embeddingsource.Read(providerMeta)
+	if !present {
+		consumed = embeddingsource.Source{Text: true}
+		if structured, ok := provider.(embed.DocumentPropertyChunkEmbedder); ok && structured.UsesDocumentProperties() {
+			consumed.AllProperties = true
+		}
+	}
+	consumed.Include, consumed.Exclude, consumed.IncludeLabels = source.Policy.Include, source.Policy.Exclude, source.Policy.IncludeLabels
+	node.EmbedMeta[embeddingsource.MetaKey] = consumed.Metadata()
+	// A property-only result cannot own spans into unconsumed fallback text.
+	if !consumed.Text {
+		source = embeddingutil.EmbedText{}
 	}
 	embeddingutil.RecordChunkSpans(node, source, chunks)
 	return ew.writeEmbeddedNode(node, provider, nil)
@@ -1814,17 +1833,8 @@ func (ew *EmbedWorker) embedDocumentWith(provider embed.Embedder, text string, n
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		meta := make(map[string]any)
+		meta := documentResultMeta(result)
 		if result != nil {
-			if result.ChunkerVersion != "" {
-				meta["chunker_version"] = result.ChunkerVersion
-			}
-			if result.TotalTokens > 0 {
-				meta["embedding_total_tokens"] = result.TotalTokens
-			}
-			if len(result.Chunks) > 0 && (result.ChunkerVersion != "" || result.TotalTokens > 0) {
-				meta["chunk_texts"] = append([]string(nil), result.Chunks...)
-			}
 			return result.Chunks, result.Embeddings, meta, nil
 		}
 		return nil, nil, meta, nil

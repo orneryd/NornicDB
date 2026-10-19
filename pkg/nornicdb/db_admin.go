@@ -620,7 +620,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// feeds) unchanged, and they're invalidated otherwise so the embed worker
 	// regenerates them (#963). We intentionally do NOT touch NamedEmbeddings
 	// here (those are user-provided, e.g., Qdrant points).
-	before := &storage.Node{Labels: n.Labels, Properties: make(map[string]interface{}, len(n.Properties))}
+	before := &storage.Node{EmbedMeta: n.EmbedMeta, Labels: n.Labels, Properties: make(map[string]interface{}, len(n.Properties))}
 	for k, v := range n.Properties {
 		before.Properties[k] = v
 	}
@@ -633,7 +633,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		n.Properties[k] = v
 	}
 
-	invalidateManagedEmbeddings := !embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(db.config)).SameSource(before, n)
+	invalidateManagedEmbeddings := !storage.EmbeddingSourceMatches(before, n, embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(db.config)))
 	if invalidateManagedEmbeddings {
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
