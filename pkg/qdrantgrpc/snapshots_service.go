@@ -85,7 +85,9 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	if err != nil {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.NotFound, localization.QdrantCollectionNotFound(req.CollectionName))
 	}
-	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
+	// A snapshot holds every stored point, those the visibility layer hides
+	// from reads included.
+	nodes, err := storage.GetStoredNodesByLabel(store, QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetCollectionPointsFailed(err))
 	}
@@ -257,19 +259,13 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	} else {
 		// Fallback: export all nodes and edges as a snapshot, those the
 		// visibility layer hides from reads included.
-		var nodes []*storage.Node
-		if err := storage.StreamStoredNodes(ctx, s.baseStorage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
-			nodes = append(nodes, node)
-			return nil
-		}); err != nil {
+		nodes, err := storage.CollectStoredNodes(ctx, s.baseStorage)
+		if err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetNodesFailed(err))
 		}
 
-		var edges []*storage.Edge
-		if err := storage.StreamStoredEdgesByType(ctx, s.baseStorage, "", func(edge *storage.Edge) error {
-			edges = append(edges, edge)
-			return nil
-		}); err != nil {
+		edges, err := storage.CollectStoredEdges(ctx, s.baseStorage)
+		if err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantGetEdgesFailed(err))
 		}
 
