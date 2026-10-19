@@ -65,3 +65,19 @@ func TestFabricStructureInvocationArgumentNames(t *testing.T) {
 		require.Contains(t, q.LocalText, example.invocation, example.text)
 	}
 }
+
+func TestFabricStructureGeneratedIdentifierRoles(t *testing.T) {
+	for _, name := range []string{"false", "true", "null", "union", "call", "with", "a b", "a`b"} {
+		quoted := "`" + strings.ReplaceAll(name, "`", "``") + "`"
+		text := "WITH 7 AS " + quoted + " WITH DISTINCT " + quoted
+		generated := ensureRowProducingPrefix(text)
+		q := ReadQueryStructure(generated)
+		require.NoError(t, q.Err, generated)
+		require.Equal(t, name, q.ResultClause().Projection.Items[0].Name, generated)
+		imported := rewriteLeadingWithImports("RETURN "+quoted+" AS k", []string{name})
+		q = ReadQueryStructure(imported)
+		require.NoError(t, q.Err, imported)
+		require.Equal(t, name, q.Clauses[0].Projection.Items[0].Alias, imported)
+		require.Equal(t, name, q.ResultClause().Projection.Items[0].Name, imported)
+	}
+}
