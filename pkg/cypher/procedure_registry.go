@@ -167,24 +167,30 @@ func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 	if len(r.user) == 0 {
 		return false
 	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
-	opts.SkipStrings = false
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			return false
+	var readsUserProcedure func(string, int) bool
+	readsUserProcedure = func(text string, depth int) bool {
+		if depth >= 16 {
+			return true // Conservatively bypass caching for deeply nested code.
 		}
-		from = at + len("CALL")
-		if name, ok := procedureNameAt(query, from); ok {
-			if _, exists := r.userFold[lowerASCII(name)]; exists {
+		syntax := readFunctionSyntax(text)
+		for _, call := range syntax.calls {
+			if call.procedure {
+				if _, exists := r.userFold[lowerASCII(call.name)]; exists {
+					return true
+				}
+			}
+		}
+		// Preserve the registry's conservative policy for literal executable
+		// text, including APOC's nested statements. Boundaries come from the
+		// same owner; quoted data never becomes a call in ordinary readers.
+		for _, span := range syntax.quoted {
+			if literal, ok := decodeCypherQuotedString(text[span.start:span.end]); ok && readsUserProcedure(literal, depth+1) {
 				return true
 			}
 		}
+		return false
 	}
-	return false
+	return readsUserProcedure(query, 0)
 }
 
 func (r *ProcedureRegistry) List() []ProcedureSpec {
