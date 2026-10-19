@@ -108,7 +108,7 @@ func buildHNSWSequential(dims int, config HNSWConfig, pairs []hnswBuildPair) (*H
 	idx := NewHNSWIndex(dims, config)
 	for _, p := range pairs {
 		if p.hasHint {
-			idx.setBuildLexicalHint(p.hint)
+			idx.setBuildLexicalHint(p.id, p.hint)
 		}
 		if err := idx.Add(p.id, p.vec); err != nil {
 			return nil, hnswBuildStats{}, err
