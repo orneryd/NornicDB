@@ -7,6 +7,8 @@ struct AIServiceSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                AIFeatureSettingsView(config: config)
+                Divider()
                 Text("Optional AI services").font(.headline)
                 Text("Configure each service independently. Remote providers do not require local model downloads.").foregroundColor(.secondary)
                 ServiceProviderEditor(title: "Embeddings", enabled: $config.embeddingsEnabled,
@@ -169,6 +171,28 @@ struct StorageUpgradeSetupControl: View {
                 Toggle("Authorize storage upgrade on the next start", isOn: $config.upgradeStorageOnNextStart)
                 Text("Enable for older existing storage. Back up your database first: upgrades are one-way. This authorization is cleared after a healthy start.")
                     .font(.caption).foregroundColor(.secondary)
+            }.padding(8)
+        }
+    }
+}
+
+/// The same feature switches are available during setup and in Settings.
+struct AIFeatureSettingsView: View {
+    @ObservedObject var config: ConfigManager
+    var body: some View {
+        GroupBox("AI & analytics features") {
+            VStack(alignment: .leading, spacing: 15) {
+                Text("Optional features. Changes apply when the server starts or restarts.")
+                    .font(.caption).foregroundColor(.secondary)
+                FeatureToggle(title: "K-Means Clustering",
+                    description: "Automatic node clustering and organization",
+                    isEnabled: $config.kmeansEnabled, icon: "circle.hexagongrid.fill")
+                FeatureToggle(title: "Memory Decay",
+                    description: "Natural episodic, semantic, and procedural memory decay",
+                    isEnabled: $config.memoryDecayEnabled, icon: "brain.filled.head.profile")
+                FeatureToggle(title: "Auto-TLP",
+                    description: "Automatic Topological Link prediction",
+                    isEnabled: $config.autoTLPEnabled, icon: "point.3.connected.trianglepath.dotted")
             }.padding(8)
         }
     }
