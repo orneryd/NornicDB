@@ -57,9 +57,9 @@ func evaluateComparisonChain(
 	cypher25 bool,
  domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
-	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25)
+	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25, domains...)
 }
-func evaluateComparisonChainInContext(ctx context.Context, expression string, resolve func(string, foldPosition) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool) (interface{}, bool, bool, error) {
+func evaluateComparisonChainInContext(ctx context.Context, expression string, resolve func(string, foldPosition) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool, domains ...graphIdentityDomain) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
 		return nil, false, false, nil
@@ -113,10 +113,10 @@ func evaluateScannedComparisonChain(
 			// same comparison implementation and exactly one evaluation per operand.
 			return evaluateComparisonLinks(expression, scan, normalizeIdentity, func(i int, text string) (interface{}, bool, error) {
 				return resolveApplyOperand(cached, i, func(i int) (interface{}, bool, error) { return resolve(i, text) })
-			}, compare, cypher25, true)
+			}, compare, cypher25, true, domains...)
 		}
 	}
-	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25, true)
+	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25, true, domains...)
 }
 
 // constantFalseLink reports a link of the chain between two literals that is
@@ -144,7 +144,7 @@ func constantFalseLink(expression string, scan *comparisonChainScan, cypher25 bo
 
 // resolveText is false for compiled operands, which already retain their text.
 // Numeric constant folding still reads the text when promotion can apply.
-func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25, resolveText bool) (interface{}, bool, error) {
+func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25, resolveText bool, domains ...graphIdentityDomain) (interface{}, bool, error) {
 	leftText := ""
 	if resolveText {
 		leftText = scan.operand(expression, 0)
