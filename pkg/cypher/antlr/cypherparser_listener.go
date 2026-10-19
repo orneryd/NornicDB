@@ -421,6 +421,36 @@ type CypherParserListener interface {
 	// EnterReservedWord is called when entering the reservedWord production.
 	EnterReservedWord(c *ReservedWordContext)
 
+	// EnterFabricScript is called when entering the fabricScript production.
+	EnterFabricScript(c *FabricScriptContext)
+
+	// EnterFabricBody is called when entering the fabricBody production.
+	EnterFabricBody(c *FabricBodyContext)
+
+	// EnterFabricClause is called when entering the fabricClause production.
+	EnterFabricClause(c *FabricClauseContext)
+
+	// EnterFabricUseClause is called when entering the fabricUseClause production.
+	EnterFabricUseClause(c *FabricUseClauseContext)
+
+	// EnterFabricCallSubquery is called when entering the fabricCallSubquery production.
+	EnterFabricCallSubquery(c *FabricCallSubqueryContext)
+
+	// EnterFabricCallScope is called when entering the fabricCallScope production.
+	EnterFabricCallScope(c *FabricCallScopeContext)
+
+	// EnterFabricLoadCsv is called when entering the fabricLoadCsv production.
+	EnterFabricLoadCsv(c *FabricLoadCsvContext)
+
+	// EnterFabricInsertSt is called when entering the fabricInsertSt production.
+	EnterFabricInsertSt(c *FabricInsertStContext)
+
+	// EnterFabricNoDetachDeleteSt is called when entering the fabricNoDetachDeleteSt production.
+	EnterFabricNoDetachDeleteSt(c *FabricNoDetachDeleteStContext)
+
+	// EnterFabricOffsetSt is called when entering the fabricOffsetSt production.
+	EnterFabricOffsetSt(c *FabricOffsetStContext)
+
 	// ExitScript is called when exiting the script production.
 	ExitScript(c *ScriptContext)
 
@@ -834,4 +864,34 @@ type CypherParserListener interface {
 
 	// ExitReservedWord is called when exiting the reservedWord production.
 	ExitReservedWord(c *ReservedWordContext)
+
+	// ExitFabricScript is called when exiting the fabricScript production.
+	ExitFabricScript(c *FabricScriptContext)
+
+	// ExitFabricBody is called when exiting the fabricBody production.
+	ExitFabricBody(c *FabricBodyContext)
+
+	// ExitFabricClause is called when exiting the fabricClause production.
+	ExitFabricClause(c *FabricClauseContext)
+
+	// ExitFabricUseClause is called when exiting the fabricUseClause production.
+	ExitFabricUseClause(c *FabricUseClauseContext)
+
+	// ExitFabricCallSubquery is called when exiting the fabricCallSubquery production.
+	ExitFabricCallSubquery(c *FabricCallSubqueryContext)
+
+	// ExitFabricCallScope is called when exiting the fabricCallScope production.
+	ExitFabricCallScope(c *FabricCallScopeContext)
+
+	// ExitFabricLoadCsv is called when exiting the fabricLoadCsv production.
+	ExitFabricLoadCsv(c *FabricLoadCsvContext)
+
+	// ExitFabricInsertSt is called when exiting the fabricInsertSt production.
+	ExitFabricInsertSt(c *FabricInsertStContext)
+
+	// ExitFabricNoDetachDeleteSt is called when exiting the fabricNoDetachDeleteSt production.
+	ExitFabricNoDetachDeleteSt(c *FabricNoDetachDeleteStContext)
+
+	// ExitFabricOffsetSt is called when exiting the fabricOffsetSt production.
+	ExitFabricOffsetSt(c *FabricOffsetStContext)
 }
