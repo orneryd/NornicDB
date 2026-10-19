@@ -5175,7 +5175,7 @@ func (s *Service) adaptiveVectorSearch(
 	requestLimit := config.initialLimit
 	// The pipeline's exact stage scores every vector of each node it is
 	// given, from this Service's membership.
-	ctx = withVectorMembers(ctx, s.vectorMembersOf)
+	ctx = withVectorMembers(ctx, s.memoizedVectorMembers())
 	var stats vectorOverfetchStats
 	for {
 		if err := ctx.Err(); err != nil {
@@ -5248,6 +5248,37 @@ func nextCandidateLimit(current int, factor float64, ceiling int) int {
 func requestCoversCandidatePopulation(ctx context.Context, pipeline *VectorSearchPipeline, limit int) bool {
 	reporter, ok := pipeline.candidateGen.(candidatePopulationReporter)
 	return ok && limit >= reporter.candidatePopulation(ctx)
+}
+
+// memoizedVectorMembers is vectorMembersOf remembering, for one query, the
+// nodes it already resolved: the widening passes rescore many of the same
+// nodes. Not safe for concurrent use; each query takes its own.
+func (s *Service) memoizedVectorMembers() vectorMemberResolver {
+	known := map[string][]string{}
+	return func(nodeIDs []string) map[string][]string {
+		out := make(map[string][]string, len(nodeIDs))
+		var missing []string
+		for _, nodeID := range nodeIDs {
+			if ids, ok := known[nodeID]; ok {
+				if ids != nil {
+					out[nodeID] = ids
+				}
+				continue
+			}
+			missing = append(missing, nodeID)
+		}
+		if len(missing) > 0 {
+			fetched := s.vectorMembersOf(missing)
+			for _, nodeID := range missing {
+				ids := fetched[nodeID]
+				known[nodeID] = ids
+				if ids != nil {
+					out[nodeID] = ids
+				}
+			}
+		}
+		return out
+	}
 }
 
 // vectorMembersOf is the exact stage's node membership (withVectorMembers):
@@ -5336,7 +5367,7 @@ func (s *Service) completeVectorSearch(
 	if _, passThrough := pipeline.exactScorer.(*IdentityExactScorer); passThrough {
 		pipeline = NewVectorSearchPipeline(pipeline.candidateGen, s.resolveVectorExactScorer(vectors, fileStore))
 	}
-	scored, _, err := pipeline.scoreNodes(ctx, embedding, candidates, 0, opts.GetMinSimilarity(0.5))
+	scored, _, err := pipeline.scoreNodes(ctx, embedding, candidates, 0, opts.GetMinSimilarity(0.5), math.Inf(1))
 	if err != nil {
 		return nil, stats, err
 	}

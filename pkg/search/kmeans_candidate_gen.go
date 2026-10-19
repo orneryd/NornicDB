@@ -108,7 +108,7 @@ func (k *KMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, q
 	if k.clusterIndex == nil || !k.clusterIndex.IsClustered() {
 		// Fall back to brute-force
 		candidates, exhausted, err := NewBruteForceCandidateGen(k.vectorIndex).searchCandidatesWithExhaustion(ctx, query, limit, minSimilarity)
-		return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}, err
+		return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}.withBound(0), err
 	}
 	if dims := k.clusterIndex.Dimensions(); dims > 0 && len(query) != dims {
 		return nil, candidateEvidence{}, localizedError(localization.SearchClusterQueryDimensionsMismatch(len(query), dims), nil)
@@ -138,7 +138,7 @@ func (k *KMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, q
 	}
 
 	if len(results) == 0 {
-		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}.withBound(0), nil
 	}
 
 	// Convert SearchResult to Candidate with approximate scores.
@@ -166,5 +166,5 @@ func (k *KMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, q
 	if len(candidates) > candidateLimit {
 		candidates = candidates[:candidateLimit]
 	}
-	return candidates, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}, nil
+	return candidates, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}.withBound(0), nil
 }

@@ -93,10 +93,41 @@ type candidateGeneratorWithLexicalEntries interface {
 // the pool holds everything the pass's routing reaches, so a wider limit on
 // the same routing repeats the pass and only the population-wide routing can
 // add more. A generator whose routing is its whole population reports
-// routedComplete as exhausted.
+// routedComplete as exhausted. scoreBound (when bounded): how far a
+// candidate's exact score can lie above the score the generator gave it,
+// before float32 slack; the exact stage skips nodes whose bound can no
+// longer qualify or reach the top k.
 type candidateEvidence struct {
 	exhausted      bool
 	routedComplete bool
+	scoreBound     float64
+	bounded        bool
+}
+
+// bound is the evidence's score bound, +Inf when the generator gave none.
+func (e candidateEvidence) bound() float64 {
+	if !e.bounded {
+		return math.Inf(1)
+	}
+	return e.scoreBound
+}
+
+// withBound returns e reporting score bound b.
+func (e candidateEvidence) withBound(b float64) candidateEvidence {
+	e.scoreBound, e.bounded = b, true
+	return e
+}
+
+// candidateGeneratorWithEntryEvidence is the HNSW generator: lexical entry
+// points and evidence, score bound included, in one search.
+type candidateGeneratorWithEntryEvidence interface {
+	searchCandidatesWithEntryEvidence(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, candidateEvidence, error)
+}
+
+// candidateScoreBounder is a generator whose scores are exact up to float32
+// slack (bound 0).
+type candidateScoreBounder interface {
+	candidateScoreBound() float64
 }
 
 // candidateGeneratorWithRouting is a generator that routes a request to part
@@ -119,13 +150,19 @@ type candidateGeneratorWithRouting interface {
 // vector perturbs it by at most d/2·u + 2u relative, so each routine's cosine
 // is within (2d+4)·u of the real one and two routines within (4d+8)·u =
 // (d+2)·2⁻²². ε = (d+4)·2⁻²² adds headroom for the second-order terms.
-// Compressed scores (scalar, binary, PQ) have no such bound: their
-// generators apply no threshold at all.
+// Compressed scores (scalar, binary, PQ) get no threshold at all: their
+// generators bound their error separately (candidateEvidence.scoreBound).
 func candidatePrefilter(minSimilarity float64, dimensions int) float64 {
 	if minSimilarity <= -1 {
 		return minSimilarity
 	}
-	return minSimilarity - float64(dimensions+4)*math.Ldexp(1, -22)
+	return minSimilarity - exactScoreSlack(dimensions)
+}
+
+// exactScoreSlack is ε = (d+4)·2⁻²² (candidatePrefilter): the most two
+// float32 routines' cosines of the same unit vectors differ.
+func exactScoreSlack(dimensions int) float64 {
+	return float64(dimensions+4) * math.Ldexp(1, -22)
 }
 
 // vectorMembersKey carries the Service's index-time node → vector membership
@@ -222,6 +259,9 @@ func (b *BruteForceCandidateGen) searchCandidatesWithExhaustion(ctx context.Cont
 	return candidates, len(results) < candidateLimit, nil
 }
 
+// candidateScoreBound: its scores are exact up to float32 slack.
+func (b *BruteForceCandidateGen) candidateScoreBound() float64 { return 0 }
+
 func (b *BruteForceCandidateGen) candidatePopulation(ctx context.Context) int {
 	return b.vectorIndex.Count()
 }
@@ -242,6 +282,9 @@ func (b *FileStoreBruteForceCandidateGen) SearchCandidates(ctx context.Context, 
 	candidates, _, err := b.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
 	return candidates, err
 }
+
+// candidateScoreBound: its scores are exact up to float32 slack.
+func (b *FileStoreBruteForceCandidateGen) candidateScoreBound() float64 { return 0 }
 
 func (b *FileStoreBruteForceCandidateGen) candidatePopulation(ctx context.Context) int {
 	if b == nil || b.vectorStore == nil {
@@ -336,6 +379,14 @@ func (h *HNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, q
 }
 
 func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, bool, error) {
+	candidates, evidence, err := h.searchCandidatesWithEntryEvidence(ctx, query, k, minSimilarity, entryIDs)
+	return candidates, evidence.exhausted, err
+}
+
+// searchCandidatesWithEntryEvidence searches the graph from the lexical entry
+// points (none: its entry point). The graph scores original coordinates, so
+// its scores are exact up to float32 slack (bound 0).
+func (h *HNSWCandidateGen) searchCandidatesWithEntryEvidence(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, candidateEvidence, error) {
 	candidateLimit := boundCandidateLimit(k)
 	config := h.hnswIndex.Config()
 	searchBeam := hnswSearchBeam(candidateLimit, config.EfSearch, config.SearchBeamFactor)
@@ -346,7 +397,7 @@ func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Contex
 	// owning nodes rather than spending the entire budget on one document.
 	results, exhausted, err := h.hnswIndex.searchWithEfExhaustionFromEntries(ctx, query, searchBeam, minSimilarity, searchBeam, entryIDs)
 	if err != nil {
-		return nil, false, err
+		return nil, candidateEvidence{}, err
 	}
 
 	// The limit counts distinct nodes, so a chunked corpus gets candidateLimit
@@ -374,7 +425,7 @@ func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Contex
 		})
 	}
 
-	return candidates, exhausted, nil
+	return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}.withBound(0), nil
 }
 
 func hnswSearchBeam(resultLimit, configuredEf, factor int) int {
@@ -506,6 +557,9 @@ func (g *GPUBruteForceCandidateGen) SearchCandidates(ctx context.Context, query 
 	return candidates, err
 }
 
+// candidateScoreBound: its scores are exact up to float32 slack.
+func (g *GPUBruteForceCandidateGen) candidateScoreBound() float64 { return 0 }
+
 func (g *GPUBruteForceCandidateGen) candidatePopulation(ctx context.Context) int {
 	if g.embeddingIndex == nil {
 		return 0
@@ -627,14 +681,14 @@ func (p *VectorSearchPipeline) searchWithEvidence(ctx context.Context, query []f
 	if len(candidates) == 0 {
 		return []ScoredCandidate{}, evidence, nil
 	}
-	scored, cut, err := p.scoreNodes(ctx, query, candidates, k, minSimilarity)
+	scored, cut, err := p.scoreNodes(ctx, query, candidates, k, minSimilarity, evidence.bound()+exactScoreSlack(len(query)))
 	if err != nil {
 		return nil, candidateEvidence{}, err
 	}
 	if cut {
-		// Nodes above the threshold cut here weren't returned: a wider
-		// request returns them.
-		evidence = candidateEvidence{}
+		// Nodes that can still qualify weren't returned: a wider request
+		// returns them.
+		evidence.exhausted, evidence.routedComplete = false, false
 	}
 	return scored, evidence, nil
 }
@@ -644,6 +698,9 @@ func (p *VectorSearchPipeline) searchWithEvidence(ctx context.Context, query []f
 // is never exhausted: a short page from an approximate generator is no
 // evidence that nothing else matches.
 func (p *VectorSearchPipeline) selectCandidates(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, candidateEvidence, error) {
+	if generator, ok := p.candidateGen.(candidateGeneratorWithEntryEvidence); ok {
+		return generator.searchCandidatesWithEntryEvidence(ctx, query, k, minSimilarity, entryIDs)
+	}
 	if generator, ok := p.candidateGen.(candidateGeneratorWithLexicalEntries); ok && len(entryIDs) > 0 {
 		candidates, exhausted, err := generator.searchCandidatesWithLexicalEntries(ctx, query, k, minSimilarity, entryIDs)
 		return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}, err
@@ -651,96 +708,210 @@ func (p *VectorSearchPipeline) selectCandidates(ctx context.Context, query []flo
 	if generator, ok := p.candidateGen.(candidateGeneratorWithRouting); ok {
 		return generator.searchCandidatesWithEvidence(ctx, query, k, minSimilarity)
 	}
+	var evidence candidateEvidence
+	if bounder, ok := p.candidateGen.(candidateScoreBounder); ok {
+		evidence = evidence.withBound(bounder.candidateScoreBound())
+	}
 	if generator, ok := p.candidateGen.(candidateGeneratorWithExhaustion); ok {
 		candidates, exhausted, err := generator.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
-		return candidates, candidateEvidence{exhausted: exhausted, routedComplete: exhausted}, err
+		evidence.exhausted, evidence.routedComplete = exhausted, exhausted
+		return candidates, evidence, err
 	}
 	candidates, err := p.candidateGen.SearchCandidates(ctx, query, k, minSimilarity)
-	return candidates, candidateEvidence{}, err
+	return candidates, evidence, err
 }
 
+// stageNode is a node in the exact stage: the vectors its generator
+// surfaced, the most its exact score can be (upper), and, once scored, its
+// best vector.
+type stageNode struct {
+	id       string
+	upper    float64
+	surfaced []Candidate
+	best     ScoredCandidate
+	scored   bool
+}
+
+// stageBatch is how many nodes the exact stage scores at a time, at least.
+const stageBatch = 32
+
 // scoreNodes is the exact stage, the one owner of a vector result's identity,
-// score, qualification and cut. Candidates only name the nodes to score: the
-// stage expands each to every vector it has indexed (expandToNodeMembers),
-// scores them with the request's scoring policy (scoreFinal), and gives the
-// node its best vector's score. Then the threshold applies and the ranking
-// is cut to k nodes (k <= 0 keeps all); cut reports that a node above the
-// threshold was cut. Each result carries its node's best vector ID.
-func (p *VectorSearchPipeline) scoreNodes(ctx context.Context, query []float32, candidates []Candidate, k int, minSimilarity float64) ([]ScoredCandidate, bool, error) {
-	scored, err := p.scoreFinal(ctx, query, p.expandToNodeMembers(ctx, candidates))
-	if err != nil {
-		return nil, false, err
+// score, qualification and cut. Candidates only name the nodes to score; each
+// key is decoded once. A node's upper bound is its best surfaced score plus
+// bound (how far an exact score can lie above a candidate's score). Nodes are
+// scored best bound first, a batch at a time: every vector the node has
+// indexed (vectorMembersFromContext), with the request's scoring policy
+// (scoreFinal), and the node takes its best vector's score. Scoring stops
+// when no remaining node's bound reaches the threshold or, once k nodes
+// qualify, the kth score: those nodes can't enter the page. Then the
+// threshold applies and the ranking is cut to k nodes (k <= 0 keeps all).
+// cut reports that a node that can still qualify isn't in the result: one
+// cut from the page, or one not scored. Each result carries its node's best
+// vector ID. With bound +Inf (no bound) every node is scored.
+func (p *VectorSearchPipeline) scoreNodes(ctx context.Context, query []float32, candidates []Candidate, k int, minSimilarity float64, bound float64) ([]ScoredCandidate, bool, error) {
+	_, passThrough := p.exactScorer.(*IdentityExactScorer)
+	if passThrough {
+		bound = 0 // candidate scores are final
 	}
-	nodes := make([]ScoredCandidate, 0, len(scored))
-	position := make(map[string]int, len(scored))
-	for _, s := range scored {
-		nodeID := normalizeVectorResultIDToNodeID(s.ID)
-		if i, ok := position[nodeID]; ok {
-			if s.Score > nodes[i].Score {
-				nodes[i] = s
-			}
-			continue
+	nodes := groupCandidatesByNode(candidates, bound)
+	slices.SortStableFunc(nodes, func(a, b *stageNode) int { return cmp.Compare(b.upper, a.upper) })
+
+	var members vectorMemberResolver
+	if !passThrough {
+		members = vectorMembersFromContext(ctx)
+	}
+	qualifying := make([]float64, 0, max(k, 0)) // min-heap of the best k qualifying scores
+	next := 0
+	for next < len(nodes) {
+		bar := minSimilarity
+		if k > 0 && len(qualifying) >= k {
+			bar = max(bar, qualifying[0])
 		}
-		position[nodeID] = len(nodes)
-		nodes = append(nodes, s)
+		if nodes[next].upper < bar {
+			break
+		}
+		end := next + 1
+		batch := max(stageBatch, k-len(qualifying))
+		if math.IsInf(bound, 1) {
+			batch = len(nodes) // no bound: every node is scored anyway
+		}
+		for end < len(nodes) && end-next < batch && nodes[end].upper >= bar {
+			end++
+		}
+		if err := p.scoreStageBatch(ctx, query, nodes[next:end], members); err != nil {
+			return nil, false, err
+		}
+		for _, n := range nodes[next:end] {
+			if n.scored && n.best.Score >= minSimilarity {
+				qualifying = pushBestScores(qualifying, n.best.Score, k)
+			}
+		}
+		next = end
 	}
-	slices.SortFunc(nodes, func(a, b ScoredCandidate) int {
+
+	cut := false
+	for _, n := range nodes[next:] {
+		if n.upper >= minSimilarity {
+			cut = true // could qualify, not scored
+			break
+		}
+	}
+	out := make([]ScoredCandidate, 0, min(next, max(k, 0)+1))
+	for _, n := range nodes[:next] {
+		if n.scored && n.best.Score >= minSimilarity {
+			out = append(out, n.best)
+		}
+	}
+	slices.SortFunc(out, func(a, b ScoredCandidate) int {
 		if order := cmp.Compare(b.Score, a.Score); order != 0 {
 			return order
 		}
 		return cmp.Compare(a.ID, b.ID)
 	})
-	qualifying := 0
-	for qualifying < len(nodes) && nodes[qualifying].Score >= minSimilarity {
-		qualifying++
+	if k > 0 && len(out) > k {
+		return out[:k], true, nil
 	}
-	if k > 0 && qualifying > k {
-		return nodes[:k], true, nil
-	}
-	return nodes[:qualifying], false, nil
+	return out, cut, nil
 }
 
-// expandToNodeMembers returns the candidates' vectors followed by every other
-// vector their nodes have indexed, from the Service's membership
-// (withVectorMembers). Approximate order chooses which nodes reach the stage;
-// it never decides which of a node's vectors are scored. A pipeline used
-// without a Service, or one whose scorer passes candidate scores through
-// (IdentityExactScorer), scores the candidates alone.
-func (p *VectorSearchPipeline) expandToNodeMembers(ctx context.Context, candidates []Candidate) []Candidate {
-	members := vectorMembersFromContext(ctx)
-	if members == nil {
-		return candidates
-	}
-	if _, passThrough := p.exactScorer.(*IdentityExactScorer); passThrough {
-		return candidates
-	}
-	pool := make([]Candidate, 0, len(candidates))
-	inPool := make(map[string]struct{}, len(candidates))
-	nodeIDs := make([]string, 0, len(candidates))
-	nodeSeen := make(map[string]struct{}, len(candidates))
+// groupCandidatesByNode groups candidates by owning node, in first-seen
+// order, decoding each key once; a node's upper bound is its best surfaced
+// score plus bound.
+func groupCandidatesByNode(candidates []Candidate, bound float64) []*stageNode {
+	nodes := make([]*stageNode, 0, len(candidates))
+	position := make(map[string]int, len(candidates))
 	for _, candidate := range candidates {
-		if _, ok := inPool[candidate.ID]; ok {
+		nodeID := normalizeVectorResultIDToNodeID(candidate.ID)
+		upper := candidate.Score + bound
+		if i, ok := position[nodeID]; ok {
+			n := nodes[i]
+			n.surfaced = append(n.surfaced, candidate)
+			n.upper = max(n.upper, upper)
 			continue
 		}
-		inPool[candidate.ID] = struct{}{}
-		pool = append(pool, candidate)
-		nodeID := normalizeVectorResultIDToNodeID(candidate.ID)
-		if _, ok := nodeSeen[nodeID]; !ok {
-			nodeSeen[nodeID] = struct{}{}
-			nodeIDs = append(nodeIDs, nodeID)
-		}
+		position[nodeID] = len(nodes)
+		nodes = append(nodes, &stageNode{id: nodeID, upper: upper, surfaced: []Candidate{candidate}})
 	}
-	byNode := members(nodeIDs)
-	for _, nodeID := range nodeIDs {
-		for _, vectorID := range byNode[nodeID] {
-			if _, ok := inPool[vectorID]; ok {
-				continue
+	return nodes
+}
+
+// scoreStageBatch scores the batch's nodes: their surfaced vectors and every
+// other vector they indexed (members, when given), each node keeping its best.
+func (p *VectorSearchPipeline) scoreStageBatch(ctx context.Context, query []float32, batch []*stageNode, members vectorMemberResolver) error {
+	owner := make(map[string]*stageNode, len(batch))
+	pool := make([]Candidate, 0, len(batch))
+	for _, n := range batch {
+		for _, candidate := range n.surfaced {
+			if _, ok := owner[candidate.ID]; !ok {
+				owner[candidate.ID] = n
+				pool = append(pool, candidate)
 			}
-			inPool[vectorID] = struct{}{}
-			pool = append(pool, Candidate{ID: vectorID})
 		}
 	}
-	return pool
+	if members != nil {
+		ids := make([]string, len(batch))
+		for i, n := range batch {
+			ids[i] = n.id
+		}
+		byNode := members(ids)
+		for _, n := range batch {
+			for _, vectorID := range byNode[n.id] {
+				if _, ok := owner[vectorID]; !ok {
+					owner[vectorID] = n
+					pool = append(pool, Candidate{ID: vectorID})
+				}
+			}
+		}
+	}
+	scored, err := p.scoreFinal(ctx, query, pool)
+	if err != nil {
+		return err
+	}
+	for _, s := range scored {
+		n := owner[s.ID]
+		if n != nil && (!n.scored || s.Score > n.best.Score) {
+			n.best, n.scored = s, true
+		}
+	}
+	return nil
+}
+
+// pushBestScores keeps the best k scores in a min-heap (scores[0] lowest);
+// with k <= 0 it keeps none.
+func pushBestScores(scores []float64, score float64, k int) []float64 {
+	if k <= 0 {
+		return scores
+	}
+	if len(scores) < k {
+		scores = append(scores, score)
+		for i := len(scores) - 1; i > 0; {
+			parent := (i - 1) / 2
+			if scores[parent] <= scores[i] {
+				break
+			}
+			scores[parent], scores[i] = scores[i], scores[parent]
+			i = parent
+		}
+		return scores
+	}
+	if score <= scores[0] {
+		return scores
+	}
+	scores[0] = score
+	for i := 0; ; {
+		smallest, left, right := i, 2*i+1, 2*i+2
+		if left < len(scores) && scores[left] < scores[smallest] {
+			smallest = left
+		}
+		if right < len(scores) && scores[right] < scores[smallest] {
+			smallest = right
+		}
+		if smallest == i {
+			return scores
+		}
+		scores[i], scores[smallest] = scores[smallest], scores[i]
+		i = smallest
+	}
 }
 
 // scoreFinal scores the pool with the pipeline's exact scorer.

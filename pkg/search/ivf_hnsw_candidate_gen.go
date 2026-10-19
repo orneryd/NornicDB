@@ -103,7 +103,7 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 		}
 	}
 	if len(clusterIDs) == 0 {
-		return []Candidate{}, candidateEvidence{exhausted: routedAll, routedComplete: true}, nil
+		return []Candidate{}, candidateEvidence{exhausted: routedAll, routedComplete: true}.withBound(0), nil
 	}
 
 	// If any required per-cluster index is missing, fall back to the existing
@@ -171,5 +171,6 @@ func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, 
 		out = out[:totalLimit]
 		routed = false
 	}
-	return out, candidateEvidence{exhausted: routedAll && routed, routedComplete: routed}, nil
+	// The graphs score original coordinates: exact up to float32 slack.
+	return out, candidateEvidence{exhausted: routedAll && routed, routedComplete: routed}.withBound(0), nil
 }

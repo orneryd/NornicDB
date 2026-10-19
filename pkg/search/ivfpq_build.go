@@ -54,6 +54,7 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		lists[i].CodeSize = profile.PQSegments
 	}
 	vectorCount := 0
+	maxResidual := 0.0
 	overflowLimit := min(profile.OverflowMax, vfs.Count())
 	var overflowHeap *candidateMinHeap
 	if overflowLimit > 0 {
@@ -66,6 +67,7 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		for i := range ids {
 			listID := nearestCentroidIndexNormalized(vecs[i], centroidNorm)
 			code := encodePQResidual(vecs[i], centroids[listID], codebooks)
+			maxResidual = max(maxResidual, pqResidualError(vecs[i], centroids[listID], codebooks, code))
 			lists[listID].IDs = append(lists[listID].IDs, ids[i])
 			lists[listID].appendCode(code)
 			if overflowHeap != nil {
@@ -97,6 +99,8 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		overflow:        overflow,
 		formatVersion:   ivfpqBundleFormatVersion,
 		builtAtUnixNano: time.Now().UnixNano(),
+		maxResidual:     maxResidual,
+		residualKnown:   true,
 	}
 	idx.initScratchPool()
 	stats := &IVFPQBuildStats{
@@ -287,6 +291,22 @@ func ivfpqTrainKMeans(ctx context.Context, vectors [][]float32, k, maxIter int, 
 		centroidNorm = normalizeCentroids(centroids)
 	}
 	return centroids, nil
+}
+
+// pqResidualError is |r - PQ(r)| for vec's residual r against centroid,
+// encoded as code.
+func pqResidualError(vec []float32, centroid []float32, codebooks []ivfpqCodebook, code []byte) float64 {
+	var sum float64
+	offset := 0
+	for seg := range codebooks {
+		codeword := codebooks[seg].Codeword[code[seg]]
+		for d := 0; d < codebooks[seg].SubDim; d++ {
+			e := float64(vec[offset+d] - centroid[offset+d] - codeword[d])
+			sum += e * e
+		}
+		offset += codebooks[seg].SubDim
+	}
+	return math.Sqrt(sum)
 }
 
 func encodePQResidual(vec []float32, centroid []float32, codebooks []ivfpqCodebook) []byte {

@@ -90,8 +90,11 @@ func (g *IVFPQCandidateGen) searchCandidatesWithEvidence(ctx context.Context, qu
 	probedAll := nprobe > 0 && nprobe >= g.index.listCount()
 	complete := probedAll && limit >= g.index.population()
 	routed := complete || len(base) < limit
+	// List members' PQ scores are within the index's residual bound of the
+	// exact ones; overflow and overlay vectors are scored exactly.
+	bound := g.index.scoreBound()
 	if g.overlay == nil {
-		return base, candidateEvidence{exhausted: complete, routedComplete: routed}, nil
+		return base, candidateEvidence{exhausted: complete, routedComplete: routed}.withBound(bound), nil
 	}
 	merged := make(map[string]Candidate, len(base)+k)
 	for _, candidate := range base {
@@ -121,5 +124,5 @@ func (g *IVFPQCandidateGen) searchCandidatesWithEvidence(ctx context.Context, qu
 		out = out[:k]
 		routed = false
 	}
-	return out, candidateEvidence{exhausted: complete && routed, routedComplete: routed}, nil
+	return out, candidateEvidence{exhausted: complete && routed, routedComplete: routed}.withBound(bound), nil
 }
