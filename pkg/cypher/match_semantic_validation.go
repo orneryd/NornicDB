@@ -116,7 +116,7 @@ func (enclosing subqueryScope) redeclarationError(name string) error {
 // semanticScopeWalk checks clauses in order against the variables' static
 // types (types, the one type scope of #1055), updating them clause by
 // clause, and returns them after the last clause; complete is false when the
-// walk stopped before the end because a clause (YIELD *, RETURN *) names
+// walk stopped before the end because a dynamic clause (YIELD *) names
 // nothing statically. A CALL subquery's returned columns are typed by
 // walking its body the same way.
 // enclosing, for a subquery body, is what it sees of the query around it
@@ -235,15 +235,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, nil
 			}
 			for _, name := range model.columns {
-				// A returned column is a new variable of the enclosing
-				// query: one it already binds is declared twice
-				// (Neo4j 5.26.30's VariableAlreadyBound), unless every
-				// branch returns that outer variable itself, unchanged
-				// (callSubqueryReturnsOuterUnchanged).
-				if _, bound := scope[name]; bound && !model.unchanged[name] {
-					return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-						localization.CypherCoreVariableDeclaredInOuterScope(name))
-				}
 				types[name] = model.returned[name]
 				scope[name] = types[name].bindingKind()
 			}

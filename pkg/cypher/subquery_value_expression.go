@@ -306,13 +306,7 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
-	visible := make(typeScope)
-	for name := range values {
-		if !strings.HasPrefix(name, "$") && !strings.HasPrefix(name, "\x00") {
-			visible[name] = staticOperand{}
-		}
-	}
-	model, scopeErr := e.scalarQueryScope(kind, body, visible, nil, cypherVersionFromContext(ctx) == "25")
+	model, scopeErr := e.runtimeScalarQueryScope(ctx, kind, body, values)
 	if scopeErr != nil {
 		return nil, false, scopeErr
 	}

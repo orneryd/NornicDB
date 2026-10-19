@@ -69,6 +69,7 @@ func generatedCallScopeOracleCases() []callScopeOracleCase {
 			}
 		}
 	}
+	cases = append(cases, generatedNestedCallScopeOracleCases()...)
 	return append(cases, callScopeOracleExtensionControls()...)
 }
 

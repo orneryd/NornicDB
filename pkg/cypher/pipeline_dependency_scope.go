@@ -19,11 +19,17 @@ func (imports typeScope) pipelineIndependent(clauses []pipelineClause) bool {
 	if len(imports) == 0 {
 		return true
 	}
-	proof, complete := imports.pipelineDependencies(clauses)
-	return complete && len(proof.reads) == 0
+	var buffer [8]string
+	names := buffer[:0]
+	for name := range imports { names = append(names, name) }
+	return !semanticRuntimeDependencies(clauses, names, false)
 }
 
 func (imports typeScope) pipelineDependencies(clauses []pipelineClause) (*semanticDependencyScope, bool) {
+	return imports.pipelineDependenciesIn(clauses, false)
+}
+
+func (imports typeScope) pipelineDependenciesIn(clauses []pipelineClause, cypher25 bool) (*semanticDependencyScope, bool) {
 	if len(clauses) == 0 {
 		return nil, false
 	}
@@ -32,6 +38,6 @@ func (imports typeScope) pipelineDependencies(clauses []pipelineClause) (*semant
 		texts[index] = clause.text
 	}
 	proof := newSemanticDependencies(imports)
-	model, err := (&StorageExecutor{}).walkQueryScope(strings.Join(texts, " "), imports, subqueryScope{dependencies: proof}, false)
+	model, err := (&StorageExecutor{}).walkQueryScope(strings.Join(texts, " "), imports, subqueryScope{dependencies: proof}, cypher25)
 	return proof, err == nil && model.complete && proof.complete
 }

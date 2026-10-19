@@ -59,6 +59,7 @@ func (proof *semanticDependencyScope) expression(expression string) {
 // which names exist. A partial walk never proves an input can be omitted.
 type semanticQueryScope struct {
 	query     string
+	execution string
 	clauses   []pipelineClause
 	branches  []*semanticQueryScope
 	columns   []string
@@ -74,10 +75,94 @@ type semanticQueryScope struct {
 
 type semanticSubqueryGlobalsKey struct{}
 
+// Runtime names have unknown static types. Their models are immutable after
+// the shared walk, independent of row values and storage contents. Typed
+// compilation still calls the walk directly. Only completely proved models
+// enter this bounded cache; dynamic schemas keep the general path.
+type semanticRuntimeScopeKey struct {
+	kind, query, tail, names string
+	cypher25 bool
+}
+
+type semanticRuntimeScopeValue struct {
+	model *semanticQueryScope
+	dependent bool
+}
+
+var semanticRuntimeScopes = newBoundedCache[semanticRuntimeScopeKey, semanticRuntimeScopeValue](512, func(key semanticRuntimeScopeKey) int {
+	return boundedCacheStringShardIndex(key.query) ^ boundedCacheStringShardIndex(key.tail)
+})
+
+func semanticScopeNames(names []string) string {
+	sort.Strings(names)
+	if len(names) == 1 { return names[0] }
+	return strings.Join(names, "\x00")
+}
+
+func semanticRuntimeInput(names []string) typeScope {
+	input := make(typeScope, len(names))
+	for _, name := range names { input[name] = staticOperand{} }
+	return input
+}
+
+func (e *StorageExecutor) runtimeScalarQueryScope(ctx context.Context, kind, body string, values map[string]interface{}) (*semanticQueryScope, error) {
+	var buffer [8]string
+	names := buffer[:0]
+	for name := range values {
+		if !strings.HasPrefix(name, "$") && !strings.HasPrefix(name, "\x00") { names = append(names, name) }
+	}
+	key := semanticRuntimeScopeKey{kind: kind, query: body, names: semanticScopeNames(names), cypher25: cypherVersionFromContext(ctx) == "25"}
+	if cached, found := semanticRuntimeScopes.get(key); found { return cached.model, nil }
+	model, err := e.scalarQueryScope(kind, body, semanticRuntimeInput(names), nil, key.cypher25)
+	if err == nil && model.complete && model.proof.complete { semanticRuntimeScopes.put(key, semanticRuntimeScopeValue{model: model}) }
+	return model, err
+}
+
+func (e *StorageExecutor) runtimeCallQueryScope(ctx context.Context, clause string, input typeScope) (*semanticQueryScope, error) {
+	var buffer [8]string
+	names := buffer[:0]
+	for name := range input { names = append(names, name) }
+	key := semanticRuntimeScopeKey{kind: "CALL", query: clause, names: semanticScopeNames(names), cypher25: cypherVersionFromContext(ctx) == "25"}
+	if cached, found := semanticRuntimeScopes.get(key); found { return cached.model, nil }
+	model, err := e.callQueryScope(clause, input, nil, key.cypher25)
+	if err == nil && model != nil && model.complete && model.proof.complete { semanticRuntimeScopes.put(key, semanticRuntimeScopeValue{model: model}) }
+	return model, err
+}
+
+func semanticDependencyKey(clauses []pipelineClause, names []string) semanticRuntimeScopeKey {
+	key := semanticRuntimeScopeKey{kind: "QUERY", names: semanticScopeNames(names)}
+	switch len(clauses) {
+	case 1:
+		key.query = clauses[0].text
+	case 2:
+		key.query, key.tail = clauses[0].text, clauses[1].text
+	default:
+		texts := make([]string, len(clauses))
+		for index, clause := range clauses { texts[index] = clause.text }
+		key.query = strings.Join(texts, " ")
+	}
+	return key
+}
+
+func semanticRuntimeDependencies(clauses []pipelineClause, names []string, cypher25 bool) bool {
+	if len(names) == 0 { return false }
+	if len(clauses) == 0 { return true }
+	key := semanticDependencyKey(clauses, names)
+	key.cypher25 = cypher25
+	if cached, found := semanticRuntimeScopes.get(key); found { return cached.dependent }
+	proof, complete := semanticRuntimeInput(names).pipelineDependenciesIn(clauses, cypher25)
+	dependent := !complete || len(proof.reads) != 0
+	// An incomplete analysis can only cache the conservative answer. A
+	// cached omission always came from the same complete semantic walk.
+	semanticRuntimeScopes.put(key, semanticRuntimeScopeValue{dependent: dependent})
+	return dependent
+}
+
 func (model *semanticQueryScope) executionQuery() string {
 	if !model.complete {
 		return model.query
 	}
+	if model.execution != "" { return model.execution }
 	parts := make([]string, len(model.branches))
 	for index, branch := range model.branches {
 		texts := make([]string, len(branch.clauses))
@@ -174,6 +259,7 @@ func (e *StorageExecutor) walkQueryScope(query string, initial typeScope, enclos
 	if enclosing.dependencies != nil {
 		enclosing.dependencies.complete = enclosing.dependencies.complete && model.complete
 	}
+	model.execution = model.executionQuery()
 	return model, nil
 }
 
@@ -378,6 +464,11 @@ func (e *StorageExecutor) callQueryScope(call string, outer typeScope, parent *s
 		return model, err
 	}
 	model.imports = make(typeScope)
+	for _, name := range model.columns {
+		if _, bound := outer[name]; bound && !model.unchanged[name] {
+			return model, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound", localization.CypherCoreVariableDeclaredInOuterScope(name))
+		}
+	}
 	for name, operand := range imports {
 		if scoped || !model.complete || !proof.complete || proof.reads[name] {
 			model.imports[name] = operand

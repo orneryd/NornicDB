@@ -37,7 +37,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 		}
 	}
-	model, scopeErr := e.callQueryScope(clause, outerScope, nil, cypherVersionFromContext(ctx) == "25")
+	model, scopeErr := e.runtimeCallQueryScope(ctx, clause, outerScope)
 	if scopeErr != nil {
 		return nil, nil, true, scopeErr
 	}
