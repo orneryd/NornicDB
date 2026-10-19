@@ -5233,7 +5233,9 @@ func requestCoversCandidatePopulation(ctx context.Context, pipeline *VectorSearc
 
 // vectorMembersOf is the exact stage's node membership (withVectorMembers):
 // every vector each node indexed, main and chunk vectors, then named and
-// property vectors. Lock order indexMu -> mu, as index writes take them.
+// property vectors. A node's chunk list is shared, not copied: indexing
+// replaces it whole and never changes a published one. Lock order indexMu ->
+// mu, as index writes take them.
 func (s *Service) vectorMembersOf(nodeIDs []string) map[string][]string {
 	members := make(map[string][]string, len(nodeIDs))
 	s.indexMu.RLock()
@@ -5242,7 +5244,10 @@ func (s *Service) vectorMembersOf(nodeIDs []string) map[string][]string {
 	defer s.mu.RUnlock()
 	for _, nodeID := range nodeIDs {
 		chunks, named, props := s.nodeChunkVectors[nodeID], s.nodeNamedVector[nodeID], s.nodePropVector[nodeID]
-		if len(chunks)+len(named)+len(props) == 0 {
+		if len(named)+len(props) == 0 {
+			if len(chunks) > 0 {
+				members[nodeID] = chunks
+			}
 			continue
 		}
 		ids := make([]string, 0, len(chunks)+len(named)+len(props))
