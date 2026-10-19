@@ -95,6 +95,14 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		if err != nil {
 			return "", err
 		}
+		// A node named by an INTEGER anywhere shows as that INTEGER,
+		// whatever the rows' order.
+		if integer {
+			if projection.integerNodeIDs == nil {
+				projection.integerNodeIDs = make(map[string]bool)
+			}
+			projection.integerNodeIDs[id] = true
+		}
 		// A node's labels and properties are its first occurrence's, as in
 		// GDS: a later row naming it adds only its relationship.
 		if seen[id] {
@@ -102,12 +110,6 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		}
 		seen[id] = true
 		projection.NodeIDs = append(projection.NodeIDs, id)
-		if integer {
-			if projection.integerNodeIDs == nil {
-				projection.integerNodeIDs = make(map[string]bool)
-			}
-			projection.integerNodeIDs[id] = true
-		}
 		if len(nodeLabels) == 0 {
 			nodeLabels = []string{"__ALL__"}
 		}
