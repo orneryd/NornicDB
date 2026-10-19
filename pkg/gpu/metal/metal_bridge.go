@@ -341,10 +341,8 @@ func (b *Buffer) ReadFloat32(count int) []float32 {
 		return nil
 	}
 
-	// Create a Go slice that references the buffer memory
 	result := make([]float32, count)
-	src := (*[1 << 30]float32)(contents)[:count:count]
-	copy(result, src)
+	copy(result, unsafe.Slice((*float32)(contents), count))
 	return result
 }
 
@@ -374,8 +372,7 @@ func (b *Buffer) ReadUint32(count int) []uint32 {
 	}
 
 	result := make([]uint32, count)
-	src := (*[1 << 30]uint32)(contents)[:count:count]
-	copy(result, src)
+	copy(result, unsafe.Slice((*uint32)(contents), count))
 	return result
 }
 
@@ -385,6 +382,9 @@ func (b *Buffer) WriteFloat32(data []float32, offset int) error {
 		return nil
 	}
 
+	if offset < 0 {
+		return errors.New("metal: negative write offset")
+	}
 	if uint64((offset+len(data))*4) > b.size {
 		return errors.New("metal: write exceeds buffer size")
 	}
@@ -394,7 +394,9 @@ func (b *Buffer) WriteFloat32(data []float32, offset int) error {
 		return ErrInvalidBuffer
 	}
 
-	dst := (*[1 << 30]float32)(contents)[offset : offset+len(data) : offset+len(data)]
+	// unsafe.Slice spans the whole buffer; a fixed *[1 << 30]float32 view
+	// panicked for offsets past 4 GiB in buffers larger than that.
+	dst := unsafe.Slice((*float32)(unsafe.Add(contents, offset*4)), len(data))
 	copy(dst, data)
 
 	// Notify Metal that buffer was modified

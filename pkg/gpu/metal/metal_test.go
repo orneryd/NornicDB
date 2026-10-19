@@ -785,3 +785,47 @@ func BenchmarkSearch(b *testing.B) {
 		device.Search(embBuf, query, n, dims, 10, false)
 	}
 }
+
+// Regression: buffer reads and writes viewed memory through a *[1 << 30]
+// array type, so any access past 2^30 elements (4 GiB of float32) panicked
+// with "slice bounds out of range" even though the buffer was large enough.
+// Resident HNSW build buffers for corpora above ~1M 1024-dim vectors exceed it.
+func TestBufferAccessBeyondFourGiB(t *testing.T) {
+	if testing.Short() {
+		t.Skip("allocates a buffer larger than 4 GiB")
+	}
+	if !IsAvailable() {
+		t.Skip("Metal not available")
+	}
+
+	device, err := NewDevice()
+	if err != nil {
+		t.Fatalf("NewDevice() error = %v", err)
+	}
+	defer device.Release()
+
+	const offset = 1 << 30 // first element past the old array-type bound
+	const tail = 16
+	buf, err := device.NewEmptyBuffer(uint64(offset+tail)*4, StorageShared)
+	if err != nil {
+		t.Skipf("device cannot allocate a %d-byte buffer: %v", uint64(offset+tail)*4, err)
+	}
+	defer buf.Release()
+
+	data := []float32{1.5, 2.5, 3.5, 4.5}
+	if err := buf.WriteFloat32(data, offset); err != nil {
+		t.Fatalf("WriteFloat32() at offset 2^30 error = %v", err)
+	}
+	view := buf.Float32View(offset + tail)
+	for i, want := range data {
+		if got := view[offset+i]; got != want {
+			t.Errorf("view[2^30+%d] = %v, want %v", i, got, want)
+		}
+	}
+	if err := buf.WriteFloat32(data, offset+tail-len(data)+1); err == nil {
+		t.Error("WriteFloat32() past the buffer end succeeded, want error")
+	}
+	if err := buf.WriteFloat32(data, -1); err == nil {
+		t.Error("WriteFloat32() at a negative offset succeeded, want error")
+	}
+}
