@@ -15,7 +15,8 @@ func TestCompositeConstituentEntityIdentity(t *testing.T) {
 	}
 }
 
-func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
+func newCompositeIdentityExecutor(t *testing.T, explicit bool) (*StorageExecutor, *multidb.DatabaseManager) {
+	t.Helper()
 	base, err := storage.NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
@@ -25,9 +26,9 @@ func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
 		require.NoError(t, mgr.CreateDatabase(db))
 		s, err := mgr.GetStorage(db)
 		require.NoError(t, err)
-		_, err = s.CreateNode(&storage.Node{ID: "same", Labels: []string{"P"}, Properties: map[string]interface{}{"db": db}})
+		_, err = s.CreateNode(&storage.Node{ID: "same", Labels: []string{"P"}, Properties: map[string]interface{}{"db": db, "v": int64(7)}})
 		require.NoError(t, err)
-		_, err = s.CreateNode(&storage.Node{ID: "target", Labels: []string{"Q"}})
+		_, err = s.CreateNode(&storage.Node{ID: "target", Labels: []string{"Q"}, Properties: map[string]interface{}{"v": int64(7)}})
 		require.NoError(t, err)
 		require.NoError(t, s.CreateEdge(&storage.Edge{ID: "same-rel", StartNode: "same", EndNode: "target", Type: "R"}))
 	}
@@ -48,7 +49,14 @@ func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _, _ = exec.Execute(context.Background(), "ROLLBACK", nil) })
 	}
-	prefix := "USE comp CALL { USE comp.one MATCH p=(n:P)-[r:R]->(z:Q) RETURN n,r,p } CALL { USE comp.two MATCH q=(m:P)-[s:R]->(y:Q) RETURN m,s,q } "
+	return exec, mgr
+}
+
+const compositeIdentityQueryPrefix = "USE comp CALL { USE comp.one MATCH p=(n:P)-[r:R]->(z:Q) RETURN n,r,p,z } CALL { USE comp.two MATCH q=(m:P)-[s:R]->(y:Q) RETURN m,s,q,y } "
+
+func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
+	exec, _ := newCompositeIdentityExecutor(t, explicit)
+	prefix := compositeIdentityQueryPrefix
 	for _, tt := range []struct {
 		name, query string
 		want        interface{}
