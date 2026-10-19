@@ -14,7 +14,7 @@ func TestExecutionDeterminismCachedAdmissionAllocations(t *testing.T) {
 	exec := solR2CacheExecutor(t)
 	ctx := withQueryParams(context.Background(), map[string]any{
 		"request": map[string]any{"query": "transcript", "limit": int64(2)},
-		"query": "transcript",
+		"query":   "transcript",
 	})
 	for _, query := range []string{
 		"CALL db.rretrieve($request)",
