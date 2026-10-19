@@ -1567,7 +1567,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				// A void procedure leaves the row it was called for as it
 				// is: the clauses after it run once, as after any other
 				// leading clause.
-								seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+				seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
 				if result != nil {
 					seed.Stats = result.Stats
 				}
