@@ -311,6 +311,10 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
 	ctx = withoutLocalSubqueryScope(ctx)
+	visible := make(typeScope)
+	for name := range values { if !strings.HasPrefix(name, "$") && !strings.HasPrefix(name, "\x00") { visible[name] = staticOperand{} } }
+	model, scopeErr := e.scalarQueryScope(kind, body, visible, nil, cypherVersionFromContext(ctx) == "25")
+	if scopeErr != nil { return nil, false, scopeErr }
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
@@ -331,6 +335,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			}
 		}
 	}
+	if model.complete { body = model.executionQuery() }
 	if cypherVersionFromContext(ctx) != "25" {
 		grouped, err := cypher5ImportGrouping(body, values)
 		if err != nil {
@@ -379,6 +384,7 @@ func rowCountValue(kind string, rows int64) interface{} {
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	ctx = withSemanticSubqueryGlobals(ctx, values)
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranchesFor(ctx, query); union {
@@ -404,8 +410,9 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 		params[name] = value
 	}
 	names := make([]string, 0, len(values))
+	dependencies := pipelineDependencyClauses(query)
 	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
+		if !strings.HasPrefix(name, "$") && pipelineReadsBinding(dependencies, name) {
 			names = append(names, name)
 		}
 	}

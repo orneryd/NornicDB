@@ -69,6 +69,36 @@ func generatedCallScopeOracleCases() []callScopeOracleCase {
 			}
 		}
 	}
+	return append(cases, callScopeOracleExtensionControls()...)
+}
+
+func callScopeOracleExtensionControls() []callScopeOracleCase {
+	var cases []callScopeOracleCase
+	for _, call := range []string{"explicit", "all", "implicit", "with", "with-all"} {
+		item := callScopeOracleCase{name: "control/unchanged/" + call, call: call, union: "none"}
+		body := item.callBody([]string{"RETURN a"}, false)
+		item.query = "WITH a " + body + " RETURN *"
+		item.reference = "WITH $outer AS a " + body + " RETURN *"
+		item.extension = "907-return-outer-unchanged"
+		item.compatibility = "WITH $outer AS scopeInput CALL (scopeInput) { RETURN scopeInput AS a } RETURN *"
+		if call == "implicit" { item.extension = "907-unscoped-implicit-import" }
+		cases = append(cases, item)
+	}
+	for _, call := range []string{"explicit", "all"} {
+		for _, binding := range []string{"WITH a+1 AS a", "UNWIND [a+1] AS a"} {
+			item := callScopeOracleCase{name: "control/redeclaration/" + call + "/" + binding, call: call, union: "none", extension: "907-scoped-redeclaration"}
+			body := item.callBody([]string{binding + " RETURN a AS v"}, false)
+			item.query = "WITH a " + body + " RETURN a,v"
+			item.reference = "WITH $outer AS a " + body + " RETURN a,v"
+			compatibleBinding := strings.ReplaceAll(binding, "a+1", "scopeInput+1")
+			item.compatibility = "WITH $outer AS scopeInput CALL (scopeInput) { " + compatibleBinding + " RETURN a AS v } RETURN scopeInput AS a,v"
+			cases = append(cases, item)
+		}
+	}
+	for _, kind := range []string{"COLLECT", "COUNT", "EXISTS"} {
+		body := "CALL (a) { RETURN " + kind + " { WITH 9 AS a RETURN a AS v } AS value } RETURN a,value"
+		cases = append(cases, callScopeOracleCase{name: "control/scalar-shadow/" + kind, query: "WITH a " + body, reference: "WITH $outer AS a " + body})
+	}
 	return cases
 }
 
@@ -91,7 +121,7 @@ func (item callScopeOracleCase) branches(level int) []string {
 	if level == item.depth {
 		prefix := ""
 		if item.seed == "match" {
-			prefix = "MATCH (b:CallScopeOracleTarget) "
+			prefix = "MATCH (b:CallScopeOracleTarget {oracleRun:$oracleRun}) "
 		}
 		switch item.projection {
 		case "return-all":

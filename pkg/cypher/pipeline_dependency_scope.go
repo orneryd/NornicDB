@@ -2,63 +2,23 @@ package cypher
 
 import "strings"
 
-// pipelineDependencyClauses returns no proof when a body cannot be planned.
-// All consumers selecting or omitting imported columns use this same reader.
+// Dependency consumers retain the whole query composition. UNION branches and
+// nested bodies are resolved only by the shared semantic scope walk.
 func pipelineDependencyClauses(body string) []pipelineClause {
-	clauses, ok := pipelineClausesFor(body)
-	if !ok {
-		return nil
-	}
-	return clauses
+	return []pipelineClause{{kind: -1, text: body}}
 }
 
 func pipelineReadsBinding(clauses []pipelineClause, name string) bool {
-	if name == "" || strings.HasPrefix(name, "$") {
-		return false
-	}
+	if name == "" || strings.HasPrefix(name, "$") { return false }
 	return !typeScope{name: staticOperand{}}.pipelineIndependent(clauses)
 }
 
-// pipelineIndependent proves that a statement shortcut can omit imports.
-// Name occurrences alone are insufficient: projections consume scope through
-// RETURN * and WITH *. Expand them with the same typeScope projection owner
-// used by semanticScopeWalk and CALL return typing. This is deliberately a
-// proof for the read/projection clauses the shortcuts implement, rather than
-// another scope interpreter. Unknown clauses and nested subqueries (whose
-// bodies can consume imports implicitly too) keep the general row pipeline.
 func (imports typeScope) pipelineIndependent(clauses []pipelineClause) bool {
-	if len(imports) == 0 {
-		return true
-	}
-	if len(clauses) == 0 {
-		return false
-	}
-	for _, clause := range clauses {
-		if mayContainSubqueryExpression(clause.text) {
-			return false
-		}
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-		case pipelineClauseReturn, pipelineClauseWith:
-			projection := clause.text
-			if clause.kind == pipelineClauseReturn {
-				projection = "WITH " + strings.TrimSpace(projection[len("RETURN"):])
-			}
-			consumed := false
-			imports.forEachProjectedBinding(projection, func(_ string, _ string, inherited bool) {
-				consumed = consumed || inherited
-			})
-			if consumed {
-				return false
-			}
-		default:
-			return false
-		}
-		for name := range imports {
-			if isIdentifierReferenced(clause.text, name) {
-				return false
-			}
-		}
-	}
-	return true
+	if len(imports) == 0 { return true }
+	if len(clauses) == 0 { return false }
+	texts := make([]string, len(clauses))
+	for index, clause := range clauses { texts[index] = clause.text }
+	proof := newSemanticDependencies(imports)
+	model, err := (&StorageExecutor{}).walkQueryScope(strings.Join(texts, " "), imports, subqueryScope{dependencies: proof}, false)
+	return err == nil && model.complete && proof.complete && len(proof.reads) == 0
 }
