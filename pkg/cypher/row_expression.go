@@ -444,6 +444,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return rowTypeOf(value)
 		}
+		// Registered functions evaluate arguments in this row and statement's
+		// context, including nested graph expressions, just like specialized calls.
+		if value, resolved, err := e.evaluateRowGraphFunction(function, argument, values); resolved || err != nil {
+			return value, resolved, err
+		}
 	}
 
 	// OR, XOR, AND and NOT (evaluateLogicalExpression). NOT binds less

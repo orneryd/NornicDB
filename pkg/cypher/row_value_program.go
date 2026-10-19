@@ -683,14 +683,6 @@ func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	// The context evaluator sends expressions containing subqueries back to
-	// this evaluator. Resolve a containing function here instead of returning
-	// the unchanged expression to that dispatcher indefinitely.
-	if mayContainSubqueryExpression(expr) {
-		if function, argument, call := parseFunctionCallWS(expr); call {
-			return e.evaluateRowGraphFunction(function, argument, values)
-		}
-	}
 	value, err := e.evaluateRowFallback(expr, values)
 	if err != nil {
 		return nil, false, err
