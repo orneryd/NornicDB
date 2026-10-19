@@ -237,8 +237,16 @@ func readFunctionSyntax(text string) *functionSyntax {
 		}
 	}
 	syntax := &functionSyntax{text: text, leading: queryGapEnd(text, 0)}
+	// Counts are allocation hints only, never token classification. Bound the
+	// reservation so parentheses inside a large literal cannot inflate it.
+	parentheses := strings.Count(text, "(")
+	groups := parentheses+strings.Count(text,"[")+strings.Count(text,"{")
+	if parentheses > 64 { parentheses = 64 }
+	if groups > 64 { groups = 64 }
+	if parentheses > 0 { syntax.calls = make([]functionCallSpan,0,parentheses) }
 	// Group zero represents the whole input, including argument-only inputs.
-	syntax.groups = append(syntax.groups, syntaxGroup{open: -1, close: len(text), parent: -1})
+	syntax.groups = make([]syntaxGroup,1,groups+1)
+	syntax.groups[0] = syntaxGroup{open: -1, close: len(text), parent: -1}
 	stack := []int{0}
 	var pending functionCallSpan
 	hasPending := false
