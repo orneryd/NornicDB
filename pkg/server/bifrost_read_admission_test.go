@@ -81,20 +81,20 @@ func TestBifrostGlobalFeedRequiresAllDatabaseReads(t *testing.T) {
 		t.Fatal("allowed global feed did not deliver a result")
 	}
 	for _, database := range []string{"feed_named", "system"} {
-	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", database, false, true))
-	require.NoError(t, handler.Bifrost().SendNotification("info", "result", "after-event-marker"))
-	select {
-	case event := <-events:
-		t.Fatalf("global result delivered after database read revocation: %s", event)
-	case <-time.After(150 * time.Millisecond):
-	}
-	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", database, true, true))
-	require.NoError(t, handler.Bifrost().SendNotification("info", "result", "restored-event-marker"))
-	select {
-	case <-events:
-	case <-time.After(time.Second):
-		t.Fatal("restored read permission did not resume the global feed")
-	}
+		require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", database, false, true))
+		require.NoError(t, handler.Bifrost().SendNotification("info", "result", "after-event-marker"))
+		select {
+		case event := <-events:
+			t.Fatalf("global result delivered after database read revocation: %s", event)
+		case <-time.After(150 * time.Millisecond):
+		}
+		require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "feed-reader", database, true, true))
+		require.NoError(t, handler.Bifrost().SendNotification("info", "result", "restored-event-marker"))
+		select {
+		case <-events:
+		case <-time.After(time.Second):
+			t.Fatal("restored read permission did not resume the global feed")
+		}
 	}
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "feed-reader", []string{"nornic"}))
 	require.NoError(t, handler.Bifrost().SendNotification("info", "result", "allowlist-revoked-event-marker"))
