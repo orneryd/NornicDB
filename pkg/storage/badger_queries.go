@@ -307,7 +307,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			if !ok || b.writeBehind != nil {
 				return nil, false
 			}
-			return projectCachedNodeForRead(cached, properties), true
+			return projectCachedNodeForRead(cached, properties, false), true
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterNodeByDecay(node, nowNanos) {
@@ -416,7 +416,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		if !nodeIDInScope(n.ID, scope) || b.filterNodeByDecay(n, nowNanos) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(n, properties)); err != nil {
+		if err := visit(projectCachedNodeForRead(n, properties, false)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -445,23 +445,32 @@ func (b *BadgerEngine) mergeWriteBehindNodes(nodes, overlay []*Node, touched map
 		if !nodeIDInScope(n.ID, scope) || b.filterNodeByDecay(n, nowNanos) {
 			continue
 		}
-		out = append(out, projectCachedNodeForRead(n, projected))
+		out = append(out, projectCachedNodeForRead(n, projected, false))
 	}
 	return out
 }
 
-func projectCachedNodeForRead(node *Node, properties []string) *Node {
+func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings bool) *Node {
 	if node == nil {
 		return nil
 	}
 	if properties == nil {
+		if stripEmbeddings {
+			return copyNodeWithoutEmbeddings(node)
+		}
 		return copyNode(node)
 	}
-	// Projection changes the property set, not ownership of the rest of the
-	// node. Copy mutable metadata and vectors without copying omitted properties.
+	// Copy only returned fields, once. Labels and embedding metadata remain
+	// part of a stripped result; vector payloads and omitted properties do not.
 	source := *node
 	source.Properties = nil
-	projected := copyNode(&source)
+	var projected *Node
+	if stripEmbeddings {
+		projected = copyNodeWithoutEmbeddings(&source)
+	} else {
+		projected = copyNode(&source)
+	}
+
 	projected.Properties = make(map[string]any, len(properties))
 	for _, property := range properties {
 		if value, ok := node.Properties[property]; ok {
