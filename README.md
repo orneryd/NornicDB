@@ -116,13 +116,14 @@ All seed counts and per-query result fingerprints matched between NornicDB and N
 
 ### BEIR Retrieval Quality
 
-The reproducible BEIR SciFact evaluation uses the official 300-query test qrels. With exact hybrid RRF retrieval and the native BGE-M3 reranker, NornicDB recorded:
+The reproducible BEIR SciFact evaluation uses the official 300-query test qrels. With exact hybrid RRF retrieval followed by reranking the top 100 candidates, NornicDB recorded:
 
-|   Recall@10 |  Recall@100 |     nDCG@10 |      MRR@10 |     MAP@100 |
-| ----------: | ----------: | ----------: | ----------: | ----------: |
-| **0.82510** | **0.93563** | **0.72292** | **0.69447** | **0.69215** |
+| Embeddings + reranker                          |   Recall@10 |  Recall@100 |     nDCG@10 |      MRR@10 |     MAP@100 |
+| ---------------------------------------------- | ----------: | ----------: | ----------: | ----------: | ----------: |
+| BGE-M3 + native BGE-M3 reranker                |     0.82510 |     0.93563 |     0.72292 |     0.69447 |     0.69215 |
+| v1.4.4: Titan V2 + Cohere Rerank 3.5 (Bedrock) | **0.86956** | **0.96667** | **0.77282** | **0.74710** | **0.74278** |
 
-These scores are configuration-specific rather than an official leaderboard placement. See the [BEIR retrieval benchmark](docs/performance/retrieval-recall-benchmark.md#recorded-scifact-results) for the protocol, baselines, confidence intervals, and published-reference context.
+The BGE-M3 row runs fully locally. The Titan V2 row uses Amazon Titan Text Embeddings V2 and Cohere Rerank 3.5 on AWS Bedrock. These scores are configuration-specific rather than an official leaderboard placement. See the [BEIR retrieval benchmark](docs/performance/retrieval-recall-benchmark.md#recorded-scifact-results) for the protocol, baselines, confidence intervals, and published-reference context.
 
 ### Hybrid Retrieval Benchmarks
 

@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `recall-bench ingest` enables embedding when an embedding provider is set and
+  fails when no corpus vectors were stored. It previously left embedding
+  disabled, so hybrid runs silently fell back to BM25. Add OpenAI-compatible
+  embeddings, Cohere-compatible HTTP reranking and `--embedding-workers`, and
+  record the SciFact Titan V2 + Cohere Rerank 3.5 result in the README.
+
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 
