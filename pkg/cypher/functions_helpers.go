@@ -108,7 +108,7 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 			result = nil
 			err = fmt.Errorf("plugin handler panic: %v", recovered)
 		}
-		result = cypherfn.RuntimeValue(result)
+		result = cypherfn.FunctionResult(result)
 	}()
 
 	if handler == nil {
