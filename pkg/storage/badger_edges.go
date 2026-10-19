@@ -15,6 +15,13 @@ import (
 
 // CreateEdge creates a new edge between two nodes.
 func (b *BadgerEngine) CreateEdge(edge *Edge) error {
+	if b.writeBehind == nil || edge == nil {
+		return b.createEdge(edge)
+	}
+	return b.orderBehindBufferedWrites(namespaceForEdgeID(edge.ID), func() error { return b.createEdge(edge) })
+}
+
+func (b *BadgerEngine) createEdge(edge *Edge) error {
 	if edge != nil {
 		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(edge)
@@ -96,7 +103,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return ErrAlreadyExists
 	}
 
-	err = b.withUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
@@ -171,12 +178,11 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
+	}, func() { b.cacheOnEdgeCreated(edge) }, func() []any {
+		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, nil, edge)
 	})
 
-	// Invalidate only this edge type (not entire cache)
 	if err == nil {
-		b.cacheOnEdgeCreated(edge)
-
 		// Notify listeners (e.g., graph analyzers) about the new edge
 		b.notifyEdgeCreated(edge)
 	}
@@ -280,6 +286,13 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 
 // UpdateEdge updates an existing edge.
 func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
+	if b.writeBehind == nil || edge == nil {
+		return b.updateEdge(edge)
+	}
+	return b.orderBehindBufferedWrites(namespaceForEdgeID(edge.ID), func() error { return b.updateEdge(edge) })
+}
+
+func (b *BadgerEngine) updateEdge(edge *Edge) error {
 	if edge != nil {
 		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
 			return tx.UpdateEdge(edge)
@@ -311,7 +324,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	defer releaseConstraint()
 
 	var oldType string
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	var oldEdge *Edge
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
 			return err
@@ -337,6 +351,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 
 		oldType = existing.Type
+		oldEdge = existing
 
 		// Validate relationship constraints on updated edge
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
@@ -493,11 +508,12 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
+	}, func() { b.cacheOnEdgeUpdated(oldType, edge) }, func() []any {
+		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)), edge.ID, oldEdge, edge)
 	})
 
 	// Notify listeners on successful update
 	if err == nil {
-		b.cacheOnEdgeUpdated(oldType, edge)
 		b.notifyEdgeUpdated(edge)
 	}
 
@@ -506,6 +522,13 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
+	if b.writeBehind == nil {
+		return b.deleteEdge(id)
+	}
+	return b.orderBehindBufferedWrites(namespaceForEdgeID(id), func() error { return b.deleteEdge(id) })
+}
+
+func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
 		return tx.DeleteEdge(id)
 	}); handled {
@@ -533,7 +556,15 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		edgeType = edge.Type
 	}
 
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	publish := func() {
+		b.unmarkDeletedManualSuppressions("", []EdgeID{id})
+		if edgeType != "" {
+			b.cacheOnEdgeDeleted(id, edgeType)
+		} else {
+			b.cacheOnEdgesDeleted([]EdgeID{id})
+		}
+	}
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
 			return err
@@ -580,16 +611,11 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
+	}, publish, func() []any {
+		return appendEdgePublicationKeys(nil, b.GetSchemaForNamespace(namespaceForEdgeID(id)), id, edge, nil)
 	})
 
-	// Invalidate only this edge type (not entire cache)
 	if err == nil {
-		if edgeType != "" {
-			b.cacheOnEdgeDeleted(id, edgeType)
-		} else {
-			b.cacheOnEdgesDeleted([]EdgeID{id})
-		}
-
 		// Notify listeners (e.g., graph analyzers) about the deleted edge
 		b.notifyEdgeDeleted(id)
 	}
@@ -609,6 +635,11 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 		return ErrNotFound
 	}
 	if err != nil {
+		return err
+	}
+	// Its on-demand suppression goes with it, in this commit; the delete's
+	// publication updates the mirror (unmarkDeletedManualSuppressions).
+	if err := txn.Delete(manualSuppressionKey(manualSuppressionEdge, string(id))); err != nil {
 		return err
 	}
 
@@ -700,6 +731,11 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 		deletedNode, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 		return decodeErr
 	}); err != nil {
+		return 0, nil, nil, nil, err
+	}
+	// Its on-demand suppression goes with it, in this commit; the delete's
+	// publication updates the mirror (unmarkDeletedManualSuppressions).
+	if err := txn.Delete(manualSuppressionKey(manualSuppressionNode, string(id))); err != nil {
 		return 0, nil, nil, nil, err
 	}
 
