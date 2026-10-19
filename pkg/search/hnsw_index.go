@@ -157,7 +157,7 @@ type hnswDistNode struct {
 	id           uint32
 	dist         float32
 	vec          []float32
-	hint nodeLexicalHint
+	hint         nodeLexicalHint
 	hasHint      bool
 	minDiversity int
 	hasDiversity bool
@@ -241,12 +241,17 @@ func (h *HNSWIndex) SetBuildLexicalHints(hints []LexicalSeedHint) {
 }
 
 func (h *HNSWIndex) setBuildLexicalHint(key string, hint nodeLexicalHint) {
-	if hint.ID == "" { return }
+	if hint.ID == "" {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.buildLexicalHints == nil { h.buildLexicalHints = make(nodeLexicalHints) }
+	if h.buildLexicalHints == nil {
+		h.buildLexicalHints = make(nodeLexicalHints)
+	}
 	h.buildLexicalHints[hint.ID] = hint
 }
+
 // Config returns a copy of the index configuration.
 func (h *HNSWIndex) Config() HNSWConfig {
 	h.mu.RLock()
@@ -1473,7 +1478,9 @@ func (h *HNSWIndex) buildNeighborDistance(left, right uint32, a, b []float32) fl
 }
 
 func (h *HNSWIndex) buildLexicalHintLocked(internalID uint32) (nodeLexicalHint, bool) {
-	if !validHNSWIndex(internalID, len(h.internalToID)) { return nodeLexicalHint{}, false }
+	if !validHNSWIndex(internalID, len(h.internalToID)) {
+		return nodeLexicalHint{}, false
+	}
 	return lexicalHintForVectorID(h.internalToID[internalID], h.buildLexicalHints)
 }
 

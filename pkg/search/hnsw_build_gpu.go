@@ -133,7 +133,7 @@ func candidateSearchGraphGroup[A gpuBuildCandidateSearcher](ctx context.Context,
 type hnswBuildPair struct {
 	id      string
 	vec     []float32
-	hint nodeLexicalHint
+	hint    nodeLexicalHint
 	hasHint bool
 }
 
