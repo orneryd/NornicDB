@@ -709,8 +709,19 @@ func (h *HNSWIndex) searchWithEfExhaustion(ctx context.Context, query []float32,
 }
 
 func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query []float32, k int, minSimilarity float64, ef int, entryIDs []string) ([]ANNResult, bool, error) {
+	results, exhausted, _, err := h.searchBoundedFromEntries(ctx, query, k, minSimilarity, ef, entryIDs)
+	return results, exhausted, err
+}
+
+// searchBoundedFromEntries is searchWithEfExhaustionFromEntries reporting
+// also how far a result's exact cosine can lie above its score: 0 for
+// original coordinates, the codes' scoreBound when the graph searches
+// compressed ones (+Inf when there is none). Float32 rounding is the
+// caller's slack. Read under the same lock as the search, so it is the
+// bound of the codes that scored the results.
+func (h *HNSWIndex) searchBoundedFromEntries(ctx context.Context, query []float32, k int, minSimilarity float64, ef int, entryIDs []string) ([]ANNResult, bool, float64, error) {
 	if len(query) != h.dimensions {
-		return nil, false, ErrDimensionMismatch
+		return nil, false, 0, ErrDimensionMismatch
 	}
 	if ef <= 0 {
 		ef = h.config.EfSearch
@@ -719,11 +730,11 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	if err := h.prepareQuantizationReadLocked(ctx); err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 
 	if !h.hasEntryPoint || len(h.nodeLevel) == 0 {
-		return []ANNResult{}, true, nil
+		return []ANNResult{}, true, 0, nil
 	}
 	if k > h.liveCount {
 		k = h.liveCount
@@ -761,11 +772,13 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	if minSimilarity <= -1 {
 		minSim32 = float32(math.Inf(-1))
 	}
+	bound := 0.0
 	if h.quantized != nil && !quantizationOptions(ctx).ignore {
 		scorer := h.quantized.query(normalized)
 		defer scorer.release()
 		ctx = context.WithValue(ctx, hnswQuantizedQueryKey{}, scorer)
 		minSim32 = float32(math.Inf(-1))
+		bound = scorer.scoreBound()
 	}
 	var candidates []hnswDistItem
 	var err error
@@ -779,12 +792,12 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 		candidates, err = h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 	defer h.itemsPool.Put(candidates[:0])
 
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, false, 0, err
 	}
 
 	// Distances were computed during graph traversal; reuse them to avoid a second
@@ -828,7 +841,7 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 		}
 		exhausted = liveCandidates == h.liveCount && (len(results) < k || liveCandidates <= k)
 	}
-	return results, exhausted, nil
+	return results, exhausted, bound, nil
 }
 
 // Size returns the number of vectors in the index.

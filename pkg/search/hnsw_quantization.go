@@ -7,6 +7,7 @@ import (
 	"math/bits"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/simd"
 )
@@ -52,6 +53,13 @@ type hnswQuantizedVectors struct {
 	binary     []uint64
 	books      []ivfpqCodebook
 	queryPool  sync.Pool
+	// maxResidual holds (as float64 bits) the largest reconstruction error
+	// |x - decode(x)| of a scalar or PQ row written so far; removals never
+	// lower it. Rows are encoded in parallel (setQuantizationLocked), so it
+	// is updated atomically. residualKnown is whether every row's error went
+	// into it: a graph saved without it restores with none (scoreBound).
+	maxResidual   atomic.Uint64
+	residualKnown bool
 }
 
 func newHNSWQuantizedVectors(ctx context.Context, cfg HNSWQuantizationConfig, dimensions int, training [][]float32) (*hnswQuantizedVectors, error) {
@@ -111,6 +119,7 @@ func newHNSWQuantizedVectors(ctx context.Context, cfg HNSWQuantizationConfig, di
 		return nil, fmt.Errorf("unsupported HNSW quantization %q", cfg.Mode)
 	}
 	q.config = cfg
+	q.residualKnown = true // every row is written through set
 	return q, nil
 }
 
@@ -140,13 +149,68 @@ func (q *hnswQuantizedVectors) set(id uint32, v []float32) {
 			q.scales = append(q.scales, make([]float32, int(id)+1-len(q.scales))...)
 		}
 		q.scales[id] = encodeHNSWInt8(row, v)
+		q.noteResidual(int8Residual(v, row, q.scales[id]))
 		return
 	}
 	offset := 0
+	var residual float64
 	for seg, book := range q.books {
 		sub := v[offset : offset+book.SubDim]
-		row[seg] = byte(nearestPQCodeword(sub, book.Codeword))
+		code := nearestPQCodeword(sub, book.Codeword)
+		row[seg] = byte(code)
+		for d, x := range sub {
+			e := float64(x - book.Codeword[code][d])
+			residual += e * e
+		}
 		offset += book.SubDim
+	}
+	q.noteResidual(math.Sqrt(residual))
+}
+
+func (q *hnswQuantizedVectors) noteResidual(residual float64) {
+	for {
+		old := q.maxResidual.Load()
+		if residual <= math.Float64frombits(old) || q.maxResidual.CompareAndSwap(old, math.Float64bits(residual)) {
+			return
+		}
+	}
+}
+
+func (q *hnswQuantizedVectors) residualBound() float64 {
+	return math.Float64frombits(q.maxResidual.Load())
+}
+
+// int8Residual is |v - decode(code)| for an int8 row written with scale.
+func int8Residual(v []float32, code []byte, scale float32) float64 {
+	var sum float64
+	for i, x := range v {
+		e := float64(x - float32(int8(code[i]))*scale)
+		sum += e * e
+	}
+	return math.Sqrt(sum)
+}
+
+// scoreBound is how far an exact cosine of the query with a stored vector
+// can lie above the approximate score dot gives it (both unit vectors):
+//   - PQ: dot is q·x̂, so q·x - q·x̂ = q·(x - x̂) ≤ |x - x̂| ≤ maxResidual.
+//   - scalar: dot is q̂·x̂ with both coded, and q·x - q̂·x̂ = (q - q̂)·x +
+//     q̂·(x - x̂) ≤ |q - q̂| + (1 + |q - q̂|)·maxResidual.
+//   - binary: a Hamming similarity has no such bound (+Inf).
+//
+// Float32 rounding of the codes' arithmetic is the caller's slack. A graph
+// restored without the rows' errors has no bound either.
+func (q *hnswQuantizedQuery) scoreBound() float64 {
+	s := q.store
+	if !s.residualKnown {
+		return math.Inf(1)
+	}
+	switch s.config.Mode {
+	case HNSWQuantizationScalar:
+		return q.residual + (1+q.residual)*s.residualBound()
+	case HNSWQuantizationProduct:
+		return s.residualBound()
+	default:
+		return math.Inf(1)
 	}
 }
 
@@ -179,6 +243,7 @@ type hnswQuantizedQuery struct {
 	lut        []float32
 	planes     []uint64
 	integerSum int32
+	residual   float64 // scalar: |q - decode(q)| (scoreBound)
 }
 
 func (q *hnswQuantizedVectors) query(v []float32) *hnswQuantizedQuery {
@@ -186,11 +251,12 @@ func (q *hnswQuantizedVectors) query(v []float32) *hnswQuantizedQuery {
 	if out == nil {
 		out = &hnswQuantizedQuery{store: q}
 	}
-	out.scale, out.integerSum = 0, 0
+	out.scale, out.integerSum, out.residual = 0, 0, 0
 	switch q.config.Mode {
 	case HNSWQuantizationScalar:
 		out.scalar = resizeQuantizationBuffer(out.scalar, len(v))
 		out.scale = encodeHNSWInt8(out.scalar, v)
+		out.residual = int8Residual(v, out.scalar, out.scale)
 	case HNSWQuantizationBinary:
 		if q.config.BinaryQueryBits > 1 {
 			out.encodeBinaryQuery(v)
