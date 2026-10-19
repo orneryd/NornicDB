@@ -10,6 +10,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestVectorEntryLexicalNodeIdentityIsExact(t *testing.T) {
+	ids := []string{"other", " other", "other ", "\x00n\x05otherv"}
+	var raw []LexicalSeedHint
+	for rank, id := range ids { raw = append(raw, LexicalSeedHint{ID: id, Rank: uint32(rank), Signature: uint64(rank+1)}) }
+	hints := nodeHintsFromValues(raw)
+	require.Len(t,hints,len(ids))
+	for rank,id := range ids {
+		hint,ok := lexicalHintForVectorID(nodeMainVectorKey(id),hints)
+		require.True(t,ok)
+		require.Equal(t,id,string(hint.ID))
+		require.Equal(t,uint32(rank),hint.Rank)
+		require.Equal(t,uint64(rank+1),hint.Signature)
+	}
+}
+
 // The review's four-document public BuildIndexes reproduction. These bytes are
 // independent graph IDs; no constructor is used to manufacture the collision.
 // Check public construction, graph readers, and both snapshot iterators against
