@@ -11,12 +11,12 @@ func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo
 }
 
 func (info *QueryInfo) deterministicExecution(ctx context.Context, text string) bool {
-    policy := info.cachePolicy.Load()
-    if policy == nil || policy.generation != globalProcedureRegistry.generation.Load() {
-        policy = cachedExecutionPolicy(text)
-        info.cachePolicy.Store(policy)
-    }
-    return policy.allows(&executionBindings{params: getParamsFromContext(ctx)}, 0)
+	policy := info.cachePolicy.Load()
+	if policy == nil || policy.generation != globalProcedureRegistry.generation.Load() {
+		policy = cachedExecutionPolicy(text)
+		info.cachePolicy.Store(policy)
+	}
+	return policy.allows(newExecutionBindings(ctx), 0)
 }
 
 func isCacheableReadQuery(cypher string) bool {

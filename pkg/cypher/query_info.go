@@ -142,7 +142,9 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 	// Analyze query
 	info := analyzeQuery(text)
 	info.NormalizedQuery = normalized
-	info.cachePolicy.Store(cachedExecutionPolicy(text))
+	if info.IsReadOnly {
+		info.cachePolicy.Store(cachedExecutionPolicy(text))
+	}
 
 	// Cache result
 	a.cacheMu.Lock()
