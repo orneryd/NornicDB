@@ -438,7 +438,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		ctx = context.WithValue(ctx, fabricPreparedExecKey{}, preparedFabric)
-		allowResultCache := !preparedFabric.hasRemote
+		allowResultCache := len(preparedFabric.remotes) == 0
 		fabricResultCacheKey := ""
 
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
