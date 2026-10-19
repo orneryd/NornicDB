@@ -66,7 +66,15 @@ func TestSearchStreamRetryHTTP(t *testing.T) {
 						}
 						page := streamretrytest.Page{More: value["has_more"].(bool)}
 						for _, row := range value["results"].([]any) {
-							page.IDs = append(page.IDs, row.(map[string]any)["node"].(map[string]any)["id"].(string))
+							// Transaction rows serialize nodes as properties; the
+							// direct search API includes the node identity envelope.
+							key := "id"
+							if route != "search" {
+								key = "retry_id"
+							}
+							id, ok := row.(map[string]any)["node"].(map[string]any)[key].(string)
+							require.True(t, ok, response.Body.String())
+							page.IDs = append(page.IDs, id)
 						}
 						return page, nil
 					}}
