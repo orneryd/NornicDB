@@ -1683,7 +1683,13 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		return execute(ctx, e)
+		result, err := execute(ctx, e)
+		if err == nil {
+			// Legacy engines apply writes directly; successful execution is
+			// their publication boundary, with no pending transaction.
+			e.publishDirectStatementCommit(ctx, cypher)
+		}
+		return result, err
 	}
 
 	// Start implicit transaction
@@ -1832,10 +1838,6 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// with pkg/cypher/transaction.go:181 so the explicit and implicit paths produce the
 		// same wire shape.
 		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
-	}
-	// Committed: a TERMINATE from now on doesn't fail this statement (#751).
-	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok {
-		running.committed.Store(true)
 	}
 
 	// Attach receipt metadata if WAL markers were recorded. Receipts are
