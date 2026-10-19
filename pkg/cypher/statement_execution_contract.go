@@ -18,7 +18,6 @@ func readStatementExecutionContract(query string) (statementExecutionContract, e
 		return statementExecutionContract{}, nil
 	}
 	contract := statementExecutionContract{writes: structure.Writes(), transaction: structure.Writes()}
-	ensureBuiltInProceduresRegistered()
 	var visit func(*fabric.QueryStructure)
 	visit = func(scope *fabric.QueryStructure) {
 		for _, clause := range scope.Clauses {
@@ -29,17 +28,15 @@ func readStatementExecutionContract(query string) (statementExecutionContract, e
 				continue
 			}
 			contract.calls = true
-			procedure, found := globalProcedureRegistry.Get(clause.Name)
-			if !found {
-				continue // execution reports the unknown procedure
-			}
-			spec := procedure.Spec
-			contract.writes = contract.writes || spec.writes()
-			contract.dynamic = contract.dynamic || spec.ExecutesStatements
-			contract.transaction = contract.transaction || !spec.OwnsTransactions &&
-				(spec.writes() || spec.ExecutesStatements || spec.Name == "tx.setMetaData")
 		}
 	}
 	visit(structure)
+	visitStructuredProcedureCalls(structure, func(spec ProcedureSpec, _ string) bool {
+		contract.writes = contract.writes || spec.writes()
+		contract.dynamic = contract.dynamic || spec.ExecutesStatements
+		contract.transaction = contract.transaction || !spec.OwnsTransactions &&
+			(spec.writes() || spec.ExecutesStatements || spec.Name == "tx.setMetaData")
+		return false
+	})
 	return contract, nil
 }

@@ -147,7 +147,10 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricExecutor.SetRemoteValueCodec(fabricRemoteValueCodec)
 	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
-	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool { return queryKeywords(query)["CALL"] })
+	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool {
+		contract, err := readStatementExecutionContract(query)
+		return err != nil || contract.calls
+	})
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
 			return err

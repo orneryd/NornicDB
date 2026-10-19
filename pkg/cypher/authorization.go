@@ -102,42 +102,30 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 // authorization and transaction admission. A true visit stops the scan without
 // materializing a list of complete procedure specifications.
 func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, string) bool) bool {
-	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
-			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
-		}
-		if procedure, found := globalProcedureRegistry.Get(name); found {
-			if visit(procedure.Spec, query[at:]) {
-				return true
-			}
-			continue
-		}
-		// Execution resolves exact names. Preserve conservative authorization
-		// for an invalid case variant without making it executable: every
-		// matching contract counts, since case-distinct registrations can
-		// require different permissions. An exact match above remains decisive.
-		for _, procedure := range globalProcedureRegistry.List() {
-			if strings.EqualFold(name, procedure.Name) {
-				if visit(procedure, query[at:]) {
-					return true
-				}
-			}
-		}
-	}
-	return false
+ structure := fabric.ReadQueryStructure(query)
+ if structure.Err != nil { return false }
+ return visitStructuredProcedureCalls(structure, visit)
 }
 
+// visitStructuredProcedureCalls visits only grammar-owned procedure invocation
+// nodes. Authorization and execution admission share this live registry reader.
+func visitStructuredProcedureCalls(structure *fabric.QueryStructure, visit func(ProcedureSpec, string) bool) bool {
+ ensureBuiltInProceduresRegistered()
+ for _, clause := range structure.Clauses {
+  if clause.Nested != nil && visitStructuredProcedureCalls(clause.Nested,visit) { return true }
+  if clause.Kind != "CALL" || clause.Nested != nil { continue }
+  if procedure,found:=globalProcedureRegistry.Get(clause.Name); found {
+   if visit(procedure.Spec,clause.Text) { return true }
+   continue
+  }
+  // Invalid case variants still retain conservative permission requirements;
+  // only the exact registered name is executable.
+  for _,procedure:=range globalProcedureRegistry.List() {
+   if strings.EqualFold(clause.Name,procedure.Name) && visit(procedure,clause.Text) { return true }
+  }
+ }
+ return false
+}
 // procedureNameAt parses the dotted procedure name after a CALL keyword
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.
