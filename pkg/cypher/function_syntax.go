@@ -19,6 +19,8 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 }
 
 func standaloneFunctionCall(text string) (functionCallSpan, bool) {
+	// Absence is conclusive even inside quoted data: no call can open here.
+	if !strings.ContainsRune(text, '(') { return functionCallSpan{}, false }
 	syntax := readFunctionSyntax(text)
 	index := syntax.callIndex(syntax.leading)
 	if index >= len(syntax.calls) { return functionCallSpan{}, false }
@@ -413,6 +415,17 @@ func (syntax *functionSyntax) appendArguments(parts []string, group int, keepEmp
 		parts = append(parts, value)
 	}
 	return parts
+}
+
+// appendFunctionArguments is the argument-only entry into the same owner.
+// Without any comma or comment marker, there can be neither a split nor a
+// rendered comment; the one span is the trimmed input, including quoted data.
+func appendFunctionArguments(parts []string, text string, keepEmpty bool) []string {
+	if !strings.ContainsRune(text, ',') && !strings.Contains(text, "/*") && !strings.Contains(text, "//") {
+		if value := strings.TrimSpace(text); value != "" { return append(parts,value) }
+		return parts
+	}
+	return readFunctionSyntax(text).appendArguments(parts,0,keepEmpty)
 }
 
 func (call functionCallSpan) arguments(parts []string) []string {
