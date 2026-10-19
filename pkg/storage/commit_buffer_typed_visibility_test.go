@@ -221,25 +221,32 @@ func TestWriteBehindBuffer_LegacyGenericDeleteKeepsKindsIndependent(t *testing.T
 	require.Len(t, w.TypeEdges("REL"), 1)
 }
 
-func TestWriteBehindBuffer_AppliedTypedStateFallsThrough(t *testing.T) {
+func TestWriteBehindBuffer_AppliedTypedStateRemainsUntilRetirement(t *testing.T) {
 	old := newCommitBuffer()
 	old.AddCommit(bufferedCommit{ops: []Operation{{Type: OpDeleteNode, NodeID: "test:gone", DeletedEdgeIDs: []EdgeID{"test:gone"}}}})
 	old.markApplied()
 	w := &WriteBehindBuffer{active: newCommitBuffer(), draining: []*CommitBuffer{old}}
-	_, nodeFound, nodeDeleted := w.GetNode("test:gone")
-	_, edgeFound, edgeDeleted := w.GetEdge("test:gone")
-	require.False(t, nodeFound)
-	require.False(t, edgeFound)
-	require.False(t, nodeDeleted)
-	require.False(t, edgeDeleted)
-	require.False(t, w.NodeDeleted("test:gone"))
-	require.False(t, w.EdgeDeleted("test:gone"))
-	nodes, touchedNodes := w.AllNodesOverlay()
-	edges, touchedEdges := w.AllEdgesOverlay()
-	require.Empty(t, nodes)
-	require.Empty(t, edges)
-	require.Empty(t, touchedNodes)
-	require.Empty(t, touchedEdges)
+	check := func(retained bool) {
+		_, nodeFound, nodeDeleted := w.GetNode("test:gone")
+		_, edgeFound, edgeDeleted := w.GetEdge("test:gone")
+		require.Equal(t, retained, nodeFound)
+		require.Equal(t, retained, edgeFound)
+		require.Equal(t, retained, nodeDeleted)
+		require.Equal(t, retained, edgeDeleted)
+		require.Equal(t, retained, w.NodeDeleted("test:gone"))
+		require.Equal(t, retained, w.EdgeDeleted("test:gone"))
+		nodes, touchedNodes := w.AllNodesOverlay()
+		edges, touchedEdges := w.AllEdgesOverlay()
+		require.Empty(t, nodes)
+		require.Empty(t, edges)
+		require.Equal(t, retained, touchedNodes["test:gone"])
+		require.Equal(t, retained, touchedEdges["test:gone"])
+	}
+	// Applied is replay progress. Readers retain tombstones until the same
+	// write lock that guards snapshot capture removes the generation.
+	check(true)
+	w.removeDrained(old)
+	check(false)
 }
 
 func TestWriteBehindBuffer_NewestEdgeBodyControlsTypeAndEndpoints(t *testing.T) {
