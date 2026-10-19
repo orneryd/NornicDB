@@ -22,10 +22,18 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		seededIDs := make(map[string]struct{})
 		if len(seedHints) > 0 {
 			seedPairs := make([]hnswBuildPair, 0, len(seedHints))
+			anchored := make(map[vectorNodeID]bool, len(seedHints))
 			if err := iterate(batchSize, func(ids []string, vecs [][]float32) error {
 				for i := range ids {
 					hint, ok := lexicalHintForVectorID(ids[i], seedHints)
 					if !ok {
+						continue
+					}
+					if ids[i] == mainKeyForLexicalHint(hint) {
+						anchored[hint.ID] = true
+					} else if anchored[hint.ID] {
+						// The main already owns this document's ranked slot. Its
+						// other entries are annotated in the streaming pass below.
 						continue
 					}
 					seedPairs = append(seedPairs, hnswBuildPair{
