@@ -61,7 +61,7 @@ func TestGraphQLSubscriptionsRequireSelectedDatabaseRead(t *testing.T) {
 			for _, subscription := range deniedCalls {
 				t.Run(database+"/"+principal.name+"/"+subscription.name, func(t *testing.T) {
 					err := subscription.call(subscriptionTestContext(database, principal.mode, principal.access))
-					require.ErrorContains(t, err, database)
+					require.ErrorContains(t, err, "read permission")
 				})
 			}
 		}

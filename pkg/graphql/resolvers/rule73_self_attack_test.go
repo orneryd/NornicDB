@@ -19,7 +19,7 @@ const (
 	rule73Write     rule73GraphQLClass = "write"
 	rule73ReadWrite rule73GraphQLClass = "read_write"
 	rule73Admin     rule73GraphQLClass = "admin"
-	rule73Global rule73GraphQLClass = "global_worker"
+	rule73Global    rule73GraphQLClass = "global_worker"
 )
 
 func rule73GraphQLInventory() map[string]rule73GraphQLClass {
@@ -125,9 +125,9 @@ func TestRule73SelfAttackEveryGraphQLDataResolver(t *testing.T) {
 	t.Cleanup(resolver.EventBroker.Close)
 
 	profiles := []struct {
-		name              string
-		ctx               context.Context
-		allowed           func(rule73GraphQLClass) bool
+		name    string
+		ctx     context.Context
+		allowed func(rule73GraphQLClass) bool
 	}{
 		{"default-only", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic"}, true, true, false), func(class rule73GraphQLClass) bool { return class != rule73Admin && class != rule73Global }},
 		{"named-only", rule73GraphQLContext("", map[string]string{"rule73_named": "rule73_named"}, true, true, false), func(class rule73GraphQLClass) bool { return class != rule73Admin && class != rule73Global }},

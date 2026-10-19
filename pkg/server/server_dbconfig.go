@@ -3,8 +3,8 @@
 package server
 
 import (
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"encoding/json"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"log/slog"
 	"net/http"
 	"strconv"

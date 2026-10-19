@@ -82,9 +82,9 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	}
 
 	type profile struct {
-		name, token string
+		name, token        string
 		read, write, admin bool
-		allowedDatabases map[string]bool
+		allowedDatabases   map[string]bool
 	}
 	var profiles []profile
 	for _, spec := range []struct {
@@ -226,12 +226,12 @@ func TestRule73SelfAttackEveryMCPTool(t *testing.T) {
 	type profile struct {
 		name, token string
 		read, write bool
-		databases map[string]bool
+		databases   map[string]bool
 	}
 	var profiles []profile
 	for _, spec := range []struct {
-		name string
-		dbs []string
+		name        string
+		dbs         []string
 		read, write bool
 	}{
 		{"default-only", []string{"nornic"}, true, true},
@@ -256,14 +256,18 @@ func TestRule73SelfAttackEveryMCPTool(t *testing.T) {
 	profiles = append(profiles, profile{"admin", "Bearer " + getAuthToken(t, users, "admin"), true, true, map[string]bool{"nornic": true, "rule73_named": true}})
 
 	tools := []struct {
-		name string
-		write bool
+		name      string
+		write     bool
 		arguments func(string) map[string]any
 	}{
-		{"store", true, func(db string) map[string]any { return map[string]any{"database": db, "content": "rule73 content", "type": "Rule73"} }},
+		{"store", true, func(db string) map[string]any {
+			return map[string]any{"database": db, "content": "rule73 content", "type": "Rule73"}
+		}},
 		{"recall", false, func(db string) map[string]any { return map[string]any{"database": db, "id": "missing"} }},
 		{"discover", false, func(db string) map[string]any { return map[string]any{"database": db, "query": "rule73", "limit": 1} }},
-		{"link", true, func(db string) map[string]any { return map[string]any{"database": db, "source_id": "missing-a", "target_id": "missing-b", "relationship_type": "RELATED"} }},
+		{"link", true, func(db string) map[string]any {
+			return map[string]any{"database": db, "source_id": "missing-a", "target_id": "missing-b", "relationship_type": "RELATED"}
+		}},
 		{"tasks.list", false, func(db string) map[string]any { return map[string]any{"database": db, "limit": 1} }},
 		{"tasks.mutate", true, func(db string) map[string]any { return map[string]any{"database": db, "title": "rule73 task"} }},
 	}
