@@ -128,3 +128,16 @@ Focused coverage run passed (0.950 s), exercising projection, WHERE, ordered WIT
 and APOC consumers. Its package statement coverage is 16.7%; this is a focused
 run and does not establish full-package coverage. `go vet -tags noui,nolocalllm
 ./pkg/cypher` and `git diff --check` passed.
+
+## Publication and live commit check
+
+Source and report are published in draft #1538, linked from #1472. The mandatory
+live check passed against `orneryd/NornicDB` / `nornicdbcode` using the maintainer's
+new bounded-search policy (limit 1000, RRF floor 0.01; no cursors). Analysis took
+21.99 s. Earlier cursor-mode attempts failed with HTTP 410 despite a verified
+15-minute live cursor TTL; they were not passes and no hook was bypassed.
+A renamed copy of production `pipelineProjectWithRow` was then staged as a
+separate probe: the hook blocked it as a 100% similar reuse candidate in 10.81 s.
+HEAD stayed unchanged, and the probe was unstaged and removed. Both checks warn
+that the ingested baseline is older (`7e90401c6`); they do not establish current
+baseline completeness or exhaustive retrieval.
