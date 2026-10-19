@@ -116,9 +116,9 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 		t.Fatalf("unexpected execute result in session: %#v", result.Rows)
 	}
 
-	mgr.nowFunc = func() time.Time { return baseTime.Add(5 * time.Second) }
+	mgr.nowFunc = func() time.Time { return baseTime.Add(500 * time.Millisecond) }
 	mgr.Touch(session)
-	if !session.Expires.Equal(baseTime.Add(6 * time.Second)) {
+	if !session.Expires.Equal(baseTime.Add(1500 * time.Millisecond)) {
 		t.Fatalf("touch should refresh expiration, got %v", session.Expires)
 	}
 
@@ -130,6 +130,27 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 	}
 
 	mgr.Delete("42") // no-op path
+}
+
+func TestManagerTouchDoesNotReviveExpiredSession(t *testing.T) {
+	mgr := NewManager(time.Second, newExecutorFactory(t))
+	base := time.Unix(1700000000, 0)
+	mgr.nowFunc = func() time.Time { return base }
+	session, err := mgr.Open(context.Background(), "neo4j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.nowFunc = func() time.Time { return base.Add(2 * time.Second) }
+	mgr.Touch(session)
+	if _, ok := mgr.Get(session.ID); ok {
+		t.Fatal("expired session was revived")
+	}
+	if session.Executor != nil {
+		t.Fatal("expired executor retained")
+	}
+	if _, err := mgr.ExecuteInSession(context.Background(), session, "RETURN 1", nil); err == nil {
+		t.Fatal("expired session admitted a statement")
+	}
 }
 
 func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {

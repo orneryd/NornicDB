@@ -1941,7 +1941,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txSession.ID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(txSession.Expires),
+			Expires: transactionExpires(txSession.Expiration()),
 		},
 	}
 
@@ -1949,7 +1949,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
 			s.rollbackFailedTransaction(r.Context(), txSession, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.Expires)
+		response.Transaction.Expires = transactionExpires(txSession.Expiration())
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
