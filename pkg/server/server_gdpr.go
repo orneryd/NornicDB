@@ -64,6 +64,10 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), auth.PermRead, auth.PermWrite) {
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
