@@ -1943,21 +1943,32 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 }
 
 func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge, end bool, properties []string) interface{} {
-	if edge == nil {
+	id, exists := e.relationshipEndpointID(edge, end)
+	if !exists {
 		return nil
 	}
-	// A deleted relationship has no endpoints. Only a value shaped like its
-	// view (deletedEntityViews.edge) can be one, and storage confirms it: a
-	// relationship carrying its properties costs no second read.
+	return e.readRelationshipEndpoint(id, properties)
+}
+
+func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool) (storage.NodeID, bool) {
+	if edge == nil {
+		return "", false
+	}
+	// Keep develop's existing deleted-view check: a relationship carrying its
+	// properties already proves its existence without a second storage read.
 	if mayBeDeletedRelationshipView(edge) {
 		if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
-			return nil
+			return "", false
 		}
 	}
 	id := edge.StartNode
 	if end {
 		id = edge.EndNode
 	}
+	return id, true
+}
+
+func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties []string) interface{} {
 	if properties != nil {
 		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
 			node, err := reader.GetNodeProjected(id, properties)
