@@ -1,0 +1,33 @@
+File: nornic-1472-final-current.test
+Type: cpu
+Time: 2026-10-18 21:07:39 MST
+Duration: 4.04s, Total samples = 3700ms (91.61%)
+Showing nodes accounting for 1810ms, 48.92% of 3700ms total
+Dropped 198 nodes (cum <= 18.50ms)
+Showing top 25 nodes out of 325
+      flat  flat%   sum%        cum   cum%
+     190ms  5.14%  5.14%      370ms 10.00%  github.com/orneryd/nornicdb/pkg/cypher.keywordIndexFrom
+     170ms  4.59%  9.73%      170ms  4.59%  runtime.memclrNoHeapPointers
+     160ms  4.32% 14.05%      160ms  4.32%  runtime.pthread_cond_signal
+     130ms  3.51% 17.57%      710ms 19.19%  runtime.mallocgcSmallScanNoHeader
+     100ms  2.70% 20.27%      100ms  2.70%  internal/runtime/atomic.(*UnsafePointer).Load (inline)
+      90ms  2.43% 22.70%       90ms  2.43%  aeshashbody
+      90ms  2.43% 25.14%      120ms  3.24%  runtime.(*mspan).writeHeapBitsSmall
+      90ms  2.43% 27.57%       90ms  2.43%  runtime.madvise
+      70ms  1.89% 29.46%       70ms  1.89%  runtime.pthread_cond_wait
+      70ms  1.89% 31.35%       70ms  1.89%  syscall.rawsyscalln
+      60ms  1.62% 32.97%       60ms  1.62%  strings.TrimSpace
+      50ms  1.35% 34.32%      120ms  3.24%  github.com/orneryd/nornicdb/pkg/cypher.clauseKeywordNamedByContext
+      50ms  1.35% 35.68%       60ms  1.62%  github.com/orneryd/nornicdb/pkg/cypher.lastLiveByte
+      50ms  1.35% 37.03%      170ms  4.59%  github.com/orneryd/nornicdb/pkg/cypher.lastTopLevelClauseWord
+      40ms  1.08% 38.11%      210ms  5.68%  github.com/dgraph-io/badger/v4.(*levelsController).get
+      40ms  1.08% 39.19%       60ms  1.62%  github.com/dgraph-io/badger/v4/y.CompareKeys
+      40ms  1.08% 40.27%       40ms  1.08%  github.com/dgraph-io/badger/v4/y.Hash
+      40ms  1.08% 41.35%       40ms  1.08%  github.com/orneryd/nornicdb/pkg/cypher.enclosingCaseBlockEnd
+      40ms  1.08% 42.43%       50ms  1.35%  github.com/orneryd/nornicdb/pkg/cypher.firstTopLevelCallSubquery
+      40ms  1.08% 43.51%       40ms  1.08%  github.com/orneryd/nornicdb/pkg/cypher.isASCIISpace (inline)
+      40ms  1.08% 44.59%       40ms  1.08%  internal/runtime/maps.(*Iter).Init
+      40ms  1.08% 45.68%      860ms 23.24%  runtime.mallocgc
+      40ms  1.08% 46.76%      260ms  7.03%  runtime.mapassign_faststr
+      40ms  1.08% 47.84%       40ms  1.08%  runtime.usleep
+      40ms  1.08% 48.92%       40ms  1.08%  strings.EqualFold
