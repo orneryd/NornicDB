@@ -12,13 +12,17 @@ import (
 // to the next operator. In particular, aggregation and Bolt projection must
 // not first collect a graph-sized PathResult or binding-map slice.
 func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+	// Keep the existing bounded/top-k physical operators for LIMIT and ORDER.
+	if hint.readTail == nil || hint.orderExpr != "" || hint.earlyLimit >= 0 {
+		return nil, false, nil
+	}
 	pattern := pipelineClauseBody(clause, "MATCH")
 	where := ""
 	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}
-	if !containsRelationshipPattern(pattern) || len(splitTopLevelComma(pattern)) != 1 || hint.readTail == nil || hint.orderExpr != "" {
+	if !containsRelationshipPattern(pattern) || len(splitTopLevelComma(pattern)) != 1 {
 		return nil, false, nil
 	}
 	if viewport, _ := TemporalViewportFromContext(ctx); viewport.Enabled() {
@@ -33,13 +37,9 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	store := e.getStorage(ctx)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
-		emitted := 0
-		limited := hint.earlyLimit == 0
+		endpointValues := &endpointPropertyCache{}
 		current := make(pipelineRow)
 		completed := input(func(row pipelineRow) bool {
-			if limited {
-				return false
-			}
 			rowCtx := withValueBindings(ctx, row)
 			match := e.parseTraversalPattern(rowCtx, pattern)
 			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
@@ -85,6 +85,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				for name, value := range row {
 					current[name] = value
 				}
+				current[endpointPropertyCacheKey] = endpointValues
 				// Check bound identities before any property read.
 				for _, endpoint := range []struct {
 					variable string
@@ -115,11 +116,6 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					return getExpressionFailure(ctx)
 				}
 				if !yield(current) {
-					return storage.ErrIterationStopped
-				}
-				emitted++
-				if hint.earlyLimit > 0 && emitted >= hint.earlyLimit {
-					limited = true
 					return storage.ErrIterationStopped
 				}
 				return nil
@@ -155,7 +151,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			}
 			return true
 		})
-		return (completed || limited) && valid
+		return completed && valid
 	}, true, nil
 }
 
