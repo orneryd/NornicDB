@@ -44,6 +44,13 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 					require.NoError(t, svc.IndexNode(node))
 				}
 				require.NoError(t, svc.TriggerClustering(context.Background()))
+				svc.indexMu.Lock()
+				before := svc.beginClusterNodeChangeLocked(alias)
+				svc.indexMu.Unlock()
+				require.NotNil(t, before)
+				require.Len(t, before.members, 1, "a marker node change must not capture another node's cluster member")
+				require.Contains(t, before.members[0].tokens, "markertoken")
+				require.NotContains(t, before.members[0].tokens, "victimtoken")
 				checkTerms := func() {
 					t.Helper()
 					svc.clusterStateMu.RLock()
