@@ -565,13 +565,17 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 // Runtime Fabric promotion and ordinary explicit execution reuse this adapter;
 // neither creates another transaction or terminal lifecycle.
 func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *transactionStorageWrapper {
-	if wrapper := e.txContext.storageWrapper; wrapper != nil && wrapper.tx == tx { return wrapper }
+	if wrapper := e.txContext.storageWrapper; wrapper != nil && wrapper.tx == tx {
+		return wrapper
+	}
 	engines := e.resolveImplicitTxEngines()
 	separator := ":"
-	if engines.namespace == "" { separator = "" }
+	if engines.namespace == "" {
+		separator = ""
+	}
 	wrapper := &transactionStorageWrapper{
-		tx:tx,underlying:e.storage,namespace:engines.namespace,separator:separator,
-		mutatedNodeIDs:make(map[string]struct{}),
+		tx: tx, underlying: e.storage, namespace: engines.namespace, separator: separator,
+		mutatedNodeIDs: make(map[string]struct{}),
 	}
 	e.txContext.storageWrapper = wrapper
 	return wrapper

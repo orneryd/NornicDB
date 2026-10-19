@@ -889,21 +889,21 @@ type GraphRelationship struct {
 // singular "relationship_deleted"), and every counter is always present, as
 // Neo4j sends them.
 type QueryStats struct {
- ContainsUpdates bool `json:"contains_updates"`
- QueryType string `json:"query_type,omitempty"`
-	NodesCreated          int  `json:"nodes_created"`
-	NodesDeleted          int  `json:"nodes_deleted"`
-	PropertiesSet         int  `json:"properties_set"`
-	RelationshipsCreated  int  `json:"relationships_created"`
-	RelationshipsDeleted  int  `json:"relationship_deleted"`
-	LabelsAdded           int  `json:"labels_added"`
-	LabelsRemoved         int  `json:"labels_removed"`
-	IndexesAdded          int  `json:"indexes_added"`
-	IndexesRemoved        int  `json:"indexes_removed"`
-	ConstraintsAdded      int  `json:"constraints_added"`
-	ConstraintsRemoved    int  `json:"constraints_removed"`
-	ContainsSystemUpdates bool `json:"contains_system_updates"`
-	SystemUpdates         int  `json:"system_updates"`
+	ContainsUpdates       bool   `json:"contains_updates"`
+	QueryType             string `json:"query_type,omitempty"`
+	NodesCreated          int    `json:"nodes_created"`
+	NodesDeleted          int    `json:"nodes_deleted"`
+	PropertiesSet         int    `json:"properties_set"`
+	RelationshipsCreated  int    `json:"relationships_created"`
+	RelationshipsDeleted  int    `json:"relationship_deleted"`
+	LabelsAdded           int    `json:"labels_added"`
+	LabelsRemoved         int    `json:"labels_removed"`
+	IndexesAdded          int    `json:"indexes_added"`
+	IndexesRemoved        int    `json:"indexes_removed"`
+	ConstraintsAdded      int    `json:"constraints_added"`
+	ConstraintsRemoved    int    `json:"constraints_removed"`
+	ContainsSystemUpdates bool   `json:"contains_system_updates"`
+	SystemUpdates         int    `json:"system_updates"`
 }
 
 // queryStatsFromResult is the includeStats object of one statement, built
@@ -911,7 +911,9 @@ type QueryStats struct {
 // contains_updates is true when any counter is non-zero.
 func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 	stats := &QueryStats{}
- if result!=nil { stats.QueryType,_=cypher.ResolvedStatementQueryType(result.Metadata) }
+	if result != nil {
+		stats.QueryType, _ = cypher.ResolvedStatementQueryType(result.Metadata)
+	}
 	if result != nil && result.Stats != nil {
 		stats.NodesCreated = result.Stats.NodesCreated
 		stats.NodesDeleted = result.Stats.NodesDeleted

@@ -2,17 +2,26 @@ package storage
 
 import "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 
-const ( remoteModeUnknown int32=iota; remoteModeRead; remoteModeWrite )
+const (
+	remoteModeUnknown int32 = iota
+	remoteModeRead
+	remoteModeWrite
+)
 
 type remoteQueryStats struct {
- ContainsUpdates *bool `json:"contains_updates"`
- ContainsSystemUpdates *bool `json:"contains_system_updates"`
- QueryType string `json:"query_type"`
+	ContainsUpdates       *bool  `json:"contains_updates"`
+	ContainsSystemUpdates *bool  `json:"contains_system_updates"`
+	QueryType             string `json:"query_type"`
 }
 
 func remoteQueryTypeMode(queryType string) int32 {
- switch queryType { case "r": return remoteModeRead; case "w","rw","s": return remoteModeWrite }
- return remoteModeUnknown
+	switch queryType {
+	case "r":
+		return remoteModeRead
+	case "w", "rw", "s":
+		return remoteModeWrite
+	}
+	return remoteModeUnknown
 }
 
 // Positive standard counters prove a write. Zero counters alone cannot prove
@@ -20,26 +29,36 @@ func remoteQueryTypeMode(queryType string) int32 {
 // type field; our optional owner-produced mode supplies that missing evidence.
 // Older/foreign responses without it remain unknown and fail safe at admission.
 func remoteHTTPQueryMode(stats *remoteQueryStats) int32 {
- if stats==nil { return remoteModeUnknown }
- if stats.ContainsUpdates!=nil && *stats.ContainsUpdates || stats.ContainsSystemUpdates!=nil && *stats.ContainsSystemUpdates { return remoteModeWrite }
- return remoteQueryTypeMode(stats.QueryType)
+	if stats == nil {
+		return remoteModeUnknown
+	}
+	if stats.ContainsUpdates != nil && *stats.ContainsUpdates || stats.ContainsSystemUpdates != nil && *stats.ContainsSystemUpdates {
+		return remoteModeWrite
+	}
+	return remoteQueryTypeMode(stats.QueryType)
 }
 
 func remoteBoltQueryMode(summary neo4j.ResultSummary) int32 {
- if summary==nil { return remoteModeUnknown }
- switch summary.StatementType() {
- case neo4j.StatementTypeReadOnly: return remoteModeRead
- case neo4j.StatementTypeWriteOnly,neo4j.StatementTypeReadWrite,neo4j.StatementTypeSchemaWrite: return remoteModeWrite
- }
- if counters:=summary.Counters(); counters!=nil && counters.ContainsUpdates() { return remoteModeWrite }
- return remoteModeUnknown
+	if summary == nil {
+		return remoteModeUnknown
+	}
+	switch summary.StatementType() {
+	case neo4j.StatementTypeReadOnly:
+		return remoteModeRead
+	case neo4j.StatementTypeWriteOnly, neo4j.StatementTypeReadWrite, neo4j.StatementTypeSchemaWrite:
+		return remoteModeWrite
+	}
+	if counters := summary.Counters(); counters != nil && counters.ContainsUpdates() {
+		return remoteModeWrite
+	}
+	return remoteModeUnknown
 }
 
-func (tx *boltCypherTx) ResolvedWriteMode() (bool,bool) {
- mode:=tx.resolvedMode.Load()
- return mode==remoteModeWrite,mode!=remoteModeUnknown
+func (tx *boltCypherTx) ResolvedWriteMode() (bool, bool) {
+	mode := tx.resolvedMode.Load()
+	return mode == remoteModeWrite, mode != remoteModeUnknown
 }
-func (tx *httpCypherTx) ResolvedWriteMode() (bool,bool) {
- mode:=tx.resolvedMode.Load()
- return mode==remoteModeWrite,mode!=remoteModeUnknown
+func (tx *httpCypherTx) ResolvedWriteMode() (bool, bool) {
+	mode := tx.resolvedMode.Load()
+	return mode == remoteModeWrite, mode != remoteModeUnknown
 }

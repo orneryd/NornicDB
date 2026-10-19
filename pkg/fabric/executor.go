@@ -3895,5 +3895,5 @@ func (e *FabricExecutor) executionColumnNames(query string, incoming []string) [
 // SetRemoteModeUncertainty marks remote procedure calls whose actual mode must
 // come from their result summary. Missing mode evidence never means READ.
 func (e *FabricExecutor) SetRemoteModeUncertainty(uncertain func(string) bool) {
- e.remoteModeUncertain=uncertain
+	e.remoteModeUncertain = uncertain
 }
