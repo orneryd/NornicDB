@@ -615,20 +615,23 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
-	base := c.base
+	var exec *StorageExecutor
 	if !c.autoCommit {
 		if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
 			txExec, err := c.ensureLocalShardTxExecutor(ctx, sub, dbName, engine)
 			if err != nil {
 				return nil, nil, err
 			}
-			base = txExec
-			engine = txExec.storage
+			exec = txExec
 		}
 	}
-	// A fragment view owns its removable catalog selection while the retained
-	// shard executor keeps the underlying database transaction's lifetime.
-	exec := base.cloneForStorage(engine)
+	if exec == nil {
+		exec = c.base.cloneForStorage(engine)
+	}
+	// Explicit participant dispatch is serialized. Scope the removable catalog
+	// selection to this fragment without replacing the participant's owner.
+	previousScope := exec.statementCacheScope
+	defer func() { exec.statementCacheScope = previousScope }()
 	if err := exec.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, err
 	}
