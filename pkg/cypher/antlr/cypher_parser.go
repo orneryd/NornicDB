@@ -1045,9 +1045,9 @@ func cypherparserParserInit() {
 		1774, 5, 11, 0, 0, 1774, 1776, 3, 272, 136, 0, 1775, 1773, 1, 0, 0, 0,
 		1776, 1779, 1, 0, 0, 0, 1777, 1775, 1, 0, 0, 0, 1777, 1778, 1, 0, 0, 0,
 		1778, 223, 1, 0, 0, 0, 1779, 1777, 1, 0, 0, 0, 1780, 1781, 3, 222, 111,
-		0, 1781, 1783, 5, 13, 0, 0, 1782, 1784, 5, 79, 0, 0, 1783, 1782, 1, 0,
-		0, 0, 1783, 1784, 1, 0, 0, 0, 1784, 1786, 1, 0, 0, 0, 1785, 1787, 3, 240,
-		120, 0, 1786, 1785, 1, 0, 0, 0, 1786, 1787, 1, 0, 0, 0, 1787, 1788, 1,
+		0, 1781, 1786, 5, 13, 0, 0, 1782, 1784, 5, 79, 0, 0, 1783, 1782, 1, 0,
+		0, 0, 1783, 1784, 1, 0, 0, 0, 1784, 1785, 1, 0, 0, 0, 1785, 1787, 3, 240,
+		120, 0, 1786, 1783, 1, 0, 0, 0, 1786, 1787, 1, 0, 0, 0, 1787, 1788, 1,
 		0, 0, 0, 1788, 1789, 5, 14, 0, 0, 1789, 1803, 1, 0, 0, 0, 1790, 1791, 5,
 		139, 0, 0, 1791, 1793, 5, 13, 0, 0, 1792, 1794, 7, 28, 0, 0, 1793, 1792,
 		1, 0, 0, 0, 1793, 1794, 1, 0, 0, 0, 1794, 1796, 1, 0, 0, 0, 1795, 1797,
@@ -27485,8 +27485,8 @@ type IFunctionInvocationContext interface {
 	InvocationName() IInvocationNameContext
 	LPAREN() antlr.TerminalNode
 	RPAREN() antlr.TerminalNode
-	DISTINCT() antlr.TerminalNode
 	ExpressionChain() IExpressionChainContext
+	DISTINCT() antlr.TerminalNode
 	TRIM() antlr.TerminalNode
 	FROM() antlr.TerminalNode
 	AllExpression() []IExpressionContext
@@ -27555,10 +27555,6 @@ func (s *FunctionInvocationContext) RPAREN() antlr.TerminalNode {
 	return s.GetToken(CypherParserRPAREN, 0)
 }
 
-func (s *FunctionInvocationContext) DISTINCT() antlr.TerminalNode {
-	return s.GetToken(CypherParserDISTINCT, 0)
-}
-
 func (s *FunctionInvocationContext) ExpressionChain() IExpressionChainContext {
 	var t antlr.RuleContext
 	for _, ctx := range s.GetChildren() {
@@ -27573,6 +27569,10 @@ func (s *FunctionInvocationContext) ExpressionChain() IExpressionChainContext {
 	}
 
 	return t.(IExpressionChainContext)
+}
+
+func (s *FunctionInvocationContext) DISTINCT() antlr.TerminalNode {
+	return s.GetToken(CypherParserDISTINCT, 0)
 }
 
 func (s *FunctionInvocationContext) TRIM() antlr.TerminalNode {
@@ -27682,22 +27682,6 @@ func (p *CypherParser) FunctionInvocation() (localctx IFunctionInvocationContext
 				goto errorExit
 			}
 		}
-		p.SetState(1783)
-		p.GetErrorHandler().Sync(p)
-
-		if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 266, p.GetParserRuleContext()) == 1 {
-			{
-				p.SetState(1782)
-				p.Match(CypherParserDISTINCT)
-				if p.HasError() {
-					// Recognition error - abort rule
-					goto errorExit
-				}
-			}
-
-		} else if p.HasError() { // JIM
-			goto errorExit
-		}
 		p.SetState(1786)
 		p.GetErrorHandler().Sync(p)
 		if p.HasError() {
@@ -27706,6 +27690,22 @@ func (p *CypherParser) FunctionInvocation() (localctx IFunctionInvocationContext
 		_la = p.GetTokenStream().LA(1)
 
 		if ((int64(_la) & ^0x3f) == 0 && ((int64(1)<<_la)&-1071996928) != 0) || ((int64((_la-64)) & ^0x3f) == 0 && ((int64(1)<<(_la-64))&-1) != 0) || ((int64((_la-128)) & ^0x3f) == 0 && ((int64(1)<<(_la-128))&-1152921504606846977) != 0) {
+			p.SetState(1783)
+			p.GetErrorHandler().Sync(p)
+
+			if p.GetInterpreter().AdaptivePredict(p.BaseParser, p.GetTokenStream(), 266, p.GetParserRuleContext()) == 1 {
+				{
+					p.SetState(1782)
+					p.Match(CypherParserDISTINCT)
+					if p.HasError() {
+						// Recognition error - abort rule
+						goto errorExit
+					}
+				}
+
+			} else if p.HasError() { // JIM
+				goto errorExit
+			}
 			{
 				p.SetState(1785)
 				p.ExpressionChain()
