@@ -251,7 +251,15 @@ func TestCredentialURLSinkStructure(t *testing.T) {
 			hash := sha256.Sum256([]byte(sourceText(fn.decl)+"\x00"+expression))
 			sinks = append(sinks, endpointSink{fn.path + ":" + fn.name, expression, hex.EncodeToString(hash[:])})
 		}
-		if credentialOwnerCall(fn.decl.Name.Name) || (fn.path=="pkg/cypher/executor.go" && fn.decl.Name.Name=="Execute") || (fn.path=="pkg/config/display_errors.go" && fn.decl.Name.Name=="configDisplayError") || (fn.path=="pkg/server/server_dbconfig.go" && fn.decl.Name.Name=="redactDatabaseSettings") || (fn.path=="pkg/cypher/executor_show.go" && fn.decl.Name.Name=="executeShowSettings") { add(fn.decl) }
+		sharedExit := fn.path == "pkg/cypher/executor_entry.go" && fn.decl.Name.Name == "Execute"
+		configProjection := (fn.path == "pkg/config/display_errors.go" && fn.decl.Name.Name == "configDisplayError") ||
+			(fn.path == "pkg/server/server_dbconfig.go" && fn.decl.Name.Name == "redactDatabaseSettings") ||
+			(fn.path == "pkg/cypher/executor_show.go" && fn.decl.Name.Name == "executeShowSettings")
+		bootstrapProjection := fn.path == "pkg/observability/log_events.go" &&
+			(fn.decl.Name.Name == "logBootstrapEvent" || fn.decl.Name.Name == "logSlogBootstrapEvent")
+		if credentialOwnerCall(fn.decl.Name.Name) || sharedExit || configProjection || bootstrapProjection {
+			add(fn.decl)
+		}
 		ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.ReturnStmt:
