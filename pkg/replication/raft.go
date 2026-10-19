@@ -230,16 +230,6 @@ func (r *RaftReplicator) takeApplyFuture(index uint64) *applyFuture {
 	return future
 }
 
-func (r *RaftReplicator) completeNamespaceCommand(cmd *Command, err error, notify func(error)) {
-	if op := cmd.namespaceDrop; op != nil && op.Committed() {
-		// Catalog persistence may submit another consensus command. Never run
-		// that continuation on the state-machine/consensus apply goroutine.
-		go func() { notify(op.Complete(err)) }()
-		return
-	}
-	notify(err)
-}
-
 // rpcRequest represents an incoming RPC request.
 type rpcRequest struct {
 	message *RaftRPCMessage
@@ -952,7 +942,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		delete(r.futures, entry.Index)
 		r.futuresMu.Unlock()
 
-		r.completeNamespaceCommand(future.cmd, err, future.resolve)
+		future.resolve(err)
 		return
 	}
 
@@ -1067,8 +1057,7 @@ func (r *RaftReplicator) advanceCommitIndex() {
 
 	// Apply committed entries to state machine
 	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		applyIdx := r.lastApplied
+		applyIdx := r.lastApplied + 1
 
 		if int(applyIdx) < len(r.log) {
 			entry := r.log[applyIdx]
@@ -1084,10 +1073,10 @@ func (r *RaftReplicator) advanceCommitIndex() {
 				notify = future.resolve
 			}
 			if entry.Command != nil {
-				r.completeNamespaceCommand(entry.Command, applyErr, notify)
+				notify(applyErr)
 			}
 		}
-
+		r.lastApplied = applyIdx
 	}
 }
 
@@ -1371,9 +1360,9 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 
 	// Apply committed entries to state machine
 	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		if int(r.lastApplied) < len(r.log) {
-			entry := r.log[r.lastApplied]
+		applyIdx := r.lastApplied + 1
+		if int(applyIdx) < len(r.log) {
+			entry := r.log[applyIdx]
 			if entry.Command != nil {
 				applyErr := r.applyCommittedCommand(entry.Command)
 				if applyErr != nil {
@@ -1383,9 +1372,10 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 				if future := r.takeApplyFuture(entry.Index); future != nil {
 					notify = future.resolve
 				}
-				r.completeNamespaceCommand(entry.Command, applyErr, notify)
+				notify(applyErr)
 			}
 		}
+		r.lastApplied = applyIdx
 	}
 
 	resp.Success = true
