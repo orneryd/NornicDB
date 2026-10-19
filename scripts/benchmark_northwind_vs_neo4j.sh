@@ -90,6 +90,15 @@
 #                           and throughput. Durable synchronous commits are the
 #                           product default; set NORNIC_ASYNC_WRITES=0 to benchmark
 #                           the durable baseline instead.
+#   NORNICDB_CYPHER_QUERY_NORMALIZATION=false
+#                           (default false here; the server's default is true)
+#                           NornicDB's Cypher query normalization pass, which
+#                           strips comments and collapses whitespace in every
+#                           statement before it runs, as Neo4j ignores them.
+#                           The benchmark's queries carry neither, so the pass
+#                           is pure per-statement overhead here. Export
+#                           NORNICDB_CYPHER_QUERY_NORMALIZATION=true to include
+#                           its cost.
 #   NORTHWIND_GOGC=400      (default 400) GC percent for the NornicDB server
 #                           process. Write-path profiles show ~9-12% of CPU in GC
 #                           mark work; 400 measures +19-38% on batched writes at
@@ -480,6 +489,11 @@ run_nornic() {
     # for the default seed size) via per-entity AccessMeta reads + scoring.
     nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
   fi
+  # Query normalization (comment stripping + whitespace collapsing) is on by
+  # default in the server. The benchmark's statements have no comments and no
+  # unusual spacing, so the pass is skipped unless the caller exports
+  # NORNICDB_CYPHER_QUERY_NORMALIZATION=true.
+  nornic_extra_env+=(NORNICDB_CYPHER_QUERY_NORMALIZATION="${NORNICDB_CYPHER_QUERY_NORMALIZATION:-false}")
   # The benchmark measures the auto-scaling write-behind path: committed
   # statements are acknowledged in memory and replayed by a background
   # flusher whose rotation delay and buffer size adapt to measured drain
@@ -524,7 +538,7 @@ run_nornic() {
     fi
   fi
 
-  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"
+  log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} query_normalization=${NORNICDB_CYPHER_QUERY_NORMALIZATION:-false} parser=${mode}"
   # Note: ${arr[@]+"${arr[@]}"} guards against `set -u` tripping on an empty
   # array expansion. macOS ships bash 3.2 which is strict here. Extra env
   # vars ride through `env` because bash does NOT recognize a word produced
