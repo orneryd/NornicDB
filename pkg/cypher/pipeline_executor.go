@@ -700,6 +700,9 @@ func carryPipelineImports(rows []pipelineRow, scope map[string]struct{}, carried
 }
 
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
+	if output == nil {
+		if globals, ok := ctx.Value(semanticSubqueryGlobalsKey{}).(pipelineRow); ok { output = &pipelineRowOutput{carried: globals} }
+	}
 	// A CALL (…) body's imports stay bound through its WITH clauses.
 	carried := output.carriedImports()
 	if len(carried) > 0 {
@@ -1201,13 +1204,11 @@ func (e *StorageExecutor) forEachPipelineImport(ctx context.Context, clauses []p
 // pipelineReadsImportedBinding declines statement shortcuts unless the shared
 // scope owner proves the body independent of the complete imported row.
 func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	dependent := false
+	imports := make(typeScope)
 	e.forEachPipelineImport(ctx, clauses, func(name string, _ interface{}) {
-		if !dependent {
-			dependent = pipelineReadsBinding(clauses, name)
-		}
+		if !strings.HasPrefix(name, "$") { imports[name] = staticOperand{} }
 	})
-	return dependent
+	return !imports.pipelineIndependent(clauses)
 }
 
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of

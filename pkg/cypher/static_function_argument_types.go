@@ -676,6 +676,7 @@ func parameterMayBeFunctionArgument(cypher string) bool {
 // relationships, a path) and the literal types of variables bound by WITH …
 // AS or UNWIND.
 type staticTypeScope struct {
+	dependencies *semanticDependencyScope
 	kinds  matchSemanticScope
 	values map[string]string
 	// derived preserves operator constraints of projected expressions whose exact type is unknown.

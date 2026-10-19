@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"maps"
+	"slices"
 	"strings"
 )
 
@@ -211,7 +211,7 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) t
 			projected[name] = types[name]
 			return
 		}
-		operand := projectedOperand(types, input, expression)
+		operand := projectedOperand(typeScopeOf(input), input, expression)
 		if simpleSemanticIdentifier(name) == "" {
 			// Unaliased, a column is named by its text (WITH {a: 1}); only a
 			// name binds a variable whose members are known.
@@ -226,11 +226,17 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) t
 // type inference and dependency proofs. A proof need not allocate or infer
 // another type scope just to observe which incoming bindings a * consumes.
 func (types typeScope) forEachProjectedBinding(clause string, visit func(name, expression string, inherited bool)) {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	keyword := "WITH"
+	if startsWithKeywordFold(strings.TrimSpace(clause), "RETURN") { keyword = "RETURN" }
+	body, _ := projectionSemanticBodyAndTail(clause, keyword)
+	body, _ = cutDistinct(body)
 	for _, raw := range splitTopLevelComma(body) {
 		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
 		if expression == "*" {
-			for name := range types {
+			names := make([]string, 0, len(types))
+			for name := range types { names = append(names, name) }
+			slices.Sort(names)
+			for _, name := range names {
 				visit(name, name, true)
 			}
 			continue
@@ -240,7 +246,7 @@ func (types typeScope) forEachProjectedBinding(clause string, visit func(name, e
 			name = simpleSemanticIdentifier(expression)
 		}
 		if name == "" {
-			continue
+			name = strings.TrimSpace(expression)
 		}
 		visit(name, expression, false)
 	}
@@ -375,29 +381,15 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 // every outer variable (the latter's leading WITH picks them). ok is false
 // for a CALL without a body; scoped is set for CALL (…) { }.
 func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
-	trimmed := strings.TrimSpace(callText)
-	open := strings.IndexByte(trimmed, '{')
-	call := indexASCIIFold(trimmed, "call")
-	if open < 0 || call < 0 || call > open {
-		return nil, false, false
-	}
+	if strings.IndexByte(callText, '{') < 0 || !containsFold(callText, "CALL") { return nil, false, false }
+	scoped := callSubqueryHasScopeClause(callText)
+	names := parseCallSubqueryImportVariables(callText)
 	initial := make(typeScope)
-	head := strings.TrimSpace(trimmed[call+len("CALL") : open])
-	if imports, scoped := stripEnclosingRowDelimiter(head, '(', ')'); scoped && strings.TrimSpace(imports) != "*" {
-		for _, name := range splitTopLevelComma(imports) {
-			name = normalizeProjectionColumnName(strings.TrimSpace(name))
-			if operand, bound := outer[name]; bound {
-				initial[name] = operand
-			}
-		}
-		return initial, true, true
-	}
-	for name, operand := range outer {
-		initial[name] = operand
-	}
-	return initial, false, true
+	if scoped && names != nil {
+		for _, name := range names { if operand, bound := outer[name]; bound { initial[name] = operand } }
+	} else { for name, operand := range outer { initial[name] = operand } }
+	return initial, scoped, true
 }
-
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
 // as a query of its own, with the one clause walk (semanticScopeWalk) from
 // the variables it imports (callSubqueryImports), and returns the static
@@ -408,39 +400,10 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
 func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, scoped, ok := callSubqueryImports(callText, outer)
-	if !ok {
-		return nil, nil
-	}
-	var returned typeScope
-	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
-		if !ok || len(clauses) == 0 {
-			continue
-		}
-		body := subqueryScope{}
-		if scoped {
-			body.visible = initial
-		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
-		if err != nil {
-			if !scoped {
-				// An old-style CALL { … } keeps NornicDB's implicit imports
-				// (gh648: an outer name it doesn't import is visible, or
-				// declared anew), so its walk only types its columns.
-				return nil, nil
-			}
-			return nil, err
-		}
-		last := clauses[len(clauses)-1]
-		if len(branches) == 1 && complete && last.kind == pipelineClauseReturn {
-			returnClause := strings.TrimSpace(last.text)
-			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
-		}
-	}
-	return returned, nil
+	model, err := e.callQueryScope(callText, outer, nil, cypher25)
+	if err != nil || model == nil { return nil, err }
+	return model.returned, nil
 }
-
 // projectedFunctionOperand is the static type of a call whose result type
 // follows from its arguments: coalesce of arguments of one type (open when
 // one is null), nodes / relationships of a path, startNode / endNode,
