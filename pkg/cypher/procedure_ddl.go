@@ -248,6 +248,7 @@ func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRec
 		MaxArgs:     len(argNames),
 		Params:      make([]ProcedureParam, 0, len(argNames)),
 		Returns:     append([]ProcedureColumn(nil), record.Outputs...),
+		ResultCache: ProcedureResultCache{CypherInputs: []ProcedureCypherInput{{StoredText: record.Body}}},
 	}
 	for i, arg := range argNames {
 		param := ProcedureParam{Name: arg, Type: "ANY", Optional: i >= minArgs}
