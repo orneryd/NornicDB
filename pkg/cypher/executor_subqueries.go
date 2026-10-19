@@ -298,7 +298,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 		}
 
 		np := e.parseNodePattern(ctx, matchBody)
-		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
+		if np.variable != "" && !pipelineReadsBinding(pipelineDependencyClauses(trimmedOuter), variable) {
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
@@ -803,12 +803,13 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 		return nil
 	}
 	referenced := make([]string, 0, len(seedResult.Columns))
+	dependencies := pipelineDependencyClauses(subqueryBody)
 	for _, col := range seedResult.Columns {
 		name := strings.TrimSpace(col)
 		if name == "" {
 			continue
 		}
-		if isIdentifierReferenced(subqueryBody, name) {
+		if pipelineReadsBinding(dependencies, name) {
 			referenced = append(referenced, name)
 		}
 	}

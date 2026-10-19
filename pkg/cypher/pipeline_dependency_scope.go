@@ -2,6 +2,23 @@ package cypher
 
 import "strings"
 
+// pipelineDependencyClauses returns no proof when a body cannot be planned.
+// All consumers selecting or omitting imported columns use this same reader.
+func pipelineDependencyClauses(body string) []pipelineClause {
+	clauses, ok := pipelineClausesFor(body)
+	if !ok {
+		return nil
+	}
+	return clauses
+}
+
+func pipelineReadsBinding(clauses []pipelineClause, name string) bool {
+	if name == "" || strings.HasPrefix(name, "$") {
+		return false
+	}
+	return !typeScope{name: staticOperand{}}.pipelineIndependent(clauses)
+}
+
 // pipelineIndependent proves that a statement shortcut can omit imports.
 // Name occurrences alone are insufficient: projections consume scope through
 // RETURN * and WITH *. Expand them with the same typeScope projection owner

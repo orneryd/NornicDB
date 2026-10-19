@@ -378,12 +378,9 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 		}
 	}
 	initial := pipelineRow{}
-	for name, value := range e.fabricRecordBindings {
+	e.forEachPipelineImport(ctx, clauses, func(name string, value interface{}) {
 		initial[name] = value
-	}
-	for name, value := range valueBindingsFromContext(ctx) {
-		initial[name] = value
-	}
+	})
 	bindParameterRow(ctx, initial)
 	rows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{initial}, clauses[:end])
 	if err != nil {
