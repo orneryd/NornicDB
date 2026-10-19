@@ -53,3 +53,12 @@ func (err *NodeStillConnectedError) BoltErrorDetail() string { return "DeleteCon
 type ConnectedNodeDeleter interface {
 	DeleteConnectedNode(id NodeID) error
 }
+
+// IncidentEdgeLister is a store that lists every relationship connecting a
+// node, those the visibility layer hides from reads included
+// (BadgerTransaction.IncidentEdges). A DELETE reads them: a hidden
+// relationship still connects its endpoints, so it keeps a non-DETACH DELETE
+// from removing the node, and DETACH DELETE removes and counts it.
+type IncidentEdgeLister interface {
+	IncidentEdges(nodeID NodeID) ([]*Edge, error)
+}

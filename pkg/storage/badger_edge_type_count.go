@@ -1093,9 +1093,10 @@ func (tx *BadgerTransaction) bufferEdgePositionalLabelDeltas(namespace, edgeType
 	}
 }
 
-// nodeLabelsTxVisibleLocked returns a node's labels as visible to this
-// transaction: the pending overlay wins, then committed state. The caller
-// must hold tx.mu.
+// nodeLabelsTxVisibleLocked returns a node's labels as this transaction
+// sees them: the pending overlay wins, then committed state, read from
+// storage (getCommittedNodeLocked), so a node the visibility layer hides
+// keeps its positional counts in step. The caller must hold tx.mu.
 func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(id NodeID) ([]string, error) {
 	if node, ok := tx.pendingNodes[id]; ok {
 		return node.Labels, nil
@@ -1111,52 +1112,17 @@ func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(id NodeID) ([]string, err
 }
 
 // incidentEdgeTypesTxLocked counts the edge types reachable through one
-// adjacency direction of a node as visible to this transaction: committed
-// adjacency with the pending overlay applied. The caller must hold tx.mu.
+// adjacency direction of a node as the transaction sees storage
+// (incidentEdgesLocked): the positional counters count every stored
+// relationship, hidden ones too. The caller must hold tx.mu.
 func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing bool) (map[string]int64, error) {
+	edges, err := tx.incidentEdgesLocked(nodeID)
+	if err != nil {
+		return nil, err
+	}
 	types := make(map[string]int64)
-	var prefix []byte
-	if outgoing {
-		prefix = tx.engine.outgoingIndexPrefixString(nodeID)
-	} else {
-		prefix = tx.engine.incomingIndexPrefixString(nodeID)
-	}
-	if prefix != nil {
-		it := tx.badgerTx.NewIterator(badgerPrefixIteratorOptions(prefix))
-		for it.Rewind(); it.Valid(); it.Next() {
-			edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
-			if !ok {
-				continue
-			}
-			edgeID, ok := tx.engine.idDict.lookupEdgeIDByNum(edgeNum)
-			if !ok {
-				continue
-			}
-			if tx.committedEdgeSupersededLocked(edgeID) {
-				continue // a rewritten edge is counted as pending below
-			}
-			edge, err := tx.getCommittedEdgeLocked(edgeID)
-			if err != nil {
-				if err == ErrNotFound {
-					continue
-				}
-				it.Close()
-				return nil, err
-			}
-			if t := edge.Type; t != "" {
-				types[t]++
-			}
-		}
-		it.Close()
-	}
-	for _, edge := range tx.pendingEdges {
-		if edge == nil {
-			continue
-		}
-		if outgoing && edge.StartNode != nodeID {
-			continue
-		}
-		if !outgoing && edge.EndNode != nodeID {
+	for _, edge := range edges {
+		if outgoing && edge.StartNode != nodeID || !outgoing && edge.EndNode != nodeID {
 			continue
 		}
 		if t := edge.Type; t != "" {
