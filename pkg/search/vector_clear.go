@@ -28,6 +28,8 @@ func (s *Service) ClearIndexes() error {
 func (s *Service) clearIndexes(all bool) error {
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
+	resume := s.pauseHNSWBuild()
+	defer resume()
 	// Persistence and clearing own the same file resources. Retire on-disk
 	// coordinates too, so a reused service cannot reopen the dropped population.
 	s.persistRunMu.Lock()
