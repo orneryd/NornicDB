@@ -108,6 +108,21 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 	return executionInputValue{}, false
 }
 
+// A literal container can have bound data fields and fixed executable text.
+// Classify each declared text field at compile time when its syntax is fixed,
+// even when another field (for example the search query) needs a binding.
+func (input *executionInputValue) mapField(key string) (executionInputValue, bool) {
+	if input.entries == nil {
+		return executionInputValue{}, false
+	}
+	for i := len(input.entries) - 1; i >= 0; i-- {
+		if input.entries[i].key == key {
+			return input.entries[i].value, true
+		}
+	}
+	return executionInputValue{}, true
+}
+
 func foldExecutionInput(value executionInputValue) executionInputValue {
 	if value.bound {
 		return value
