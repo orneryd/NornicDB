@@ -31,11 +31,8 @@ func (s *Server) retentionManagerOr503(w http.ResponseWriter, r *http.Request) *
 	if r.Method != http.MethodGet {
 		permissions = append(permissions, auth.PermWrite)
 	}
-	if r.URL.Path == "/admin/retention/sweep" {
-		if !s.authorizeAllDatabaseOperation(w, r) {
-			return nil
-		}
-	} else if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), permissions...) {
+	// Retention records and sweeps use DB.storage, the default namespace.
+	if !s.authorizeDatabaseOperation(w, r, s.dbManager.DefaultDatabaseName(), permissions...) {
 		return nil
 	}
 	rm := s.db.GetRetentionManager()
