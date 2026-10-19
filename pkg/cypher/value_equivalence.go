@@ -17,8 +17,7 @@ import (
 // equivalence. Execution uses cypherValueIndex's native scalar keys and
 // collision-checked structural hashes instead of serializing containers.
 // Two values are equivalent exactly when their encoded keys are equal.
-// Equivalence is equality
-// (cypherEquality) except that null is equivalent to null:
+// Equivalence has its own contract, including named-zone overlap identity:
 //   - numbers are equivalent when their exact values are, whatever their
 //     types: 1 ≡ 1.0 and -0.0 ≡ 0, while 9007199254740993 and
 //     9007199254740992.0 stay apart, as they are unequal;
@@ -30,11 +29,16 @@ import (
 //     counts the same bound NaN repeated once, by object identity; values here
 //     have no identity, so every NaN is apart.)
 //   - paths are equivalent by their ordered entity identities;
-//   - temporal values use the same canonical parts as temporal equality;
+//   - temporal values use the canonical equivalence parts (overlap offsets retained);
 //   - other values (including spatial values) keep their Go type and value.
 func cypherEquivalenceKey(value interface{}) string {
+	return cypherValueKey(value, cypherEquivalenceContract)
+}
+
+// cypherValueKey serializes the requested comparison contract recursively.
+func cypherValueKey(value interface{}, contract cypherComparisonContract) string {
 	// The common single values get their key in one allocation; the rest are
-	// written by appendEquivalenceKey.
+	// written by appendValueKey.
 	switch typed := value.(type) {
 	case nil:
 		return "N"
@@ -67,14 +71,14 @@ func cypherEquivalenceKey(value interface{}) string {
 		return "I" + strconv.FormatInt(typed, 10)
 	}
 	var key strings.Builder
-	appendEquivalenceKey(&key, value)
+	appendValueKey(&key, value, contract)
 	return key.String()
 }
 
-// appendEquivalenceKey writes value's equivalence key (cypherEquivalenceKey).
+// appendValueKey writes the key for the selected comparison contract.
 // A key starts with one letter naming its kind; a list or map element's key
 // is preceded by its length, so a composite key has one reading.
-func appendEquivalenceKey(key *strings.Builder, value interface{}) {
+func appendValueKey(key *strings.Builder, value interface{}, contract cypherComparisonContract) {
 	switch typed := value.(type) {
 	case bool:
 		if typed {
@@ -107,7 +111,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 			key.WriteByte('P')
 			key.WriteString(strconv.Itoa(len(elements)))
 			for _, entity := range elements {
-				appendNestedEquivalenceKey(key, entity)
+				appendNestedValueKey(key, entity, contract)
 			}
 			return
 		}
@@ -116,7 +120,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		key.WriteByte('L')
 		key.WriteString(strconv.Itoa(len(list)))
 		for _, item := range list {
-			appendNestedEquivalenceKey(key, item)
+			appendNestedValueKey(key, item, contract)
 		}
 		return
 	}
@@ -133,12 +137,12 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 			key.WriteString(strconv.Itoa(len(name)))
 			key.WriteByte(':')
 			key.WriteString(name)
-			appendNestedEquivalenceKey(key, fields[name])
+			appendNestedValueKey(key, fields[name], contract)
 		}
 		return
 	}
-	if parts, temporal := temporalEqualityParts(value); temporal {
-		appendTemporalEquivalenceKey(key, parts)
+	if parts, temporal := contract.temporalKey(value); temporal {
+		appendTemporalValueKey(key, parts)
 		return
 	}
 	key.WriteByte('T')
@@ -147,7 +151,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 
 // Encoded keys are needed by older grouping paths and nested encoded values.
 // Serialize the same typed identity without reflection or per-field formatting.
-func appendTemporalEquivalenceKey(key *strings.Builder, parts temporalEqualityKey) {
+func appendTemporalValueKey(key *strings.Builder, parts temporalValueKey) {
 	var buffer [1 + 7*8 + 8]byte
 	buffer[0] = parts.kind
 	for i, part := range parts.parts {
@@ -159,10 +163,10 @@ func appendTemporalEquivalenceKey(key *strings.Builder, parts temporalEqualityKe
 	key.WriteString(parts.zone)
 }
 
-// appendNestedEquivalenceKey writes a list or map element's key preceded by
+// appendNestedValueKey writes a list or map element's key preceded by
 // its length.
-func appendNestedEquivalenceKey(key *strings.Builder, value interface{}) {
-	nested := cypherEquivalenceKey(value)
+func appendNestedValueKey(key *strings.Builder, value interface{}, contract cypherComparisonContract) {
+	nested := cypherValueKey(value, contract)
 	key.WriteByte('|')
 	key.WriteString(strconv.Itoa(len(nested)))
 	key.WriteByte(':')

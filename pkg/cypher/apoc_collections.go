@@ -578,7 +578,7 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 // apocValueSet is a list's non-null items as a set, for lookups by APOC's
 // value equality (cypherValueEquals): a null finds nothing.
 func apocValueSet(list []interface{}) *cypherValueIndex {
-	var set cypherValueIndex
+	set := cypherValueIndex{contract: cypherValueEqualityContract}
 	for _, item := range list {
 		if item != nil {
 			set.add(item)
@@ -810,8 +810,8 @@ func apocSameValue(value, listed interface{}) bool {
 
 // apocCollFrequencies is apoc.coll.frequencies(list): each distinct item
 // with its count, {item, count}, in the order the items first appear, as in
-// APOC (#1164). Items equal in Cypher (1 and 1.0, [1] and [1]) count
-// together, under the first one.
+// APOC (#1164). Equivalent items count together under the first one;
+// named-zone overlap occurrences remain separate even when equal with =.
 //
 // # Example
 //

@@ -106,10 +106,14 @@ func mixCypherHash(hash, value uint64) uint64 {
 // combined commutatively, independently of insertion/iteration order. A hash
 // only selects a bucket; cypherValuesEquivalent checks collisions.
 func cypherEquivalenceHash(value interface{}) uint64 {
+	return cypherValueHash(value, cypherEquivalenceContract)
+}
+
+func cypherValueHash(value interface{}, contract cypherComparisonContract) uint64 {
 	if key, scalar := cypherComparableKey(value); scalar {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
-	if key, temporal := temporalEqualityParts(value); temporal {
+	if key, temporal := contract.temporalKey(value); temporal {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
 	if value, bytes := value.([]byte); bytes {
@@ -118,14 +122,14 @@ func cypherEquivalenceHash(value interface{}) uint64 {
 	if list, ok := cypherListValue(value); ok {
 		hash := mixCypherHash('L', uint64(len(list)))
 		for _, item := range list {
-			hash = mixCypherHash(hash, cypherEquivalenceHash(item))
+			hash = mixCypherHash(hash, cypherValueHash(item, contract))
 		}
 		return hash
 	}
 	fields, _ := toStringAnyMap(value)
 	hash := mixCypherHash('M', uint64(len(fields)))
 	for name, item := range fields {
-		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherEquivalenceHash(item))
+		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherValueHash(item, contract))
 	}
 	return hash
 }
@@ -133,12 +137,18 @@ func cypherEquivalenceHash(value interface{}) uint64 {
 // cypherValuesEquivalent is DISTINCT's structural equality: null equals
 // null, numbers compare exactly across types, and each NaN remains separate.
 func cypherValuesEquivalent(left, right interface{}) bool {
+	return cypherValuesMatch(left, right, cypherEquivalenceContract)
+}
+
+// Nested values retain the caller's contract. Nulls inside lists/maps compare
+// as AnyValues; cypherValueEquals separately excludes a top-level null.
+func cypherValuesMatch(left, right interface{}, contract cypherComparisonContract) bool {
 	leftKey, leftScalar := cypherComparableKey(left)
 	rightKey, rightScalar := cypherComparableKey(right)
 	if leftScalar || rightScalar {
 		return leftScalar && rightScalar && leftKey == rightKey
 	}
-	if equal, temporal := compareTemporalValues(left, right); temporal {
+	if equal, temporal := compareTemporalByContract(left, right, contract); temporal {
 		return equal
 	}
 	leftBytes, leftIsBytes := left.([]byte)
@@ -153,7 +163,7 @@ func cypherValuesEquivalent(left, right interface{}) bool {
 			return false
 		}
 		for i, item := range leftList {
-			if !cypherValuesEquivalent(item, rightList[i]) {
+			if !cypherValuesMatch(item, rightList[i], contract) {
 				return false
 			}
 		}
@@ -166,7 +176,7 @@ func cypherValuesEquivalent(left, right interface{}) bool {
 	}
 	for name, item := range leftMap {
 		other, exists := rightMap[name]
-		if !exists || !cypherValuesEquivalent(item, other) {
+		if !exists || !cypherValuesMatch(item, other, contract) {
 			return false
 		}
 	}
@@ -182,8 +192,11 @@ type cypherTupleEntry struct {
 // deduplication and UNION. Scalar keys use Go's collision-checked hashing;
 // structural tuples check every value in a bucket.
 type cypherValueIndex struct {
+	// Zero means equivalence. The non-null membership adapter explicitly
+	// selects value equality for containsAll/containsAny.
+	contract cypherComparisonContract
 	single   map[interface{}]int
-	temporal map[temporalEqualityKey]int
+	temporal map[temporalValueKey]int
 	tuples   map[uint64][]cypherTupleEntry
 	count    int
 }
@@ -192,19 +205,19 @@ func (index *cypherValueIndex) add(value interface{}) (position int, existed boo
 	if key, scalar := cypherComparableKey(value); scalar {
 		return index.addComparable(key)
 	}
-	if key, temporal := temporalEqualityParts(value); temporal {
+	if key, temporal := index.contract.temporalKey(value); temporal {
 		if position, existed = index.temporal[key]; existed {
 			return position, true
 		}
 		if index.temporal == nil {
-			index.temporal = make(map[temporalEqualityKey]int)
+			index.temporal = make(map[temporalValueKey]int)
 		}
 		position = index.count
 		index.temporal[key] = position
 		index.count++
 		return position, false
 	}
-	return index.addTupleValues(cypherEquivalenceHash(value), []interface{}{value})
+	return index.addTupleValues(cypherValueHash(value, index.contract), []interface{}{value})
 }
 
 // find is the position of the value the index holds that is equivalent to
@@ -214,12 +227,12 @@ func (index *cypherValueIndex) find(value interface{}) (position int, found bool
 		position, found = index.single[key]
 		return position, found
 	}
-	if key, temporal := temporalEqualityParts(value); temporal {
+	if key, temporal := index.contract.temporalKey(value); temporal {
 		position, found = index.temporal[key]
 		return position, found
 	}
-	for _, candidate := range index.tuples[cypherEquivalenceHash(value)] {
-		if len(candidate.values) == 1 && cypherValuesEquivalent(value, candidate.values[0]) {
+	for _, candidate := range index.tuples[cypherValueHash(value, index.contract)] {
+		if len(candidate.values) == 1 && cypherValuesMatch(value, candidate.values[0], index.contract) {
 			return candidate.position, true
 		}
 	}
@@ -228,9 +241,10 @@ func (index *cypherValueIndex) find(value interface{}) (position int, found bool
 
 // cypherValueEquals is APOC's value equality (Util.valueEquals, used by
 // apoc.coll.contains, containsAll, indexOf, occurrences and split):
-// equivalence, except that a null equals nothing.
+// value equality, with a top-level null equal to nothing. Temporal overlap
+// equality differs from the equivalence used by DISTINCT/grouping/set maps.
 func cypherValueEquals(left, right interface{}) bool {
-	return left != nil && right != nil && cypherValuesEquivalent(left, right)
+	return left != nil && right != nil && cypherValuesMatch(left, right, cypherValueEqualityContract)
 }
 
 func (index *cypherValueIndex) addComparable(key interface{}) (position int, existed bool) {
@@ -255,7 +269,7 @@ func (index *cypherValueIndex) addTuple(values []interface{}) (int, bool) {
 	}
 	hash := uint64(len(values))
 	for _, value := range values {
-		hash = mixCypherHash(hash, cypherEquivalenceHash(value))
+		hash = mixCypherHash(hash, cypherValueHash(value, index.contract))
 	}
 	return index.addTupleValues(hash, values)
 }
@@ -267,7 +281,7 @@ func (index *cypherValueIndex) addTupleValues(hash uint64, values []interface{})
 		}
 		equal := true
 		for i, value := range values {
-			if !cypherValuesEquivalent(value, candidate.values[i]) {
+			if !cypherValuesMatch(value, candidate.values[i], index.contract) {
 				equal = false
 				break
 			}
