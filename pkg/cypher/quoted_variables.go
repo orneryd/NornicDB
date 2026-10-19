@@ -790,9 +790,16 @@ func (names *quotedVariableNames) originalText(start, end int) string {
 	return names.restoreText(names.canonical[start:end])
 }
 
-// finalReturnBody locates the body of text's last top-level RETURN (after
-// the keyword).
+// finalReturnBody locates the public projection's body. The structural owner
+// selects the first UNION branch, also for result-name restoration.
 func finalReturnBody(text string) (int, int, bool) {
+	if syntax := fabric.ReadQueryStructure(text); syntax.Err == nil {
+		clause := syntax.ResultClause()
+		if clause == nil {
+			return 0, 0, false
+		}
+		return clause.BodyStart, clause.End, true
+	}
 	positions := findAllTopLevelPipelineKeywordPositions(text, "RETURN")
 	if len(positions) == 0 {
 		return 0, 0, false
