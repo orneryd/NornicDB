@@ -139,8 +139,12 @@ func TestWriteProcedureFabricRegistrationReload(t *testing.T) {
 	failure := errors.New("u5 reloaded procedure rejected")
 	require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 		result, err := nested.Execute(ctx, "CREATE (:U5ReloadWrite) RETURN 1 AS value", nil)
-		if err != nil { return nil, err }
-		if reject { return nil, failure }
+		if err != nil {
+			return nil, err
+		}
+		if reject {
+			return nil, failure
+		}
 		return result, nil
 	}))
 	_, err = exec.Execute(context.Background(), query, nil)
