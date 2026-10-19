@@ -124,7 +124,7 @@ func traversalEndpointsNeedOnlyLabels(match *TraversalMatch) bool {
 // traversal then lists them through storage.EdgeHeaderReader, which can
 // answer without reading the relationship records.
 func traversalRelationshipsNeedOnlyHeaders(match *TraversalMatch) bool {
-	return !match.IsChained && match.PathVariable == "" && match.Relationship.Variable == "" && len(match.Relationship.Properties) == 0
+	return !match.IsChained && match.PathVariable == "" && (match.Relationship.Variable == "" || match.UnusedPropertyVariables[match.Relationship.Variable]) && len(match.Relationship.Properties) == 0
 }
 
 // traversalEdges lists the relationships a traversal step expands from node

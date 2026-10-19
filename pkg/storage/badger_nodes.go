@@ -255,7 +255,11 @@ func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
 			if deleted {
 				return nil, ErrNotFound
 			}
-			return copyNodeForCaller(n), nil
+			node := copyNodeForCaller(n)
+			if b.filterNodeByDecay(node, DecayScoringTime()) {
+				return nil, ErrNotFound
+			}
+			return node, nil
 		}
 	}
 	if node, ok := b.cacheLoadQueryNode(id); ok {
