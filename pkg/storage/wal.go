@@ -750,7 +750,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	if w.closed.Load() {
 		return 0, ErrWALClosed
 	}
-	if op != OpBufferedCommit {
+	if op != OpBufferedCommit && op != OpNamespaceLifecycle {
 		return w.AppendWithDatabaseReturningSeq(op, data, database)
 	}
 
@@ -766,7 +766,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	// The buffered-commit payload is the dominant WAL cost (it carries every
 	// write for kill -9 recovery); losslessly compress it so the WAL stays
 	// proportional to the data instead of several times larger.
-	dataBytes = compressWALBufferedCommitPayload(dataBytes)
+	if op == OpBufferedCommit {
+		dataBytes = compressWALBufferedCommitPayload(dataBytes)
+	}
 
 	seq := w.sequence.Add(1)
 	entry := WALEntry{
@@ -809,6 +811,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 
 	if rotateErr := w.maybeRotateLocked(seq); rotateErr != nil {
 		w.mu.Unlock()
+		if op == OpNamespaceLifecycle {
+			return seq, rotateErr
+		}
 		return 0, rotateErr
 	}
 	w.mu.Unlock()
@@ -2247,6 +2252,8 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
 
 	switch entry.Operation {
+	case OpNamespaceLifecycle:
+		return replayNamespaceLifecycle(baseEngine, entry)
 	case OpCreateNode:
 		var data WALNodeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
@@ -2523,6 +2530,8 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		}
 		return namespacedEngine.BulkCreateEdges(data.OldEdges)
 
+	case OpNamespaceLifecycle:
+		return ErrNoUndoData
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
 		return nil

@@ -836,6 +836,7 @@ func (r *RaftReplicator) runApplyLoop(ctx context.Context) {
 func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) {
 	if future.caller != nil {
 		if err := future.caller.Err(); err != nil {
+			if op:=future.cmd.namespaceDrop;op!=nil{op.Abort()}
 			future.errCh <- err
 			return
 		}
@@ -846,10 +847,11 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 	r.mu.RUnlock()
 
 	if !isLeader {
+		if op:=future.cmd.namespaceDrop;op!=nil{op.Abort()}
 		future.errCh <- ErrNotLeader
 		return
 	}
-	if future.cmd.Type == CmdDeleteByPrefix {
+	if isNamespaceLifecycle(future.cmd) {
 		// A prepared DROP fences native publications. Earlier committed log
 		// entries must cross the state machine before installing that fence;
 		// otherwise an earlier same-namespace write would wait on the DROP
@@ -858,7 +860,8 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		if caller == nil {
 			caller = context.Background()
 		}
-		if err := r.awaitNamespacePreparationFrontier(caller); err != nil {
+		if err := r.awaitNamespacePreparationFrontier(caller, future.cmd); err != nil {
+			if op:=future.cmd.namespaceDrop;op!=nil{op.Abort()}
 			future.resolve(err)
 			return
 		}
@@ -1485,7 +1488,7 @@ func (r *RaftReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout
 		return ErrNotLeader
 	}
 
-	if cmd.Type == CmdDeleteByPrefix && cmd.namespaceDrop == nil {
+	if isNamespaceLifecycle(cmd) && cmd.namespaceDrop == nil {
 		cmd.namespaceDrop = storage.NewNamespaceDrop(nil)
 	}
 	future := &applyFuture{

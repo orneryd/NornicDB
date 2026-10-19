@@ -152,6 +152,9 @@ const (
 
 	// CmdBulkDeleteEdges deletes multiple edges.
 	CmdBulkDeleteEdges
+
+	// CmdNamespaceCatalog publishes one database's CREATE/ALTER catalog delta.
+	CmdNamespaceCatalog
 )
 
 // HealthStatus represents the health state of the replicator.

@@ -36,6 +36,8 @@ func TestNamespaceDropSnapshotPreservesRetirementBeforeMetadataReplay(t *testing
 	require.NoError(t, err)
 	readOnly, err := multidb.NewDatabaseManager(&namespaceCatalogStandby{standby}, nil)
 	require.NoError(t, err)
+	oldCatalog, err := standby.GetNode("system:databases:metadata")
+	require.NoError(t, err)
 	require.NoError(t, m.DropDatabase("snapshot_retired"))
 	require.NoError(t, a.FlushWAL())
 	entries, err := a.GetWALEntries(initial[len(initial)-1].Position, 100)
@@ -51,13 +53,15 @@ func TestNamespaceDropSnapshotPreservesRetirementBeforeMetadataReplay(t *testing
 	_, err = applier.ApplyBatch([]*WALEntry{drop})
 	require.NoError(t, err)
 	require.False(t, readOnly.Exists("snapshot_retired"))
-	// A replica must not publish an independent full-catalog write from DROP
-	// completion: it could overtake the primary's recreated catalog lifetime.
+	// DROP carries its own catalog delta, with no later full-catalog write.
 	node, err := standby.GetNode("system:databases:metadata")
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal([]byte(node.Properties["data"].(string)), &raw))
-	require.Contains(t, raw, "snapshot_retired", "the primary's metadata-removal entry has not replayed yet")
+	require.NotContains(t, raw, "snapshot_retired", "the DROP entry completes catalog removal itself")
+	// A delayed legacy catalog must also stay retired through snapshot bootstrap.
+	require.NoError(t, standby.UpdateNode(oldCatalog))
+	require.False(t, readOnly.Exists("snapshot_retired"))
 	var snapshot bytes.Buffer
 	require.NoError(t, f.WriteSnapshot(&snapshot))
 	receiver, err := NewStorageAdapterWithWAL(bootstrap, t.TempDir())

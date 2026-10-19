@@ -154,28 +154,48 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 	release := func() {}
 	var payload commandPublicationPayload
 	var err error
+	if isNamespaceLifecycle(cmd) {
+		if op == nil {
+			op = storage.NewNamespaceDrop(nil)
+		}
+		if cmd.namespaceDrop == nil {
+			cmd.namespaceDrop = op
+		}
+		request, err := configureNamespaceOperation(cmd, op)
+		if err != nil {
+			return err
+		}
+		if err := storage.PrepareNamespaceJournal(ctx, a.engine, request.Prefix, op); err != nil {
+			op.Abort()
+			return err
+		}
+	}
 	if op == nil || !op.HasPublicationLease() {
-		release, err = a.admitCommand(ctx, cmd, cmd.Type == CmdDeleteByPrefix, &payload)
+		release, err = a.admitCommand(ctx, cmd, isNamespaceLifecycle(cmd), &payload)
 	}
 	if err != nil {
+		if op != nil {
+			op.Abort()
+		}
 		return err
 	}
 	defer release()
-	if cmd.Type == CmdDeleteByPrefix {
+	if isNamespaceLifecycle(cmd) {
 		if op == nil {
 			op = storage.NewNamespaceDrop(nil)
 		}
 		if !op.HasPublicationLease() {
 			op.SetPublicationRelease(release)
 		}
-		var request namespaceDropCommand
-		if err := decodeGob(cmd.Data, &request); err != nil {
+		request, err := configureNamespaceOperation(cmd, op)
+		if err != nil {
 			return err
 		}
-		if request.Retirement != 0 {
-			op.SetCatalogRevision(request.Retirement)
-		}
 		committed := ctx.Value(committedCommandKey{}) == true
+		if committed {
+			op.MarkCommittedEntry()
+			ctx = context.WithoutCancel(ctx)
+		}
 		op.SetJournal(func() (bool, error) {
 			if err := stampNamespaceDrop(cmd, op); err != nil {
 				return committed, err
@@ -195,7 +215,14 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 				return committed, errors.Join(ErrClosed, flushErr)
 			}
 		})
-		return a.applyDeleteByPrefixContext(storage.WithNamespaceDrop(ctx, op), cmd.Data)
+		ctx = storage.WithNamespaceDrop(ctx, op)
+		if cmd.Type == CmdNamespaceCatalog {
+			if request.Catalog == nil {
+				return storage.ErrInvalidData
+			}
+			return storage.PublishNamespaceCatalogContext(ctx, a.engine, *request.Catalog)
+		}
+		return a.applyDeleteByPrefixContext(ctx, cmd.Data)
 	}
 
 	req, record, err := a.queueCommandWAL(cmd)
@@ -285,7 +312,7 @@ func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replic
 		a.walPosition.Store(pos)
 		a.walMu.Unlock()
 		a.appendToMemWAL(pos, record, cmd)
-		if cmd.Type == CmdDeleteByPrefix {
+		if isNamespaceLifecycle(cmd) {
 			req.posCh <- pos
 		}
 	}
