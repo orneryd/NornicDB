@@ -13,10 +13,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// cypherEquivalenceKey is value's key under Cypher equivalence, the sameness
-// DISTINCT, grouping keys, UNION and count/collect(DISTINCT …) use: two values
-// are equivalent exactly when their keys are equal. Equivalence has its own
-// contract, including nulls and named-zone overlap identity:
+// Canonical value keys encode the explicitly selected comparison contract.
+// Execution uses cypherValueIndex's native scalar keys and
+// collision-checked structural hashes instead of serializing containers.
+// Two values are equivalent exactly when their encoded keys are equal.
+// Equivalence has its own contract, including named-zone overlap identity:
 //   - numbers are equivalent when their exact values are, whatever their
 //     types: 1 ≡ 1.0 and -0.0 ≡ 0, while 9007199254740993 and
 //     9007199254740992.0 stay apart, as they are unequal;
@@ -30,9 +31,6 @@ import (
 //   - paths are equivalent by their ordered entity identities;
 //   - temporal values use the canonical equivalence parts (overlap offsets retained);
 //   - other values (including spatial values) keep their Go type and value.
-func cypherEquivalenceKey(value interface{}) string {
-	return cypherValueKey(value, cypherEquivalenceContract)
-}
 
 // cypherValueKey serializes the requested comparison contract recursively.
 func cypherValueKey(value interface{}, contract cypherComparisonContract) string {
@@ -70,14 +68,33 @@ func cypherValueKey(value interface{}, contract cypherComparisonContract) string
 		return "I" + strconv.FormatInt(typed, 10)
 	}
 	var key strings.Builder
-	appendValueKey(&key, value, contract)
+	appendValueKey(&key, value, cypherNumericValues, contract)
+	return key.String()
+}
+
+// apoc.map.clean uses Java-object removal values: floating and integral
+// representations stay distinct, recursively. Share structural encoding and
+// temporal normalization with ordinary Cypher keys instead of reimplementing
+// equality at this protocol boundary.
+func cypherValueKeyWithNumericPolicy(value interface{}, numericPolicy cypherNumericComparisonPolicy, contract cypherComparisonContract) string {
+	if numericPolicy == cypherNumericValues {
+		return cypherValueKey(value, contract)
+	}
+	_, floating := value.(float64)
+	_, list := cypherListValue(value)
+	_, fields := toStringAnyMap(value)
+	if !floating && !list && !fields {
+		return cypherValueKey(value, contract)
+	}
+	var key strings.Builder
+	appendValueKey(&key, value, numericPolicy, contract)
 	return key.String()
 }
 
 // appendValueKey writes the key for the selected comparison contract.
 // A key starts with one letter naming its kind; a list or map element's key
 // is preceded by its length, so a composite key has one reading.
-func appendValueKey(key *strings.Builder, value interface{}, contract cypherComparisonContract) {
+func appendValueKey(key *strings.Builder, value interface{}, numericPolicy cypherNumericComparisonPolicy, contract cypherComparisonContract) {
 	switch typed := value.(type) {
 	case bool:
 		if typed {
@@ -102,6 +119,9 @@ func appendValueKey(key *strings.Builder, value interface{}, contract cypherComp
 		return
 	}
 	if number, ok := cypherFloatValue(value); ok {
+		if _, floatKind := value.(float64); floatKind && numericPolicy == cypherNumericKinds {
+			key.WriteString("F64:")
+		}
 		appendFloatEquivalenceKey(key, number)
 		return
 	}
@@ -110,7 +130,7 @@ func appendValueKey(key *strings.Builder, value interface{}, contract cypherComp
 			key.WriteByte('P')
 			key.WriteString(strconv.Itoa(len(elements)))
 			for _, entity := range elements {
-				appendNestedValueKey(key, entity, contract)
+				appendNestedValueKey(key, entity, numericPolicy, contract)
 			}
 			return
 		}
@@ -119,7 +139,7 @@ func appendValueKey(key *strings.Builder, value interface{}, contract cypherComp
 		key.WriteByte('L')
 		key.WriteString(strconv.Itoa(len(list)))
 		for _, item := range list {
-			appendNestedValueKey(key, item, contract)
+			appendNestedValueKey(key, item, numericPolicy, contract)
 		}
 		return
 	}
@@ -136,11 +156,11 @@ func appendValueKey(key *strings.Builder, value interface{}, contract cypherComp
 			key.WriteString(strconv.Itoa(len(name)))
 			key.WriteByte(':')
 			key.WriteString(name)
-			appendNestedValueKey(key, fields[name], contract)
+			appendNestedValueKey(key, fields[name], numericPolicy, contract)
 		}
 		return
 	}
-	if parts, temporal := contract.temporalKey(value); temporal {
+	if parts, temporal := temporalIdentityParts(value, contract); temporal {
 		appendTemporalValueKey(key, parts)
 		return
 	}
@@ -164,8 +184,13 @@ func appendTemporalValueKey(key *strings.Builder, parts temporalValueKey) {
 
 // appendNestedValueKey writes a list or map element's key preceded by
 // its length.
-func appendNestedValueKey(key *strings.Builder, value interface{}, contract cypherComparisonContract) {
-	nested := cypherValueKey(value, contract)
+func appendNestedValueKey(key *strings.Builder, value interface{}, numericPolicy cypherNumericComparisonPolicy, contract cypherComparisonContract) {
+	var nested string
+	if numericPolicy == cypherNumericKinds {
+		nested = cypherValueKeyWithNumericPolicy(value, numericPolicy, contract)
+	} else {
+		nested = cypherValueKey(value, contract)
+	}
 	key.WriteByte('|')
 	key.WriteString(strconv.Itoa(len(nested)))
 	key.WriteByte(':')
@@ -195,31 +220,30 @@ func appendFloatEquivalenceKey(key *strings.Builder, number float64) {
 	}
 }
 
-// cypherValueSet is a set of values under equivalence (cypherEquivalenceKey),
+// cypherValueSet stores values under each operation's explicit contract,
 // for the apoc.coll functions that compare items as APOC's sets of AnyValues
 // do: 1 and 1.0 are one item, a null is one item, and every NaN is its own.
 type cypherValueSet struct {
-	// Zero means equivalence; non-null value lookup selects equality explicitly.
-	contract cypherComparisonContract
+	// Every operation receives an explicit comparison contract.
 	encoded  map[string]int
 	temporal map[temporalValueKey]int
 	count    int
 }
 
 // add adds value; existed reports an equivalent value already there.
-func (set *cypherValueSet) add(value interface{}) (existed bool) {
-	_, existed = set.addPosition(value)
+func (set *cypherValueSet) addByContract(value interface{}, contract cypherComparisonContract) (existed bool) {
+	_, existed = set.addPositionByContract(value, contract)
 	return existed
 }
 
 // addPosition shares first-occurrence lookup with frequencies. Typed temporal
 // keys avoid allocating a serialized key for every scalar item.
-func (set *cypherValueSet) addPosition(value interface{}) (position int, existed bool) {
+func (set *cypherValueSet) addPositionByContract(value interface{}, contract cypherComparisonContract) (position int, existed bool) {
 	// Ordinary scalars need no temporal extraction or large key return value.
 	switch value.(type) {
 	case nil, string, bool, int64, float64:
 	default:
-		if key, temporal := set.contract.temporalKey(value); temporal {
+		if key, temporal := temporalIdentityParts(value, contract); temporal {
 			if position, existed = set.temporal[key]; existed {
 				return position, true
 			}
@@ -232,7 +256,7 @@ func (set *cypherValueSet) addPosition(value interface{}) (position int, existed
 			return position, false
 		}
 	}
-	key := cypherValueKey(value, set.contract)
+	key := cypherValueKey(value, contract)
 	if position, existed = set.encoded[key]; existed {
 		return position, true
 	}
@@ -246,12 +270,12 @@ func (set *cypherValueSet) addPosition(value interface{}) (position int, existed
 }
 
 // has reports whether the set holds a value equivalent to value.
-func (set *cypherValueSet) has(value interface{}) bool {
-	if key, temporal := set.contract.temporalKey(value); temporal {
+func (set *cypherValueSet) hasByContract(value interface{}, contract cypherComparisonContract) bool {
+	if key, temporal := temporalIdentityParts(value, contract); temporal {
 		_, found := set.temporal[key]
 		return found
 	}
-	_, found := set.encoded[cypherValueKey(value, set.contract)]
+	_, found := set.encoded[cypherValueKey(value, contract)]
 	return found
 }
 
@@ -259,7 +283,7 @@ func (set *cypherValueSet) has(value interface{}) bool {
 // apoc.coll.contains, containsAll, indexOf, occurrences and split):
 // value equality, excluding a top-level null. Nested values keep that contract.
 func cypherValueEquals(left, right interface{}) bool {
-	if equal, temporal := compareTemporalValues(left, right); temporal {
+	if equal, temporal := compareTemporalByContract(left, right, cypherValueEqualityContract); temporal {
 		return equal
 	}
 	return left != nil && right != nil && cypherValueKey(left, cypherValueEqualityContract) == cypherValueKey(right, cypherValueEqualityContract)

@@ -1238,7 +1238,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 			if !ok {
 				continue
 			}
-			k := cartesianValueKey(v)
+			k := cypherValueKey(v, cypherValueEqualityContract)
 			idx[k] = append(idx[k], n)
 		}
 		indexCache[cacheKey] = idx
@@ -1309,16 +1309,16 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					if !ok {
 						continue
 					}
-					lookupKey := cartesianValueKey(baseVal)
+					lookupKey := cypherValueKey(baseVal, cypherValueEqualityContract)
 					if lookupOffset != 0 {
 						// Shift the value exactly: integer offsets use integer
 						// arithmetic (no float64 rounding above 2^53, #692).
 						// Floats keep their float keys so float offset joins
 						// still find their index entries.
-						if key, ok := cartesianShiftValueKey(baseVal, lookupOffset); ok {
+						if key, ok := cartesianShiftValueKey(baseVal, lookupOffset, cypherValueEqualityContract); ok {
 							lookupKey = key
 						} else if baseNum, numeric := toFloat64(baseVal); numeric {
-							lookupKey = cartesianValueKey(baseNum + float64(lookupOffset))
+							lookupKey = cypherValueKey(baseNum+float64(lookupOffset), cypherValueEqualityContract)
 						} else {
 							continue
 						}
@@ -1358,7 +1358,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					break
 				}
 				if c.offset == 0 {
-					if cartesianValueKey(lv) != cartesianValueKey(rv) {
+					if cypherValueKey(lv, cypherValueEqualityContract) != cypherValueKey(rv, cypherValueEqualityContract) {
 						keep = false
 						break
 					}

@@ -51,7 +51,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 			return nil, false
 		}
 		if distinct {
-			key := cypherEquivalenceKey(value)
+			key := cypherValueKey(value, cypherEquivalenceContract)
 			if _, exists := seen[key]; exists {
 				continue
 			}
