@@ -79,11 +79,17 @@ func writeVectorRollbackFixture(t *testing.T, dir string) {
 			return err
 		}
 		rel, err := filepath.Rel(dir, path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		out, err := archive.Create(filepath.ToSlash(rel))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		data, err := os.ReadFile(path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		_, err = out.Write(data)
 		return err
 	}))
