@@ -14,7 +14,7 @@ func BenchmarkManagedSourceWritePath(b *testing.B) {
 			// Detect source-aware acceptance outside timing. Both trees use
 			// this identical fixture; the base writes its original payload,
 			// and the head writes the new production descriptor too.
-			probe := &Node{Properties: map[string]any{"id": "old"}, EmbedMeta: map[string]any{"__nornic_embedding_source": []any{"1", false, false, false, nil, nil, []string{"id"}}}}
+			probe := &Node{Properties: map[string]any{"id": "old"}, EmbedMeta: map[string]any{"__nornic_embedding_source": "1:0:0:0:1:2:id"}}
 			sourceAware := !engine.sameEmbeddingSource(probe, &Node{Properties: map[string]any{"id": "new"}})
 			const pool = 128
 			nodes := make([]*Node, pool)
@@ -23,14 +23,14 @@ func BenchmarkManagedSourceWritePath(b *testing.B) {
 				if _, err := engine.CreateNode(n); err != nil {
 					b.Fatal(err)
 				}
-				var keys []string
+				keys := "0:"
 				if mode != "text" {
-					keys = []string{"id"}
+					keys = "1:2:id"
 				}
 				n.ChunkEmbeddings = [][]float32{{1, 2, 3}}
 				n.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1}
 				if sourceAware {
-					n.EmbedMeta["__nornic_embedding_source"] = []any{"1", true, false, false, []string{"text"}, nil, keys}
+					n.EmbedMeta["__nornic_embedding_source"] = "1:1:1:4:text0:" + keys
 				}
 				if err := engine.UpdateNodeEmbeddingSidecar(n); err != nil {
 					b.Fatal(err)
