@@ -9,6 +9,43 @@ type procedureStatementStats struct {
 	executed bool
 }
 
+// A transaction scope stages contributions in the invocation's existing
+// collector type. Only the transaction owner may publish them after commit.
+// Nested procedure invocations still fold through their returned summary.
+type procedureStatementStatsScope struct {
+	procedureStatementStats
+	parent *procedureStatementStats
+}
+
+func beginProcedureStatementStatsScope(ctx context.Context) (context.Context, *procedureStatementStatsScope) {
+	parent, _ := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats)
+	if parent == nil {
+		return ctx, nil
+	}
+	scope := &procedureStatementStatsScope{
+		procedureStatementStats: procedureStatementStats{Context: ctx},
+		parent: parent,
+	}
+	return scope, scope
+}
+
+func (s *procedureStatementStatsScope) commit() {
+	if s == nil || s.parent == nil {
+		return
+	}
+	if s.executed {
+		s.parent.executed = true
+		s.parent.stats = mergeQueryStats(s.parent.stats, s.stats)
+	}
+	s.discard()
+}
+
+func (s *procedureStatementStatsScope) discard() {
+	if s != nil {
+		s.parent = nil
+	}
+}
+
 // Value keeps the invocation collector in the same allocation as its context
 // frame. Other statement metadata continues through the caller's context.
 func (s *procedureStatementStats) Value(key interface{}) interface{} {
