@@ -11,6 +11,15 @@ package cypher
 // after from, as the index of its '[' and of the matching ']', or -1, -1 when
 // there is none (or it is not closed).
 func nextRelationshipBracket(text string, from int) (open, close int) {
+	if open, close = scanRelationshipBracket(text, from); close < 0 {
+		return -1, -1
+	}
+	return open, close
+}
+
+// scanRelationshipBracket is nextRelationshipBracket that also reports a
+// relationship bracket that is not closed: its '[' and -1.
+func scanRelationshipBracket(text string, from int) (open, close int) {
 	for index := from; index < len(text); index++ {
 		switch c := text[index]; c {
 		case '\'', '"':
@@ -37,11 +46,7 @@ func nextRelationshipBracket(text string, from int) (open, close int) {
 			if previous < 0 || text[previous] != '-' {
 				continue
 			}
-			close := findMatchingBracket(text, index)
-			if close < 0 {
-				return -1, -1
-			}
-			return index, close
+			return index, findMatchingBracket(text, index)
 		}
 	}
 	return -1, -1

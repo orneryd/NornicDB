@@ -176,7 +176,7 @@ func embedLocallyChunkedDocuments(
 	texts []string,
 	maxTokens, overlap int,
 	chunk func(string, int, int) ([]string, error),
-	embedBatch func(context.Context, []string) ([][]float32, error),
+	embedBatch func(context.Context, []string) ([][]float32, []providerBatchUsage, error),
 	model string,
 ) ([]*DocumentChunkResult, error) {
 	results := make([]*DocumentChunkResult, len(texts))
@@ -194,7 +194,7 @@ func embedLocallyChunkedDocuments(
 	if len(allChunks) == 0 {
 		return results, nil
 	}
-	embeddings, err := embedBatch(ctx, allChunks)
+	embeddings, usage, err := embedBatch(ctx, allChunks)
 	if err != nil {
 		return nil, err
 	}
@@ -206,6 +206,7 @@ func embedLocallyChunkedDocuments(
 		results[i].Embeddings = append([][]float32(nil), embeddings[offset:offset+count]...)
 		offset += count
 	}
+	attributeDocumentUsage(results, usage)
 	return results, nil
 }
 
@@ -499,7 +500,8 @@ type ollamaRequest struct {
 
 // ollamaResponse is the response format from Ollama.
 type ollamaResponse struct {
-	Embedding []float32 `json:"embedding"`
+	Embedding       []float32 `json:"embedding"`
+	PromptEvalCount int       `json:"prompt_eval_count"`
 }
 
 // Embed generates a vector embedding for a single text string.
@@ -521,6 +523,14 @@ type ollamaResponse struct {
 //
 // Returns the embedding vector, or an error if the API request fails.
 func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	path, arrayInput := e.embeddingEndpoint(false)
+	if arrayInput {
+		vectors, err := e.EmbedBatch(ctx, []string{text})
+		if err != nil {
+			return nil, err
+		}
+		return vectors[0], nil
+	}
 	req := ollamaRequest{
 		Model:  e.config.Model,
 		Prompt: text,
@@ -531,7 +541,7 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := e.config.APIURL + e.config.APIPath
+	url := e.config.APIURL + path
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -553,14 +563,16 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
+	recordEmbeddingUsage(ctx, "ollama", e.Model(), 1, ollamaResp.PromptEvalCount)
 
 	return ollamaResp.Embedding, nil
 }
 
 // EmbedBatch generates embeddings for multiple texts efficiently.
 //
-// For Ollama, this currently makes one request per text. Future versions
-// may support true batch processing for better performance.
+// Uses Ollama's array-input /api/embed endpoint. The legacy single-text
+// /api/embeddings configuration selects /api/embed for batch calls. Custom
+// legacy endpoints retain their prompt protocol with one request per text.
 //
 // Example:
 //
@@ -583,15 +595,69 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 //
 // Returns a slice of embeddings (one per input text), or an error if any request fails.
 func (e *OllamaEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	results := make([][]float32, len(texts))
-	for i, text := range texts {
-		embedding, err := e.Embed(ctx, text)
-		if err != nil {
-			return nil, fmt.Errorf("failed to embed text %d: %w", i, err)
-		}
-		results[i] = embedding
+	if len(texts) == 0 {
+		return [][]float32{}, nil
 	}
-	return results, nil
+	path, arrayInput := e.embeddingEndpoint(true)
+	if !arrayInput {
+		vectors := make([][]float32, len(texts))
+		for i, text := range texts {
+			vector, err := e.Embed(ctx, text)
+			if err != nil {
+				return nil, err
+			}
+			vectors[i] = vector
+		}
+		if err := CheckEmbeddings(vectors, len(texts), e.Dimensions()); err != nil {
+			return nil, err
+		}
+		return vectors, nil
+	}
+	body, err := json.Marshal(openaiRequest{Model: e.Model(), Input: texts})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.config.APIURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, &ProviderError{Provider: "ollama", StatusCode: resp.StatusCode, Body: string(raw)}
+	}
+	var wire struct {
+		Embeddings      [][]float32 `json:"embeddings"`
+		PromptEvalCount int         `json:"prompt_eval_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	recordEmbeddingUsage(ctx, "ollama", e.Model(), len(texts), wire.PromptEvalCount)
+	if err := CheckEmbeddings(wire.Embeddings, len(texts), e.Dimensions()); err != nil {
+		return nil, err
+	}
+	return wire.Embeddings, nil
+}
+
+// embeddingEndpoint owns Ollama route/protocol selection. Only the documented
+// legacy route has a known array-capable counterpart; aliases keep the prompt
+// protocol that Embed has always used. Proxy prefixes and queries survive.
+func (e *OllamaEmbedder) embeddingEndpoint(batch bool) (string, bool) {
+	route, query, hasQuery := strings.Cut(e.config.APIPath, "?")
+	if batch && strings.HasSuffix(route, "/api/embeddings") {
+		route = strings.TrimSuffix(route, "/embeddings") + "/embed"
+	}
+	arrayInput := strings.HasSuffix(route, "/api/embed")
+	if hasQuery {
+		route += "?" + query
+	}
+	return route, arrayInput
 }
 
 func (e *OllamaEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
@@ -819,6 +885,9 @@ type openaiResponse struct {
 		Embedding []float32 `json:"embedding"`
 		Index     int       `json:"index"`
 	} `json:"data"`
+	Usage struct {
+		TotalTokens int `json:"total_tokens"`
+	} `json:"usage"`
 }
 
 // Embed generates a vector embedding for a single text string.
@@ -879,6 +948,28 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 //
 // Returns a slice of embeddings (one per input text), or an error if the API request fails.
 func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return [][]float32{}, nil
+	}
+	var results [][]float32
+	err := forProviderBatches(ctx, len(texts), 2048, 300000, func(i int) int { return min(len(texts[i]), 8192) }, func(start, end int) error {
+		vectors, err := e.embedBatchRequest(ctx, texts[start:end])
+		if err == nil {
+			results = mergeProviderBatch(results, vectors, start, len(texts))
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func (e *OpenAIEmbedder) embedBatchRequest(ctx context.Context, texts []string) ([][]float32, error) {
+	provider := "openai"
+	if e.config.Provider == "orca" {
+		provider = "orca"
+	}
 	req := openaiRequest{
 		Model: e.config.Model,
 		Input: texts,
@@ -905,7 +996,7 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ProviderError{Provider: "openai", StatusCode: resp.StatusCode, Body: string(bodyBytes)}
+		return nil, &ProviderError{Provider: provider, StatusCode: resp.StatusCode, Body: string(bodyBytes)}
 	}
 
 	var openaiResp openaiResponse
@@ -913,9 +1004,16 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	results := make([][]float32, len(openaiResp.Data))
+	recordEmbeddingUsage(ctx, provider, e.Model(), len(texts), openaiResp.Usage.TotalTokens)
+	results := make([][]float32, len(texts))
 	for _, data := range openaiResp.Data {
+		if data.Index < 0 || data.Index >= len(results) || results[data.Index] != nil {
+			return nil, &UnusableEmbeddingError{Input: -1, Dimensions: len(openaiResp.Data), Want: len(texts)}
+		}
 		results[data.Index] = data.Embedding
+	}
+	if err := CheckEmbeddings(results, len(texts), e.Dimensions()); err != nil {
+		return nil, err
 	}
 
 	return results, nil
