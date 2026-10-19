@@ -251,6 +251,7 @@ sweep.md                     all engines in one breakdown
 | `SEED_PARALLEL` | `4` | Concurrent Bolt sessions per seed phase. |
 | `SEED` | `42` | PRNG seed — same seed produces an identical dataset on both DBs. |
 | `GRAPH_ONLY` | `1` | Disable NornicDB BM25/vector-index maintenance for this graph-only workload. Set to `0` to include search-index build cost. |
+| `NORNICDB_CYPHER_QUERY_NORMALIZATION` | `false` | The server's query normalization pass (comment stripping, whitespace collapsing). The server defaults to `true`; the benchmark turns it off because its statements have neither. Export `true` to include its cost. |
 | `NORNIC_DATA_DIR` | `./bench-data/nornic` | NornicDB data directory. Wiped each run. |
 | `NEO4J_HOME` | `/opt/homebrew/opt/neo4j` | Neo4j install prefix. |
 | `NEO4J_DATA_DIR` | `/opt/homebrew/var/neo4j/data` | Neo4j data dir. `databases/` and `transactions/` are wiped each run. |
