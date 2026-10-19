@@ -467,7 +467,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		return 0, false
 	}
 	ctx = withRelationshipSeekPredicate(withValueBindings(ctx, values), pattern, where)
-	execution := e.relationshipExecutionFor(ctx, pattern, "" )
+	execution := e.relationshipExecutionFor(ctx, pattern, "")
 	return execution.anchoredCount(ctx, matches, seed, values, first)
 }
 

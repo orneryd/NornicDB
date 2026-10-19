@@ -399,7 +399,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	e.pushRelationshipEqualities(ctx, matches, whereClause)
 
 	paths, accessErr := execution.paths(ctx, matches, seedNodes, endSeedNodes, optimizedStartNodes)
-	if accessErr != nil { return nil, accessErr }
+	if accessErr != nil {
+		return nil, accessErr
+	}
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
 		for _, path := range paths {
@@ -688,7 +690,9 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 	paths := make([]PathResult, 0, util.SafePreallocCap(len(seedNodes)))
 	for _, endNode := range seedNodes {
 		seededPaths, accessErr := execution.paths(ctx, matches, nil, []*storage.Node{endNode}, nil)
-		if accessErr != nil { return nil, true, accessErr }
+		if accessErr != nil {
+			return nil, true, accessErr
+		}
 		for _, path := range seededPaths {
 			if whereClause != "" && !e.evaluateWhereOnPath(ctx, whereClause, e.buildPathContext(path, matches)) {
 				continue
@@ -1070,9 +1074,9 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 // TraversalMatch represents a parsed traversal pattern
 type TraversalMatch struct {
 	accessPattern string // original program template, retained by parsed-pattern caches
-	StartNode    nodePatternInfo
-	EndNode      nodePatternInfo
-	Relationship RelationshipPattern
+	StartNode     nodePatternInfo
+	EndNode       nodePatternInfo
+	Relationship  RelationshipPattern
 	// For chained patterns like (a)-[:R1]->(b)-[:R2]->(c), we store intermediate segments
 	IntermediateNodes []nodePatternInfo
 	Segments          []TraversalSegment // All segments in the chain
@@ -1119,7 +1123,9 @@ func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern str
 	} else {
 		match = e.parseTraversalPatternStateMachine(ctx, pattern)
 	}
-	if match != nil { match.accessPattern = source }
+	if match != nil {
+		match.accessPattern = source
+	}
 	return match
 }
 

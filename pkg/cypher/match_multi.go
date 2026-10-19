@@ -162,11 +162,18 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			boundEndNode := existing[matches.EndNode.variable]
 
 			var start, end []*storage.Node
-			if boundStartNode != nil { start = []*storage.Node{boundStartNode} }
-			if boundEndNode != nil { end = []*storage.Node{boundEndNode} }
+			if boundStartNode != nil {
+				start = []*storage.Node{boundStartNode}
+			}
+			if boundEndNode != nil {
+				end = []*storage.Node{boundEndNode}
+			}
 			execution := e.relationshipExecutionFor(ctx, pattern, "")
 			paths, err := execution.paths(ctx, matches, start, end, nil)
-			if err != nil { recordExpressionFailure(ctx, err); return nil, nil }
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil, nil
+			}
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
 					continue

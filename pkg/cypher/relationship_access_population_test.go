@@ -35,15 +35,21 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 	for _, source := range []string{"'x'", "$x", "k"} {
 		for _, inline := range []bool{false, true} {
 			body := "MATCH (a)-[r:T]->() WHERE r.p=" + source
-			if inline { body = "(a)-[r:T {p:" + source + "}]->()" }
+			if inline {
+				body = "(a)-[r:T {p:" + source + "}]->()"
+			}
 			for _, kind := range []string{"COUNT", "EXISTS", "COLLECT", "CALL"} {
 				name := fmt.Sprintf("generated_anchor_%s_%s_%t", kind, source, inline)
 				prefix := "MATCH (a:Key) WITH a,$x AS k "
 				if kind == "CALL" {
-					if inline { body = "MATCH " + body }
+					if inline {
+						body = "MATCH " + body
+					}
 					add(name, prefix+"CALL (a,k) { "+body+" RETURN r.p AS value } RETURN value")
 				} else if kind == "COLLECT" {
-					if inline { body = "MATCH " + body }
+					if inline {
+						body = "MATCH " + body
+					}
 					add(name, prefix+"RETURN COLLECT { "+body+" RETURN r.p }")
 				} else {
 					add(name, prefix+"RETURN "+kind+" { "+body+" }")
@@ -55,11 +61,21 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 }
 
 func relationshipAccessGeneratedRows(name string) [][]interface{} {
-	if strings.HasPrefix(name,"generated_anchor_COUNT_") { return [][]interface{}{{int64(1)}} }
-	if strings.HasPrefix(name,"generated_anchor_EXISTS_") { return [][]interface{}{{true}} }
-	if strings.HasPrefix(name,"generated_anchor_CALL_") || strings.HasSuffix(name,"_type") { return [][]interface{}{{"x"}} }
+	if strings.HasPrefix(name, "generated_anchor_COUNT_") {
+		return [][]interface{}{{int64(1)}}
+	}
+	if strings.HasPrefix(name, "generated_anchor_EXISTS_") {
+		return [][]interface{}{{true}}
+	}
+	if strings.HasPrefix(name, "generated_anchor_CALL_") || strings.HasSuffix(name, "_type") {
+		return [][]interface{}{{"x"}}
+	}
 	label := "x"
-	if strings.HasSuffix(name,"_exists") { label = "Made" }
-	if strings.HasPrefix(name,"generated_match_") { label = "Key" }
+	if strings.HasSuffix(name, "_exists") {
+		label = "Made"
+	}
+	if strings.HasPrefix(name, "generated_match_") {
+		label = "Key"
+	}
 	return [][]interface{}{{[]interface{}{label}}}
 }
