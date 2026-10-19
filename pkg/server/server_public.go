@@ -146,7 +146,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	embedInfo := map[string]interface{}{
 		"enabled": false,
 	}
-	if embedStats := s.db.EmbedQueueStats(); embedStats != nil {
+	if embedStats := s.db.EmbedQueueStats(); embedStats != nil && s.canReadAllDatabases(r) {
 		status := "idle"
 		if embedStats.Running {
 			status = "processing"

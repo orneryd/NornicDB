@@ -299,15 +299,64 @@ func (s *Server) VisibleDatabases(ctx context.Context, candidates []string) ([]s
 	}
 	mode := s.databaseAccessModeResolver(roles)
 	if mode == nil {
-		return candidates, nil
+		return nil, nil
 	}
 	out := make([]string, 0, len(candidates))
 	for _, name := range candidates {
-		if mode.CanSeeDatabase(name) {
+		if mode.CanSeeDatabase(name) && s.AllowDatabaseAccess(ctx, name, false) == nil {
 			out = append(out, name)
 		}
 	}
 	return out, nil
+}
+
+// AllowAllDatabaseAccess checks the population a full storage snapshot can
+// expose, including ordinary graph databases which are not Qdrant collections.
+func (s *Server) AllowAllDatabaseAccess(ctx context.Context) error {
+	if s.databaseAccessModeResolver == nil {
+		return nil
+	}
+	var names []string
+	if store, ok := s.collections.(*databaseCollectionStore); ok {
+		for _, database := range store.dbManager.ListDatabases() {
+			if database != nil && database.Type != "system" {
+				names = append(names, database.Name)
+			}
+		}
+	} else if lister, ok := s.baseStorage.(interface{ ListNamespaces() []string }); ok {
+		names = lister.ListNamespaces()
+	} else {
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+	}
+	for _, database := range names {
+		if database == "" || database == "system" {
+			continue
+		}
+		if err := s.AllowDatabaseAccess(ctx, database, false); err != nil {
+			return err
+		}
+		if err := s.AllowDatabaseAccess(ctx, database, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// authorizeRequestDatabase covers named and empty/batch requests before the
+// service dispatch. Per-statement and child-request checks remain at their
+// existing owners when a method can select more than one database.
+func (s *Server) authorizeRequestDatabase(ctx context.Context, req interface{}, fullMethod string) error {
+	key, _ := methodKey(fullMethod)
+	if key == "Snapshots/CreateFull" || key == "Snapshots/ListFull" || key == "Snapshots/DeleteFull" {
+		return s.AllowAllDatabaseAccess(ctx)
+	}
+	if selected, ok := req.(interface{ GetCollectionName() string }); ok {
+		permission, known := requiredPermissionForMethod(fullMethod)
+		if known {
+			return s.AllowDatabaseAccess(ctx, selected.GetCollectionName(), permission != auth.PermRead && permission != auth.PermAdmin)
+		}
+	}
+	return nil
 }
 
 type contextKeyClaims struct{}
@@ -565,6 +614,9 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 						return nil, err
 					}
 					ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+					if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
+						return nil, err
+					}
 					return handler(ctx, req)
 				}
 				// If Basic Auth fails, fall through to try Bearer token
@@ -589,6 +641,9 @@ func (s *Server) unaryAuthInterceptor(ctx context.Context, req interface{}, info
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, contextKeyClaims{}, claims)
+	if err := s.authorizeRequestDatabase(ctx, req, info.FullMethod); err != nil {
+		return nil, err
+	}
 	return handler(ctx, req)
 }
 

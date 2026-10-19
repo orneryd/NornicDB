@@ -53,6 +53,16 @@ func (s *SnapshotsService) allowAccess(ctx context.Context, collectionName strin
 	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
 }
 
+func (s *SnapshotsService) allowFullAccess(ctx context.Context) error {
+	if s.checker == nil {
+		return nil
+	}
+	if checker, ok := s.checker.(interface{ AllowAllDatabaseAccess(context.Context) error }); ok {
+		return checker.AllowAllDatabaseAccess(ctx)
+	}
+	return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
+}
+
 // Create creates a new snapshot of a collection.
 // Maps to: Export collection nodes as JSON snapshot
 func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRequest) (*qpb.CreateSnapshotResponse, error) {
@@ -232,6 +242,9 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 // CreateFull creates a full storage snapshot (all collections).
 // Maps to: BadgerEngine.Backup or WAL.CreateSnapshot for all data
 func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSnapshotRequest) (*qpb.CreateSnapshotResponse, error) {
+	if err := s.allowFullAccess(ctx); err != nil {
+		return nil, err
+	}
 	start := time.Now()
 
 	if s.baseStorage == nil {
@@ -299,6 +312,9 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 // ListFull lists all full storage snapshots.
 // Maps to: List files in full snapshot directory
 func (s *SnapshotsService) ListFull(ctx context.Context, req *qpb.ListFullSnapshotsRequest) (*qpb.ListSnapshotsResponse, error) {
+	if err := s.allowFullAccess(ctx); err != nil {
+		return nil, err
+	}
 	start := time.Now()
 
 	// List snapshots in full directory
@@ -353,6 +369,9 @@ func (s *SnapshotsService) ListFull(ctx context.Context, req *qpb.ListFullSnapsh
 // DeleteFull removes a full storage snapshot.
 // Maps to: Delete full snapshot file
 func (s *SnapshotsService) DeleteFull(ctx context.Context, req *qpb.DeleteFullSnapshotRequest) (*qpb.DeleteSnapshotResponse, error) {
+	if err := s.allowFullAccess(ctx); err != nil {
+		return nil, err
+	}
 	start := time.Now()
 
 	if req.GetSnapshotName() == "" {
