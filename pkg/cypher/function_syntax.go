@@ -311,6 +311,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 			group := stack[len(stack)-1]
 			syntax.groups[group].punctuation = append(syntax.groups[group].punctuation, index)
 		}
+		previous = index
 		index++
 	}
 	for index := range syntax.groups {
