@@ -216,11 +216,7 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		}
 	}
 	closing := func() int {
-		closeBy := ')'
-		if list {
-			closeBy = ']'
-		}
-		if close := findMatchingDelimiter(text, open, rune(text[open]), closeBy); close >= 0 {
+		if close := syntaxGroupClose(text, open); close >= 0 {
 			return close
 		}
 		return len(text)
