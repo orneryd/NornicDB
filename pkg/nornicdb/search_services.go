@@ -46,11 +46,9 @@ type dbSearchService struct {
 	pendingFlushTimer   *time.Timer
 	pendingFlushRunning bool
 	pendingFlushDelay   time.Duration
-	// retryAttempts counts the retries of refreshes whose storage read failed
-	// (searchRefreshRetry), by "n:"/"e:" and local ID. retired is set once the
-	// entry's generation ended (invalidateSearchState). Both under pendingMu.
-	retryAttempts map[string]int
-	retired       bool
+	// Delayed retry ownership and entry retirement are protected by pendingMu.
+	refreshRetries map[string]*pendingSearchRetry
+	retired        bool
 	// generation is the database's search-state generation this entry is.
 	generation uint64
 }
@@ -90,11 +88,11 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 func (e *dbSearchService) queueRefresh(localID string) search.NodeMutation {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
-	if e.pendingOps == nil {
-		e.pendingOps = make(map[string]search.NodeMutation)
+	if e.retired {
+		return search.NodeMutation{}
 	}
 	mutation := e.svc.ReserveNodeMutation(storage.NodeID(localID))
-	e.pendingOps[localID] = mutation
+	e.queueReservedRefreshLocked(localID, search.RefreshRetry{Node: mutation})
 	return mutation
 }
 
@@ -102,10 +100,10 @@ func (e *dbSearchService) queueRefresh(localID string) search.NodeMutation {
 func (e *dbSearchService) queueEdgeRefresh(localID string) {
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
-	if e.pendingEdgeOps == nil {
-		e.pendingEdgeOps = make(map[string]search.EdgeMutation)
+	if !e.retired {
+		mutation := e.svc.ReserveEdgeMutation(storage.EdgeID(localID))
+		e.queueReservedRefreshLocked(localID, search.RefreshRetry{Edge: mutation})
 	}
-	e.pendingEdgeOps[localID] = e.svc.ReserveEdgeMutation(storage.EdgeID(localID))
 }
 
 func (e *dbSearchService) drainPending() (map[string]search.NodeMutation, map[string]search.EdgeMutation) {
@@ -449,7 +447,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		svc:       svc,
 		buildDone: make(chan struct{}),
 	}
-	svc.SetRefreshRetry(db.searchRefreshRetry(entry))
+	svc.SetRefreshRetryOwner(db.searchRefreshRetry(entry))
 
 	db.searchServicesMu.Lock()
 	// Double-check in case another goroutine created it while we were building.
@@ -802,14 +800,14 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 					err := entry.svc.RefreshNodeWithMutation(nodes[id])
 					db.logSearchRefreshError("node", id, entry, err)
 					if err == nil {
-						entry.clearRetry("n:" + id)
+						db.finishSearchRefresh(entry, search.RefreshRetry{Node: nodes[id]})
 					}
 				}
 				for _, id := range sortedKeys(edges) {
 					err := entry.svc.RefreshEdgeWithMutation(edges[id])
 					db.logSearchRefreshError("relationship", id, entry, err)
 					if err == nil {
-						entry.clearRetry("e:" + id)
+						db.finishSearchRefresh(entry, search.RefreshRetry{Edge: edges[id]})
 					}
 				}
 				entry.reusePending(nodes, edges)
