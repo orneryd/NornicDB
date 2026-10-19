@@ -31,4 +31,3 @@ func TestVectorEntryInventoryUsesEscapedMain(t *testing.T) {
 		})
 	}
 }
-
