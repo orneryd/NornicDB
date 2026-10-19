@@ -44,3 +44,24 @@ func TestFabricStructureRenderingSourceSpans(t *testing.T) {
 		require.Equal(t, q.LocalText, out.String(), "structural rendering and its source map agree")
 	}
 }
+
+func TestFabricStructurePublicProjection(t *testing.T) {
+	text := "RETURN 1 AS `UNION`, 2 AS `CALL` UNION ALL RETURN 3 AS `CALL`, 4 AS `UNION`"
+	q := ReadQueryStructure(text)
+	require.NoError(t, q.Err)
+	require.Equal(t, []string{"UNION", "CALL"}, q.ResultColumns())
+	clause := q.ResultClause()
+	require.Equal(t, "1 AS `UNION`, 2 AS `CALL`", text[clause.BodyStart:clause.End])
+}
+
+func TestFabricStructureInvocationArgumentNames(t *testing.T) {
+	for _, example := range []struct{ text, invocation string }{
+		{"WITH 'comp.one' AS distinct USE graph.byName(distinct) RETURN 7 AS k", "graph.byName(`distinct`)"},
+		{"WITH 7 AS distinct RETURN toInteger(distinct) AS k", "toInteger(`distinct`)"},
+		{"WITH 7 AS distinct RETURN count(DISTINCT distinct) AS k", "count(DISTINCT `distinct`)"},
+	} {
+		q := ReadQueryStructure(example.text)
+		require.NoError(t, q.Err, example.text)
+		require.Contains(t, q.LocalText, example.invocation, example.text)
+	}
+}

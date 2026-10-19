@@ -16,26 +16,37 @@ func ProjectionColumns(p *QueryProjection) []string {
 	return columns
 }
 
-// ResultColumns selects the declared public projection. UNION uses its first
-// branch's schema; a star remains owned by runtime scope.
-func (q *QueryStructure) ResultColumns() []string {
-	var first, last *QueryProjection
+// ResultClause owns the public projection and its source span. UNION uses its
+// first branch's schema, including when names are restored after rewriting.
+func (q *QueryStructure) ResultClause() *QueryClause {
+	var first, last *QueryClause
 	union := false
-	for _, clause := range q.Clauses {
+	for i := range q.Clauses {
+		clause := &q.Clauses[i]
 		if clause.Kind == "RETURN" {
 			if first == nil {
-				first = clause.Projection
+				first = clause
 			}
-			last = clause.Projection
+			last = clause
 		}
 		if clause.Kind == "UNION" {
 			union = true
 		}
 	}
 	if union {
-		return ProjectionColumns(first)
+		return first
 	}
-	return ProjectionColumns(last)
+	return last
+}
+
+// ResultColumns selects the declared public projection. A star remains owned
+// by runtime scope.
+func (q *QueryStructure) ResultColumns() []string {
+	clause := q.ResultClause()
+	if clause == nil {
+		return nil
+	}
+	return ProjectionColumns(clause.Projection)
 }
 
 // ValidateUnions checks source schemas before any rendering/normalization can
