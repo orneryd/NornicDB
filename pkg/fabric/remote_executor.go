@@ -11,12 +11,20 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// Remote factories may decorate an engine. Fabric depends on its Cypher
+// capabilities rather than the concrete transport implementation.
+type remoteCypherEngine interface {
+	QueryCypher(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
+	BeginCypherTx(context.Context) (storage.RemoteCypherTx, error)
+	Close() error
+}
+
 // RemoteFragmentExecutor executes fragments against a remote NornicDB instance
 // via the RemoteEngine transport (Bolt or HTTP, auto-detected from URI scheme).
 type RemoteFragmentExecutor struct {
 	// engineCache caches RemoteEngine instances by URI+database key to avoid
 	// reconnecting on every fragment execution.
-	engineCache map[string]*storage.RemoteEngine
+	engineCache map[string]remoteCypherEngine
 	txHandles   map[string]*remoteParticipant
 	mu          sync.RWMutex
 }
@@ -93,7 +101,7 @@ func (p *remoteParticipant) rollbackDetached(ctx context.Context) error {
 // NewRemoteFragmentExecutor creates a remote executor.
 func NewRemoteFragmentExecutor() *RemoteFragmentExecutor {
 	return &RemoteFragmentExecutor{
-		engineCache: make(map[string]*storage.RemoteEngine),
+		engineCache: make(map[string]remoteCypherEngine),
 		txHandles:   make(map[string]*remoteParticipant),
 	}
 }
@@ -237,7 +245,7 @@ func fnv64aString(s string) uint64 {
 }
 
 // getOrCreateEngine returns a cached engine or creates a new one.
-func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToken string) (*storage.RemoteEngine, error) {
+func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToken string) (remoteCypherEngine, error) {
 	key := cacheKey(loc, authToken)
 
 	r.mu.RLock()
@@ -258,7 +266,7 @@ func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToke
 			if err != nil {
 				return nil, err
 			}
-			remote, ok := resolved.(*storage.RemoteEngine)
+			remote, ok := resolved.(remoteCypherEngine)
 			if !ok {
 				return nil, fmt.Errorf("remote constituent '%s' resolved to %T", loc.GraphName, resolved)
 			}
@@ -289,10 +297,9 @@ func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToke
 	return engine, nil
 }
 
-// executeRemoteQuery runs a Cypher query via a RemoteEngine and returns columns + rows.
-// This uses the engine's GetNodesByLabel as a transport mechanism for arbitrary Cypher.
-// The RemoteEngine.transport.query method handles the actual Bolt/HTTP execution.
-func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine *storage.RemoteEngine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+// executeRemoteQuery uses the factory's Cypher capabilities for implicit or
+// explicit transactions, preserving decorator behavior on both paths.
+func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine remoteCypherEngine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	sub, hasSub := SubTransactionFromContext(ctx)
 	if !hasSub || sub == nil {
 		return engine.QueryCypher(ctx, query, params)
@@ -304,7 +311,7 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	return handle.tx.QueryCypher(ctx, query, params)
 }
 
-func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine) (*remoteParticipant, error) {
+func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine remoteCypherEngine) (*remoteParticipant, error) {
 	r.mu.RLock()
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
 		r.mu.RUnlock()

@@ -119,13 +119,16 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 				qualifiedName := dbName + "." + strings.ToLower(ref.Alias)
 				switch ref.Type {
 				case "remote":
+					// Catalog lookup is case-insensitive, but the manager's
+					// composite key retains its original spelling.
+					managerName := db.Name + "." + ref.Alias
 					c.graphs[qualifiedName] = &LocationRemote{
 						GraphName: qualifiedName,
 						DBName:    ref.DatabaseName,
 						URI:       ref.URI,
 						AuthMode:  effectiveAuthMode(ref.AuthMode),
 						ResolveEngine: func(authToken string) (storage.Engine, error) {
-							return mgr.GetStorageWithAuth(qualifiedName, authToken)
+							return mgr.GetStorageWithAuth(managerName, authToken)
 						},
 					}
 				default:
