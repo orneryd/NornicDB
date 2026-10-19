@@ -20,6 +20,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	antlr4 "github.com/antlr4-go/antlr/v4"
@@ -119,31 +120,40 @@ func RedactLiterals(query string) string {
 // RedactLiterals): the safe direction, since it redacts more.
 const redactGrammarCheckMaxBytes = 8 << 10
 
-// redactGrammarValidate is cantlr.Validate; tests replace it to count the
+// redactGrammarValidate is cantlr.ValidateContext; tests replace it to count the
 // grammar parses the redactor runs.
-var redactGrammarValidate = cantlr.Validate
+var redactGrammarValidate = cantlr.ValidateContext
 
 // redactGrammarAccepts is the uncached grammar verdict RedactLiterals uses.
 func redactGrammarAccepts(query string) bool {
-	return len(query) <= redactGrammarCheckMaxBytes && redactGrammarValidate(query) == nil
+	return len(query) <= redactGrammarCheckMaxBytes && redactGrammarValidate(context.Background(), query) == nil
 }
 
 // redactForLog is RedactLiterals for the executor's log sites. A statement
 // the executor's own ANTLR validation (or an earlier redaction) already
 // found grammar-valid is not parsed again; the verdict is the same either
 // way, so the output does not depend on the parser or the cache.
-func (e *StorageExecutor) redactForLog(query string) string {
-	return redactLiterals(query, e.redactGrammarAccepts)
+func (e *StorageExecutor) redactForLog(ctx context.Context, query string) string {
+	if ctx.Err() != nil {
+		return RedactedPlaceholder
+	}
+	redacted := redactLiterals(query, func(query string) bool {
+		return e.redactGrammarAccepts(ctx, query)
+	})
+	if ctx.Err() != nil {
+		return RedactedPlaceholder
+	}
+	return redacted
 }
 
-func (e *StorageExecutor) redactGrammarAccepts(query string) bool {
-	if len(query) > redactGrammarCheckMaxBytes {
+func (e *StorageExecutor) redactGrammarAccepts(ctx context.Context, query string) bool {
+	if ctx.Err() != nil || len(query) > redactGrammarCheckMaxBytes {
 		return false
 	}
 	if e.hasCachedValidSyntax(query, syntaxGrammarAccepted) {
 		return true
 	}
-	if redactGrammarValidate(query) != nil {
+	if redactGrammarValidate(ctx, query) != nil {
 		return false
 	}
 	e.markCachedValidSyntax(query, syntaxGrammarAccepted)
