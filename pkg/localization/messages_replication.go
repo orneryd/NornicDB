@@ -515,18 +515,3 @@ func ReplicationEngineEncodeBulkDeleteEdgesFailed(cause error) Message {
 func ReplicationEngineEncodeDeletePrefixFailed(cause error) Message {
 	return replicationCause(MessageReplicationEngineEncodeDeletePrefixFailed, "encode delete by prefix: ", cause)
 }
-
-const (
-	MessageReplicationConfigInvalidReplayProtection     MessageID = "replication.config.invalid_replay_protection"
-	MessageReplicationConfigReplayProtectionNeedsSecret MessageID = "replication.config.replay_protection_needs_secret"
-)
-
-// ReplicationConfigInvalidReplayProtection identifies an unknown replay protection mode.
-func ReplicationConfigInvalidReplayProtection(value string) Message {
-	return Message{ID: MessageReplicationConfigInvalidReplayProtection, Fallback: fmt.Sprintf("invalid value \"%s\" for NORNICDB_CLUSTER_REPLAY_PROTECTION (use 'compat' or 'require')", value), Data: map[string]any{"Value": value, "EnvVar": "NORNICDB_CLUSTER_REPLAY_PROTECTION", "Compat": "compat", "Require": "require"}}
-}
-
-// ReplicationConfigReplayProtectionNeedsSecret identifies required replay protection without a replication secret.
-func ReplicationConfigReplayProtectionNeedsSecret() Message {
-	return Message{ID: MessageReplicationConfigReplayProtectionNeedsSecret, Fallback: "NORNICDB_CLUSTER_REPLAY_PROTECTION=require needs NORNICDB_CLUSTER_REPLICATION_SECRET", Data: map[string]any{"EnvVar": "NORNICDB_CLUSTER_REPLAY_PROTECTION", "SecretEnvVar": "NORNICDB_CLUSTER_REPLICATION_SECRET"}}
-}
