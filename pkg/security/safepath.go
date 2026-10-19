@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+// AbsCanonicalFilePath applies the rooted-file path validation before resolving
+// a path against the working directory. Validating the supplied spelling first
+// prevents filepath.Abs from cleaning away rejected traversal components.
+func AbsCanonicalFilePath(path string) (string, error) {
+	if _, _, err := splitCanonicalFilePath(path); err != nil {
+		return "", err
+	}
+	return filepath.Abs(path)
+}
+
 // OpenRootedFile opens a canonical file path through an os.Root rooted at its
 // parent directory. Traversal components and paths whose cleaned form differs
 // from the supplied path are rejected before any filesystem operation.
