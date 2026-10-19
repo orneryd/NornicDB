@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -43,7 +44,7 @@ func TestRule73HeimdallPublicColdAdmission(t *testing.T) {
 			if form == "fabric" {
 				query = "CALL { USE gate_heimdall_comp.leaf " + body + " } RETURN c"
 			}
-			ctx := context.Background()
+			ctx := auth.WithRequestAuthenticationDisabled(context.Background())
 			if _, err := router.Query(ctx, "nornic", query, nil); err != nil {
 				t.Fatal(err)
 			}
