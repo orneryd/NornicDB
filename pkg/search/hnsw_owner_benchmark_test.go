@@ -10,9 +10,9 @@ import (
 )
 
 // This identical public-API fixture runs on the release base and the port.
-func lifecycleBenchmarkFixture(b *testing.B, indexed bool) (*Service, *storage.MemoryEngine, []float32) {
+func lifecycleBenchmarkFixture(b *testing.B, indexed bool) (*Service, *storage.NamespacedEngine, []float32) {
 	b.Helper()
-	engine := storage.NewMemoryEngine()
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "hnsw-bench")
 	svc := NewServiceWithDimensions(engine, 64)
 	svc.SetRuntimeStrategyTransitionsEnabled(false)
 	rng := rand.New(rand.NewSource(86))
