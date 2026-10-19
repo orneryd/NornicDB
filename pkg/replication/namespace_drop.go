@@ -38,6 +38,11 @@ func stampNamespaceDrop(cmd *Command, op *storage.NamespaceDrop) error {
 	if err := decodeGob(cmd.Data, &request); err != nil {
 		return err
 	}
+	// A consensus/WAL entry is immutable after admission. Application uses its
+	// assigned revision and catalog delta even while peers serialize the log.
+	if request.RevisionAssigned {
+		return nil
+	}
 	request.Retirement = op.CatalogRevision()
 	request.RevisionAssigned = true
 	request.Catalog = op.CatalogMutation()
