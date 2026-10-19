@@ -281,8 +281,8 @@ type vectorNodeID string
 type vectorEntryID string
 
 type nodeLexicalHint struct {
-	ID vectorNodeID
-	Rank uint32
+	ID        vectorNodeID
+	Rank      uint32
 	Signature uint64
 }
 
@@ -290,7 +290,9 @@ type nodeLexicalHints map[vectorNodeID]nodeLexicalHint
 type entryLexicalHints map[vectorEntryID]nodeLexicalHint
 
 func nodeHintsFromValues(hints []LexicalSeedHint) nodeLexicalHints {
-	if len(hints) == 0 { return nil }
+	if len(hints) == 0 {
+		return nil
+	}
 	out := make(nodeLexicalHints, len(hints))
 	for _, hint := range hints {
 		id := strings.TrimSpace(hint.ID)
@@ -298,7 +300,9 @@ func nodeHintsFromValues(hints []LexicalSeedHint) nodeLexicalHints {
 			out[vectorNodeID(id)] = nodeLexicalHint{ID: vectorNodeID(id), Rank: hint.Rank, Signature: hint.Signature}
 		}
 	}
-	if len(out) == 0 { return nil }
+	if len(out) == 0 {
+		return nil
+	}
 	return out
 }
 
@@ -309,7 +313,9 @@ func nodeHintForID(hints nodeLexicalHints, id string) (nodeLexicalHint, bool) {
 
 func lexicalHintForVectorID(key string, hints nodeLexicalHints) (nodeLexicalHint, bool) {
 	owner, ok := vectorEntryOwner(key)
-	if !ok { return nodeLexicalHint{}, false }
+	if !ok {
+		return nodeLexicalHint{}, false
+	}
 	return nodeHintForID(hints, owner)
 }
 
@@ -321,7 +327,9 @@ func entryHintForVectorID(hints entryLexicalHints, key string) (nodeLexicalHint,
 // entryHintsFromValues is the public HNSW per-entry hint API boundary. Its IDs
 // already identify entries; the retained hint still names the owning document.
 func entryHintsFromValues(hints []LexicalSeedHint) entryLexicalHints {
-	if len(hints) == 0 { return nil }
+	if len(hints) == 0 {
+		return nil
+	}
 	out := make(entryLexicalHints, len(hints))
 	for _, hint := range hints {
 		if owner, ok := vectorEntryOwner(hint.ID); ok {
@@ -342,7 +350,9 @@ func mainKeyForLexicalHint(hint nodeLexicalHint) string {
 // lexicalHintValues projects an explicitly node- or entry-keyed map through the
 // legacy public hint API. The key domain is preserved; the maps never mix.
 func lexicalHintValues[K ~string, H ~map[K]nodeLexicalHint](hints H) []LexicalSeedHint {
-	if len(hints) == 0 { return nil }
+	if len(hints) == 0 {
+		return nil
+	}
 	out := make([]LexicalSeedHint, 0, len(hints))
 	for key, hint := range hints {
 		out = append(out, LexicalSeedHint{ID: string(key), Rank: hint.Rank, Signature: hint.Signature})
@@ -354,7 +364,9 @@ func lexicalHintValues[K ~string, H ~map[K]nodeLexicalHint](hints H) []LexicalSe
 // The input remains document-keyed for construction and owner lookup; only graph
 // hint caches use this entry-keyed projection. Caller snapshots before pipelineMu.
 func (s *Service) entryLexicalHintsForNodes(docs nodeLexicalHints) entryLexicalHints {
-	if len(docs) == 0 { return nil }
+	if len(docs) == 0 {
+		return nil
+	}
 	out := make(entryLexicalHints)
 	s.indexMu.RLock()
 	defer s.indexMu.RUnlock()
@@ -368,15 +380,21 @@ func (s *Service) entryLexicalHintsForNodes(docs nodeLexicalHints) entryLexicalH
 
 func (s *Service) hnswLexicalSeedNodeSet(ft bm25Index) map[string]struct{} {
 	hints := s.hnswLexicalSeedHints(ft, DefaultHNSWConfig().M)
-	if len(hints) == 0 { return nil }
+	if len(hints) == 0 {
+		return nil
+	}
 	out := make(map[string]struct{}, len(hints))
-	for id := range hints { out[string(id)] = struct{}{} }
+	for id := range hints {
+		out[string(id)] = struct{}{}
+	}
 	return out
 }
 
 func vectorIDInSeedNodeSet(vectorID string, seedNodeIDs map[string]struct{}) bool {
 	owner, ok := vectorEntryOwner(vectorID)
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	_, ok = seedNodeIDs[owner]
 	return ok
 }
