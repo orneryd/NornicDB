@@ -295,47 +295,24 @@ func (c *databaseLimitChecker) CheckStorageLimits(operation string, node *storag
 // getCurrentStorageSize gets the current storage size, initializing it if needed.
 // Uses tracked size from DatabaseInfo for efficiency.
 func (c *databaseLimitChecker) getCurrentStorageSize(engine storage.Engine) (int64, error) {
-	// Get database info to access tracked size
-	c.manager.mu.RLock()
-	info, exists := c.manager.databases[c.databaseName]
-	c.manager.mu.RUnlock()
-
-	if !exists {
-		return 0, ErrDatabaseNotFound
-	}
-
-	// Check if size has been initialized
-	info.sizeMu.RLock()
-	initialized := info.sizeInitialized
-	currentSize := info.totalSize
-	nodeSize := info.nodeSize
-	edgeSize := info.edgeSize
-	info.sizeMu.RUnlock()
-
-	if !initialized {
-		// Calculate size on first access (lazy initialization)
-		calcNodeSize, calcEdgeSize, err := c.calculateCurrentStorageSize(engine)
-		if err != nil {
+	for {
+		if err := c.manager.ensureStorageSizeInitialized(c.databaseName, engine); err != nil {
 			return 0, err
 		}
-		totalSize := calcNodeSize + calcEdgeSize
-
-		// Update tracked size
-		info.sizeMu.Lock()
-		info.totalSize = totalSize
-		info.nodeSize = calcNodeSize
-		info.edgeSize = calcEdgeSize
-		info.sizeInitialized = true
-		info.sizeMu.Unlock()
-
-		return totalSize, nil
+		c.manager.mu.RLock()
+		info, exists := c.manager.databases[c.databaseName]
+		c.manager.mu.RUnlock()
+		if !exists {
+			return 0, ErrDatabaseNotFound
+		}
+		info.sizeMu.RLock()
+		initialized, size := info.sizeInitialized, info.totalSize
+		c.nodeSize, c.edgeSize = info.nodeSize, info.edgeSize
+		info.sizeMu.RUnlock()
+		if initialized {
+			return size, nil
+		}
 	}
-
-	// Store node/edge sizes for use in estimation
-	c.nodeSize = nodeSize
-	c.edgeSize = edgeSize
-
-	return currentSize, nil
 }
 
 // calculateCurrentStorageSize calculates the total size of all nodes and edges in storage.

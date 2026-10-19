@@ -216,6 +216,7 @@ type BadgerEngine struct {
 	namespaceJournalGlobal       namespaceJournalState
 	namespaceJournalPreparations map[string]*NamespaceDrop
 	namespaceWALOwner            *WALEngine
+	accountingOwners             sync.Map // namespace -> AccountingOwner
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup

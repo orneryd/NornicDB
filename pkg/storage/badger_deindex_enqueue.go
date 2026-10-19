@@ -145,7 +145,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 //
 // When decay is disabled at the engine level, this is a no-op so the
 // codepath cost stays zero on operators who don't use the feature.
-func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, namespace string, node *Node) error {
+func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn kvWriter, namespace string, node *Node) error {
 	if !b.decayEnabled || node == nil {
 		return nil
 	}
@@ -162,7 +162,7 @@ func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, 
 		return nil
 	}
 
-	data, _, err := b.encodeNodeInTxn(txn, namespace, node)
+	data, _, err := b.encodeNodeInTxn(kvWriterTxn(txn), namespace, node)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 	return false, nil, nil
 }
 
-func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {
+func enqueueWorkItemInTxn(txn kvWriter, entityID, scope string) error {
 	workItem := &DeindexWorkItem{
 		WorkItemID:  fmt.Sprintf("deindex:%s", entityID),
 		TargetID:    entityID,
@@ -244,14 +244,9 @@ func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {
 	return putDeindexWorkItemInTxn(txn, workItem)
 }
 
-func clearTombstonesForEntityInTxn(txn *badger.Txn, entityID string) error {
-	catItem, err := txn.Get(indexEntryCatalogKey(entityID))
-	if err != nil {
-		return nil
-	}
-
+func clearTombstonesForEntityInTxn(txn kvWriter, entityID string) error {
 	var cat IndexEntryCatalog
-	if err := catItem.Value(func(val []byte) error {
+	if err := kvReadValue(txn, indexEntryCatalogKey(entityID), func(val []byte) error {
 		return msgpack.Unmarshal(val, &cat)
 	}); err != nil {
 		return nil
