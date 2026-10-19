@@ -30,7 +30,9 @@ func deterministicExecution(ctx context.Context, text string, depth int) bool {
 	}
 	text = classificationText(text)
 	trimmed := strings.TrimSpace(text)
-	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || containsKeyword(text, "LOAD") {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
 		return false
 	}
 	requirements := QueryPermissionRequirements(text)
@@ -78,8 +80,6 @@ func deterministicExecution(ctx context.Context, text string, depth int) bool {
 	}
 
 	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
 	for from := 0; from < len(text); {
 		at := keywordIndexFrom(text, "CALL", from, opts)
 		if at < 0 {

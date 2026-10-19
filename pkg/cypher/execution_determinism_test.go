@@ -119,6 +119,8 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 		cacheable bool
 	}{
 		{"RETURN 'timestamp() rand()' AS data", nil, true},
+		{"RETURN 'LOAD CSV' AS data", nil, true},
+		{"load csv from $url AS row RETURN row", nil, false},
 		{"RETURN timestamp /* gap */ () AS now", nil, false},
 		{"RETURN `randomUUID` ( ) AS id", nil, false},
 		{"RETURN date('2020-01-01') AS day", nil, true},
