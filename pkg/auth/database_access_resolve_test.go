@@ -56,6 +56,7 @@ func TestResolveDatabaseAccess(t *testing.T) {
 		{"no roles", nil, "nornic", ResolvedAccess{}},
 	} {
 		require.Equal(t, check.want, ResolveDatabaseAccess(check.roles, check.database, privileges, entitlements), check.name)
+		require.Equal(t, check.want.Read, DatabaseReadAllowed(check.roles, check.database, privileges, entitlements), check.name)
 	}
 
 	// An editor demoted to read keeps no write anywhere, with or without an
