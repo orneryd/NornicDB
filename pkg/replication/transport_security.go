@@ -26,7 +26,6 @@ func NewDefaultTransportFromConfig(cfg *Config) (Transport, error) {
 	if cfg.ReplicationSecret != "" {
 		transportCfg.AuthSecret = []byte(cfg.ReplicationSecret)
 	}
-	transportCfg.RequireReplayProtection = cfg.ReplayProtection == ReplayProtectionRequire
 
 	if cfg.TLS.Enabled {
 		serverTLS, clientTLS, err := buildTLSConfigs(cfg.TLS)
@@ -43,14 +42,8 @@ func NewDefaultTransportFromConfig(cfg *Config) (Transport, error) {
 
 	transport := NewClusterTransport(transportCfg)
 	if len(transportCfg.AuthSecret) > 0 {
-		if transportCfg.RequireReplayProtection {
-			transport.logPrintf(context.Background(), slog.LevelInfo,
-				"[Cluster] Replay protection: require; only nonce-signed messages are sent and accepted")
-		} else {
-			transport.logPrintf(context.Background(), slog.LevelWarn,
-				"[Cluster] Replay protection: compat (transition mode); messages without a nonce are accepted, so signed messages can be replayed within the %s window. Set NORNICDB_CLUSTER_REPLAY_PROTECTION=require once every node is upgraded",
-				transportCfg.AuthMaxSkew)
-		}
+		transport.logPrintf(context.Background(), slog.LevelInfo,
+			"[Cluster] Replay protection enabled; only nonce-signed messages are sent and accepted")
 	}
 	return transport, nil
 }
