@@ -94,6 +94,7 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 		{"commented", "WITH $x AS k /* scope */ " + g + "RETURN r.p"},
 	}
 	cases = append(cases, relationshipAccessGeneratedCases()...)
+	t.Logf("relationship access inventory: %d declared entries", len(cases))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "r3_inventory"))
