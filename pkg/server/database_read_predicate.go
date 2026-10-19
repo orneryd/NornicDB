@@ -16,3 +16,22 @@ func (s *Server) databaseReadPredicate(claims *auth.JWTClaims) func(string) bool
 		return access.Read
 	}
 }
+
+// databaseReadCoverage distinguishes admission to a logical database from
+// physical local counts. A remote-only composite can have readable metrics
+// while contributing no local nodes. Both decisions use the same live owner.
+func (s *Server) databaseReadCoverage(canRead func(string) bool, includeSystem, anyReadable bool) (bool, bool) {
+	allReadable := true
+	for _, database := range s.dbManager.ListDatabaseNames() {
+		if !includeSystem && database == "system" {
+			continue
+		}
+		readable := canRead(database)
+		anyReadable = anyReadable || readable
+		allReadable = allReadable && readable
+		if anyReadable && !allReadable {
+			return true, false
+		}
+	}
+	return anyReadable, allReadable
+}
