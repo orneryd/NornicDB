@@ -50,6 +50,42 @@ func (b *BadgerEngine) BeginQueryRevealScope(reveal bool) func() {
 	}
 }
 
+// readVisibility is whether a read applies the visibility layer: on-demand
+// suppression, knowledge-policy decay and the index tombstones decay leaves
+// (filterNodeByDecay, filterEdgeByDecay, hasIndexTombstone). User reads do,
+// unless a reveal scope is open. Integrity work reads what storage holds: a
+// node delete's cascade and connected check, constraint checks, count
+// bookkeeping, index backfills, replay, snapshots, backups and data-subject
+// requests. The layer hides entities from users without removing them, so a
+// hidden relationship still connects its endpoints and a hidden value still
+// occupies its unique key; integrity work that skipped them left dangling
+// relationships, admitted duplicates or lost data.
+type readVisibility bool
+
+const (
+	// visibleRead applies the visibility layer: user-facing reads.
+	visibleRead readVisibility = false
+	// storedRead returns every stored entity: integrity work
+	// (StoredEntityReader).
+	storedRead readVisibility = true
+)
+
+// hidesNode reports whether a read with visibility v leaves node out.
+func (b *BadgerEngine) hidesNode(v readVisibility, node *Node, nowNanos int64) bool {
+	return v == visibleRead && b.filterNodeByDecay(node, nowNanos)
+}
+
+// hidesEdge reports whether a read with visibility v leaves edge out.
+func (b *BadgerEngine) hidesEdge(v readVisibility, edge *Edge, nowNanos int64) bool {
+	return v == visibleRead && b.filterEdgeByDecay(edge, nowNanos)
+}
+
+// checksIndexTombstones reports whether a read with visibility v skips index
+// entries decay tombstoned.
+func (b *BadgerEngine) checksIndexTombstones(v readVisibility) bool {
+	return v == visibleRead && b.decayEnabled && !b.revealAll.Load()
+}
+
 // filterEntityByDecay is the shared kernel behind filterNodeByDecay and
 // filterEdgeByDecay. It resolves the namespace scorer, applies the
 // reveal-all scope, scores the entity, and decides suppression. The
