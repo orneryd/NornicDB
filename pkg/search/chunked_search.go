@@ -386,7 +386,7 @@ func searchResultID(result SearchResult) string {
 }
 
 func isFatalChunkedSearchError(predicate func(error) bool, err error) bool {
-	return predicate != nil && predicate(err)
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || predicate != nil && predicate(err)
 }
 
 // isQueryEmbeddingFallback reports whether reason says the query wasn't
