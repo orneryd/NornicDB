@@ -2,8 +2,10 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"testing"
 
+	apoccoll "github.com/orneryd/nornicdb/apoc/coll"
 	apocconvert "github.com/orneryd/nornicdb/apoc/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -37,6 +39,45 @@ func BenchmarkListInputCollections(b *testing.B) {
 				}
 				query += ") AS v"
 				params := map[string]interface{}{"xs": input.value}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := exec.Execute(context.Background(), query, params); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkUnsignedIntegerInputs(b *testing.B) {
+	previous := PluginFunctionLookup
+	handlers := map[string]interface{}{
+		"apoc.convert.toInteger": apocconvert.ToInteger,
+		"apoc.convert.toIntList": apocconvert.ToIntList,
+		"apoc.coll.sumLongs":     apoccoll.SumLongs,
+	}
+	PluginFunctionLookup = func(name string) (interface{}, bool) {
+		handler, ok := handlers[name]
+		return handler, ok
+	}
+	defer func() { PluginFunctionLookup = previous }()
+	for _, input := range []struct {
+		name  string
+		value uint64
+	}{{"bound", math.MaxInt64}, {"overflow", math.MaxUint64}} {
+		for _, function := range []string{"apoc.convert.toInteger", "apoc.convert.toIntList", "apoc.coll.sumLongs"} {
+			b.Run(input.name+"/"+function, func(b *testing.B) {
+				store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "unsigned_bench")
+				defer store.Close()
+				exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+				argument := "$xs"
+				if function == "apoc.convert.toInteger" {
+					argument = "$value"
+				}
+				query := "RETURN " + function + "(" + argument + ") AS v"
+				params := map[string]interface{}{"value": input.value, "xs": []uint64{input.value}}
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {

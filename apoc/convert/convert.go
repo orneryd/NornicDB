@@ -51,8 +51,10 @@ func ToInteger(value interface{}) int64 {
 		}
 		return 0
 	}
-	integer, _ := valueconvert.ToInt64(value)
-	return integer
+	if integer, ok := valueconvert.ToInt64(value); ok {
+		return integer
+	}
+	return 0
 }
 
 // ToFloat converts a value to float.
@@ -68,8 +70,10 @@ func ToFloat(value interface{}) float64 {
 		}
 		return 0.0
 	}
-	number, _ := valueconvert.ToFloat64(value)
-	return number
+	if number, ok := valueconvert.ToFloat64(value); ok {
+		return number
+	}
+	return 0
 }
 
 // ToString converts a value to string.

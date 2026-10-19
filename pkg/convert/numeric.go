@@ -35,6 +35,7 @@
 package convert
 
 import (
+	"math"
 	"strconv"
 )
 
@@ -124,7 +125,7 @@ func ToFloat64(v interface{}) (float64, bool) {
 // Supported types:
 //   - int64 (returned as-is)
 //   - int, int32, int16, int8 (converted)
-//   - uint, uint32, uint16, uint8, uint64 (converted, may overflow for large uint64)
+//   - uint, uint32, uint16, uint8, uint64 (converted if within int64 range)
 //   - float64, float32 (truncated toward zero)
 //   - string (parsed as integer)
 //
@@ -152,7 +153,7 @@ func ToInt64(v interface{}) (int64, bool) {
 	case int8:
 		return int64(val), true
 	case uint:
-		return int64(val), true
+		return unsignedInt64(uint64(val))
 	case uint32:
 		return int64(val), true
 	case uint16:
@@ -160,7 +161,7 @@ func ToInt64(v interface{}) (int64, bool) {
 	case uint8:
 		return int64(val), true
 	case uint64:
-		return int64(val), true
+		return unsignedInt64(val)
 	case float64:
 		return int64(val), true
 	case float32:
@@ -175,4 +176,13 @@ func ToInt64(v interface{}) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// unsignedInt64 is the single checked narrowing path for unsigned types that
+// can exceed Cypher's signed integer range. Narrower unsigned types always fit.
+func unsignedInt64(value uint64) (int64, bool) {
+	if value > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(value), true
 }

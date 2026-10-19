@@ -31,26 +31,7 @@ func TestListInputPluginRepresentations(t *testing.T) {
 		}
 	}
 	withPluginFunctions(t, handlers)
-	queries := []string{
-		"apoc.coll.sum(%s)", "apoc.coll.avg(%s)", "apoc.coll.min(%s)", "apoc.coll.max(%s)",
-		"apoc.coll.sort(%s)", "apoc.coll.sortMaps(%s,'rank')", "apoc.coll.reverse(%s)",
-		"apoc.coll.contains(%s,head(%s))", "apoc.coll.containsAll(%s,%s)", "apoc.coll.containsAny(%s,%s)",
-		"apoc.coll.containsSorted(%s,head(%s))", "apoc.coll.containsDuplicates(%s)",
-		"apoc.coll.union(%s,[9])", "apoc.coll.union([9],%s)", "apoc.coll.unionAll(%s,[9])",
-		"coll.sort(apoc.coll.intersection(%s,%s))", "apoc.coll.subtract(%s,[9])", "apoc.coll.disjunction(%s,[9])",
-		"apoc.coll.flatten(%s,true)", "apoc.coll.flatten([%s],true)", "apoc.coll.toSet(%s)",
-		"apoc.coll.indexOf(%s,head(%s))", "apoc.coll.pairs(%s)", "apoc.coll.pairsMin(%s)",
-		"apoc.coll.zip(%s,[4,5,6])", "apoc.coll.frequencies(%s)", "apoc.coll.frequenciesAsMap(%s)",
-		"apoc.coll.occurrences(%s,head(%s))", "coll.sort(apoc.coll.duplicates(%s))", "coll.sort(apoc.coll.duplicatesWithCount(%s))",
-		"apoc.coll.dropDuplicateNeighbors(%s)", "apoc.coll.insert(%s,1,9)", "apoc.coll.insertAll(%s,1,%s)",
-		"apoc.coll.remove(%s,1)", "apoc.coll.removeAll(%s,head(%s))", "apoc.coll.set(%s,1,9)",
-		"apoc.coll.slice(%s,1,3)", "coll.sort(apoc.coll.shuffle(%s))",
-		"apoc.coll.contains(%s,apoc.coll.randomItem(%s))", "size(apoc.coll.randomItems(%s,2))",
-		"apoc.coll.isEmpty(%s)", "apoc.coll.isNotEmpty(%s)", "apoc.coll.different(%s,[9])", "apoc.coll.sumLongs(%s)",
-		"apoc.convert.toList(%s)", "apoc.convert.toSet(%s)", "apoc.convert.toIntList(%s)",
-		"apoc.convert.toFloatList(%s)", "apoc.convert.toStringList(%s)", "apoc.convert.toBooleanList(%s)",
-		"apoc.convert.toNodeList(%s)", "apoc.convert.toRelationshipList(%s)",
-	}
+	queries := listInputPluginQueries()
 	for name := range handlers {
 		if name != "apoc.coll.fill" {
 			require.Contains(t, strings.Join(queries, "\n"), name+"(", "missing registered plugin list consumer")
@@ -90,4 +71,27 @@ func TestListInputPluginRepresentations(t *testing.T) {
 	}
 	rowValueProgramsDisabled.Store(false)
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
+}
+
+func listInputPluginQueries() []string {
+	return []string{
+		"apoc.coll.sum(%s)", "apoc.coll.avg(%s)", "apoc.coll.min(%s)", "apoc.coll.max(%s)",
+		"apoc.coll.sort(%s)", "apoc.coll.sortMaps(%s,'rank')", "apoc.coll.reverse(%s)",
+		"apoc.coll.contains(%s,head(%s))", "apoc.coll.containsAll(%s,%s)", "apoc.coll.containsAny(%s,%s)",
+		"apoc.coll.containsSorted(%s,head(%s))", "apoc.coll.containsDuplicates(%s)",
+		"apoc.coll.union(%s,[9])", "apoc.coll.union([9],%s)", "apoc.coll.unionAll(%s,[9])",
+		"coll.sort(apoc.coll.intersection(%s,%s))", "apoc.coll.subtract(%s,[9])", "apoc.coll.disjunction(%s,[9])",
+		"apoc.coll.flatten(%s,true)", "apoc.coll.flatten([%s],true)", "apoc.coll.toSet(%s)",
+		"apoc.coll.indexOf(%s,head(%s))", "apoc.coll.pairs(%s)", "apoc.coll.pairsMin(%s)",
+		"apoc.coll.zip(%s,[4,5,6])", "apoc.coll.frequencies(%s)", "apoc.coll.frequenciesAsMap(%s)",
+		"apoc.coll.occurrences(%s,head(%s))", "coll.sort(apoc.coll.duplicates(%s))", "coll.sort(apoc.coll.duplicatesWithCount(%s))",
+		"apoc.coll.dropDuplicateNeighbors(%s)", "apoc.coll.insert(%s,1,9)", "apoc.coll.insertAll(%s,1,%s)",
+		"apoc.coll.remove(%s,1)", "apoc.coll.removeAll(%s,head(%s))", "apoc.coll.set(%s,1,9)",
+		"apoc.coll.slice(%s,1,3)", "coll.sort(apoc.coll.shuffle(%s))",
+		"apoc.coll.contains(%s,apoc.coll.randomItem(%s))", "size(apoc.coll.randomItems(%s,2))",
+		"apoc.coll.isEmpty(%s)", "apoc.coll.isNotEmpty(%s)", "apoc.coll.different(%s,[9])", "apoc.coll.sumLongs(%s)",
+		"apoc.convert.toList(%s)", "apoc.convert.toSet(%s)", "apoc.convert.toIntList(%s)",
+		"apoc.convert.toFloatList(%s)", "apoc.convert.toStringList(%s)", "apoc.convert.toBooleanList(%s)",
+		"apoc.convert.toNodeList(%s)", "apoc.convert.toRelationshipList(%s)",
+	}
 }
