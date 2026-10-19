@@ -140,7 +140,9 @@ func deterministicExecution(ctx context.Context, text string, depth int) bool {
 							return false
 						}
 					}
-					innerContext = withQueryParams(ctx, params)
+					// executeInternal inherits caller bindings, then applies the
+					// supplied map's overrides. Classify those same bindings.
+					innerContext = withQueryParams(ctx, mergeInheritedQueryParams(ctx, params))
 				}
 			}
 			inner, isText := value.(string)
