@@ -168,7 +168,7 @@ func namedFunctionArguments(expression, function string) []string {
 		if close < 0 {
 			break
 		}
-		arguments = append(arguments, call.syntax.source(syntaxSpan{call.open+1,close}))
+		arguments = append(arguments, call.syntax.source(syntaxSpan{call.open + 1, close}))
 		// The selected call evaluates its own nested arguments.
 		index = close + 1
 	}

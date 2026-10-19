@@ -88,8 +88,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
- if name,args,ok:=parseFunctionCallArguments(expr);ok {
-  if equalFoldASCII(name,"size") && len(args)==1 {args[0]=sizeArgumentExpression(args[0])}
+	if name, args, ok := parseFunctionCallArguments(expr); ok {
+		if equalFoldASCII(name, "size") && len(args) == 1 {
+			args[0] = sizeArgumentExpression(args[0])
+		}
 		fnCtx := cypherfn.Context{
 			Nodes:    nodes,
 			Rels:     rels,

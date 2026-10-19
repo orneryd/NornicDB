@@ -105,13 +105,17 @@ func containsNotInOperator(cypher string) bool {
 // expression after it (`[1, 2,]`) or no expression before it (`[, 1]`) —
 // both are syntax errors in Neo4j.
 func containsTrailingListComma(cypher string) bool {
- syntax:=readFunctionSyntax(cypher)
- for index,group:=range syntax.groups {
-  if group.open<0 || group.close<0 || cypher[group.open]!='[' || len(group.separators)==0 {continue}
-  spans:=syntax.argumentSpans(index)
-  if syntax.render(spans[0])=="" || syntax.render(spans[len(spans)-1])=="" {return true}
- }
- return false
+	syntax := readFunctionSyntax(cypher)
+	for index, group := range syntax.groups {
+		if group.open < 0 || group.close < 0 || cypher[group.open] != '[' || len(group.separators) == 0 {
+			continue
+		}
+		spans := syntax.argumentSpans(index)
+		if syntax.render(spans[0]) == "" || syntax.render(spans[len(spans)-1]) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // hasAdjacentStringLiterals reports whether two string literals sit next to

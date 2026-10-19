@@ -751,7 +751,7 @@ func (e *StorageExecutor) isSingleNodePattern(pattern string) bool {
 }
 
 func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
- return readFunctionSyntax(pattern).appendArguments(nil,0,false)
+	return readFunctionSyntax(pattern).appendArguments(nil, 0, false)
 }
 
 // parseRelationshipTypeAndProps parses "r:TYPE {props}", ":`A TYPE` {props}"

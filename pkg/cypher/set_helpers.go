@@ -214,7 +214,7 @@ func parseSetAssignmentTarget(target string) (variable string, property string, 
 //	splitSetAssignments("n.embedding = [0.1, 0.2], n.dim = 4")
 //	// Returns: ["n.embedding = [0.1, 0.2]", "n.dim = 4"]
 func splitSetAssignments(setClause string) []string {
- return readFunctionSyntax(setClause).appendArguments(nil,0,true)
+	return readFunctionSyntax(setClause).appendArguments(nil, 0, true)
 }
 
 // hasConcatOperator checks if the expression has a + operator outside of quotes.

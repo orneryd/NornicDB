@@ -1847,14 +1847,20 @@ func tryRewriteNullNormalizedPredicate(whereClause string) string {
 		return clause
 	}
 
-	call,called:=functionCallAt(clause,readFunctionSyntax(clause).leading)
- if !called || !strings.EqualFold(call.name,"coalesce") || call.close(clause)<0 {return clause}
- arguments:=call.arguments(nil)
- if len(arguments)!=2 {return clause}
- varProp,defaultVal:=arguments[0],arguments[1]
- afterCoalesce:=strings.TrimSpace(clause[call.close(clause)+1:])
- if varProp=="" || defaultVal=="" {return clause}
- // varProp must look like variable.property
+	call, called := functionCallAt(clause, readFunctionSyntax(clause).leading)
+	if !called || !strings.EqualFold(call.name, "coalesce") || call.close(clause) < 0 {
+		return clause
+	}
+	arguments := call.arguments(nil)
+	if len(arguments) != 2 {
+		return clause
+	}
+	varProp, defaultVal := arguments[0], arguments[1]
+	afterCoalesce := strings.TrimSpace(clause[call.close(clause)+1:])
+	if varProp == "" || defaultVal == "" {
+		return clause
+	}
+	// varProp must look like variable.property
 	if !strings.Contains(varProp, ".") {
 		return clause
 	}

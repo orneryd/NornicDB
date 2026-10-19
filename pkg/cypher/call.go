@@ -216,11 +216,15 @@ func splitCallAndTail(cypher string) callSplit {
 		if !strings.HasPrefix(upperASCII(strings.TrimSpace(normalized)), "CALL ") {
 			return callSplit{callOnly: strings.TrimSpace(cypher)}
 		}
-		call,called:=firstProcedureCall(normalized)
-  if !called || call.open<0 {return callSplit{callOnly:strings.TrimSpace(cypher)}}
-  close:=call.close(normalized)
-  if close<0 {return callSplit{callOnly:strings.TrimSpace(cypher)}}
-  searchStart := close + 1
+		call, called := firstProcedureCall(normalized)
+		if !called || call.open < 0 {
+			return callSplit{callOnly: strings.TrimSpace(cypher)}
+		}
+		close := call.close(normalized)
+		if close < 0 {
+			return callSplit{callOnly: strings.TrimSpace(cypher)}
+		}
+		searchStart := close + 1
 		boundary := len(normalized)
 		for _, keyword := range []string{"WITH", "MATCH", "OPTIONAL MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "DETACH DELETE", "REMOVE", "FOREACH", "LOAD CSV", "RETURN"} {
 			if index := findKeywordIndexInContext(normalized[searchStart:], keyword); index >= 0 {

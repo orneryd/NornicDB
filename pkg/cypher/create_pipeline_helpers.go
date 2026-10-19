@@ -31,10 +31,12 @@ func containsString(slice []string, s string) bool {
 // validateSetAssignments pre-validates SET clause assignments before executing CREATE
 // This ensures we fail fast on invalid function calls, preventing orphaned nodes
 func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
- for _,assignment:=range assignments {
-  if err:=validateKnownFunctions(assignment);err!=nil {return err}
- }
- return nil
+	for _, assignment := range assignments {
+		if err := validateKnownFunctions(assignment); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // extractCreateVariableRefs returns variable names used as simple refs in CREATE relationship patterns

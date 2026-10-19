@@ -226,20 +226,25 @@ type deletedEntityRead struct {
 // labels(v), keys(v), properties(v).
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
- for index := 0; index < len(expression); {
-  if call,ok:=functionCallAt(expression,index);ok {
-   name:=lowerASCII(call.name)
-   if name=="labels" || name=="keys" || name=="properties" {
-    arguments:=call.arguments(nil)
-    if len(arguments)==1 {
-     if variable:=simpleSemanticIdentifier(arguments[0]);variable!="" {reads=append(reads,deletedEntityRead{variable:variable,relationshipOnly:name!="labels"})}
-    }
-   }
-  }
-  if end:=queryCommentEnd(expression,index);end>=0 {index=end;continue}
+	for index := 0; index < len(expression); {
+		if call, ok := functionCallAt(expression, index); ok {
+			name := lowerASCII(call.name)
+			if name == "labels" || name == "keys" || name == "properties" {
+				arguments := call.arguments(nil)
+				if len(arguments) == 1 {
+					if variable := simpleSemanticIdentifier(arguments[0]); variable != "" {
+						reads = append(reads, deletedEntityRead{variable: variable, relationshipOnly: name != "labels"})
+					}
+				}
+			}
+		}
+		if end := queryCommentEnd(expression, index); end >= 0 {
+			index = end
+			continue
+		}
 		switch character := expression[index]; {
 		case character == '\'' || character == '"' || character == '`':
-			index = skipCypherQuotedText(expression,index,character)
+			index = skipCypherQuotedText(expression, index, character)
 			continue
 		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
 			index++

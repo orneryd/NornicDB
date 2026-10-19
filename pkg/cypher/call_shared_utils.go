@@ -26,7 +26,7 @@ func splitTopLevelComma(input string) []string {
 // fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
 // allocating.
 func appendTopLevelComma(parts []string, input string) []string {
- return readFunctionSyntax(input).appendArguments(parts,0,false)
+	return readFunctionSyntax(input).appendArguments(parts, 0, false)
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {

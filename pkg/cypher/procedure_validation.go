@@ -170,9 +170,11 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 }
 
 func explicitProcedureArgumentTexts(callCypher string) []string {
- call,ok:=firstProcedureCall(callCypher)
- if !ok || call.open<0 || call.close(callCypher)<0 {return nil}
- return call.arguments([]string{})
+	call, ok := firstProcedureCall(callCypher)
+	if !ok || call.open < 0 || call.close(callCypher) < 0 {
+		return nil
+	}
+	return call.arguments([]string{})
 }
 
 func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string) ([]interface{}, error) {
@@ -423,7 +425,9 @@ func isFloatProcedureValue(value interface{}) bool {
 }
 
 func procedureCallContainsAggregation(callCypher string) bool {
- call,ok:=firstProcedureCall(callCypher)
- if !ok || call.open<0 || call.close(callCypher)<0 {return false}
- return containsAggregateFunc(callCypher[call.open+1:call.close(callCypher)])
+	call, ok := firstProcedureCall(callCypher)
+	if !ok || call.open < 0 || call.close(callCypher) < 0 {
+		return false
+	}
+	return containsAggregateFunc(callCypher[call.open+1 : call.close(callCypher)])
 }

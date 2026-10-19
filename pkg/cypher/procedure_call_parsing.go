@@ -11,13 +11,19 @@ import (
 // It supports numbers, booleans, null, quoted strings, and leaves complex values as raw strings.
 func extractCallArguments(cypher string) ([]interface{}, error) {
 	var call functionCallSpan
- found:=false
- for _,candidate:=range readFunctionSyntax(cypher).calls {
-  if candidate.procedure {call=candidate;found=true;break}
- }
- if !found || call.open<0 || call.close(cypher)<0 {return nil,nil}
- parts:=call.arguments(nil)
- args := make([]interface{}, 0, len(parts))
+	found := false
+	for _, candidate := range readFunctionSyntax(cypher).calls {
+		if candidate.procedure {
+			call = candidate
+			found = true
+			break
+		}
+	}
+	if !found || call.open < 0 || call.close(cypher) < 0 {
+		return nil, nil
+	}
+	parts := call.arguments(nil)
+	args := make([]interface{}, 0, len(parts))
 	for _, p := range parts {
 		v, err := parseProcedureArgLiteral(strings.TrimSpace(p))
 		if err != nil {
@@ -29,11 +35,16 @@ func extractCallArguments(cypher string) ([]interface{}, error) {
 }
 
 func findMatchingCallParen(s string, open int) int {
-	for _,group:=range readFunctionSyntax(s).groups {if group.open==open {return group.close}};return -1
+	for _, group := range readFunctionSyntax(s).groups {
+		if group.open == open {
+			return group.close
+		}
+	}
+	return -1
 }
 
 func splitProcedureTopLevelComma(s string) []string {
- return readFunctionSyntax(s).appendArguments(nil,0,false)
+	return readFunctionSyntax(s).appendArguments(nil, 0, false)
 }
 
 func parseProcedureArgLiteral(s string) (interface{}, error) {

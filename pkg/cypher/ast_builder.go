@@ -805,24 +805,28 @@ func (b *ASTBuilder) parseSkip(text string) *int64 {
 
 // parseCall parses a CALL clause.
 func (b *ASTBuilder) parseCall(text string) *ASTCall {
- call:=&ASTCall{}
- for _,span:=range readFunctionSyntax(text).calls {
-  if !span.procedure {continue}
-  call.Procedure=span.name
-  rest:=span.next
-  if span.open>=0 {
-   close:=span.close(text)
-   if close<0 {return call}
-   call.RawArgs=text[span.open+1:close]
-   rest=close+1
-  }
-  tail:=text[queryGapEnd(text,rest):]
-  if startsWithKeywordFold(tail,"YIELD") {
-   call.Yield=splitTopLevelComma(tail[len("YIELD"):])
-  }
-  return call
- }
- return call
+	call := &ASTCall{}
+	for _, span := range readFunctionSyntax(text).calls {
+		if !span.procedure {
+			continue
+		}
+		call.Procedure = span.name
+		rest := span.next
+		if span.open >= 0 {
+			close := span.close(text)
+			if close < 0 {
+				return call
+			}
+			call.RawArgs = text[span.open+1 : close]
+			rest = close + 1
+		}
+		tail := text[queryGapEnd(text, rest):]
+		if startsWithKeywordFold(tail, "YIELD") {
+			call.Yield = splitTopLevelComma(tail[len("YIELD"):])
+		}
+		return call
+	}
+	return call
 }
 
 // parsePatterns parses pattern text into ASTPattern structs.
@@ -972,7 +976,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// Property access (n.prop)
-	if dotIdx := strings.Index(text, "."); dotIdx > 0 && len(readFunctionSyntax(text).calls)==0 {
+	if dotIdx := strings.Index(text, "."); dotIdx > 0 && len(readFunctionSyntax(text).calls) == 0 {
 		expr.Type = ASTExprProperty
 		expr.Property = &ASTPropertyAccess{
 			Variable: text[:dotIdx],
@@ -1003,7 +1007,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 
 // splitOutsideBrackets splits string by delimiter, ignoring delimiters inside brackets.
 func splitOutsideBrackets(s string, delim rune) []string {
- return readFunctionSyntax(s).splitDelimiter(delim)
+	return readFunctionSyntax(s).splitDelimiter(delim)
 }
 
 // determineReadOnly checks if the AST represents a read-only query.

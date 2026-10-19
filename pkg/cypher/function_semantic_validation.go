@@ -152,6 +152,7 @@ func forEachSemanticCall(text string, visit func(name, normalized string, argume
 	}
 	return nil
 }
+
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
 // at end, and where they end. Each name is read as the code that runs it
 // reads it: whitespace may stand around a dot only when spaced is set, for a
@@ -196,5 +197,5 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
- return skipCypherQuotedText(expression,start,expression[start])
+	return skipCypherQuotedText(expression, start, expression[start])
 }

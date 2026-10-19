@@ -289,7 +289,7 @@ func isBackslashEscaped(s string, idx int) bool {
 //	splitPropertyPairs("tags: ['a', 'b'], data: {nested: true}")
 //	// Returns: ["tags: ['a', 'b']", "data: {nested: true}"]
 func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
- return readFunctionSyntax(propsStr).appendArguments(nil,0,false)
+	return readFunctionSyntax(propsStr).appendArguments(nil, 0, false)
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.

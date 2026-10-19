@@ -61,7 +61,6 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 		return nil, false
 	}
 
-
 	// Evaluate each argument
 	var evalArgs []interface{}
 	for _, arg := range args {

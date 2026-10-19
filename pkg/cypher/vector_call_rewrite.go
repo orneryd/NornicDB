@@ -92,22 +92,25 @@ func isBareName(text string) bool {
 // topLevelArgumentSpans returns the [start, end) of each comma-separated
 // argument in query[start:end], spaces trimmed.
 func topLevelArgumentSpans(query string, start, end int) [][2]int {
- syntax:=readFunctionSyntax(query[start:end])
- var spans [][2]int
- for _,span:=range syntax.argumentSpans(0) {
-  from:=queryGapEnd(query,start+span.start)
-  to:=trimRightIndex(query,from,start+span.end)
-  spans=append(spans,[2]int{from,to})
- }
- return spans
+	syntax := readFunctionSyntax(query[start:end])
+	var spans [][2]int
+	for _, span := range syntax.argumentSpans(0) {
+		from := queryGapEnd(query, start+span.start)
+		to := trimRightIndex(query, from, start+span.end)
+		spans = append(spans, [2]int{from, to})
+	}
+	return spans
 }
 
 // mayUseVectorCall reports whether query may call vector, vector_distance
 // or vector_norm: the word, outside a longer name, then (. It never answers
 // false for one.
 func mayUseVectorCall(query string) bool {
- for _,call:=range readFunctionSyntax(query).calls {
-  switch lowerASCII(call.name) {case "vector","vector_distance","vector_norm":return true}
- }
- return false
+	for _, call := range readFunctionSyntax(query).calls {
+		switch lowerASCII(call.name) {
+		case "vector", "vector_distance", "vector_norm":
+			return true
+		}
+	}
+	return false
 }
