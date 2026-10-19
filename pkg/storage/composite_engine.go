@@ -976,6 +976,10 @@ func (c *CompositeEngine) GetAllNodes() []*Node {
 
 // GetInDegree returns the in-degree of a node across all constituents.
 func (c *CompositeEngine) GetInDegree(nodeID NodeID) int {
+	if engine,local,qualified := c.constituentForElementID("4",string(nodeID)); qualified {
+		if engine == nil { return 0 }
+		return engine.GetInDegree(NodeID(local))
+	}
 	readConstituents := c.getConstituentsForRead()
 	total := 0
 
@@ -993,6 +997,10 @@ func (c *CompositeEngine) GetInDegree(nodeID NodeID) int {
 
 // GetOutDegree returns the out-degree of a node across all constituents.
 func (c *CompositeEngine) GetOutDegree(nodeID NodeID) int {
+	if engine,local,qualified := c.constituentForElementID("4",string(nodeID)); qualified {
+		if engine == nil { return 0 }
+		return engine.GetOutDegree(NodeID(local))
+	}
 	readConstituents := c.getConstituentsForRead()
 	total := 0
 
