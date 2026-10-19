@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -125,6 +127,7 @@ func TestRetentionPolicyByID_AdditionalErrorBranches(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, resp.Code)
 
 	req := httptest.NewRequest(http.MethodGet, retentionPoliciesEndpoint+"/blank", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	req.SetPathValue("id", "   ")
 	rec := httptest.NewRecorder()
 	server.handleRetentionPolicyByID(rec, req)
@@ -204,6 +207,7 @@ func TestRetentionHoldByID_DeleteAndErrors(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.Code)
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/retention/holds/blank", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	req.SetPathValue("id", " \t ")
 	rec := httptest.NewRecorder()
 	server.handleRetentionHoldByID(rec, req)
@@ -253,6 +257,7 @@ func TestRetentionDefaultsStatusAndProcessAdditionalBranches(t *testing.T) {
 	disabledServer, _ := setupTestServer(t)
 	disabledRec := httptest.NewRecorder()
 	disabledReq := httptest.NewRequest(http.MethodPost, "/admin/retention/erasures/e/process", nil)
+	disabledReq = disabledReq.WithContext(context.WithValue(disabledReq.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	disabledReq.SetPathValue("id", "e")
 	disabledServer.handleRetentionProcessErasure(disabledRec, disabledReq)
 	require.Equal(t, http.StatusServiceUnavailable, disabledRec.Code)
@@ -286,6 +291,7 @@ func TestRetentionDefaultsStatusAndProcessAdditionalBranches(t *testing.T) {
 	require.Equal(t, 0, processed.ItemsFound)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/retention/erasures/blank/process", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	req.SetPathValue("id", "  ")
 	rec := httptest.NewRecorder()
 	server.handleRetentionProcessErasure(rec, req)
