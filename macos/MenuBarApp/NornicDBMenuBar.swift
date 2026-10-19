@@ -923,6 +923,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func downloadDefaultModels(_ models: [DefaultLocalModel]) {
+        configManager.scanModels()
+        let models = models.filter { !configManager.availableModels.contains($0.filename) }
+        guard !models.isEmpty else { return }
         let alert = NSAlert()
         alert.messageText = "Download Default Local Model\(models.count == 1 ? "" : "s")"
         alert.informativeText = models.map { $0.filename }.joined(separator: "\n")
@@ -1337,7 +1340,7 @@ struct SettingsView: View {
         }
     }
     
-    var modelsTab: some View { AIServiceSettingsView(config: config, downloadModel: { appDelegate.downloadModel($0) }) }
+    var modelsTab: some View { AIServiceSettingsView(config: config, downloadModel: { appDelegate.downloadModel($0) }, openModelsFolder: { appDelegate.openModelsFolder() }) }
 
     var securityTab: some View {
         ScrollView {
@@ -1827,6 +1830,8 @@ func downloadDefaultLocalModel(_ model: DefaultLocalModel, into directory: URL,
         process.waitUntilExit()
         return process.terminationStatus
     }) throws {
+    let destination = directory.appendingPathComponent(model.filename)
+    guard !isValidGGUFFile(atPath: destination.path) else { return }
     // Stage beside the destination so failure never destroys a valid installed model.
     let staging = directory.appendingPathComponent(".download-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: staging) }
@@ -1834,7 +1839,6 @@ func downloadDefaultLocalModel(_ model: DefaultLocalModel, into directory: URL,
           isValidGGUFFile(atPath: staging.path) else {
         throw NSError(domain: "NornicDB.ModelDownload", code: 1)
     }
-    let destination = directory.appendingPathComponent(model.filename)
     if FileManager.default.fileExists(atPath: destination.path) {
         _ = try FileManager.default.replaceItemAt(destination, withItemAt: staging)
     } else {
