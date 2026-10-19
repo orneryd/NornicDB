@@ -40,7 +40,9 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 			}
 			for _, kind := range []string{"COUNT", "EXISTS", "COLLECT", "CALL"} {
 				readBody := body
-				if inline && (kind == "CALL" || kind == "COLLECT") { readBody = "MATCH " + body }
+				if inline && (kind == "CALL" || kind == "COLLECT") {
+					readBody = "MATCH " + body
+				}
 				name := fmt.Sprintf("generated_anchor_%s_%s_%t", kind, source, inline)
 				prefix := "MATCH (a:Key) WITH a,$x AS k "
 				if kind == "CALL" {
@@ -55,7 +57,9 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 	}
 	for _, imports := range []string{"(outer,k)", "(*)", ""} {
 		body := "MATCH ()-[r:T]->() WHERE r.p=outer.p RETURN r.p AS value"
-		if imports == "" { body = "WITH outer,k " + body }
+		if imports == "" {
+			body = "WITH outer,k " + body
+		}
 		call := "CALL " + imports + " { " + body + " }"
 		prefix := "MATCH ()-[outer:T]->() WITH outer,$x AS k "
 		add("generated_anchor_CALL_edge_"+imports, prefix+call+" RETURN value")

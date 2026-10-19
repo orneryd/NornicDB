@@ -51,11 +51,7 @@ func relationshipProgramFromContext(ctx context.Context, query string) *relation
 }
 
 func withRelationshipAccessProgram(ctx context.Context, query string) context.Context {
-	_, query = parseExecutionMode(query)
-	if program, _ := ctx.Value(relationshipAccessProgramKey{}).(*relationshipAccessProgram); program != nil && program.query == query {
-		return ctx
-	}
-	if !containsRelationshipPattern(query) {
+	if ctx.Value(relationshipAccessProgramKey{}) != nil || !containsRelationshipPattern(query) {
 		return ctx
 	}
 	return context.WithValue(ctx, relationshipAccessProgramKey{}, relationshipProgramFor(query))
