@@ -415,6 +415,12 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 // executeShowCompositeDatabases handles SHOW COMPOSITE DATABASES command.
 func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (_ *ExecuteResult, retErr error) {
 	defer redactAdminCommandError(cypher, &retErr)
+	// executeShowWithTail owns valid SHOW tails. Its head must contain only
+	// this command, including when an unknown suffix precedes a valid YIELD.
+	tokens, err := tokenize(cypher)
+	if err != nil || len(tokens) != 3 || !strings.EqualFold(tokens[0], "SHOW") || !strings.EqualFold(tokens[1], "COMPOSITE") || !strings.EqualFold(tokens[2], "DATABASES") {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "SyntaxError", localization.CypherAdminShowClauseInvalid())
+	}
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW COMPOSITE DATABASES"), nil)
 	}
