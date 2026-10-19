@@ -324,9 +324,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	for i, id := range config.sources {
 		index := sort.SearchStrings(incidence.sources, id)
 		if config.named[i] && (index == len(incidence.sources) || incidence.sources[index] != id) {
-			// An id string may name a remote node of the rows by its
-			// elementId; a node keeps its own identity.
-			id = similarityRemoteKey + id
+			id = incidence.namedSourceKey(id)
 			index = sort.SearchStrings(incidence.sources, id)
 		}
 		if index < len(incidence.sources) && incidence.sources[index] == id && !excluded[index] {
@@ -416,6 +414,9 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 // as given, even when the strings are equal. Output shows the elementId.
 const similarityRemoteKey = "\x00remote\x00"
 
+const similarityNativeKey = "\x00native\x00"
+const similarityLocalKey = "\x00local\x00"
+
 // similarityNodeID is the identity of a node a row or the configuration
 // gives: a stored node's id, an id as given, or, for a node of a remote
 // constituent (a composite database's USE), its elementId, which carries the
@@ -423,6 +424,9 @@ const similarityRemoteKey = "\x00remote\x00"
 // storage, so the identity a value carries is enough; a remote relationship
 // is not a node.
 func similarityNodeID(value interface{}) (string, bool) {
+	if node, native := value.(*storage.Node); native && node != nil && node.Database != "" {
+		return similarityNativeKey + node.ElementID(""), true
+	}
 	if remote, isRemote := value.(storage.RemoteEntityValue); isRemote {
 		if remote == nil || cypherValueKindOf(remote) != valueKindNode {
 			return "", false
@@ -431,13 +435,52 @@ func similarityNodeID(value interface{}) (string, bool) {
 		return similarityRemoteKey + id, ok && id != ""
 	}
 	id, ok := gdsNodeID(value)
+	if strings.HasPrefix(string(id), "\x00") {
+		return similarityLocalKey + string(id), ok
+	}
 	return string(id), ok
+}
+
+// namedSourceKey preserves local stored-ID inputs when they name one native
+// source, and accepts an element ID for a qualified native or remote source.
+// An unqualified ID shared by several databases cannot select one arbitrarily.
+func (incidence *similarityIncidence) namedSourceKey(key string) string {
+	text := similarityDisplayID(key)
+	for _, prefix := range []string{similarityNativeKey, similarityRemoteKey} {
+		candidate := prefix + text
+		index := sort.SearchStrings(incidence.sources, candidate)
+		if index < len(incidence.sources) && incidence.sources[index] == candidate {
+			return candidate
+		}
+	}
+	matched := ""
+	for _, candidate := range incidence.sources {
+		if !strings.HasPrefix(candidate, similarityNativeKey) {
+			continue
+		}
+		_, _, local, valid := storage.ParseElementID(strings.TrimPrefix(candidate, similarityNativeKey))
+		if valid && local == text {
+			if matched != "" {
+				return key
+			}
+			matched = candidate
+		}
+	}
+	if matched != "" {
+		return matched
+	}
+	return key
 }
 
 // similarityDisplayID is a key as the output shows it: a remote node's
 // elementId, or the local id.
 func similarityDisplayID(key string) string {
-	return strings.TrimPrefix(key, similarityRemoteKey)
+	for _, prefix := range []string{similarityRemoteKey, similarityNativeKey, similarityLocalKey} {
+		if strings.HasPrefix(key, prefix) {
+			return strings.TrimPrefix(key, prefix)
+		}
+	}
+	return key
 }
 
 // similarityShownBefore orders two keys by the ids the output shows, then by
