@@ -11,12 +11,13 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 	var states map[NodeID]bufferedEntityState
 	if w := b.writeBehind; w != nil {
 		w.ensurePendingValueTracked(label, property)
-	} else {
-		ids = idx.LookupFull(values...)
 	}
 	var nodes []*Node
 	err := b.withReadView(func(w *WriteBehindBuffer) {
 		ids = idx.LookupFull(values...)
+		if w == nil {
+			return
+		}
 		if valueKey, ok := indexValueKey(values[0]); ok {
 			pending = w.keyCandidatesLocked(label, property, valueKey)
 		} else {
