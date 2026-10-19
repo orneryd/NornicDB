@@ -235,6 +235,7 @@ func RedactURL(raw string) string {
 func redactURLCredential(string, error) (string, error) {
 	return redactedPlaceholder, nil
 }
+
 // Error bodies can also carry newly issued credentials, whose values were not
 // in the request. Apply the same field-name policy to structured error data.
 func redactJSON(value any, path string) bool {
@@ -282,6 +283,7 @@ func ClientCredentials(endpoint string, secrets ...string) []string {
 	})
 	return values
 }
+
 // ContextCredentials extracts URL-owned credentials from diagnostic source
 // context, such as an original DDL command. It uses the same URL reader as
 // client configuration; it does not classify unrelated prose as a credential.
@@ -292,6 +294,7 @@ func ContextCredentials(context string, secrets ...string) []string {
 	}
 	return values
 }
+
 // RedactText removes credentials owned by the caller, including the encodings
 // used by HTTP forms, JSON and Basic authorization. It never reads environment
 // variables or discovers credentials from unrelated clients.
