@@ -69,9 +69,9 @@ var builtinProcedureResultCache = map[string]ProcedureResultCache{
 	"apoc.custom.declareProcedure":         {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
 	// These legacy handlers also accept a raw configuration expression. Their
 	// live collector state remains non-deterministic regardless of its content.
-	"db.stats.collect":  {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
-	"db.stats.retrieve": {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
+	"db.stats.collect":                        {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
+	"db.stats.retrieve":                       {CypherInputs: []ProcedureCypherInput{{Argument: 1}}},
 	"db.create.setNodeVectorProperty":         {CypherInputs: []ProcedureCypherInput{{Argument: 2}}},
 	"db.create.setRelationshipVectorProperty": {CypherInputs: []ProcedureCypherInput{{Argument: 2}}},
-	"tx.setMetaData":                         {CypherInputs: []ProcedureCypherInput{{Argument: 0}}},
+	"tx.setMetaData":                          {CypherInputs: []ProcedureCypherInput{{Argument: 0}}},
 }
