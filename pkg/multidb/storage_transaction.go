@@ -110,11 +110,17 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	}
 	// Quotas describe stored data, including hidden entities. Use the same
 	// stored-reader owner as direct accounting for each prior committed body.
+	// Size both sides as stored-reader images. Pending values and acknowledged
+	// write-behind values may still carry pre-codec timestamps/property types.
 	nodes, nodeBytes, err := transactionEntityDelta(changes.Nodes,
 		func(id storage.NodeID) (*storage.Node, error) {
 			return storage.GetStoredNode(t.Engine, storage.NodeID(strings.TrimPrefix(string(id), t.dbName+":")))
 		},
 		func(node *storage.Node) (int64, error) {
+			node, err := tx.StoredNodeImage(node)
+			if err != nil {
+				return 0, err
+			}
 			node.ID = storage.NodeID(strings.TrimPrefix(string(node.ID), t.dbName+":"))
 			return calculateNodeSize(node)
 		}, trackBytes)
@@ -126,6 +132,10 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 			return storage.GetStoredEdge(t.Engine, storage.EdgeID(strings.TrimPrefix(string(id), t.dbName+":")))
 		},
 		func(edge *storage.Edge) (int64, error) {
+			edge, err := tx.StoredEdgeImage(edge)
+			if err != nil {
+				return 0, err
+			}
 			edge.ID = storage.EdgeID(strings.TrimPrefix(string(edge.ID), t.dbName+":"))
 			edge.StartNode = storage.NodeID(strings.TrimPrefix(string(edge.StartNode), t.dbName+":"))
 			edge.EndNode = storage.NodeID(strings.TrimPrefix(string(edge.EndNode), t.dbName+":"))
