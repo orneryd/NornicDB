@@ -457,14 +457,18 @@ func projectCachedNodeForRead(node *Node, properties []string) *Node {
 	if properties == nil {
 		return copyNode(node)
 	}
-	projected := *node
+	// Projection changes the property set, not ownership of the rest of the
+	// node. Copy mutable metadata and vectors without copying omitted properties.
+	source := *node
+	source.Properties = nil
+	projected := copyNode(&source)
 	projected.Properties = make(map[string]any, len(properties))
 	for _, property := range properties {
 		if value, ok := node.Properties[property]; ok {
 			projected.Properties[property] = value
 		}
 	}
-	return &projected
+	return projected
 }
 
 // GetAllNodes returns all nodes in the storage.
