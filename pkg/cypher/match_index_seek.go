@@ -95,29 +95,39 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 	}
 	lookupID = strings.TrimSpace(idValue)
 	// Equality and IN consume the same qualified reference as graph readers.
-	lookupID,found,applicable := e.entitySeekLookup(lookupID,elementKind,kind)
-	if !applicable { return "","",false,false }
-	if !found { return variable,"",true,true }
+	lookupID, found, applicable := e.entitySeekLookup(lookupID, elementKind, kind)
+	if !applicable {
+		return "", "", false, false
+	}
+	if !found {
+		return variable, "", true, true
+	}
 	return variable, lookupID, false, true
 }
 
 // entitySeekLookup retains the database until the selected engine accepts it.
 // Unqualified strings retain the existing raw-ID extension.
-func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string,bool,bool) {
-	actual,database,local,qualified := storage.ParseElementID(value)
-	if function != "elementId" && !strings.HasPrefix(value,kind+":") { qualified = false }
+func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string, bool, bool) {
+	actual, database, local, qualified := storage.ParseElementID(value)
+	if function != "elementId" && !strings.HasPrefix(value, kind+":") {
+		qualified = false
+	}
 	if !qualified {
 		// A raw local ID may match several sources. Leave that kept extension
 		// to the normal predicate rather than certifying a single-node seek.
-		if storage.CompositeDatabaseOf(e.storage) != "" { return "",false,false }
-		return value,true,true
+		if storage.CompositeDatabaseOf(e.storage) != "" {
+			return "", false, false
+		}
+		return value, true, true
 	}
-	if actual != kind { return "",false,true }
+	if actual != kind {
+		return "", false, true
+	}
 	if storage.CompositeDatabaseOf(e.storage) == "" && database != storageDatabaseName(e.storage) {
-		return "",false,true
+		return "", false, true
 	}
-	id,found := (storage.EntityIdentity{Database: database,LocalID: local}).LookupID(e.storage,kind)
-	return id,found,true
+	id, found := (storage.EntityIdentity{Database: database, LocalID: local}).LookupID(e.storage, kind)
+	return id, found, true
 }
 
 // tryCollectNodesFromIDEquality attempts to satisfy:
@@ -240,9 +250,13 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 	}
 	idValue = strings.TrimSpace(idValue)
 
-	lookupID,found,applicable := e.entitySeekLookup(idValue,"4",kind)
-	if !applicable { return nil,false,nil }
-	if !found { return []*storage.Node{},true,nil }
+	lookupID, found, applicable := e.entitySeekLookup(idValue, "4", kind)
+	if !applicable {
+		return nil, false, nil
+	}
+	if !found {
+		return []*storage.Node{}, true, nil
+	}
 
 	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
 	if err != nil || node == nil {
@@ -936,9 +950,13 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		if lookupID == "" {
 			continue
 		}
-		lookupID,found,applicable := e.entitySeekLookup(lookupID,"4",kind)
-		if !applicable { return nil,false,nil }
-		if !found { continue }
+		lookupID, found, applicable := e.entitySeekLookup(lookupID, "4", kind)
+		if !applicable {
+			return nil, false, nil
+		}
+		if !found {
+			continue
+		}
 		if _, exists := seen[lookupID]; exists {
 			continue
 		}

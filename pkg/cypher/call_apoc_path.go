@@ -123,16 +123,20 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 		if typed == nil {
 			return nil, nil
 		}
-		if view,ok := e.storage.(*graphIdentityStorage); ok { return []*storage.Node{view.node(typed)},nil }
+		if view, ok := e.storage.(*graphIdentityStorage); ok {
+			return []*storage.Node{view.node(typed)}, nil
+		}
 		return []*storage.Node{typed}, nil
 	case string:
 		id := storage.NodeID(normalizeNodeIDValue(typed).(string))
-		if view,ok := e.storage.(*graphIdentityStorage); ok {
+		if view, ok := e.storage.(*graphIdentityStorage); ok {
 			var valid bool
-			id,valid = view.inputKey(typed)
-			if !valid { return nil,localizedError(localization.CypherCoreApocPathNodeNotFound(argument,typed),nil) }
+			id, valid = view.inputKey(typed)
+			if !valid {
+				return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
+			}
 		}
-		node, err := e.getQueryNode(e.storage,id)
+		node, err := e.getQueryNode(e.storage, id)
 		if err != nil || node == nil {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
@@ -712,7 +716,9 @@ func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
+		return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))}
+	}, "path")
 }
 
 // callApocPathExpand implements apoc.path.expand(start, relationshipFilter,
@@ -734,7 +740,9 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
+		return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))}
+	}, "path")
 }
 
 // callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
@@ -756,7 +764,9 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
+		return []interface{}{e.pathToMap(graphIdentityPathValue(end.path()))}
+	}, "path")
 }
 
 // callApocPathSubgraphAll implements apoc.path.subgraphAll(start, config) ::
@@ -792,7 +802,11 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	}
 	// One row, with empty lists when nothing is reached, optional or not,
 	// as in APOC.
-	for i,node := range nodes { nodes[i] = graphIdentityNodeValue(node.(*storage.Node)) }
-	for i,edge := range relationships { relationships[i] = graphIdentityEdgeValue(edge.(*storage.Edge)) }
+	for i, node := range nodes {
+		nodes[i] = graphIdentityNodeValue(node.(*storage.Node))
+	}
+	for i, edge := range relationships {
+		relationships[i] = graphIdentityEdgeValue(edge.(*storage.Edge))
+	}
 	return &ExecuteResult{Columns: []string{"nodes", "relationships"}, Rows: [][]interface{}{{nodes, relationships}}}, nil
 }
