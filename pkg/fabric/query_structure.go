@@ -22,28 +22,34 @@ type QueryStructure struct {
 	LocalText  string
 	LocalEdits []QueryTextEdit
 	tree       antlr4.ParserRuleContext
+	unionErr   error
+	parsed     bool
+	statements int
 }
 
 type QueryClause struct {
-	Kind                  string
-	Start, End, BodyStart int
-	Text, Body, Remaining string
-	Use                   *UseClause
-	Nested                *QueryStructure
-	Projection            *QueryProjection
-	Yield                 *QueryYield
-	Pattern, Predicate    string
-	Expression, Name      string
-	Distinct              bool
-	Optional              bool
-	ExecutionText         string
-	InTransactions        bool
-	BatchSize             string
-	Scoped                bool
-	ScopeText             string
-	ScopeNames            []string
-	BodyOffset            int
-	tree                  antlr4.ParserRuleContext
+	Kind                                      string
+	Start, End, BodyStart                     int
+	Text, Body, Remaining                     string
+	Use                                       *UseClause
+	Nested                                    *QueryStructure
+	Projection                                *QueryProjection
+	Yield                                     *QueryYield
+	Pattern, Predicate                        string
+	Expression, Name                          string
+	Distinct                                  bool
+	Optional                                  bool
+	ExecutionText                             string
+	InTransactions                            bool
+	BatchSize                                 string
+	Scoped                                    bool
+	ScopeText                                 string
+	ScopeNames                                []string
+	BodyOffset                                int
+	tree                                      antlr4.ParserRuleContext
+	endsStatement, schemaDrop, administration bool
+	statement                                 int
+	graphStart                                int
 }
 
 type QueryProjection struct {
@@ -238,11 +244,27 @@ func (r *structureReader) partialUses(body grammar.IFabricBodyContext) *QueryStr
 		}
 		if use, ok := tree.(grammar.IFabricUseClauseContext); ok && use.GetStart() != nil {
 			start := r.start(use.GetStart())
-			target, _, found, err := ParseUseClause(r.text[start:], inCall)
-			if err != nil {
+			target, found := r.useReference(use)
+			if found {
+				clause := QueryClause{Kind: "USE", Start: start, Use: &target, graphStart: r.useReferenceStart(use)}
+				if use.GetStop() != nil {
+					clause.End = r.end(use.GetStop())
+					clause.Remaining = strings.TrimSpace(r.text[clause.End:])
+				}
+				q.Clauses = append(q.Clauses, clause)
+				var preset *QueryClause
+				if clause.End > clause.Start {
+					preset = &clause
+				}
+				text := r.text
+				if preset == nil {
+					text = r.text[start:]
+				}
+				if _, _, _, err := parseUseClauseFallback(text, inCall, preset); err != nil {
+					q.Err = err
+				}
+			} else if _, _, _, err := parseUseClauseFallback(r.text[start:], inCall, nil); err != nil {
 				q.Err = err
-			} else if found {
-				q.Clauses = append(q.Clauses, QueryClause{Kind: "USE", Start: start, Use: &target})
 			}
 		}
 		for i := 0; i < tree.GetChildCount(); i++ {
@@ -257,31 +279,35 @@ func (r *structureReader) partialUses(body grammar.IFabricBodyContext) *QueryStr
 // syntax. Parsing a clause in isolation loses its following-clause context;
 // in particular NOT, DISTINCT and USE may all be legitimate variable names.
 func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *QueryStructure {
-	q := &QueryStructure{tree: body}
+	q := &QueryStructure{tree: body, parsed: true}
 	if body == nil {
 		return q
 	}
+	startsStatement := true
 	for _, clause := range body.AllFabricClause() {
 		if clause.SEMI() != nil {
+			if len(q.Clauses) > 0 {
+				q.Clauses[len(q.Clauses)-1].endsStatement = true
+			}
+			startsStatement = true
 			continue
 		}
 		if clause.GetStart() == nil || clause.GetStop() == nil {
 			continue
 		}
-		c := QueryClause{Start: r.start(clause.GetStart()), End: r.end(clause.GetStop())}
+		if startsStatement {
+			q.statements++
+			startsStatement = false
+		}
+		c := QueryClause{Start: r.start(clause.GetStart()), End: r.end(clause.GetStop()), statement: q.statements}
 		headEnd := r.end(clause.GetStart())
 		switch {
 		case clause.FabricUseClause() != nil:
 			c.Kind = "USE"
 			c.tree = clause.FabricUseClause()
-			use, _, ok, err := ParseUseClause(r.text[c.Start:], inCall)
-			if err != nil {
-				q.Err = err
-				return q
-			}
-			if ok {
-				c.Use = &use
-			}
+			use, _ := r.useReference(clause.FabricUseClause())
+			c.Use = &use
+			c.graphStart = r.useReferenceStart(clause.FabricUseClause())
 		case clause.WithSt() != nil:
 			c.Kind = "WITH"
 			t := clause.WithSt()
@@ -382,9 +408,8 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 				}
 			}
 			c.Nested = r.body(t.FabricBody(), true)
-			if c.Nested.Err != nil {
+			if c.Nested.Err != nil && q.Err == nil {
 				q.Err = c.Nested.Err
-				return q
 			}
 		case clause.QueryCallSt() != nil:
 			c.Kind = "CALL"
@@ -428,9 +453,12 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		case clause.SchemaCommand() != nil:
 			c.Kind = "SCHEMA"
 			c.tree = clause.SchemaCommand()
+			c.schemaDrop = clause.SchemaCommand().DROP() != nil
 		case clause.ShowCommand() != nil:
 			c.Kind = "SHOW"
 			c.tree = clause.ShowCommand()
+			show := clause.ShowCommand()
+			c.administration = show.DATABASE() != nil || show.DATABASES() != nil || show.ALIASES() != nil || show.USERS() != nil || show.CURRENT() != nil || show.ROLES() != nil || show.PRIVILEGES() != nil || show.SERVERS() != nil
 		case clause.TerminateCommand() != nil:
 			c.Kind = "TERMINATE"
 			c.tree = clause.TerminateCommand()
@@ -483,6 +511,10 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		}
 		q.Clauses = append(q.Clauses, c)
 	}
+	if q.Err == nil {
+		q.Err = q.validateUses(inCall)
+	}
+	q.unionErr = q.validateUnionSchemas()
 	return q
 }
 

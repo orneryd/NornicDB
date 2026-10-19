@@ -81,3 +81,19 @@ func TestFabricStructureGeneratedIdentifierRoles(t *testing.T) {
 		require.Equal(t, name, q.ResultClause().Projection.Items[0].Name, imported)
 	}
 }
+
+func TestFabricStructureGraphSelectionNames(t *testing.T) {
+	for _, name := range []string{"union", "use", "return", "with", "call", "create", "graph", "true", "false", "null"} {
+		for _, written := range []string{name, "`" + name + "`"} {
+			text := "USE GRAPH " + written + " RETURN 7 AS k"
+			q := ReadQueryStructure(text)
+			require.NoError(t, q.Err, text)
+			require.Equal(t, name, q.Clauses[0].Use.Name, text)
+			clause, remaining, found, err := ParseUseClause(text, false)
+			require.NoError(t, err, text)
+			require.True(t, found, text)
+			require.Equal(t, name, clause.Name, text)
+			require.Equal(t, "RETURN 7 AS k", remaining, text)
+		}
+	}
+}
