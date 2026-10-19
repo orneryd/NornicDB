@@ -107,14 +107,15 @@ func parseProjectionExprAlias(item string) (string, string) {
 	}
 	asIdx := projectionAliasIndex(trimmed)
 	if asIdx < 0 {
+		expression := lexicalExpressionText(trimmed)
 		// A projected variable is named by the variable itself: `x` is the
 		// column x, as in Neo4j. Other expressions are named by their text.
-		if name := simpleSemanticIdentifier(trimmed); name != "" {
-			return trimmed, name
+		if name := simpleSemanticIdentifier(expression); name != "" {
+			return expression, name
 		}
-		return trimmed, trimmed
+		return expression, trimmed
 	}
-	expr := strings.TrimSpace(trimmed[:asIdx])
+	expr := lexicalExpressionText(trimmed[:asIdx])
 	alias := normalizeProjectionColumnName(trimmed[asIdx+len("AS"):])
 	return expr, alias
 }
