@@ -3,11 +3,44 @@ package multidb
 import (
 	"encoding/json"
 	"path/filepath"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNamespaceCatalogConcurrentCreatesPreserveAcknowledgedDatabases(t *testing.T) {
+	b := storage.NewMemoryEngine()
+	m, err := NewDatabaseManager(b, nil)
+	require.NoError(t, err)
+	defer m.Close()
+	const count = 24
+	start := make(chan struct{})
+	errors := make(chan error, count)
+	var writers sync.WaitGroup
+	for i := 0; i < count; i++ {
+		writers.Add(1)
+		go func(i int) {
+			defer writers.Done()
+			<-start
+			errors <- m.CreateDatabase(fmt.Sprintf("concurrent_catalog_%d", i))
+		}(i)
+	}
+	close(start)
+	writers.Wait()
+	close(errors)
+	for err := range errors { require.NoError(t, err) }
+	for i := 0; i < count; i++ {
+		require.True(t, m.Exists(fmt.Sprintf("concurrent_catalog_%d", i)), "every acknowledged CREATE must remain in the catalog")
+	}
+	reloaded, err := NewDatabaseManager(b, nil)
+	require.NoError(t, err)
+	for i := 0; i < count; i++ {
+		require.True(t, reloaded.Exists(fmt.Sprintf("concurrent_catalog_%d", i)), "every acknowledged CREATE must survive catalog reload")
+	}
+}
 
 func TestNamespaceCatalogReplayClearsRemovedMetadata(t *testing.T) {
 	b := storage.NewMemoryEngine()
