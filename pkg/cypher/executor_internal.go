@@ -156,6 +156,10 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	upper := e.cachedUpperQuery(cypher)
+	// This is executable, normalized statement text with its actual parameter
+	// values installed. Nested dynamic handlers return through this same gate;
+	// no admission parser attempts to reconstruct their arguments.
+	if err := e.admitResolvedStatementWrite(ctx,nil,cypher); err != nil { return nil,err }
 
 	// If we're in an explicit transaction, execute within it.
 	if e.txContext != nil && e.txContext.active {

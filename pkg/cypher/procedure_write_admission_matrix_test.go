@@ -95,7 +95,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 	failure := registerAdmissionMatrixReject(t)
 	for index, origin := range origins {
 		bodies := []bool{false}
-		if origin.Statement != nil {
+		if origin.ExecutesStatements {
 			bodies = []bool{false, true}
 		}
 		for _, dynamicWrite := range bodies {
@@ -112,17 +112,17 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 							spec.Returns = []ProcedureColumn{{Name: "value", Type: "INTEGER"}}
 							spec.MinArgs, spec.MaxArgs = 0, 0
 							call := "CALL " + alias + "() YIELD value"
-							if spec.Statement != nil {
+							if spec.ExecutesStatements {
 								spec.MinArgs, spec.MaxArgs = 2, 2
 								spec.Signature = alias + "(statement :: STRING, params :: MAP) :: (value :: INTEGER)"
 								spec.Params = []ProcedureParam{{Name: "statement", Type: "STRING"}, {Name: "params", Type: "MAP"}}
 								call = "CALL " + alias + "($statement,{}) YIELD value"
 							}
-							writes := origin.Mode == ProcedureModeWrite || origin.Statement != nil && dynamicWrite
+							writes := origin.Mode == ProcedureModeWrite || origin.ExecutesStatements && dynamicWrite
 							invoked, transactional := false, false
 							require.NoError(t, RegisterUserProcedure(spec, func(ctx context.Context, nested *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 								invoked, transactional = true, nested.inTransaction(ctx)
-								if origin.Statement != nil {
+								if origin.ExecutesStatements {
 									return nested.Execute(ctx, args[0].(string), nil)
 								}
 								if writes {
@@ -146,7 +146,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 								require.NoError(t, err)
 							}
 							require.True(t, invoked, "the contract handler must actually run")
-							require.Equal(t, explicit || writes, transactional, "genuine READ contracts must not become write participants")
+							require.Equal(t, explicit || writes || origin.ExecutesStatements && !composite, transactional, "genuine READ contracts must not become write participants")
 							if explicit {
 								_, err = exec.Execute(ctx, "COMMIT", nil)
 								if reject {
@@ -167,7 +167,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 				}
 			}
 		}
-		t.Logf("registry matrix origin=%s mode=%s dynamic=%v: success/failure x native/Fabric x auto/explicit", origin.Name, origin.Mode, origin.Statement != nil)
+		t.Logf("registry matrix origin=%s mode=%s dynamic=%v: success/failure x native/Fabric x auto/explicit", origin.Name, origin.Mode, origin.ExecutesStatements)
 	}
 }
 
@@ -191,7 +191,7 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 	}
 	for _, procedure := range ListRegisteredProcedures() {
 		call, exists := profiles[procedure.Name]
-		if procedure.Statement != nil {
+		if procedure.ExecutesStatements {
 			require.True(t, exists, "missing actual-handler fixture for dynamic registry contract %s", procedure.Name)
 		}
 		if !exists {

@@ -137,7 +137,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	fabricExecutor.SetUnionContract(fabricUnionContract)
 	fabricExecutor.SetRemoteValueCodec(fabricRemoteValueCodec)
-	fabricExecutor.SetConcurrentExecution(autoCommit)
+	fabricExecutor.SetConcurrentExecution(autoCommit && !callsDynamicStatementProcedure(cypher))
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
@@ -700,9 +700,19 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
+	ctx = context.WithValue(ctx,dynamicWriteAdmissionKey{},dynamicWriteAdmission(func(callCtx context.Context,caller *StorageExecutor,statement string) error {
+		return c.promoteResolvedStatement(callCtx,caller,dbName,engine,statement)
+	}))
 	base := c.base
-	if !c.autoCommit {
-		if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
+			// Fabric has one write participant. Its local fragments share one
+			// transactional executor until the coordinator admits COMMIT.
+			// Concurrent read-only participants keep their independent path.
+			if c.autoCommit {
+				c.localDispatchMu.Lock()
+				defer c.localDispatchMu.Unlock()
+			}
 			txExec, err := c.ensureLocalShardTxExecutor(ctx, sub, dbName, engine)
 			if err != nil {
 				return nil, nil, err

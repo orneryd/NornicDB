@@ -3467,7 +3467,7 @@ func (e *FabricExecutor) executeUnion(ctx context.Context, tx *FabricTransaction
 func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransaction, f *FragmentUnion, params map[string]interface{}, authToken string) ([]string, RowIterator, error) {
 	// Keep write branch execution sequential so shard write-routing remains deterministic.
 	// Read-only UNION branches execute concurrently and are merged in LHS/RHS order.
-	if fragmentContainsWrite(f.LHS) || fragmentContainsWrite(f.RHS) {
+	if e.serializeExec || fragmentContainsWrite(f.LHS) || fragmentContainsWrite(f.RHS) {
 		lhsCols, lhsIt, err := e.executeRows(ctx, tx, f.LHS, params, authToken)
 		if err != nil {
 			return nil, nil, fmt.Errorf("union LHS failed: %w", err)
