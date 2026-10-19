@@ -25,7 +25,7 @@ type QueryStructure struct {
 
 type QueryClause struct {
 	Kind                  string
-	Start, End            int
+	Start, End, BodyStart int
 	Text, Body, Remaining string
 	Use                   *UseClause
 	Nested                *QueryStructure
@@ -417,7 +417,8 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		c.Remaining = strings.TrimSpace(r.text[c.End:])
 		c.ExecutionText = c.Text
 		if c.Kind != "CALL" {
-			c.Body = strings.TrimSpace(r.text[min(skipSpacesAndComments(r.text, headEnd), c.End):c.End])
+			c.BodyStart = min(skipSpacesAndComments(r.text, headEnd), c.End)
+			c.Body = strings.TrimSpace(r.text[c.BodyStart:c.End])
 		}
 		if c.Optional && c.Kind == "CALL" {
 			var call antlr4.TerminalNode
