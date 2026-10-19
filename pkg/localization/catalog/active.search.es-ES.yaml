@@ -21,6 +21,9 @@
   other: "No se encontró el nodo '{{.ID}}'"
 - id: search.group_by_ranked_mode
   other: "group_by requiere el modo de continuación ranked_then_id o id; el modo ranked pagina los resultados a medida que los encuentra y no los agrupa"
+- id: search.page_size_exceeded
+  description: Página de continuación demasiado grande. page_size_exceeded y max_page_size son identificadores de API; MaxPageSize es el máximo n configurado.
+  other: "page_size_exceeded: n de continuación de búsqueda supera max_page_size={{.MaxPageSize}}"
 - id: search.query_embedding_required
   description: Error de validación de consulta vectorial cuando falta el embedding.
   other: se requiere el embedding de la consulta

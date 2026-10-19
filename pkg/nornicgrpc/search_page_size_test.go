@@ -49,15 +49,26 @@ func TestSearchContinuationPageSizeGRPC(t *testing.T) {
 			client := gen.NewNornicSearchClient(conn)
 			ctx := context.Background()
 			assertOversized := func(request *gen.SearchTextRequest) {
-				_, err := client.SearchText(ctx, request)
-				require.Equal(t, codes.InvalidArgument, status.Code(err))
-				details := status.Convert(err).Details()
-				require.Len(t, details, 1)
-				info, ok := details[0].(*errdetails.ErrorInfo)
-				require.True(t, ok)
-				require.Equal(t, "PAGE_SIZE_EXCEEDED", info.Reason)
-				require.Equal(t, "page_size_exceeded", info.Metadata["request_status"])
-				require.Equal(t, fmt.Sprint(limit), info.Metadata["max_page_size"])
+				for _, locale := range []struct {
+					tag  string
+					want string
+				}{
+					{"en-US", fmt.Sprintf("page_size_exceeded: search continuation n exceeds max_page_size=%d", limit)},
+					{"en-XA", fmt.Sprintf("[!! page_size_exceeded: search continuation n exceeds max_page_size=%d !!]", limit)},
+					{"es-ES", fmt.Sprintf("page_size_exceeded: n de continuación de búsqueda supera max_page_size=%d", limit)},
+				} {
+					localized := metadata.NewOutgoingContext(ctx, metadata.Pairs("accept-language", locale.tag))
+					_, err := client.SearchText(localized, request)
+					require.Equal(t, codes.InvalidArgument, status.Code(err))
+					require.Equal(t, locale.want, status.Convert(err).Message(), locale.tag)
+					details := status.Convert(err).Details()
+					require.Len(t, details, 1)
+					info, ok := details[0].(*errdetails.ErrorInfo)
+					require.True(t, ok)
+					require.Equal(t, "PAGE_SIZE_EXCEEDED", info.Reason)
+					require.Equal(t, "page_size_exceeded", info.Metadata["request_status"])
+					require.Equal(t, fmt.Sprint(limit), info.Metadata["max_page_size"])
+				}
 			}
 			assertOversized(&gen.SearchTextRequest{Mode: "id", N: uint32(limit + 1)})
 			var header metadata.MD
