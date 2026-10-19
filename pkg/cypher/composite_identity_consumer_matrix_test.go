@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -210,8 +211,11 @@ func TestCompositeEntityLookupConsumers(t *testing.T) {
 		t.Run(map[bool]string{false:"autocommit",true:"explicit"}[explicit],func(t *testing.T) {
 			ctx := context.Background()
 			for _,procedure := range []string{"kp.resolve","nornicdb.knowledgepolicy.resolve"} {
-				exec,_ := newCompositeIdentityExecutor(t,explicit)
-				_,err := exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:one:same')",nil)
+				exec,manager := newCompositeIdentityExecutor(t,explicit)
+				store,err := manager.GetStorage("one")
+				require.NoError(t,err)
+				store.GetSchema().SetBindingTable(knowledgepolicy.NewBindingTable())
+				_,err = exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:one:same')",nil)
 				require.NoError(t,err)
 				_,err = exec.Execute(ctx,"USE comp.one CALL "+procedure+"('4:two:same')",nil)
 				require.Error(t,err,"a foreign entity cannot resolve against this database")
