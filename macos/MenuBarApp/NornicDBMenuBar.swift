@@ -915,66 +915,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func downloadModels() {
+        downloadDefaultModels(DefaultLocalModel.allCases)
+    }
+
+    func downloadModel(_ model: DefaultLocalModel) {
+        downloadDefaultModels([model])
+    }
+
+    private func downloadDefaultModels(_ models: [DefaultLocalModel]) {
         let alert = NSAlert()
-        alert.messageText = "Download Default Models"
-        alert.informativeText = "This will download:\n• BGE-M3 embedding model (~400MB)\n• BGE reranker model (~440MB)\n• qwen3-0.6b-Instruct model (~350MB)\n\nTotal: ~1.2GB\n\nDownloading from HuggingFace..."
-        alert.alertStyle = .informational
+        alert.messageText = "Download Default Local Model\(models.count == 1 ? "" : "s")"
+        alert.informativeText = models.map { $0.filename }.joined(separator: "\n")
+            + "\n\nDownload from HuggingFace into \(configManager.modelsPath)? Existing model selections are preserved."
         alert.addButton(withTitle: "Download")
         alert.addButton(withTitle: "Cancel")
-        
-        if alert.runModal() == .alertFirstButtonReturn {
-            // Show progress indicator
-            let progress = NSAlert()
-            progress.messageText = "Downloading Models..."
-            progress.informativeText = "This may take several minutes depending on your connection.\n\nCheck the console for progress."
-            progress.alertStyle = .informational
-            progress.addButton(withTitle: "OK")
-            
-            // Execute download script
-            DispatchQueue.global(qos: .userInitiated).async {
-                let modelsPath = self.configManager.modelsPath
-                let bgePath = "\(modelsPath)/bge-m3.gguf"
-                let bgeRerankerPath = "\(modelsPath)/bge-reranker-v2-m3-Q4_K_M.gguf"
-                let qwenPath = "\(modelsPath)/\(defaultQwenHeimdallFileName)"
-                let task = Process()
-                task.launchPath = "/bin/bash"
-                task.arguments = ["-c", "mkdir -p \(shellQuoted(modelsPath)) && curl -fL -o \(shellQuoted(bgePath)) https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf && curl -fL -o \(shellQuoted(bgeRerankerPath)) https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf && curl -fL -o \(shellQuoted(qwenPath)) \(shellQuoted(defaultQwenHeimdallDownloadURL))"]
-                
-                // Create models directory first
-                try? FileManager.default.createDirectory(atPath: modelsPath, withIntermediateDirectories: true, attributes: nil)
-                
-                task.launch()
-                task.waitUntilExit()
-                
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let modelsPath = configManager.modelsPath
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try FileManager.default.createDirectory(atPath: modelsPath, withIntermediateDirectories: true)
+                for model in models {
+                    try downloadDefaultLocalModel(model, into: URL(fileURLWithPath: modelsPath))
+                }
+                DispatchQueue.main.async {
+                    self.configManager.scanModels()
+                    let result = NSAlert()
+                    result.messageText = "Download Complete"
+                    result.informativeText = "Downloaded \(models.map { $0.filename }.joined(separator: ", ")). Select the filename in its local model field."
+                    result.runModal()
+                }
+            } catch {
                 DispatchQueue.main.async {
                     let result = NSAlert()
-                    let downloadsValid = isValidGGUFFile(atPath: bgePath)
-                        && isValidGGUFFile(atPath: bgeRerankerPath)
-                        && isValidGGUFFile(atPath: qwenPath)
-                    if task.terminationStatus == 0 && downloadsValid {
-                        result.messageText = "Download Complete"
-                        result.informativeText = "Models downloaded successfully!\n\nYou can now select them in Settings → AI services."
-                        result.alertStyle = .informational
-                    } else {
-                        _ = removeInvalidGGUFFile(atPath: bgePath)
-                        _ = removeInvalidGGUFFile(atPath: bgeRerankerPath)
-                        _ = removeInvalidGGUFFile(atPath: qwenPath)
-                        result.messageText = "Download Failed"
-                        result.informativeText = modelDownloadFailureMessage(modelsPath: modelsPath)
-                        result.alertStyle = .warning
-                    }
-                    result.addButton(withTitle: "OK")
+                    result.messageText = "Download Failed"
+                    result.informativeText = modelDownloadFailureMessage(modelsPath: modelsPath)
                     result.runModal()
-                    
-                    // Refresh models list in config manager
-                    self.configManager.scanModels()
                 }
             }
-            
-            progress.runModal()
         }
     }
-    
+
     @objc func openModelsFolder() {
         let modelsPath = configManager.modelsPath
         
@@ -1357,7 +1337,7 @@ struct SettingsView: View {
         }
     }
     
-    var modelsTab: some View { AIServiceSettingsView(config: config, downloadModels: { appDelegate.downloadModels() }) }
+    var modelsTab: some View { AIServiceSettingsView(config: config, downloadModel: { appDelegate.downloadModel($0) }) }
 
     var securityTab: some View {
         ScrollView {
@@ -1815,4 +1795,49 @@ private func serverLaunchAgentHasProcess() -> Bool {
         guard process.terminationStatus == 0 else { return false }
         return launchAgentHasProcess(String(decoding: data, as: UTF8.self))
     } catch { return false }
+}
+
+/// One download descriptor per local service; remote providers never use these.
+enum DefaultLocalModel: CaseIterable {
+    case embeddings, reranking, inference
+
+    var filename: String {
+        switch self {
+        case .embeddings: return ConfigManager.defaultEmbeddingModel
+        case .reranking: return ConfigManager.defaultSearchRerankModel
+        case .inference: return ConfigManager.defaultHeimdallModel
+        }
+    }
+
+    var downloadURL: String {
+        switch self {
+        case .embeddings: return "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf"
+        case .reranking: return "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q4_K_M.gguf"
+        case .inference: return defaultQwenHeimdallDownloadURL
+        }
+    }
+}
+
+func downloadDefaultLocalModel(_ model: DefaultLocalModel, into directory: URL,
+    execute: ([String]) throws -> Int32 = { arguments in
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        process.arguments = arguments
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    }) throws {
+    // Stage beside the destination so failure never destroys a valid installed model.
+    let staging = directory.appendingPathComponent(".download-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: staging) }
+    guard try execute(["--fail", "--location", "--output", staging.path, model.downloadURL]) == 0,
+          isValidGGUFFile(atPath: staging.path) else {
+        throw NSError(domain: "NornicDB.ModelDownload", code: 1)
+    }
+    let destination = directory.appendingPathComponent(model.filename)
+    if FileManager.default.fileExists(atPath: destination.path) {
+        _ = try FileManager.default.replaceItemAt(destination, withItemAt: staging)
+    } else {
+        try FileManager.default.moveItem(at: staging, to: destination)
+    }
 }
