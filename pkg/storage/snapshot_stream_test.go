@@ -21,14 +21,18 @@ type embeddingFreeSnapshotSpy struct {
 	lightNodeStreams int
 }
 
-func (s *embeddingFreeSnapshotSpy) StreamNodes(ctx context.Context, fn func(*Node) error) error {
-	s.fullNodeStreams++
-	return s.MemoryEngine.StreamNodes(ctx, fn)
-}
-
-func (s *embeddingFreeSnapshotSpy) StreamNodesWithoutEmbeddings(ctx context.Context, fn func(*Node) error) error {
+// StreamNodesWithOptions counts the snapshot's node streams by whether they
+// load separately stored embeddings; a snapshot reads stored nodes.
+func (s *embeddingFreeSnapshotSpy) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
+	if opts.ApplyDecayFilter {
+		return errors.New("a snapshot must read stored nodes")
+	}
+	if opts.WithEmbeddings {
+		s.fullNodeStreams++
+		return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
+	}
 	s.lightNodeStreams++
-	return s.MemoryEngine.StreamNodes(ctx, func(node *Node) error {
+	return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, func(node *Node) error {
 		return fn(copyNodeWithoutEmbeddings(node))
 	})
 }
@@ -105,22 +109,18 @@ type failingStreamingSnapshotEngine struct {
 	edgeErr error
 }
 
-func (e *failingStreamingSnapshotEngine) StreamNodes(context.Context, func(*Node) error) error {
+func (e *failingStreamingSnapshotEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(*Node) error) error {
 	if e.nodeErr != nil {
 		return e.nodeErr
 	}
-	return nil
+	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, fn)
 }
 
-func (e *failingStreamingSnapshotEngine) StreamNodesWithoutEmbeddings(context.Context, func(*Node) error) error {
-	if e.nodeErr != nil {
-		return e.nodeErr
+func (e *failingStreamingSnapshotEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, fn func(*Edge) error) error {
+	if e.edgeErr != nil {
+		return e.edgeErr
 	}
-	return nil
-}
-
-func (e *failingStreamingSnapshotEngine) StreamEdges(context.Context, func(*Edge) error) error {
-	return e.edgeErr
+	return e.MemoryEngine.StreamStoredEdgesByType(ctx, edgeType, fn)
 }
 
 func streamingSnapshotHeader(t *testing.T) *bytes.Buffer {

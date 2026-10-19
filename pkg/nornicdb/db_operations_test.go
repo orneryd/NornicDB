@@ -36,6 +36,15 @@ func (e *backupErrorEngine) AllEdges() ([]*storage.Edge, error) {
 	return e.Engine.AllEdges()
 }
 
+// The backup fallback streams stored nodes; the fake fails that stream as it
+// fails AllNodes.
+func (e *backupErrorEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if e.allNodesErr != nil {
+		return e.allNodesErr
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, opts, visit)
+}
+
 func TestDB_GetIndexes(t *testing.T) {
 	t.Run("a new database has Neo4j's two token lookup indexes", func(t *testing.T) {
 		db, err := Open("", nil)
