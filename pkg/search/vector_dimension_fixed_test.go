@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -186,4 +187,69 @@ func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
 	require.True(t, svc.AdmitsVectorDimensions(8))
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "eight", NamedEmbeddings: map[string][]float32{"default": eight}}))
 	require.Equal(t, 1, svc.EmbeddingCount())
+}
+
+// Moving in-memory vectors into a new file-backed store takes vectorIndex.mu
+// inside s.mu, as dimension admission does: AdmitsVectorDimensions holds s.mu
+// while it counts the index's vectors for a mismatched dimension, so a
+// migration that held vectorIndex.mu while waiting for s.mu deadlocked a
+// Qdrant write of another dimension.
+func TestFileStoreMigrationDoesNotDeadlockDimensionAdmission(t *testing.T) {
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	t.Cleanup(func() { _ = svc.Close() })
+	require.NoError(t, svc.vectorIndex.Add("live", []float32{1, 0}))
+	// Persistence enabled after live ingestion began: the next index
+	// mutation migrates the in-memory vector to disk. Nothing else here takes
+	// s.mu for writing, so a pending writer below is the migration.
+	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetPersistenceEnabled(true)
+
+	// Admission of a 3-dimensional write between its two steps: s.mu held,
+	// the index count (read only on a dimension mismatch) next.
+	svc.mu.RLock()
+	migrated := make(chan struct{})
+	go func() {
+		svc.indexMu.Lock()
+		svc.ensureVectorFileStore()
+		svc.indexMu.Unlock()
+		close(migrated)
+	}()
+	// The migration reaches publication: its s.mu.Lock is pending, which
+	// makes new read locks fail.
+	require.Eventually(t, func() bool {
+		if svc.mu.TryRLock() {
+			svc.mu.RUnlock()
+			return false
+		}
+		return true
+	}, 5*time.Second, time.Millisecond)
+	admitted := make(chan bool, 1)
+	go func() { admitted <- svc.activeVectorDimensions() == 3 || svc.vectorDimensionsAdoptable() }()
+	var admits, deadlocked bool
+	select {
+	case admits = <-admitted:
+	case <-time.After(2 * time.Second):
+		deadlocked = true
+	}
+	// Release admission's lock either way so no goroutine is stranded.
+	svc.mu.RUnlock()
+	select {
+	case <-migrated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("migration did not finish after admission released s.mu")
+	}
+	if deadlocked {
+		<-admitted
+		t.Fatal("admission's index read waited on the migration, which waited on admission's s.mu")
+	}
+	require.False(t, admits, "a 2-dimensional index holding a vector admits no 3-dimensional write")
+
+	svc.mu.RLock()
+	vfs := svc.vectorFileStore
+	svc.mu.RUnlock()
+	require.NotNil(t, vfs, "the migration published the file-backed store")
+	require.True(t, vfs.Has("live"), "the in-memory vector moved to the file-backed store")
+	require.Equal(t, 1, svc.EmbeddingCount())
+	require.True(t, svc.AdmitsVectorDimensions(2))
+	require.False(t, svc.AdmitsVectorDimensions(3))
 }
