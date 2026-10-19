@@ -253,3 +253,23 @@ func nodeMainVectorKeys(nodeIDs []string) []string {
 func NodeChunkVectorKey(nodeID string, chunk int) string {
 	return nodeChunkVectorKey(nodeID, chunk)
 }
+
+// forEachNodeVectorKeyLocked visits a node's main and tracked vector-entry keys.
+// The main entry and tracked chunk zero share one key and are visited once.
+// Callers hold the node metadata locks. Raw node IDs must not enter vector-key
+// consumers: marker-prefixed IDs may themselves encode a different node's entry.
+func (s *Service) forEachNodeVectorKeyLocked(nodeID string, visit func(string)) {
+	mainKey := nodeMainVectorKey(nodeID)
+	visit(mainKey)
+	for _, key := range s.nodeChunkVectors[nodeID] {
+		if key != mainKey {
+			visit(key)
+		}
+	}
+	for _, key := range s.nodeNamedVector[nodeID] {
+		visit(key)
+	}
+	for _, key := range s.nodePropVector[nodeID] {
+		visit(key)
+	}
+}
