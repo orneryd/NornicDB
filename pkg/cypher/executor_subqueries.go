@@ -538,6 +538,54 @@ func parseCallSubqueryImportVariables(cypher string) []string {
 	names, _, _ := readCallScopeClause(cypher)
 	return names
 }
+type callSubqueryScopeClause struct {
+	names      []string
+	scoped     bool
+	text       string
+	bodyOffset int
+	invalid    bool
+}
+
+// readCallSubqueryScope is the shared static/runtime owner of CALL's scope
+// clause. scoped distinguishes CALL (*) from legacy CALL { ... }; a nil name
+// list means all outer variables, and a non-nil empty list means CALL ().
+// text and bodyOffset let validation use the same parsed clause. Legacy
+// importing-WITH and implicit imports are resolved by their existing owners.
+func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
+	trimmed := strings.TrimSpace(cypher)
+	if findKeywordIndex(trimmed, "CALL") != 0 {
+		return callSubqueryScopeClause{}
+	}
+	idx := skipSpaces(trimmed, len("CALL"))
+	offset := strings.Index(cypher, trimmed)
+	scope := callSubqueryScopeClause{bodyOffset: offset + idx}
+	if idx >= len(trimmed) || trimmed[idx] != '(' {
+		return scope
+	}
+	close := findMatchingCallParen(trimmed, idx)
+	if close < 0 {
+		return scope
+	}
+	scope.scoped = true
+	scope.text = strings.TrimSpace(trimmed[idx+1 : close])
+	scope.bodyOffset = offset + skipSpaces(trimmed, close+1)
+	if scope.text == "*" {
+		return scope
+	}
+	parts := splitProcedureTopLevelComma(scope.text)
+	scope.names = make([]string, 0, len(parts))
+	for _, part := range parts {
+		if simpleSemanticIdentifier(part) == "" && scope.text != "" {
+			scope.invalid = true
+		}
+		name := strings.Trim(strings.TrimSpace(part), "`")
+		if isSimpleIdentifier(name) {
+			scope.names = append(scope.names, name)
+		}
+	}
+	return scope
+}
+
 // prefixUnionBranches puts prefix before body, or before each branch of a
 // UNION / UNION ALL body: every branch of a CALL subquery imports the same
 // outer variables.

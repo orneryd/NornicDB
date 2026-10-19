@@ -138,6 +138,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	var view staticTypeScope
 	stale := true
 	for _, clause := range clauses {
+		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil { return types, false, err }
 		if clause.kind == pipelineClauseMatch || clause.kind == pipelineClauseOptionalMatch {
 			enclosing.declarePatternLocals(types, clause)
 			stale = true
@@ -328,11 +329,8 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				// declares it again.
 				if _, alias := parseProjectionExprAlias(strings.TrimSpace(raw)); alias != "" {
 					name := normalizeProjectionColumnName(alias)
-					if simpleSemanticIdentifier(strings.TrimSpace(expression)) != name {
-						if err := enclosing.redeclarationError(name); err != nil {
-							return types, false, err
-						}
-						if proof := enclosing.dependencies; proof != nil && proof.implicit && proof.active[name] && !proof.touched[name] && enclosing.result != nil { enclosing.result.locals[name] = true }
+					if simpleSemanticIdentifier(unwrapOuterParens(expression)) != name {
+						if proof := enclosing.dependencies; proof != nil && proof.implicit && proof.active[name] && !proof.touched[name] && enclosing.result != nil { enclosing.result.locals[name] = true; delete(enclosing.visible, name) }
 						if enclosing.dependencies != nil { delete(enclosing.dependencies.active, name) }
 					}
 				}
@@ -349,13 +347,16 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if err := e.validateStaticOperatorTypes(clause, input, func() staticTypeScope { return projectionAliasScope(input, clause.text) }, nil); err != nil {
 				return types, false, err
 			}
+			for name := range enclosing.visible {
+				if operand, exists := projectedTypes[name]; exists { enclosing.visible[name] = operand } else if operand, exists := types[name]; exists { enclosing.visible[name] = operand }
+			}
 			types = projectedTypes
 			if proof := enclosing.dependencies; proof != nil {
 				retained := make(map[string]bool)
 				for name := range enclosing.visible { retained[name] = proof.active[name] }
 				projectionTypes := scopeVisibleTypes(types, nil)
 				projectionTypes.forEachProjectedBinding(clause.text, func(name, expression string, inherited bool) {
-					if simpleSemanticIdentifier(expression) == name { retained[name] = proof.active[name] }
+					if simpleSemanticIdentifier(unwrapOuterParens(expression)) == name { retained[name] = proof.active[name] }
 				})
 				proof.active = retained
 			}
@@ -380,9 +381,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
-				if err := enclosing.redeclarationError(normalizeProjectionColumnName(alias)); err != nil {
-					return types, false, err
-				}
 				// FOR is new syntax: unlike the pre-existing permissive UNWIND,
 				// it must not redeclare an already-bound variable, as in Neo4j.
 				if startsWithKeywordFold(clause.text, "FOR") {
@@ -395,7 +393,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				input.complete = false
 				types[alias] = unwoundOperand(types, input, clause.text)
 				if proof := enclosing.dependencies; proof != nil {
-					if proof.implicit && proof.active[alias] && !proof.touched[alias] && enclosing.result != nil { enclosing.result.locals[alias] = true }
+					if proof.implicit && proof.active[alias] && !proof.touched[alias] && enclosing.result != nil { enclosing.result.locals[alias] = true; delete(enclosing.visible, alias) }
 					delete(proof.active, alias)
 				}
 				scope[alias] = types[alias].bindingKind()

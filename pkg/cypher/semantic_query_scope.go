@@ -53,6 +53,7 @@ type semanticQueryScope struct {
 	returned typeScope
 	unchanged map[string]bool
 	imports typeScope
+	globals typeScope
 	locals map[string]bool
 	complete bool
 	wildcard bool
@@ -100,12 +101,17 @@ func (e *StorageExecutor) walkQueryScope(query string, initial typeScope, enclos
 		part.clauses = slices.Clone(clauses)
 		if last := clauses[len(clauses)-1]; last.kind == pipelineClauseReturn { part.wildcard = slices.Contains(pipelineReturnSourceColumns(last.text), "*") }
 		frame := enclosing
+		frame.visible = maps.Clone(enclosing.visible)
 		frame.dependencies = enclosing.dependencies.nested()
+		if frame.dependencies != nil && frame.dependencies.implicit && clauses[0].kind == pipelineClauseWith {
+			for name := range projectTypeScope(initial, cypher25, clauses[0].text) { delete(frame.visible, name) }
+		}
 		frame.result = part
 		part.proof = frame.dependencies
 		_, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, frame)
 		if err != nil { return model, err }
 		part.complete = complete
+		part.globals = frame.visible
 		if part.proof != nil && !part.proof.complete { enclosing.dependencies.complete = false }
 		model.complete = model.complete && part.complete
 		if len(model.branches) == 0 {
@@ -168,6 +174,7 @@ func (enclosing subqueryScope) declarePatternLocals(types typeScope, clause pipe
 		if proof.active[name] && !proof.touched[name] {
 			delete(types, name)
 			delete(proof.active, name)
+			delete(enclosing.visible, name)
 			if enclosing.result != nil { enclosing.result.locals[name] = true }
 		}
 	}
@@ -197,7 +204,7 @@ func (enclosing subqueryScope) projectedScope(clause pipelineClause, local typeS
 	result.unchanged = make(map[string]bool)
 	local.forEachProjectedBinding(clause.text, func(name, expression string, inherited bool) {
 		result.columns = append(result.columns, name)
-		if enclosing.dependencies != nil && enclosing.dependencies.active[name] && simpleSemanticIdentifier(expression) == name { result.unchanged[name] = true }
+		if enclosing.dependencies != nil && enclosing.dependencies.active[name] && simpleSemanticIdentifier(unwrapOuterParens(expression)) == name { result.unchanged[name] = true }
 	})
 	if wildcard {
 		keyword := "RETURN "
@@ -262,7 +269,7 @@ func (e *StorageExecutor) callQueryScope(call string, outer typeScope, parent *s
 	}
 	proof := newSemanticDependencies(imports)
 	proof.implicit = !scoped
-	frame := subqueryScope{dependencies: proof}
+	frame := subqueryScope{dependencies: proof, visible: imports}
 	initial := imports
 	if scoped { frame.visible = imports; initial = typeScope{} }
 	model, err := e.walkQueryScope(body, initial, frame, cypher25)
@@ -282,20 +289,9 @@ func (e *StorageExecutor) callQueryScope(call string, outer typeScope, parent *s
 // scope construction and execution. nil names denotes (*); an empty non-nil
 // list denotes (). Unscoped CALL has scoped == false.
 func readCallScopeClause(call string) (names []string, scoped bool, err error) {
-	call = strings.TrimSpace(call)
-	if !startsWithKeywordFold(call, "CALL") { return nil, false, nil }
-	open := skipSpaces(call, len("CALL"))
-	if open >= len(call) || call[open] != '(' { return nil, false, nil }
-	close := findMatchingCallParen(call, open)
-	if close < 0 { return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherSubqueriesWithImportExpressionInvalid(call[open:])) }
-	body := strings.TrimSpace(call[open+1:close])
-	if body == "*" { return nil, true, nil }
-	names = make([]string, 0)
-	if body == "" { return names, true, nil }
-	for _, raw := range splitProcedureTopLevelComma(body) {
-		name := simpleSemanticIdentifier(strings.TrimSpace(raw))
-		if name == "" { return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherSubqueriesWithImportExpressionInvalid(raw)) }
-		names = append(names, name)
+	parsed := readCallSubqueryScope(call)
+	if parsed.invalid {
+		return nil, parsed.scoped, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherSubqueriesWithImportExpressionInvalid(parsed.text))
 	}
-	return names, true, nil
+	return parsed.names, parsed.scoped, nil
 }

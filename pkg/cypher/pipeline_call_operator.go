@@ -33,7 +33,6 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	model, scopeErr := e.callQueryScope(clause, outerScope, nil, cypherVersionFromContext(ctx) == "25")
 	if scopeErr != nil { return nil, nil, true, scopeErr }
-	scoped := callSubqueryHasScopeClause(clause)
 	if len(rows) == 0 {
 		if metadata != nil && model != nil {
 			metadata.columns = append([]string(nil), model.columns...)
@@ -110,9 +109,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				// A CALL (…) body's imports stay bound through its WITH
 				// clauses (pipelineWithCarrying).
 				state := &pipelineRowOutput{}
-				if scoped {
+				if branchModel != nil {
 					state.carried = make(pipelineRow, len(imports))
-					for _, name := range imports {
+					for name := range branchModel.globals {
 						if value, imported := branchInput[name]; imported {
 							state.carried[name] = value
 						}
