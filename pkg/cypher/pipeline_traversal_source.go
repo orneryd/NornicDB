@@ -69,6 +69,8 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			}
 			rowCtx := withValueBindings(ctx, row)
 			match := e.parseTraversalPattern(rowCtx, pattern)
+			match.PathVariable = pathVariable
+			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, where, hint.readTail)
 			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
