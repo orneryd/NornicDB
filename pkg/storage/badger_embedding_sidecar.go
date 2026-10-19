@@ -162,7 +162,7 @@ func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node, beginRevision uint
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer b.finishNotifyingWrite(notification, release)
 	if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(node.ID), beginRevision); err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func (b *BadgerEngine) updateNodeEmbeddingSidecar(node *Node, beginRevision uint
 
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
-	notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
+	notification.ops = append(notification.ops, Operation{Type: OpUpdateNode, Node: node})
 	return nil
 }
 

@@ -35,7 +35,7 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer b.finishNotifyingWrite(notification, release)
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -184,7 +184,7 @@ func (b *BadgerEngine) createEdge(edge *Edge) error {
 
 	if err == nil {
 		// Notify listeners (e.g., graph analyzers) about the new edge
-		notification.ops = []Operation{{Type: OpCreateEdge, Edge: edge}}
+		notification.ops = append(notification.ops, Operation{Type: OpCreateEdge, Edge: edge})
 	}
 
 	return err
@@ -306,7 +306,7 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer b.finishNotifyingWrite(notification, release)
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -514,7 +514,7 @@ func (b *BadgerEngine) updateEdge(edge *Edge) error {
 
 	// Notify listeners on successful update
 	if err == nil {
-		notification.ops = []Operation{{Type: OpUpdateEdge, Edge: edge}}
+		notification.ops = append(notification.ops, Operation{Type: OpUpdateEdge, Edge: edge})
 	}
 
 	return err
@@ -540,7 +540,7 @@ func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer b.finishNotifyingWrite(notification, release)
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -617,7 +617,7 @@ func (b *BadgerEngine) deleteEdge(id EdgeID) error {
 
 	if err == nil {
 		// Notify listeners (e.g., graph analyzers) about the deleted edge
-		notification.ops = []Operation{{Type: OpDeleteEdge, EdgeID: id}}
+		notification.ops = append(notification.ops, Operation{Type: OpDeleteEdge, EdgeID: id})
 	}
 
 	return err
