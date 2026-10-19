@@ -466,12 +466,12 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 		if strings.EqualFold(function, "id") {
 			return string(node.ID), true
 		}
-		return storage.NodeElementID(e.entityIdentityDatabase(ctx, node.ID), node.ID), true
+		return node.ElementID(e.entityIdentityDatabase(ctx, node.ID)), true
 	case edge != nil:
 		if strings.EqualFold(function, "id") {
 			return string(edge.ID), true
 		}
-		return storage.RelationshipElementID(e.entityIdentityDatabase(ctx, storage.NodeID(edge.StartNode)), edge.ID), true
+		return edge.ElementID(e.entityIdentityDatabase(ctx, storage.NodeID(edge.StartNode))), true
 	}
 	return nil, false
 }

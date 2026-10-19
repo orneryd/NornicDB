@@ -759,6 +759,8 @@ type unboundRelationship struct {
 	id         storage.EdgeID
 	relType    string
 	properties map[string]any
+
+	database string
 }
 
 func encodeUnboundRelationshipInto(dst []byte, rel *unboundRelationship) []byte {
@@ -932,7 +934,7 @@ func encodeStorageNodeV5Into(dst []byte, node *storage.Node, dbName string) []by
 	if start+1 < len(dst) {
 		dst[start] = 0xB4 // B3 4E (3 fields) -> B4 4E (4 fields)
 	}
-	return encodePackStreamStringInto(dst, storage.NodeElementID(dbName, node.ID))
+	return encodePackStreamStringInto(dst, node.ElementID(dbName))
 }
 
 // encodeStorageEdgeV5Into encodes a relationship with the Bolt 5.0 eight-field
@@ -945,9 +947,9 @@ func encodeStorageEdgeV5Into(dst []byte, edge *storage.Edge, dbName string, reso
 	if start+1 < len(dst) {
 		dst[start] = 0xB8 // B5 52 (5 fields) -> B8 52 (8 fields)
 	}
-	dst = encodePackStreamStringInto(dst, storage.RelationshipElementID(recordEntityDatabase(dbName, "", edge.ID, resolvers), edge.ID))
-	dst = encodePackStreamStringInto(dst, storage.NodeElementID(recordEntityDatabase(dbName, edge.StartNode, "", resolvers), edge.StartNode))
-	dst = encodePackStreamStringInto(dst, storage.NodeElementID(recordEntityDatabase(dbName, edge.EndNode, "", resolvers), edge.EndNode))
+	dst = encodePackStreamStringInto(dst, edge.ElementID(recordEntityDatabase(dbName, "", edge.ID, resolvers)))
+	dst = encodePackStreamStringInto(dst, edge.StartElementID(recordEntityDatabase(dbName, edge.StartNode, "", resolvers)))
+	dst = encodePackStreamStringInto(dst, edge.EndElementID(recordEntityDatabase(dbName, edge.EndNode, "", resolvers)))
 	return dst
 }
 
@@ -989,7 +991,7 @@ func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage
 
 	rels := make([]unboundRelationship, len(uniqueRels))
 	for i, rel := range uniqueRels {
-		rels[i] = unboundRelationship{id: rel.ID, relType: rel.Type, properties: rel.Properties}
+		rels[i] = unboundRelationship{id: rel.ID, database: rel.Database, relType: rel.Type, properties: rel.Properties}
 	}
 	dst = encodeUnboundRelationshipListV5Into(dst, rels, dbName, resolvers...)
 
@@ -1009,7 +1011,11 @@ func encodeUnboundRelationshipV5Into(dst []byte, rel *unboundRelationship, dbNam
 	} else {
 		dst = encodePackStreamMapIntoWithUTC(dst, rel.properties, true)
 	}
-	return encodePackStreamStringInto(dst, storage.RelationshipElementID(dbName, rel.id))
+	id := storage.RelationshipElementID(dbName, rel.id)
+	if rel.database != "" {
+		id = storage.SourceRelationshipElementID(rel.database, rel.id)
+	}
+	return encodePackStreamStringInto(dst, id)
 }
 
 // encodeUnboundRelationshipListV5Into encodes a list of Bolt 5.0 unbound
@@ -1077,10 +1083,11 @@ func uniquePathNodes(nodes []*storage.Node) ([]*storage.Node, map[storage.NodeID
 		if node == nil {
 			continue
 		}
-		if _, ok := index[node.ID]; ok {
+		identity := storage.NodeID(node.IdentityKey())
+		if _, ok := index[identity]; ok {
 			continue
 		}
-		index[node.ID] = len(unique)
+		index[identity] = len(unique)
 		unique = append(unique, node)
 	}
 	return unique, index
@@ -1096,10 +1103,11 @@ func uniquePathRels(rels []*storage.Edge) ([]*storage.Edge, map[storage.EdgeID]i
 		if rel == nil {
 			continue
 		}
-		if _, ok := index[rel.ID]; ok {
+		identity := storage.EdgeID(rel.IdentityKey())
+		if _, ok := index[identity]; ok {
 			continue
 		}
-		index[rel.ID] = len(unique)
+		index[identity] = len(unique)
 		unique = append(unique, rel)
 	}
 	return unique, index
@@ -1122,11 +1130,11 @@ func buildPathSequence(pathNodes []*storage.Node, pathRels []*storage.Edge, node
 		if rel == nil || current == nil || next == nil {
 			return []int64{}
 		}
-		relPos, ok := relIndex[rel.ID]
+		relPos, ok := relIndex[storage.EdgeID(rel.IdentityKey())]
 		if !ok {
 			return []int64{}
 		}
-		nodePos, ok := nodeIndex[next.ID]
+		nodePos, ok := nodeIndex[storage.NodeID(next.IdentityKey())]
 		if !ok {
 			return []int64{}
 		}

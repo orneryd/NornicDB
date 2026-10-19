@@ -234,9 +234,9 @@ func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntit
 	}
 	switch parts[0] {
 	case "4":
-		return parts[2], knowledgePolicyEntityNode
+		return entityID, knowledgePolicyEntityNode
 	case "5":
-		return parts[2], knowledgePolicyEntityEdge
+		return entityID, knowledgePolicyEntityEdge
 	default:
 		return entityID, knowledgePolicyEntityAny
 	}
@@ -279,6 +279,17 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	var resolution knowledgepolicy.ScoringResolution
 	if entityID != "" {
 		lookupID, entityKind := parseKnowledgePolicyEntityID(entityID)
+		if entityKind != knowledgePolicyEntityAny {
+			kind := "4"
+			if entityKind == knowledgePolicyEntityEdge {
+				kind = "5"
+			}
+			var found, applicable bool
+			lookupID, found, applicable = e.entitySeekLookup(lookupID, kind, "elementId")
+			if !found || !applicable {
+				return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
+			}
+		}
 		if node, nodeErr := e.storage.GetNode(storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
 			createdNanos := node.CreatedAt.UnixNano()
 			versionNanos := createdNanos

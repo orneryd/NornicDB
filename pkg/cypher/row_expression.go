@@ -1895,7 +1895,7 @@ func normalizeRowIdentityComparison(leftExpr, rightExpr string, leftValue, right
 	if !isRowIdentityExpression(leftExpr) && !isRowIdentityExpression(rightExpr) {
 		return leftValue, rightValue
 	}
-	return rowIdentityPayload(leftValue), rowIdentityPayload(rightValue)
+	return normalizeRowIdentityValues(leftValue, rightValue)
 }
 
 func isRowIdentityExpression(expression string) bool {
@@ -1903,16 +1903,27 @@ func isRowIdentityExpression(expression string) bool {
 	return ok && (strings.EqualFold(name, "id") || strings.EqualFold(name, "elementId"))
 }
 
-func rowIdentityPayload(value interface{}) interface{} {
+// normalizeRowIdentityValues preserves complete element identities. The legacy
+// raw-ID comparison extension applies only when one operand is unqualified;
+// stripping two database-qualified IDs would collapse different constituents.
+func normalizeRowIdentityValues(left, right interface{}) (interface{}, interface{}) {
+	leftPayload, leftElement := rowIdentityPayload(left)
+	rightPayload, rightElement := rowIdentityPayload(right)
+	if leftElement && rightElement {
+		return left, right
+	}
+	return leftPayload, rightPayload
+}
+
+func rowIdentityPayload(value interface{}) (interface{}, bool) {
 	text, ok := value.(string)
 	if !ok {
-		return value
+		return value, false
 	}
-	parts := strings.SplitN(text, ":", 3)
-	if len(parts) == 3 && (parts[0] == "4" || parts[0] == "5") {
-		return parts[2]
+	if _, _, payload, found := storage.ParseElementID(text); found {
+		return payload, true
 	}
-	return text
+	return text, false
 }
 
 // rowRelationshipEndpoint evaluates startNode(r) / endNode(r), reading bound
@@ -1947,14 +1958,19 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if edge == nil {
 		return nil
 	}
-	if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
-		return nil
-	}
 	id := edge.StartNode
 	if end {
 		id = edge.EndNode
 	}
-	node, err := e.getQueryNode(e.storage, id)
+	edgeID, edgeSelected := edge.Identity().LookupID(e.storage, "5")
+	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(e.storage)
+	if !edgeSelected || !nodeSelected {
+		return nil
+	}
+	if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
+		return nil
+	}
+	node, err := e.getQueryNode(e.storage, nodeID)
 	if err != nil {
 		return nil
 	}
@@ -2023,16 +2039,13 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	if needle == nil {
 		return nil, true
 	}
-	identityMembership := identity
-	if identityMembership {
-		needle = rowIdentityPayload(needle)
-	}
 	containsUnknown := false
 	for _, item := range items {
-		if identityMembership {
-			item = rowIdentityPayload(item)
+		comparisonNeedle := needle
+		if identity {
+			comparisonNeedle, item = normalizeRowIdentityValues(needle, item)
 		}
-		equal := cypherEquality(needle, item)
+		equal := cypherEquality(comparisonNeedle, item)
 		if equal == nil {
 			containsUnknown = true
 			continue
