@@ -94,6 +94,9 @@ type EmbedWorker struct {
 	// embeddingRetries holds generated payloads after rejected writes. claimMu
 	// protects ownership; a claim retries persistence before calling a provider.
 	embeddingRetries map[storage.NodeID]*retainedNodeEmbedding
+	retryMaxCount int // zero uses the shared owner default
+	retryMaxBytes int64
+	retryBudgetBlockedUntil time.Time
 
 	embeddingEpoch atomic.Uint64
 	retryTurn      bool // claimMu alternates due retries with fresh work.
@@ -585,6 +588,7 @@ func (ew *EmbedWorker) Reset() {
 	ew.claimMu.Lock()
 	ew.claimedNodes = make(map[string]uint64)
 	ew.embeddingRetries = nil
+	ew.retryBudgetBlockedUntil = time.Time{}
 	ew.claimMu.Unlock()
 	ew.processed.Store(0)
 	ew.failed.Store(0)
@@ -638,6 +642,7 @@ func (ew *EmbedWorker) Close() {
 	ew.wg.Wait()
 	ew.claimMu.Lock()
 	ew.embeddingRetries = nil
+	ew.retryBudgetBlockedUntil = time.Time{}
 	ew.claimMu.Unlock()
 }
 
@@ -1262,6 +1267,7 @@ func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node, provider embed.Embe
 	}
 	updateErr := sidecar.UpdateNodeEmbeddingSidecar(node)
 	if errors.Is(updateErr, storage.ErrEmbeddingSourceChanged) {
+	ew.dropNodeEmbeddingRetry(node.ID)
 		// The node changed while it was being embedded: the embedding is of
 		// its old content and was not written. The change left the node
 		// pending; it is embedded again once the recently-processed wait
@@ -1284,6 +1290,8 @@ func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node, provider embed.Embe
 		ew.failed.Add(1)
 		return retained == nil // A rejected retained write is not progress.
 	}
+
+	ew.dropNodeEmbeddingRetry(node.ID)
 
 	// Call callback to update search index
 	if ew.onEmbedded != nil {
@@ -1532,7 +1540,7 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *retainedNodeEmbedd
 		// example while a restore replaces the store) stays pending, as in
 		// markNodeEmbeddingFailed.
 		if nodeGone(node, err) {
-			delete(ew.embeddingRetries, pendingID)
+			ew.dropNodeEmbeddingRetryLocked(pendingID)
 			ew.markNodeEmbedded(pendingID)
 		}
 		return nil, nil, false
@@ -1545,7 +1553,6 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *retainedNodeEmbedd
 	ew.inFlight.Add(1)
 	ew.markNodeEmbedded(node.ID)
 	retained := ew.embeddingRetries[node.ID]
-	delete(ew.embeddingRetries, node.ID)
 	return copyNodeForEmbedding(node), retained, false
 }
 
