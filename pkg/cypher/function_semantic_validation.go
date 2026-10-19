@@ -107,61 +107,6 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
-// skipCalledName returns where the name after CALL or USE ends: a procedure
-// or graph name, dotted, which is not a function call. Anything else after
-// the keyword (a subquery, its imports) is scanned on.
-func skipCalledName(expression string, start int) int {
-	_, end, ok := scanIdentifierToken(expression, queryGapEnd(expression, start))
-	if !ok {
-		return start
-	}
-	_, end = dottedNameParts(expression, end, true)
-	return end
-}
-
-// dottedNameParts returns the dotted parts (.b.c) following a name that ends
-// at end, and where they end. Each name is read as the code that runs it
-// reads it: whitespace may stand around a dot only when spaced is set, for a
-// procedure, function or graph name. Contiguous unquoted components reuse
-// the source slice; only names containing trivia or quotes are normalized.
-func dottedNameParts(expression string, end int, spaced bool) (string, int) {
-	skip := func(index int) int {
-		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
-			return queryGapEnd(expression, index)
-		}
-		return index
-	}
-	origin := end
-	var normalized strings.Builder
-	normalizing := false
-	for {
-		dot := skip(end)
-		if dot >= len(expression) || expression[dot] != '.' {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		partStart := skip(dot + 1)
-		part, partEnd, ok := scanIdentifierToken(expression, partStart)
-		if !ok {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
-			normalized.WriteString(expression[origin:end])
-			normalizing = true
-		}
-		if normalizing {
-			normalized.WriteByte('.')
-			normalized.WriteString(part)
-		}
-		end = partEnd
-	}
-}
-
 func skipQuotedSemanticText(expression string, start int) int {
 	return skipCypherQuotedText(expression, start, expression[start])
 }
