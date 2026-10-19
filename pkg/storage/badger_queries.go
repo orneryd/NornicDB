@@ -842,9 +842,9 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 	var states map[NodeID]bufferedEntityState
 	result := make(map[NodeID]bool, len(ids))
 	err := b.withReadView(func(w *WriteBehindBuffer) {
-		states = make(map[NodeID]bufferedEntityState, len(ids))
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
+				if states == nil { states = make(map[NodeID]bufferedEntityState) }
 				states[id] = state
 			}
 		}
