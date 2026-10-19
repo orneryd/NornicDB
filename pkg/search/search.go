@@ -3194,6 +3194,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 // (checkEmbeddingDimensions); the build's own stored nodes do not validate
 // (indexStoredNodeLocked).
 func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex, validate bool) error {
+	var indexErr error
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
 	// silently discard acknowledged vectors (including fixed embedder dimensions).
@@ -3278,6 +3279,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 		var chunkIDs []string
 		s.forEachNodeVectorEntry(node, expectedDim, func(item nodeVectorEntry) bool {
 			if err := s.addVectorLocked(item.key, item.vector); err != nil {
+				indexErr = errors.Join(indexErr, vectorInstallError(item.key, err))
 				if err == ErrDimensionMismatch {
 					s.logPrintf("⚠️ IndexNode %s %s: embedding dimension mismatch (got %d, expected %d)",
 						node.ID, item.entry.describe(), len(item.vector), expectedDim)
@@ -3317,7 +3319,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	}
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
-	return nil
+	return indexErr
 }
 
 // nodeVectorStateUnchangedLocked reports whether re-indexing node would produce
@@ -3860,7 +3862,10 @@ type NodeIterator interface {
 // When both fulltext and vector index paths are set, tries to load both from disk;
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
-func (s *Service) BuildIndexes(ctx context.Context) error {
+func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// The build reads its baseline (nodes, relationships) through one storage
 	// snapshot, opened after the queue: a write whose search call ran live
 	// before the queue opened committed before the snapshot, which therefore
@@ -3871,7 +3876,13 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.beginBuildWrites(storage.SupportsReadSnapshot(ctx, s.engine))
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
-	defer s.endBuildWrites()
+	defer func() {
+		resultErr = errors.Join(resultErr, s.endBuildWrites())
+		if resultErr != nil {
+			s.ready.Store(false)
+			s.setBuildPhase("idle")
+		}
+	}()
 	s.startBuildWrites()
 	snapshot, closeSnapshot, snapErr := s.openBuildSnapshot(ctx)
 	if snapErr != nil {
@@ -4249,14 +4260,18 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 
 	if skipIteration {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
-		closeSnapshot()
 		// The indexes are restored: the population is complete.
-		s.completeBuildPopulation()
+		closeSnapshot()
+		if err := s.completeBuildPopulation(); err != nil {
+			return err
+		}
 		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
 		s.warmupVectorPipeline(ctx, nil)
 		// Writes handed over since the last step, including during the
 		// warmup, which reloaded BM25 first, reach the final save.
-		s.drainBuildWrites()
+		if err := s.drainBuildWrites(); err != nil {
+			return err
+		}
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
 	}
@@ -4396,7 +4411,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 		// The population is complete: every queued operation, administrative
 		// ones included, is installed before the base save.
-		s.completeBuildPopulation()
+		closeSnapshot()
+		if err := s.completeBuildPopulation(); err != nil {
+			return err
+		}
 		// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 		s.setBuildPhase("persisting_base_indexes")
 		if err := s.persistBaseIndexes(); err != nil {
@@ -4407,7 +4425,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 		// Writes handed over since the last step, including during the
 		// warmup, which reloaded BM25 first, reach the final save.
-		s.drainBuildWrites()
+		if err := s.drainBuildWrites(); err != nil {
+			return err
+		}
 		s.finishBuildWithFinalPersist(ctx)
 		return nil
 	}
@@ -4508,7 +4528,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	}
 	// The population is complete: every queued operation, administrative ones
 	// included, is installed before the base save.
-	s.completeBuildPopulation()
+	closeSnapshot()
+	if err := s.completeBuildPopulation(); err != nil {
+		return err
+	}
 	// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
 	s.setBuildPhase("persisting_base_indexes")
 	if err := s.persistBaseIndexes(); err != nil {
@@ -4519,7 +4542,9 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	}
 	// Writes handed over since the last step, including during the
 	// warmup, which reloaded BM25 first, reach the final save.
-	s.drainBuildWrites()
+	if err := s.drainBuildWrites(); err != nil {
+		return err
+	}
 	s.finishBuildWithFinalPersist(ctx)
 	return nil
 }
