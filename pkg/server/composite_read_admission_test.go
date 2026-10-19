@@ -35,7 +35,10 @@ func TestCompositeConstituentReadAdmission(t *testing.T) {
 		}
 		_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
 		require.NoError(t, err)
-		for _, route := range []struct{ path string; body any }{
+		for _, route := range []struct {
+			path string
+			body any
+		}{
 			{"/db/read_portfolio/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "USE read_portfolio.closed MATCH (n:CompositeRead) RETURN count(n) AS count"}}}},
 			{"/graphql", map[string]any{"query": `{ cypher(input: {statement: "USE read_portfolio.closed MATCH (n:CompositeRead) RETURN count(n) AS count", database: "read_portfolio"}) { rowCount rows } }`}},
 		} {
