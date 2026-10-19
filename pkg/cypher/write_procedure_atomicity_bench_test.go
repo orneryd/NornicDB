@@ -8,7 +8,7 @@ import (
 )
 
 func BenchmarkWriteProcedureAtomicity(b *testing.B) {
-	for _, route := range []string{"registered", "apoc"} {
+	for _, route := range []string{"registered", "apoc", "dynamicWrite", "dynamicRead"} {
 		b.Run(route, func(b *testing.B) {
 			base := storage.NewMemoryEngine()
 			b.Cleanup(func() { _ = base.Close() })
@@ -19,6 +19,11 @@ func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 				b.Fatal(err)
 			}
 			query := "CALL apoc.cypher.doIt($statement,{value:$value}) YIELD value RETURN value.value"
+			inner := statement
+			if route == "dynamicWrite" || route == "dynamicRead" {
+				query = "CALL apoc.cypher.run($statement,{value:$value}) YIELD value RETURN value.value"
+				if route == "dynamicRead" { inner = "RETURN $value AS value" }
+			}
 			if route == "registered" {
 				if err := RegisterUserProcedure(ProcedureSpec{
 					Name: "u5tx.benchwrite", Signature: "u5tx.benchwrite(value :: INTEGER) :: (value :: INTEGER)",
@@ -33,7 +38,7 @@ func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				result, err := exec.Execute(ctx, query, map[string]interface{}{"value": i, "statement": statement})
+				result, err := exec.Execute(ctx, query, map[string]interface{}{"value": i, "statement": inner})
 				if err != nil || len(result.Rows) != 1 {
 					b.Fatalf("procedure result: %v %v", result, err)
 				}
