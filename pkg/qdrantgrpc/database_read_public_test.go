@@ -6,6 +6,9 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/nornicgrpc"
+	native "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
@@ -18,6 +21,12 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
+
+type readAdmissionSearcher struct{}
+
+func (readAdmissionSearcher) Search(context.Context, string, []float32, *search.SearchOptions) (*search.SearchResponse, error) {
+	return &search.SearchResponse{}, nil
+}
 
 // Walk actual registered descriptors over the wire, including empty requests
 // and batches. Global admin entitlement deliberately does not imply database
@@ -68,13 +77,26 @@ func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 	}
 	server, err := NewServer(config, collections, base, nil, users)
 	require.NoError(t, err)
+	nativeSearch, err := nornicgrpc.NewService(nornicgrpc.Config{
+		DefaultDatabase: "read_default",
+		AllowDatabase: func(ctx context.Context, database string) error {
+			return server.AllowDatabaseAccess(ctx, database, false)
+		},
+		ResolveDatabase: func(context.Context, string) (nornicgrpc.DatabaseDependencies, error) {
+			return nornicgrpc.DatabaseDependencies{Searcher: readAdmissionSearcher{}}, nil
+		},
+	}, nil, nil, readAdmissionSearcher{})
+	require.NoError(t, err)
+	require.NoError(t, server.RegisterAdditionalServices(func(registry *grpc.Server) {
+		native.RegisterNornicSearchServer(registry, nativeSearch)
+	}))
 	require.NoError(t, server.Start())
 	t.Cleanup(server.Stop)
 	connection, err := grpc.NewClient(server.Addr(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = connection.Close() })
 	classes := rule73GRPCInventory()
-	for _, service := range []*grpc.ServiceDesc{&qpb.Collections_ServiceDesc, &qpb.Points_ServiceDesc, &qpb.Snapshots_ServiceDesc} {
+	for _, service := range []*grpc.ServiceDesc{&qpb.Collections_ServiceDesc, &qpb.Points_ServiceDesc, &qpb.Snapshots_ServiceDesc, &native.NornicSearch_ServiceDesc} {
 		descriptor, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(service.ServiceName))
 		require.NoError(t, err)
 		methods := descriptor.(protoreflect.ServiceDescriptor).Methods()
@@ -90,6 +112,10 @@ func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 					t.Run(key+"/"+database+"/"+name, func(t *testing.T) {
 						request := dynamicpb.NewMessage(method.Input())
 						field := method.Input().Fields().ByName("collection_name")
+						if key == "NornicSearch/SearchText" {
+							field = method.Input().Fields().ByName("database")
+							request.Set(method.Input().Fields().ByName("query"), protoreflect.ValueOfString("read admission"))
+						}
 						if field != nil {
 							request.Set(field, protoreflect.ValueOfString(database))
 						}
