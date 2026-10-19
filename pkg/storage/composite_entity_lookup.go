@@ -4,29 +4,38 @@ package storage
 // A qualified ID never falls back to another database with the same local ID.
 // qualified is true even when its database is unavailable or the kind differs.
 func (c *CompositeEngine) constituentForElementID(kind, value string) (engine Engine, local string, qualified bool) {
+	aliases,local,qualified := c.constituentsForEntity(kind,value)
+	if !qualified || len(aliases) == 0 { return nil,local,qualified }
+	engine,_ = c.getConstituent(aliases[0])
+	return engine,local,true
+}
+
+// constituentsForEntity is the shared source selector for ordinary and MVCC
+// identity reads. A qualified reference cannot fall through to another source.
+func (c *CompositeEngine) constituentsForEntity(kind,value string) ([]string,string,bool) {
 	actual, database, local, qualified := ParseElementID(value)
-	if !qualified || actual != kind {
-		return nil, local, qualified
-	}
-	for _, alias := range c.getConstituentsForRead() {
+	aliases := c.getConstituentsForRead()
+	if !qualified { return aliases,value,false }
+	if actual != kind { return nil,local,true }
+	for _, alias := range aliases {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
 		}
-		c.mu.RLock()
-		name := c.constituentNames[alias]
-		c.mu.RUnlock()
-		if name == "" {
-			name = DatabaseOf(engine)
-		}
-		if name == "" {
-			name = alias
-		}
-		if name == database {
-			return engine, local, true
+		if c.constituentDatabase(alias,engine) == database {
+			return []string{alias}, local, true
 		}
 	}
 	return nil, local, true
+}
+
+func (c *CompositeEngine) constituentDatabase(alias string,engine Engine) string {
+	if database := DatabaseOf(engine); database != "" { return database }
+	c.mu.RLock()
+	database := c.constituentNames[alias]
+	c.mu.RUnlock()
+	if database == "" { database = alias }
+	return database
 }
 
 // constituentForNodePair scopes both endpoints to the same selected source.
