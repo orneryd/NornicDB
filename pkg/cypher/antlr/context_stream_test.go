@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/antlr4-go/antlr/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -106,13 +107,61 @@ func TestValidateContextSingleTokenCancellation(t *testing.T) {
 }
 
 func TestLexContextSingleTokenCancellation(t *testing.T) {
-	query := "/*" + strings.Repeat("x", 1<<20) + "*/ RETURN 1"
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	during := &cancelAtCheck{Context: ctx, cancel: cancel, target: len(query)/1024 + 16}
-	tokens, err := LexContext(during, query)
-	require.ErrorIs(t, err, context.Canceled)
-	require.Nil(t, tokens)
+	for _, query := range []string{
+		"/*" + strings.Repeat("x", 1<<20) + "*/ RETURN 1",
+		"RETURN '" + strings.Repeat("x", 1<<20) + "'",
+		"RETURN " + strings.Repeat("x", 1<<20),
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		during := &cancelAtCheck{Context: ctx, cancel: cancel, target: len(query)/1024 + 16}
+		tokens, err := LexContext(during, query)
+		cancel()
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, tokens)
+	}
+}
+
+// Force the interruption inside Match, where ANTLR safeMatch swallows a
+// non-recognition panic. Both streams must rethrow it at NextToken's LA.
+func TestContextLexerUnwindEscapesSafeMatch(t *testing.T) {
+	for _, ascii := range []bool{true, false} {
+		for _, unrelated := range []bool{false, true} {
+			ctx, cancel := context.WithCancel(t.Context())
+			var during context.Context
+			if unrelated {
+				during = &panicDuringLookahead{Context: ctx}
+			} else {
+				during = &cancelDuringLookahead{Context: ctx, cancel: cancel}
+			}
+			query := "RETURN '" + strings.Repeat("界", 1<<16) + "'"
+			var input antlr.CharStream
+			if ascii {
+				query = "RETURN '" + strings.Repeat("x", 1<<16) + "'"
+				input = &contextASCIICharStream{
+					asciiCharStream:         *newASCIICharStream(query),
+					contextCharCancellation: contextCharCancellation{ctx: during},
+				}
+			} else {
+				input = &contextCharStream{
+					CharStream:              antlr.NewInputStream(query),
+					contextCharCancellation: contextCharCancellation{ctx: during},
+				}
+			}
+			lex := func() (err error) {
+				defer recoverPredictionCancellation(&err)
+				lexer := NewCypherLexer(input)
+				for lexer.NextToken().GetTokenType() != antlr.TokenEOF {
+				}
+				return nil
+			}
+			if unrelated {
+				require.PanicsWithValue(t, "unrelated prediction panic", func() { _ = lex() })
+			} else {
+				require.ErrorIs(t, lex(), context.Canceled)
+			}
+			cancel()
+		}
+	}
 }
 
 func TestContextUnicodeInputPreparationCancellation(t *testing.T) {
