@@ -572,14 +572,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
 	initialRow := pipelineRow{}
-	for name, value := range e.fabricRecordBindings {
+	e.forEachPipelineImport(ctx, clauses, func(name string, value interface{}) {
 		initialRow[name] = value
-	}
-	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
-		for name, value := range valueBindingsFromContext(ctx) {
-			initialRow[name] = value
-		}
-	}
+	})
 	bindParameterRow(ctx, initialRow)
 	rows := []pipelineRow{initialRow}
 	scope := make(map[string]struct{})
@@ -1093,36 +1088,32 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 	return nil, false, nil
 }
 
-// pipelineReadsImportedBinding reports whether a clause mentions a variable
-// the pipeline's first row imports: a correlated subquery body's outer row
-// (fabricRecordBindings) or an enclosing value scope. Parameters are not
-// imports. It uses isIdentifierReferenced, the reader unscoped CALL imports
-// use, so a body that only names its own variables keeps the shortcuts.
-func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	references := func(name string) bool {
-		if strings.HasPrefix(name, "$") {
-			return false
-		}
-		for _, clause := range clauses {
-			if isIdentifierReferenced(clause.text, name) {
-				return true
-			}
-		}
-		return false
-	}
-	for name := range e.fabricRecordBindings {
-		if references(name) {
-			return true
-		}
+// forEachPipelineImport owns the imports of the pipeline's first row for
+// execution and shortcut eligibility. Context values override fabric values.
+func (e *StorageExecutor) forEachPipelineImport(ctx context.Context, clauses []pipelineClause, visit func(string, interface{})) {
+	for name, value := range e.fabricRecordBindings {
+		visit(name, value)
 	}
 	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
-		for name := range valueBindingsFromContext(ctx) {
-			if references(name) {
-				return true
-			}
+		for name, value := range valueBindingsFromContext(ctx) {
+			visit(name, value)
 		}
 	}
-	return false
+}
+
+// pipelineReadsImportedBinding declines statement shortcuts unless the shared
+// scope owner proves the body independent of the complete imported row.
+func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
+	var imports typeScope
+	e.forEachPipelineImport(ctx, clauses, func(name string, _ interface{}) {
+		if !strings.HasPrefix(name, "$") {
+			if imports == nil {
+				imports = make(typeScope)
+			}
+			imports[name] = staticOperand{}
+		}
+	})
+	return !imports.pipelineIndependent(clauses)
 }
 
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of

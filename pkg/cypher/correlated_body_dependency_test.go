@@ -128,7 +128,9 @@ func BenchmarkCorrelatedBodyDependencyProof(b *testing.B) {
 			exec := NewStorageExecutor(storage.NewMemoryEngine())
 			exec.fabricRecordBindings = map[string]interface{}{"a": int64(1)}
 			clauses, ok := canExecuteAsPipeline(query)
-			if !ok { b.Fatal(query) }
+			if !ok {
+				b.Fatal(query)
+			}
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				exec.pipelineReadsImportedBinding(context.Background(), clauses)
