@@ -874,12 +874,13 @@ func continuationResultMetadata(value any) map[string]any {
 }
 
 // desugarRetrievalWhere rewrites a retrieval's where predicate as a
-// statement's text is rewritten when it enters the executor
-// (desugarLabelExpressions): a pattern element's own WHERE
+// statement's text is rewritten when it enters the executor: function aliases,
+// then desugarLabelExpressions for a pattern element's own WHERE
 // ((m:Coll WHERE m.id IN $ids)), label expressions and the other pattern
 // forms every route reads. The predicate is rewritten as the expression of
 // RETURN <where> AS …, and taken back from it.
 func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
+	where, _ = canonicalizeFunctionAliases(where)
 	const prefix, suffix = "RETURN ", " AS __nornic_where"
 	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
