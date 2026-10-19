@@ -161,31 +161,38 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Logging is part of the statement's deadline. Release registry and query
 	// limit contexts after its deferred emission, so normal completion does
 	// not look like cancellation to the redactor.
+	originalCypher := cypher
+	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
+	var executionDuration time.Duration
 	var running runningStatement
 	var queryLimitCancel context.CancelFunc
 	defer func() {
-		running.done()
+		statementErr := ctx.Err()
+		terminated := running.done()
+		if running.tx == nil || !running.tx.committed.Load() {
+			if terminated {
+				result, retErr = nil, transactionTerminatedError()
+			} else if retErr == nil && statementErr != nil {
+				result, retErr = nil, statementErr
+			}
+		}
+		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, executionDuration, retErr == nil)
+		e.observeSlowQueryIfThresholded(executionDuration)
+		recordSpanError(execSpan, retErr)
+		execSpan.End()
 		if queryLimitCancel != nil {
 			queryLimitCancel()
 		}
 	}()
-	originalCypher := cypher
-	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
 	defer func() {
-		dur := time.Since(slowStart)
-		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, dur, retErr == nil)
+		executionDuration = time.Since(slowStart)
+		dur := executionDuration
 		e.emitRejectionReport(ctx, originalCypher, retErr)
 		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and
 		// rely on PlanHash's zero-placeholder behavior. Phase 6 (TRC-04) will
 		// thread the planned tree here once cypher EXPLAIN refactoring is in.
 		e.emitSlowQueryLog(ctx, originalCypher, nil, dur)
-		// Plan 04-03 / MET-08 slow_queries_total: increments only when
-		// duration meets the configured threshold (matches the D-04c
-		// emitSlowQueryLog gate semantics — single threshold, single
-		// emission point per Execute return).
-		e.observeSlowQueryIfThresholded(dur)
-		recordSpanError(execSpan, retErr)
-		execSpan.End()
+
 	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -608,11 +615,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// checked write path, the row loop) and whether it read or wrote;
 	// only an auto-commit statement that had already committed keeps its
 	// result (#751).
-	defer func() {
-		if running.tx != nil && running.tx.terminated.Load() && !running.tx.committed.Load() {
-			result, retErr = nil, transactionTerminatedError()
-		}
-	}()
+
 	registerStatement := func() error {
 		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
 		if err != nil {
