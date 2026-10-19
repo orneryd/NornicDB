@@ -725,11 +725,12 @@ func (p *VectorSearchPipeline) selectCandidates(ctx context.Context, query []flo
 // surfaced, the most its exact score can be (upper), and, once scored, its
 // best vector.
 type stageNode struct {
-	id       string
-	upper    float64
-	surfaced []Candidate
-	best     ScoredCandidate
-	scored   bool
+	id     string
+	upper  float64
+	first  Candidate
+	extra  []Candidate
+	best   ScoredCandidate
+	scored bool
 }
 
 // stageBatch is how many nodes the exact stage scores at a time, at least.
@@ -753,7 +754,7 @@ func (p *VectorSearchPipeline) scoreNodes(ctx context.Context, query []float32, 
 	if passThrough {
 		bound = 0 // candidate scores are final
 	}
-	nodes := groupCandidatesByNode(candidates, bound)
+	nodes := groupCandidatesByNode(candidates, bound, minSimilarity, k)
 	slices.SortStableFunc(nodes, func(a, b *stageNode) int { return cmp.Compare(b.upper, a.upper) })
 
 	var members vectorMemberResolver
@@ -847,22 +848,42 @@ func (p *VectorSearchPipeline) scoreAllNodes(ctx context.Context, query []float3
 }
 
 // groupCandidatesByNode groups candidates by owning node, in first-seen
-// order, decoding each key once; a node's upper bound is its best surfaced
-// score plus bound.
-func groupCandidatesByNode(candidates []Candidate, bound float64) []*stageNode {
-	nodes := make([]*stageNode, 0, len(candidates))
-	position := make(map[string]int, len(candidates))
+// order, decoding each eligible key once. Candidates whose upper bound is
+// below the threshold cannot contribute to a qualifying node's best score.
+// The nodes share one backing allocation, and their first candidate is inline;
+// only nodes with additional surfaced vectors need a separate candidate slice.
+func groupCandidatesByNode(candidates []Candidate, bound, minSimilarity float64, k int) []*stageNode {
+	eligible := 0
 	for _, candidate := range candidates {
-		nodeID := normalizeVectorResultIDToNodeID(candidate.ID)
+		if !(candidate.Score+bound < minSimilarity) {
+			eligible++
+		}
+	}
+	capacity := eligible
+	if k > 0 {
+		capacity = min(capacity, k)
+	}
+	storage := make([]stageNode, 0, capacity)
+	position := make(map[string]int, capacity)
+	for _, candidate := range candidates {
 		upper := candidate.Score + bound
+		if upper < minSimilarity {
+			continue
+		}
+		nodeID := normalizeVectorResultIDToNodeID(candidate.ID)
 		if i, ok := position[nodeID]; ok {
-			n := nodes[i]
-			n.surfaced = append(n.surfaced, candidate)
+			n := &storage[i]
+			n.extra = append(n.extra, candidate)
 			n.upper = max(n.upper, upper)
 			continue
 		}
-		position[nodeID] = len(nodes)
-		nodes = append(nodes, &stageNode{id: nodeID, upper: upper, surfaced: []Candidate{candidate}})
+		position[nodeID] = len(storage)
+		storage = append(storage, stageNode{id: nodeID, upper: upper, first: candidate})
+	}
+	// Publish pointers only after storage has stopped growing.
+	nodes := make([]*stageNode, len(storage))
+	for i := range storage {
+		nodes[i] = &storage[i]
 	}
 	return nodes
 }
@@ -870,28 +891,33 @@ func groupCandidatesByNode(candidates []Candidate, bound float64) []*stageNode {
 // scoreStageBatch scores the batch's nodes: their surfaced vectors and every
 // other vector they indexed (members, when given), each node keeping its best.
 func (p *VectorSearchPipeline) scoreStageBatch(ctx context.Context, query []float32, batch []*stageNode, members vectorMemberResolver) error {
-	owner := make(map[string]*stageNode, len(batch))
-	pool := make([]Candidate, 0, len(batch))
-	for _, n := range batch {
-		for _, candidate := range n.surfaced {
-			if _, ok := owner[candidate.ID]; !ok {
-				owner[candidate.ID] = n
-				pool = append(pool, candidate)
-			}
-		}
-	}
+	var byNode map[string][]string
 	if members != nil {
 		ids := make([]string, len(batch))
 		for i, n := range batch {
 			ids[i] = n.id
 		}
-		byNode := members(ids)
-		for _, n := range batch {
-			for _, vectorID := range byNode[n.id] {
-				if _, ok := owner[vectorID]; !ok {
-					owner[vectorID] = n
-					pool = append(pool, Candidate{ID: vectorID})
-				}
+		byNode = members(ids)
+	}
+	capacity := 0
+	for _, n := range batch {
+		capacity += max(1+len(n.extra), len(byNode[n.id]))
+	}
+	owner := make(map[string]*stageNode, capacity)
+	pool := make([]Candidate, 0, capacity)
+	for _, n := range batch {
+		owner[n.first.ID] = n
+		pool = append(pool, n.first)
+		for _, candidate := range n.extra {
+			if _, ok := owner[candidate.ID]; !ok {
+				owner[candidate.ID] = n
+				pool = append(pool, candidate)
+			}
+		}
+		for _, vectorID := range byNode[n.id] {
+			if _, ok := owner[vectorID]; !ok {
+				owner[vectorID] = n
+				pool = append(pool, Candidate{ID: vectorID})
 			}
 		}
 	}
