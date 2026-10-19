@@ -51,6 +51,7 @@ func TestSearchStreamLifecycleProcedures(t *testing.T) {
 func TestSearchStreamLifecycleCachePolicy(t *testing.T) {
 	for _, query := range []string{
 		"CALL db.rretrieve($request)",
+		"CALL db.rretrieve({query: $query, limit: 5})",
 		"WITH $request AS request CALL db.rretrieve(request)",
 		"CALL db.rretrieve({query: 'x', n: 1})",
 		"CALL `db`.`rretrieve`({`qid`: $qid, n: 1})",
@@ -63,10 +64,20 @@ func TestSearchStreamLifecycleCachePolicy(t *testing.T) {
 	}
 	for _, query := range []string{
 		"CALL db.rretrieve('query')",
-		"CALL db.rretrieve({query: $query, limit: 5})",
 		"CALL db.rretrieve({query: 'n: qid', filters: {n: 1}})",
 		"CALL `db`.`rretrieve`({query: 'x', limit: 5})",
 	} {
 		require.True(t, isCacheableReadQuery(query), query)
 	}
+	// Eligibility now classifies actual executable inputs. A missing binding
+	// is unknown; the ordinary bound form must still hit the result cache.
+	exec := solR2CacheExecutor(t)
+	const query = "CALL db.rretrieve({query: $query, limit: 5})"
+	params := map[string]any{"query": "transcript"}
+	first, err := exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	second, err := exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	require.Len(t, second.Rows, 2)
+	require.Same(t, first, second)
 }
