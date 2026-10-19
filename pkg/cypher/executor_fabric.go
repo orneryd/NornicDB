@@ -896,7 +896,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	txExec.ShareStatementCachesFrom(c.base)
 	txExec.deferFlush = c.base.deferFlush
 	txExec.ShareEmbedderFrom(c.base)
-	txExec.searchService = c.base.searchService
+	c.base.shareSearchFor(txExec, storageDatabaseName(engine))
 	txExec.inferenceManager = c.base.inferenceManager
 	txExec.onNodeMutated = c.base.onNodeMutated
 	txExec.defaultEmbeddingDimensions = c.base.defaultEmbeddingDimensions

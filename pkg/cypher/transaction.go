@@ -335,6 +335,7 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		for _, action := range e.txContext.storageWrapper.schemaCommitActions {
 			action()
 		}
+		txExec.refreshSearchAfterCommit(e.txContext.storageWrapper)
 	}
 
 	if e.txContext.fabricRemoteExe != nil {

@@ -848,6 +848,15 @@ type Service struct {
 	buildWrites buildWriteQueue
 	population  populationPersistence
 
+	// nodeMutationMu orders reservations with their application. It is acquired
+	// after buildMu and before indexMu when applying a live node mutation.
+	nodeMutationMu       sync.Mutex
+	nextNodeMutation     uint64
+	pendingNodeMutations map[storage.NodeID]uint64
+	pendingEdgeMutations map[storage.EdgeID]uint64
+	// refreshRetry, when set, receives a refresh whose storage read failed
+	// (SetRefreshRetry).
+	refreshRetry atomic.Pointer[RefreshRetryFunc]
 	// buildMu orders live node mutations and derived builds against full
 	// population/checkpoint restoration and vector-source clearing.
 	buildMu        sync.RWMutex
@@ -988,6 +997,11 @@ type Service struct {
 	// cache, are keyed by it (IndexRevision), so a result computed before a
 	// change is never served after it (#945).
 	indexRevision atomic.Uint64
+
+	// instance identifies this service among every one this process created,
+	// so a cache keyed by IndexRevision also tells a replacement service from
+	// the one it replaced (Instance).
+	instance uint64
 
 	// resultCache caches Search() results by query+options (same semantics as Cypher query cache).
 	// All call paths (HTTP search, Cypher, etc.) benefit. Invalidated on IndexNode/RemoveNode.
@@ -1239,6 +1253,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		resultCache.Resize(cacheEntries)
 	}
 	svc := &Service{
+		instance:                   serviceInstances.Add(1),
 		engine:                     engine,
 		vectorIndex:                NewVectorIndex(dimensions),
 		bm25StorageMode:            bm25StorageMode,
@@ -1494,6 +1509,20 @@ func (s *Service) IndexRevision() uint64 {
 		return 0
 	}
 	return s.indexRevision.Load()
+}
+
+// serviceInstances numbers the services this process creates (Instance).
+var serviceInstances atomic.Uint64
+
+// Instance identifies this service among every one created in the process. A
+// database whose search is reset gets a new service whose IndexRevision starts
+// over, so a cache of search results keys by Instance and IndexRevision
+// together.
+func (s *Service) Instance() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.instance
 }
 
 // indexChanged advances IndexRevision. Call it after the change is applied,
@@ -2223,6 +2252,12 @@ func (s *Service) setPersistenceEnabledNow(enabled bool) {
 	s.persistRunMu.Unlock()
 }
 
+// Closed reports whether Close was called (its background workers stopped
+// and its file-backed vector store released).
+func (s *Service) Closed() bool {
+	return s != nil && s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil
+}
+
 // Close stops search-service background workers and releases file-backed vector resources.
 // It is safe to call more than once. PersistIndexesToDisk should be called by owners before
 // Close when shutdown persistence is desired.
@@ -2841,14 +2876,36 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
-	// Population and checkpoint restoration must not be overtaken by a live
-	// mutation; their snapshots may contain older node state. During a build
-	// the write is handed to the build (build_write_queue.go).
+	// A payload write for rebuilds and offline sinks; live writers use
+	// RefreshNode (TestLiveIndexWritersRefreshFromStorage). Population and
+	// checkpoint restoration must not be overtaken by a live mutation; their
+	// snapshots may contain older node state. During a build the write is
+	// handed to the build (build_write_queue.go).
 	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
 	return s.indexNodeOwned(node, nil)
+}
+
+// IndexNodeWithMutation applies a previously reserved index mutation. A newer
+// reservation (a later refresh) makes this mutation a no-op.
+// Population and checkpoint restoration must not be overtaken by a live
+// mutation; their snapshots may contain older node state. During a build
+// the write is handed to the build (build_write_queue.go), which installs
+// it only if the reservation is still current when its turn comes.
+func (s *Service) IndexNodeWithMutation(node *storage.Node, mutation NodeMutation) error {
+	if node == nil || mutation.nodeID != node.ID {
+		return nil
+	}
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: mutation.claim}); queued || err != nil {
+		if err != nil {
+			s.DiscardNodeMutation(mutation)
+		}
+		return err
+	}
+	defer s.buildMu.RUnlock()
+	return s.applyNodeMutationLocked(mutation, func() error { return s.indexNodeOwned(node, nil) })
 }
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
@@ -3589,6 +3646,23 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	return nil
 }
 
+// RemoveNodeWithMutation applies a previously reserved removal, unless a newer
+// index or removal has superseded it. Like IndexNodeWithMutation, during a
+// build the removal is handed to the build.
+func (s *Service) RemoveNodeWithMutation(mutation NodeMutation) error {
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{nodeID: string(mutation.nodeID), valid: mutation.claim}); queued || err != nil {
+		if err != nil {
+			s.DiscardNodeMutation(mutation)
+		}
+		return err
+	}
+	defer s.buildMu.RUnlock()
+	return s.applyNodeMutationLocked(mutation, func() error {
+		s.removeNodeOwned(mutation.nodeID)
+		return nil
+	})
+}
+
 // removeNodeOwned is RemoveNode for a caller holding buildMu.
 func (s *Service) removeNodeOwned(nodeID storage.NodeID) {
 	if !s.buildInProgress.Load() {
@@ -3609,6 +3683,9 @@ func (s *Service) removeNodeOwned(nodeID storage.NodeID) {
 //
 // Relationship vector queries use this metadata to avoid scanning and decoding every
 // relationship from storage for each db.index.vector.queryRelationships call.
+//
+// Live writers use RefreshEdge; this payload form is for rebuilds and offline
+// sinks, like IndexNode.
 func (s *Service) IndexEdge(edge *storage.Edge) error {
 	if s == nil || edge == nil {
 		return nil
@@ -3625,6 +3702,23 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	}
 	defer s.buildMu.RUnlock()
 	return s.indexEdgeOwned(edge)
+}
+
+// indexEdgeWithMutation applies a reserved relationship write. The
+// relationship index has its own loader; during a build its update is ordered
+// in the build sequence too (relationship-search writes), and the vector part
+// is handed to the build, which applies it after the stream's copy. Both are
+// installed only while the reservation is current.
+func (s *Service) indexEdgeWithMutation(edge *storage.Edge, mutation EdgeMutation) error {
+	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: mutation.claim}); queued || err != nil {
+		if err != nil {
+			s.discardEdgeMutation(mutation)
+		}
+		return err
+	}
+	defer s.buildMu.RUnlock()
+	return s.applyEdgeMutationLocked(mutation, func() error { return s.indexEdgeOwned(edge) })
 }
 
 // indexEdgeOwned is IndexEdge for a caller holding buildMu.
@@ -3717,6 +3811,8 @@ func (s *Service) removeEdgeLocked(edgeIDStr string) {
 }
 
 // RemoveEdge removes a relationship from vector search metadata.
+// Like node writes (see IndexEdge), a removal waits for the explicit build, so
+// its relationship stream cannot re-add the edge.
 func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
@@ -3731,6 +3827,22 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	defer s.buildMu.RUnlock()
 	s.removeEdgeOwned(edgeID)
 	return nil
+}
+
+// removeEdgeWithMutation is indexEdgeWithMutation for a removal.
+func (s *Service) removeEdgeWithMutation(mutation EdgeMutation) error {
+	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(mutation.edgeID), relationship: true}, mutation)
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edgeID: string(mutation.edgeID), valid: mutation.claim}); queued || err != nil {
+		if err != nil {
+			s.discardEdgeMutation(mutation)
+		}
+		return err
+	}
+	defer s.buildMu.RUnlock()
+	return s.applyEdgeMutationLocked(mutation, func() error {
+		s.removeEdgeOwned(mutation.edgeID)
+		return nil
+	})
 }
 
 // removeEdgeOwned is RemoveEdge for a caller holding buildMu.
@@ -3901,19 +4013,20 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot s
 
 // handleOrphanedEmbedding handles the case where a vector/index hit refers to a node
 // that no longer exists in storage (orphaned embedding). If err is storage.ErrNotFound,
-// it logs once per node ID (when seenOrphans is provided), removes all embeddings for
-// that node from indexes via RemoveNode, and returns true so the caller can skip the result.
+// it logs once per node ID (when seenOrphans is provided), refreshes that node's index
+// entries via RefreshNode, and returns true so the caller can skip the result. The
+// refresh removes them, unless the node was stored again after this read.
 // If seenOrphans is non-nil and the node ID was already seen this request, it returns true
-// without logging or removing again. If err is not ErrNotFound, returns false.
+// without logging or refreshing again. If err is not ErrNotFound, returns false.
 func (s *Service) handleOrphanedEmbedding(ctx context.Context, nodeIDStr string, err error, seenOrphans map[string]bool) bool {
 	if !errors.Is(err, storage.ErrNotFound) {
 		return false
 	}
 	if seenOrphans != nil && seenOrphans[nodeIDStr] {
-		return true // already logged and removed this request
+		return true // already logged and refreshed this request
 	}
 	s.logPrintf("[search] orphaned embedding detected, removing from indexes: nodeID=%s", nodeIDStr)
-	if removeErr := s.RemoveNode(storage.NodeID(nodeIDStr)); removeErr != nil {
+	if removeErr := s.RefreshNode(storage.NodeID(nodeIDStr)); removeErr != nil {
 		s.logPrintf("[search] failed to remove orphaned embedding for nodeID=%s: %v", nodeIDStr, removeErr)
 	}
 	if seenOrphans != nil {

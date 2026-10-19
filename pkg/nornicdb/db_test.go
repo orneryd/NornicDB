@@ -1705,12 +1705,12 @@ func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- db.removeNodeFromSearchIndexes(context.Background(), "nornic", ns, storage.NodeID("wait-delete"))
+		errCh <- db.refreshNodeInSearchIndexes(context.Background(), "nornic", ns, storage.NodeID("wait-delete"))
 	}()
 
 	select {
 	case err := <-errCh:
-		t.Fatalf("removeNodeFromSearchIndexes returned before build completion: %v", err)
+		t.Fatalf("refreshNodeInSearchIndexes returned before build completion: %v", err)
 	case <-time.After(25 * time.Millisecond):
 	}
 

@@ -89,8 +89,9 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 
 // SetNodeManuallySuppressed hides a node on demand, or shows it again: hidden
 // from MATCH, traversal and search, its data kept and visible under reveal(),
-// whether or not decay is enabled (#1064). Showing it again re-indexes it for
-// search. ErrNotFound when no such node is stored.
+// whether or not decay is enabled (#1064). Either way it is reported as an
+// update, so search drops a hidden node and indexes a shown one. ErrNotFound
+// when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
 	var node *Node
 	err := b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
@@ -101,21 +102,22 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 	if err != nil {
 		return err
 	}
-	b.graphMutationVersions.changed(namespaceForNodeID(id))
-	if !suppressed && node != nil {
-		// Search drops a node it can't load; index it again.
-		b.notifyNodeUpdated(node)
-	}
+	b.notifyNodeUpdated(node)
 	return nil
 }
 
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	err := b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, nil)
+	var edge *Edge
+	err := b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, func(_ *badger.Txn, val []byte) error {
+		decoded, err := b.decodeEdgeBodyWithID(namespaceForEdgeID(id), val, id)
+		edge = decoded
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	b.graphMutationVersions.changed(namespaceForEdgeID(id))
+	b.notifyEdgeUpdated(edge)
 	return nil
 }
 

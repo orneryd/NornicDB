@@ -384,7 +384,13 @@ type StorageExecutor struct {
 
 	// searchService optionally provides unified search semantics for Cypher procedures.
 	// When set, db.index.vector.queryNodes delegates to search.Service.
-	searchService *search.Service
+	// searchResolver, when set, takes its place: it resolves searchDatabase's
+	// current service on each use, so a reset or restore that replaces the
+	// service never leaves this executor with the replaced one. Read both
+	// through search().
+	searchService  *search.Service
+	searchResolver SearchServiceResolver
+	searchDatabase string
 
 	// inferenceManager optionally provides LLM inference for db.infer.
 	inferenceManager InferenceManager
@@ -573,6 +579,8 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		deferFlush:                     e.deferFlush,
 		queryEmbedder:                  e.queryEmbedder,
 		searchService:                  e.searchService,
+		searchResolver:                 e.searchResolver,
+		searchDatabase:                 e.searchDatabase,
 		inferenceManager:               e.inferenceManager,
 		localizationRenderer:           e.localizationRenderer,
 		settingsResolver:               e.settingsResolver,
@@ -1146,6 +1154,53 @@ func (e *StorageExecutor) SetSearchService(svc *search.Service) {
 	e.searchService = svc
 }
 
+// SearchServiceResolver returns a database's current search service, or nil
+// when it has none.
+type SearchServiceResolver func(database string) *search.Service
+
+// SetSearchServiceResolver has the executor resolve database's search service
+// on each use instead of keeping one (SetSearchService). Executors it is
+// cloned into for another database (USE, composite constituents) resolve that
+// database's service.
+func (e *StorageExecutor) SetSearchServiceResolver(database string, resolve SearchServiceResolver) {
+	e.searchResolver = resolve
+	e.searchDatabase = database
+}
+
+// search returns the search service for this statement's database.
+func (e *StorageExecutor) search() *search.Service {
+	if e.searchResolver != nil {
+		return e.searchResolver(e.searchDatabase)
+	}
+	return e.searchService
+}
+
+// keepUnmanagedSearchService keeps a service a procedure created because the
+// executor had none. An executor no database wired (no resolver) keeps it for
+// its later statements, as there is no owner to reset it. One whose database
+// has no search does not: it never shares a service the database's owner
+// cannot reach, and the service (which starts no worker until it is built)
+// lives for this statement only.
+func (e *StorageExecutor) keepUnmanagedSearchService(svc *search.Service) {
+	if e.searchResolver == nil {
+		e.SetSearchService(svc)
+	}
+}
+
+// shareSearchFor gives target the search of database: the resolver, for the
+// named database, when this executor resolves; otherwise this executor's
+// service, as before resolvers.
+func (e *StorageExecutor) shareSearchFor(target *StorageExecutor, database string) {
+	if e.searchResolver != nil && database != "" {
+		target.searchResolver = e.searchResolver
+		target.searchDatabase = database
+		return
+	}
+	target.searchService = e.searchService
+	target.searchResolver = e.searchResolver
+	target.searchDatabase = e.searchDatabase
+}
+
 // SetInferenceManager sets the inference manager used by db.infer.
 func (e *StorageExecutor) SetInferenceManager(mgr InferenceManager) {
 	e.inferenceManager = mgr
@@ -1209,12 +1264,11 @@ func (e *StorageExecutor) GetDefaultEmbeddingDimensions() int {
 // callback if set. Call after any node creation or mutation (CREATE, MERGE,
 // SET, REMOVE) so search sees client-supplied vectors immediately and the
 // embed queue can re-process.
+//
+// Search reads the node itself after reserving the refresh, so a later write or
+// delete that commits first is not overwritten by this notification.
 func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
-	if e.searchService != nil && nodeID != "" {
-		if node, err := e.storage.GetNode(storage.NodeID(nodeID)); err == nil && node != nil {
-			_ = e.searchService.IndexNode(node)
-		}
-	}
+	e.refreshSearch(storage.NodeID(nodeID), "")
 	if e.onNodeMutated != nil {
 		e.onNodeMutated(nodeID)
 	}
@@ -1222,34 +1276,62 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 
 // notifyEdgeMutated updates live search metadata after a relationship create or
 // mutation so relationship vector queries can use client-supplied vectors before
-// a full search warmup/build has run.
+// a full search warmup/build has run. Call it after deleting one too, so its
+// vectors leave search.
 func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	if e.searchService == nil || edgeID == "" {
+	e.refreshSearch("", storage.EdgeID(edgeID))
+}
+
+// refreshSearch has search read a node or relationship this statement changed.
+// Inside a transaction the change is not visible yet: the transaction keeps
+// it until its commit (refreshSearchAfterCommit), and drops it on rollback.
+func (e *StorageExecutor) refreshSearch(node storage.NodeID, edge storage.EdgeID) {
+	if node == "" && edge == "" {
 		return
 	}
-	if edge, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err == nil && edge != nil {
-		e.indexMutatedEdge(edge)
+	if tx, ok := e.storage.(*transactionStorageWrapper); ok {
+		if e.searchResolver != nil || e.searchService != nil {
+			tx.deferSearchRefresh(node, edge)
+		}
+		return
+	}
+	svc := e.search()
+	if svc == nil {
+		return
+	}
+	if node != "" {
+		_ = svc.RefreshNode(node)
+	}
+	if edge != "" {
+		_ = svc.RefreshEdge(edge)
 	}
 }
 
-func (e *StorageExecutor) indexMutatedEdge(edge *storage.Edge) {
-	if e.searchService != nil && edge != nil {
-		_ = e.searchService.IndexEdge(edge)
+// refreshSearchAfterCommit refreshes what the committed transaction changed.
+func (e *StorageExecutor) refreshSearchAfterCommit(tx *transactionStorageWrapper) {
+	nodes, edges := tx.takeSearchRefreshes()
+	svc := e.search()
+	if svc == nil {
+		return
+	}
+	for id := range nodes {
+		_ = svc.RefreshNode(id)
+	}
+	for id := range edges {
+		_ = svc.RefreshEdge(id)
 	}
 }
 
-// removeNodeFromSearch removes a node from the search service (vector/fulltext indexes).
-// Call after successfully deleting a node via Cypher so embeddings are not left orphaned.
+// removeNodeFromSearch refreshes a deleted node in the search service (vector/fulltext
+// indexes), which removes it. Call after successfully deleting a node via Cypher so
+// embeddings are not left orphaned.
 // nodeID may be prefixed (e.g. "nornic:xyz") or local ("xyz"); the search service expects local ID.
 func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
-	if e.searchService == nil || nodeID == "" {
-		return
-	}
 	localID := nodeID
 	if _, unprefixed, ok := storage.ParseDatabasePrefix(nodeID); ok {
 		localID = unprefixed
 	}
-	_ = e.searchService.RemoveNode(storage.NodeID(localID))
+	e.refreshSearch(storage.NodeID(localID), "")
 }
 
 // Flush persists all pending writes to storage.
@@ -1837,6 +1919,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok {
 		running.committed.Store(true)
 	}
+	txExec.refreshSearchAfterCommit(txWrapper)
 
 	// Attach receipt metadata if WAL markers were recorded. Receipts are
 	// attached exactly as on the durable path: the write-behind ACK carries

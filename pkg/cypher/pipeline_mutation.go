@@ -125,6 +125,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		stats.NodesDeleted++
 		e.removeNodeFromSearch(string(nodeID))
 	}
+	// Incident relationships of detached nodes were deleted with them.
+	for edgeID := range deletedEdges {
+		e.notifyEdgeMutated(string(edgeID))
+	}
 	deleted := deletedEntitiesOf(ctx)
 	if deleted == nil {
 		deleted = &deletedEntities{}

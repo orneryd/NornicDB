@@ -11,6 +11,7 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -768,8 +769,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}
 		}
-		if svc := e.searchService; svc != nil {
-			resultCacheKey += ":search:" + strconv.FormatUint(svc.IndexRevision(), 10)
+		if svc := e.search(); svc != nil {
+			resultCacheKey += searchCacheKey(svc)
 		}
 		if cached, trace, entities, found := e.cache.getWithTraceForEmbedding(resultCacheKey, embeddingGeneration); found {
 			e.restoreHotPathTrace(trace)
@@ -905,4 +906,12 @@ func (e *StorageExecutor) maxResults() int64 {
 		return 0
 	}
 	return limits.GetMaxResults()
+}
+
+// searchCacheKey is the part of a result-cache key that depends on the search
+// service: its revision, and its instance, which tells a replacement service
+// (a reset or restore of the database's search) from the one it replaced,
+// whose revisions it would otherwise repeat.
+func searchCacheKey(svc *search.Service) string {
+	return ":search:" + strconv.FormatUint(svc.Instance(), 10) + ":" + strconv.FormatUint(svc.IndexRevision(), 10)
 }
