@@ -315,9 +315,10 @@ func (s *Service) orderDimensionChange(op func()) {
 // build's own saves (the persistence toggle): in the serial order it comes
 // after them, so it is installed once the build has finished (endBuildWrites).
 func (s *Service) orderWithBuildEnd(op func()) {
-	if queued, _, _ := s.queueBuildWrite(deferredIndexWrite{apply: op, atEnd: true}); queued {
+	if queued, _ := s.readLockOrQueue(deferredIndexWrite{apply: op, atEnd: true}); queued {
 		return
 	}
+	defer s.buildMu.RUnlock()
 	op()
 }
 
