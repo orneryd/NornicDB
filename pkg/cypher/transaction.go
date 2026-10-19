@@ -323,6 +323,9 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		err = e.commitStorageTransaction(ctx, tx)
 	case *fabric.FabricTransaction:
 		err = tx.Commit(nil, nil)
+		if err == nil {
+			publishStatementCommit(ctx)
+		}
 	default:
 		return nil, localizedError(localization.CypherTransactionsUnknownType(), nil)
 	}
