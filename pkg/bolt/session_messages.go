@@ -907,9 +907,9 @@ func (s *Session) handlePull(data []byte) error {
 
 		// Return metadata for completed query (Neo4j compatibility)
 		// Neo4j sends: type, bookmark, t_last, stats, db (but NOT has_more when false)
-		queryType := boltSummaryQueryType(stream.isWrite, resultStats)
+		queryType := stream.resolvedQueryType()
 
-		bookmark := s.resultSummaryBookmark(stream.result, stream.isWrite)
+		bookmark := s.resultSummaryBookmark(stream.result, stream.resolvedWrite())
 
 		// Build stats matching Neo4j format (only if there are updates)
 		metadata = map[string]any{
@@ -1074,8 +1074,8 @@ func (s *Session) handleDiscard(data []byte) error {
 	}
 
 	// Build completion metadata with stats (same contract as PULL completion).
-	queryType := boltSummaryQueryType(stream.isWrite, resultStats)
-	bookmark := s.resultSummaryBookmark(stream.result, stream.isWrite)
+	queryType := stream.resolvedQueryType()
+	bookmark := s.resultSummaryBookmark(stream.result, stream.resolvedWrite())
 	metadata := map[string]any{
 		"bookmark": bookmark,
 		"type":     queryType,

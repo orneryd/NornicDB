@@ -34,6 +34,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	remoteModeUncertain func(string) bool
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
 	codec                  RemoteValueCodec
@@ -212,6 +213,7 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, 0, err
 		}
+		if e.remoteModeUncertain != nil && e.remoteModeUncertain(f.Query) { ctx = WithUnresolvedRemoteMode(ctx) }
 		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken)
 		if err != nil {
 			return nil, 0, err
@@ -3888,4 +3890,10 @@ func (e *FabricExecutor) executionColumnNames(query string, incoming []string) [
 	var columns []string
 	e.executionProjection(query, incoming).Names.Visit(func(names []string) { columns = names }, func() {})
 	return columns
+}
+
+// SetRemoteModeUncertainty marks remote procedure calls whose actual mode must
+// come from their result summary. Missing mode evidence never means READ.
+func (e *FabricExecutor) SetRemoteModeUncertainty(uncertain func(string) bool) {
+ e.remoteModeUncertain=uncertain
 }
