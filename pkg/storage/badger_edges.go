@@ -237,13 +237,17 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 		if w != nil {
 			state := w.entityStateLocked(bufferedEdgeEntity, string(id))
 			if state.found {
-				if state.deleted || b.filterEdgeByDecay(state.edge, DecayScoringTime()) { return true, ErrNotFound }
+				if state.deleted || b.filterEdgeByDecay(state.edge, DecayScoringTime()) {
+					return true, ErrNotFound
+				}
 				edge = copyEdge(state.edge)
 				return true, nil
 			}
 		}
 		if value, ok := b.cacheLoadEdge(id); ok {
-			if b.filterEdgeByDecay(value, DecayScoringTime()) { return true, ErrNotFound }
+			if b.filterEdgeByDecay(value, DecayScoringTime()) {
+				return true, ErrNotFound
+			}
 			edge = copyEdge(value)
 			return true, nil
 		}
