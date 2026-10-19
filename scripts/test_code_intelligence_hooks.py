@@ -186,22 +186,19 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.assertIn("Commit blocked", result.stderr)
         self.assertTrue(self.searches)
 
-    def test_duplicate_on_later_cursor_page_blocks_commit(self):
-        self.search_pages = [
-            {"results": [{"rrf_score": 0.005, "node": {"properties": {
-                "id": "weak-match", "body": BODY, "source_file": "weak.py", "symbol_kind": "function", "repo": "test/repo"}}}],
-             "has_more": True, "qid": "page-1"},
-            {"results": [{"node": {"properties": {"id": "later-copy", "body": BODY,
-              "source_file": "lib/existing.py", "symbol_kind": "function", "repo": "test/repo"}}}],
-             "has_more": False, "collection_exhausted": True, "completion": "eligible_population_exhausted"},
-        ]
+    def test_single_high_limit_search_blocks_duplicate_without_cursor(self):
+        self.hits = 1
         self.stage()
-        result = self.git("commit", "-m", "later-page duplicate", check=False)
+        result = self.git("commit", "-m", "bounded duplicate", check=False)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Commit blocked", result.stderr)
-        self.assertEqual(self.search_requests[0]["mode"], "ranked")
-        self.assertEqual(self.search_requests[1]["qid"], "page-1")
-        self.assertEqual(self.search_requests[1]["database"], "nornicdbcode")
+        self.assertEqual(len(self.search_requests), 1)
+        request = self.search_requests[0]
+        self.assertEqual(request["limit"], 1000)
+        self.assertEqual(request["database"], "nornicdbcode")
+        self.assertEqual(request["filters"]["repo"], ["test/repo"])
+        for field in ["qid", "n", "mode", "discard"]:
+            self.assertNotIn(field, request)
         self.assertNotIn("/db/nornic/tx/commit", self.paths)
 
     def test_ranked_matches_respect_score_floor(self):
@@ -216,7 +213,8 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
                 self.assertEqual(result.returncode != 0, blocked, result.stdout + result.stderr)
                 if blocked:
                     self.assertIn("Commit blocked", result.stderr)
-                self.assertEqual(self.search_requests[-1]["mode"], "ranked")
+                self.assertNotIn("mode", self.search_requests[-1])
+                self.assertEqual(self.search_requests[-1]["limit"], 1000)
                 self.assertNotIn("ranked_limit", self.search_requests[-1])
 
     def test_missing_rank_score_never_passes_mandatory_check(self):
@@ -229,24 +227,14 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
         self.assertIn("score", result.stderr.lower())
         self.assertIn("MANDATORY COMMIT CHECK", result.stderr)
 
-    def test_incomplete_or_expired_cursor_never_passes_commit(self):
-        cases = [
-            [{"results": [], "has_more": False, "collection_exhausted": False, "completion": "max_results_reached"}],
-            [{"mode": "ranked_then_id", "results": [], "has_more": False, "collection_exhausted": True}],
-            [{"results": [], "has_more": True, "qid": "page-1"},
-             {"_http_status": 410, "request_status": "continuation_gone", "results": []}],
-            [{"results": [], "has_more": True, "qid": "page-1"},
-             {"results": [], "has_more": True, "qid": "page-1"}],
-        ]
+    def test_search_failure_never_passes_commit(self):
         self.stage()
-        for pages in cases:
-            with self.subTest(pages=pages):
-                self.search_pages = pages
-                result = self.git("commit", "-m", "incomplete cursor", check=False)
-                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
-                if pages[0].get("has_more"):
-                    self.assertTrue(self.search_requests[-1].get("discard"))
+        self.search_pages = [{"_http_status": 410, "results": []}]
+        result = self.git("commit", "-m", "failed search", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), self.baseline)
+        self.assertIn("MANDATORY COMMIT CHECK", result.stderr)
+        self.assertFalse(any("qid" in request for request in self.search_requests))
 
     def test_ingest_retries_a_truncated_commit_response(self):
         self.truncate_commit_once = True
