@@ -24,11 +24,13 @@ type legacyTestEngine struct {
 	incomingEdges map[storage.NodeID]map[storage.EdgeID]struct{}
 	edgeTypeIndex map[string]map[storage.EdgeID]struct{}
 
-	schema storage.SchemaManager
+	schema  storage.SchemaManager
+	catalog *storage.MemoryEngine
 }
 
 func newLegacyTestEngine() *legacyTestEngine {
 	return &legacyTestEngine{
+		catalog:       storage.NewMemoryEngine(),
 		nodes:         make(map[storage.NodeID]*storage.Node),
 		edges:         make(map[storage.EdgeID]*storage.Edge),
 		labelIndex:    make(map[string]map[storage.NodeID]struct{}),
@@ -459,7 +461,27 @@ func (e *legacyTestEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.Node
 	return result, nil
 }
 
-func (e *legacyTestEngine) Close() error { return nil }
+func (e *legacyTestEngine) Close() error { return e.catalog.Close() }
+
+// Only the pre-namespace entity layout is simulated by this fixture. Catalog
+// publication exercises the real lifecycle owner and mirrors its committed
+// record into the legacy map, which remains the fixture's read interface.
+func (e *legacyTestEngine) PublishNamespaceCatalogContext(ctx context.Context, mutation storage.NamespaceCatalogMutation) error {
+	if err := e.catalog.PublishNamespaceCatalogContext(ctx, mutation); err != nil {
+		return err
+	}
+	node, err := e.catalog.GetNode(mutation.Record.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := e.GetNode(node.ID); err == storage.ErrNotFound {
+		_, err = e.CreateNode(node)
+		return err
+	} else if err != nil {
+		return err
+	}
+	return e.UpdateNode(node)
+}
 
 func (e *legacyTestEngine) NodeCount() (int64, error) {
 	e.mu.RLock()

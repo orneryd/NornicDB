@@ -990,7 +990,7 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 			future.resolve(localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil))
 			return
 		case <-ticker.C:
-			if future.cmd.namespaceDrop != nil {
+			if future.cmd != nil && future.cmd.namespaceDrop != nil {
 				continue
 			} // the completion owner resolves DROP
 			r.logMu.RLock()
