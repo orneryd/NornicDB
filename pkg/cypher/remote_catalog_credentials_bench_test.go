@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkManagedRemoteConstituentLookup(b *testing.B) {
-	remote := storage.NewMemoryEngine()
+	remote := newTestMemoryEngine(b)
 	config := multidb.DefaultConfig()
 	config.RemoteEngineFactory = func(multidb.ConstituentRef, string) (storage.Engine, error) { return remote, nil }
 	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), config)
