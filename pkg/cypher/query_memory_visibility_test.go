@@ -16,6 +16,11 @@ func TestQueryMemoryStreamedRelationshipEndpointVisibility(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace))
 			exec.cache = nil
 			ctx := context.Background()
+			if namespace == "system" {
+				_, err := exec.Execute(ctx, "MATCH ()-[r]->() RETURN r", nil)
+				require.ErrorContains(t, err, "Graph access is not supported on the system database")
+				return
+			}
 			_, err := exec.Execute(ctx, `CREATE (a:Visible {id:'a'}), (b:Visible {id:'b'}),
 				(h:_meta {id:'hidden'}), (m:Visible:_meta {id:'mixed'})
 				CREATE (a)-[:REL {tag:'public'}]->(b), (h)-[:REL {tag:'start'}]->(b),
@@ -23,32 +28,27 @@ func TestQueryMemoryStreamedRelationshipEndpointVisibility(t *testing.T) {
 				(h)-[:OTHER {tag:'both'}]->(m)`, nil)
 			require.NoError(t, err)
 			for _, tc := range []struct {
-				query      string
-				systemRows int
-				userRows   int
+				query string
+				rows  int
 			}{
-				{"MATCH ()-[r]->() RETURN r", 5, 1},
-				{"MATCH ()-[r:REL]->() RETURN r.tag", 4, 1},
-				{"MATCH ()-[r:REL|OTHER]->() RETURN startNode(r), endNode(r)", 5, 1},
-				{"MATCH ()<-[r]-() RETURN r.tag", 5, 1},
-				{"MATCH ()-[r]-() RETURN r.tag", 10, 2},
-				{"MATCH (a)-[r]->(b) RETURN a, b", 5, 1},
-				{"MATCH (a:Visible)-[r]->(b:Visible) RETURN r.tag", 2, 1},
-				{"MATCH p=()-[r]->() RETURN p", 5, 1},
-				{"MATCH ()-[r]->() RETURN startNode(r).id, endNode(r).id", 5, 1},
-				{"MATCH ()-[r]->() WITH r RETURN count(r)", 5, 1},
+				{"MATCH ()-[r]->() RETURN r", 1},
+				{"MATCH ()-[r:REL]->() RETURN r.tag", 1},
+				{"MATCH ()-[r:REL|OTHER]->() RETURN startNode(r), endNode(r)", 1},
+				{"MATCH ()<-[r]-() RETURN r.tag", 1},
+				{"MATCH ()-[r]-() RETURN r.tag", 2},
+				{"MATCH (a)-[r]->(b) RETURN a, b", 1},
+				{"MATCH (a:Visible)-[r]->(b:Visible) RETURN r.tag", 1},
+				{"MATCH p=()-[r]->() RETURN p", 1},
+				{"MATCH ()-[r]->() RETURN startNode(r).id, endNode(r).id", 1},
+				{"MATCH ()-[r]->() WITH r RETURN count(r)", 1},
 			} {
 				t.Run(tc.query, func(t *testing.T) {
 					result, err := exec.Execute(ctx, tc.query, nil)
 					require.NoError(t, err)
-					want := tc.userRows
-					if namespace == "system" {
-						want = tc.systemRows
-					}
 					if tc.query == "MATCH ()-[r]->() WITH r RETURN count(r)" {
-						require.Equal(t, [][]interface{}{{int64(want)}}, result.Rows)
+						require.Equal(t, [][]interface{}{{int64(tc.rows)}}, result.Rows)
 					} else {
-						require.Len(t, result.Rows, want)
+						require.Len(t, result.Rows, tc.rows)
 					}
 				})
 			}
@@ -66,10 +66,6 @@ func TestQueryMemoryStreamedRelationshipEndpointVisibility(t *testing.T) {
 			}
 			<-run.stream.Done()
 			require.NoError(t, run.err)
-			if namespace == "system" {
-				require.Len(t, streamed, 5)
-				return
-			}
 			require.Equal(t, [][]interface{}{{"a", "b"}}, streamed)
 			// Pending writes use the same endpoint checks through transaction
 			// storage forwarding; internal labels must survive projection.
