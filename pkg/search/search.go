@@ -2158,6 +2158,7 @@ func (s *Service) Close() error {
 	if s.lifecycleCancel != nil {
 		s.lifecycleCancel()
 	}
+	relationshipErr := s.joinRelationshipIndex()
 	s.continuationMu.Lock()
 	if s.continuationRegistry != nil && s.continuationOwned {
 		s.continuationRegistry.Close()
@@ -2186,7 +2187,7 @@ func (s *Service) Close() error {
 	s.strategyTransitionMu.Unlock()
 
 	s.closeVectorFileStore(false)
-	return nil
+	return relationshipErr
 }
 
 // closeVectorFileStore serializes teardown with persistence, vector mutation
