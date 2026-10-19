@@ -4069,7 +4069,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				// Beam factor is query-only tuning and does not affect the persisted
 				// graph, so apply it without paying for an index rebuild.
 				loaded.setSearchBeamFactor(want.SearchBeamFactor)
-				loaded.SetBuildLexicalHints(lexicalHintValues(s.entryLexicalHintsForNodes(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M))))
+				loaded.setBuildLexicalHints(s.entryLexicalHintsForNodes(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M)))
 				s.publishVectorServing(func() {
 					s.hnswMu.Lock()
 					s.hnswIndex = loaded
@@ -5121,10 +5121,15 @@ func (s *Service) adaptiveVectorSearch(
 		}
 		stats.rawCandidates = len(scored)
 		stats.exhausted = evidence.exhausted
-		// One result per node, with its best vector as the match.
+		// The exact stage already selected one best entry per node. Decode
+		// its owner once here and retain the entry key as match evidence.
 		results := make([]indexResult, 0, len(scored))
 		for _, result := range scored {
-			results = append(results, indexResult{ID: normalizeVectorResultIDToNodeID(result.ID), MatchID: result.ID, Score: result.Score})
+			nodeID, ok := vectorEntryOwner(result.ID)
+			if !ok {
+				continue
+			}
+			results = append(results, indexResult{ID: nodeID, MatchID: result.ID, Score: result.Score})
 		}
 		if postProcess != nil {
 			results = postProcess(results)
@@ -5309,7 +5314,11 @@ func (s *Service) completeVectorSearch(
 	stats.rawCandidates = len(scored)
 	ranked := make([]indexResult, 0, len(scored))
 	for _, result := range scored {
-		ranked = append(ranked, indexResult{ID: normalizeVectorResultIDToNodeID(result.ID), MatchID: result.ID, Score: result.Score})
+		nodeID, ok := vectorEntryOwner(result.ID)
+		if !ok {
+			continue
+		}
+		ranked = append(ranked, indexResult{ID: nodeID, MatchID: result.ID, Score: result.Score})
 	}
 	results := make([]indexResult, 0, target)
 	for start := 0; start < len(ranked) && len(results) < target; start += target {
@@ -6542,7 +6551,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	rebuilt := NewHNSWIndex(old.dimensions, old.config)
 	rebuilt.SetVectorLookup(s.getVectorLookup())
 	seedHints := s.hnswBuildLexicalSeedHints(fulltext, old.config.M)
-	rebuilt.SetBuildLexicalHints(lexicalHintValues(s.entryLexicalHintsForNodes(seedHints)))
+	rebuilt.setBuildLexicalHints(s.entryLexicalHintsForNodes(seedHints))
 	const rebuildProgressInterval = 50000
 	if vfs != nil && vfs.Count() > 0 {
 		total := vfs.Count()
