@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 )
 
@@ -16,4 +17,32 @@ func TestFunctionSyntaxStructure(t *testing.T) {
 	require.Equal(t, []string{"'a,b'", "[1,2]", "{x:1,y:2}", ""}, readFunctionSyntax("'a,b', [1,2], {x:1,y:2}, /* ' , */").appendArguments(nil, 0, true))
 	require.Equal(t, []string{"'a,b'", "[1,2]", "{x:1,y:2}"}, readFunctionSyntax("'a,b', [1,2], {x:1,y:2}, /* ' , */").appendArguments(nil, 0, false))
 	require.True(t, hasValidStartKeyword("/* } { ' \" */ RETURN 'ok' AS v"))
+}
+
+func TestFunctionSyntaxQualifiedInventory(t *testing.T) {
+	text := "RETURN apoc /* ' , */ . coll . sort(collect(x)), datetime.statement(), `custom`.`fn`(1)"
+	var names []string
+	require.NoError(t, forEachFunctionCall(text, func(name, _ string) error {
+		names = append(names, name)
+		return nil
+	}))
+	require.Equal(t, []string{"apoc.coll.sort", "collect", "datetime.statement", "custom.fn"}, names)
+	name, arguments, ok := parseFunctionCallArguments("apoc.coll.sort(/* , */ collect(x))")
+	require.True(t, ok)
+	require.Equal(t, "apoc.coll.sort", name)
+	require.Equal(t, []string{"collect(x)"}, arguments)
+}
+
+func TestFunctionSyntaxUncachedWholeTextWalk(t *testing.T) {
+	// Exceed the retention bound: the walker must keep its lexical structure
+	// rather than reparsing the entire statement for each successive call.
+	text := "RETURN " + strings.Repeat("coalesce(/* don't split , */ null, custom.fn(1)),", 512) + "1"
+	require.Greater(t, len(text), 16384)
+	count := 0
+	require.NoError(t, forEachFunctionCall(text, func(name, _ string) error {
+		if count%2 == 0 { require.Equal(t, "coalesce", name) } else { require.Equal(t, "custom.fn", name) }
+		count++
+		return nil
+	}))
+	require.Equal(t, 1024, count)
 }
