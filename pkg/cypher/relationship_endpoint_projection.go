@@ -7,7 +7,7 @@ import "strings"
 // this same reader and the ordinary endpoint existence/type contract.
 type rowEndpointPropertyNode struct {
 	argument, property string
-	end bool
+	end                bool
 }
 
 func endpointPropertyNode(base, property string) *rowEndpointPropertyNode {
