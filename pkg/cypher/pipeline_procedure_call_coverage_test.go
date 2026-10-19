@@ -59,26 +59,26 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	ctx := context.Background()
 	rows := []pipelineRow{{"x": int64(1)}}
 
-	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)")
+	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)", nil)
 	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
 	require.True(t, ok)
 	require.Nil(t, out)
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed")
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed", nil)
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "aggregate")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed")
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed", nil)
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/ by zero")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed")
+	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed", nil)
 	require.True(t, ok)
 	require.Error(t, err)
 
-	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1")
+	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1", nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"echoed"}, yielded)
