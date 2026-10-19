@@ -22,8 +22,8 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 	return call.name, call.syntax.source(syntaxSpan{call.open + 1, close}), true
 }
 
-// functionCallSpan is the shared lexical identity of a call. Delimiter matching
-// is lazy: name-only validation does not rescan every nested argument list.
+// functionCallSpan refers to the immutable call identity and argument group.
+// Matching and argument boundaries are computed by the owner once.
 type functionCallSpan struct {
 	name        string
 	start, open int
@@ -244,8 +244,9 @@ func readFunctionSyntax(text string) *functionSyntax {
 						continue
 					}
 					parts, end := dottedNameParts(text, end, true)
+                    cursor := queryGapEnd(text,end)
+                    if cursor < len(text) && text[cursor] == '.' {index=end;previous=end-1;continue}
 					if strings.EqualFold(name, "CALL") {
-						cursor := queryGapEnd(text, end)
 						call := functionCallSpan{name: called + parts, start: start, open: -1, next: cursor, procedure: true, syntax: syntax, group: -1}
 						if cursor < len(text) && text[cursor] == '(' {
 							call.open = cursor
@@ -505,5 +506,3 @@ func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 		end = partEnd
 	}
 }
-
-
