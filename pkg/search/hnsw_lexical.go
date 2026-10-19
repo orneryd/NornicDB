@@ -19,50 +19,62 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		if batchSize <= 0 {
 			batchSize = 10000
 		}
-		seededIDs := make(map[string]struct{})
+		// Main anchors have their own entry-keyed projection. Selecting them
+		// requires no owner decoding; other entries are annotated when emitted.
+		mains := mainEntryLexicalHintsForNodes(seedHints)
+		seedPairs := make([]hnswBuildPair, 0, len(seedHints))
 		if len(seedHints) > 0 {
-			seedPairs := make([]hnswBuildPair, 0, len(seedHints))
-			anchored := make(map[vectorNodeID]bool, len(seedHints))
 			if err := iterate(batchSize, func(ids []string, vecs [][]float32) error {
-				for i := range ids {
-					hint, ok := lexicalHintForVectorID(ids[i], seedHints)
-					if !ok {
-						continue
+				for i, id := range ids {
+					if hint, ok := entryHintForVectorID(mains, id); ok {
+						seedPairs = append(seedPairs, hnswBuildPair{
+							id: id, vec: append([]float32(nil), vecs[i]...), hint: hint, hasHint: true,
+						})
 					}
-					if ids[i] == mainKeyForLexicalHint(hint) {
-						anchored[hint.ID] = true
-					} else if anchored[hint.ID] {
-						// The main already owns this document's ranked slot. Its
-						// other entries are annotated in the streaming pass below.
-						continue
-					}
-					seedPairs = append(seedPairs, hnswBuildPair{
-						id: ids[i], vec: append([]float32(nil), vecs[i]...), hint: hint, hasHint: true,
-					})
 				}
 				return nil
 			}); err != nil {
 				return err
 			}
-			seedPairs = prioritizedLexicalBuildPairs(seedPairs)
+		}
+		// Only a document without a main promotes its other embeddings. A
+		// complete main population needs neither this map nor another scan.
+		var anchored map[vectorNodeID]bool
+		if len(seedPairs) != len(seedHints) {
+			anchored = make(map[vectorNodeID]bool, len(seedPairs))
 			for _, pair := range seedPairs {
-				seededIDs[pair.id] = struct{}{}
+				anchored[pair.hint.ID] = true
 			}
-			for start := 0; start < len(seedPairs); start += batchSize {
-				end := min(start+batchSize, len(seedPairs))
-				if err := fn(seedPairs[start:end]); err != nil {
-					return err
+			if err := iterate(batchSize, func(ids []string, vecs [][]float32) error {
+				for i, id := range ids {
+					if hint, ok := lexicalHintForVectorID(id, seedHints); ok && !anchored[hint.ID] {
+						seedPairs = append(seedPairs, hnswBuildPair{
+							id: id, vec: append([]float32(nil), vecs[i]...), hint: hint, hasHint: true,
+						})
+					}
 				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		slices.SortFunc(seedPairs, compareLexicalBuildPairs)
+		for start := 0; start < len(seedPairs); start += batchSize {
+			if err := fn(seedPairs[start:min(start+batchSize, len(seedPairs))]); err != nil {
+				return err
 			}
 		}
 		return iterate(batchSize, func(ids []string, vecs [][]float32) error {
 			batch := make([]hnswBuildPair, 0, len(ids))
-			for i := range ids {
-				if _, seeded := seededIDs[ids[i]]; seeded {
+			for i, id := range ids {
+				if _, main := entryHintForVectorID(mains, id); main {
 					continue
 				}
-				hint, hasHint := lexicalHintForVectorID(ids[i], seedHints)
-				batch = append(batch, hnswBuildPair{id: ids[i], vec: vecs[i], hint: hint, hasHint: hasHint})
+				hint, hasHint := lexicalHintForVectorID(id, seedHints)
+				if anchored != nil && hasHint && !anchored[hint.ID] {
+					continue
+				}
+				batch = append(batch, hnswBuildPair{id: id, vec: vecs[i], hint: hint, hasHint: hasHint})
 			}
 			if len(batch) == 0 {
 				return nil
@@ -71,7 +83,6 @@ func hnswVectorChunkIterator(iterate func(int, func([]string, [][]float32) error
 		})
 	}
 }
-
 func hnswOrderedVectorIndexPairs(vi *VectorIndex, seedHints nodeLexicalHints) []hnswBuildPair {
 	vi.mu.RLock()
 	pairs := make([]hnswBuildPair, 0, len(vi.vectors))

@@ -313,6 +313,9 @@ func nodeHintForID(hints nodeLexicalHints, id string) (nodeLexicalHint, bool) {
 }
 
 func lexicalHintForVectorID(key string, hints nodeLexicalHints) (nodeLexicalHint, bool) {
+	if len(hints) == 0 {
+		return nodeLexicalHint{}, false
+	}
 	owner, ok := vectorEntryOwner(key)
 	if !ok {
 		return nodeLexicalHint{}, false
@@ -325,6 +328,18 @@ func entryHintForVectorID(hints entryLexicalHints, key string) (nodeLexicalHint,
 	return hint, ok
 }
 
+// mainEntryLexicalHintsForNodes projects only canonical main anchors. It never
+// treats a graph ID as an entry key, even when its bytes spell another entry.
+func mainEntryLexicalHintsForNodes(docs nodeLexicalHints) entryLexicalHints {
+	if len(docs) == 0 {
+		return nil
+	}
+	out := make(entryLexicalHints, len(docs))
+	for _, hint := range docs {
+		putEntryLexicalHint(out, mainKeyForLexicalHint(hint), hint)
+	}
+	return out
+}
 // entryHintsFromValues is the public HNSW per-entry hint API boundary. Its IDs
 // already identify entries; the retained hint still names the owning document.
 func entryHintsFromValues(hints []LexicalSeedHint) entryLexicalHints {

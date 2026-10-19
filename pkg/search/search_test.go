@@ -2818,12 +2818,14 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 		seedIDs:       []string{"  doc-a ", "", "doc-a", "doc-b"},
 	}
 	seedSet := svc.hnswLexicalSeedNodeSet(ft)
-	require.Len(t, seedSet, 2)
-	_, okA := seedSet["doc-a"]
-	_, okB := seedSet["doc-b"]
-	require.True(t, okA)
-	require.True(t, okB)
-	require.Len(t, svc.hnswLexicalSeedNodeSet(ft), 2, "lexical graph metadata is always applied")
+	require.Len(t, seedSet, 3)
+	require.Contains(t, seedSet, "  doc-a ", "whitespace is part of the document ID")
+	require.Contains(t, seedSet, "doc-a")
+	require.Contains(t, seedSet, "doc-b")
+	require.NotContains(t, seedSet, "", "empty document IDs are excluded")
+	repeated := svc.hnswLexicalSeedNodeSet(ft)
+	require.Len(t, repeated, 3, "lexical graph metadata is always applied")
+	require.Equal(t, seedSet, repeated)
 
 	// Error branch when neither vector store nor in-memory vector index is available.
 	svc.mu.Lock()
