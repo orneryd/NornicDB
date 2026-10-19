@@ -83,15 +83,15 @@ type syntaxErrors struct {
 }
 
 // QuerySyntaxError retains the parser's status through every Fabric consumer.
-type QuerySyntaxError struct { Message localization.Message }
+type QuerySyntaxError struct{ Message localization.Message }
 
-func (e *QuerySyntaxError) Error() string { return e.Message.Fallback }
+func (e *QuerySyntaxError) Error() string         { return e.Message.Fallback }
 func (e *QuerySyntaxError) BoltErrorCode() string { return "Neo.ClientError.Statement.SyntaxError" }
 
 // Structural consumers require a complete parse; recovery cannot provide a
 // usable structure. Stop at the first error instead of repairing a tree that
 // callers will reject, particularly for ordinary extensions outside this grammar.
-type structureErrorStrategy struct { *antlr4.DefaultErrorStrategy }
+type structureErrorStrategy struct{ *antlr4.DefaultErrorStrategy }
 type structureSyntaxAbort struct{}
 
 func (s *structureErrorStrategy) Sync(antlr4.Parser) {}
@@ -176,8 +176,16 @@ func ReadQueryStructure(text string) *QueryStructure {
 	if cached != nil {
 		return cached
 	}
+	// Use the runtime's SLL prediction cache first, retrying an incomplete
+	// parse in full context. Both paths retain the complete grammar tree.
 	r := newStructureReader(text)
+	r.parser.Interpreter.SetPredictionMode(antlr4.PredictionModeSLL)
 	tree := r.parseScript()
+	if r.errors.err != nil {
+		r = newStructureReader(text)
+		r.parser.Interpreter.SetPredictionMode(antlr4.PredictionModeLL)
+		tree = r.parseScript()
+	}
 	var result *QueryStructure
 	if r.errors.err == nil {
 		result = r.body(tree.FabricBody(), false)

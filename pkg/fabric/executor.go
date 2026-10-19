@@ -2337,7 +2337,7 @@ func importColumnsFromFragment(f Fragment) []string {
 }
 
 func quoteCypherIdentifier(identifier string) string {
-	if isSimpleIdentifier(identifier) {
+	if isSimpleIdentifier(identifier) && !KeywordName(identifier) {
 		return identifier
 	}
 	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
@@ -2452,7 +2452,8 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 		if col == "" {
 			continue
 		}
-		assignments = append(assignments, "$"+col+" AS "+col)
+		identifier := quoteCypherIdentifier(col)
+		assignments = append(assignments, "$"+identifier+" AS "+identifier)
 	}
 	if len(assignments) == 0 {
 		return query
@@ -2519,7 +2520,7 @@ func substituteVarsWithParams(query string, vars []string) string {
 		if v == "" {
 			continue
 		}
-		out = replaceStandaloneVar(out, v, "$"+v)
+		out = replaceStandaloneVar(out, v, "$"+quoteCypherIdentifier(v))
 	}
 	return out
 }
