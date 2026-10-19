@@ -50,6 +50,50 @@ func graphIdentityNodeValue(node *storage.Node) *storage.Node {
 	return &copy
 }
 
+func graphIdentityEdgeValue(edge *storage.Edge) *storage.Edge {
+	if edge == nil { return nil }
+	identity := storage.EntityIdentityFromKey(string(edge.ID))
+	start := storage.EntityIdentityFromKey(string(edge.StartNode))
+	end := storage.EntityIdentityFromKey(string(edge.EndNode))
+	copy := *edge
+	copy.ID,copy.Database = storage.EdgeID(identity.LocalID),identity.Database
+	copy.StartNode,copy.EndNode = storage.NodeID(start.LocalID),storage.NodeID(end.LocalID)
+	return &copy
+}
+
+func graphIdentityPathValue(path PathResult) PathResult {
+	copy := path
+	copy.Nodes = make([]*storage.Node,len(path.Nodes))
+	copy.Relationships = make([]*storage.Edge,len(path.Relationships))
+	for i,node := range path.Nodes { copy.Nodes[i] = graphIdentityNodeValue(node) }
+	for i,edge := range path.Relationships { copy.Relationships[i] = graphIdentityEdgeValue(edge) }
+	return copy
+}
+
+func (e *StorageExecutor) graphIdentityExecutor(ctx context.Context) *StorageExecutor {
+	return e.cloneForStorage(graphIdentityView(e.getStorage(ctx)))
+}
+
+func (e *StorageExecutor) graphReadArguments(ctx context.Context,args []interface{},nodeCount int) (*StorageExecutor,[]interface{}) {
+	graph := e.graphIdentityExecutor(ctx)
+	view := graph.storage.(*graphIdentityStorage)
+	input := append([]interface{}(nil),args...)
+	for i:=0; i<nodeCount && i<len(input); i++ {
+		switch value := input[i].(type) {
+		case *storage.Node: input[i] = view.node(value)
+		case string:
+			if key,ok := view.inputKey(value); ok { input[i] = string(key) }
+		}
+	}
+	return graph,input
+}
+
+func (v *graphIdentityStorage) outputPath(path []storage.NodeID) []storage.NodeID {
+	result := make([]storage.NodeID,len(path))
+	for i,id := range path { result[i] = storage.NodeID(v.outputID(id)) }
+	return result
+}
+
 func (v *graphIdentityStorage) edge(edge *storage.Edge) *storage.Edge {
 	if edge == nil { return nil }
 	copy := *edge
@@ -78,6 +122,24 @@ func (v *graphIdentityStorage) GetNode(key storage.NodeID) (*storage.Node,error)
 	if !ok { return nil,storage.ErrNotFound }
 	node,err := v.Engine.GetNode(id)
 	return v.node(node),err
+}
+
+func (v *graphIdentityStorage) BatchGetNodes(keys []storage.NodeID) (map[storage.NodeID]*storage.Node,error) {
+	requests := make([]storage.NodeID,0,len(keys))
+	originals := make(map[storage.NodeID][]storage.NodeID,len(keys))
+	for _,key := range keys {
+		if id,ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(v.Engine); ok {
+			if _,requested := originals[id]; !requested { requests = append(requests,id) }
+			originals[id] = append(originals[id],key)
+		}
+	}
+	nodes,err := v.Engine.BatchGetNodes(requests)
+	if err != nil { return nil,err }
+	result := make(map[storage.NodeID]*storage.Node,len(nodes))
+	for id,node := range nodes {
+		for _,key := range originals[id] { result[key] = v.node(node) }
+	}
+	return result,nil
 }
 
 func (v *graphIdentityStorage) GetAllNodes() []*storage.Node { return v.nodes(v.Engine.GetAllNodes()) }
@@ -146,6 +208,8 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID,bool)
 			reference.Database,reference.LocalID = database,local
 		} else if storage.CompositeDatabaseOf(v.Engine) == "" {
 			reference.Database = storage.DatabaseOf(v.Engine)
+		} else if node,err := v.Engine.GetNode(storage.NodeID(reference.LocalID)); err == nil && node != nil {
+			reference = node.Identity()
 		}
 	}
 	return storage.NodeID(reference.Key()),true

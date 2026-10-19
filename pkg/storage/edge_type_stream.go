@@ -365,7 +365,7 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 			if edge == nil {
 				return nil
 			}
-			if err := visit(edge); err != nil {
+			if err := visit(c.sourceEdge(alias,engine,edge)); err != nil {
 				visitErr = err
 				return err
 			}
