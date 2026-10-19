@@ -32,7 +32,7 @@ func TestAllDatabaseOperationsIncludeSystemAdmission(t *testing.T) {
 			{http.MethodPost, "/admin/restore"},
 			{http.MethodGet, "/nornicdb/embed/stats"},
 			{http.MethodGet, "/nornicdb/embed/failures"},
-			{http.MethodPost, "/nornicdb/embed/failures/retry"},
+			{http.MethodPost, "/nornicdb/embed/retry-failures"},
 			{http.MethodPost, "/nornicdb/embed/trigger"},
 		} {
 			response := makeRequest(t, s, operation.method, operation.path, map[string]any{}, token)

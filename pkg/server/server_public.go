@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -193,7 +194,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		anyReadable, allReadable := s.databaseReadCoverage(canRead, true, databases > 0)
+		anyReadable, allReadable := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), canRead)
+		anyReadable = anyReadable || databases > 0
 		if !anyReadable {
 			s.writeNeo4jDatabaseAccessDenied(w, r, "")
 			return

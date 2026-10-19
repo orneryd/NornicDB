@@ -236,17 +236,20 @@ func (r *Resolver) authorizeEmbeddingWorker(ctx context.Context, regenerate bool
 			return err
 		}
 	}
-	for _, database := range r.dbManager.ListDatabases() {
-		if database == nil || database.Type == "system" {
-			continue
+	var denied error
+	auth.DatabasePopulationAccess(r.dbManager.ListDatabaseNames(), func(database string) bool {
+		if denied != nil {
+			return false
 		}
 		for _, permission := range []auth.Permission{auth.PermRead, auth.PermWrite} {
-			if !auth.RequestDatabasePermissionAllowed(ctx, database.Name, permission) {
-				return &cypher.PermissionDeniedError{Permission: string(permission)}
+			if !auth.RequestDatabasePermissionAllowed(ctx, database, permission) {
+				denied = &cypher.PermissionDeniedError{Permission: string(permission)}
+				return false
 			}
 		}
-	}
-	return nil
+		return true
+	})
+	return denied
 }
 
 // readableDatabase is the database a direct GraphQL reader selects, resolved

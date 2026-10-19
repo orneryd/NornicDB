@@ -16,8 +16,9 @@ func TestGraphQLRegenerateRequiresAdminBeforeClearing(t *testing.T) {
 	ctx := context.Background()
 	const role = "embedding-writer"
 	require.NoError(t, s.roleStore.CreateRole(ctx, role))
-	require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
+	require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "system"}))
 	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, true))
+	require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", true, true))
 	_, err := users.CreateUser(role, "password123", []auth.Role{auth.Role(role)})
 	require.NoError(t, err)
 	token := "Bearer " + getAuthToken(t, users, role)

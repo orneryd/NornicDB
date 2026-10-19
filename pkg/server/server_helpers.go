@@ -295,24 +295,29 @@ func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Re
 	if len(permissions) == 0 {
 		permissions = []auth.Permission{auth.PermRead, auth.PermWrite, auth.PermAdmin}
 	}
-	for _, database := range s.dbManager.ListDatabases() {
-		if database == nil || database.Type == "system" {
-			continue
-		}
-		if !s.authorizeDatabaseOperation(w, r, database.Name, permissions...) {
+	access := s.principalAccess(getClaims(r))
+	var denied auth.Permission
+	_, all := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), func(database string) bool {
+		if denied != "" {
 			return false
 		}
+		for _, permission := range permissions {
+			if !access.Allows(database, string(permission)) {
+				denied = permission
+				return false
+			}
+		}
+		return true
+	})
+	if !all {
+		s.writeBoundaryNeo4jError(w, r, http.StatusForbidden, "Neo.ClientError.Security.Forbidden", &cypher.PermissionDeniedError{Permission: string(denied)})
 	}
-	return true
+	return all
 }
 
 func (s *Server) canReadAllDatabases(r *http.Request) bool {
-	return s.canReadAllDatabasesWith(s.databaseReadPredicate(getClaims(r)), false)
-}
-
-func (s *Server) canReadAllDatabasesWith(canRead func(string) bool, includeSystem bool) bool {
-	_, allReadable := s.databaseReadCoverage(canRead, includeSystem, true)
-	return allReadable
+	_, all := auth.DatabasePopulationAccess(s.dbManager.ListDatabaseNames(), s.databaseReadPredicate(getClaims(r)))
+	return all
 }
 
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)

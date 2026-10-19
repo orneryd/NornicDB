@@ -418,19 +418,13 @@ func (h *Handler) canReadAllDatabases(ctx context.Context) bool {
 	if allows != nil && auth.RequestDatabaseScopeFromContext(ctx) == nil {
 		return false
 	}
-	for _, database := range h.database.ListDatabases() {
-		if database == "" || database == "system" {
-			continue
-		}
+	_, all := auth.DatabasePopulationAccess(h.database.ListDatabases(), func(database string) bool {
 		if allows != nil {
-			if !allows(database, auth.PermRead) {
-				return false
-			}
-		} else if !auth.RequestDatabasePermissionAllowed(ctx, database, auth.PermRead) {
-			return false
+			return allows(database, auth.PermRead)
 		}
-	}
-	return true
+		return auth.RequestDatabasePermissionAllowed(ctx, database, auth.PermRead)
+	})
+	return all
 }
 
 // handleAutocomplete provides Cypher query autocomplete suggestions.
