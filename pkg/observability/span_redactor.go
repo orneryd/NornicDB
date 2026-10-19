@@ -17,13 +17,13 @@ var SensitiveKeys = func() map[string]bool {
 	return keys
 }()
 
-// redactingSpanProcessor wraps an inner SpanProcessor and strips sensitive
-// attributes from spans before forwarding to the inner processor.
+// redactingSpanProcessor projects attributes, status and events before
+// forwarding spans to the inner processor. The SDK snapshot is never mutated.
 type redactingSpanProcessor struct {
 	inner sdktrace.SpanProcessor
 }
 
-// NewRedactingSpanProcessor wraps inner with attribute redaction (SEC-01).
+// NewRedactingSpanProcessor wraps inner with diagnostic redaction (SEC-01).
 func NewRedactingSpanProcessor(inner sdktrace.SpanProcessor) sdktrace.SpanProcessor {
 	return &redactingSpanProcessor{inner: inner}
 }
@@ -54,39 +54,90 @@ func isSensitiveKey(key string) bool {
 	return IsSensitiveFieldName(key)
 }
 
-// needsRedaction scans attributes without allocating. Returns true only if
-// at least one key is sensitive — the common case (no PII) exits early with
-// zero allocations.
+// needsRedaction leaves clean snapshots unchanged without allocating.
 func needsRedaction(s sdktrace.ReadOnlySpan) bool {
 	for _, a := range s.Attributes() {
-		if isSensitiveKey(string(a.Key)) || (a.Value.Type() == attribute.STRING && RedactText(a.Value.AsString()) != a.Value.AsString()) {
+		if spanAttributeNeedsRedaction(a) {
 			return true
+		}
+	}
+	if text := s.Status().Description; RedactText(text) != text {
+		return true
+	}
+	for _, event := range s.Events() {
+		if RedactText(event.Name) != event.Name {
+			return true
+		}
+		for _, a := range event.Attributes {
+			if spanAttributeNeedsRedaction(a) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// redactedSpan wraps a ReadOnlySpan and filters its attributes.
+func spanAttributeNeedsRedaction(a attribute.KeyValue) bool {
+	if isSensitiveKey(string(a.Key)) {
+		return true
+	}
+	switch a.Value.Type() {
+	case attribute.STRING:
+		return RedactText(a.Value.AsString()) != a.Value.AsString()
+	case attribute.STRINGSLICE:
+		for _, text := range a.Value.AsStringSlice() {
+			if RedactText(text) != text {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// redactedSpan changes only display fields; codes, event identity/timestamps,
+// exception types and the rest of the SDK snapshot retain their contracts.
 type redactedSpan struct {
 	sdktrace.ReadOnlySpan
-	attrs []attribute.KeyValue
+	attrs  []attribute.KeyValue
+	status sdktrace.Status
+	events []sdktrace.Event
 }
 
 func newRedactedSpan(s sdktrace.ReadOnlySpan) *redactedSpan {
-	orig := s.Attributes()
+	status := s.Status()
+	status.Description = RedactText(status.Description)
+	events := append([]sdktrace.Event(nil), s.Events()...)
+	for i := range events {
+		events[i].Name = RedactText(events[i].Name)
+		events[i].Attributes = redactSpanAttributes(events[i].Attributes)
+	}
+	return &redactedSpan{ReadOnlySpan: s, attrs: redactSpanAttributes(s.Attributes()), status: status, events: events}
+}
+
+func redactSpanAttributes(orig []attribute.KeyValue) []attribute.KeyValue {
 	filtered := make([]attribute.KeyValue, 0, len(orig))
 	for _, a := range orig {
 		if isSensitiveKey(string(a.Key)) {
 			filtered = append(filtered, attribute.String(string(a.Key), "REDACTED"))
 		} else if a.Value.Type() == attribute.STRING {
 			filtered = append(filtered, attribute.String(string(a.Key), RedactText(a.Value.AsString())))
+		} else if a.Value.Type() == attribute.STRINGSLICE {
+			values := append([]string(nil), a.Value.AsStringSlice()...)
+			for i, text := range values {
+				values[i] = RedactText(text)
+			}
+			filtered = append(filtered, attribute.StringSlice(string(a.Key), values))
 		} else {
 			filtered = append(filtered, a)
 		}
 	}
-	return &redactedSpan{ReadOnlySpan: s, attrs: filtered}
+	return filtered
 }
 
 func (r *redactedSpan) Attributes() []attribute.KeyValue {
 	return r.attrs
 }
+
+func (r *redactedSpan) Status() sdktrace.Status { return r.status }
+
+func (r *redactedSpan) Events() []sdktrace.Event { return r.events }
