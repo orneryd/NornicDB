@@ -86,9 +86,8 @@ func containsReservedKeyword(s string) bool {
 //	parseNodePattern(ctx, "(n:Person {name: 'Alice'})")
 //	// Returns: {variable: "n", labels: ["Person"], properties: {"name": "Alice"}}
 
-//
-//	parseNodePattern(ctx, "(:Employee)")
-//	// Returns: {variable: "", labels: ["Employee"], properties: {}}
+// parseNodePattern(ctx, "(:Employee)")
+// // Returns: {variable: "", labels: ["Employee"], properties: {}}
 func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
 	info := nodePatternInfo{
 		labels:     []string{},
@@ -141,9 +140,8 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //	parseProperties("{name: 'Alice', age: 30}")
 //	// Returns: {"name": "Alice", "age": int64(30)}
 
-//
-//	parseProperties("{tags: ['a', 'b'], active: true}")
-//	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
+// parseProperties("{tags: ['a', 'b'], active: true}")
+// // Returns: {"tags": []interface{}{"a", "b"}, "active": true}
 func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) map[string]interface{} {
 	return e.parsePropertyMap(ctx, propsStr, false)
 }
@@ -511,7 +509,7 @@ type invalidPropertyValue struct {
 
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 
-//	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
+// parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
 func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) []interface{} {
 	// Remove brackets
 	inner := strings.TrimSpace(arrayStr[1 : len(arrayStr)-1])
