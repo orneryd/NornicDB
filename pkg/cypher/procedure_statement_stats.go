@@ -24,7 +24,7 @@ func beginProcedureStatementStatsScope(ctx context.Context) (context.Context, *p
 	}
 	scope := &procedureStatementStatsScope{
 		procedureStatementStats: procedureStatementStats{Context: ctx},
-		parent: parent,
+		parent:                  parent,
 	}
 	return scope, scope
 }
