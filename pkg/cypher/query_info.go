@@ -284,12 +284,12 @@ func analyzeQuery(cypher string) *QueryInfo {
 
 	// Aggregation functions (COUNT/SUM/AVG/MIN/MAX/COLLECT).
 	// These are cached with conservative TTL and invalidation on writes.
-	info.HasAggregation = strings.Contains(upper, "COUNT(") ||
-		strings.Contains(upper, "SUM(") ||
-		strings.Contains(upper, "AVG(") ||
-		strings.Contains(upper, "MIN(") ||
-		strings.Contains(upper, "MAX(") ||
-		strings.Contains(upper, "COLLECT(")
+	info.HasAggregation = containsFunctionCallNamed(upper, "COUNT") ||
+		containsFunctionCallNamed(upper, "SUM") ||
+		containsFunctionCallNamed(upper, "AVG") ||
+		containsFunctionCallNamed(upper, "MIN") ||
+		containsFunctionCallNamed(upper, "MAX") ||
+		containsFunctionCallNamed(upper, "COLLECT")
 
 	// Determine first clause (for routing)
 	info.FirstClause = detectFirstClause(upper)

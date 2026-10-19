@@ -61,7 +61,7 @@ func alternateFunctionSyntax(body ast.Node) []string {
    literal,ok:=n.Args[1].(*ast.BasicLit);if !ok {return true}
    value,_:=strconv.Unquote(literal.Value)
    if rawFunctionPrefix.MatchString(value) {reasons["independent function-prefix reader"]=true}
-   if value=="(" || value=="," {
+   if (value=="(" || value==",") && selector.Sel.Name!="HasPrefix" && selector.Sel.Name!="Contains" {
     ast.Inspect(n.Args[0],func(child ast.Node)bool {
      if identifier,ok:=child.(*ast.Ident);ok && callTextInput.MatchString(identifier.Name) {reasons["raw call-text delimiter reader"]=true}
      return true

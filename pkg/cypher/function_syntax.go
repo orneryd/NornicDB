@@ -329,3 +329,7 @@ func firstProcedureCall(text string) (functionCallSpan,bool) {
 func (syntax *functionSyntax) render(span syntaxSpan) string {
  return strings.TrimSpace(syntax.source(span))
 }
+func firstSyntaxGroup(text string, opening byte, from int) int {
+ for _,group:=range readFunctionSyntax(text).groups {if group.open>=from && group.open>=0 && text[group.open]==opening {return group.open}}
+ return -1
+}

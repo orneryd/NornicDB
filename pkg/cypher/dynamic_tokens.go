@@ -527,7 +527,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			if (clause.kind != pipelineClauseCreate && clause.kind != pipelineClauseMerge) || !dynamicLabelStartsAt(text, i) {
 				continue
 			}
-			open := i + strings.IndexByte(text[i:], '(')
+			open := firstSyntaxGroup(text,'(',i)
 			closing := findMatchingDelimiter(text, open, '(', ')')
 			if closing < 0 {
 				return nil

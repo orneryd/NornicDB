@@ -351,7 +351,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		argument = strings.TrimSpace(argument)
-		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
+		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && len(splitTopLevelComma(argument)) > 1 {
 			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
 				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
 				return value, true, err
