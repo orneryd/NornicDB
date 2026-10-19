@@ -92,7 +92,15 @@ func TestLouvainEntryPointsSelfLoopsAndParallelEdges(t *testing.T) {
 			// library handler only; this is also the plugin's exact handler.
 			value, err := callPluginHandlerContext(context.Background(), handler, []interface{}{nodes, rels, community.DefaultLouvainConfig()})
 			require.NoError(t, err)
-			check(t, value.([]community.CommunityResult))
+			runtimeRows, ok := cypherListValue(value)
+			require.True(t, ok, "plugin result must remain a runtime list")
+			rows := make([]community.CommunityResult, len(runtimeRows))
+			for i, item := range runtimeRows {
+				row, ok := item.(community.CommunityResult)
+				require.True(t, ok, "unexpected plugin row type %T", item)
+				rows[i] = row
+			}
+			check(t, rows)
 			result, err := run("CALL apoc.algo.louvain(['N'],{weightProperty:'w'})")
 			require.NoError(t, err)
 			got := make([]int, 4)
