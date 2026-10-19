@@ -52,7 +52,6 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 		} else {
 			require.NotNil(t, w)
 			node := b.nodeCache["test:a"]
-			require.NoError(t, err)
 			value = node.Properties["v"].(int64)
 		}
 		return true, nil
