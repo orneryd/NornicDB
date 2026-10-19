@@ -207,8 +207,8 @@ func RedactURL(raw string) string {
 		}
 		for _, separator := range []string{"?", "#"} {
 			if _, query, ok := strings.Cut(raw, separator); ok {
-				_, changed, valid := redactURLQuery(query)
-				if changed || !valid {
+				mapped, err := mapURLCredentialQuery(query, redactURLCredential)
+				if err != nil || mapped != query {
 					return redactedPlaceholder
 				}
 			}
@@ -216,77 +216,25 @@ func RedactURL(raw string) string {
 		return raw
 	}
 	changed := false
-	if u.User != nil {
-		u.User = url.User(redactedPlaceholder)
+	err = MapURLCredentials(u, func(*url.Userinfo) *url.Userinfo {
 		changed = true
-	}
-	query, queryChanged, valid := redactURLQuery(u.RawQuery)
-	if !valid {
+		return url.User(redactedPlaceholder)
+	}, func(value string, err error) (string, error) {
+		changed = true
+		return redactURLCredential(value, err)
+	})
+	if err != nil {
 		return redactedPlaceholder
 	}
-	if escaped := u.EscapedFragment(); strings.Contains(escaped, "=") {
-		fragment, fragmentChanged, valid := redactURLQuery(escaped)
-		if !valid {
-			return redactedPlaceholder
-		}
-		if fragmentChanged {
-			decoded, err := url.PathUnescape(fragment)
-			if err != nil {
-				return redactedPlaceholder
-			}
-			u.Fragment = decoded
-			u.RawFragment = fragment
-			changed = true
-		}
-	}
-	if !changed && !queryChanged {
+	if !changed {
 		return raw
 	}
-	u.RawQuery = query
 	return u.String()
 }
 
-// Query aliases use the same canonical names and normalization as fields.
-// Provider prefixes (X-Amz-Signature, for example) do not change the credential
-// meaning of the final component. Metadata suffixes such as auth_provider stay.
-func isSensitiveURLQueryName(name string) bool {
-	parts := fieldWords(name)
-	for i := range parts {
-		if IsSensitiveFieldName("url_query_" + strings.Join(parts[i:], "_")) {
-			return true
-		}
-	}
-	return false
+func redactURLCredential(string, error) (string, error) {
+	return redactedPlaceholder, nil
 }
-
-func redactURLQuery(query string) (string, bool, bool) {
-	// Preserve the original query spelling/order and non-secret values.
-	changed := false
-	parts := strings.Split(query, "&")
-	for i, part := range parts {
-		key, _, sensitive, valid := credentialURLField(part)
-		if !valid {
-			return "", false, false
-		}
-		if sensitive {
-			parts[i] = key + "=" + url.QueryEscape(redactedPlaceholder)
-			changed = true
-		}
-	}
-	return strings.Join(parts, "&"), changed, true
-}
-
-// Interpret one escaped field after splitting on literal '&'. Both URL display
-// and credential extraction use this order so encoded delimiters stay in values.
-func credentialURLField(part string) (key, value string, sensitive, valid bool) {
-	key, value, found := strings.Cut(part, "=")
-	decoded, err := url.QueryUnescape(key)
-	if err != nil {
-		return key, value, false, false
-	}
-	return key, value, found && isSensitiveURLQueryName(decoded), true
-}
-
 // Error bodies can also carry newly issued credentials, whose values were not
 // in the request. Apply the same field-name policy to structured error data.
 func redactJSON(value any, path string) bool {
@@ -322,28 +270,28 @@ func ClientCredentials(endpoint string, secrets ...string) []string {
 		}
 		return values
 	}
-	if u.User != nil {
-		values = append(values, u.User.String())
-		if password, ok := u.User.Password(); ok {
-			values = append(values, password, u.User.Username()+":"+password)
+	_ = MapURLCredentials(u, func(user *url.Userinfo) *url.Userinfo {
+		values = append(values, user.String())
+		if password, ok := user.Password(); ok {
+			values = append(values, password, user.Username()+":"+password)
 		}
-	}
-	for _, query := range []string{u.RawQuery, u.EscapedFragment()} {
-		for _, part := range strings.Split(query, "&") {
-			_, value, sensitive, valid := credentialURLField(part)
-			if !valid || !sensitive {
-				continue
-			}
-			decoded, err := url.QueryUnescape(value)
-			if err != nil {
-				decoded = value
-			}
-			values = append(values, decoded)
-		}
+		return user
+	}, func(value string, _ error) (string, error) {
+		values = append(values, value)
+		return value, nil
+	})
+	return values
+}
+// ContextCredentials extracts URL-owned credentials from diagnostic source
+// context, such as an original DDL command. It uses the same URL reader as
+// client configuration; it does not classify unrelated prose as a credential.
+func ContextCredentials(context string, secrets ...string) []string {
+	values := append([]string(nil), secrets...)
+	for _, endpoint := range credentialURL.FindAllString(context, -1) {
+		values = append(values, ClientCredentials(endpoint)...)
 	}
 	return values
 }
-
 // RedactText removes credentials owned by the caller, including the encodings
 // used by HTTP forms, JSON and Basic authorization. It never reads environment
 // variables or discovers credentials from unrelated clients.
