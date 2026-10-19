@@ -271,6 +271,10 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger
 // getEdgesByTypeVisibleAtSnapshotWithView: type candidates come from the same
 // physical snapshot an explicit transaction reads, one edge at a time.
 func (b *BadgerEngine) streamEdgesByTypeVisibleAtSnapshotWithView(ctx context.Context, scope, edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error, visit func(*Edge) error) error {
+	return b.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, version, view, visibleRead, visit)
+}
+
+func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, scope, edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error, v readVisibility, visit func(*Edge) error) error {
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return err
@@ -281,7 +285,7 @@ func (b *BadgerEngine) streamEdgesByTypeVisibleAtSnapshotWithView(ctx context.Co
 	}
 	return view(func(txn *badger.Txn) error {
 		if edgeType == "" {
-			return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
+			return b.iterateEdgesAtInTxn(txn, version, v, func(edge *Edge) error {
 				if edge == nil || !edgeIDInScope(edge.ID, scope) {
 					return nil
 				}
@@ -303,7 +307,7 @@ func (b *BadgerEngine) streamEdgesByTypeVisibleAtSnapshotWithView(ctx context.Co
 			if !ok || edgeID == "" || !edgeIDInScope(edgeID, scope) {
 				continue
 			}
-			edge, getErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
+			edge, getErr := b.getEdgeAtInTxn(txn, edgeID, version, v)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
