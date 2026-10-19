@@ -401,7 +401,7 @@ func fabricSingleGraphStatement(cypher string) string {
 func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
 	if e.fabricPlanCache != nil {
 		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
-			return cached, nil
+			return fabricProcedureWritePlan(cached), nil
 		}
 	}
 
@@ -416,7 +416,37 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	if e.fabricPlanCache != nil {
 		e.fabricPlanCache.Put(cypher, sessionDB, fragment)
 	}
-	return fragment, nil
+	return fabricProcedureWritePlan(fragment), nil
+}
+
+// fabricProcedureWritePlan resolves the registered CALL contract at statement
+// admission, just as the native transaction route does. Cached structural plans
+// stay immutable and do not retain an obsolete procedure mode after registration.
+// The existing Fabric participant owner then handles writes and their rollback.
+func fabricProcedureWritePlan(fragment fabric.Fragment) fabric.Fragment {
+	switch current := fragment.(type) {
+	case *fabric.FragmentExec:
+		copy := *current
+		copy.Input = fabricProcedureWritePlan(current.Input)
+		copy.IsWrite = current.IsWrite || callsDataWriteProcedure(current.Query)
+		return &copy
+	case *fabric.FragmentApply:
+		copy := *current
+		copy.Input = fabricProcedureWritePlan(current.Input)
+		copy.Inner = fabricProcedureWritePlan(current.Inner)
+		return &copy
+	case *fabric.FragmentUnion:
+		copy := *current
+		copy.LHS = fabricProcedureWritePlan(current.LHS)
+		copy.RHS = fabricProcedureWritePlan(current.RHS)
+		return &copy
+	case *fabric.FragmentLeaf:
+		copy := *current
+		copy.Input = fabricProcedureWritePlan(current.Input)
+		return &copy
+	default:
+		return fragment
+	}
 }
 
 func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) error {
