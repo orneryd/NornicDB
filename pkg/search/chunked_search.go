@@ -61,10 +61,19 @@ func SearchTextChunksWithErrorPolicy(
 	embedQuery EmbedQueryFunc,
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
-) (*SearchResponse, error) {
+) (response *SearchResponse, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Every selected search completes here, including lexical callbacks and
+	// result fusion. A canceled request/DB child cannot publish success just
+	// because its callback returned hits. A live request still permits the
+	// existing provider-timeout fallback.
+	defer func() {
+		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, retErr); fatal != nil {
+			response, retErr = nil, fatal
+		}
+	}()
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults
@@ -147,11 +156,12 @@ func searchSingleQueryChunk(
 	}
 	if err == nil && len(embedding) > 0 {
 		response, searchErr := searchQuery(ctx, query, embedding, opts)
+		if searchErr == nil && response != nil {
+			// The public completion boundary checks cancellation on success.
+			return response, nil
+		}
 		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalSearchError, searchErr); fatal != nil {
 			return nil, fatal
-		}
-		if searchErr == nil && response != nil {
-			return response, nil
 		}
 		fallbackReason = SearchFallbackNoHybridResults
 		if searchErr != nil {
