@@ -307,11 +307,15 @@ func (s *Server) authorizeAllDatabaseOperation(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) canReadAllDatabases(r *http.Request) bool {
-	for _, database := range s.dbManager.ListDatabases() {
-		if database == nil || database.Type == "system" {
+	return s.canReadAllDatabasesWith(s.databaseReadPredicate(getClaims(r)))
+}
+
+func (s *Server) canReadAllDatabasesWith(canRead func(string) bool) bool {
+	for _, database := range s.dbManager.ListDatabaseNames() {
+		if database == "system" {
 			continue
 		}
-		if _, readable := s.databaseReadAccess(getClaims(r), database.Name); !readable {
+		if !canRead(database) {
 			return false
 		}
 	}
