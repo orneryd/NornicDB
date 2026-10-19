@@ -123,6 +123,9 @@ func (m *OAuthManager) GenerateAuthURL(baseURL string) (string, string, error) {
 	if !config.IsConfigured() {
 		return "", "", fmt.Errorf("OAuth not configured")
 	}
+	if err := ValidateOAuthIssuer(config.Issuer); err != nil {
+		return "", "", err
+	}
 
 	// Generate state parameter for CSRF protection
 	state := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
@@ -182,6 +185,9 @@ func (m *OAuthManager) ExchangeCode(code string) (*OAuthTokenData, error) {
 	if !config.IsConfigured() {
 		return nil, fmt.Errorf("OAuth not configured")
 	}
+	if err := ValidateOAuthIssuer(config.Issuer); err != nil {
+		return nil, err
+	}
 
 	// Exchange authorization code for access token
 	tokenURL := fmt.Sprintf("%s/oauth2/v1/token", config.Issuer)
@@ -216,6 +222,9 @@ func (m *OAuthManager) GetUserInfo(accessToken string) (*OAuthUserInfo, error) {
 	config := GetOAuthConfig()
 	if !config.IsConfigured() {
 		return nil, fmt.Errorf("OAuth not configured")
+	}
+	if err := ValidateOAuthIssuer(config.Issuer); err != nil {
+		return nil, err
 	}
 
 	// Get user info from OAuth provider
@@ -401,6 +410,9 @@ func (m *OAuthManager) RefreshOAuthToken(user *User, refreshToken string) error 
 	config := GetOAuthConfig()
 	if !config.IsConfigured() {
 		return fmt.Errorf("OAuth configuration incomplete")
+	}
+	if err := ValidateOAuthIssuer(config.Issuer); err != nil {
+		return err
 	}
 
 	// Request new access token using refresh token

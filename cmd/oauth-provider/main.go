@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -81,6 +82,9 @@ type OAuthProvider struct {
 
 // NewOAuthProvider creates a new OAuth provider with default test users
 func NewOAuthProvider(clientID, clientSecret, issuer, redirectURI string) (*OAuthProvider, error) {
+	if err := auth.ValidateOAuthIssuer(issuer); err != nil {
+		return nil, err
+	}
 	redirectURL, err := validateLocalRedirectURI(redirectURI)
 	if err != nil {
 		return nil, fmt.Errorf("invalid registered redirect URI: %w", err)
@@ -564,10 +568,10 @@ func (p *OAuthProvider) handleDiscovery(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"issuer":                                observability.RedactURL(p.issuer),
-		"authorization_endpoint":                observability.RedactURL(fmt.Sprintf("%s/oauth2/v1/authorize", p.issuer)),
-		"token_endpoint":                        observability.RedactURL(fmt.Sprintf("%s/oauth2/v1/token", p.issuer)),
-		"userinfo_endpoint":                     observability.RedactURL(fmt.Sprintf("%s/oauth2/v1/userinfo", p.issuer)),
+		"issuer":                                p.issuer,
+		"authorization_endpoint":                fmt.Sprintf("%s/oauth2/v1/authorize", p.issuer),
+		"token_endpoint":                        fmt.Sprintf("%s/oauth2/v1/token", p.issuer),
+		"userinfo_endpoint":                     fmt.Sprintf("%s/oauth2/v1/userinfo", p.issuer),
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_post"},
