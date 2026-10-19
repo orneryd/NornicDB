@@ -310,88 +310,106 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 // Native storage values never masquerade as nodes whose physical ID is a key.
 type graphEntityKey string
 type algorithmGraphNode struct {
-    ID graphEntityKey
-    value *storage.Node
+	ID    graphEntityKey
+	value *storage.Node
 }
 type algorithmGraphEdge struct {
-    ID graphEntityKey
-    StartNode,EndNode graphEntityKey
-    Type string
-    Properties map[string]interface{}
+	ID                 graphEntityKey
+	StartNode, EndNode graphEntityKey
+	Type               string
+	Properties         map[string]interface{}
 }
 type algorithmGraphStorage struct {
-    source,reader storage.Engine
+	source, reader storage.Engine
 }
-type algorithmGraphExecutor struct {storage *algorithmGraphStorage}
+type algorithmGraphExecutor struct{ storage *algorithmGraphStorage }
 
 func algorithmIdentity(source storage.Engine, identity storage.EntityIdentity) storage.EntityIdentity {
-    if identity.Database=="" {identity.Database=storage.DatabaseOf(source)}
-    return identity
+	if identity.Database == "" {
+		identity.Database = storage.DatabaseOf(source)
+	}
+	return identity
 }
 
 func algorithmNativeNodes(nodes []*storage.Node, source storage.Engine) []algorithmGraphNode {
-    values:=make([]algorithmGraphNode,0,len(nodes))
-    for _,node:=range nodes {
-        if node!=nil {values=append(values,algorithmGraphNode{ID:graphEntityKey(algorithmIdentity(source,node.Identity()).Key()),value:node})}
-    }
-    return values
+	values := make([]algorithmGraphNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node != nil {
+			values = append(values, algorithmGraphNode{ID: graphEntityKey(algorithmIdentity(source, node.Identity()).Key()), value: node})
+		}
+	}
+	return values
 }
 
 func algorithmNodeValue(node algorithmGraphNode) *storage.Node {
-    value:=*node.value
-    return &value
+	value := *node.value
+	return &value
 }
 
-func (g *algorithmGraphStorage) edges(edges []*storage.Edge, err error) ([]algorithmGraphEdge,error) {
-    if err!=nil {return nil,err}
-    values:=make([]algorithmGraphEdge,0,len(edges))
-    for _,edge:=range edges {
-        if edge==nil {continue}
-        values=append(values,algorithmGraphEdge{
-            ID:graphEntityKey(algorithmIdentity(g.source,edge.Identity()).Key()),
-            StartNode:graphEntityKey(algorithmIdentity(g.source,edge.StartIdentity()).Key()),
-            EndNode:graphEntityKey(algorithmIdentity(g.source,edge.EndIdentity()).Key()),
-            Type:edge.Type,Properties:edge.Properties,
-        })
-    }
-    return values,nil
+func (g *algorithmGraphStorage) edges(edges []*storage.Edge, err error) ([]algorithmGraphEdge, error) {
+	if err != nil {
+		return nil, err
+	}
+	values := make([]algorithmGraphEdge, 0, len(edges))
+	for _, edge := range edges {
+		if edge == nil {
+			continue
+		}
+		values = append(values, algorithmGraphEdge{
+			ID:        graphEntityKey(algorithmIdentity(g.source, edge.Identity()).Key()),
+			StartNode: graphEntityKey(algorithmIdentity(g.source, edge.StartIdentity()).Key()),
+			EndNode:   graphEntityKey(algorithmIdentity(g.source, edge.EndIdentity()).Key()),
+			Type:      edge.Type, Properties: edge.Properties,
+		})
+	}
+	return values, nil
 }
 
-func (g *algorithmGraphStorage) GetOutgoingEdges(key graphEntityKey) ([]algorithmGraphEdge,error) {
-    id,ok:=storage.EntityIdentityFromKey(string(key)).NodeLookupID(g.source)
-    if !ok {return nil,storage.ErrNotFound}
-    return g.edges(g.reader.GetOutgoingEdges(id))
+func (g *algorithmGraphStorage) GetOutgoingEdges(key graphEntityKey) ([]algorithmGraphEdge, error) {
+	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(g.source)
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	return g.edges(g.reader.GetOutgoingEdges(id))
 }
 
-func (g *algorithmGraphStorage) GetIncomingEdges(key graphEntityKey) ([]algorithmGraphEdge,error) {
-    id,ok:=storage.EntityIdentityFromKey(string(key)).NodeLookupID(g.source)
-    if !ok {return nil,storage.ErrNotFound}
-    return g.edges(g.reader.GetIncomingEdges(id))
+func (g *algorithmGraphStorage) GetIncomingEdges(key graphEntityKey) ([]algorithmGraphEdge, error) {
+	id, ok := storage.EntityIdentityFromKey(string(key)).NodeLookupID(g.source)
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	return g.edges(g.reader.GetIncomingEdges(id))
 }
 
 func (g *algorithmGraphExecutor) getNodeEdges(key graphEntityKey) []algorithmGraphEdge {
-    outgoing,_:=g.storage.GetOutgoingEdges(key)
-    incoming,_:=g.storage.GetIncomingEdges(key)
-    return append(outgoing,incoming...)
+	outgoing, _ := g.storage.GetOutgoingEdges(key)
+	incoming, _ := g.storage.GetIncomingEdges(key)
+	return append(outgoing, incoming...)
 }
 
 func (g *algorithmGraphExecutor) filtered(types map[string]struct{}) *algorithmGraphExecutor {
-    return &algorithmGraphExecutor{storage:&algorithmGraphStorage{source:g.storage.source,reader:&algorithmRelationshipReader{Engine:g.storage.reader,types:types}}}
+	return &algorithmGraphExecutor{storage: &algorithmGraphStorage{source: g.storage.source, reader: &algorithmRelationshipReader{Engine: g.storage.reader, types: types}}}
 }
 
 func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*algorithmGraphExecutor, []algorithmGraphNode, error) {
-    native,err:=e.algorithmNodes(procedure,args)
-    if err!=nil {return nil,nil,err}
-    graph:=&algorithmGraphExecutor{storage:&algorithmGraphStorage{source:e.storage,reader:e.storage}}
-    nodes:=algorithmNativeNodes(native,e.storage)
-    selected:=false
-    if items,list:=cypherListValue(procedureArgument(args,0)); list && len(items)>0 {_,selected=items[0].(*storage.Node)}
-    if !selected {sort.SliceStable(nodes,func(i,j int)bool{return nodes[i].ID<nodes[j].ID})}
-    return graph,nodes,nil
+	native, err := e.algorithmNodes(procedure, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	graph := &algorithmGraphExecutor{storage: &algorithmGraphStorage{source: e.storage, reader: e.storage}}
+	nodes := algorithmNativeNodes(native, e.storage)
+	selected := false
+	if items, list := cypherListValue(procedureArgument(args, 0)); list && len(items) > 0 {
+		_, selected = items[0].(*storage.Node)
+	}
+	if !selected {
+		sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	}
+	return graph, nodes, nil
 }
 
 func graphAlgorithmRows[T any](nodes []algorithmGraphNode, values map[graphEntityKey]T) [][]interface{} {
-    return algorithmRows(nodes,values)
+	return algorithmRows(nodes, values)
 }
 
 // bindIdentity converts native/config references only after the graph's key
