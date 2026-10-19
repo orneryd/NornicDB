@@ -111,6 +111,14 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 				return
 			}
 			require.NoError(t, err, "query=%s", tc.q)
+			switch tc.name {
+			case "dynamic_create_exists_label":
+				require.Equal(t, [][]interface{}{{[]interface{}{"Made"}}}, actual.Rows)
+			case "dynamic_create_collect_label":
+				require.Equal(t, [][]interface{}{{[]interface{}{"x"}}}, actual.Rows)
+			case "dynamic_create_collect_type":
+				require.Equal(t, [][]interface{}{{"x"}}, actual.Rows)
+			}
 			stats := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile).seeks
 			require.Empty(t, ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile).unregistered, "runtime access must originate in the shared program")
 			require.NotEmpty(t, stats, "expected executed seek; rows=%v", actual.Rows)

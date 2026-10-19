@@ -15,6 +15,7 @@ type relationshipSeekProfile struct {
 	fallbacks map[string]int64
 	templates map[string]*relationshipAccessSite
 	order     []string
+
 	unregistered map[string]int64 // testable invariant: runtime cannot invent a site
 }
 
@@ -30,6 +31,7 @@ func recordUnregisteredRelationshipAccess(ctx context.Context, pattern, where st
 	}
 	profile.unregistered[relationshipAccessID(pattern, where)]++
 }
+
 type relationshipSeekStats struct {
 	seek                      relationshipSeek
 	variable                  string
@@ -58,6 +60,9 @@ func (profile *relationshipSeekProfile) accessSite(id, variable string) *relatio
 // Equal templates at multiple syntactic sites aggregate their runtime counters;
 // EXPLAIN reports their occurrence count rather than pretending they are one site.
 func relationshipAccessID(pattern, where string) string {
+	// Cartesian MATCH and named-path consumers add path assignments. They
+	// do not create a different relationship access template.
+	_, pattern = parseCreatePathAssignment(pattern)
 	pattern = strings.ReplaceAll(pattern, traversalAnonVar, "")
 	return strings.TrimSpace(pattern) + "\x00" + normalizePipelineWhitespace(where)
 }
@@ -144,6 +149,9 @@ func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, quer
 			id: template.id, occurrences: template.occurrences,
 			access: e.relationshipAccessFor(ctx, template.pattern, template.where),
 		})
+	}
+	for _, query := range program.graphQueries {
+		sites = append(sites, e.relationshipFabricAccessSites(ctx, query)...)
 	}
 	return sites
 }
