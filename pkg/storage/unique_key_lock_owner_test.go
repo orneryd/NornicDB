@@ -105,7 +105,7 @@ func TestUniqueKeyLocksAreOwned(t *testing.T) {
 // value that has a key.
 func TestUniqueMergeKey(t *testing.T) {
 	var none *SchemaManager
-	_, ok := none.uniqueMergeKey("L", "k", 1)
+	_, ok := none.scalarMergeLockKey("L", "k", 1)
 	require.False(t, ok)
 	sm := NewSchemaManager()
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "u", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
@@ -114,14 +114,14 @@ func TestUniqueMergeKey(t *testing.T) {
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "r", Type: ConstraintUnique, EntityType: ConstraintEntityRelationship, Label: "R", Properties: []string{"k"}}))
 	require.NoError(t, sm.AddConstraint(Constraint{Name: "e", Type: ConstraintExists, Label: "E", Properties: []string{"k"}}))
 
-	key, ok := sm.uniqueMergeKey("U", "k", int64(7))
+	key, ok := sm.scalarMergeLockKey("U", "k", int64(7))
 	require.True(t, ok)
 	require.Equal(t, "U", key.label)
 	require.Equal(t, "k", key.property)
-	_, ok = sm.uniqueMergeKey("N", "k", "x")
+	_, ok = sm.scalarMergeLockKey("N", "k", "x")
 	require.True(t, ok)
 	// A list has a key, as for the commit locks (indexValueKey).
-	_, ok = sm.uniqueMergeKey("U", "k", []interface{}{int64(1)})
+	_, ok = sm.scalarMergeLockKey("U", "k", []interface{}{int64(1)})
 	require.True(t, ok)
 	for _, missing := range []struct {
 		label, property string
@@ -129,7 +129,7 @@ func TestUniqueMergeKey(t *testing.T) {
 	}{
 		{"U", "other", 1}, {"U", "k", nil}, {"P", "a", 1}, {"R", "k", 1}, {"E", "k", 1}, {"X", "k", 1},
 	} {
-		_, ok := sm.uniqueMergeKey(missing.label, missing.property, missing.value)
+		_, ok := sm.scalarMergeLockKey(missing.label, missing.property, missing.value)
 		require.False(t, ok, "%+v", missing)
 	}
 }
@@ -157,6 +157,15 @@ func TestUniqueKeyLockEdgeBranches(t *testing.T) {
 	other.uniqueConstraintCommitLocksMu.Unlock()
 
 	require.NoError(t, other.AddConstraint(Constraint{Name: "u", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-	_, ok := other.uniqueMergeKey("U", "k", struct{ list []int }{list: []int{1}})
+	_, ok := other.scalarMergeLockKey("U", "k", struct{ list []int }{list: []int{1}})
 	require.False(t, ok)
+}
+
+// Keep the scalar regression matrix against the generalized key owner.
+func (sm *SchemaManager) scalarMergeLockKey(label, property string, value interface{}) (uniqueConstraintLockKey, bool) {
+	keys := sm.uniqueMergeKeys([]string{label}, map[string]interface{}{property: value})
+	if len(keys) == 0 {
+		return uniqueConstraintLockKey{}, false
+	}
+	return keys[0].lock, true
 }
