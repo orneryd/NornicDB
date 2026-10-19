@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -92,6 +93,14 @@ type relationshipSearch struct {
 
 	// beforeSave is a per-service persistence barrier used by tests.
 	beforeSave func()
+
+	workerMu sync.Mutex
+	done     chan struct{}
+	embedMu  sync.Mutex
+	saveErr  error
+	// staged belongs to the embedding worker. Failed saves keep the batch
+	// here so retrying persistence never buys the same embeddings again.
+	staged map[string]*relationshipEntry
 }
 
 type relationshipVectorsFile struct {
@@ -115,6 +124,7 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 		pending:  make(map[string]*storage.Edge),
 		wake:     make(chan struct{}, 1),
 		ready:    make(chan struct{}),
+		staged:   make(map[string]*relationshipEntry),
 	})
 }
 
@@ -158,11 +168,18 @@ func (s *Service) StartRelationshipIndex() {
 		return
 	}
 	rs.start.Do(func() {
+		rs.workerMu.Lock()
+		defer rs.workerMu.Unlock()
+		if s.lifecycleCtx.Err() != nil {
+			return
+		}
+		rs.done = make(chan struct{})
 		go s.runRelationshipIndex(rs)
 	})
 }
 
 func (s *Service) runRelationshipIndex(rs *relationshipSearch) {
+	defer close(rs.done)
 	ctx := s.lifecycleCtx
 	persisted := s.loadRelationshipVectors()
 	seen := make(map[string]bool)
@@ -302,10 +319,7 @@ func (s *Service) embedRelationships(ctx context.Context, rs *relationshipSearch
 			return
 		case <-rs.wake:
 		}
-		changed, failed := s.embedPendingRelationships(ctx, rs)
-		if changed {
-			s.saveRelationshipVectors(rs)
-		}
+		_, failed := s.embedPendingRelationships(ctx, rs)
 		if failed {
 			// Retried after the delay, or sooner when woken: an embedder
 			// was loaded (WakeRelationshipEmbedding) or there is new work.
@@ -324,6 +338,30 @@ func (s *Service) embedRelationships(ctx context.Context, rs *relationshipSearch
 }
 
 func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshipSearch) (changed, failed bool) {
+	rs.embedMu.Lock()
+	defer rs.embedMu.Unlock()
+	// Persist a completed batch even when cancellation or a provider failure
+	// ends its drain. No vector/count/search reader sees it before the save.
+	defer func() {
+		if len(rs.staged) == 0 {
+			return
+		}
+		rs.saveErr = s.saveRelationshipVectors(rs)
+		if rs.saveErr != nil {
+			failed = true
+			return
+		}
+		rs.mu.Lock()
+		for id, embedded := range rs.staged {
+			if current := rs.entries[id]; current != nil && current.Source == embedded.Source {
+				current.Vectors = embedded.Vectors
+				current.Spans = embedded.Spans
+				changed = true
+			}
+			delete(rs.staged, id)
+		}
+		rs.mu.Unlock()
+	}()
 	for ctx.Err() == nil {
 		rs.mu.Lock()
 		var id string
@@ -336,6 +374,9 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		rs.mu.Unlock()
 		if id == "" {
 			return changed, false
+		}
+		if staged := rs.staged[id]; staged != nil && reported != nil && staged.Source == rs.source(reported) {
+			continue
 		}
 		// The copy the index took is the version its entry stands for: it
 		// is embedded even when a read of storage would still give an older
@@ -383,9 +424,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		rs.mu.Lock()
 		current := rs.entries[id]
 		if current != nil && current.Source == source {
-			current.Vectors = normalized
-			current.Spans = spans
-			changed = true
+			rs.staged[id] = &relationshipEntry{Source: source, Vectors: normalized, Spans: spans}
 		}
 		rs.mu.Unlock()
 		if current != nil && current.Source != source {
@@ -436,14 +475,17 @@ func (s *Service) loadRelationshipVectors() map[string]*relationshipEntry {
 	return stored.Entries
 }
 
-func (s *Service) saveRelationshipVectors(rs *relationshipSearch) {
+func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
 	path := s.relationshipVectorsPath()
 	if path == "" {
-		return
+		return nil
 	}
 	rs.mu.RLock()
 	entries := make(map[string]*relationshipEntry, len(rs.entries))
 	for id, entry := range rs.entries {
+		if staged := rs.staged[id]; staged != nil && staged.Source == entry.Source {
+			entry = staged
+		}
 		if len(entry.Vectors) > 0 {
 			entries[id] = &relationshipEntry{Source: entry.Source, Vectors: entry.Vectors, Spans: entry.Spans}
 		}
@@ -456,19 +498,50 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) {
 	file, err := security.CreateRootedFile(temp, 0o600)
 	if err != nil {
 		s.logPrintf("⚠️ Relationship search: saving vectors to %s failed: %v", path, err)
-		return
+		return err
 	}
 	err = gob.NewEncoder(file).Encode(relationshipVectorsFile{Format: relationshipVectorsFormat, Entries: entries})
+	if err == nil {
+		err = file.Sync()
+	}
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
 	}
 	if err == nil {
 		err = security.RenameRootedFile(temp, path)
 	}
+	if err == nil {
+		// The file sync orders its contents; the directory sync makes the
+		// replacement name durable before a reader is told it is complete.
+		var directory *security.RootedFile
+		directory, err = security.OpenRootedFile(filepath.Dir(path), os.O_RDONLY, 0)
+		if err == nil {
+			err = directory.Sync()
+			if closeErr := directory.Close(); err == nil {
+				err = closeErr
+			}
+		}
+	}
 	if err != nil {
 		_ = security.RemoveRootedPath(temp)
 		s.logPrintf("⚠️ Relationship search: saving vectors to %s failed: %v", path, err)
 	}
+	return err
+}
+
+// joinRelationshipIndex pairs startup with Close, including a startup racing
+// cancellation. The worker owns both embedding and its synchronous saves.
+func (s *Service) joinRelationshipIndex() error {
+	if rs := s.relationshipSearch(); rs != nil {
+		rs.workerMu.Lock()
+		done := rs.done
+		rs.workerMu.Unlock()
+		if done != nil {
+			<-done
+			return rs.saveErr
+		}
+	}
+	return nil
 }
 
 type relationshipCandidate struct {
