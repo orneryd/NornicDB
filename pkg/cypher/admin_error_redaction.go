@@ -15,7 +15,7 @@ func redactAdminCommandError(query string, retErr *error) {
 	if *retErr == nil {
 		return
 	}
-	var values []string
+	values := observability.ContextCredentials(query)
 	for offset := 0; offset < len(query); {
 		index := keywordIndexFrom(query, "PASSWORD", offset, defaultKeywordScanOpts())
 		if index < 0 {
