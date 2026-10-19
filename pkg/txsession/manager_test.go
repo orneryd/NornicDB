@@ -303,3 +303,29 @@ func TestManagerExecuteInSession_ReplaysTerminalLifecycleError(t *testing.T) {
 		t.Fatalf("rollback after terminal error should succeed, got %v", rollbackErr)
 	}
 }
+
+func TestManagerCommitCompletionOutlivesRequest(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = store.Close() })
+	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic"))
+	mgr := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil })
+	session, err := mgr.Open(context.Background(), "nornic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ExecuteInSession(context.Background(), session, "CREATE (:CommitRequestOwner {k:7})", nil); err != nil {
+		t.Fatal(err)
+	}
+	request, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mgr.CommitAndDelete(request, session); err != nil {
+		t.Fatalf("COMMIT completion inherited request cancellation: %v", err)
+	}
+	result, err := executor.Execute(context.Background(), "MATCH (n:CommitRequestOwner) RETURN count(n)", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+		t.Fatalf("committed outcome missing: %v", result.Rows)
+	}
+}
