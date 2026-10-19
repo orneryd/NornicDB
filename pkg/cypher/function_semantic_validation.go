@@ -141,8 +141,9 @@ func isNonFunctionSemanticKeyword(name string) bool {
 // forEachSemanticCall retains the procedure dependency inventory, using the
 // same lexical spans as runtime and static function consumers.
 func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
+	syntax := readFunctionSyntax(text)
 	for index := 0; index < len(text); {
-		call, ok := nextCallSpan(text, index, true, true)
+		call, ok := syntax.nextCall(index, true, true, false)
 		if !ok {
 			break
 		}
