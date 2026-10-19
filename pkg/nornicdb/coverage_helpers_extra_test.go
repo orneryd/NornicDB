@@ -122,29 +122,28 @@ func TestDBCollectSubjectRetentionRecords(t *testing.T) {
 }
 
 func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
-	entry := &dbSearchService{}
+	entry := &dbSearchService{svc: search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test"), 3)}
 	require.False(t, entry.hasPending())
-	require.Nil(t, (*dbSearchService)(nil).drainPending())
+	nodes, edges := (*dbSearchService)(nil).drainPending()
+	require.Nil(t, nodes)
+	require.Nil(t, edges)
 	require.False(t, (*dbSearchService)(nil).hasPending())
 	require.Equal(t, searchMutationDebounceDelay, (*dbSearchService)(nil).flushDelay())
 
 	entry.pendingFlushDelay = time.Millisecond
 	require.Equal(t, time.Millisecond, entry.flushDelay())
-	entry.queueIndex(nil)
-	entry.queueRemove("")
-	require.False(t, entry.hasPending())
 
-	node := &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]any{"title": "old"}}
-	entry.queueIndex(node)
-	node.Properties["title"] = "mutated"
-	entry.queueRemove("n2")
+	entry.queueRefresh("n1")
+	newest := entry.queueRefresh("n1")
+	entry.queueEdgeRefresh("e1")
 	require.True(t, entry.hasPending())
-	ops := entry.drainPending()
-	require.Len(t, ops, 2)
-	require.Equal(t, "old", ops["n1"].node.Properties["title"])
-	require.True(t, ops["n2"].remove)
+	nodes, edges = entry.drainPending()
+	require.Equal(t, map[string]search.NodeMutation{"n1": newest}, nodes, "a node keeps only its newest refresh")
+	require.Len(t, edges, 1)
 	require.False(t, entry.hasPending())
-	require.Nil(t, entry.drainPending())
+	nodes, edges = entry.drainPending()
+	require.Nil(t, nodes)
+	require.Nil(t, edges)
 
 	entry.buildDone = make(chan struct{})
 	entry.closeBuildDone()

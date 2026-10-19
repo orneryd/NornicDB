@@ -625,8 +625,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		return nil, noSuchVectorIndexError(indexName)
 	}
 
-	if e.searchService != nil && targetProperty != "" && e.searchService.HasRelationshipVectorEntries(targetRelType, targetProperty) {
-		hits, err := e.searchService.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
+	if svc := e.search(); svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
+		hits, err := svc.VectorQueryRelationships(ctx, queryVector, search.RelationshipVectorQuerySpec{
 			IndexName:  indexName,
 			Type:       targetRelType,
 			Property:   targetProperty,

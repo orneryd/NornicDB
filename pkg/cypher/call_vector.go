@@ -170,7 +170,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		}
 	}
 	if !indexFound {
-		managed := e.searchService != nil && e.searchService.EmbeddingCount() > 0
+		svc := e.search()
+		managed := svc != nil && svc.EmbeddingCount() > 0
 		if !managed {
 			stop := errors.New("managed vector found")
 			err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
@@ -208,12 +209,12 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	// if we honoured it after, a dimension-driven replacement would
 	// instantiate a fresh Service whose default flags are both ON, silently
 	// bypassing the operator's disable.
-	if e.searchService != nil && !e.searchService.VectorEnabled() {
+	svc := e.search()
+	if svc != nil && !svc.VectorEnabled() {
 		e.logEvent(slog.LevelWarn, localization.CypherVectorSearchDisabledEvent(indexName))
 		return result, nil
 	}
 
-	svc := e.searchService
 	useService, err := prepareWiredNodeVectorService(ctx, svc, wantDims)
 	if err != nil {
 		return nil, err
@@ -251,10 +252,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	for _, hit := range hits {
 		node, err := e.storage.GetNode(storage.NodeID(hit.ID))
 		if err != nil || node == nil {
-			if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil {
+			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
 				if !seenOrphans[hit.ID] {
 					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
-					if removeErr := e.searchService.RemoveNode(storage.NodeID(hit.ID)); removeErr != nil {
+					// Unless the node was stored again after this read.
+					if removeErr := svc.RefreshNode(storage.NodeID(hit.ID)); removeErr != nil {
 						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
 					}
 					seenOrphans[hit.ID] = true

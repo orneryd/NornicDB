@@ -24,11 +24,13 @@ func (db *DB) onNodeEmbedded(node *storage.Node) {
 	// the node embedded only after this callback, and a search must then find
 	// the vector. Otherwise the deferred mutation queue publishes it.
 	published := db.publishEmbeddedNode(nodeCopy)
+	if !published {
+		// Admit the refresh before the asynchronous inference work. A delayed
+		// goroutine must not register an old callback after a newer source event.
+		db.queueSearchRefreshEvent(nodeCopy.ID)
+	}
 	// Keep embed worker hot: inference can be expensive, so run asynchronously.
 	go func(n *storage.Node) {
-		if !published {
-			db.indexNodeFromEvent(n)
-		}
 		db.runInferenceForEmbeddedNode(n)
 	}(nodeCopy)
 }

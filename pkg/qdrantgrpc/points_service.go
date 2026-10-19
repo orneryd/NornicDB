@@ -325,7 +325,7 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 		// or finish before the final shared-index removal can be acknowledged.
 		_ = store.DeleteNode(nodeID)
 		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(nodeID)
+			_ = searchSvc.RefreshNode(nodeID)
 		}
 	}
 
@@ -585,7 +585,11 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("payload"))
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -613,6 +617,9 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 		}
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
+		if err := indexPoint(searchSvc, node); err != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -634,7 +641,11 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("keys"))
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -654,6 +665,9 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 		}
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
+		if err := indexPoint(searchSvc, node); err != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -675,7 +689,11 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldRequired("points selector"))
 	}
 
-	store, _, err := s.openCollection(ctx, req.CollectionName)
+	store, meta, err := s.openCollection(ctx, req.CollectionName)
+	if err != nil {
+		return nil, err
+	}
+	searchSvc, err := s.getSearchService(ctx, req.CollectionName, store, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -693,6 +711,9 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 		node.Properties = nil
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
+		if err := indexPoint(searchSvc, node); err != nil {
+			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantIndexPointFailed(string(node.ID), err))
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -1345,14 +1366,15 @@ type searchResult struct {
 }
 
 // indexPoint brings the collection database's search index in step with a
-// point just written: its previous vectors are removed and its current ones
-// indexed, which is what Search finds. A database without a search service
-// (vector search disabled for it) has nothing to index.
+// point just written: its previous vectors are removed and its stored ones
+// indexed, which is what Search finds. The refresh reads the point back, so a
+// newer write or delete of it wins over this one. A database without a search
+// service (vector search disabled for it) has nothing to index.
 func indexPoint(searchSvc *search.Service, node *storage.Node) error {
 	if searchSvc == nil {
 		return nil
 	}
-	return searchSvc.IndexNode(node)
+	return searchSvc.RefreshNode(node.ID)
 }
 
 // searchCollection runs a Qdrant vector search on the collection database's

@@ -691,3 +691,9 @@ func (t *sizeTrackingEngine) OpenReadSnapshot(ctx context.Context) (storage.Read
 }
 
 var _ storage.ReadSnapshotter = (*sizeTrackingEngine)(nil)
+var _ storage.EventSubscriber = (*sizeTrackingEngine)(nil)
+
+// SubscribeEvents forwards to the tracked engine.
+func (t *sizeTrackingEngine) SubscribeEvents(handlers storage.EventHandlers) error {
+	return storage.SubscribeEvents(t.Engine, handlers)
+}

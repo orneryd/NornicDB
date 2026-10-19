@@ -148,6 +148,9 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			return nil, true, err
 		}
 		result.Stats.RelationshipsDeleted = len(edgeIDs)
+		for _, edgeID := range edgeIDs {
+			e.notifyEdgeMutated(string(edgeID))
+		}
 	}
 	e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 	return result, true, nil

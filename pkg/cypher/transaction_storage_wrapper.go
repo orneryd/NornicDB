@@ -94,6 +94,13 @@ type transactionStorageWrapper struct {
 	mutatedNodeIDs      map[string]struct{}
 	mutatedNodeIDsMu    sync.Mutex
 
+	// searchNodeRefreshes and searchEdgeRefreshes are what the transaction
+	// changed for search. Search reads them back once the commit makes them
+	// visible (refreshSearchAfterCommit), and never after a rollback.
+	searchRefreshMu     sync.Mutex
+	searchNodeRefreshes map[storage.NodeID]struct{}
+	searchEdgeRefreshes map[storage.EdgeID]struct{}
+
 	// txNodeLookupCache scopes the executor's MERGE/MATCH lookup cache to
 	// this single transaction. Concurrent transactions get distinct
 	// wrappers — and therefore distinct caches — so a peer's uncommitted
@@ -168,6 +175,31 @@ func (w *transactionStorageWrapper) markMutatedNodeID(id storage.NodeID) {
 	w.mutatedNodeIDsMu.Lock()
 	w.mutatedNodeIDs[string(id)] = struct{}{}
 	w.mutatedNodeIDsMu.Unlock()
+}
+
+func (w *transactionStorageWrapper) deferSearchRefresh(node storage.NodeID, edge storage.EdgeID) {
+	w.searchRefreshMu.Lock()
+	defer w.searchRefreshMu.Unlock()
+	if node != "" {
+		if w.searchNodeRefreshes == nil {
+			w.searchNodeRefreshes = make(map[storage.NodeID]struct{})
+		}
+		w.searchNodeRefreshes[node] = struct{}{}
+	}
+	if edge != "" {
+		if w.searchEdgeRefreshes == nil {
+			w.searchEdgeRefreshes = make(map[storage.EdgeID]struct{})
+		}
+		w.searchEdgeRefreshes[edge] = struct{}{}
+	}
+}
+
+func (w *transactionStorageWrapper) takeSearchRefreshes() (map[storage.NodeID]struct{}, map[storage.EdgeID]struct{}) {
+	w.searchRefreshMu.Lock()
+	defer w.searchRefreshMu.Unlock()
+	nodes, edges := w.searchNodeRefreshes, w.searchEdgeRefreshes
+	w.searchNodeRefreshes, w.searchEdgeRefreshes = nil, nil
+	return nodes, edges
 }
 
 func (w *transactionStorageWrapper) snapshotMutatedNodeIDs() map[string]struct{} {
