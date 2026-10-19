@@ -67,14 +67,7 @@ func (r *heimdallDBRouter) ListDatabases() []string {
 	if r.dbManager == nil {
 		return []string{r.DefaultDatabaseName()}
 	}
-	infos := r.dbManager.ListDatabases()
-	names := make([]string, 0, len(infos))
-	for _, info := range infos {
-		if info == nil || info.Name == "" {
-			continue
-		}
-		names = append(names, info.Name)
-	}
+	names := r.dbManager.ListDatabaseNames()
 	sort.Strings(names)
 	return names
 }

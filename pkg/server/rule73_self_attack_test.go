@@ -138,7 +138,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 		if tc.target == "missing" {
 			return false
 		}
-		if tc.target == "all" && (!p.allowedDatabases["nornic"] || !p.allowedDatabases["rule73_named"]) {
+		if tc.target == "all" && (!p.allowedDatabases["nornic"] || !p.allowedDatabases["rule73_named"] || !p.allowedDatabases["system"]) {
 			return false
 		}
 		if !p.allowedDatabases[database] {
