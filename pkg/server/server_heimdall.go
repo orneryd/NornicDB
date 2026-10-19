@@ -29,6 +29,8 @@ type heimdallDBRouter struct {
 	dbManager *multidb.DatabaseManager
 	features  *nornicConfig.FeatureFlagsConfig
 
+	statementCacheIndex multidb.StatementCacheIndex
+
 	executorsMu sync.RWMutex
 	executors   map[string]*cypher.StorageExecutor
 }
@@ -80,6 +82,7 @@ func (r *heimdallDBRouter) ListDatabases() []string {
 }
 
 func (r *heimdallDBRouter) storageForDatabase(database string) (dbName string, engine storage.Engine, err error) {
+	r.bindStatementCacheIndex()
 	dbName, err = r.ResolveDatabase(database)
 	if err != nil {
 		return "", nil, err
@@ -103,16 +106,19 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	if err != nil {
 		return "", nil, nil, err
 	}
-
-	if cached := r.cachedExecutor(dbName); cached != nil {
+	selection := database
+	if selection == "" {
+		selection = dbName
+	}
+	if cached := r.cachedExecutor(selection); cached != nil {
 		return dbName, cached, engine, nil
 	}
-	exec, err = r.newExecutor(engine, dbName)
+	exec, err = r.newExecutor(engine, selection)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	r.finishExecutor(dbName, engine, exec)
-	return dbName, r.publishExecutor(dbName, exec), engine, nil
+	return dbName, r.publishExecutor(selection, exec), engine, nil
 }
 
 // cachedExecutor is the executor the router shares for dbName, or nil.
@@ -259,6 +265,9 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 		return nil, "", r.databaseForbidden(database)
 	}
 	if !allows(dbName, permission) {
+		if permission == auth.Permission("access") {
+			return nil, "", r.databaseForbidden(database)
+		}
 		return nil, "", &cypher.PermissionDeniedError{Permission: string(permission)}
 	}
 	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
@@ -589,4 +598,23 @@ func (r *heimdallMetricsReader) Runtime() heimdall.RuntimeMetrics {
 		MemoryAllocMB:  m.Alloc / 1024 / 1024,
 		NumGC:          m.NumGC,
 	}
+}
+
+func (r *heimdallDBRouter) bindStatementCacheIndex() {
+	r.statementCacheIndex.Bind(r.dbManager, func() {
+		r.executorsMu.Lock()
+		defer r.executorsMu.Unlock()
+		for name, executor := range r.executors {
+			if !executor.StatementCacheSelectionValid() {
+				delete(r.executors, name)
+			}
+		}
+	})
+}
+
+func (r *heimdallDBRouter) Close() {
+	r.statementCacheIndex.Close()
+	r.executorsMu.Lock()
+	r.executors = nil
+	r.executorsMu.Unlock()
 }
