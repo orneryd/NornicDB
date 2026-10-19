@@ -20,13 +20,17 @@ func TestBoltWriteProcedureStatementRollback(t *testing.T) {
 		Returns: []cypher.ProcedureColumn{{Name: "value", Type: "INTEGER"}},
 	}, func(ctx context.Context, exec *cypher.StorageExecutor, _ string, _ []interface{}) (*cypher.ExecuteResult, error) {
 		_, err := exec.Execute(ctx, "CREATE (:U5WireWrite) RETURN 1 AS value", nil)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		return nil, failure
 	}))
 	require.NoError(t, cypher.RegisterUserProcedure(cypher.ProcedureSpec{
 		Name: "u5wire.fail", Signature: "u5wire.fail() :: (rejected :: INTEGER)", Mode: cypher.ProcedureModeRead,
 		Returns: []cypher.ProcedureColumn{{Name: "rejected", Type: "INTEGER"}},
-	}, func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) { return nil, failure }))
+	}, func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+		return nil, failure
+	}))
 	base, err := storage.NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
@@ -43,7 +47,9 @@ func TestBoltWriteProcedureStatementRollback(t *testing.T) {
 			session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "u5_wire", AccessMode: neo4j.AccessModeWrite})
 			defer session.Close(ctx)
 			result, err := session.Run(ctx, query, map[string]interface{}{"statement": "CREATE (:U5WireWrite) RETURN 1 AS value"})
-			if err == nil { _, err = result.Consume(ctx) }
+			if err == nil {
+				_, err = result.Consume(ctx)
+			}
 			require.ErrorContains(t, err, failure.Error())
 			nodes, err := store.GetNodesByLabel("U5WireWrite")
 			require.NoError(t, err)
