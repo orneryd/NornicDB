@@ -27,6 +27,7 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 	require.NoError(t, server.Start())
 	ctx := context.Background()
 	require.NoError(t, server.qdrantGRPCServer.CollectionStore().Create(ctx, "grpc_physical", 4, qpb.Distance_Cosine))
+	require.NoError(t, server.dbManager.CreateAlias("grpc_selected_alias", "grpc_physical"))
 	require.NoError(t, server.dbManager.CreateCompositeDatabase("grpc_portfolio", []multidb.ConstituentRef{
 		{Alias: "part", DatabaseName: "grpc_physical", Type: "local", AccessMode: "read_write"},
 	}))
@@ -76,6 +77,23 @@ func TestGRPCConstituentReadsUsePhysicalDatabasePrivileges(t *testing.T) {
 			} else {
 				require.Equal(t, codes.PermissionDenied, status.Code(err), selection)
 			}
+		}
+	} // An ordinary alias needs its own current grant even when its physical
+	// database remains allowed. Reuse the authenticated connection throughout.
+	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, string(auth.RoleViewer), "grpc_physical", true, false))
+	for _, allowed := range []bool{false, true, false, true} {
+		names := []string{"grpc_portfolio", "grpc_physical"}
+		if allowed {
+			names = append(names, "grpc_selected_alias")
+		}
+		require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, string(auth.RoleViewer), names))
+		_, err := points.Count(reader, &qpb.CountPoints{CollectionName: "grpc_physical"})
+		require.NoError(t, err)
+		_, err = points.Count(reader, &qpb.CountPoints{CollectionName: "grpc_selected_alias"})
+		if allowed {
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, codes.PermissionDenied, status.Code(err))
 		}
 	}
 }
