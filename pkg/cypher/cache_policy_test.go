@@ -74,9 +74,9 @@ func TestIsCacheableReadQuery_NewPrimitives(t *testing.T) {
 			expect: false,
 		},
 		{
-			name:   "infer cache opt-in via cache true",
+			name:   "inference remains nondeterministic despite an opt-in",
 			query:  "CALL db.infer({prompt: 'hello', cache: true})",
-			expect: true,
+			expect: false,
 		},
 		{
 			name:   "infer cache_enabled ignored",
