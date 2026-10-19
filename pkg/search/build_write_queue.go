@@ -141,16 +141,19 @@ func (s *Service) startBuildWrites() {
 }
 
 // endBuildWrites installs the rest of the sequence and, for the last build,
-// closes it. A build that another one waits for leaves the rest to it. Caller
-// owns buildMu and releases it next, so a write that finds the queue closed
-// waits only for that release.
-func (s *Service) endBuildWrites() error {
+// closes it. Readiness is published only after that final replay succeeds.
+// A build that another one waits for leaves the rest, and publication, to it.
+// Caller owns buildMu and releases it next, so a write that finds the queue
+// closed waits only for that release.
+func (s *Service) endBuildWrites(buildErr error) error {
+	s.ready.Store(false)
 	q := &s.buildWrites
 	q.mu.Lock()
 	q.owners--
 	if q.owners > 0 {
 		q.mu.Unlock()
-		return nil
+		s.setBuildPhase("idle")
+		return buildErr
 	}
 	q.open.Store(false)
 	q.deferring.Store(false)
@@ -158,10 +161,21 @@ func (s *Service) endBuildWrites() error {
 	q.flagsQueued = false
 	q.mu.Unlock()
 	changed, err := s.applyBuildWrites(writes)
+	resultErr := errors.Join(buildErr, err)
 	if changed && err == nil && !s.buildInProgress.Load() {
 		s.schedulePersist()
 	}
-	return err
+	// A new build can claim the next sequence while the final batch applies.
+	// Check and publish under the same lock that claims its ownership.
+	q.mu.Lock()
+	if resultErr == nil && q.owners == 0 {
+		s.setBuildPhase("ready")
+		s.ready.Store(true)
+	} else {
+		s.setBuildPhase("idle")
+	}
+	q.mu.Unlock()
+	return resultErr
 }
 
 // completeBuildPopulation records that the build's baseline is installed and
