@@ -17,9 +17,9 @@ import (
 // of a scan/count/aggregation kernel cannot evade it by omitting diagnostics.
 func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 	type function struct {
-		name, position           string
+		name, position                  string
 		owner, typed, result, value, io bool
-		calls                    map[string]bool
+		calls                           map[string]bool
 	}
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
@@ -58,8 +58,13 @@ func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 			})
 			if fn.Type.Results != nil {
 				for _, result := range fn.Type.Results.List {
-					switch result.Type.(type) { case *ast.InterfaceType: item.value = true }
-					if id, ok := result.Type.(*ast.Ident); ok && id.Name == "any" { item.value = true }
+					switch result.Type.(type) {
+					case *ast.InterfaceType:
+						item.value = true
+					}
+					if id, ok := result.Type.(*ast.Ident); ok && id.Name == "any" {
+						item.value = true
+					}
 				}
 				ast.Inspect(fn.Type.Results, func(n ast.Node) bool {
 					if id, ok := n.(*ast.Ident); ok && id.Name == "ExecuteResult" {

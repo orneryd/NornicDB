@@ -51,7 +51,9 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 	}
 	// MERGE identity compares stored properties. Preserve its existing scan
 	// contract instead of using a visible-property RANGE lookup for writes.
-	if e.storedPropertyIdentity { return &relationshipAccess{variable: template.syntax.variable} }
+	if e.storedPropertyIdentity {
+		return &relationshipAccess{variable: template.syntax.variable}
+	}
 	// Availability belongs to the current read view, even when nested entries
 	// share a schema and the statement's immutable expression templates.
 	reader, available := e.getStorage(ctx).(storage.RelationshipPropertySeeker)

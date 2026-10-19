@@ -263,7 +263,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	identity.storedPropertyIdentity = true
 	// The identity probe is a rewritten MATCH statement. Its actual source
 	// goes through the same compiler, including resolved dynamic tokens.
-	ctx = withRelationshipAccessProgram(ctx, match)
+	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, relationshipProgramFor(match))
 	matched, err := identity.pipelineMatchRows(ctx, row, match)
 	if err != nil {
 		return nil, nil, false, err

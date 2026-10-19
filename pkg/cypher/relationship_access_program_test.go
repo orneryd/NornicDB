@@ -48,7 +48,7 @@ func TestRelationshipAccessProgramKeepsSchemaAndRowsLive(t *testing.T) {
 func TestRelationshipAccessProgramScanView(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "scan_site_owner")
 	setup := NewStorageExecutor(store)
-	for _, q := range []string{"CREATE ()-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
+	for _, q := range []string{"CREATE (:Key)-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
 		_, err := setup.Execute(context.Background(), q, nil)
 		require.NoError(t, err)
 	}
@@ -70,11 +70,19 @@ func TestRelationshipAccessProgramScanView(t *testing.T) {
 // its pattern, or a display scanner that rebuilds them, fails this guard.
 func TestRelationshipAccessProgramIsSharedSource(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "site_owner"))
-	for _, q := range []string{"CREATE ()-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
+	for _, q := range []string{"CREATE (:Key)-[:T {p:'x'}]->()", "CREATE RANGE INDEX rel_p FOR ()-[r:T]-() ON (r.p)"} {
 		_, err := e.Execute(context.Background(), q, nil)
 		require.NoError(t, err)
 	}
-	query := "WITH $x AS k RETURN COLLECT { MATCH ()-[r:T]->() WHERE r.p=k RETURN r.p }"
+	for _, tc := range []struct { name, query string; rows [][]interface{} }{
+		{"collect", "WITH $x AS k RETURN COLLECT { MATCH ()-[r:T]->() WHERE r.p=k RETURN r.p }", [][]interface{}{{[]interface{}{"x"}}}},
+		{"anchored_count", "MATCH (a:Key) RETURN COUNT { MATCH (a)-[r:T]->() WHERE r.p=$x }", [][]interface{}{{int64(1)}}},
+		{"anchored_exists", "MATCH (a:Key) RETURN EXISTS { (a)-[r:T {p:$x}]->() }", [][]interface{}{{true}}},
+		{"call", "MATCH (a:Key) CALL (a) { MATCH (a)-[r:T]->() WHERE r.p=$x RETURN r.p AS value } RETURN value", [][]interface{}{{"x"}}},
+		{"all_token", "CREATE (n:$all(head(COLLECT { MATCH ()-[r:T]->() WHERE r.p=$x RETURN r.p }))) RETURN labels(n)", [][]interface{}{{[]interface{}{"x"}}}},
+	} {
+	t.Run(tc.name, func(t *testing.T) {
+	query := tc.query
 	program := relationshipProgramFor(query)
 	require.Len(t, program.sites, 1)
 	for _, populated := range []bool{true, false} {
@@ -88,7 +96,7 @@ func TestRelationshipAccessProgramIsSharedSource(t *testing.T) {
 			params := map[string]interface{}{"x": "x"}
 			actual, err := e.Execute(ctx, query, params)
 			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{[]interface{}{"x"}}}, actual.Rows)
+			require.Equal(t, tc.rows, actual.Rows)
 			profile := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
 			require.Equal(t, populated, len(profile.seeks) != 0)
 			require.Equal(t, !populated, len(profile.unregistered) != 0)
@@ -97,5 +105,7 @@ func TestRelationshipAccessProgramIsSharedSource(t *testing.T) {
 			seek := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipIndexSeek")
 			require.Equal(t, populated, seek != nil)
 		})
+	}
+	})
 	}
 }
