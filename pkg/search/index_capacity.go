@@ -85,10 +85,12 @@ func (s *Service) estimateNodeIndexCapacityLocked(node *storage.Node, fulltext n
 		usage.vectorMetadata += int64(len(label) + 8)
 	}
 	dimensions := 0
+	s.mu.RLock()
 	if s.vectorIndex != nil {
 		dimensions = s.vectorIndex.GetDimensions()
 	}
 	diskPayload := s.vectorFileStore != nil || s.vectorStorageMode == "disk"
+	s.mu.RUnlock()
 	addVector := func(id string, vector []float32) {
 		if len(vector) == 0 || (dimensions > 0 && len(vector) != dimensions) {
 			return
