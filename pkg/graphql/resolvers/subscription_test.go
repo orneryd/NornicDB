@@ -587,9 +587,9 @@ func TestSubscriptionResolver_NodeCreated(t *testing.T) {
 }
 
 func TestSubscriptionResolver_NodeCreated_NoEventBroker(t *testing.T) {
-	resolver := &Resolver{
-		EventBroker: nil, // No event broker
-	}
+	db := testDB(t)
+	resolver := NewResolver(db, testDBManager(t, db))
+	resolver.EventBroker = nil
 	subResolver := &subscriptionResolver{Resolver: resolver}
 
 	ctx := context.Background()
