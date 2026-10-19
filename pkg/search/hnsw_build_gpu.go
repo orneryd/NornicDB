@@ -873,7 +873,15 @@ func newBestHNSWBuildAccelerator() (HNSWBuildAccelerator, error) {
 // best available when nil), otherwise, or when the GPU fails, with the CPU
 // kernel.
 func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator, accel HNSWBuildAccelerator) (*HNSWIndex, hnswBuildStats, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, hnswBuildStats{}, err
+	}
 	cpuBuild := func(reason string, cause error, gpuStats hnswBuildStats) (*HNSWIndex, hnswBuildStats, error) {
+		// A cancelled service job must not prepare another accelerator when
+		// GPU creation, preparation or construction returns to the CPU path.
+		if err := ctx.Err(); err != nil {
+			return nil, gpuStats, err
+		}
 		if reason != "" {
 			logSearchPrintf("[HNSW] %s, building on the CPU: %v", reason, cause)
 		}
