@@ -391,15 +391,12 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 
 	for _, item := range returnItems[1:] {
 		expr, _ := parseProjectionExprAlias(item.expr)
-		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
-		open := strings.IndexByte(u, '(')
-		close := strings.LastIndexByte(u, ')')
-		if open <= 0 || close <= open {
+		name, arguments, ok := parseFunctionCallWS(expr)
+		if !ok {
 			continue
 		}
-		aggFunc := lowerASCII(u[:open])
-		inner := u[open+1 : close]
-
+		aggFunc := lowerASCII(name)
+		inner := upperASCII(stripExpressionWhitespace(StripComments(arguments)))
 		if aggFunc == "count" {
 			if inner == "*" || strings.EqualFold(inner, upperASCII(relVar)) {
 				continue
@@ -481,23 +478,20 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 			item = strings.TrimSpace(item[:asIdx])
 		}
 
-		u := upperASCII(strings.ReplaceAll(item, " ", ""))
+		name, arguments, ok := parseFunctionCallWS(item)
+		if !ok {
+			return false
+		}
+		inner := upperASCII(stripExpressionWhitespace(StripComments(arguments)))
 		switch {
-		case strings.HasPrefix(u, "COUNT(") && strings.HasSuffix(u, ")"):
+		case strings.EqualFold(name, "count"):
 			// Allow COUNT(r) and COUNT(*).
-			inner := strings.TrimSuffix(strings.TrimPrefix(u, "COUNT("), ")")
 			if inner == "*" || strings.EqualFold(inner, relVar) {
 				continue
 			}
 			return false
 
-		case strings.HasPrefix(u, "SUM(") || strings.HasPrefix(u, "AVG(") || strings.HasPrefix(u, "MIN(") || strings.HasPrefix(u, "MAX("):
-			open := strings.IndexByte(u, '(')
-			close := strings.LastIndexByte(u, ')')
-			if open < 0 || close < 0 || close <= open+1 {
-				return false
-			}
-			inner := u[open+1 : close]
+		case strings.EqualFold(name, "sum"), strings.EqualFold(name, "avg"), strings.EqualFold(name, "min"), strings.EqualFold(name, "max"):
 			if !strings.HasPrefix(inner, wantAggPrefix) {
 				return false
 			}
@@ -518,21 +512,9 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 // directly follows a name that isn't a clause keyword (MATCH(n), WHERE(...)
 // open patterns and expressions).
 func functionCallParenAt(text string, open int) bool {
-	end := open
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	if start == end {
-		return false
-	}
-	switch upperASCII(text[start:end]) {
-	case "MATCH", "CREATE", "MERGE", "WHERE", "AND", "OR", "XOR", "NOT", "WITH", "RETURN", "UNWIND", "IN", "DELETE", "SET", "REMOVE", "FOREACH", "YIELD":
-		return false
-	}
-	return true
+	call, ok := functionCallBeforeParen(text, open)
+	return ok && !isNonFunctionSemanticKeyword(lowerASCII(call.name))
 }
-
 // extractNodeVariables extracts node variable names from a MATCH pattern,
 // plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
 // function call's arguments or an expression starting with a subquery

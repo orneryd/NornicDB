@@ -173,15 +173,6 @@ func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 // traversalCallNameIsSafe reports whether the function whose opening paren is
 // at openParen is property-agnostic for a node argument.
 func traversalCallNameIsSafe(expression string, openParen int) bool {
-	for index := 0; index < openParen; {
-		call, ok := nextFunctionCall(expression, index)
-		if !ok || call.open > openParen {
-			return false
-		}
-		if call.open == openParen {
-			return traversalSafeArgumentFunctions[lowerASCII(call.name)]
-		}
-		index = call.open + 1
-	}
-	return false
+	call, ok := functionCallBeforeParen(expression, openParen)
+	return ok && traversalSafeArgumentFunctions[lowerASCII(call.name)]
 }

@@ -63,10 +63,18 @@ func nextFunctionCall(text string, index int) (functionCallSpan, bool) {
 }
 
 func nextFunctionCallIn(text string, index int, descendSubqueries bool) (functionCallSpan, bool) {
-	return nextCallSpan(text, index, descendSubqueries, false)
+	return nextFunctionCallMode(text, index, descendSubqueries, false)
+}
+
+func nextFunctionCallMode(text string, index int, descendSubqueries, syntaxNames bool) (functionCallSpan, bool) {
+	return nextCallSpanMode(text, index, descendSubqueries, false, syntaxNames)
 }
 
 func nextCallSpan(text string, index int, descendSubqueries, includeProcedures bool) (functionCallSpan, bool) {
+	return nextCallSpanMode(text, index, descendSubqueries, includeProcedures, false)
+}
+
+func nextCallSpanMode(text string, index int, descendSubqueries, includeProcedures, syntaxNames bool) (functionCallSpan, bool) {
 	for index < len(text) {
 		if end := queryGapEnd(text, index); end > index {
 			index = end
@@ -109,10 +117,37 @@ func nextCallSpan(text string, index int, descendSubqueries, includeProcedures b
 		}
 		call, called := functionCallAt(text, index)
 		if called && !precededByTypeAnnotation(text, index) &&
-			!isNonFunctionSemanticKeyword(lowerASCII(call.name)) {
+			(syntaxNames || !isNonFunctionSemanticKeyword(lowerASCII(call.name))) {
 			return call, true
 		}
 		index = next
+	}
+	return functionCallSpan{}, false
+}
+
+// functionCallBeforeParen reads a call at an opening already classified as
+// code. Ordinary names use a backward token boundary plus functionCallAt;
+// quoted or qualified names fall back to the same whole-text lexical reader.
+func functionCallBeforeParen(text string, open int) (functionCallSpan, bool) {
+	end := queryGapStart(text, open)
+	start := end
+	for start > 0 && isIdentByte(text[start-1]) {
+		start--
+	}
+	if start < end {
+		if call, ok := functionCallAt(text, start); ok && call.open == open {
+			return call, true
+		}
+	}
+	for index := 0; index < open; {
+		call, ok := nextFunctionCallMode(text, index, true, true)
+		if !ok || call.open > open {
+			break
+		}
+		if call.open == open {
+			return call, true
+		}
+		index = call.open + 1
 	}
 	return functionCallSpan{}, false
 }
