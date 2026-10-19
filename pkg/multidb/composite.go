@@ -275,18 +275,19 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 		return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
-	// Find and remove constituent
-	for i, ref := range info.Constituents {
-		if ref.Alias == alias {
-			info.Constituents = slices.Delete(info.Constituents, i, i+1)
-			info.UpdatedAt = time.Now()
-			if err := m.persistMetadata(); err != nil {
-				return err
-			}
-			m.invalidateStatementCacheReferenceLocked(compositeName + "." + alias)
-			changed = true
-			return nil
+	// Remove the selected registration, using the same folded last-winner
+	// rule as catalog, execution and admission. Earlier registrations remain
+	// available if the winning registration is explicitly removed.
+	for _, ref := range canonicalConstituents(info.Constituents, alias) {
+		i := slices.Index(info.Constituents, ref)
+		info.Constituents = slices.Delete(info.Constituents, i, i+1)
+		info.UpdatedAt = time.Now()
+		if err := m.persistMetadata(); err != nil {
+			return err
 		}
+		m.invalidateStatementCacheReferenceLocked(compositeName + "." + alias)
+		changed = true
+		return nil
 	}
 
 	return localizedError(localization.MultidbCompositeAliasNotFound(alias), nil)

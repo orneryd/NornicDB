@@ -27,11 +27,20 @@ func (m *DatabaseManager) resolveRemoteCredentials(ref ConstituentRef, authToken
 		return ConstituentRef{}, observability.RedactError(err, observability.ClientCredentials(ref.URI)...)
 	}
 	ref.AuthMode = strings.ToLower(strings.TrimSpace(ref.AuthMode))
-	useStored := ref.AuthMode == "user_password" || (ref.Password != "" && strings.TrimSpace(authToken) == "")
-	if useStored {
-		ref.Password, err = m.decryptStoredRemotePassword(ref.Password)
+	explicit := ref.AuthMode == "user_password"
+	useStored := explicit || ((ref.Password != "" || ref.User != "") && strings.TrimSpace(authToken) == "")
+	if useStored && !explicit && isEncryptedRemoteCredential(ref.User) {
+		ref.User, err = m.decryptStoredRemotePassword(ref.User)
 		if err != nil {
 			return ConstituentRef{}, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(ref.Alias, err), err)
+		}
+	}
+	if useStored {
+		if ref.Password != "" || explicit {
+			ref.Password, err = m.decryptStoredRemotePassword(ref.Password)
+			if err != nil {
+				return ConstituentRef{}, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(ref.Alias, err), err)
+			}
 		}
 		ref.AuthMode = "user_password"
 	} else {
@@ -101,7 +110,16 @@ func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInpu
 		return ConstituentRef{}, localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
 	}
 	ref.URI = endpoint.String()
-	if uriCredential || (ref.Password != "" && (newInput || !isEncryptedRemoteCredential(ref.Password))) {
+	// URI userinfo may be a username-only token. Its username is credential
+	// material just like its password; a separate explicit USER remains the
+	// public identity selected by the explicit user_password protocol.
+	if !explicit && ref.User != "" && (newInput || !isEncryptedRemoteCredential(ref.User)) {
+		ref.User, err = m.encryptRemoteCredential(ref.User)
+		if err != nil {
+			return ConstituentRef{}, localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
+		}
+	}
+	if uriCredential || (!explicit && ref.User != "" && ref.Password == "") || (ref.Password != "" && (newInput || !isEncryptedRemoteCredential(ref.Password))) {
 		if explicit {
 			ref.Password, err = m.encryptRemotePassword(ref.Password)
 		} else {
@@ -113,6 +131,15 @@ func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInpu
 		}
 	}
 	return ref, nil
+}
+
+// RemoteUserForDisplay distinguishes an explicit public USER identity from
+// credential material extracted from URL userinfo, including legacy records.
+func RemoteUserForDisplay(user, authMode string) string {
+	if user != "" && (!strings.EqualFold(strings.TrimSpace(authMode), "user_password") || isEncryptedRemoteCredential(user)) {
+		return observability.RedactedPlaceholder()
+	}
+	return user
 }
 
 type remoteCredentialCipher struct {

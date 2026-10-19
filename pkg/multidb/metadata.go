@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -171,6 +172,9 @@ func (m *DatabaseManager) hasLegacyRemoteCredentials() bool {
 				continue
 			}
 			if ref.Password != "" && !isEncryptedRemoteCredential(ref.Password) {
+				return true
+			}
+			if !strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") && ref.User != "" && (!isEncryptedRemoteCredential(ref.User) || ref.Password == "") {
 				return true
 			}
 			endpoint, err := url.Parse(ref.URI)
