@@ -5,6 +5,7 @@ import SwiftUI
 struct AIServiceSettingsView: View {
     @ObservedObject var config: ConfigManager
     let downloadModel: (DefaultLocalModel) -> Void
+    let openModelsFolder: () -> Void
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -16,7 +17,7 @@ struct AIServiceSettingsView: View {
                     provider: $config.embeddingProvider, model: $config.embeddingModel,
                     endpoint: $config.embeddingURL, apiKey: $config.embeddingAPIKey,
                     providers: ["local", "ollama", "openai", "orca", "voyage"],
-                    defaultModel: .embeddings, downloadModel: downloadModel)
+                    defaultModel: .embeddings, downloadModel: downloadModel, modelsPath: config.modelsPath, availableModels: config.availableModels, openModelsFolder: openModelsFolder)
                 if config.embeddingsEnabled {
                     if AppleMLEmbedder.isAvailable() {
                         Toggle("Use local Apple Intelligence adapter (512 dimensions)", isOn: $config.useAppleIntelligence)
@@ -40,16 +41,16 @@ struct AIServiceSettingsView: View {
                     provider: $config.searchRerankProvider, model: $config.searchRerankModel,
                     endpoint: $config.searchRerankURL, apiKey: $config.searchRerankAPIKey,
                     providers: ["local", "ollama", "openai", "http"],
-                    defaultModel: .reranking, downloadModel: downloadModel)
+                    defaultModel: .reranking, downloadModel: downloadModel, modelsPath: config.modelsPath, availableModels: config.availableModels, openModelsFolder: openModelsFolder)
                 ServiceProviderEditor(title: "Heimdall assistant", enabled: $config.heimdallEnabled,
                     provider: $config.heimdallProvider, model: $config.heimdallModel,
                     endpoint: $config.heimdallURL, apiKey: $config.heimdallAPIKey,
                     providers: ["local", "ollama", "openai", "orca", "vllm", "litellm"],
-                    defaultModel: .inference, downloadModel: downloadModel)
+                    defaultModel: .inference, downloadModel: downloadModel, modelsPath: config.modelsPath, availableModels: config.availableModels, openModelsFolder: openModelsFolder)
                 Text("Local models: \(config.modelsPath)")
                     .font(.caption).foregroundColor(.secondary)
             }.padding()
-        }
+        }.onAppear { config.scanModels() }
     }
 }
 
@@ -63,6 +64,9 @@ struct ServiceProviderEditor: View {
     let providers: [String]
     let defaultModel: DefaultLocalModel
     let downloadModel: (DefaultLocalModel) -> Void
+    let modelsPath: String
+    let availableModels: [String]
+    let openModelsFolder: () -> Void
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
@@ -76,7 +80,17 @@ struct ServiceProviderEditor: View {
                     }
                     TextField(provider == "local" ? "GGUF filename" : "Model ID", text: $model)
                     if provider == "local" {
-                        Button("Download default model (\(defaultModel.filename))…") { downloadModel(defaultModel) }
+                        HStack {
+                            if isValidGGUFFile(atPath: model.hasPrefix("/") ? model : "\(modelsPath)/\(model)") {
+                                Label("Ready · \(model)", systemImage: "checkmark.circle.fill").foregroundColor(.green)
+                            } else if isValidGGUFFile(atPath: "\(modelsPath)/\(defaultModel.filename)") {
+                                Label("Default model ready · \(defaultModel.filename)", systemImage: "checkmark.circle.fill").foregroundColor(.green)
+                                Button("Use installed default model") { model = defaultModel.filename }
+                            } else {
+                                Button("Download default model (\(defaultModel.filename))…") { downloadModel(defaultModel) }
+                            }
+                            Button("Open Models Folder", action: openModelsFolder)
+                        }
                     }
                     if provider != "local" {
                         TextField("API endpoint (provider default when empty)", text: $endpoint)
