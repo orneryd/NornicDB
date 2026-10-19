@@ -552,6 +552,10 @@ func (e *StorageExecutor) tryRawMatchRelationshipVectorCosine(ctx context.Contex
 	if probe, _ := ctx.Value(relationshipVectorProbeKey{}).(*relationshipVectorProbe); probe != nil {
 		probe.access = &relationshipVectorAccess{index: indexName, relType: pattern.relType, property: vectorProp, estimatedRows: 10}
 		if probe.planOnly {
+			if vector, valid := e.resolveCosineQueryVector(ctx, queryExpr); limit > 0 && (!valid || len(vector) == 0) {
+				probe.access = nil
+				return nil, false
+			}
 			return nil, true
 		}
 	}
@@ -714,6 +718,10 @@ func (e *StorageExecutor) tryRawMatchWithRelationshipVectorCosineProjection(ctx 
 	if probe, _ := ctx.Value(relationshipVectorProbeKey{}).(*relationshipVectorProbe); probe != nil {
 		probe.access = &relationshipVectorAccess{index: indexName, relType: pattern.relType, property: vectorProp, estimatedRows: 10}
 		if probe.planOnly {
+			if vector, valid := e.resolveCosineQueryVector(ctx, queryExpr); limit > 0 && (!valid || len(vector) == 0) {
+				probe.access = nil
+				return nil, false
+			}
 			return nil, true
 		}
 	}
