@@ -32,7 +32,7 @@ func TestManagedStagingOwnsCallerUpdateBodies(t *testing.T) {
 				require.NoError(t, tx.PrepareChanges())
 				require.NoError(t, tx.SetImplicit(buffered))
 				properties["payload"] = "caller mutation"
-				properties["nested"].([]any)[0] = "caller mutation"
+				properties["nested"] = []any{"caller mutation"}
 				labels[0] = "CallerMutation"
 				require.NoError(t, tx.CommitContextWithPublication(context.Background(), func() {}))
 				view := NewNamespacedEngine(base, "owned")
