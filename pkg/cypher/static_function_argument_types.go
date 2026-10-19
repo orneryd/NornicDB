@@ -946,7 +946,7 @@ func checkReduceForm(function, text string, open int, check func(staticArgumentT
 	if closing < 0 {
 		return nil
 	}
-	form, ok := parseReduceForm(function, readFunctionSyntax(text).source(syntaxSpan{open+1, closing}))
+	form, ok := parseReduceForm(function, readFunctionSyntax(text).source(syntaxSpan{open + 1, closing}))
 	if !ok {
 		entry := reduceFormEntries[lowerASCII(function)]
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(entry.name, entry.signature))

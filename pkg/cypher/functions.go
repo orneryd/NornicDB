@@ -219,18 +219,20 @@ func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 	syntax := readFunctionSyntax(expr)
 	lastDot := -1
 	for _, at := range syntax.groups[0].punctuation {
-		if expr[at] == '.' { lastDot = at }
+		if expr[at] == '.' {
+			lastDot = at
+		}
 	}
 	if lastDot <= 0 || lastDot == len(expr)-1 {
 		return "", "", false
 	}
-	property := syntax.render(syntaxSpan{lastDot+1,len(expr)})
+	property := syntax.render(syntaxSpan{lastDot + 1, len(expr)})
 	if isBacktickQuotedName(property) {
 		property = normalizePropertyKey(property)
 	} else if !isValidIdentifier(property) {
 		return "", "", false
 	}
-	base := syntax.render(syntaxSpan{0,lastDot})
+	base := syntax.render(syntaxSpan{0, lastDot})
 	// Property access binds tighter than any operator: in 'x' + o.missing the
 	// access is o.missing, not ('x' + o).missing. A base with a top-level
 	// operator is not a postfix access.

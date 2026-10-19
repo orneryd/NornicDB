@@ -2140,14 +2140,18 @@ func graphReadingExpression(cypher string) string {
 		}
 	}
 	for _, call := range readFunctionSyntax(cypher).calls {
-		if call.procedure { continue }
+		if call.procedure {
+			continue
+		}
 		switch lowerASCII(call.name) {
 		case "shortestpath", "allshortestpaths":
 			return graphReadingPattern
 		case "exists":
 			if close := call.close(cypher); close > call.open {
-				inner := call.syntax.render(syntaxSpan{call.open+1, close})
-				if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") { return graphReadingPattern }
+				inner := call.syntax.render(syntaxSpan{call.open + 1, close})
+				if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") {
+					return graphReadingPattern
+				}
 			}
 		}
 	}
