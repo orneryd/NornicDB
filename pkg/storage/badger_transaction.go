@@ -722,9 +722,8 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 		return "", ErrAlreadyExists
 	}
 
-	// Check if exists in storage (read from Badger). Through the visibility
-	// layer, as before: whether creating an entity over a hidden one with
-	// its ID fails or replaces it is open (validateNewEdgeLocked).
+	// Check if exists in storage (read from Badger), through the visibility
+	// layer as before.
 	skipExistenceCheck := tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID))
 	if !skipExistenceCheck {
 		if _, deleted := tx.deletedNodes[node.ID]; !deleted {
@@ -1487,11 +1486,11 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
-	startLabels, endLabels, err := tx.validateNewEdgeLocked(edge, tx.visibleNodeLabelsLocked, nil)
+	startLabels, endLabels, existing, err := tx.validateNewEdgeLocked(edge, tx.visibleNodeLabelsLocked, nil)
 	if err != nil {
 		return err
 	}
-	return tx.bufferNewEdgeLocked(edge, startLabels, endLabels)
+	return tx.bufferNewEdgeLocked(edge, startLabels, endLabels, existing)
 }
 
 // BulkCreateEdges buffers many edges in one pass, amortizing the lock, the
@@ -1531,17 +1530,22 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 		return labels, visible
 	}
 	batch := make(map[EdgeID]struct{}, len(edges))
-	labels := make([][2][]string, len(edges))
+	validated := make([]struct {
+		startLabels, endLabels []string
+		existing               *Edge
+	}, len(edges))
 	for i, edge := range edges {
-		startLabels, endLabels, err := tx.validateNewEdgeLocked(edge, resolve, batch)
+		startLabels, endLabels, oldEdge, err := tx.validateNewEdgeLocked(edge, resolve, batch)
 		if err != nil {
 			return err
 		}
-		labels[i] = [2][]string{startLabels, endLabels}
+		validated[i].startLabels, validated[i].endLabels = startLabels, endLabels
+		validated[i].existing = oldEdge
 		batch[edge.ID] = struct{}{}
 	}
 	for i, edge := range edges {
-		if err := tx.bufferNewEdgeLocked(edge, labels[i][0], labels[i][1]); err != nil {
+		state := validated[i]
+		if err := tx.bufferNewEdgeLocked(edge, state.startLabels, state.endLabels, state.existing); err != nil {
 			return err
 		}
 	}
@@ -1549,59 +1553,62 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 }
 
 // validateNewEdgeLocked checks that edge can be created in the transaction
-// and returns its endpoints' labels: it is not nil and has an ID, its
-// namespace pins, both endpoints are visible (endpoint; ErrNotFound
-// otherwise), and no pending edge, edge earlier in the same batch or
-// committed edge has its ID (ErrAlreadyExists). The committed check is
+// and returns its endpoints' labels and any stored record it replaces: it
+// is not nil and has an ID, its namespace pins, both endpoints are visible
+// (endpoint; ErrNotFound otherwise), and no pending edge, edge earlier in the same batch or
+// visible committed edge has its ID (ErrAlreadyExists). Suppressed records
+// may be overwritten by re-ingestion; their physical presence still controls
+// counter bookkeeping. The committed check is
 // skipped for generated IDs exactly as CreateNode skips it.
-func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(NodeID) ([]string, bool), batch map[EdgeID]struct{}) (startLabels, endLabels []string, err error) {
+func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(NodeID) ([]string, bool), batch map[EdgeID]struct{}) (startLabels, endLabels []string, existing *Edge, err error) {
 	// A nil edge is invalid data and an empty ID an invalid ID, as in the
 	// engines' CreateEdge.
 	if edge == nil {
-		return nil, nil, ErrInvalidData
+		return nil, nil, nil, ErrInvalidData
 	}
 	if edge.ID == "" {
-		return nil, nil, ErrInvalidID
+		return nil, nil, nil, ErrInvalidID
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	startLabels, visible := endpoint(edge.StartNode)
 	if !visible {
-		return nil, nil, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
+		return nil, nil, nil, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
 	}
 	endLabels, visible = endpoint(edge.EndNode)
 	if !visible {
-		return nil, nil, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
+		return nil, nil, nil, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
 	}
 	if _, exists := tx.pendingEdges[edge.ID]; exists {
-		return nil, nil, ErrAlreadyExists
+		return nil, nil, nil, ErrAlreadyExists
 	}
 	if _, exists := batch[edge.ID]; exists {
-		return nil, nil, ErrAlreadyExists
+		return nil, nil, nil, ErrAlreadyExists
 	}
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted || (tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID))) {
-		return startLabels, endLabels, nil
+		return startLabels, endLabels, nil, nil
 	}
-	// Through the visibility layer, as before. A MERGEd relationship's ID
-	// derives from its endpoints and properties, so MERGE meets a hidden
-	// relationship with its ID here: whether that fails or replaces it is
-	// a knowledge-policy decision still open.
-	_, err = tx.getCommittedEdgeReadLocked(edge.ID, visibleRead)
+	// Preserve the visibility-based acceptance rule, but retain the physical
+	// record so an accepted overwrite uses replacement bookkeeping, not +1.
+	existing, err = tx.getCommittedEdgeLocked(edge.ID)
 	if err == nil {
-		return nil, nil, ErrAlreadyExists
+		if !tx.engine.hidesEdge(visibleRead, existing, DecayScoringTime()) {
+			return nil, nil, nil, ErrAlreadyExists
+		}
+		return startLabels, endLabels, existing, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
-		return nil, nil, fmt.Errorf("checking edge existence: %w", err)
+		return nil, nil, nil, fmt.Errorf("checking edge existence: %w", err)
 	}
-	return startLabels, endLabels, nil
+	return startLabels, endLabels, nil, nil
 }
 
 // bufferNewEdgeLocked buffers a validated new edge: its record, its
 // outgoing, incoming, type and edge-between index entries, the positional
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
-func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
+func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string, existing *Edge) error {
 	initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
 	tx.engine.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	delete(tx.cancelledEdgeWrites, edge.ID)
@@ -1614,21 +1621,25 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 	} else if err := tx.bufferEdgePhysicalWritesLocked(edge); err != nil {
 		return err
 	}
-	// Derived per-type counter follows the index entry (issue #638).
-	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
-	// Positional (label, type) counters follow the endpoints' tx-visible labels.
-	tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, 1)
+	if existing == nil {
+		// Only a new physical record contributes an insertion delta.
+		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
+		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, startLabels, endLabels, 1)
+	} else if err := tx.bufferEdgeReplacementCountDeltasLocked(existing, edge); err != nil {
+		return err
+	}
 
 	// Track for read-your-writes
 	edgeCopy := copyEdge(edge)
 	delete(tx.deletedEdges, edge.ID)
 	tx.pendingEdges[edge.ID] = edgeCopy
 	tx.operations = append(tx.operations, Operation{
-		Type:      OpCreateEdge,
-		Timestamp: time.Now(),
-		EdgeID:    edge.ID,
-		Edge:      edgeCopy,
-		FreshID:   hasUUIDShape(string(edge.ID)),
+		Type:             OpCreateEdge,
+		Timestamp:        time.Now(),
+		EdgeID:           edge.ID,
+		Edge:             edgeCopy,
+		ReplacesExisting: existing != nil,
+		FreshID:          hasUUIDShape(string(edge.ID)),
 	})
 	return nil
 }
@@ -1731,8 +1742,6 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 			if oldTypeKey := tx.engine.edgeTypeIndexKeyStringLookup(oldEdge.Type, edge.ID); oldTypeKey != nil {
 				tx.bufferDelete(oldTypeKey)
 			}
-			// Derived per-type counters follow the index entries (issue #638).
-			tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), oldEdge.Type, -1)
 		}
 		if oldEdge.StartNode == edge.StartNode && oldEdge.EndNode == edge.EndNode {
 			tx.bufferDeleteEdgeBetweenIndexes(oldEdge)
@@ -1743,7 +1752,6 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 				return fmt.Errorf("edge type index: %w", err)
 			}
 			tx.bufferSet(newTypeKey, []byte{})
-			tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
 		}
 		if oldEdge.StartNode == edge.StartNode && oldEdge.EndNode == edge.EndNode {
 			if err := tx.bufferSetEdgeBetweenIndexes(edge); err != nil {
@@ -1770,7 +1778,29 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	// Track for read-your-writes.
 	edgeCopy := copyEdge(edge)
 	tx.pendingEdges[edge.ID] = edgeCopy
+	if err := tx.bufferEdgeReplacementCountDeltasLocked(oldEdge, edge); err != nil {
+		return err
+	}
 
+	tx.operations = append(tx.operations, Operation{
+		Type:      OpUpdateEdge,
+		Timestamp: time.Now(),
+		EdgeID:    edge.ID,
+		Edge:      edgeCopy,
+		OldEdge:   oldEdge,
+	})
+
+	return nil
+}
+
+// bufferEdgeReplacementCountDeltasLocked owns typed and positional counter
+// changes for any physical overwrite, whether accepted as CREATE or UPDATE.
+// An unchanged type and endpoints contribute no delta.
+func (tx *BadgerTransaction) bufferEdgeReplacementCountDeltasLocked(oldEdge, edge *Edge) error {
+	if oldEdge.Type != edge.Type {
+		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), oldEdge.Type, -1)
+		tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, 1)
+	}
 	// Positional (label, type) counters move with type or endpoint changes.
 	if oldEdge.Type != edge.Type || oldEdge.StartNode != edge.StartNode || oldEdge.EndNode != edge.EndNode {
 		oldStartLabels, err := tx.nodeLabelsTxVisibleLocked(oldEdge.StartNode)
@@ -1798,14 +1828,6 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		}
 		tx.bufferEdgePositionalLabelDeltas(namespaceForEdgeID(edge.ID), edge.Type, newStartLabels, newEndLabels, 1)
 	}
-
-	tx.operations = append(tx.operations, Operation{
-		Type:      OpUpdateEdge,
-		Timestamp: time.Now(),
-		EdgeID:    edge.ID,
-		Edge:      edgeCopy,
-		OldEdge:   oldEdge,
-	})
 
 	return nil
 }
@@ -3035,7 +3057,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
 			}
 		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreated(op.Edge)
+			tx.engine.cacheOnEdgeCreatedWithCounts(op.Edge, !op.ReplacesExisting)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
