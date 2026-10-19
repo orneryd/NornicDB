@@ -31,19 +31,13 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 			}
 		}
 	}
-	if b.writeBehind == nil {
-		load(nil)
-		if (!wantOut || out.hit) && (!wantIn || in.hit) {
-			o, err := b.materializeAdjEdges(out.ids)
-			if err != nil {
-				return nil, nil, err
-			}
-			i, err := b.materializeAdjEdges(in.ids)
-			return o, i, err
-		}
-	}
 	adjGen, edgeGen := b.adjCacheGen.current(), b.edgeCacheGen.current()
 	var outgoing, incoming []*Edge
+	cached := func(w *WriteBehindBuffer) (bool, error) {
+		var ok bool
+		outgoing, incoming, ok = b.cachedAdjacency(w, nodeID, wantOut, wantIn)
+		return ok, nil
+	}
 	err := b.withReadView(load, func(txn *badger.Txn) error {
 		read := func(d *direction, outgoing bool) ([]*Edge, error) {
 			if d.deleted {
@@ -109,6 +103,63 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool) ([]*Ed
 			incoming, err = read(&in, false)
 		}
 		return err
-	})
+	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: cached})
 	return outgoing, incoming, err
+}
+
+// cachedAdjacency resolves a traversal as one captured operation. The edge cache
+// is locked once for both directions; only pending adjacency entries are copied.
+func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool) ([]*Edge, []*Edge, bool) {
+	var outIDs, inIDs []EdgeID
+	var outHit, inHit = !wantOut, !wantIn
+	if wantOut { outIDs, outHit = b.adjCacheLoadOutgoing(id) }
+	if wantIn { inIDs, inHit = b.adjCacheLoadIncoming(id) }
+	if !outHit || !inHit { return nil, nil, false }
+	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id)).deleted { return nil, nil, true }
+	b.edgeCacheMu.RLock()
+	defer b.edgeCacheMu.RUnlock()
+	now := DecayScoringTime()
+	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
+		var live []*Edge
+		if w != nil { live = w.liveAdjacencyLocked(id, outgoing) }
+		if len(ids) == 0 && len(live) == 0 { return nil, true }
+		result := make([]*Edge, 0, len(ids)+len(live))
+		for _, edgeID := range ids {
+			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID)).found { continue }
+			edge := b.edgeCache[edgeID]
+			if edge == nil { return nil, false }
+			if !b.filterEdgeByDecay(edge, now) { result = append(result, edge) }
+		}
+		for _, edge := range live {
+			if !b.filterEdgeByDecay(edge, now) { result = append(result, copyEdge(edge)) }
+		}
+		return result, true
+	}
+	out, ok := read(outIDs, true)
+	if !ok { return nil, nil, false }
+	in, ok := read(inIDs, false)
+	return out, in, ok
+}
+
+// liveAdjacencyLocked enumerates the overlapping adjacency index, not the
+// buffer's global tombstones. Cached committed IDs resolve tombstones directly.
+func (w *WriteBehindBuffer) liveAdjacencyLocked(id NodeID, outgoing bool) []*Edge {
+	var result []*Edge
+	var seen map[EdgeID]bool
+	visit := func(buf *CommitBuffer) {
+		ids := buf.incomingByNode[id]
+		if outgoing { ids = buf.outgoingByNode[id] }
+		for _, edgeID := range ids {
+			if seen[edgeID] { continue }
+			if seen == nil { seen = make(map[EdgeID]bool) }
+			seen[edgeID] = true
+			state := w.entityStateLocked(bufferedEdgeEntity, string(edgeID))
+			if state.deleted || state.edge == nil { continue }
+			edge := state.edge
+			if outgoing && edge.StartNode == id || !outgoing && edge.EndNode == id { result = append(result, edge) }
+		}
+	}
+	visit(w.active)
+	for i := len(w.draining)-1; i >= 0; i-- { visit(w.draining[i]) }
+	return result
 }

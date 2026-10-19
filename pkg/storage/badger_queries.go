@@ -180,11 +180,14 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 	// This reduces transaction overhead compared to two-phase approach
 	var overlay []*Node
 	var touched map[NodeID]bool
+	var current bool
 	var nodes []*Node
 	var loaded []*Node
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(label) }, func(txn *badger.Txn) error {
+		nodes = nil
+		loaded = nil
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
@@ -196,9 +199,11 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 				continue
 			}
 
+			if touched[nodeID] { continue }
+
 			// Cache-first: avoid Badger reads/decodes for hot label scans.
 			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok && b.writeBehind == nil {
+			if cached, ok := b.nodeCache[nodeID]; ok && current {
 				b.nodeCacheMu.RUnlock()
 				cn := copyNode(cached)
 				if b.filterNodeByDecay(cn, nowNanos) {
@@ -233,7 +238,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 			nodes = append(nodes, node)
 		}
 		return it.Err()
-	})
+	}, readViewOptions{scope: scope, current: &current})
 
 	if err != nil {
 		return nil, err
@@ -241,12 +246,12 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 
 	// Cache loaded nodes for future label scans.
 	for _, n := range loaded {
-		if n != nil && b.writeBehind == nil {
+		if n != nil {
 			b.cacheFillNode(gen, n)
 		}
 	}
 
-	if b.writeBehind != nil {
+	if len(touched) != 0 {
 		nodes = b.mergeWriteBehindNodes(nodes, overlay, touched, scope, nil)
 	}
 	return nodes, nil
@@ -471,6 +476,7 @@ func (b *BadgerEngine) GetAllNodes() []*Node {
 func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
+	var current bool
 	var nodes []*Node
 	var loaded []*Node
 	var overlay []*Node
@@ -481,6 +487,8 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		nodes = nil
+		loaded = nil
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -497,7 +505,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			}
 
 			b.nodeCacheMu.RLock()
-			if cached, ok := b.nodeCache[nodeID]; ok && b.writeBehind == nil {
+			if cached, ok := b.nodeCache[nodeID]; ok && current {
 				b.nodeCacheMu.RUnlock()
 				nodeCopy := copyNode(cached)
 				if b.filterNodeByDecay(nodeCopy, nowNanos) {
@@ -524,13 +532,13 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 		}
 
 		return nil
-	})
+	}, readViewOptions{current: &current})
 
 	if err != nil {
 		return nil, err
 	}
 	for _, node := range loaded {
-		if node != nil && b.writeBehind == nil {
+		if node != nil {
 			b.cacheFillNode(gen, node)
 		}
 	}
@@ -753,177 +761,74 @@ func (b *BadgerEngine) InvalidateEdgeTypeCacheForType(edgeType string) {
 	b.edgeTypeCacheMu.Unlock()
 }
 
-// BatchGetNodes fetches multiple nodes in a single transaction.
-// Returns a map for O(1) lookup by ID. Missing nodes are not included in the result.
-// This is optimized for traversal operations that need to fetch many nodes.
+// BatchGetNodes materializes a batch through one capture, with no overlay map
+// or transaction when every requested body is cached.
 func (b *BadgerEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	if len(ids) == 0 {
-		return make(map[NodeID]*Node), nil
-	}
-
-	// Fast path: satisfy as many lookups as possible from the node cache.
-	//
-	// This is critical for read-heavy workloads (and benchmarks) where the same
-	// node sets are repeatedly fetched (e.g., aggregation and COLLECT queries).
-	var states map[NodeID]bufferedEntityState
-	result := make(map[NodeID]*Node, len(ids))
-	missing := make([]NodeID, 0, len(ids))
-
-	b.nodeCacheMu.RLock()
-	for _, id := range ids {
-		if id == "" {
-			continue
-		}
-		if cached, ok := b.nodeCache[id]; ok && b.writeBehind == nil {
-			nodeCopy := copyNode(cached)
-			if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
-				continue
-			}
-			result[id] = nodeCopy
-			continue
-		}
-		missing = append(missing, id)
-	}
-	b.nodeCacheMu.RUnlock()
-
-	if len(missing) == 0 {
-		return result, nil
-	}
-
-	var loaded []*Node
-	nowNanos := DecayScoringTime()
-	gen := b.nodeCacheGen.current()
-	err := b.withReadView(func(w *WriteBehindBuffer) {
-		states = make(map[NodeID]bufferedEntityState, len(ids))
-		for _, id := range ids {
-			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
-				states[id] = state
-			}
-		}
-	}, func(txn *badger.Txn) error {
-		loaded = loaded[:0]
-		for _, id := range missing {
-			if state, found := states[id]; found {
-				if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) {
-					result[id] = copyNode(state.node)
-				}
-				continue
-			}
-			item, err := txn.Get(nodeKey(id))
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue // Skip missing nodes
-			}
-			if err != nil {
-				return err
-			}
-
-			var node *Node
-			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
-			if readErr != nil {
-				return readErr
-			}
-			if b.filterNodeByDecay(node, nowNanos) {
-				continue
-			}
-
-			loaded = append(loaded, node)
-			result[id] = node
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Cache loaded nodes for future batch lookups.
-	for _, n := range loaded {
-		if n != nil && b.writeBehind == nil {
-			b.cacheFillNode(gen, n)
-		}
-	}
-
-	return result, nil
+	return b.readNodeBatch(ids, true)
 }
 
-// BatchGetNodesWithoutEmbeddings fetches multiple nodes in one read
-// transaction without loading separately stored embedding vectors.
 func (b *BadgerEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error) {
-	if len(ids) == 0 {
-		return make(map[NodeID]*Node), nil
-	}
-	if err := b.ensureOpen(); err != nil {
-		return nil, err
-	}
+	return b.readNodeBatch(ids, false)
+}
 
-	var states map[NodeID]bufferedEntityState
+func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]*Node, error) {
 	result := make(map[NodeID]*Node, len(ids))
-	missing := make([]NodeID, 0, len(ids))
-	cacheHits := 0
-
-	b.nodeCacheMu.RLock()
-	for _, id := range ids {
-		if id == "" {
-			continue
-		}
-		if cached, ok := b.nodeCache[id]; ok && b.writeBehind == nil {
-			cacheHits++
-			nodeCopy := copyNodeWithoutEmbeddings(cached)
-			if b.filterNodeByDecay(nodeCopy, DecayScoringTime()) {
-				continue
+	if len(ids) == 0 { return result, nil }
+	if err := b.ensureOpen(); err != nil { return nil, err }
+	copyForRead := copyNodeWithoutEmbeddings
+	if embeddings { copyForRead = copyNode }
+	now := DecayScoringTime()
+	cached := func(w *WriteBehindBuffer) (bool, error) {
+		clear(result)
+		b.nodeCacheMu.RLock()
+		defer b.nodeCacheMu.RUnlock()
+		for _, id := range ids {
+			if id == "" { continue }
+			var node *Node
+			if w != nil {
+				state := w.entityStateLocked(bufferedNodeEntity, string(id))
+				if state.deleted { continue }
+				node = state.node
 			}
-			result[id] = nodeCopy
-			continue
+			if node == nil { node = b.nodeCache[id] }
+			if node == nil { return false, nil }
+			if !b.filterNodeByDecay(node, now) { result[id] = copyForRead(node) }
 		}
-		missing = append(missing, id)
+		return true, nil
 	}
-	b.nodeCacheMu.RUnlock()
-	atomic.AddInt64(&b.cacheHits, int64(cacheHits))
-	atomic.AddInt64(&b.cacheMisses, int64(len(missing)))
-
-	if len(missing) == 0 {
-		return result, nil
-	}
-
-	nowNanos := DecayScoringTime()
+	var states map[NodeID]bufferedEntityState
+	gen := b.nodeCacheGen.current()
+	var loaded []*Node
 	err := b.withReadView(func(w *WriteBehindBuffer) {
-		states = make(map[NodeID]bufferedEntityState, len(ids))
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
+				if states == nil { states = make(map[NodeID]bufferedEntityState) }
 				states[id] = state
 			}
 		}
 	}, func(txn *badger.Txn) error {
-		for _, id := range missing {
-			if state, found := states[id]; found {
-				if !state.deleted && !b.filterNodeByDecay(state.node, nowNanos) {
-					result[id] = copyNodeWithoutEmbeddings(state.node)
-				}
-				continue
+		clear(result)
+		for _, id := range ids {
+			if id == "" { continue }
+			state := states[id]
+			if state.deleted { continue }
+			node := state.node
+			if !state.found {
+				item, err := txn.Get(nodeKey(id))
+				if errors.Is(err, badger.ErrKeyNotFound) { continue }
+				if err != nil { return err }
+				var hydrate func(*badger.Txn, *Node, NodeID) (*Node, error)
+				if embeddings { hydrate = b.loadNodeEmbeddings }
+				node, err = b.readNodeItemInTxn(txn, item, id, hydrate)
+				if err != nil { return err }
+				if embeddings { loaded = append(loaded, node) }
 			}
-			item, err := txn.Get(nodeKey(id))
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			var node *Node
-			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, item, id, nil)
-			if readErr != nil {
-				return readErr
-			}
-			if b.filterNodeByDecay(node, nowNanos) {
-				continue
-			}
-			result[id] = node
+			if !b.filterNodeByDecay(node, now) { result[id] = copyForRead(node) }
 		}
 		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
+	}, readViewOptions{cached: cached})
+	if err != nil { return nil, err }
+	for _, node := range loaded { b.cacheFillNode(gen, node) }
 	return result, nil
 }
 
