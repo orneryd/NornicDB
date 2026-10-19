@@ -156,7 +156,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		}
 		return e.recordStatementReference(cypher, database)
 	})
-	fragment := fabricProcedureWritePlan(prepared.fragment,params)
+	fragment := fabricProcedureWritePlan(prepared.fragment, params)
 	stream, err := fabricExecutor.Execute(ctx, tx, fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
@@ -389,30 +389,38 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 // admission, just as the native transaction route does. Cached structural plans
 // stay immutable and do not retain an obsolete procedure mode after registration.
 // The existing Fabric participant owner then handles writes and their rollback.
-func fabricProcedureWritePlan(fragment fabric.Fragment,parameters ...map[string]interface{}) fabric.Fragment {
+func fabricProcedureWritePlan(fragment fabric.Fragment, parameters ...map[string]interface{}) fabric.Fragment {
 	switch current := fragment.(type) {
 	case *fabric.FragmentExec:
-		input := fabricProcedureWritePlan(current.Input,parameters...)
-		write := current.IsWrite || callsDataWriteProcedure(current.Query,parameters...)
-		if input == current.Input && write == current.IsWrite { return current }
+		input := fabricProcedureWritePlan(current.Input, parameters...)
+		write := current.IsWrite || callsDataWriteProcedure(current.Query, parameters...)
+		if input == current.Input && write == current.IsWrite {
+			return current
+		}
 		copy := *current
-		copy.Input,copy.IsWrite = input,write
+		copy.Input, copy.IsWrite = input, write
 		return &copy
 	case *fabric.FragmentApply:
-		input,inner := fabricProcedureWritePlan(current.Input,parameters...),fabricProcedureWritePlan(current.Inner,parameters...)
-		if input == current.Input && inner == current.Inner { return current }
+		input, inner := fabricProcedureWritePlan(current.Input, parameters...), fabricProcedureWritePlan(current.Inner, parameters...)
+		if input == current.Input && inner == current.Inner {
+			return current
+		}
 		copy := *current
-		copy.Input,copy.Inner = input,inner
+		copy.Input, copy.Inner = input, inner
 		return &copy
 	case *fabric.FragmentUnion:
-		left,right := fabricProcedureWritePlan(current.LHS,parameters...),fabricProcedureWritePlan(current.RHS,parameters...)
-		if left == current.LHS && right == current.RHS { return current }
+		left, right := fabricProcedureWritePlan(current.LHS, parameters...), fabricProcedureWritePlan(current.RHS, parameters...)
+		if left == current.LHS && right == current.RHS {
+			return current
+		}
 		copy := *current
-		copy.LHS,copy.RHS = left,right
+		copy.LHS, copy.RHS = left, right
 		return &copy
 	case *fabric.FragmentLeaf:
-		input := fabricProcedureWritePlan(current.Input,parameters...)
-		if input == current.Input { return current }
+		input := fabricProcedureWritePlan(current.Input, parameters...)
+		if input == current.Input {
+			return current
+		}
 		copy := *current
 		copy.Input = input
 		return &copy
