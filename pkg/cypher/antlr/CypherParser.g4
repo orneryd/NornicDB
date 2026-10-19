@@ -169,8 +169,8 @@ regularQuery
     ;
 
 singleQuery
-    : multiPartQ
-    | singlePartQ
+    : singlePartQ
+    | multiPartQ
     ;
 
 standaloneCall
@@ -196,7 +196,7 @@ callSubquery
 
 // Subquery body can start with WITH (to import variables) or have statements
 subqueryBody
-    : useClause? ({p.ProjectionPartAllowed()}? (readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* embeddingSt? (returnSt | FINISH)? (UNION ALL? subqueryBody)?
+    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -204,11 +204,11 @@ returnSt
     ;
 
 withSt
-    : {!p.EmbeddingOptionAllowed()}? WITH projectionBody where?
+    : WITH projectionBody where?
     ;
 
 embeddingSt
-    : {p.EmbeddingOptionAllowed()}? WITH EMBEDDING
+    : {p.EmbeddingOptionTerminal()}? WITH EMBEDDING
     ;
 
 skipSt
@@ -242,12 +242,12 @@ orderSt
 // Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
 // Neo4j 5 and 25.
 singlePartQ
-    : readingStatement* (returnSt | updatingStatement (readingStatement | updatingStatement)* embeddingSt? returnSt?)?
+    : readingStatement* (returnSt | updatingStatement (readingStatement | updatingStatement)* (embeddingSt | returnSt)?)?
     | callSubquery orderSt?
     ;
 
 multiPartQ
-    : ({p.ProjectionPartAllowed()}? (readingStatement | updatingStatement)* withSt)+ singlePartQ
+    : ((readingStatement | updatingStatement)* withSt)+ singlePartQ
     ;
 
 matchSt
