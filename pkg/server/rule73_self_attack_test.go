@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,6 +23,7 @@ const (
 	rule73HTTPReadAdmin rule73HTTPClass = "read_admin"
 	rule73HTTPAdmin     rule73HTTPClass = "admin"
 	rule73HTTPAllAdmin  rule73HTTPClass = "all_admin"
+	rule73HTTPAggregate rule73HTTPClass = "aggregate"
 )
 
 type rule73HTTPCase struct {
@@ -33,7 +36,13 @@ type rule73HTTPCase struct {
 func rule73HTTPInventory() []rule73HTTPCase {
 	constantBody := func(value any) func(string) any { return func(string) any { return value } }
 	return []rule73HTTPCase{
+		{"status", http.MethodGet, "aggregate", rule73HTTPAggregate, func(string) string { return "/status" }, nil},
+		{"metrics", http.MethodGet, "aggregate", rule73HTTPAggregate, func(string) string { return "/metrics" }, nil},
+		{"admin.stats", http.MethodGet, "aggregate", rule73HTTPAggregate, func(string) string { return "/admin/stats" }, nil},
 		{"db.info.missing", http.MethodGet, "missing", rule73HTTPRead, func(db string) string { return "/db/" + db + "_missing" }, nil},
+		{"embed.pause", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/pause" }, nil},
+		{"embed.resume", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/resume" }, nil},
+		{"embed.status", http.MethodGet, "all", rule73HTTPReadAdmin, func(string) string { return "/nornicdb/embed/status" }, nil},
 		{"db.info", http.MethodGet, "selected", rule73HTTPRead, func(db string) string { return "/db/" + db }, nil},
 		{"db.tx.read", http.MethodPost, "selected", rule73HTTPRead, func(db string) string { return "/db/" + db + "/tx/commit" }, constantBody(map[string]any{"statements": []map[string]any{{"statement": "MATCH (n) RETURN n LIMIT 1"}}})},
 		{"search", http.MethodPost, "selected", rule73HTTPRead, func(string) string { return "/nornicdb/search" }, func(db string) any { return map[string]any{"database": db, "query": "rule73"} }},
@@ -48,7 +57,7 @@ func rule73HTTPInventory() []rule73HTTPCase {
 		{"embed.stats", http.MethodGet, "all", rule73HTTPRead, func(string) string { return "/nornicdb/embed/stats" }, nil},
 		{"embed.failures", http.MethodGet, "all", rule73HTTPRead, func(string) string { return "/nornicdb/embed/failures" }, nil},
 		{"embed.retry-failures", http.MethodPost, "all", rule73HTTPReadWrite, func(string) string { return "/nornicdb/embed/retry-failures" }, constantBody(map[string]any{})},
-		{"embed.clear", http.MethodPost, "default", rule73HTTPAdmin, func(db string) string { return "/nornicdb/embed/clear?database=" + db }, constantBody(map[string]any{})},
+		{"embed.clear", http.MethodPost, "selected", rule73HTTPAdmin, func(db string) string { return "/nornicdb/embed/clear?database=" + db }, constantBody(map[string]any{})},
 		{"search.rebuild", http.MethodPost, "selected", rule73HTTPReadWrite, func(string) string { return "/nornicdb/search/rebuild" }, func(db string) any { return map[string]any{"database": db} }},
 		{"gdpr.export", http.MethodPost, "default", rule73HTTPRead, func(string) string { return "/gdpr/export" }, constantBody(map[string]any{"user_id": "nobody", "format": "json"})},
 		{"gdpr.delete", http.MethodPost, "default", rule73HTTPReadWrite, func(string) string { return "/gdpr/delete" }, constantBody(map[string]any{"user_id": "nobody", "confirm": true})},
@@ -75,6 +84,11 @@ func rule73HTTPDenied(responseBody string, status int) bool {
 func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	server, users := setupTestServer(t)
 	ctx := context.Background()
+	badger, ok := storage.UnwrapEngine(server.db.GetStorage()).(*storage.BadgerEngine)
+	require.True(t, ok)
+	registry := prometheus.NewRegistry()
+	observability.NewStorageMetrics(registry, false, metricsReadStorageProbe{badger})
+	server.SetObsRegistry(registry)
 	require.NoError(t, server.dbManager.CreateDatabase("rule73_named"))
 	for database, id := range map[string]string{"nornic": "default-secret", "rule73_named": "named-secret"} {
 		engine, err := server.dbManager.GetStorage(database)
@@ -147,6 +161,9 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	}
 
 	for _, tc := range rule73HTTPInventory() {
+		if tc.class == rule73HTTPAggregate {
+			continue // asserted against its actual admitted population below
+		}
 		databases := []string{"nornic", "rule73_named"}
 		if tc.target == "default" || tc.target == "all" {
 			databases = []string{"nornic"}
@@ -171,10 +188,29 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 	}
 
 	// Aggregate readers must expose only admitted databases, not merely return 200.
-	for _, endpoint := range []string{"/status", "/admin/stats"} {
+	for _, tc := range rule73HTTPInventory() {
+		if tc.class != rule73HTTPAggregate {
+			continue
+		}
+		endpoint := tc.path("")
 		for _, p := range profiles {
 			t.Run("aggregate"+endpoint+"/"+p.name, func(t *testing.T) {
 				response := makeRequest(t, server, http.MethodGet, endpoint, nil, p.token)
+				if endpoint == "/metrics" {
+					if !p.read {
+						require.Equal(t, http.StatusForbidden, response.Code)
+						return
+					}
+					require.Equal(t, http.StatusOK, response.Code)
+					want := float64(2)
+					if p.name == "default-only" || p.name == "named-only" {
+						want = 1
+					}
+					if p.name == "admin" {
+						want = float64(metricsReadStorageProbe{badger}.NodeCount())
+					}
+					require.Equal(t, want, legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
+				}
 				if endpoint == "/status" {
 					var payload map[string]any
 					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
