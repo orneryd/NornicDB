@@ -280,6 +280,18 @@ func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, er
 	return database, engine, nil
 }
 
+// subscriptionDatabase retains the existing explicit-target requirement for
+// composite subscriptions after the shared direct-read decision.
+func (r *Resolver) subscriptionDatabase(ctx context.Context) (string, error) {
+	database, err := r.readableDatabase(ctx)
+	if err != nil {
+		return "", err
+	}
+	if r.dbManager.IsCompositeDatabase(database) {
+		return "", fmt.Errorf("subscriptions on composite database '%s' are not supported; target a constituent database explicitly", database)
+	}
+	return database, nil
+}
 // executeCypher executes a Cypher query using the specified database's namespaced storage.
 // If database is empty, uses the default database.
 // Authorization is derived from the Cypher statement and enforced by the executor.

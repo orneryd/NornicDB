@@ -20,7 +20,7 @@ func (r *subscriptionResolver) subscriptionNodeCreated(ctx context.Context, labe
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	database, err := r.readableDatabase(ctx)
+	database, err := r.subscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func (r *subscriptionResolver) subscriptionNodeUpdated(ctx context.Context, id *
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	database, err := r.readableDatabase(ctx)
+	database, err := r.subscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (r *subscriptionResolver) subscriptionNodeDeleted(ctx context.Context, labe
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	database, err := r.readableDatabase(ctx)
+	database, err := r.subscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (r *subscriptionResolver) subscriptionRelationshipCreated(ctx context.Conte
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	database, err := r.readableDatabase(ctx)
+	database, err := r.subscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (r *subscriptionResolver) subscriptionRelationshipUpdated(ctx context.Conte
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	database, err := r.readableDatabase(ctx)
+	database, err := r.subscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (r *subscriptionResolver) subscriptionRelationshipDeleted(ctx context.Conte
 	if r.EventBroker == nil {
 		return nil, fmt.Errorf("event broker not initialized")
 	}
-	database, err := r.readableDatabase(ctx)
+	database, err := r.subscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
