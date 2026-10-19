@@ -4,6 +4,8 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 const (
@@ -88,6 +90,10 @@ type IVFPQIndex struct {
 	// (scoreBound); residualKnown is false for a bundle saved without it.
 	maxResidual   float64
 	residualKnown bool
+	// maxCoordinateError is the maximum absolute reconstruction error in
+	// each coordinate. Its projection bounds queries more tightly when the
+	// largest residual errors lie outside the query direction.
+	maxCoordinateError []float64
 }
 
 // scoreBound is how far a vector's exact cosine with a unit query can lie
@@ -101,6 +107,23 @@ func (i *IVFPQIndex) scoreBound() float64 {
 		return math.Inf(1)
 	}
 	return i.maxResidual
+}
+
+// queryScoreBound projects the reconstruction-error box onto the unit
+// query: |q·(r-PQ(r))| <= sum_d |q_d| max_x |error(x,d)|. It uses the
+// tighter of this and the L2 bound. Older bundles retain their L2 bound;
+// bundles predating both bounds remain unbounded.
+func (i *IVFPQIndex) queryScoreBound(query []float32) float64 {
+	bound := i.scoreBound()
+	if i == nil || !i.residualKnown || len(i.maxCoordinateError) == 0 {
+		return bound
+	}
+	q := vector.Normalize(query)
+	projected := 0.0
+	for d, coordinateError := range i.maxCoordinateError {
+		projected += math.Abs(float64(q[d])) * coordinateError
+	}
+	return min(bound, projected)
 }
 
 type ivfpqScratch struct {

@@ -532,7 +532,17 @@ func TestIVFPQScoresStayWithinTheirBound(t *testing.T) {
 	require.NoError(t, err)
 	bound := index.scoreBound()
 	require.False(t, math.IsInf(bound, 1))
-	for _, q := range randomUnitVectors(rng, 20, dims) {
+	queries := randomUnitVectors(rng, 20, dims)
+	for d := 0; d < dims; d++ {
+		q := make([]float32, dims)
+		q[d] = 1
+		queries = append(queries, q)
+	}
+	tightened := false
+	for _, q := range queries {
+		bound := index.queryScoreBound(q)
+		tightened = tightened || bound < index.scoreBound()
+		require.LessOrEqual(t, bound, index.scoreBound())
 		candidates, err := index.SearchApprox(context.Background(), q, n, -1, 8)
 		require.NoError(t, err)
 		require.Len(t, candidates, n)
@@ -541,6 +551,7 @@ func TestIVFPQScoresStayWithinTheirBound(t *testing.T) {
 			require.LessOrEqual(t, exact, c.Score+bound+exactScoreSlack(dims), c.ID)
 		}
 	}
+	require.True(t, tightened, "coordinate projection must tighten a nonzero residual bound")
 }
 
 // boundedNoiseGenerator returns every vector of a corpus with its exact
