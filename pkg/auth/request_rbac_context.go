@@ -24,17 +24,25 @@ const (
 type RequestEntitlementResolver func(database string, permission Permission) bool
 
 // RequestDatabaseScope is the server-derived set of database names and aliases
-// an authenticated principal may select for one request.
+// available to a request. A live selection check can restrict these catalog names.
 type RequestDatabaseScope struct {
 	defaultDatabase string
 	selections      map[string]string
 	canonical       []string
+	selectionCheck  func(string) bool
 }
 
 // NewRequestDatabaseScope constructs an immutable request scope. Selection
 // keys are normalized for lookup and the supplied map is defensively copied.
 func NewRequestDatabaseScope(defaultDatabase string, selections map[string]string) *RequestDatabaseScope {
-	scope := &RequestDatabaseScope{selections: make(map[string]string, len(selections))}
+	return NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase, selections, nil)
+}
+
+// NewRequestDatabaseScopeWithSelectionCheck binds the existing live graph-selection
+// owner. Catalog aliases do not confer authority, and later grants/revocations
+// are observed without rebuilding the request context.
+func NewRequestDatabaseScopeWithSelectionCheck(defaultDatabase string, selections map[string]string, check func(string) bool) *RequestDatabaseScope {
+	scope := &RequestDatabaseScope{selections: make(map[string]string, len(selections)), selectionCheck: check}
 	canonicalSeen := make(map[string]struct{})
 	for selection, database := range selections {
 		selection = normalizeDatabaseSelection(selection)
@@ -48,16 +56,35 @@ func NewRequestDatabaseScope(defaultDatabase string, selections map[string]strin
 			scope.canonical = append(scope.canonical, database)
 		}
 	}
-	if database, ok := scope.selections[normalizeDatabaseSelection(defaultDatabase)]; ok {
-		scope.defaultDatabase = database
+	if _, ok := scope.selections[normalizeDatabaseSelection(defaultDatabase)]; ok {
+		scope.defaultDatabase = normalizeDatabaseSelection(defaultDatabase)
 	}
 	return scope
 }
 
-// Resolve returns the canonical database for an explicit selection. An omitted
-// selection resolves to the authorized default, or to the sole authorized
-// database when no authorized default exists.
+// Resolve validates the requested name before returning its canonical database.
+// An omitted name uses the configured default or the sole scoped database.
 func (s *RequestDatabaseScope) Resolve(selection string) (string, bool) {
+	database, found := s.resolve(selection)
+	return database, found && s.allowsSelection(selection, database)
+}
+
+func (s *RequestDatabaseScope) allowsSelection(selection, database string) bool {
+	if s.selectionCheck == nil {
+		return true
+	}
+	selection = normalizeDatabaseSelection(selection)
+	if selection == "" {
+		selection = s.defaultDatabase
+		if selection == "" {
+			selection = database
+		}
+	}
+	return s.selectionCheck(selection)
+}
+
+// resolve binds catalog identity without caching an authorization decision.
+func (s *RequestDatabaseScope) resolve(selection string) (string, bool) {
 	if s == nil {
 		return "", false
 	}
@@ -67,7 +94,7 @@ func (s *RequestDatabaseScope) Resolve(selection string) (string, bool) {
 		return database, ok
 	}
 	if s.defaultDatabase != "" {
-		return s.defaultDatabase, true
+		return s.selections[s.defaultDatabase], true
 	}
 	if len(s.canonical) == 1 {
 		return s.canonical[0], true
