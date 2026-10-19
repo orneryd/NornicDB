@@ -295,11 +295,11 @@ func gdsProjectionNode(value interface{}, scopes ...*GraphProjection) (id string
 	}
 	if node, ok := value.(*storage.Node); ok && node != nil {
 		if len(scopes) > 0 && scopes[0] != nil {
- id, _ := scopes[0].nodeReference(node)
- return id, false, nil
- }
- id, _ := graphEntityDisplayID(node)
- return string(id), false, nil
+			id, _ := scopes[0].nodeReference(node)
+			return id, false, nil
+		}
+		id, _ := graphEntityDisplayID(node)
+		return string(id), false, nil
 	}
 	typeName := gdsJavaType(value)
 	if value == nil {

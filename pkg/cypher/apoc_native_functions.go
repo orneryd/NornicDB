@@ -167,9 +167,11 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		}
 		return false
 	}
-	store,err := e.graphFunctionStorage(e.databaseName(),e.getStorage(ctx))
- if err != nil { return nil,err }
- view := graphIdentityView(store,e.graphIdentityScope)
+	store, err := e.graphFunctionStorage(e.databaseName(), e.getStorage(ctx))
+	if err != nil {
+		return nil, err
+	}
+	view := graphIdentityView(store, e.graphIdentityScope)
 	outgoing, incoming, err := incidentEdgeListsContext(ctx, view, storage.NodeID(node.IdentityKey()), "both")
 	if err != nil {
 		return nil, err

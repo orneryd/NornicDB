@@ -1869,7 +1869,7 @@ func isRowIdentityExpression(expression string) bool {
 func normalizeRowIdentityValues(left, right interface{}, domains ...graphIdentityDomain) (interface{}, interface{}) {
 	leftPayload, leftElement := rowIdentityPayload(left)
 	rightPayload, rightElement := rowIdentityPayload(right)
-	if leftElement && rightElement && (len(domains) == 0 || domains[0].preserveQualifiers(left,right)) {
+	if leftElement && rightElement && (len(domains) == 0 || domains[0].preserveQualifiers(left, right)) {
 		return left, right
 	}
 	return leftPayload, rightPayload
@@ -1939,9 +1939,11 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 	if err != nil {
 		return nil, err
 	}
-	store,err := e.FunctionStorage(e.databaseName())
- if err != nil { return nil,err }
- return e.relationshipEndpoint(edge, end,store), nil
+	store, err := e.FunctionStorage(e.databaseName())
+	if err != nil {
+		return nil, err
+	}
+	return e.relationshipEndpoint(edge, end, store), nil
 }
 
 // relationshipEndpoint is startNode(edge) / endNode(edge) (end): the
@@ -1949,8 +1951,10 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
 func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
- store := e.storage
- if len(stores)>0 { store=stores[0] }
+	store := e.storage
+	if len(stores) > 0 {
+		store = stores[0]
+	}
 	if edge == nil {
 		return nil
 	}

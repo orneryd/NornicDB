@@ -322,9 +322,9 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
- graphIdentityScope *graphIdentityScope
-	parser  *Parser
-	storage storage.Engine
+	graphIdentityScope *graphIdentityScope
+	parser             *Parser
+	storage            storage.Engine
 	// The storage decorator chain is immutable for an executor. Discover the
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
@@ -550,7 +550,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
 	return &StorageExecutor{
- graphIdentityScope: e.graphIdentityScope,
+		graphIdentityScope:             e.graphIdentityScope,
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),

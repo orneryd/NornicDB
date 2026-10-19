@@ -55,7 +55,7 @@ func evaluateComparisonChain(
 	resolve func(string, foldPosition) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
- domains ...graphIdentityDomain,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
 	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25, domains...)
 }
@@ -95,7 +95,7 @@ func evaluateScannedComparisonChain(
 	resolve func(int, string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
- domains ...graphIdentityDomain,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, error) {
 	if scan.count > 1 && mayContainSubqueryExpression(expression) && constantFalseLink(expression, scan, cypher25) {
 		// Neo4j folds a link of two literals before it plans the chain's
