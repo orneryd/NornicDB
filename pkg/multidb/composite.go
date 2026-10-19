@@ -302,18 +302,29 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 // canonicalConstituents is the shared catalog/manager reader of graph aliases.
 // Preserve the catalog's last-registration-wins rule for case-folded duplicates.
 // Walk backward so a single lookup can stop at its winner without copying the
-// catalog. The yielded key has exactly the catalog's case normalization.
-func canonicalConstituents(refs []ConstituentRef) iter.Seq2[string, ConstituentRef] {
+// catalog. Empty wanted enumerates all winners; a lookup yields only its last
+// matching alias and needs no duplicate-tracking map. Keys use the catalog's
+// exact case normalization.
+func canonicalConstituents(refs []ConstituentRef, wanted string) iter.Seq2[string, ConstituentRef] {
 	return func(yield func(string, ConstituentRef) bool) {
-		seen := make(map[string]struct{}, len(refs))
+		var seen map[string]struct{}
+		if wanted == "" {
+			seen = make(map[string]struct{}, len(refs))
+		}
 		for i := len(refs) - 1; i >= 0; i-- {
 			ref := refs[i]
 			key := strings.ToLower(ref.Alias)
-			if _, exists := seen[key]; exists {
-				continue
+			if wanted != "" {
+				if !constituentAliasMatches(key, wanted) {
+					continue
+				}
+			} else {
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
 			}
-			seen[key] = struct{}{}
-			if !yield(key, ref) {
+			if !yield(key, ref) || wanted != "" {
 				return
 			}
 		}
@@ -349,7 +360,7 @@ func snapshotConstituents(refs []ConstituentRef) []ConstituentRef {
 		return nil
 	}
 	result := make([]ConstituentRef, 0, len(refs))
-	for _, ref := range canonicalConstituents(refs) {
+	for _, ref := range canonicalConstituents(refs, "") {
 		result = append(result, ref)
 	}
 	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
@@ -409,10 +420,8 @@ func (m *DatabaseManager) ExistsOrIsConstituent(name string) bool {
 		constituentAlias := name[dotIdx+1:]
 		info, exists := m.databases[compositeName]
 		if exists && info.Type == "composite" {
-			for key := range canonicalConstituents(info.Constituents) {
-				if constituentAliasMatches(key, constituentAlias) {
-					return true
-				}
+			for range canonicalConstituents(info.Constituents, constituentAlias) {
+				return true
 			}
 		}
 	}
