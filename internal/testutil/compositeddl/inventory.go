@@ -194,5 +194,32 @@ func Cases() []Case {
 		// uses administration dispatch; both public parser routes must accept it.
 		cases = append(cases, Case{Name: "show_aliases_numeric_" + strconv.Itoa(i), DatabaseSuffix: suffix, Setup: []string{local, "CREATE ALIAS numeric_$db FOR DATABASE $db"}, Statement: "SHOW ALIASES FOR DATABASE $db WHERE alias = 'numeric_$db'", Grammar: suffix == "-1", Inspect: "aliases", Alias: "numeric_$db", Database: "$db", ReplyAlias: "numeric_$db"})
 	}
+	// The shared composite reader reports malformed trailing literals through
+	// the native command/error owner even when ANTLR selects the extension.
+	for _, alter := range []bool{false, true} {
+		for _, quote := range []string{"'", "\""} {
+			for _, repeated := range []bool{false, true} {
+				name := "composite_error_create"
+				statement := "CREATE COMPOSITE DATABASE $db ALIAS r FOR DATABASE nornic"
+				var setup []string
+				if alter {
+					name, statement, setup = "composite_error_alter", "ALTER COMPOSITE DATABASE $db ADD ALIAS r FOR DATABASE nornic", []string{local}
+				}
+				literal := quote + Password + quote
+				statement += " AT 'http://127.0.0.1:1' USER admin PASSWORD "
+				if repeated {
+					name, statement = name+"_keyword", statement+"PASSWORD "+literal
+				} else {
+					name, statement = name+"_trailing", statement+literal+" "+literal
+				}
+				if quote == "'" {
+					name += "_single"
+				} else {
+					name += "_double"
+				}
+				cases = append(cases, Case{Name: name, Setup: setup, Statement: statement, Reject: true, Inspect: "databases"})
+			}
+		}
+	}
 	return cases
 }
