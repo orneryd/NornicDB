@@ -1015,54 +1015,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 
 // splitOutsideBrackets splits string by delimiter, ignoring delimiters inside brackets.
 func splitOutsideBrackets(s string, delim rune) []string {
-	var parts []string
-	var current strings.Builder
-	depth := 0
-	inString := false
-	stringChar := rune(0)
-
-	for _, ch := range s {
-		if inString {
-			current.WriteRune(ch)
-			if ch == stringChar {
-				inString = false
-			}
-			continue
-		}
-
-		if ch == '\'' || ch == '"' {
-			inString = true
-			stringChar = ch
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == '(' || ch == '[' || ch == '{' {
-			depth++
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == ')' || ch == ']' || ch == '}' {
-			depth--
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == delim && depth == 0 {
-			parts = append(parts, current.String())
-			current.Reset()
-			continue
-		}
-
-		current.WriteRune(ch)
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
+ return readFunctionSyntax(s).splitDelimiter(delim)
 }
 
 // determineReadOnly checks if the AST represents a read-only query.

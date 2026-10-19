@@ -461,51 +461,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 // splitParamsCarefully splits comma-separated parameters while respecting
 // brackets and quoted strings.
 func splitParamsCarefully(params string) []string {
-	var result []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-	escaped := false
-
-	for _, c := range params {
-		if inQuote {
-			current.WriteRune(c)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if c == '\'' || c == '"' {
-			inQuote = true
-			quoteChar = c
-			current.WriteRune(c)
-		} else if c == '[' || c == '(' || c == '{' {
-			depth++
-			current.WriteRune(c)
-		} else if c == ']' || c == ')' || c == '}' {
-			depth--
-			current.WriteRune(c)
-		} else if c == ',' && depth == 0 {
-			result = append(result, current.String())
-			current.Reset()
-		} else {
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-
-	return result
+ return readFunctionSyntax(params).appendArguments(nil,0,false)
 }
 
 // parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]; nil for

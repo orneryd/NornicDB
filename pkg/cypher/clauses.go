@@ -156,43 +156,7 @@ func rowHasAggregate(items []returnItem) bool {
 
 // splitWithItems splits WITH expressions respecting nested brackets and quotes
 func (e *StorageExecutor) splitWithItems(expr string) []string {
-	var items []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for _, c := range expr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteRune(c)
-		case c == '(' || c == '[' || c == '{':
-			if !inQuote {
-				depth++
-			}
-			current.WriteRune(c)
-		case c == ')' || c == ']' || c == '}':
-			if !inQuote {
-				depth--
-			}
-			current.WriteRune(c)
-		case c == ',' && depth == 0 && !inQuote:
-			items = append(items, current.String())
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		items = append(items, current.String())
-	}
-	return items
+ return readFunctionSyntax(expr).appendArguments(nil,0,false)
 }
 
 type unwindSimpleSetAssignment struct {

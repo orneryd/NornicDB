@@ -289,56 +289,7 @@ func isBackslashEscaped(s string, idx int) bool {
 //	splitPropertyPairs("tags: ['a', 'b'], data: {nested: true}")
 //	// Returns: ["tags: ['a', 'b']", "data: {nested: true}"]
 func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
-	var pairs []string
-	var current strings.Builder
-	depth := 0 // Track [], {} nesting
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range propsStr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				// Check for escaped quote (look back for \)
-				escaped := false
-				if i > 0 {
-					// Count consecutive backslashes before this quote
-					backslashes := 0
-					for j := i - 1; j >= 0 && propsStr[j] == '\\'; j-- {
-						backslashes++
-					}
-					escaped = backslashes%2 == 1
-				}
-				if !escaped {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '[' || c == '{' || c == '(') && !inQuote:
-			depth++
-			current.WriteRune(c)
-		case (c == ']' || c == '}' || c == ')') && !inQuote:
-			depth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && depth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				pairs = append(pairs, s)
-			}
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	// Add final pair
-	if s := strings.TrimSpace(current.String()); s != "" {
-		pairs = append(pairs, s)
-	}
-
-	return pairs
+ return readFunctionSyntax(propsStr).appendArguments(nil,0,false)
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.

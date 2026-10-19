@@ -92,45 +92,22 @@ func isBareName(text string) bool {
 // topLevelArgumentSpans returns the [start, end) of each comma-separated
 // argument in query[start:end], spaces trimmed.
 func topLevelArgumentSpans(query string, start, end int) [][2]int {
-	var spans [][2]int
-	for from := start; from <= end; {
-		comma := topLevelByteIndex(query, from, end, ',')
-		stop := end
-		if comma >= 0 {
-			stop = comma
-		}
-		argStart := skipASCIISpaces(query, from, stop)
-		spans = append(spans, [2]int{argStart, trimRightIndex(query, argStart, stop)})
-		if comma < 0 {
-			break
-		}
-		from = comma + 1
-	}
-	return spans
+ syntax:=readFunctionSyntax(query[start:end])
+ var spans [][2]int
+ for _,span:=range syntax.argumentSpans(0) {
+  from:=queryGapEnd(query,start+span.start)
+  to:=trimRightIndex(query,from,start+span.end)
+  spans=append(spans,[2]int{from,to})
+ }
+ return spans
 }
 
 // mayUseVectorCall reports whether query may call vector, vector_distance
 // or vector_norm: the word, outside a longer name, then (. It never answers
 // false for one.
 func mayUseVectorCall(query string) bool {
-	for from := 0; ; {
-		at := indexASCIIFold(query[from:], "vector")
-		if at < 0 {
-			return false
-		}
-		at += from
-		from = at + len("vector")
-		if at > 0 && (isIdentByte(query[at-1]) || query[at-1] == '.') {
-			continue
-		}
-		end := from
-		for _, suffix := range []string{"_distance", "_norm"} {
-			if len(query) >= end+len(suffix) && equalFoldASCII(query[end:end+len(suffix)], suffix) {
-				end += len(suffix)
-			}
-		}
-		if next := skipASCIISpaces(query, end, len(query)); next < len(query) && query[next] == '(' {
-			return true
-		}
-	}
+ for _,call:=range readFunctionSyntax(query).calls {
+  switch lowerASCII(call.name) {case "vector","vector_distance","vector_norm":return true}
+ }
+ return false
 }
