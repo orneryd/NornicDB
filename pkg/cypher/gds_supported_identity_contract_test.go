@@ -19,7 +19,7 @@ func TestGDSSupportedNativeIdentityContracts(t *testing.T) {
 		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(id), StartNode: storage.NodeID(id), EndNode: "shared", Type: "K"}))
 	}
 	exec := NewStorageExecutor(store)
-	exec.SetDatabaseName("u5_native_gds")
+	exec.databaseName = "u5_native_gds"
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CALL gds.graph.project('u5_native_contract', 'P', 'K', {nodeProperties: ['value']})", nil)
 	require.NoError(t, err)
