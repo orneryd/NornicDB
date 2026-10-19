@@ -387,7 +387,6 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 	if visit == nil {
 		return nil
 	}
-	seen := make(map[NodeID]struct{})
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
@@ -396,11 +395,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 		stop := false
 		if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
 			err = lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
-				if _, exists := seen[id]; exists {
-					return true
-				}
-				seen[id] = struct{}{}
-				if !visit(id) {
+				if !visit(NodeID(QualifiedEntityID(engine, string(id)))) {
 					stop = true
 					return false
 				}
@@ -415,11 +410,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 				if node == nil {
 					continue
 				}
-				if _, exists := seen[node.ID]; exists {
-					continue
-				}
-				seen[node.ID] = struct{}{}
-				if !visit(node.ID) {
+				if !visit(NodeID(QualifiedEntityID(engine, string(node.ID)))) {
 					stop = true
 					break
 				}
