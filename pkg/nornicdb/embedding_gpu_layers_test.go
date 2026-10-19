@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
@@ -18,7 +19,7 @@ func TestLocalEmbedderRegistryPreservesGPULayers(t *testing.T) {
 		db.SetDefaultEmbedConfig(defaultCfg)
 		db.SetEmbedConfigForDB(func(string) (*embed.Config, error) { return &requested, nil })
 		called := false
-		db.embedderFactory = func(cfg *embed.Config) (embed.Embedder, error) {
+		db.embedderFactory = func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error) {
 			called = true
 			require.Equal(t, layers, cfg.GPULayers)
 			return selected, nil

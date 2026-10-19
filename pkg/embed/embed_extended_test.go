@@ -171,7 +171,7 @@ func TestLocalGGUFStub_MetadataAndClose(t *testing.T) {
 }
 
 func TestNewLocalGGUF_Stub(t *testing.T) {
-	_, err := NewLocalGGUF(&Config{Provider: "local"})
+	_, err := NewLocalGGUF(context.Background(), &Config{Provider: "local"})
 	if err == nil {
 		t.Fatal("Expected error from stub NewLocalGGUF")
 	}
