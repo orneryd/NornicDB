@@ -2337,7 +2337,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 			if !nodeIDInScope(n.ID, scope) || tx.engine.filterNodeByDecay(n, nowNanos) {
 				continue
 			}
-			if err := invokeVisit(projectCachedNodeForRead(n, properties)); err != nil {
+			if err := invokeVisit(projectCachedNodeForRead(n, properties, false)); err != nil {
 				if err == ErrIterationStopped {
 					return nil
 				}
@@ -2380,7 +2380,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		if pending, exists := tx.pendingNodes[node.ID]; exists {
 			seen[node.ID] = struct{}{}
 			if pending != nil && slices.Contains(pending.Labels, label) {
-				return invokeVisit(projectCachedNodeForRead(pending, properties))
+				return invokeVisit(projectCachedNodeForRead(pending, properties, false))
 			}
 			return nil
 		}
@@ -2503,10 +2503,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
 	readPending := func(node *Node) *Node {
-		if opts.Projection != nil {
-			return projectCachedNodeForRead(node, opts.Projection)
-		}
-		return copyNode(node)
+		return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
 	}
 
 	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
@@ -2574,8 +2571,8 @@ func (tx *BadgerTransaction) streamCommittedNodesLocked(opts StreamNodesOptions,
 		if !inScope(node.ID) {
 			continue
 		}
-		if opts.Projection != nil {
-			node = projectCachedNodeForRead(node, opts.Projection)
+		if opts.Projection != nil || opts.StripEmbeddings {
+			node = projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
 		}
 		if opts.PropertyFilter != nil && !opts.PropertyFilter(node.Properties) {
 			continue
@@ -2622,7 +2619,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 		if _, deleted := tx.deletedNodes[id]; deleted || node == nil || !slices.Contains(node.Labels, label) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
+		if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
 			return err
 		}
 	}
