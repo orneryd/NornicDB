@@ -28,7 +28,7 @@ type grpcDatabaseAccessMode struct {
 func (m grpcDatabaseAccessMode) CanAccessDatabase(database string) bool { return m.allows(database) }
 
 func (s *Server) grpcDatabaseAccessForRoles(roles []string, database string) auth.ResolvedAccess {
-	targets, allowed := s.databaseReadTargets(database, nil)
+	targets, allowed := s.databaseReadTargets(database, s.GetDatabaseAccessModeForRoles(roles))
 	if !allowed {
 		return auth.ResolvedAccess{}
 	}
