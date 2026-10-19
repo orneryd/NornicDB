@@ -124,14 +124,18 @@ func TestRemoteFactoryDecorators(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{"decorated-result"}}, result.Rows)
 			transaction := NewFabricTransaction("decorator-lifetime")
+			transaction.BindContext(context.Background())
 			sub, err := transaction.GetOrOpen(participantKeyFromLocation(loc), false)
 			require.NoError(t, err)
-			ctx := WithSubTransaction(WithFabricTransaction(context.Background(), transaction), sub)
+			statementCtx, cancelStatement := context.WithCancel(context.Background())
+			defer cancelStatement()
+			ctx := WithSubTransaction(WithFabricTransaction(statementCtx, transaction), sub)
 			for query := 0; query < 2; query++ {
 				result, err := executor.Execute(ctx, loc, "RETURN 'decorated-result' AS marker", nil, "")
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{"decorated-result"}}, result.Rows)
 			}
+			cancelStatement()
 			if commit {
 				require.NoError(t, transaction.Commit(nil, nil))
 			} else {
