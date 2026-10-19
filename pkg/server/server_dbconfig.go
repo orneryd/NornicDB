@@ -38,7 +38,11 @@ func (s *Server) handleDbConfigPrefix(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.SplitN(path, "/", 2)
 	dbName := parts[0]
-	if !s.authorizeDatabaseOperation(w, r, dbName, auth.PermRead, auth.PermWrite, auth.PermAdmin) {
+	permissions := []auth.Permission{auth.PermRead, auth.PermAdmin}
+	if r.Method != http.MethodGet {
+		permissions = append(permissions, auth.PermWrite)
+	}
+	if !s.authorizeDatabaseOperation(w, r, dbName, permissions...) {
 		return
 	}
 	if dbName == "system" {
