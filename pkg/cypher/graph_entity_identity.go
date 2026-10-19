@@ -431,7 +431,7 @@ func (p *GraphProjection) nativeNodeInput(node *storage.Node) projectionNodeInpu
 
 func (p *GraphProjection) nativeEdgeInput(edge *storage.Edge) projectionEdgeInput {
 	return projectionEdgeInput{
-		key:    edge.Identity().InDatabase(p.Database),
+		key:    edge.Identity().ReferenceIn(p.Database, "5"),
 		source: edge.StartIdentity().InDatabase(p.Database), target: edge.EndIdentity().InDatabase(p.Database),
 		relationshipType: edge.Type, properties: edge.Properties,
 	}

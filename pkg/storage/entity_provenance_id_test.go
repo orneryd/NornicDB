@@ -18,5 +18,7 @@ func TestEntitySourceOutranksLocalIDText(t *testing.T) {
 	require.Equal(t, string(second.ID), local)
 	relationship := &Edge{Database: "two", ID: "5:one:rel", StartNode: second.ID}
 	require.Equal(t, "5:two:5:one:rel", relationship.ElementID("comp"))
+	require.Equal(t, relationship.ElementID("comp"), relationship.Identity().ReferenceIn("comp", "5"))
+	require.Equal(t, string(relationship.ID), relationship.Identity().ReferenceIn("two", "5"))
 	require.Equal(t, second.ElementID("comp"), relationship.StartElementID("comp"))
 }

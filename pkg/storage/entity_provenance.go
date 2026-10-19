@@ -17,8 +17,14 @@ func (id EntityIdentity) Key() string { return EntityIdentityKey(id.Database, id
 // InDatabase encodes the identity in an existing projection's ID domain. Local
 // IDs remain local inside that database's catalog; foreign values are qualified.
 func (id EntityIdentity) InDatabase(database string) string {
+	return id.ReferenceIn(database, "4")
+}
+
+// ReferenceIn renders an identity in a catalog's existing node or relationship
+// ID domain. The entity kind does not change the source or opaque local ID.
+func (id EntityIdentity) ReferenceIn(database, kind string) string {
 	if id.Database != "" && id.Database != database {
-		return SourceNodeElementID(id.Database, NodeID(id.LocalID))
+		return kind + ":" + id.Database + ":" + id.LocalID
 	}
 	return id.LocalID
 }
