@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -61,6 +62,18 @@ func TestFabricQueryStructureLoadCSVSeparators(t *testing.T) {
 						}
 						// The remote query itself has no nested CALL: Neo4j's single database is
 						// both the source constituent and the direct reference execution target.
+						fabricCompareGrammarCase(t, base, driver, "USE comp.csv "+clause, clause)
+					})
+				}
+			}
+			for _, word := range fabricGrammarWords() {
+				for _, quoted := range []bool{false, true} {
+					name := strings.ToLower(word)
+					if quoted {
+						name = "`" + name + "`"
+					}
+					t.Run(fmt.Sprintf("binding_%s/quoted_%v", word, quoted), func(t *testing.T) {
+						clause := "LOAD CSV FROM '" + source + "/plain' AS " + name + " RETURN toInteger(" + name + "[0]) AS k"
 						fabricCompareGrammarCase(t, base, driver, "USE comp.csv "+clause, clause)
 					})
 				}

@@ -13,6 +13,36 @@ type QueryNameOccurrence struct {
 	Variable, Binding, Parameter, ProcedureColumn, Selector bool
 }
 
+// The maintained grammar's complete Symbol-parent inventory. Projection and
+// query bindings, local bindings, references, assignment targets and protocol
+// column names are different roles. Every name consumer selects its needed
+// roles here instead of rediscovering them from source text or parent lists.
+type grammarSymbolRole struct {
+	variable, binding, queryBinding, expression, selector, procedureColumn bool
+}
+
+func symbolRole(symbol grammar.ISymbolContext, parent antlr4.Tree) (role grammarSymbolRole) {
+	switch p := parent.(type) {
+	case grammar.IAtomContext, grammar.IMapProjectionContext:
+		role.variable, role.expression = true, true
+	case grammar.IMapProjectionItemContext:
+		role.variable, role.expression, role.selector = true, true, true
+	case grammar.IFabricCallScopeContext, grammar.ICallSubqueryContext, grammar.ISetItemContext, grammar.IRemoveItemContext, grammar.ISchemaCommandContext:
+		role.variable = true
+	case grammar.INodePatternContext, grammar.IRelationDetailContext, grammar.IPatternPartContext, grammar.IUnwindStContext, grammar.IForStContext, grammar.IProjectionItemContext, grammar.ILetItemContext, grammar.IFabricLoadCsvContext:
+		role.variable, role.binding, role.queryBinding = true, true, true
+	case grammar.IForeachStContext, grammar.IFilterExpressionContext, grammar.IReduceExpressionContext, grammar.IAllReduceExpressionContext, grammar.ILhsContext:
+		role.variable, role.binding = true, true
+	case grammar.IYieldItemContext:
+		symbols := p.AllSymbol()
+		role.variable = true
+		role.binding = len(symbols) == 1 || symbols[0] != symbol
+		role.queryBinding = role.binding
+		role.procedureColumn = len(symbols) == 1 || symbols[0] == symbol
+	}
+	return role
+}
+
 // NameOccurrences supplies the grammar role of every symbolic name to the
 // existing identifier canonicalizer, including comprehension/CALL bindings.
 func NameOccurrences(text string) ([]QueryNameOccurrence, bool) {
@@ -32,20 +62,9 @@ func NameOccurrences(text string) ([]QueryNameOccurrence, bool) {
 			inParameter = true
 		}
 		if symbol, ok := tree.(grammar.ISymbolContext); ok {
-			n := QueryNameOccurrence{Start: r.start(symbol.GetStart()), End: r.end(symbol.GetStop()), Name: unquoteSyntaxName(symbol.GetText()), Written: r.source(symbol), Parameter: inParameter}
-			switch p := parent.(type) {
-			case grammar.IAtomContext, grammar.IMapProjectionContext, grammar.IFabricCallScopeContext:
-				n.Variable = true
-			case grammar.IMapProjectionItemContext:
-				n.Variable = true
-				n.Selector = true
-			case grammar.INodePatternContext, grammar.IRelationDetailContext, grammar.IPatternPartContext, grammar.IUnwindStContext, grammar.IForStContext, grammar.IProjectionItemContext, grammar.ILetItemContext, grammar.IForeachStContext, grammar.IFilterExpressionContext, grammar.IReduceExpressionContext, grammar.IAllReduceExpressionContext, grammar.IPatternComprehensionContext:
-				n.Variable, n.Binding = true, true
-			case grammar.IYieldItemContext:
-				symbols := p.AllSymbol()
-				n.Variable, n.Binding = true, true
-				n.ProcedureColumn = len(symbols) == 1 || symbols[0] == symbol
-			}
+			role := symbolRole(symbol, parent)
+			n := QueryNameOccurrence{Start: r.start(symbol.GetStart()), End: r.end(symbol.GetStop()), Name: unquoteSyntaxName(symbol.GetText()), Written: r.source(symbol), Parameter: inParameter,
+				Variable: role.variable, Binding: role.binding, Selector: role.selector, ProcedureColumn: role.procedureColumn}
 			names = append(names, n)
 		}
 		for i := 0; i < tree.GetChildCount(); i++ {
