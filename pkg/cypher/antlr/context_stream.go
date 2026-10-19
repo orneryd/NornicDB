@@ -45,20 +45,48 @@ func (s *contextTokenStream) Consume() {
 // querying the context for every lexer lookahead.
 type contextCharStream struct {
 	antlr.CharStream
+	contextCharCancellation
+}
+
+// Shared cancellation owner for both character representations. ASCII consumes
+// poll by input position; the Unicode adapter also bounds lexer lookahead.
+type contextCharCancellation struct {
 	ctx    context.Context
 	checks uint
 }
 
-func (s *contextCharStream) check() {
+func (s *contextCharCancellation) check() {
 	if s.checks&1023 == 0 {
-		if err := s.ctx.Err(); err != nil {
-			panic(predictionCanceled{err})
-		}
+		s.poll()
 	}
 	s.checks++
 }
+
+func (s *contextCharCancellation) poll() {
+	if err := s.ctx.Err(); err != nil {
+		panic(predictionCanceled{err})
+	}
+}
+
+func (s *contextCharCancellation) releaseContext() { s.ctx = context.Background() }
+
 func (s *contextCharStream) LA(k int) int { s.check(); return s.CharStream.LA(k) }
 func (s *contextCharStream) Consume()     { s.check(); s.CharStream.Consume() }
+
+// Embed the concrete ASCII stream so lookahead and text access retain their
+// direct implementation. Lexer consumption polls every 1024 characters, even
+// within one long token; repeated lookahead needs no additional bookkeeping.
+type contextASCIICharStream struct {
+	asciiCharStream
+	contextCharCancellation
+}
+
+func (s *contextASCIICharStream) Consume() {
+	if s.i&1023 == 0 {
+		s.poll()
+	}
+	s.asciiCharStream.Consume()
+}
 
 func recoverPredictionCancellation(err *error) {
 	if p := recover(); p != nil {
@@ -83,18 +111,21 @@ func contextInputStream(ctx context.Context, query string) antlr.CharStream {
 			break
 		}
 	}
-	var input antlr.CharStream
 	if ascii {
-		input = newASCIICharStream(query)
-	} else if ctx.Done() != nil {
-		input = antlr.NewIoStream(&contextInputReader{Reader: strings.NewReader(query), ctx: ctx})
-	} else {
-		input = antlr.NewInputStream(query)
+		input := newASCIICharStream(query)
+		if ctx.Done() != nil {
+			stream := &contextASCIICharStream{asciiCharStream: *input}
+			stream.ctx = ctx
+			return stream
+		}
+		return input
 	}
 	if ctx.Done() != nil {
-		input = &contextCharStream{CharStream: input, ctx: ctx}
+		stream := &contextCharStream{CharStream: antlr.NewIoStream(&contextInputReader{Reader: strings.NewReader(query), ctx: ctx})}
+		stream.ctx = ctx
+		return stream
 	}
-	return input
+	return antlr.NewInputStream(query)
 }
 
 // LexContext tokenizes for consumers such as log redaction using the same
@@ -114,9 +145,8 @@ func LexContext(ctx context.Context, query string) (tokens []antlr.Token, err er
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(listener)
 	for {
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
+		// The character stream bounds cancellation inside and between tokens.
+		// Check once more at EOF instead of polling again for every token.
 		token := lexer.NextToken()
 		if len(listener.errors) != 0 {
 			return nil, fmt.Errorf("invalid Cypher token: %s", listener.errors[0])
