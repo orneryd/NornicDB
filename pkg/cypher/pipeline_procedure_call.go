@@ -43,7 +43,7 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 //
 // Void calls without YIELD preserve input rows; non-void calls require YIELD.
 // Explicit arguments are evaluated as typed values in the canonical invocation.
-func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, []string, bool, error) {
+func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string, totals ...*QueryStats) ([]pipelineRow, []string, bool, error) {
 	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
 	invocation := strings.TrimSpace(clause)
 	if yieldIndex >= 0 {
@@ -137,6 +137,10 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 						return nil, nil, true, err
 					}
 				}
+			}
+			// Count executions, not yielded rows or shared result reuse.
+			if result != nil && len(totals) > 0 {
+				addQueryStats(totals[0], result.Stats)
 			}
 			if !rowDependent && procedure.Spec.Mode == ProcedureModeRead {
 				shared = result
