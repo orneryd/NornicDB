@@ -63,6 +63,13 @@ func nodeEmbeddingRetryValueBytes(v reflect.Value, budget int64, depth int) int6
 	if !v.IsValid() {
 		return 0
 	}
+	// time.Time is a supported immutable stored value. Its location is shared
+	// library configuration, not an arbitrary application-owned pointer graph.
+	// Charge the value and zone name without traversing time.Location internals.
+	if v.Type() == reflect.TypeOf(time.Time{}) && v.CanInterface() {
+		stamp := v.Interface().(time.Time)
+		return int64(v.Type().Size()) + 64 + int64(len(stamp.Location().String()))
+	}
 	bytes := int64(32)
 	add := func(value reflect.Value) { bytes += nodeEmbeddingRetryValueBytes(value, budget-bytes, depth+1) }
 	switch v.Kind() {
@@ -125,6 +132,7 @@ func (ew *EmbedWorker) dropNodeEmbeddingRetryLocked(id storage.NodeID) {
 	if _, ok := ew.embeddingRetries[id]; ok {
 		delete(ew.embeddingRetries, id)
 		ew.retryBudgetBlocked = false
+		ew.retryAdmissionAt = time.Time{}
 	}
 }
 
@@ -163,7 +171,13 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 			// A batch/another worker may already have bought this result before
 			// the budget filled. Admission stays blocked until retained capacity
 			// is released or the owner is invalidated.
-			ew.retryBudgetBlocked = true
+			if len(ew.embeddingRetries) > 0 {
+				ew.retryBudgetBlocked = true
+			} else {
+				// An unretainable first result has no capacity owner to drain.
+				// Back off new attempts without creating an unreleaseable latch.
+				ew.retryAdmissionAt = time.Now().Add(30 * time.Second)
+			}
 			return
 		}
 	}
@@ -204,6 +218,7 @@ func (ew *EmbedWorker) invalidateNodeEmbeddingRetries() {
 	}
 	ew.embeddingRetries = nil
 	ew.retryBudgetBlocked = false
+	ew.retryAdmissionAt = time.Time{}
 }
 
 // nextEmbeddingNodeID runs under claimMu. Storage markers for retained IDs are
@@ -228,7 +243,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 			count++
 		}
 	}
-	if count >= countLimit || ew.nodeEmbeddingRetryBytes() >= byteLimit || ew.retryBudgetBlocked {
+	if count >= countLimit || ew.nodeEmbeddingRetryBytes() >= byteLimit || ew.retryBudgetBlocked || now.Before(ew.retryAdmissionAt) {
 		return due // Saving retained work needs no new provider result.
 	}
 	for attempts := 0; attempts <= len(ew.embeddingRetries); attempts++ {
@@ -271,6 +286,9 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duration {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
+	if remaining := time.Until(ew.retryAdmissionAt); remaining > 0 && remaining < delay {
+		delay = remaining
+	}
 	for id, result := range ew.embeddingRetries {
 		if _, claimed := ew.claimedNodes[string(id)]; claimed {
 			continue

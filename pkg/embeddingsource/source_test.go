@@ -40,3 +40,19 @@ func TestMetadataRejectsInvalidRecord(t *testing.T) {
 		t.Fatal("untagged legacy record must remain distinguishable")
 	}
 }
+
+func TestMetadataViewNoAllocations(t *testing.T) {
+	meta := map[string]any{MetaKey: (Source{Text: true, Include: []string{"text", "é:名", ""}, Exclude: []string{"secret"}, Properties: []string{"id", "createdAt"}}).Metadata()}
+	if allocs := testing.AllocsPerRun(100, func() {
+		view, present, valid := ReadView(meta)
+		if !present || !valid || !view.Include.Contains("é:名") || view.Properties.Contains("unused") {
+			panic("invalid view")
+		}
+		keys := view.Properties.Iterator()
+		if key, ok := keys.Next(); !ok || key != "id" {
+			panic("invalid iterator")
+		}
+	}); allocs != 0 {
+		t.Fatalf("view allocated %v times", allocs)
+	}
+}
