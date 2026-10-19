@@ -91,12 +91,22 @@ func (r *RaftReplicator) applyCommittedCommand(cmd *Command) error {
 	return err
 }
 
-func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, cmd *Command) error {
+func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, cmd *Command, term uint64) error {
 	namespaces, err := commandNamespaces(cmd)
 	if err != nil {
 		return err
 	}
-	r.logMu.RLock()
+	r.mu.RLock()
+	if r.state != StateLeader || r.currentTerm != term {
+		r.mu.RUnlock()
+		return ErrNotLeader
+	}
+	r.logMu.Lock()
+	if err := ctx.Err(); err != nil {
+		r.logMu.Unlock()
+		r.mu.RUnlock()
+		return err
+	}
 	var frontier uint64
 	for _, entry := range r.log {
 		if entry.Command == nil || entry.Index <= r.lastApplied {
@@ -104,7 +114,8 @@ func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, 
 		}
 		prior, err := commandNamespaces(entry.Command)
 		if err != nil {
-			r.logMu.RUnlock()
+			r.logMu.Unlock()
+			r.mu.RUnlock()
 			return err
 		}
 		matches := len(prior) == 0 || len(namespaces) == 0
@@ -118,9 +129,26 @@ func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, 
 		}
 	}
 	applied := r.lastApplied
-	r.logMu.RUnlock()
+	// An inherited prior-term frontier cannot commit itself. Admit one
+	// current-term no-op before waiting, without preparing/fencing DROP.
+	// Quorum commitment then applies earlier entries in their original order.
+	// Reuse any existing current-term entry, including a previous attempt's
+	// no-op; cancellation never turns this progress entry into a DROP.
+	ordering := applied < frontier && r.log[len(r.log)-1].Term != term
+	if ordering {
+		r.log = append(r.log, &RaftLogEntry{Index: r.log[len(r.log)-1].Index + 1, Term: term})
+	}
+	r.logMu.Unlock()
+	r.mu.RUnlock()
 	if applied >= frontier {
 		return ctx.Err()
+	}
+	if ordering {
+		if r.peerCount() == 0 {
+			r.advanceCommitIndex()
+		} else {
+			r.sendHeartbeatsToAllPeers(ctx, term)
+		}
 	}
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -135,6 +163,12 @@ func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, 
 		case <-timeout.C:
 			return fmt.Errorf("namespace preparation waiting for prior consensus entries: deadline exceeded")
 		case <-ticker.C:
+			r.mu.RLock()
+			leader := r.state == StateLeader && r.currentTerm == term
+			r.mu.RUnlock()
+			if !leader {
+				return ErrNotLeader
+			}
 			r.logMu.RLock()
 			applied = r.lastApplied
 			r.logMu.RUnlock()

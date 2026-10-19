@@ -26,6 +26,7 @@ func namespacePriorTermLeader(t *testing.T, priorType CommandType, singleNode bo
 	cfg.Mode, cfg.NodeID = ModeRaft, "new-leader"
 	cfg.Raft.CommitTimeout = 2 * time.Second
 	cfg.Raft.HeartbeatTimeout = time.Hour
+	cfg.Raft.Bootstrap = singleNode
 	if !singleNode {
 		cfg.Raft.Peers = []PeerConfig{{ID: "peer", Addr: "127.0.0.1:1"}}
 	}
@@ -154,16 +155,27 @@ func TestNamespaceDropPriorTermCancellationReusesOrderingEntry(t *testing.T) {
 	raft, base := namespacePriorTermLeader(t, CmdCreateNode, false)
 	for attempt := 0; attempt < 2; attempt++ {
 		ctx, cancel := context.WithCancel(context.Background())
-		op, result := namespacePriorTermDrop(t, raft, ctx)
+		t.Cleanup(cancel)
+		// The public route is covered above. Drive admission directly here so
+		// cancellation of a reused ordering entry cannot race queue submission.
+		data, err := encodeGob(namespaceDropCommand{Prefix: "prior_a:"})
+		require.NoError(t, err)
+		op := storage.NewNamespaceDrop(nil)
+		future := &applyFuture{caller: ctx, cmd: &Command{Type: CmdDeleteByPrefix, Data: data, namespaceDrop: op}, errCh: make(chan error, 1), doneCh: make(chan struct{})}
+		raft.wg.Add(1)
+		go func() {
+			defer raft.wg.Done()
+			raft.processApply(context.Background(), future)
+		}()
 		require.Eventually(t, func() bool { return namespacePriorTermLogLength(raft) >= 3 }, time.Second, time.Millisecond)
 		cancel()
-		require.ErrorIs(t, <-result, context.Canceled)
+		require.ErrorIs(t, <-future.errCh, context.Canceled)
 		<-op.Done()
 		require.False(t, op.Committed())
 		require.Equal(t, 3, namespacePriorTermLogLength(raft), "reuse one current-term entry; cancelled DROP never enters the log")
-		_, err := base.GetNode("prior_a:old")
+		_, err = base.GetNode("prior_a:old")
 		require.NoError(t, err)
-		_, err = base.CreateNode(&storage.Node{ID: "prior_a:unfenced"})
+		_, err = base.CreateNode(&storage.Node{ID: storage.NodeID([]string{"prior_a:first", "prior_a:second"}[attempt])})
 		require.NoError(t, err)
 	}
 	raft.logMu.RLock()
