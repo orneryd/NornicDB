@@ -154,11 +154,18 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	return node.ID, nil
 }
 
+type nodeReadCacheMode uint8
+
+const (
+	nodeReadCacheFull nodeReadCacheMode = iota
+	nodeReadCacheQuery
+)
+
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
 // miss decode via decode, decay filter and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
 // copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), readCache bool) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), cacheMode nodeReadCacheMode) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -182,11 +189,11 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 				return true, nil
 			}
 		}
-		if !readCache {
-			return false, nil
-		}
 		b.nodeCacheMu.RLock()
 		value, found := b.nodeCache[id]
+		if !found && cacheMode == nodeReadCacheQuery {
+			value, found = b.queryNodeCache[id]
+		}
 		if found {
 			node = value
 		}
@@ -240,7 +247,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
-	}, copyNode, b.cacheFillNode, true)
+	}, copyNode, b.cacheFillNode, nodeReadCacheFull)
 }
 
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
@@ -250,14 +257,6 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-
-	if node, ok := b.cacheLoadQueryNode(id); ok && b.writeBehind == nil {
-		atomic.AddInt64(&b.cacheHits, 1)
-		if b.filterNodeByDecay(node, DecayScoringTime()) {
-			return nil, ErrNotFound
-		}
-		return node, nil
-	}
 	return b.getNodeByID(id,
 		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 			return b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
@@ -266,7 +265,7 @@ func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
 		},
 		copyNodeForCaller,
 		b.cacheFillQueryNode,
-		true,
+		nodeReadCacheQuery,
 	)
 }
 
@@ -327,7 +326,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
-	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, true)
+	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, nodeReadCacheFull)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
@@ -337,7 +336,7 @@ func (b *BadgerEngine) GetNodeProjected(id NodeID, properties []string) (*Node, 
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 	return b.getNodeByID(id, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, nil)
-	}, copyNodeWithoutEmbeddings, nil, true)
+	}, copyNodeWithoutEmbeddings, nil, nodeReadCacheFull)
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
