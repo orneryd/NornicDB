@@ -4,6 +4,8 @@ import (
 	"context"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // Parsing of a RETURN/WITH projection's modifier tail: the ORDER BY terms and
@@ -18,6 +20,13 @@ type orderByTerm struct {
 // inside braces (COLLECT { … ORDER BY … }, map literals) belong to nested
 // expressions, never to the projection (#652, #547).
 func parseOrderByTerms(modifiers string) []orderByTerm {
+	if p := fabric.ResultModifierSyntax(modifiers); p != nil {
+		var terms []orderByTerm
+		for _, item := range p.Order {
+			terms = append(terms, orderByTerm{column: item.Expression, descending: item.Desc})
+		}
+		return terms
+	}
 	orderByIndex := topLevelKeywordIndex(modifiers, "ORDER BY")
 	if orderByIndex < 0 {
 		return nil
@@ -30,6 +39,13 @@ func parseOrderByTerms(modifiers string) []orderByTerm {
 // (WITH n ORDER BY n.x WHERE n.y > 0): that WHERE filters the sorted rows and
 // is not part of the last sort item.
 func parseOrderByClause(clause string) []orderByTerm {
+	if items := fabric.OrderItemsSyntax(clause); items != nil {
+		terms := make([]orderByTerm, 0, len(items))
+		for _, item := range items {
+			terms = append(terms, orderByTerm{column: item.Expression, descending: item.Desc})
+		}
+		return terms
+	}
 	clause = strings.TrimSpace(clause)
 	end := len(clause)
 	for _, keyword := range []string{"LIMIT", "SKIP"} {
@@ -103,6 +119,16 @@ type intModifier struct {
 }
 
 func parseIntModifierText(modifiers, keyword string) intModifier {
+	if p := fabric.ResultModifierSyntax(modifiers); p != nil {
+		text := ""
+		switch keyword {
+		case "SKIP":
+			text = p.Skip
+		case "LIMIT":
+			text = p.Limit
+		}
+		return intModifier{text: text, found: text != ""}
+	}
 	idx := findKeywordIndex(modifiers, keyword)
 	if idx == -1 {
 		return intModifier{}

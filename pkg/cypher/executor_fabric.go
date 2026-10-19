@@ -60,22 +60,10 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 	//   - USE <composite>
 	//   - USE <composite>.<constituent>
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
-	opts := defaultKeywordScanOpts()
-	searchFrom := 0
-	for {
-		useIdx := keywordIndexFrom(cypher, "USE", searchFrom, opts)
-		if useIdx < 0 {
-			break
-		}
-		if !fabric.ClauseKeywordAt(cypher, useIdx, "USE") {
-			searchFrom = useIdx + len("USE")
-			continue
-		}
-		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
-		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
+	for _, use := range fabric.ReadQueryStructure(cypher).Uses() {
+		if e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite()) {
 			return true
 		}
-		searchFrom = useIdx + len("USE")
 	}
 	return false
 }
@@ -483,47 +471,7 @@ func (e *StorageExecutor) currentDatabaseName() string {
 // inferTopLevelReturnColumns best-effort derives outer RETURN columns for Fabric queries.
 // This is used when a distributed execution path returns zero rows and no columns.
 func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
-	opts := defaultKeywordScanOpts()
-	opts.SkipBraces = true
-
-	lastReturn := -1
-	searchFrom := 0
-	for {
-		idx := keywordIndexFrom(query, "RETURN", searchFrom, opts)
-		if idx < 0 {
-			break
-		}
-		lastReturn = idx
-		searchFrom = idx + len("RETURN")
-	}
-	if lastReturn < 0 {
-		return nil
-	}
-
-	clause := strings.TrimSpace(query[lastReturn+len("RETURN"):])
-	if clause == "" {
-		return nil
-	}
-
-	// Strip trailing ORDER BY / SKIP / LIMIT at top-level.
-	end := len(clause)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	clause = strings.TrimSpace(clause[:end])
-	clause = strings.TrimSuffix(clause, ";")
-	clause = strings.TrimSpace(clause)
-	if clause == "" {
-		return nil
-	}
-
-	items := e.parseReturnItems(clause)
-	if len(items) == 0 {
-		return nil
-	}
-	return e.buildColumnsFromReturnItems(items)
+	return fabric.ReturnColumns(query)
 }
 
 func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
@@ -679,6 +627,7 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	query = fabric.LocalQuery(query)
 	result, err := exec.executeInternal(ctx, query, params)
 	if err != nil {
 		return nil, nil, err
@@ -693,52 +642,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 }
 
 func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[string]interface{}) string {
-	if len(recordBindings) == 0 {
-		return query
-	}
-	trimmed := strings.TrimSpace(query)
-	if !fabric.ClauseKeywordAt(trimmed, 0, "WITH") {
-		return query
-	}
-	withEnd := findLeadingWithEndLocal(trimmed)
-	if withEnd <= 0 || withEnd >= len(trimmed) {
-		return query
-	}
-	withClause := strings.TrimSpace(trimmed[len("WITH"):withEnd])
-	rest := strings.TrimSpace(trimmed[withEnd:])
-	if rest == "" {
-		return query
-	}
-	// Stripping is safe for simple imported bindings when the next clause is a
-	// top-level read/projection/pipeline clause that can resolve identifiers from
-	// Fabric record bindings.
-	if !(startsWithKeywordFold(rest, "MATCH") ||
-		startsWithKeywordFold(rest, "OPTIONAL MATCH") ||
-		startsWithKeywordFold(rest, "RETURN") ||
-		startsWithKeywordFold(rest, "UNWIND") ||
-		startsWithKeywordFold(rest, "USE")) {
-		return query
-	}
-	imports := splitCommaTopLevelLocal(withClause)
-	if len(imports) == 0 {
-		return query
-	}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		if name == "" || strings.Contains(name, " ") {
-			return query
-		}
-		if _, ok := recordBindings[name]; !ok {
-			return query
-		}
-	}
-	rewritten := rest
-	local := localOccurrences{text: rest}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, &local)
-	}
-	return rewritten
+	return fabric.StripLeadingImportsForRecord(query, recordBindings)
 }
 
 func findLeadingWithEndLocal(query string) int {
