@@ -104,7 +104,10 @@ func TestPeriodicBatchRollbackIsAtomic(t *testing.T) {
 				nodes, err := committed.GetNodesByLabel("U5BatchAtomic")
 				require.NoError(t, err)
 				require.Len(t, nodes, 2, "failed batch rolls back its earlier action, retaining completed batch")
-				require.Equal(t, [][]interface{}{{int64(2), int64(2), int64(1)}}, result.Rows)
+				require.Len(t,result.Rows,1)
+    observed:=make(map[string]interface{},len(result.Columns))
+    for index,column:=range result.Columns { observed[column]=result.Rows[0][index] }
+    require.Equal(t,map[string]interface{}{"committedOperations":int64(2),"failedOperations":int64(2),"failedBatches":int64(1)},observed)
 			})
 		}
 	}
