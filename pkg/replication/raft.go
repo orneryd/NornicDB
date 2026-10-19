@@ -124,7 +124,11 @@ type RaftReplicator struct {
 	leaderAddr  string
 
 	// Log (protected by logMu)
-	logMu       sync.RWMutex
+	logMu sync.RWMutex
+
+	// applyMu serializes state-machine application and discard cleanup.
+	// Metadata locks are released before either invokes storage.
+	applyMu     sync.Mutex
 	log         []*RaftLogEntry
 	commitIndex uint64
 	lastApplied uint64
@@ -574,6 +578,8 @@ func (r *RaftReplicator) sendVoteRequestRPC(ctx context.Context, conn PeerConnec
 
 // becomeLeader transitions this node to leader state.
 func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 	r.mu.Lock()
 	if r.currentTerm != term || r.state == StateLeader {
 		r.mu.Unlock()
@@ -826,7 +832,9 @@ func (r *RaftReplicator) runApplyLoop(ctx context.Context) {
 func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) {
 	if future.caller != nil {
 		if err := future.caller.Err(); err != nil {
-			if op:=future.cmd.namespaceDrop;op!=nil{op.Abort()}
+			if op := future.cmd.namespaceDrop; op != nil {
+				op.Abort()
+			}
 			future.errCh <- err
 			return
 		}
@@ -837,7 +845,9 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 	r.mu.RUnlock()
 
 	if !isLeader {
-		if op:=future.cmd.namespaceDrop;op!=nil{op.Abort()}
+		if op := future.cmd.namespaceDrop; op != nil {
+			op.Abort()
+		}
 		future.errCh <- ErrNotLeader
 		return
 	}
@@ -851,7 +861,9 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 			caller = context.Background()
 		}
 		if err := r.awaitNamespacePreparationFrontier(caller, future.cmd, term); err != nil {
-			if op:=future.cmd.namespaceDrop;op!=nil{op.Abort()}
+			if op := future.cmd.namespaceDrop; op != nil {
+				op.Abort()
+			}
 			future.resolve(err)
 			return
 		}
@@ -895,6 +907,9 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		r.log = append(r.log, entry)
 		future.index = entry.Index
 		future.term = term
+		r.futuresMu.Lock()
+		r.futures[entry.Index] = future
+		r.futuresMu.Unlock()
 		r.logMu.Unlock()
 		return nil
 	}
@@ -914,29 +929,13 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		}
 	}
 
-	// Track this future for commit notification
-	r.futuresMu.Lock()
-	r.futures[entry.Index] = future
-	r.futuresMu.Unlock()
-
 	// If single node, commit immediately
 	if r.peerCount() == 0 {
 		r.logMu.Lock()
 		r.commitIndex = entry.Index
 		r.logMu.Unlock()
 
-		// Apply to state machine
-		err := r.applyCommittedCommand(future.cmd)
-
-		r.logMu.Lock()
-		r.lastApplied = entry.Index
-		r.logMu.Unlock()
-
-		r.futuresMu.Lock()
-		delete(r.futures, entry.Index)
-		r.futuresMu.Unlock()
-
-		future.resolve(err)
+		r.applyCommittedEntries()
 		return
 	}
 
@@ -1013,6 +1012,8 @@ func (r *RaftReplicator) runCommitLoop(ctx context.Context) {
 
 // advanceCommitIndex checks if any entries can be committed.
 func (r *RaftReplicator) advanceCommitIndex() {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 	r.mu.RLock()
 	isLeader := r.state == StateLeader
 	term := r.currentTerm
@@ -1023,7 +1024,6 @@ func (r *RaftReplicator) advanceCommitIndex() {
 	}
 
 	r.logMu.Lock()
-	defer r.logMu.Unlock()
 
 	// Find highest index replicated to majority of servers
 	for n := r.commitIndex + 1; n < uint64(len(r.log)); n++ {
@@ -1049,29 +1049,8 @@ func (r *RaftReplicator) advanceCommitIndex() {
 		}
 	}
 
-	// Apply committed entries to state machine
-	for r.lastApplied < r.commitIndex {
-		applyIdx := r.lastApplied + 1
-
-		if int(applyIdx) < len(r.log) {
-			entry := r.log[applyIdx]
-			var applyErr error
-			if entry.Command != nil {
-				if err := r.applyCommittedCommand(entry.Command); err != nil {
-					applyErr = err
-					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
-				}
-			}
-			notify := func(error) {}
-			if future := r.takeApplyFuture(applyIdx); future != nil {
-				notify = future.resolve
-			}
-			if entry.Command != nil {
-				notify(applyErr)
-			}
-		}
-		r.lastApplied = applyIdx
-	}
+	r.logMu.Unlock()
+	r.applyCommittedEntriesLocked()
 }
 
 // runPeerConnector maintains connections to peers.
@@ -1244,6 +1223,8 @@ func (r *RaftReplicator) handleVoteRequest(req *VoteRequest) *VoteResponse {
 
 // handleAppendEntriesRequest processes an incoming AppendEntries request.
 func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *AppendEntriesResponse {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 	// TRC-20: follower-side apply span.
 	_, applySpan := startApplySpan(context.Background(), req.LeaderID, req.Term, req.PrevLogIndex, len(req.Entries))
 	defer applySpan.End()
@@ -1285,7 +1266,12 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 
 	// Check log consistency
 	r.logMu.Lock()
-	defer r.logMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			r.logMu.Unlock()
+		}
+	}()
 
 	// Check if we have the entry at PrevLogIndex with matching term
 	if req.PrevLogIndex > 0 {
@@ -1317,7 +1303,9 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		if int(idx) < len(r.log) {
 			if r.log[idx].Term != entry.Term {
 				// Conflict: delete this and all following entries
-				for _, discarded := range r.log[idx:] {
+				discardedEntries := append([]*RaftLogEntry(nil), r.log[idx:]...)
+				r.logMu.Unlock()
+				for _, discarded := range discardedEntries {
 					if discarded.Command != nil && discarded.Command.namespaceDrop != nil {
 						discarded.Command.namespaceDrop.Abort()
 					}
@@ -1325,6 +1313,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 						future.resolve(ErrNotLeader)
 					}
 				}
+				r.logMu.Lock()
 				clear(r.log[idx:])
 				r.log = r.log[:idx]
 				r.log = append(r.log, entry)
@@ -1353,25 +1342,9 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		}
 	}
 
-	// Apply committed entries to state machine
-	for r.lastApplied < r.commitIndex {
-		applyIdx := r.lastApplied + 1
-		if int(applyIdx) < len(r.log) {
-			entry := r.log[applyIdx]
-			if entry.Command != nil {
-				applyErr := r.applyCommittedCommand(entry.Command)
-				if applyErr != nil {
-					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
-				}
-				notify := func(error) {}
-				if future := r.takeApplyFuture(entry.Index); future != nil {
-					notify = future.resolve
-				}
-				notify(applyErr)
-			}
-		}
-		r.lastApplied = applyIdx
-	}
+	locked = false
+	r.logMu.Unlock()
+	r.applyCommittedEntriesLocked()
 
 	resp.Success = true
 	return resp

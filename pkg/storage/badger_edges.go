@@ -24,7 +24,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	release, barrierErr := b.beginWrite(namespaceOfEdge(edge))
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -289,7 +289,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	release, barrierErr := b.beginWrite(namespaceOfEdge(edge))
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -513,7 +513,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	release, barrierErr := b.beginWrite(namespaceForEdgeID(id))
 	if barrierErr != nil {
 		return barrierErr
 	}

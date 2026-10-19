@@ -24,6 +24,7 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}
+	defer wal.reconcileNamespaceObligations(b)
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair

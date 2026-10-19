@@ -442,6 +442,8 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 		return err
 	}
 	snapshotSequence := w.wal.sequence.Load()
+	if err := checkNamespaceSnapshot(w.engine); err != nil { return err }
+	if err := w.wal.checkNamespaceSnapshot(snapshotSequence); err != nil { return err }
 	if w.hasCompacted.Load() && snapshotSequence == w.compactedSequence.Load() {
 		return nil
 	}

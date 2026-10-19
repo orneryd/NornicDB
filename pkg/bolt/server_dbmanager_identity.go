@@ -18,10 +18,10 @@ func (a *boltDatabaseManagerAdapter) CreateDatabaseContext(ctx context.Context, 
 }
 
 func (a *boltDatabaseManagerAdapter) CreateDatabase(name string) error {
-	return a.manager.CreateDatabase(name)
+	return a.manager.CreateDatabaseContext(context.Background(), name)
 }
 func (a *boltDatabaseManagerAdapter) DropDatabase(name string) error {
-	return a.manager.DropDatabase(name)
+	return a.manager.DropDatabaseContext(context.Background(), name)
 }
 func (a *boltDatabaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
 	return a.manager.DropDatabaseContext(ctx, name)

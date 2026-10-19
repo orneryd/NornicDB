@@ -349,6 +349,10 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // processing non-existent nodes. It will skip up to 100 stale entries
 // before giving up to prevent infinite loops.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
+	releaseAdmission, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+	if err != nil { return nil }
+	defer releaseAdmission()
+
 	if b.ensureOpen() != nil {
 		return nil
 	}

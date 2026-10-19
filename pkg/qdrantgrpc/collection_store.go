@@ -80,6 +80,7 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
+	if err := ctx.Err(); err != nil { return err }
 	return s.CreateWithQuantization(ctx, name, dims, distance, nil)
 }
 
@@ -103,7 +104,7 @@ func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, na
 		return fmt.Errorf("invalid dimensions: %d", dims)
 	}
 
-	if err := s.dbManager.CreateDatabase(name); err != nil {
+	if err := s.dbManager.CreateDatabaseContext(ctx, name); err != nil {
 		return err
 	}
 
@@ -177,6 +178,7 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 }
 
 func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil { return err }
 	_ = ctx
 	if name == "" {
 		return ErrCollectionNotFound

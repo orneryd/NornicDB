@@ -2835,9 +2835,9 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	var releaseWrite func()
 	var writeErr error
 	if tx.schemaRuntime != nil {
-		releaseWrite, writeErr = tx.engine.beginSchemaWrite()
+		releaseWrite, writeErr = tx.engine.beginSchemaWrite(tx.namespace)
 	} else {
-		releaseWrite, writeErr = tx.engine.beginWrite()
+		releaseWrite, writeErr = tx.engine.beginWrite(tx.namespace)
 	}
 	if writeErr != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)

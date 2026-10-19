@@ -1,6 +1,7 @@
 package storage
 
 import (
+ "context"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -135,6 +136,9 @@ func (b *BadgerEngine) runDeleteCleanup(counted int64) {
 // which drops delete markers with no older data below them. It writes the
 // throw-away marker key with an ordinary commit and drops it.
 func (b *BadgerEngine) compactDeletedEntries() error {
+ release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+ if err != nil { return err }
+ defer release()
 	if err := b.withUpdate(func(txn *badger.Txn) error {
 		return txn.Set(deleteCleanupMarkerKey, []byte{1})
 	}); err != nil {

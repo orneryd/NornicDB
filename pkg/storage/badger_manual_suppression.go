@@ -93,7 +93,7 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 // search. ErrNotFound when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
 	revision := b.namespaceLifetimeRevision()
-	finish, err := b.beginWrite()
+	finish, err := b.beginWrite(namespaceForNodeID(id))
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
 	revision := b.namespaceLifetimeRevision()
-	release, err := b.beginWrite()
+	release, err := b.beginWrite(namespaceForEdgeID(id))
 	if err != nil {
 		return err
 	}

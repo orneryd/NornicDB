@@ -151,7 +151,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		units = append(units, func(txn *badger.Txn) error { return txn.Delete(metaKey) })
 	}
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	release, err := b.beginWrite()
+	release, err := b.beginWrite(namespaceOfNode(node))
 	if err != nil {
 		return err
 	}
