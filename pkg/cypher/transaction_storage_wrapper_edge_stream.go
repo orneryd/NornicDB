@@ -12,14 +12,25 @@ import (
 // converted to user-facing IDs per visited edge, so constraint validation
 // inside a transaction never collects the type into a slice.
 func (w *transactionStorageWrapper) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*storage.Edge) error) error {
+	return w.streamEdgesByType(ctx, edgeType, false, visit)
+}
+
+func (w *transactionStorageWrapper) streamEdgesByType(ctx context.Context, edgeType string, stored bool, visit func(*storage.Edge) error) error {
 	if visit == nil {
 		return storage.ErrInvalidData
 	}
 	if w.tx == nil {
+		if stored {
+			return storage.StreamStoredEdgesByType(ctx, w.underlying, edgeType, visit)
+		}
 		return storage.StreamEdgesByType(ctx, w.underlying, edgeType, visit)
 	}
 	prefix := w.namespace + w.separator
-	return w.tx.StreamEdgesByType(ctx, edgeType, func(edge *storage.Edge) error {
+	stream := w.tx.StreamEdgesByType
+	if stored {
+		stream = w.tx.StreamStoredEdgesByType
+	}
+	return stream(ctx, edgeType, func(edge *storage.Edge) error {
 		if edge == nil {
 			return nil
 		}

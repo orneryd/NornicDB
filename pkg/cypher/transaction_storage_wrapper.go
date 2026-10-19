@@ -377,10 +377,18 @@ func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.No
 // Namespace conversion happens per visited node, so unconsumed nodes are never
 // copied into a transaction-local result slice.
 func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+	return w.streamNodesByLabelProjected(label, properties, false, visit)
+}
+
+func (w *transactionStorageWrapper) streamNodesByLabelProjected(label string, properties []string, stored bool, visit func(*storage.Node) error) error {
 	if visit == nil {
 		return storage.ErrInvalidData
 	}
-	return w.tx.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+	stream := w.tx.StreamNodesByLabelProjected
+	if stored {
+		stream = w.tx.StreamStoredNodesByLabelProjected
+	}
+	return stream(label, properties, func(node *storage.Node) error {
 		if node == nil {
 			return nil
 		}
