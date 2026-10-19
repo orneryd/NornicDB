@@ -596,16 +596,13 @@ func (a *databaseInfoAdapter) CreatedAt() time.Time {
 //   - For large databases, this may take a few milliseconds
 //   - Consider caching if this endpoint is called frequently
 func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbName string) {
+	if !s.authorizeDatabaseRead(w, r, dbName) {
+		return
+	}
 	// Check if database exists (also accepts dotted composite.alias references).
 	// This is a fast lookup in the DatabaseManager's metadata.
 	if !s.dbManager.ExistsOrIsConstituent(dbName) {
 		s.writeNeo4jDatabaseNotFound(w, r, dbName)
-		return
-	}
-
-	// Database information reads stored counts and derived search state, so it
-	// needs the same direct-read decision as graph/search routes.
-	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
 

@@ -1136,7 +1136,7 @@ func TestGraphQLNodeAndSubscriptionAdditionalCoverage(t *testing.T) {
 	})
 
 	t.Run("subscription helpers validate broker and delegate", func(t *testing.T) {
-		empty := &subscriptionResolver{&Resolver{}}
+		empty := &subscriptionResolver{&Resolver{dbManager: resolver.dbManager}}
 
 		_, err := empty.subscriptionNodeCreated(ctx, nil)
 		require.ErrorContains(t, err, "event broker not initialized")
