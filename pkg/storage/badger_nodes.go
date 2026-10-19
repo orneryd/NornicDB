@@ -250,15 +250,8 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	if b.writeBehind != nil {
-		if n, found, deleted := b.writeBehind.GetNode(id); found {
-			if deleted {
-				return nil, ErrNotFound
-			}
-			return copyNodeForCaller(n), nil
-		}
-	}
-	if node, ok := b.cacheLoadQueryNode(id); ok {
+
+	if node, ok := b.cacheLoadQueryNode(id); ok && b.writeBehind == nil {
 		atomic.AddInt64(&b.cacheHits, 1)
 		if b.filterNodeByDecay(node, DecayScoringTime()) {
 			return nil, ErrNotFound
@@ -266,11 +259,14 @@ func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
 		return node, nil
 	}
 	return b.getNodeByID(id,
-		func(txn *badger.Txn, val []byte) (*Node, error) {
-			return b.decodeNodeEmbeddingState(txn, val, id, false)
+		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+			return b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
+				return b.loadNodeEmbeddingState(txn, node, id, false)
+			})
 		},
 		copyNodeForCaller,
 		b.cacheFillQueryNode,
+		true,
 	)
 }
 
