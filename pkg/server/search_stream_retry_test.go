@@ -69,7 +69,7 @@ func TestSearchStreamRetryHTTP(t *testing.T) {
 							page.IDs = append(page.IDs, row.(map[string]any)["node"].(map[string]any)["id"].(string))
 						}
 						return page, nil
-						}}
+					}}
 			})
 		})
 	}
