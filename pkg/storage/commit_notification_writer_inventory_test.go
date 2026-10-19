@@ -11,19 +11,40 @@ import (
 // to overtake it even when both cache deltas run in the right order.
 func TestCommitNotifications_AllWriterReservations(t *testing.T) {
 	cases := []struct {
-		name string
+		name  string
 		write func(*BadgerEngine) error
 	}{
 		{"create-node", func(b *BadgerEngine) error { _, err := b.CreateNode(&Node{ID: "test:new"}); return err }},
 		{"update-node", func(b *BadgerEngine) error { return b.UpdateNode(&Node{ID: "test:target"}) }},
 		{"upsert-create-node", func(b *BadgerEngine) error { return b.UpdateNode(&Node{ID: "test:upsert"}) }},
 		{"delete-node-cascade", func(b *BadgerEngine) error { return b.DeleteNode("test:target") }},
-		{"create-edge", func(b *BadgerEngine) error { return b.CreateEdge(&Edge{ID: "test:new-edge", StartNode: "test:target", EndNode: "test:peer", Type: "R"}) }},
-		{"update-edge", func(b *BadgerEngine) error { return b.UpdateEdge(&Edge{ID: "test:edge", StartNode: "test:target", EndNode: "test:peer", Type: "S"}) }},
+		{"create-edge", func(b *BadgerEngine) error {
+			return b.CreateEdge(&Edge{ID: "test:new-edge", StartNode: "test:target", EndNode: "test:peer", Type: "R"})
+		}},
+		{"update-edge", func(b *BadgerEngine) error {
+			return b.UpdateEdge(&Edge{ID: "test:edge", StartNode: "test:target", EndNode: "test:peer", Type: "S"})
+		}},
 		{"delete-edge", func(b *BadgerEngine) error { return b.DeleteEdge("test:edge") }},
-		{"embedding-sidecar", func(b *BadgerEngine) error { n, err := b.GetNode("test:target"); if err != nil { return err }; n.ChunkEmbeddings = [][]float32{{1, 2}}; return b.UpdateNodeEmbeddingSidecar(n) }},
-		{"manual-suppression", func(b *BadgerEngine) error { return b.SetNodeManuallySuppressed("test:target", true) }},
-		{"transaction", func(b *BadgerEngine) error { tx, err := b.BeginTransaction(); if err != nil { return err }; defer tx.Rollback(); if _, err := tx.CreateNode(&Node{ID: "test:transaction"}); err != nil { return err }; return tx.Commit() }},
+		{"embedding-sidecar", func(b *BadgerEngine) error {
+			n, err := b.GetNode("test:target")
+			if err != nil {
+				return err
+			}
+			n.ChunkEmbeddings = [][]float32{{1, 2}}
+			return b.UpdateNodeEmbeddingSidecar(n)
+		}},
+		{"manual-suppression", func(b *BadgerEngine) error { return b.SetNodeManuallySuppressed("test:target", false) }},
+		{"transaction", func(b *BadgerEngine) error {
+			tx, err := b.BeginTransaction()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if _, err := tx.CreateNode(&Node{ID: "test:transaction"}); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -33,6 +54,9 @@ func TestCommitNotifications_AllWriterReservations(t *testing.T) {
 			_, err = b.CreateNode(&Node{ID: "test:peer"})
 			require.NoError(t, err)
 			require.NoError(t, b.CreateEdge(&Edge{ID: "test:edge", StartNode: "test:target", EndNode: "test:peer", Type: "R"}))
+			if tc.name == "manual-suppression" {
+				require.NoError(t, b.SetNodeManuallySuppressed("test:target", true))
+			}
 			var events int
 			b.OnNodeCreated(func(*Node) { events++ })
 			b.OnNodeUpdated(func(*Node) { events++ })

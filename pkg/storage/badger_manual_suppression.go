@@ -101,7 +101,7 @@ func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) err
 }
 
 func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool, revision uint64) error {
-	finish, err := b.beginWrite(namespaceForNodeID(id))
+	notification, finish, err := b.beginNotifyingWrite(namespaceForNodeID(id))
 	if err != nil {
 		return err
 	}
@@ -114,14 +114,14 @@ func (b *BadgerEngine) setNodeManuallySuppressed(id NodeID, suppressed bool, rev
 		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
 		node = decoded
 		return err
-	})
+	}, notification)
 	if err != nil {
 		return err
 	}
 	b.graphMutationVersions.changed(namespaceForNodeID(id))
 	if !suppressed && node != nil {
 		// Search drops a node it can't load; index it again.
-		b.notifyNodeUpdated(node)
+		notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func (b *BadgerEngine) setEdgeManuallySuppressed(id EdgeID, suppressed bool, rev
 // setManualSuppression writes (or deletes) an entity's suppression key, once
 // its record is found, and mirrors it in memory. decode, when set, reads the
 // record.
-func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error) error {
+func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error, notification ...*commitNotification) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 			return txn.Set(manualSuppressionKey(kind, id), []byte{})
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
-	}, publish, keys)
+	}, publish, keys, notification...)
 }
 
 // manualSuppressionEntityKey is the publication key of the entity a

@@ -13,12 +13,12 @@ import (
 // CommitTransaction preserves database quotas and byte accounting when Cypher
 // commits a raw transaction. Admission covers all staged changes and remains
 // serialized with ordinary writes until publication completes.
-func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
+func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) (commitErr error) {
 	changes := tx.PendingChanges(false)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	committed := false
+	committed, commitAttempted := false, false
 	var release func()
 	defer func() {
 		if release != nil {
@@ -26,12 +26,18 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 		}
 		if !committed {
 			_ = tx.Rollback()
+			// Every admission failure precedes a physical commit. Keep its
+			// cleanup and known outcome together, including future read seams.
+			if !commitAttempted {
+				commitErr = nornicerrors.MarkCommitRolledBack(commitErr)
+			}
 		}
 	}()
 	if err := ctx.Err(); err != nil {
 		return nornicerrors.MarkCommitRolledBack(err)
 	}
 	commit := func(afterPublication func()) error {
+		commitAttempted = true
 		err := tx.CommitContextWithPublication(ctx, afterPublication)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nornicerrors.MarkCommitRolledBack(err)

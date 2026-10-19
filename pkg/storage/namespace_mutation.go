@@ -55,7 +55,7 @@ func (b *BadgerEngine) beginNamespaceMutation(ctx context.Context, namespaces []
 		}
 	}
 	b.mu.RLock()
-	closed := b.closed && mode != namespacePublicationShutdown
+	closed := (b.closed && mode != namespacePublicationShutdown) || (b.closing && mode == namespacePublicationFresh)
 	b.mu.RUnlock()
 	if closed {
 		release()

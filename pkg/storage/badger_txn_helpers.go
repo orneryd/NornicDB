@@ -77,7 +77,7 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
 // is visible and before this returns (badger_publication_stage.go). publish
 // and keys may read what fn recorded: they run after fn. keys returns the
 // entities and unique values the publication touches.
-func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []any) error {
+func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publish func(), keys func() []any, notification ...*commitNotification) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
 		if err := cw.writeOnce(fn); err != nil {
 			return err
@@ -87,7 +87,7 @@ func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publ
 			cw.publishKeys = keys()
 		}
 		return nil
-	})
+	}, notification...)
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each
@@ -114,7 +114,7 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
+func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, notification ...*commitNotification) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -128,6 +128,9 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 		}
 		defer db.endRead(readTs)
 		cw := b.newCommitWriter(db, txn)
+		if len(notification) > 0 {
+			cw.notification = notification[0]
+		}
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)

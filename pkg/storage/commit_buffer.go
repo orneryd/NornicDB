@@ -44,8 +44,12 @@ type bufferedCommit struct {
 	namespace string
 	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
 	ops       []Operation
-	writes    map[string][]byte
-	deletes   map[string]bool
+
+	// Reserved at ACK; readied after replay retires its overlay.
+	notification *commitNotification
+
+	writes  map[string][]byte
+	deletes map[string]bool
 
 	// version is the MVCC version allocated at ACK time. The DB-local
 	// sequence counter orders the commit's history exactly where it

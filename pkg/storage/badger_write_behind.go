@@ -136,6 +136,9 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// synchronous commit's check of the buffer (commitWriter.admit): a
 	// synchronous commit of an entity sees it, or commits before it.
 	tx.badgerDB.commitGate.Lock()
+	// ACK and synchronous timestamp reservations share the commit gate.
+	c.notification = &commitNotification{revisionPublished: true}
+	tx.engine.reserveCommitNotification(c.notification)
 	tx.engine.writeBehind.AppendCommit(c)
 	tx.badgerDB.commitGate.Unlock()
 	// The write is committed and visible to every later read the moment it is
@@ -297,28 +300,68 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit, beforeNoti
 // publishCounts retires the generation count overlay under the same locks that
 // publish persisted counters. Entity/cache callbacks run afterward without locks.
 // beforeNotifications run once the replay is published, before its listeners.
-func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), beforeNotifications ...func()) error {
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), beforeNotifications ...func()) (result error) {
 	if len(commits) == 0 {
 		return nil
 	}
-	// Both the generation flusher and exported WAL replay reach this owner.
-	// Previously acknowledged work may drain a prepared namespace fence,
-	// while its physical publication must still exclude DROP and Close.
+	// Replay retains the parent namespace publication admission.
 	release, err := b.beginPublication(true)
 	if err != nil {
 		return err
 	}
-	var notifications []*commitNotification
 	defer func() {
-		release()
-		for _, notification := range notifications {
-			b.completeCommitNotification(notification)
+		if release != nil {
+			release()
 		}
 	}()
 
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
 	cw := b.newCommitWriter(b.db, txn)
 	cw.replay = true
+	// WAL recovery has no in-memory ACK reservations. Reserve the recovered
+	// batch at its physical publication, preserving its operation order.
+	var replayNotification *commitNotification
+	var replayOps []Operation
+	needsReplayNotification := false
+	for _, c := range commits {
+		if c.notification == nil && len(c.ops) > 0 {
+			needsReplayNotification = true
+		}
+	}
+	if needsReplayNotification {
+		replayNotification = &commitNotification{}
+		cw.notification = replayNotification
+	}
+	defer func() {
+		// Replay shares the same Close/sidecar publication discipline as
+		// direct and transactional writes. Dispatch only after releasing it.
+		release()
+		release = nil
+		if result == nil {
+			if replayNotification != nil {
+				// Recovery hydrates the operations from their typed bodies.
+				// Capture events afterward, not the legacy JSON projections.
+				for _, c := range commits {
+					if c.notification == nil {
+						replayOps = append(replayOps, c.ops...)
+					}
+				}
+				replayNotification.ops = replayOps
+			}
+			for _, c := range commits {
+				if c.notification != nil {
+					c.notification.ops = append([]Operation(nil), c.ops...)
+					b.readyCommitNotification(c.notification)
+				}
+			}
+		}
+		// Failed replay cancels only a new physical reservation. An ACK keeps
+		// its position and payload pending for the buffer's retry.
+		b.readyCommitNotification(replayNotification)
+		// Ready the whole generation before dispatch: a callback panic must
+		// not strand later ACKs in this already-applied generation.
+		b.drainCommitNotifications()
+	}()
 	// Write through the commit writer's own batch writer, exactly like the
 	// sync commit path: cw.finish() commits cw.batchWriter's open batch, so
 	// a separate batchWriter whose txn never follows the batch rotation
@@ -567,20 +610,14 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	for _, ready := range beforeNotifications {
 		ready()
 	}
-	for _, c := range commits {
-		notification := b.reserveCommitOperations(c.ops)
-		b.prepareCommitOperations(c.ops, notification != nil, c.recovered)
-		if notification != nil {
-			notifications = append(notifications, notification)
-		}
-	}
+
 	return nil
 }
 
 // publishCommitOperations is a replayed commit's publication: the entity
 // caches, indexes and unique-value registry, which the ordered stage runs
 // (badger_publication_stage.go). Its listeners run afterwards, outside the
-// stage through the existing commit notification queue.
+// stage through the ordered notification queue.
 func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
 	for _, op := range ops {
 		switch op.Type {
@@ -618,7 +655,6 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 		b.publishUniqueValuesForOps(schema, ops)
 	}
 }
-
 
 // applyWriteBehindCountDeltasLocked persists one generation's merged
 // derived-count deltas in a single metadata transaction. The caller must
