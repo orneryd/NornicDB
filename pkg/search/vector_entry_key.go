@@ -398,3 +398,8 @@ func vectorIDInSeedNodeSet(vectorID string, seedNodeIDs map[string]struct{}) boo
 	_, ok = seedNodeIDs[owner]
 	return ok
 }
+
+func vectorNodeIdentity(id string) vectorNodeID { return vectorNodeID(id) }
+func vectorEntryIdentity(key string) vectorEntryID { return vectorEntryID(key) }
+func (id vectorNodeID) nodeIDString() string { return string(id) }
+func (id vectorEntryID) entryKeyString() string { return string(id) }

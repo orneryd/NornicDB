@@ -233,7 +233,8 @@ const (
 // clusterAdmission is one population change applied to a generation.
 type clusterAdmission struct {
 	kind clusterAdmissionKind
-	id   string // vector ID, or node ID for clusterNodeChanged
+	vectorID vectorEntryID // vector add/remove admissions
+	nodeID vectorNodeID // document changes
 	// withText: a vector change outside a node change carries its document's
 	// tokens itself (backfill); inside one, the node change accounts for text.
 	withText bool
@@ -324,13 +325,13 @@ func (s *Service) applyClusterAdmission(gen *clusterGeneration, op clusterAdmiss
 	case clusterVectorAdded, clusterVectorRemoved:
 		var tokens map[string]float64
 		if op.withText && published {
-			tokens = s.clusterTextTokens(op.id)
+			tokens = s.clusterTextTokens(op.vectorID.entryKeyString())
 		}
 		// A staged generation re-derives the terms of clusters whose
 		// membership changed; a published one changes terms only by the
 		// tokens a change carries (addTerms marks those clusters).
-		if previous, wasMember := gen.unassign(op.id); wasMember {
-			gen.graphRemove(previous, op.id)
+		if previous, wasMember := gen.unassign(op.vectorID.entryKeyString()); wasMember {
+			gen.graphRemove(previous, op.vectorID.entryKeyString())
 			gen.addTerms(previous, tokens, -1)
 			if !published {
 				gen.touch(previous)
@@ -339,19 +340,19 @@ func (s *Service) applyClusterAdmission(gen *clusterGeneration, op clusterAdmiss
 		if op.kind == clusterVectorRemoved {
 			break
 		}
-		_, _, cluster, ok := gen.assign(op.id)
+		_, _, cluster, ok := gen.assign(op.vectorID.entryKeyString())
 		if !ok {
 			break
 		}
 		if gen.graphs != nil {
-			gen.graphAdd(cluster, op.id, s.getVectorLookup())
+			gen.graphAdd(cluster, op.vectorID.entryKeyString(), s.getVectorLookup())
 		}
 		gen.addTerms(cluster, tokens, 1)
 		if !published {
 			gen.touch(cluster)
 		}
 	case clusterNodeChanged:
-		ids := s.nodeVectorIDsLocked(op.id)
+		ids := s.nodeVectorIDsLocked(op.nodeID.nodeIDString())
 		if !published {
 			for _, id := range ids {
 				if cluster, ok := gen.clusterOf(id); ok {
@@ -434,7 +435,7 @@ func (s *Service) admitCanonicalLocked(id string, withText, onlyChanged bool) {
 	vec, ok := s.getVectorLookup()(id)
 	if !ok || len(vec) == 0 {
 		if _, admitted := s.clusterIndex.Get(id); admitted {
-			s.admitLocked(clusterAdmission{kind: clusterVectorRemoved, id: id, withText: withText})
+			s.admitLocked(clusterAdmission{kind: clusterVectorRemoved, vectorID: vectorEntryIdentity(id), withText: withText})
 			s.clusterIndex.Remove(id)
 		}
 		return
@@ -447,7 +448,7 @@ func (s *Service) admitCanonicalLocked(id string, withText, onlyChanged bool) {
 	if err := s.clusterIndex.Add(id, vec); err != nil {
 		return
 	}
-	s.admitLocked(clusterAdmission{kind: clusterVectorAdded, id: id, withText: withText})
+	s.admitLocked(clusterAdmission{kind: clusterVectorAdded, vectorID: vectorEntryIdentity(id), withText: withText})
 }
 
 // retireClusterVectorLocked removes id from the cluster population and the
@@ -458,7 +459,7 @@ func (s *Service) retireClusterVectorLocked(id string) {
 	if s.clusterIndex == nil {
 		return
 	}
-	s.admitLocked(clusterAdmission{kind: clusterVectorRemoved, id: id})
+	s.admitLocked(clusterAdmission{kind: clusterVectorRemoved, vectorID: vectorEntryIdentity(id)})
 	s.clusterIndex.Remove(id)
 }
 
@@ -487,7 +488,7 @@ func (s *Service) endClusterNodeChangeLocked(nodeID string, before *clusterNodeC
 	if s.clusterGen == nil && s.clusterStaging == nil {
 		return
 	}
-	s.admitLocked(clusterAdmission{kind: clusterNodeChanged, id: nodeID, before: before})
+	s.admitLocked(clusterAdmission{kind: clusterNodeChanged, nodeID: vectorNodeIdentity(nodeID), before: before})
 }
 
 // openClusterStaging starts recording admissions for a generation about to
@@ -522,7 +523,7 @@ func (s *Service) stageStaleClusterMembers(gen *clusterGeneration) {
 		return
 	}
 	for _, id := range stale {
-		*s.clusterStaging = append(*s.clusterStaging, clusterAdmission{kind: clusterVectorAdded, id: id})
+		*s.clusterStaging = append(*s.clusterStaging, clusterAdmission{kind: clusterVectorAdded, vectorID: vectorEntryIdentity(id)})
 	}
 }
 

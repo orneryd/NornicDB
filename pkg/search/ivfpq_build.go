@@ -15,7 +15,7 @@ import (
 const ivfpqTrainSeed = 42
 
 // BuildIVFPQFromVectorStore builds a full IVF/PQ index from VectorFileStore.
-func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profile IVFPQProfile, seedDocIDs []string) (*IVFPQIndex, *IVFPQBuildStats, error) {
+func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profile IVFPQProfile, seedEntryIDs []string) (*IVFPQIndex, *IVFPQBuildStats, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -31,7 +31,7 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 	start := time.Now()
 	rng := rand.New(rand.NewSource(ivfpqTrainSeed))
 
-	training, err := ivfpqCollectTrainingSample(ctx, vfs, profile.TrainingSampleMax, seedDocIDs, rng)
+	training, err := ivfpqCollectTrainingSample(ctx, vfs, profile.TrainingSampleMax, seedEntryIDs, rng)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -124,13 +124,13 @@ func ivfpqOverflowBytesPerVector(overflowCount, vectorCount, dimensions int) flo
 	return float64(overflowCount*dimensions*4) / float64(vectorCount)
 }
 
-func ivfpqCollectTrainingSample(ctx context.Context, vfs *VectorFileStore, maxSample int, seedDocIDs []string, rng *rand.Rand) ([][]float32, error) {
+func ivfpqCollectTrainingSample(ctx context.Context, vfs *VectorFileStore, maxSample int, seedEntryIDs []string, rng *rand.Rand) ([][]float32, error) {
 	if maxSample <= 0 {
 		maxSample = 1000
 	}
 	sample := make([][]float32, 0, maxSample)
-	seenSeed := make(map[string]struct{}, len(seedDocIDs))
-	for _, id := range seedDocIDs {
+	seenSeed := make(map[string]struct{}, len(seedEntryIDs))
+	for _, id := range seedEntryIDs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

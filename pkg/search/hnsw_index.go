@@ -223,6 +223,7 @@ func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 // deterministic diversity choices between vector-distance ties. The hints do
 // not affect distance ordering. They remain compact enough to guide later live
 // insertions and maintenance rebuilds without retaining BM25 postings here.
+// Hint IDs are vector-entry keys; document hints are projected by the key owner.
 func (h *HNSWIndex) SetBuildLexicalHints(hints []LexicalSeedHint) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
