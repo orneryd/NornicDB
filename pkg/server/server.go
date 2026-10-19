@@ -163,7 +163,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -202,6 +201,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
@@ -223,35 +223,20 @@ func embeddingCacheMemoryMB(cacheSize, dimensions int) int {
 	return cacheSize * dimensions * 4 / 1024 / 1024
 }
 
-// waitForDurationOrServerClose sleeps for d and returns true only when the full
-// duration elapsed. It returns false when the server is closing so background
-// retry loops can exit promptly during shutdown.
-func waitForDurationOrServerClose(s *Server, d time.Duration) bool {
+// waitForDurationOrDone sleeps for d and returns true only when the full
+// duration elapsed. It returns false as soon as ctx ends, so background retry
+// loops exit promptly during shutdown.
+func waitForDurationOrDone(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {
-		return true
+		return ctx.Err() == nil
 	}
-	if s == nil {
-		time.Sleep(d)
-		return true
-	}
-
 	timer := time.NewTimer(d)
 	defer timer.Stop()
-	poll := time.NewTicker(250 * time.Millisecond)
-	defer poll.Stop()
-
-	for {
-		if s.closed.Load() {
-			return false
-		}
-		select {
-		case <-timer.C:
-			return true
-		case <-poll.C:
-			if s.closed.Load() {
-				return false
-			}
-		}
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -737,7 +722,14 @@ type Server struct {
 	// embedder constructor (embed.NewEmbedder) when set; New leaves them unset.
 	embedderRetryInitialBackoff time.Duration
 	embedderRetryMaxBackoff     time.Duration
-	newEmbedder                 func(*embed.Config) (embed.Embedder, error)
+	newEmbedder                 func(context.Context, *embed.Config) (embed.Embedder, error)
+
+	// embedderInitCancel and embedderInitDone own the background embedder
+	// initialisation startEmbedderInit runs: Stop cancels it and waits for
+	// embedderInitDone, so it never outlives the server, and DB.Close waits
+	// for it too. Both are nil when embeddings are disabled.
+	embedderInitCancel context.CancelFunc
+	embedderInitDone   chan struct{}
 
 	// Metrics
 	requestCount   atomic.Int64
@@ -1617,7 +1609,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			localization.ServerEmbeddingModelLoadingEvent(embedConfig.Model, embedConfig.Provider,
 				"server starts immediately; embeddings available after model loads"))
 
-		go s.initEmbedderWithRetry(embedConfig, config.EmbeddingCacheSize, mcpServer, db)
+		s.startEmbedderInit(embedConfig, config.EmbeddingCacheSize, mcpServer, db)
 	}
 
 	// Log authentication status
@@ -2018,7 +2010,7 @@ func (s *Server) Start() error {
 }
 
 // Stop gracefully shuts down the server.
-func (s *Server) Stop(ctx context.Context) error {
+func (s *Server) Stop(ctx context.Context) (err error) {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
 	}
@@ -2030,6 +2022,20 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.executorsMu.Lock()
 	s.executors = nil
 	s.executorsMu.Unlock()
+	// Cancel the background embedder initialisation now and wait for it
+	// before returning, so it can't install an embedder (or log) after Stop.
+	if s.embedderInitCancel != nil {
+		s.embedderInitCancel()
+		defer func() {
+			select {
+			case <-s.embedderInitDone:
+			case <-ctx.Done():
+				if err == nil {
+					err = ctx.Err()
+				}
+			}
+		}()
+	}
 
 	s.stopQdrantGRPC()
 
@@ -2051,24 +2057,7 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.cancelRequestsCtx()
 	}
 
-	// Hard-bound shutdown: even if net/http Shutdown fails to return at ctx deadline
-	// (e.g., a stuck handler or an internal deadlock), Stop must return so callers
-	// can exit deterministically.
-	shutdownDone := make(chan error, 1)
-	go func() {
-		shutdownDone <- s.httpServer.Shutdown(ctx)
-	}()
-
-	select {
-	case err := <-shutdownDone:
-		if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
-			_ = s.httpServer.Close()
-		}
-		return err
-	case <-ctx.Done():
-		_ = s.httpServer.Close()
-		return ctx.Err()
-	}
+	return util.ShutdownHTTPServer(ctx, s.httpServer)
 }
 
 // Addr returns the server's listen address.
@@ -2128,12 +2117,32 @@ type ServerStats struct {
 	BuildTime      string        `json:"build_time"`
 }
 
+// startEmbedderInit runs initEmbedderWithRetry in the background so startup
+// doesn't wait for a local model to load. Stop cancels it and waits for it to
+// return. It runs as a db background task, so closing db cancels it and waits
+// for it too, even without Stop; a closed db refuses the embedder anyway.
+func (s *Server) startEmbedderInit(embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
+	ctx, cancel := context.WithCancel(db.LifetimeContext())
+	done := make(chan struct{})
+	s.embedderInitCancel = cancel
+	s.embedderInitDone = done
+	started := db.RunBackgroundTask(func() {
+		defer close(done)
+		defer cancel()
+		s.initEmbedderWithRetry(ctx, embedConfig, embeddingCacheSize, mcpServer, db)
+	})
+	if !started {
+		// db is already closing: there is nothing to initialise.
+		cancel()
+		close(done)
+	}
+}
+
 // initEmbedderWithRetry creates the embedder from embedConfig and installs it
 // in the MCP server and the database once it passes a health check. It retries
 // forever with exponential backoff up to 5 minutes, then every 5 minutes, and
-// stops when the server closes. New runs it in the background so startup
-// doesn't wait for a local model to load.
-func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
+// stops, without installing anything, once ctx ends.
+func (s *Server) initEmbedderWithRetry(ctx context.Context, embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
 	// Retry forever: exponential backoff to 5m, then fixed 5m interval.
 	initialBackoff, maxBackoff := 2*time.Second, 5*time.Minute
 	if s.embedderRetryInitialBackoff > 0 {
@@ -2151,7 +2160,7 @@ func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCache
 	attempt := 0
 
 	for {
-		if s.closed.Load() {
+		if ctx.Err() != nil {
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
 			return
 		}
@@ -2159,15 +2168,32 @@ func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCache
 		attempt++
 
 		// Use factory function for all providers.
-		embedder, err := newEmbedder(embedConfig)
+		embedder, err := newEmbedder(ctx, embedConfig)
+		release, accepted := db.OwnEmbedder(embedder)
+		if err == nil && !accepted {
+			return
+		}
 		if err == nil {
 			// Health check: test embedding before enabling.
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, healthErr := embedder.Embed(ctx, "health check")
+			healthCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			_, healthErr := embedder.Embed(healthCtx, "health check")
 			cancel()
 			if healthErr != nil {
 				err = fmt.Errorf("health check failed: %w", healthErr)
 			}
+		}
+		if err != nil {
+			// Failed construction/health attempts use the same resource owner as
+			// installed providers, and release before entering retry backoff.
+			_ = release()
+		}
+
+		// Shutdown during the attempt: don't install or report it, and release
+		// what it built (a loaded local model and its warmup goroutine).
+		if ctx.Err() != nil {
+			_ = release()
+			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
+			return
 		}
 
 		if err == nil {
@@ -2191,7 +2217,13 @@ func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCache
 			// DB publishes the query provider once; MCP shares its binding.
 			// Share embedder with DB for auto-embed queue.
 			// The embed worker will wait for this to be set before processing.
-			db.SetEmbedder(embedder)
+			// The database decides under its lock: a closing database (Close
+			// may begin after the check above) refuses the embedder and closes
+			// it, so it never outlives DB.Close.
+			if !db.SetEmbedder(embedder) {
+				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
+				return
+			}
 			// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
 			db.SetDefaultEmbedConfig(embedConfig)
 			return
@@ -2208,7 +2240,7 @@ func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCache
 
 		if backoff < maxBackoff {
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryingEvent(backoff))
-			if !waitForDurationOrServerClose(s, backoff) {
+			if !waitForDurationOrDone(ctx, backoff) {
 				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
 				return
 			}
@@ -2218,7 +2250,7 @@ func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCache
 			}
 		} else {
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryIntervalCappedEvent(maxBackoff))
-			if !waitForDurationOrServerClose(s, maxBackoff) {
+			if !waitForDurationOrDone(ctx, maxBackoff) {
 				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingInitializationRetryInterruptedEvent())
 				return
 			}

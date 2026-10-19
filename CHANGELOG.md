@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inherited v1 limits, without reading unrelated cgroups (#1390).
 - Derive the Go soft memory limit from the container's cgroup limit by default,
   and clamp configured limits above it with a startup warning (#1369).
+- Own embedding providers through initialization, foreground/background use and
+  shutdown. Join actual batch calls before model release and remove the locale
+  test's shutdown-race workaround (#1487).
+
 - Bound aggregate ANTLR prediction generations with an exactly counted ledger,
   and detach completed parsers so idle validators and kept trees release retired
   prediction state (#1382).

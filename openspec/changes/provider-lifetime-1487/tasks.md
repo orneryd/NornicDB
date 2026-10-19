@@ -1,0 +1,16 @@
+Resumed at maintainer request after macOS installation work. Mandatory live duplicate checking is restored; automatic ingestion hooks remain paused. Prior canceled runs remain incomplete.
+
+- [x] Clean inactive task artifacts/worktrees; preserve branches and dirty worktrees.
+- [x] Read #1487 and the #1465/#1469 family, unresolved review and shutdown consumers.
+- [x] Reproduce late publication on original #1487 and premature provider Close on the prior lifecycle owner for ordinary/typed background calls.
+- [x] Integrate the existing shared DB provider owner; keep actual batch calls synchronous within joined workers. Validate current-release integration before publication.
+- [x] Restore DB-side embeddings in localization tests and remove the queue-publication wait.
+- [ ] Run deterministic lifecycle/race checks, affected packages, native checks and required verification.
+- [ ] Update #1487 title/description, push source and report exact verification/limits.
+
+- [x] Apply maintainer instruction: remove forwarding constructor APIs, migrate every Go consumer and DB factory to the single context-taking constructor, update examples.
+- [x] Replace DB.Open salt generation with existing encryption.GenerateSalt owner; encryption regressions pass.
+
+- [x] Converge single-flight construction/wait assertions into one test owner, retaining both cases; 10-repeat race check passes.
+- [x] Consolidate model warmup launch/loop/completion into one owner; native warmup/Close race checks pass.
+- [x] Share bounded HTTP shutdown between database HTTP and standalone MCP; MCP cancellation regression fails before correction and both public Stop paths pass 10-repeat race checks.

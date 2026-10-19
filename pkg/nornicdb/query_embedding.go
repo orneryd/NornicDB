@@ -16,6 +16,11 @@ func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb cypher.Query
 	if emb == nil {
 		return nil, nil, nil
 	}
+	ctx, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer finish()
 	chunks, err := db.chunkQueryWithEmbedder(ctx, emb, query)
 	if err != nil {
 		return nil, nil, err
@@ -141,6 +146,11 @@ func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedd
 	if emb == nil {
 		return nil, nil
 	}
+	_, finish, err := db.beginProviderUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	const (
 		queryChunkSize    = 512
 		queryChunkOverlap = 50
