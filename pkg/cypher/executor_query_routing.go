@@ -437,6 +437,9 @@ func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string
 		return nil
 	}
 	parserError := antlr.ValidateContext(ctx, cypher)
+	if parserError == context.Canceled || parserError == context.DeadlineExceeded {
+		return parserError
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
