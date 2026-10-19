@@ -5,6 +5,7 @@
 package antlr
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -106,6 +107,25 @@ func Parse(query string) (*ParseResult, error) {
 // This is the hot path used when NORNICDB_PARSER=antlr for strict syntax validation.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
 func Validate(query string) error {
+	return ValidateContext(context.Background(), query)
+}
+
+// ValidateContext validates syntax while observing cancellation during lexer
+// and parser lookahead, including cold prediction. Cancellation returns only
+// after the parser has unwound and its pooled validator is released.
+func ValidateContext(ctx context.Context, query string) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			if canceled, ok := p.(predictionCanceled); ok {
+				err = canceled.err
+			} else {
+				panic(p)
+			}
+		}
+	}()
 	query = strings.TrimSpace(query)
 	if query == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
@@ -117,8 +137,8 @@ func Validate(query string) error {
 	prediction := acquirePrediction()
 	usePrediction(v.parser, prediction)
 	defer func() {
-		// A pooled validator holds no generation: an idle one would keep a
-		// retired generation's DFAs reachable until it is reused.
+		// Restore the plain stream before detaching and releasing the generation.
+		v.parser.SetTokenStream(v.tokens)
 		v.parser.Interpreter = nil
 		prediction.release()
 		validatorPool.Put(v)
@@ -134,7 +154,11 @@ func Validate(query string) error {
 	v.lexer.Reset()
 
 	v.tokens.SetTokenSource(v.lexer)
-	v.parser.SetTokenStream(v.tokens)
+	var tokens antlr.TokenStream = v.tokens
+	if ctx.Done() != nil {
+		tokens = &contextTokenStream{TokenStream: v.tokens, ctx: ctx}
+	}
+	v.parser.SetTokenStream(tokens)
 
 	// Fast path: SLL prediction mode is usually faster; fall back to LL on errors.
 	v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeSLL)
@@ -145,7 +169,7 @@ func Validate(query string) error {
 		// require full context prediction.
 		v.errorListener.reset()
 		v.tokens.Seek(0)
-		v.parser.SetTokenStream(v.tokens)
+		v.parser.SetTokenStream(tokens)
 		v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeLL)
 		_ = v.parser.Script()
 
