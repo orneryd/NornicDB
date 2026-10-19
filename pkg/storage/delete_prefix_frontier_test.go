@@ -121,7 +121,13 @@ func TestDeleteByPrefixContextCancellation(t *testing.T) {
 	entered, resume := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	b.writeBehind.apply = func(buf *CommitBuffer) error { once.Do(func() { close(entered); <-resume }); return oldApply(buf) }
-	defer close(resume)
+	defer func() {
+		select {
+		case <-resume:
+		default:
+			close(resume)
+		}
+	}()
 	require.NoError(t, appendFrontierNode(t, b, "a", "old"))
 	ctx, cancel := context.WithCancel(context.Background())
 	earlier, err := b.BeginTransaction()
@@ -143,6 +149,9 @@ func TestDeleteByPrefixContextCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelled DROP did not return")
 	}
+	// A synchronous commit now follows every earlier ACK. Release the test's
+	// paused replay after observing cancellation, before committing that writer.
+	close(resume)
 	require.NoError(t, earlier.Commit(), "cancelled preparation must not retire the namespace lifetime")
 	require.NoError(t, appendFrontierNode(t, b, "a", "after_cancel"), "cancelled DROP must release namespace admission")
 	count, err := NewNamespacedEngine(b, "a").NodeCount()

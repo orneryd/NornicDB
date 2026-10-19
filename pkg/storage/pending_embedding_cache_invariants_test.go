@@ -162,16 +162,14 @@ func TestPendingCandidatesReviewDuplicateAndDelayedHints(t *testing.T) {
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	_, err := e.CreateNode(pendingCandidateNode(0))
 	require.NoError(t, err)
-	cw := &commitWriter{engine: e, pendingEmbeddingIDs: map[NodeID]struct{}{pendingCandidateNode(0).ID: {}}}
+	hint := func() { e.publishPendingEmbeddingAdds(map[NodeID]struct{}{pendingCandidateNode(0).ID: {}}) }
 	for i := 0; i < 32; i++ {
-		cw.pendingEmbeddingIDs = map[NodeID]struct{}{pendingCandidateNode(0).ID: {}}
-		cw.publishPendingEmbeddingAdds()
+		hint()
 	}
 	require.Len(t, e.pendingCandidates.ids, 1)
 	require.NotNil(t, e.FindNodeNeedingEmbedding())
 	require.NoError(t, e.DeleteNode(pendingCandidateNode(0).ID))
-	cw.pendingEmbeddingIDs = map[NodeID]struct{}{pendingCandidateNode(0).ID: {}}
-	cw.publishPendingEmbeddingAdds()
+	hint()
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	require.Zero(t, e.PendingEmbeddingsCount())
 }

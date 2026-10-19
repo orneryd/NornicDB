@@ -18,6 +18,9 @@ var embeddingKeyScanHook atomic.Pointer[func(NodeID)]
 // The exclusive barrier is released before the caller fires listeners.
 func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notification *commitNotification, revision uint64, write func(*commitWriter) error) error {
 	for {
+		if err := b.checkNamespaceLifetimeRevision(namespaceForNodeID(id), revision); err != nil {
+			return err
+		}
 		// Replay dispatches callbacks. Drain outside the barrier, then check
 		// under it that another ACK did not slip in before source validation.
 		if err := b.FlushWriteBehind(); err != nil {

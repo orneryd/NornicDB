@@ -360,6 +360,50 @@ Limits are **fully persisted** to disk as part of database metadata:
 
 All limits are enforced at runtime with clear, actionable error messages:
 
+Implicit and explicit transactions (HTTP and Bolt) check storage quotas against
+their cumulative final changes at commit. An over-quota transaction is rolled
+back in full. Quota checks and byte-accounted writes are admitted exclusively per
+database, so concurrent commits cannot jointly exceed a quota. Unlimited
+transactions with no initialized byte accounting share admission and can publish
+independently, including disjoint unique-key MERGEs. A first storage-size read
+initializes accounting exclusively; it cannot race an unaccounted publication.
+A transaction already holding a unique MERGE key receives a retryable storage
+conflict when an incompatible admission lease is busy, avoiding lock inversion.
+Admission waits honor the caller context. Canceled read-only commits also
+release transaction state without entering write admission. Once atomic
+publication begins, it completes; a later cancellation does not turn committed data into a rollback.
+Explicit Bolt COMMIT retains its existing terminal-owner/deadline arbitration;
+the claimed transaction/connection context still propagates to storage.
+
+Quota accounting finishes and admission releases before synchronous storage
+listeners are delivered. Transaction notifications preserve publication order;
+listener re-entry can read managed size or enqueue a managed write without
+retaining the outer transaction's admission or storage publication locks.
+
+These NornicDB quota status codes are consistent across HTTP and Bolt,
+autocommit and explicit transactions:
+
+| Condition | Status | Retry policy |
+| --- | --- | --- |
+| Node, relationship or byte capacity | `Neo.ClientError.General.ResourceLimit` | Change data/quota; retrying the same transaction cannot help. |
+| Query/write rate exhaustion | `Neo.TransientError.General.ResourceExhaustion` | Retry with bounded backoff after refill. |
+
+Commit-time quota rejection has a known rolled-back outcome and no receipt or
+indexing event. A Bolt connection remains reusable after `RESET`. An uncertain
+transport/commit failure is not a quota rejection and is not made safe to retry.
+
+Byte quotas retain the legacy gob-based logical entity accounting model; they
+are not the physical msgpack/Badger/WAL disk footprint. Empty and nil property
+maps have the same canonical quota size across staged writes, point reads and
+streaming initialization.
+
+The write-rate token bucket starts with `max_writes_per_second` tokens and refills
+at that rate, capped at that capacity. Transactions consume one token per buffered
+storage operation, including deletes, rather than one per statement or commit.
+The transaction engine can coalesce updates to a newly created entity into its
+create operation. Rejected attempts retain tokens already consumed, as ordinary
+writes do; rollback never retains storage usage.
+
 **MaxNodes/MaxEdges**: When the count limit is reached, create operations fail with:
 
 ```

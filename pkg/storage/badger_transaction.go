@@ -1117,6 +1117,9 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 
 	// Buffer pending embeddings index deletion
 	tx.bufferDelete(pendingEmbedKey(nodeID))
+	// Its on-demand suppression goes with it; the commit's publication
+	// updates the mirror (unmarkDeletedManualSuppressions).
+	tx.bufferDelete(manualSuppressionKey(manualSuppressionNode, string(nodeID)))
 
 	// Buffer node deletion. Dict cleanup is deferred to the prune
 	// pipeline — tombstones + MVCC heads reuse the existing numID.
@@ -1243,6 +1246,7 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 // (#741) alike.
 func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
 	tx.bufferDelete(edgeKey(edge.ID))
+	tx.bufferDelete(manualSuppressionKey(manualSuppressionEdge, string(edge.ID)))
 	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
 		tx.bufferDelete(outKey)
 	}
@@ -1872,6 +1876,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		tx.cancelledEdgeWrites[edgeID] = struct{}{}
 	} else {
 		tx.bufferDelete(edgeKey(edgeID))
+		tx.bufferDelete(manualSuppressionKey(manualSuppressionEdge, string(edgeID)))
 		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
 			tx.bufferDelete(outKey)
 		}
@@ -2781,20 +2786,7 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // and nothing is stored. Once the writes are being applied the commit runs to
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	tx.mu.Lock()
-	tx.commitCtx = ctx
-	tx.mu.Unlock()
-	defer func() {
-		tx.mu.Lock()
-		tx.commitCtx = nil
-		tx.mu.Unlock()
-	}()
-	return tx.Commit()
+	return tx.CommitContextWithPublication(ctx, nil)
 }
 
 // commitCancelledLocked reports the commit context's error once it is done.
@@ -2832,9 +2824,13 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
-	// The engine's write barrier is held through publication, with event
-	// callbacks dispatched after it and tx.mu are released
-	// (releaseWriteBarrierLocked): exclusively for a schema transaction, so
+	if err := tx.drainBufferedWritesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+	// The engine's write barrier is held through publication, with the
+	// afterPublication hook and then the event callbacks run after it and
+	// tx.mu are released (releaseWriteBarrierLocked): exclusively for a schema transaction, so
 	// no data write publishes between its snapshot check and its schema
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
@@ -2939,9 +2935,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
 	// A database that captures changes commits through Badger: its change
 	// events are written in the same commit as the data (#937).
-	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
-		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
-		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
+	if tx.bufferableLocked() && len(temporalTargets) == 0 {
 		if err := tx.materializeEmbeddingChangesLocked(false); err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return err
@@ -3035,6 +3029,10 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// commit acquired them before its first batch.
 	tx.acquireCommitPublicationLocked()
 
+	// The caches, counts, indexes and unique-value registry, in commit order
+	// per entity and unique value (badger_publication_stage.go).
+	cw.publish, cw.publishKeys = tx.publication()
+
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.
 	if err := cw.finish(); err != nil {
@@ -3093,91 +3091,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		tx.engine.persistMVCCSequence(tx.namespace)
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
-
-	// Apply cache/count updates after commit. Callbacks run after the barrier
-	// and tx.mu are released, permitting synchronous storage re-entry.
-	// This keeps cached stats O(1) and ensures external systems (e.g. search indexes)
-	// observe transactional writes the same way as non-transactional writes.
-	for _, op := range tx.operations {
-		switch op.Type {
-		case OpCreateNode:
-			tx.engine.cacheOnNodeCreated(op.Node)
-		case OpUpdateNode:
-			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-		case OpDeleteNode:
-			if op.OldNode != nil {
-				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
-			} else {
-				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
-			}
-		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreatedWithCounts(op.Edge, !op.ReplacesExisting)
-		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge)
-		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
-		case OpUpdateEmbedding:
-			// Embeddings are regenerable; no-op for cached counts.
-		}
-	}
-
-	// Update derived unique-constraint caches (in-memory) based on committed operations.
-	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
-	//
-	// All committed ops belong to the transaction's pinned namespace, so the
-	// schema lookup is hoisted out of the loop.
-	//
-	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
-	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
-	}
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked
@@ -4128,6 +4041,58 @@ func setCommitTailHook(hook func()) func() {
 		commitTailHook = previousHook
 		commitTailHookMu.Unlock()
 	}
+}
+
+// publication is the commit's derived-state publication, which the ordered
+// stage runs once the commit is visible (badger_publication_stage.go): the
+// caches and counts per operation, in operation order, then the unique-value
+// registry; and the keys it is ordered on. All operations belong to the
+// transaction's pinned namespace.
+func (tx *BadgerTransaction) publication() (func(), []any) {
+	engine, ops := tx.engine, tx.operations
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	var schema *SchemaManager
+	if tx.namespace != "" {
+		schema = engine.GetSchemaForNamespace(tx.namespace)
+	}
+	keys := appendOperationPublicationKeys(nil, schema, ops)
+	return func() {
+		for _, op := range ops {
+			switch op.Type {
+			case OpCreateNode:
+				engine.cacheOnNodeCreated(op.Node)
+			case OpUpdateNode:
+				engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+			case OpDeleteNode:
+				engine.unmarkDeletedManualSuppressions(op.NodeID, op.DeletedEdgeIDs)
+				if op.OldNode != nil {
+					engine.cacheOnNodeDeletedWithNode(op.NodeID, op.OldNode, op.EdgesDeleted)
+				} else {
+					engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
+				}
+			case OpCreateEdge:
+				engine.cacheOnEdgeCreatedWithCounts(op.Edge, !op.ReplacesExisting)
+			case OpUpdateEdge:
+				oldType := ""
+				if op.OldEdge != nil {
+					oldType = op.OldEdge.Type
+				}
+				engine.cacheOnEdgeUpdated(oldType, op.Edge)
+			case OpDeleteEdge:
+				oldType := ""
+				if op.OldEdge != nil {
+					oldType = op.OldEdge.Type
+				}
+				engine.unmarkDeletedManualSuppressions("", []EdgeID{op.EdgeID})
+				engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
+			case OpUpdateEmbedding:
+				// Embeddings are regenerable; no-op for cached counts.
+			}
+		}
+		engine.publishUniqueValuesForOps(schema, ops)
+	}, keys
 }
 
 func runCommitTailHook() {

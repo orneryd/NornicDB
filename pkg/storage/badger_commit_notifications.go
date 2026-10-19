@@ -67,7 +67,6 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 			for _, id := range op.DeletedEdgeIDs {
 				b.recordEdgeDeletion(id, !n.revisionPublished)
 			}
-			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
 			if !n.revisionPublished {
 				b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
 			}
@@ -91,7 +90,6 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 }
 
 func (b *BadgerEngine) recordEdgeDeletion(id EdgeID, publishRevision bool) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(id))
 	if publishRevision {
 		b.graphMutationVersions.changed(namespaceForEdgeID(id))
 	}
