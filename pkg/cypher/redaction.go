@@ -31,17 +31,6 @@ import (
 // Stable string contract: operators searching slow-query logs grep for it.
 const RedactedPlaceholder = "<REDACTED>"
 
-// redactSentinelError is consumed by the silent error listener so a syntax
-// error short-circuits to fail-closed without printing to stderr.
-type redactSilentErrorListener struct {
-	*antlr4.DefaultErrorListener
-	hadError bool
-}
-
-func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface{}, _, _ int, _ string, _ antlr4.RecognitionException) {
-	l.hadError = true
-}
-
 // RedactLiterals returns the input query with literal tokens replaced by
 // RedactedPlaceholder. STRING_LITERAL, CHAR_LITERAL, INTEGER, and FLOAT
 // tokens, and DIGIT tokens (hex and octal integers such as 0xBEEF), are
@@ -137,7 +126,7 @@ func (e *StorageExecutor) redactForLog(ctx context.Context, query string) string
 	if ctx.Err() != nil {
 		return RedactedPlaceholder
 	}
-	redacted := redactLiterals(query, func(query string) bool {
+	redacted := redactLiteralsContext(ctx, query, true, func(query string) bool {
 		return e.redactGrammarAccepts(ctx, query)
 	})
 	if ctx.Err() != nil {
@@ -163,12 +152,44 @@ func (e *StorageExecutor) redactGrammarAccepts(ctx context.Context, query string
 // redactLiterals is RedactLiterals with the grammar verdict supplied by the
 // caller; grammarAccepts runs only after the lexer checks passed.
 func redactLiterals(query string, grammarAccepts func(string) bool) string {
-	if strings.TrimSpace(query) == "" {
+	return redactLiteralsContext(context.Background(), query, false, grammarAccepts)
+}
+
+func redactLiteralsContext(ctx context.Context, query string, stripComments bool, grammarAccepts func(string) bool) string {
+	trimmed, err := cantlr.TrimSpaceContext(ctx, query)
+	if err != nil || trimmed == "" {
 		return RedactedPlaceholder
 	}
-	toks, ok := redactLexChecked(query)
+	toks, ok := redactLexCheckedContext(ctx, query)
 	if !ok {
 		return RedactedPlaceholder
+	}
+	// Strip comments from the same checked token stream; do not restart an
+	// unbounded comment/quoted-text scan before observing cancellation.
+	hasComments := false
+	for _, tok := range toks {
+		if tok.GetTokenType() == cantlr.CypherLexerCOMMENT || tok.GetTokenType() == cantlr.CypherLexerLINE_COMMENT {
+			hasComments = true
+			break
+		}
+	}
+	if stripComments && hasComments {
+		var normalized strings.Builder
+		for _, tok := range toks {
+			if ctx.Err() != nil {
+				return RedactedPlaceholder
+			}
+			text := tok.GetText()
+			if tok.GetTokenType() == cantlr.CypherLexerCOMMENT || tok.GetTokenType() == cantlr.CypherLexerLINE_COMMENT {
+				var ok bool
+				text, ok = redactCommentReplacement(ctx, text)
+				if !ok {
+					return RedactedPlaceholder
+				}
+			}
+			normalized.WriteString(text)
+		}
+		query = normalized.String()
 	}
 	grammarValid := grammarAccepts(query)
 
@@ -179,8 +200,20 @@ func redactLiterals(query string, grammarAccepts func(string) bool) string {
 	var stack []int
 	prev := noPrevToken
 	for _, tok := range toks {
+		if ctx.Err() != nil {
+			return RedactedPlaceholder
+		}
 		ttype := tok.GetTokenType()
 		text := tok.GetText()
+		if stripComments && (ttype == cantlr.CypherLexerCOMMENT || ttype == cantlr.CypherLexerLINE_COMMENT) {
+			var ok bool
+			text, ok = redactCommentReplacement(ctx, text)
+			if !ok {
+				return RedactedPlaceholder
+			}
+			b.WriteString(text)
+			continue
+		}
 		switch ttype {
 		case cantlr.CypherLexerLPAREN, cantlr.CypherLexerLBRACE, cantlr.CypherLexerLBRACK:
 			stack = append(stack, ttype)
@@ -214,28 +247,26 @@ func redactLiterals(query string, grammarAccepts func(string) bool) string {
 // token types are >= 1), so it never collides with a real token type.
 const noPrevToken = -1
 
-// redactLexChecked lexes query and applies the step-1 fail-closed signals
+// redactLexCheckedContext lexes query and applies the step-1 fail-closed signals
 // documented on RedactLiterals. It returns ok=false when the statement must
 // be redacted whole.
 func redactLexChecked(query string) ([]antlr4.Token, bool) {
-	lexer := cantlr.NewCypherLexer(antlr4.NewInputStream(query))
-	listener := &redactSilentErrorListener{}
-	lexer.RemoveErrorListeners()
-	lexer.AddErrorListener(listener)
+	return redactLexCheckedContext(context.Background(), query)
+}
 
-	var toks []antlr4.Token
+func redactLexCheckedContext(ctx context.Context, query string) ([]antlr4.Token, bool) {
+	toks, err := cantlr.LexContext(ctx, query)
+	if err != nil {
+		return nil, false
+	}
 	var stack []int
 	prev := noPrevToken
-	for {
-		tok := lexer.NextToken()
-		if tok == nil {
-			break
+	for _, tok := range toks {
+		if ctx.Err() != nil {
+			return nil, false
 		}
 		ttype := tok.GetTokenType()
-		if ttype == antlr4.TokenEOF {
-			break
-		}
-		if listener.hadError || ttype == cantlr.CypherLexerERRCHAR {
+		if ttype == cantlr.CypherLexerERRCHAR {
 			return nil, false
 		}
 		switch ttype {
@@ -253,9 +284,8 @@ func redactLexChecked(query string) ([]antlr4.Token, bool) {
 			}
 			prev = ttype
 		}
-		toks = append(toks, tok)
 	}
-	if listener.hadError || len(stack) != 0 {
+	if len(stack) != 0 {
 		return nil, false
 	}
 	return toks, true
@@ -292,4 +322,22 @@ func redactStructuralOnly(ttype, prev int, stack []int) bool {
 		return true
 	}
 	return false
+}
+
+// Preserve StripComments' formatting while bounding work within a comment.
+func redactCommentReplacement(ctx context.Context, comment string) (string, bool) {
+	if strings.HasPrefix(comment, "//") {
+		return "", true
+	}
+	var b strings.Builder
+	b.WriteByte(' ')
+	for i := 0; i < len(comment); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return "", false
+		}
+		if comment[i] == '\r' || comment[i] == '\n' {
+			b.WriteByte(comment[i])
+		}
+	}
+	return b.String(), ctx.Err() == nil
 }
