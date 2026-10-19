@@ -808,14 +808,20 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 				return false, nil
 			}
 			if !b.filterNodeByDecay(node, now) {
-				result[id] = copyForRead(node)
+				result[id] = node
 			}
+		}
+		// Copy only after every key is present. A miss must not copy the
+		// cached portion again when the captured transaction fills the batch.
+		for id, node := range result {
+			result[id] = copyForRead(node)
 		}
 		return true, nil
 	}
 	var states map[NodeID]bufferedEntityState
 	gen := b.nodeCacheGen.current()
 	var loaded []*Node
+	var current bool
 	err := b.withReadView(func(w *WriteBehindBuffer) {
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
@@ -827,6 +833,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 		}
 	}, func(txn *badger.Txn) error {
 		clear(result)
+		loaded = nil
 		for _, id := range ids {
 			if id == "" {
 				continue
@@ -836,7 +843,12 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 				continue
 			}
 			node := state.node
-			if !state.found {
+			if !state.found && current {
+				b.nodeCacheMu.RLock()
+				node = b.nodeCache[id]
+				b.nodeCacheMu.RUnlock()
+			}
+			if !state.found && node == nil {
 				item, err := txn.Get(nodeKey(id))
 				if errors.Is(err, badger.ErrKeyNotFound) {
 					continue
@@ -861,7 +873,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 			}
 		}
 		return nil
-	}, readViewOptions{cached: cached})
+	}, readViewOptions{cached: cached, current: &current})
 	if err != nil {
 		return nil, err
 	}
