@@ -913,7 +913,10 @@ func (p *VectorSearchPipeline) scoreAllNodes(ctx context.Context, query []float3
 		if s.Score < minSimilarity {
 			break
 		}
-		nodeID := normalizeVectorResultIDToNodeID(s.ID)
+		nodeID, ok := vectorEntryOwner(s.ID)
+		if !ok {
+			continue
+		}
 		if _, ok := seen[nodeID]; ok {
 			continue
 		}
@@ -946,7 +949,10 @@ func groupCandidatesByNode(candidates []Candidate, bound, minSimilarity float64,
 		if upper < minSimilarity {
 			continue
 		}
-		nodeID := normalizeVectorResultIDToNodeID(candidate.ID)
+		nodeID, ok := vectorEntryOwner(candidate.ID)
+		if !ok {
+			continue
+		}
 		if i, ok := position[nodeID]; ok {
 			n := &storage[i]
 			n.extra = append(n.extra, candidate)

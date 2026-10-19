@@ -452,7 +452,7 @@ func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.
 	entryID := graph.internalToID[graph.entryPoint]
 	graph.mu.RUnlock()
 	var entry int
-	_, err = fmt.Sscanf(normalizeVectorResultIDToNodeID(entryID), "doc-%d", &entry)
+	_, err = fmt.Sscanf(mustVectorEntryOwner(t, entryID), "doc-%d", &entry)
 	require.NoError(t, err, entryID)
 	remove(entry)
 	for _, run := range [][2]int{{5, 10}, {15, 21}} {
@@ -667,7 +667,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 					graph.setNeighborsAtLevelLocked(uint32(node), level, kept)
 				}
 			}
-			orphanID := normalizeVectorResultIDToNodeID(graph.internalToID[orphan])
+			orphanID := mustVectorEntryOwner(t, graph.internalToID[orphan])
 			graph.mu.Unlock()
 
 			embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
@@ -726,7 +726,7 @@ func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 	graph.mu.Lock()
 	orphan, found := uint32(0), false
 	for id, external := range graph.internalToID {
-		if normalizeVectorResultIDToNodeID(external) == target {
+		if mustVectorEntryOwner(t, external) == target {
 			orphan, found = uint32(id), true
 			break
 		}
@@ -822,7 +822,7 @@ func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
 				graph.mu.Lock()
 				orphan, found := uint32(0), false
 				for id, external := range graph.internalToID {
-					if normalizeVectorResultIDToNodeID(external) == target {
+					if mustVectorEntryOwner(t, external) == target {
 						orphan, found = uint32(id), true
 					}
 				}
