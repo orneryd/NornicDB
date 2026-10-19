@@ -232,9 +232,9 @@ const (
 
 // clusterAdmission is one population change applied to a generation.
 type clusterAdmission struct {
-	kind clusterAdmissionKind
+	kind     clusterAdmissionKind
 	vectorID vectorEntryID // vector add/remove admissions
-	nodeID vectorNodeID // document changes
+	nodeID   vectorNodeID  // document changes
 	// withText: a vector change outside a node change carries its document's
 	// tokens itself (backfill); inside one, the node change accounts for text.
 	withText bool
