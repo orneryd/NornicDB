@@ -35,10 +35,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
@@ -94,12 +92,9 @@ type ClusterMessage struct {
 	Type      ClusterMessageType
 	NodeID    string
 	Timestamp int64
-	Signature string
 	Payload   []byte
 
-	// Nonce and SignatureV2 carry replay protection (transport_replay.go).
-	// Nodes without them ignore the fields, so the encoding stays
-	// compatible in both directions.
+	// Nonce and SignatureV2 are required on every signed message.
 	Nonce       []byte
 	SignatureV2 string
 }
@@ -131,10 +126,8 @@ type ClusterTransport struct {
 	logger       *slog.Logger
 	localizer    *localization.Manager
 
-	// replay records message nonces for every connection of this transport;
-	// requireReplay refuses messages without one.
-	replay        *replayCache
-	requireReplay bool
+	// replay records message nonces for every connection of this transport.
+	replay *replayCache
 
 	// Message handlers
 	handlers map[ClusterMessageType]MessageHandler
@@ -157,11 +150,6 @@ type ClusterTransportConfig struct {
 	AuthMaxSkew  time.Duration
 	Logger       *slog.Logger
 	Localizer    *localization.Manager
-
-	// RequireReplayProtection sends and accepts only nonce-signed messages
-	// (ReplayProtectionRequire). Without it (ReplayProtectionCompat),
-	// messages without a nonce are accepted too, with no replay guarantee.
-	RequireReplayProtection bool
 }
 
 // DefaultClusterTransportConfig returns production defaults.
@@ -213,8 +201,6 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 		localizer:    config.Localizer,
 		replay:       newReplayCache(),
 		handlers:     make(map[ClusterMessageType]MessageHandler),
-
-		requireReplay: config.RequireReplayProtection,
 	}
 }
 
@@ -808,11 +794,6 @@ func (c *ClusterConnection) signMessage(msg *ClusterMessage) {
 	// Every send gets a fresh nonce, a resent message object included.
 	msg.Nonce = newMessageNonce()
 	msg.SignatureV2 = computeMessageSignatureV2(c.authSecret, msg)
-	if c.transport != nil && c.transport.requireReplay {
-		msg.Signature = ""
-	} else {
-		msg.Signature = computeMessageSignature(c.authSecret, msg)
-	}
 }
 
 // replayState returns the replay cache shared by the transport's
@@ -829,7 +810,13 @@ func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 	if len(c.authSecret) == 0 {
 		return nil
 	}
-	if (msg.Signature == "" && msg.SignatureV2 == "") || msg.Timestamp == 0 || msg.NodeID == "" {
+	if msg.Timestamp == 0 || msg.NodeID == "" {
+		return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
+	}
+	if len(msg.Nonce) != messageNonceSize {
+		return localizedError(localization.ReplicationRPCReplayProtectionRequired(), nil)
+	}
+	if msg.SignatureV2 == "" {
 		return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
 	}
 	// The skew window also bounds the replay cache, so it always applies.
@@ -843,29 +830,11 @@ func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 		return localizedError(localization.ReplicationRPCTimestampOutsideAllowedSkew(), nil)
 	}
 
-	if msg.SignatureV2 != "" {
-		if len(msg.Nonce) != messageNonceSize {
-			return localizedError(localization.ReplicationRPCAuthenticationFieldsMissing(), nil)
-		}
-		expected := computeMessageSignatureV2(c.authSecret, msg)
-		if !hmac.Equal([]byte(expected), []byte(msg.SignatureV2)) {
-			return localizedError(localization.ReplicationRPCInvalidSignature(), nil)
-		}
-		return c.replayState().admit(msg.NodeID, msg.Nonce, ts.Add(skew).UnixNano(), now.UnixNano())
-	}
-
-	// A message signed the original way only: from a node that predates
-	// replay protection, or an upgraded node's message with its nonce
-	// removed; the two can't be told apart. Compat mode accepts it, without
-	// replay protection; require mode refuses it.
-	if c.transport != nil && c.transport.requireReplay {
-		return localizedError(localization.ReplicationRPCReplayProtectionRequired(), nil)
-	}
-	expected := computeMessageSignature(c.authSecret, msg)
-	if !hmac.Equal([]byte(expected), []byte(msg.Signature)) {
+	expected := computeMessageSignatureV2(c.authSecret, msg)
+	if !hmac.Equal([]byte(expected), []byte(msg.SignatureV2)) {
 		return localizedError(localization.ReplicationRPCInvalidSignature(), nil)
 	}
-	return nil
+	return c.replayState().admit(msg.NodeID, msg.Nonce, ts.Add(skew).UnixNano(), now.UnixNano())
 }
 
 // Wire protocol helpers
@@ -909,17 +878,6 @@ func readClusterMessage(r *bufio.Reader, maxSize int) (*ClusterMessage, error) {
 	}
 
 	return &msg, nil
-}
-
-func computeMessageSignature(secret []byte, msg *ClusterMessage) string {
-	mac := hmac.New(sha256.New, secret)
-
-	_, _ = mac.Write([]byte{byte(msg.Type)})
-	writeStringWithLength(mac, msg.NodeID)
-	writeInt64(mac, msg.Timestamp)
-	writeBytesWithLength(mac, msg.Payload)
-
-	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func writeInt64(w io.Writer, v int64) {
