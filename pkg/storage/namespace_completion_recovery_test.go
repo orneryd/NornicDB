@@ -81,6 +81,16 @@ func TestNamespaceIntrinsicFailureRemainsReplayable(t *testing.T) {
 				require.True(t, outcome.Committed)
 			}
 			intrinsicFailed := failure == "physical" || failure == "catalog"
+			if intrinsicFailed {
+				_, err = base.CreateNode(&Node{ID: "recover_a:blocked"})
+				require.ErrorIs(t, err, ErrConflict, "failed committed cleanup must retain physical admission")
+				_, err = BeginNamespaceJournalMutation(ctx, base, []string{"recover_a"})
+				require.ErrorIs(t, err, ErrConflict, "failed cleanup must reject writes before wrapper journaling")
+				err = PublishNamespaceCatalogContext(ctx, base, NamespaceCatalogMutation{Namespace: "recover_a", Record: record, Create: true, Value: json.RawMessage(`{"id":"too-early","name":"recover_a"}`)})
+				require.ErrorIs(t, err, ErrConflict, "same-name recreation must wait for recovery")
+				_, err = base.CreateNode(&Node{ID: "recover_b:after_failure"})
+				require.NoError(t, err, "peer namespaces must remain writable")
+			}
 			done, err := base.namespaceCompleted("recover_a", sequence)
 			require.NoError(t, err)
 			require.Equal(t, !intrinsicFailed, done, "only successful intrinsic cleanup may be skipped by recovery")
@@ -117,6 +127,12 @@ func TestNamespaceIntrinsicFailureRemainsReplayable(t *testing.T) {
 			if !intrinsicFailed {
 				_, err := base.GetNode("recover_a:fresh")
 				require.NoError(t, err, "a callback error must not replay an already completed DROP")
+			} else {
+				require.NoError(t, PublishNamespaceCatalogContext(ctx, base, NamespaceCatalogMutation{Namespace: "recover_a", Record: record, Create: true, Value: json.RawMessage(`{"id":"recovered","name":"recover_a"}`)}))
+				_, err = base.CreateNode(&Node{ID: "recover_a:after_recovery"})
+				require.NoError(t, err, "successful recovery reopens namespace admission")
+				_, err = base.GetNode("recover_a:blocked")
+				require.ErrorIs(t, err, ErrNotFound, "no rejected write may be resurrected by recovery")
 			}
 		})
 	}
