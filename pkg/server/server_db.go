@@ -1303,7 +1303,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}
 		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
 		properties := converted.(map[string]interface{})
-		elementID := storage.NodeElementID(s.entityDatabase(dbName, typed.ID, ""), typed.ID)
+		elementID := typed.ElementID(s.entityDatabase(dbName, typed.ID, ""))
 		if len(graph) > 0 && graph[0].graph != nil {
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
@@ -1318,13 +1318,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}
 		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
 		properties := converted.(map[string]interface{})
-		elementID := storage.RelationshipElementID(s.entityDatabase(dbName, "", typed.ID), typed.ID)
+		elementID := typed.ElementID(s.entityDatabase(dbName, "", typed.ID))
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
+			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: typed.StartElementID(s.entityDatabase(dbName, typed.StartNode, "")), EndNode: typed.EndElementID(s.entityDatabase(dbName, typed.EndNode, "")), Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "relationship")
 		if transactionHTTPWantsREST(graph) {
-			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), "endNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode)}), meta
+			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": typed.StartElementID(s.entityDatabase(dbName, typed.StartNode, "")), "endNodeElementId": typed.EndElementID(s.entityDatabase(dbName, typed.EndNode, ""))}), meta
 		}
 		return properties, meta
 	case *cypher.PathResult:

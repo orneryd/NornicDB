@@ -280,6 +280,12 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		return failure
 	}
 	store := e.getStorage(ctx)
+	for _, node := range plan.nodes {
+		node.Database = storage.DatabaseOf(store)
+	}
+	for _, edge := range plan.edges {
+		edge.Database = storage.DatabaseOf(store)
+	}
 	switch len(plan.nodes) {
 	case 0:
 	case 1:
