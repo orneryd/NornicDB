@@ -4,6 +4,7 @@ import SwiftUI
 /// rewritten as filenames, and disabling a service leaves its configuration intact.
 struct AIServiceSettingsView: View {
     @ObservedObject var config: ConfigManager
+    let downloadModels: () -> Void
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -42,7 +43,10 @@ struct AIServiceSettingsView: View {
                     provider: $config.heimdallProvider, model: $config.heimdallModel,
                     endpoint: $config.heimdallURL, apiKey: $config.heimdallAPIKey,
                     providers: ["local", "ollama", "openai", "orca", "vllm", "litellm"])
-                Text("Local models: \(config.modelsPath). Use Download Models from the menu to install GGUF files.")
+                Button("Download default local models…", action: downloadModels)
+                Text("Downloads BGE-M3, BGE reranker and Qwen for local Embeddings, Reranking and Heimdall. Choose their filenames in the model fields above. Remote provider settings are preserved.")
+                    .font(.caption).foregroundColor(.secondary)
+                Text("Local models: \(config.modelsPath)")
                     .font(.caption).foregroundColor(.secondary)
             }.padding()
         }
