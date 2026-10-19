@@ -1960,13 +1960,13 @@ func isRelationshipPatternOperand(expression string) bool {
 // literal.
 func containsRelationshipPattern(expression string) bool {
 	for i := 0; i < len(expression); i++ {
+		if end := queryCommentEnd(expression, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		switch c := expression[i]; c {
 		case '\'', '"', '`':
-			j := i + 1
-			for j < len(expression) && (expression[j] != c || isBackslashEscaped(expression, j)) {
-				j++
-			}
-			i = j
+			i = skipCypherQuotedText(expression, i, c) - 1
 		case '(':
 			if _, chain := relationshipChainEnd(expression, i, len(expression)); chain {
 				return true

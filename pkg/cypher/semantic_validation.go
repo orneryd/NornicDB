@@ -495,6 +495,14 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 	expression = maskPathFunctionCalls(expression)
 	segmentStart := 0
 	for index := 0; index < len(expression); index++ {
+		if end := queryCommentEnd(expression, index); end >= 0 {
+			index = end - 1
+			continue
+		}
+		if c := expression[index]; c == '\'' || c == '"' || c == '`' {
+			index = skipCypherQuotedText(expression, index, c) - 1
+			continue
+		}
 		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
 			continue
 		}
