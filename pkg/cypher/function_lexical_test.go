@@ -40,4 +40,7 @@ func TestFunctionLexicalReaders(t *testing.T) {
 		return nil
 	}))
 	require.Equal(t, []string{"toUpper", "toString", "range"}, names)
+	require.False(t, containsStatementClockCall("'date()' /* datetime() */"))
+	require.True(t, containsStatementClockCall("`datetime` /* gap */ . statement ()"))
+	require.Equal(t, "UUID", staticValueCallType("/* gap */ `uuid` /* gap */ ()"))
 }
