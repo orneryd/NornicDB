@@ -51,7 +51,7 @@ func TestSnapshotOverlayCachedCaptureRetriesPublication(t *testing.T) {
 			value = 2
 		} else {
 			require.NotNil(t, w)
-			node, err := b.nodeCache["test:a"], error(nil)
+			node := b.nodeCache["test:a"]
 			require.NoError(t, err)
 			value = node.Properties["v"].(int64)
 		}
@@ -94,7 +94,8 @@ func TestSnapshotOverlayLongViewReopensAndDoesNotPinClose(t *testing.T) {
 func TestSnapshotOverlayBusyCachedBatchAndAdjacency(t *testing.T) {
 	b := snapshotOverlayFixture(t)
 	// The committed part has hot caches; pending rows must shadow just their IDs.
-	require.NoError(t, b.CreateNode(&Node{ID: "other:unrelated"}))
+	_, err := b.CreateNode(&Node{ID: "other:unrelated"})
+	require.NoError(t, err)
 	for _, read := range []func([]NodeID) (map[NodeID]*Node, error){b.BatchGetNodes, b.BatchGetNodesWithoutEmbeddings} {
 		nodes, err := read([]NodeID{"test:a", "test:b", "test:new", "test:gone", "other:unrelated"})
 		require.NoError(t, err)
