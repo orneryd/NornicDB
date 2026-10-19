@@ -156,6 +156,10 @@ func canonicalCallableName(text string) (string, bool) {
 	if len(text) > 0 && isIdentStartByte(text[0]) {
 		compact := true
 		for index := 1; index < len(text); index++ {
+			if text[index] >= 0x80 && queryWhitespaceAt(text, index) > 0 {
+				compact = false
+				break
+			}
 			if isIdentByte(text[index]) {
 				continue
 			}
