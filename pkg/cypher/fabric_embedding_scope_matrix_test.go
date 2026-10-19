@@ -76,12 +76,23 @@ func runFabricEmbeddingExecutionFrames(t *testing.T, forms []embeddingFrameForm)
 									if !native {
 										query = "USE comp.one " + query
 									}
+									if f.name == "let" || f.name == "for" {
+										query = "CYPHER 25 " + query
+									}
 									if explicit {
 										_, err := exec.Execute(ctx, "BEGIN", nil)
 										require.NoError(t, err)
 										defer exec.Execute(ctx, "ROLLBACK", nil)
 									}
 									result, err := exec.Execute(ctx, query, map[string]interface{}{"id": t.Name(), "frameName": symbolicNameValue(name)})
+									if f.name == "yield_star" {
+										require.ErrorContains(t, err, "YIELD * is only valid for a standalone procedure call")
+										return
+									}
+									if (f.name == "let" || f.name == "for") && !native {
+										require.ErrorContains(t, err, strings.ToUpper(f.name), "Fabric routing rejects these Cypher 25 clauses independently of the projection name")
+										return
+									}
 									require.NoError(t, err, query)
 									require.NotEmpty(t, result.Rows, query)
 									for _, row := range result.Rows {
