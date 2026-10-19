@@ -5367,7 +5367,7 @@ func (s *Service) completeVectorSearch(
 	if _, passThrough := pipeline.exactScorer.(*IdentityExactScorer); passThrough {
 		pipeline = NewVectorSearchPipeline(pipeline.candidateGen, s.resolveVectorExactScorer(vectors, fileStore))
 	}
-	scored, _, err := pipeline.scoreNodes(ctx, embedding, candidates, 0, opts.GetMinSimilarity(0.5), math.Inf(1))
+	scored, err := pipeline.scoreAllNodes(ctx, embedding, candidates, opts.GetMinSimilarity(0.5))
 	if err != nil {
 		return nil, stats, err
 	}

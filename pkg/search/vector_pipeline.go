@@ -814,6 +814,38 @@ func (p *VectorSearchPipeline) scoreNodes(ctx context.Context, query []float32, 
 	return out, cut, nil
 }
 
+// scoreAllNodes is the exact stage for the completion pass, whose vectors
+// are every vector of every node it can return: scored exactly (scoreFinal),
+// a node's first vector in score order is its best, so the ranking stops at
+// the threshold and decodes only the vectors above it. Each result carries
+// its node's best vector ID, best first.
+func (p *VectorSearchPipeline) scoreAllNodes(ctx context.Context, query []float32, vectors []Candidate, minSimilarity float64) ([]ScoredCandidate, error) {
+	scored, err := p.scoreFinal(ctx, query, vectors)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(scored, func(a, b ScoredCandidate) int {
+		if order := cmp.Compare(b.Score, a.Score); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	out := make([]ScoredCandidate, 0)
+	seen := make(map[string]struct{})
+	for _, s := range scored {
+		if s.Score < minSimilarity {
+			break
+		}
+		nodeID := normalizeVectorResultIDToNodeID(s.ID)
+		if _, ok := seen[nodeID]; ok {
+			continue
+		}
+		seen[nodeID] = struct{}{}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // groupCandidatesByNode groups candidates by owning node, in first-seen
 // order, decoding each key once; a node's upper bound is its best surfaced
 // score plus bound.
