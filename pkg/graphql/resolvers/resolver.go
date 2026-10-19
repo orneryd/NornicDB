@@ -268,28 +268,18 @@ func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, er
 	return database, engine, nil
 }
 
-// readableDatabase resolves the request's selected database and applies the
-// shared direct-read decision used by non-Cypher routes.
-func (r *Resolver) readableDatabase(ctx context.Context) (string, error) {
-	database, err := r.resolveCypherDatabase(ctx, "")
+// subscriptionDatabase retains the existing explicit-target requirement for
+// composite subscriptions after the shared direct-read decision.
+func (r *Resolver) subscriptionDatabase(ctx context.Context) (string, error) {
+	database, err := r.readableDatabase(ctx)
 	if err != nil {
 		return "", err
-	}
-	_, readable := auth.ResolveDatabaseReadAccess(
-		auth.RequestDatabaseAccessModeFromContext(ctx),
-		auth.RequestResolvedAccessResolverFromContext(ctx),
-		database,
-	)
-	if !readable {
-		denied := localization.DatabaseAccessDenied(database)
-		return "", localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
 	}
 	if r.dbManager.IsCompositeDatabase(database) {
 		return "", fmt.Errorf("subscriptions on composite database '%s' are not supported; target a constituent database explicitly", database)
 	}
 	return database, nil
 }
-
 // executeCypher executes a Cypher query using the specified database's namespaced storage.
 // If database is empty, uses the default database.
 // Authorization is derived from the Cypher statement and enforced by the executor.
