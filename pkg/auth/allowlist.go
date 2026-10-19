@@ -210,9 +210,13 @@ func (m *allowlistDBAccessMode) CanAccessDatabase(dbName string) bool {
 }
 
 func (m *allowlistDBAccessMode) canAccess(dbName string) bool {
-	for _, role := range m.roles {
+	return allowlistAllows(m.allowlist, m.roles, dbName)
+}
+
+func allowlistAllows(allowlist map[string][]string, roles []string, dbName string) bool {
+	for _, role := range roles {
 		role = NormalizeRoleName(role)
-		dbs, ok := m.allowlist[role]
+		dbs, ok := allowlist[role]
 		if !ok {
 			// No allowlist for this role → "all databases"
 			return true
@@ -227,4 +231,15 @@ func (m *allowlistDBAccessMode) canAccess(dbName string) bool {
 		}
 	}
 	return false
+}
+
+// CanAccessDatabaseForRoles checks the current allowlist under its read lock,
+// without copying the map or constructing a new access-mode adapter.
+func (a *AllowlistStore) CanAccessDatabaseForRoles(roles []string, database string) bool {
+	if a == nil || len(roles) == 0 {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return allowlistAllows(a.allowlist, roles, database)
 }

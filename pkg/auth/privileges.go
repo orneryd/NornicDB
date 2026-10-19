@@ -124,15 +124,26 @@ func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) Resolv
 // the entitlements decide alone. So removing a role's write entitlement
 // stops its writes on every database at once.
 func ResolveDatabaseAccess(roles []string, database string, privileges *PrivilegesStore, entitlements *RoleEntitlementsStore) ResolvedAccess {
-	global := PermissionsForRoles(roles, entitlements)
-	if !EntitlementsAllow(global, string(PermRead)) {
+	if !RolesAllow(roles, entitlements, string(PermRead)) {
 		return ResolvedAccess{}
 	}
-	write := EntitlementsAllow(global, string(PermWrite))
+	write := RolesAllow(roles, entitlements, string(PermWrite))
 	if granted, found := privileges.Granted(roles, database); found {
 		return ResolvedAccess{Read: granted.Read, Write: granted.Write && write}
 	}
 	return ResolvedAccess{Read: true, Write: write}
+}
+
+// DatabaseReadAllowed checks only read, without constructing unused write
+// capabilities. It uses the same global entitlement and matrix owners.
+func DatabaseReadAllowed(roles []string, database string, privileges *PrivilegesStore, entitlements *RoleEntitlementsStore) bool {
+	if !RolesAllow(roles, entitlements, string(PermRead)) {
+		return false
+	}
+	if granted, found := privileges.Granted(roles, database); found {
+		return granted.Read
+	}
+	return true
 }
 
 // Matrix returns a copy of the full matrix for GET API.
