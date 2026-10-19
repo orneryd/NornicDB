@@ -1065,6 +1065,7 @@ struct SettingsView: View {
     @State private var originalRuntimeArguments: [String] = []
     @State private var originalEmbeddingsEnabled: Bool = false
     @State private var originalUseAppleIntelligence: Bool = false
+    @State private var originalSearchCursorMax: Int = 0
     @State private var originalKmeansEnabled: Bool = false
     @State private var originalSearchRerankEnabled: Bool = false
     @State private var originalMemoryDecayEnabled: Bool = true
@@ -1103,6 +1104,7 @@ struct SettingsView: View {
                config.runtimeArguments != originalRuntimeArguments ||
                serviceSettings != originalServiceSettings || config.embeddingsEnabled != originalEmbeddingsEnabled ||
                config.useAppleIntelligence != originalUseAppleIntelligence ||
+               config.searchCursorMax != originalSearchCursorMax ||
                config.kmeansEnabled != originalKmeansEnabled ||
                config.searchRerankEnabled != originalSearchRerankEnabled ||
              config.memoryDecayEnabled != originalMemoryDecayEnabled ||
@@ -1229,6 +1231,7 @@ struct SettingsView: View {
         // Capture current values as originals
         originalEmbeddingsEnabled = config.embeddingsEnabled
         originalUseAppleIntelligence = config.useAppleIntelligence
+        originalSearchCursorMax = config.searchCursorMax
         originalKmeansEnabled = config.kmeansEnabled
         originalSearchRerankEnabled = config.searchRerankEnabled
         originalMemoryDecayEnabled = config.memoryDecayEnabled
