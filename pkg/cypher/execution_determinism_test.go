@@ -81,7 +81,7 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 				if procedure.ResultCache.RetrievalRequest {
 					queries = append(queries, "CALL "+procedure.Name+"($request)")
 				} else if procedure.ResultCache.Deterministic && len(procedure.ResultCache.CypherInputs) != 0 {
-					queries = append(queries, "CALL "+procedure.Name+"($statement, {})")
+					queries = append(queries, "CALL "+procedure.Name+"($statement, {}) YIELD value RETURN value")
 				}
 			}
 			for _, query := range queries {
@@ -152,7 +152,7 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 
 func TestExecutionDeterminismNestedParameterBindings(t *testing.T) {
 	exec := solR2CacheExecutor(t)
-	const query = "CALL apoc.cypher.run($statement,{})"
+	const query = "CALL apoc.cypher.run($statement,{}) YIELD value RETURN value"
 	deadline := time.Now().Add(time.Second)
 	params := map[string]any{
 		"statement": "CALL db.rretrieve($request)",
