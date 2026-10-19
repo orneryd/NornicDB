@@ -25,7 +25,9 @@ func redactAdminCommandError(query string, retErr *error) {
 		if i >= len(query) {
 			break
 		}
-		offset = i + 1
+		// An invalid value can itself be PASSWORD. Keep that next keyword
+		// visible so PASSWORD PASSWORD 'value' still supplies its literal.
+		offset = i
 		quote := query[i]
 		if quote != '\'' && quote != '"' {
 			continue
