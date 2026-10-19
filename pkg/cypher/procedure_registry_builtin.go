@@ -535,27 +535,27 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoAllSimplePaths(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.pageRank", "apoc.algo.pageRank(nodes :: ANY, config :: MAP) :: (node :: NODE, score :: FLOAT)", "Runs PageRank", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.pageRank", "apoc.algo.pageRank(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, score :: FLOAT)", "Runs PageRank", ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoPageRank(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.betweenness", "apoc.algo.betweenness(nodes :: ANY) :: (node :: NODE, score :: FLOAT)", "Runs betweenness centrality", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.betweenness", "apoc.algo.betweenness(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, score :: FLOAT)", "Runs betweenness centrality", ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoBetweenness(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.closeness", "apoc.algo.closeness(nodes :: ANY) :: (node :: NODE, score :: FLOAT)", "Runs closeness centrality", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.closeness", "apoc.algo.closeness(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, score :: FLOAT)", "Runs closeness centrality", ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoCloseness(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)", "Runs Louvain community detection", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)", "Runs Louvain community detection", ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoLouvain(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.labelPropagation", "apoc.algo.labelPropagation(nodes :: ANY) :: (node :: NODE, community :: INTEGER)", "Runs label propagation", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.labelPropagation", "apoc.algo.labelPropagation(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)", "Runs label propagation", ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoLabelPropagation(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY) :: (node :: NODE, componentId :: INTEGER)", "Runs weakly connected components", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY, relationshipTypesOrConfig :: ANY, config :: MAP) :: (node :: NODE, componentId :: INTEGER)", "Runs weakly connected components", ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoWCC(ctx, args)
 			})
