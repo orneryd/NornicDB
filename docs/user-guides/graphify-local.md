@@ -267,3 +267,23 @@ exercise their own real global configuration in temporary repositories:
 ```sh
 GIT_CONFIG_GLOBAL=/dev/null .venv-code-intelligence/bin/python -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
 ```
+
+### Bounded-search live verification (2026-10-18)
+
+The updated global runtime passed the #1472 source commit check in 21.99 seconds
+of search/comparison, and its own source commit checked nine changed functions
+in 23.17 seconds. A renamed copy of production `pipelineProjectWithRow` staged
+as `duplicateGuardProbeProjection` was blocked as a reuse candidate at 100%
+code similarity in 10.81 seconds. The failed probe left HEAD unchanged; its
+staged file was removed afterward. All checks used `orneryd/NornicDB` in the
+existing `nornicdbcode` graph. No extraction was uploaded and no hook was bypassed.
+The graph's ingested commit was `7e90401c6`, so its stale-baseline warning remains
+a limitation. These measurements exclude staged-tree extraction and do not
+establish exhaustive detection or a whole-repository timing guarantee.
+
+Focused verification: 23 Git/HTTP hook tests and 40 detector tests pass.
+The high-limit regression fails against the old runtime (`25 != 1000`). Six
+legacy detector MainTests are blocked during fixture commits by the global
+mandatory hook. `make verify-list BASE=origin/release/v1.4.4` and `make verify`
+with the same BASE stop at the temporary `plan` repository's missing ingestion
+record; downstream checks are unexecuted. These failures were not bypassed.
