@@ -1,0 +1,6 @@
+- [x] Reproduce catalog generation and strict docs failures on common release base.
+- [x] Register both existing quantization IDs as typed constants; preserve messages.
+- [x] Link the two benchmark references to their immutable tracked source.
+- [x] Run localization, generation, catalog and strict docs checks; all pass after fail-first baseline reproductions.
+- [ ] Commit through mandatory live hook, open release PR and record verification.
+- [ ] Propagate to #1487 and #1449; reverify final heads.
