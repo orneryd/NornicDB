@@ -29,6 +29,15 @@ import (
 	"strings"
 )
 
+func lexicalAggregateName(name string) bool {
+	for _, aggregate := range cypherAggregateNames {
+		if strings.EqualFold(name, aggregate) {
+			return true
+		}
+	}
+	return false
+}
+
 // aggregateSpan is one aggregate call located inside a larger expression.
 type aggregateSpan struct {
 	start, end int // expr[start:end] is the full call text
@@ -49,14 +58,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			break
 		}
 		index = call.open + 1
-		aggregate := false
-		for _, function := range cypherAggregateNames {
-			if strings.EqualFold(call.name, function) {
-				aggregate = true
-				break
-			}
-		}
-		if !aggregate {
+		if !lexicalAggregateName(call.name) {
 			continue
 		}
 		close := call.close(expr)

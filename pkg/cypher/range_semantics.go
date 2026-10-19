@@ -4,7 +4,6 @@ import (
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"iter"
-	"strings"
 )
 
 // evaluateCypherRange builds range()'s list, every evaluator's one builder.
@@ -154,24 +153,5 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 }
 
 func namedFunctionArguments(expression, function string) []string {
-	arguments := make([]string, 0)
-	syntax := readFunctionSyntax(expression)
-	for index := 0; index < len(expression); {
-		call, ok := syntax.nextCall(index, true, false, false)
-		if !ok {
-			break
-		}
-		index = call.open + 1
-		if !strings.EqualFold(call.name, function) {
-			continue
-		}
-		close := call.close(expression)
-		if close < 0 {
-			break
-		}
-		arguments = append(arguments, call.syntax.source(syntaxSpan{call.open + 1, close}))
-		// The selected call evaluates its own nested arguments.
-		index = close + 1
-	}
-	return arguments
+	return lexicalNamedArguments(expression, function)
 }

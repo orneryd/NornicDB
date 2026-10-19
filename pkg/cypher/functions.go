@@ -218,6 +218,9 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
+	if !strings.ContainsRune(expr, '.') {
+		return "", "", false
+	}
 	syntax := readFunctionSyntax(expr)
 	lastDot := -1
 	for _, at := range syntax.rootPunctuation {

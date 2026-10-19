@@ -515,6 +515,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 	if strings.IndexByte(text, '$') < 0 && !strings.Contains(text, dynamicLabelTestFunction) && !strings.Contains(text, dynamicLabelPredicateFunction) {
 		return nil
 	}
+	syntax := readFunctionSyntax(text)
 	for i := 0; i < len(text); i++ {
 		if end := queryCommentEnd(text, i); end >= 0 {
 			i = end - 1
@@ -527,7 +528,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			if (clause.kind != pipelineClauseCreate && clause.kind != pipelineClauseMerge) || !dynamicLabelStartsAt(text, i) {
 				continue
 			}
-			open := firstSyntaxGroup(text, '(', i)
+			open := syntax.firstGroup('(', i)
 			closing := findMatchingDelimiter(text, open, '(', ')')
 			if closing < 0 {
 				return nil
@@ -537,7 +538,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			}
 			i = closing
 		case '_':
-			call, ok := functionCallAt(text, i)
+			call, ok := syntax.callAt(i)
 			if !ok || call.name != dynamicLabelTestFunction && call.name != dynamicLabelPredicateFunction {
 				continue
 			}

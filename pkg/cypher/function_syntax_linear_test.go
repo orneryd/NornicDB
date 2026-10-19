@@ -34,7 +34,7 @@ func commentedFunctionScanInput(identifiers int, line bool) string {
 func TestFunctionSyntaxLinearScanGuard(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "function_syntax.go", nil, 0)
 	require.NoError(t, err)
-	forward := map[string]bool{"readFunctionSyntaxFacts": true, "readFunctionIdentity": true, "dottedNameParts": true, "callableIdentifierToken": true, "nextCall": true}
+	forward := map[string]bool{"readFunctionSyntaxFacts": true, "scanFunctionSyntax": true, "readFunctionIdentity": true, "dottedNameParts": true, "callableIdentifierToken": true, "nextCall": true}
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
 		if !ok || !forward[function.Name.Name] {
