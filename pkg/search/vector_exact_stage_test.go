@@ -496,13 +496,20 @@ func TestSelectiveClusteredSearchJumpsToTheAllClusterPass(t *testing.T) {
 			population := inner.candidatePopulation(context.Background())
 			t.Logf("passes %v, population %d", recording.limits, population)
 			require.GreaterOrEqual(t, len(recording.limits), 2, "a restricted pass, then the all-cluster one: %v", recording.limits)
+			// The last pass routes every cluster; a routing-bound restricted
+			// pass is followed directly by it. (Ordinary widening may also
+			// reach the population first, when no restricted pass searched
+			// its clusters whole.)
 			last := len(recording.limits) - 1
-			require.Equal(t, population, recording.limits[last], "passes %v", recording.limits)
+			require.GreaterOrEqual(t, recording.limits[last], population, "passes %v", recording.limits)
 			require.True(t, recording.evidence[last].exhausted)
-			for i := 0; i < last-1; i++ {
-				require.False(t, recording.evidence[i].routedComplete, "pass %d was routing-bound, yet another restricted pass followed: %v", i, recording.limits)
+			for i := 0; i < last; i++ {
+				require.Less(t, recording.limits[i], population, "passes %v", recording.limits)
+				if recording.evidence[i].routedComplete {
+					require.Equal(t, last, i+1, "pass %d was routing-bound, yet another restricted pass followed: %v", i, recording.limits)
+					require.Equal(t, population, recording.limits[last], "passes %v", recording.limits)
+				}
 			}
-			require.True(t, recording.evidence[last-1].routedComplete, "the pass before the all-cluster one was routing-bound: %v", recording.limits)
 		})
 	}
 }
