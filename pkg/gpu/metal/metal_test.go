@@ -4,6 +4,8 @@
 package metal
 
 import (
+	"math"
+	"os"
 	"testing"
 )
 
@@ -827,5 +829,76 @@ func TestBufferAccessBeyondFourGiB(t *testing.T) {
 	}
 	if err := buf.WriteFloat32(data, -1); err == nil {
 		t.Error("WriteFloat32() at a negative offset succeeded, want error")
+	}
+}
+
+// Regression: kernels computed element offsets as 32-bit products
+// (uint base = gid * dimensions), which wrap once a buffer holds more than
+// 2^32 floats (16 GiB; 4,194,304 vectors at 1,024 dimensions), so threads past
+// that point read and wrote the start of the buffer. Opt-in: allocates 16 GiB.
+func TestKernelsIndexBeyondSixteenGiB(t *testing.T) {
+	if os.Getenv("NORNICDB_LARGE_METAL_TEST") != "1" {
+		t.Skip("set NORNICDB_LARGE_METAL_TEST=1 to run (allocates 16 GiB)")
+	}
+	if !IsAvailable() {
+		t.Skip("Metal not available")
+	}
+	device, err := NewDevice()
+	if err != nil {
+		t.Fatalf("NewDevice() error = %v", err)
+	}
+	defer device.Release()
+
+	const dim = 1024
+	const n = (1<<32)/dim + 1 // the last vector starts at element 2^32
+	const last = n - 1
+	buf, err := device.NewEmptyBuffer(uint64(n)*dim*4, StorageShared)
+	if err != nil {
+		t.Skipf("device cannot allocate a 16 GiB buffer: %v", err)
+	}
+	defer buf.Release()
+
+	// Vector 0 is zero (a wrapped offset lands on it); vector 1 is a decoy
+	// that a wrapped search would rank first.
+	if err := buf.WriteFloat32([]float32{5, 12}, 1*dim); err != nil {
+		t.Fatalf("WriteFloat32(vector 1) error = %v", err)
+	}
+	if err := buf.WriteFloat32([]float32{3, 4}, last*dim); err != nil {
+		t.Fatalf("WriteFloat32(last vector) error = %v", err)
+	}
+
+	if err := device.NormalizeVectors(buf, n, dim); err != nil {
+		t.Fatalf("NormalizeVectors() error = %v", err)
+	}
+	view := buf.Float32View(n * dim)
+	if got := view[last*dim : last*dim+2]; math.Abs(float64(got[0])-0.6) > 1e-6 || math.Abs(float64(got[1])-0.8) > 1e-6 {
+		t.Fatalf("normalize_vectors: last vector = %v, want [0.6 0.8]", got)
+	}
+
+	query := make([]float32, dim)
+	query[0] = 1
+	queryBuf, err := device.NewBuffer(query, StorageShared)
+	if err != nil {
+		t.Fatalf("NewBuffer(query) error = %v", err)
+	}
+	defer queryBuf.Release()
+	scores, err := device.NewEmptyBuffer(uint64(n)*4, StorageShared)
+	if err != nil {
+		t.Fatalf("NewEmptyBuffer(scores) error = %v", err)
+	}
+	defer scores.Release()
+	if err := device.ComputeCosineSimilarity(buf, queryBuf, scores, n, dim, true); err != nil {
+		t.Fatalf("ComputeCosineSimilarity() error = %v", err)
+	}
+	if got := scores.Float32View(n)[last]; math.Abs(float64(got)-0.6) > 1e-6 {
+		t.Fatalf("cosine_similarity_normalized: score[last] = %v, want 0.6", got)
+	}
+
+	indices, topScores, err := device.HNSWBuildTopK(buf, queryBuf, n, 1, dim, 1)
+	if err != nil {
+		t.Fatalf("HNSWBuildTopK() error = %v", err)
+	}
+	if len(indices) != 1 || indices[0] != last || math.Abs(float64(topScores[0])-0.6) > 1e-6 {
+		t.Fatalf("hnsw_build kernels: top-1 = %v (score %v), want index %d (score 0.6)", indices, topScores, last)
 	}
 }
