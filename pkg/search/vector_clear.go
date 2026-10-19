@@ -42,10 +42,7 @@ func (s *Service) clearIndexes(all bool) error {
 	// Clearing the cluster generation is one cluster-state change.
 	s.clusterStateMu.Lock()
 	s.mu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
+	s.closeVectorFileStoreLocked()
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
 	}

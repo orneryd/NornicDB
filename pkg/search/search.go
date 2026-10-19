@@ -2195,10 +2195,9 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
 	s.persistMu.Unlock()
 	s.persistRunMu.Lock()
 	s.indexMu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
+	s.mu.Lock()
+	s.closeVectorFileStoreLocked()
+	s.mu.Unlock()
 	s.indexMu.Unlock()
 	s.persistRunMu.Unlock()
 }
@@ -2240,16 +2239,13 @@ func (s *Service) Close() error {
 
 	s.persistRunMu.Lock()
 	s.indexMu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
 	// The cluster generation and index retire through the owner, leaving no
 	// index: a clustering finishing later is superseded, admissions find no
 	// index, and the index's native GPU buffers are released once the last
 	// query holding it finishes.
 	s.clusterStateMu.Lock()
 	s.mu.Lock()
+	s.closeVectorFileStoreLocked()
 	s.retireClusterGeneration(nil)
 	s.mu.Unlock()
 	s.clusterStateMu.Unlock()
@@ -3063,6 +3059,18 @@ func (s *Service) ensureVectorFileStore() {
 	vi.rawVectors = make(map[string][]float32)
 	vi.mu.Unlock()
 	s.mu.Unlock()
+}
+
+// closeVectorFileStoreLocked closes and drops the file-backed vector store.
+// Caller holds s.mu for writing, so a reader holding s.mu never sees the store
+// change or close under it. The caller also holds s.indexMu or buildMu
+// exclusively, which orders the change against index mutations that read the
+// store under indexMu.
+func (s *Service) closeVectorFileStoreLocked() {
+	if s.vectorFileStore != nil {
+		_ = s.vectorFileStore.Close()
+		s.vectorFileStore = nil
+	}
 }
 
 // lastWriteTime returns the last known write time for the underlying storage, if available.
@@ -4007,10 +4015,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if forceVectorRebuild {
 		restartVectorStore = true
 		s.mu.Lock()
-		if s.vectorFileStore != nil {
-			_ = s.vectorFileStore.Close()
-			s.vectorFileStore = nil
-		}
+		s.closeVectorFileStoreLocked()
 		s.mu.Unlock()
 		if s.vectorIndex != nil {
 			s.vectorIndex.Clear()
@@ -4045,10 +4050,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		forceHNSWRebuild = true
 		forceRoutingRebuild = true
 		s.mu.Lock()
-		if s.vectorFileStore != nil {
-			_ = s.vectorFileStore.Close()
-			s.vectorFileStore = nil
-		}
+		s.closeVectorFileStoreLocked()
 		s.mu.Unlock()
 		if s.vectorIndex != nil {
 			s.vectorIndex.Clear()
@@ -4092,8 +4094,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 					s.logPrintf("📇 BuildIndexes: db updated after vector store (db=%s, vec=%s); restarting vector build",
 						lastWrite.Format(time.RFC3339), info.ModTime().Format(time.RFC3339))
 					s.mu.Lock()
-					_ = s.vectorFileStore.Close()
-					s.vectorFileStore = nil
+					s.closeVectorFileStoreLocked()
 					s.mu.Unlock()
 				}
 			}
@@ -4190,10 +4191,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		_ = security.RemoveRootedPath(vectorPath + ".vec")
 		_ = security.RemoveRootedPath(vectorPath + ".meta")
 		s.mu.Lock()
-		if s.vectorFileStore != nil {
-			_ = s.vectorFileStore.Close()
-			s.vectorFileStore = nil
-		}
+		s.closeVectorFileStoreLocked()
 		s.mu.Unlock()
 	}
 
