@@ -34,27 +34,34 @@ func (m *DatabaseManager) ensureStorageSizeInitialized(databaseName string, engi
 		return ErrDatabaseNotFound
 	}
 
-	info.sizeMu.RLock()
-	if info.sizeInitialized {
+	for {
+		info.sizeMu.RLock()
+		if info.sizeInitialized {
+			info.sizeMu.RUnlock()
+			return nil
+		}
+		revision, epoch := info.sizeRevision, info.sizeEpoch
 		info.sizeMu.RUnlock()
-		return nil
-	}
-	info.sizeMu.RUnlock()
-
-	nodeSize, edgeSize, err := m.calculateStorageSizeFromEngine(engine)
-	if err != nil {
-		return err
-	}
-
-	info.sizeMu.Lock()
-	if !info.sizeInitialized {
-		info.nodeSize = nodeSize
-		info.edgeSize = edgeSize
+		nodeSize, edgeSize, err := m.calculateStorageSizeFromEngine(engine)
+		if err != nil {
+			return err
+		}
+		info.sizeMu.Lock()
+		if info.sizeInitialized {
+			info.sizeMu.Unlock()
+			return nil
+		}
+		if revision != info.sizeRevision || epoch != info.sizeEpoch {
+			info.sizeMu.Unlock()
+			continue
+		}
+		info.nodeSize, info.edgeSize = nodeSize, edgeSize
 		info.totalSize = nodeSize + edgeSize
 		info.sizeInitialized = true
+		info.sizeEpoch++
+		info.sizeMu.Unlock()
+		return nil
 	}
-	info.sizeMu.Unlock()
-	return nil
 }
 
 // markStorageSizeDirty marks cached size as stale. The next read/operation will
@@ -68,12 +75,21 @@ func (m *DatabaseManager) markStorageSizeDirty(databaseName string) {
 	}
 	info.sizeMu.Lock()
 	info.sizeInitialized = false
+	info.sizeEpoch++
+	info.sizeRevision++
 	info.sizeMu.Unlock()
 }
 
 // applyStorageSizeDelta updates cached size counters in O(1). If a previous operation
 // marked the cache dirty, deltas are ignored until re-initialization.
 func (m *DatabaseManager) applyStorageSizeDelta(databaseName string, nodeDelta, edgeDelta int64) {
+	m.publishAccountingBatch(databaseName, accountingBatch{nodes: entityAccountingDelta{bytes: nodeDelta}, edges: entityAccountingDelta{bytes: edgeDelta}}, nil)
+}
+
+// publishAccountingBatch is the only writer of incremental size totals. A base
+// writer captures the recount epoch before commit; if a recount overtook it,
+// invalidate rather than applying its already-counted delta a second time.
+func (m *DatabaseManager) publishAccountingBatch(databaseName string, batch accountingBatch, epoch *uint64) {
 	m.mu.RLock()
 	info, exists := m.databases[databaseName]
 	m.mu.RUnlock()
@@ -82,12 +98,18 @@ func (m *DatabaseManager) applyStorageSizeDelta(databaseName string, nodeDelta, 
 	}
 	info.sizeMu.Lock()
 	defer info.sizeMu.Unlock()
+	info.sizeRevision++
+	if epoch != nil && info.sizeEpoch != *epoch {
+		info.sizeInitialized = false
+		info.sizeEpoch++
+		return
+	}
 	if !info.sizeInitialized {
 		return
 	}
-	info.nodeSize += nodeDelta
-	info.edgeSize += edgeDelta
-	info.totalSize += nodeDelta + edgeDelta
+	info.nodeSize += batch.nodes.bytes
+	info.edgeSize += batch.edges.bytes
+	info.totalSize += batch.nodes.bytes + batch.edges.bytes
 	if info.nodeSize < 0 {
 		info.nodeSize = 0
 	}

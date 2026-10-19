@@ -108,7 +108,9 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 // TestMigration_NoUnprefixedData verifies that migration is skipped
 // when there's no unprefixed data (fresh installation).
 func TestMigration_NoUnprefixedData(t *testing.T) {
-	inner := newLegacyTestEngine()
+	// New writes use the production transaction-capable engine. The legacy
+	// map fixture remains for tests that actually seed unprefixed old records.
+	inner := storage.NewMemoryEngine()
 
 	// Create DatabaseManager with fresh storage (no unprefixed data)
 	manager, err := NewDatabaseManager(inner, nil)
@@ -454,7 +456,7 @@ func TestMigration_DoesNotInjectDbProperty(t *testing.T) {
 
 // TestMigration_NewNodesDoNotRequireDbProperty verifies default-db nodes work without db metadata.
 func TestMigration_NewNodesDoNotRequireDbProperty(t *testing.T) {
-	inner := newLegacyTestEngine()
+	inner := storage.NewMemoryEngine()
 
 	config := &Config{
 		DefaultDatabase:  "nornic",

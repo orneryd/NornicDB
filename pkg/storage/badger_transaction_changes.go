@@ -22,6 +22,10 @@ type TransactionChanges struct {
 func (tx *BadgerTransaction) PendingChanges(includeEntities bool) TransactionChanges {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.pendingChangesLocked(includeEntities)
+}
+
+func (tx *BadgerTransaction) pendingChangesLocked(includeEntities bool) TransactionChanges {
 	changes := TransactionChanges{
 		Namespace:     tx.namespace,
 		Operations:    len(tx.operations) + len(tx.connectedDeletes),

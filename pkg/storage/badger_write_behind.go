@@ -83,6 +83,10 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return localizedError(localization.StorageTransactionCommitNamespaceMissing(), nil)
 	}
+	accounting, err := tx.prepareBufferedAccountingLocked()
+	if err != nil {
+		return tx.abortCommitLocked(err)
+	}
 
 	// Ownership transfer, not copies: this is an implicit autocommit, the
 	// transaction closes right after the ACK and closeLocked replaces the
@@ -143,10 +147,19 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	tx.bufferedStagingTransferred = true
 	// The exclusive commit gate orders this ACK against synchronous timestamp
 	// reservations. Replay keeps this place even after retiring its overlay.
+	if accounting != nil {
+		accounting.capturePriorLocked(tx)
+	}
 	c.notification = &commitNotification{revisionPublished: true}
 	tx.engine.reserveCommitNotification(c.notification)
 	tx.engine.writeBehind.AppendCommit(c)
 	tx.engine.forgetReplacedSidecars(tx.embeddingChanges)
+	if tx.managedAccounting != nil {
+		tx.managedAccounting()
+	}
+	if accounting != nil {
+		accounting.publish(accounting.pairs, accounting.err)
+	}
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,
 	// not at flush. The sync path advances it per-op through the notify*

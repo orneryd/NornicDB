@@ -110,12 +110,16 @@ func (b *BadgerEngine) withPublishingUpdate(fn func(txn *badger.Txn) error, publ
 // unit is a repeatable group of blind writes: when one does not fit the open
 // Badger batch, the commit becomes a large commit and the unit is repeated in
 // the next batch, and nothing is visible until every unit is written (#703).
-func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) error {
+func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error, accountingKeys ...any) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
 		for _, unit := range units {
 			if err := cw.write(unit); err != nil {
 				return err
 			}
+		}
+		if len(accountingKeys) != 0 {
+			cw.publishKeys = accountingKeys
+			cw.publish = func() {}
 		}
 		return nil
 	})

@@ -225,6 +225,7 @@ type BadgerEngine struct {
 	// under writeBarrier and avoids any registry walk on ordinary commits.
 	lastEmbeddingSidecarWrite uint64
 	embeddingSidecarWrites    sync.Map // NodeID -> physical publication version
+	accountingOwners          sync.Map // namespace -> AccountingOwner
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup

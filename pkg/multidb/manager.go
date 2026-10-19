@@ -103,6 +103,8 @@ type DatabaseInfo struct {
 	nodeSize        int64        // Total size of all nodes in bytes
 	edgeSize        int64        // Total size of all edges in bytes
 	sizeInitialized bool         // Whether size has been calculated at least once
+	sizeEpoch       uint64       // Recounts/invalidation, separate from ordinary deltas
+	sizeRevision    uint64       // Body mutations racing a lazy recount
 	sizeMu          sync.RWMutex // Protects size tracking
 }
 
@@ -763,6 +765,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 	nodeSize := info.nodeSize
 	edgeSize := info.edgeSize
 	sizeInitialized := info.sizeInitialized
+	sizeEpoch, sizeRevision := info.sizeEpoch, info.sizeRevision
 	info.sizeMu.RUnlock()
 
 	return &DatabaseInfo{
@@ -782,6 +785,8 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 		nodeSize:        nodeSize,
 		edgeSize:        edgeSize,
 		sizeInitialized: sizeInitialized,
+		sizeEpoch:       sizeEpoch,
+		sizeRevision:    sizeRevision,
 	}
 }
 
@@ -1158,29 +1163,28 @@ func (m *DatabaseManager) DecrementStorageSize(databaseName string, nodeSize, ed
 //
 // Thread-safe: This method is safe to call from multiple goroutines.
 func (m *DatabaseManager) GetStorageSize(databaseName string) (int64, int64, int64) {
-	m.mu.RLock()
-	info, exists := m.databases[databaseName]
-	var engine storage.Engine
-	if exists {
-		if cached, ok := m.engines[databaseName]; ok {
-			engine = cached
-		} else {
-			engine = storage.NewNamespacedEngine(m.inner, databaseName)
-		}
-	}
-	m.mu.RUnlock()
-
-	if !exists {
+	engine, err := m.GetStorage(databaseName)
+	if err != nil {
 		return 0, 0, 0
 	}
-
-	if tracker, ok := engine.(*sizeTrackingEngine); ok {
-		_ = tracker.ensureStorageSizeInitialized()
-	} else {
-		_ = m.ensureStorageSizeInitialized(databaseName, engine)
+	m.mu.RLock()
+	info := m.databases[databaseName]
+	m.mu.RUnlock()
+	if info == nil {
+		return 0, 0, 0
 	}
-
-	info.sizeMu.RLock()
-	defer info.sizeMu.RUnlock()
-	return info.totalSize, info.nodeSize, info.edgeSize
+	for {
+		if tracker, ok := engine.(*sizeTrackingEngine); ok {
+			err = tracker.ensureStorageSizeInitialized()
+		} else {
+			err = m.ensureStorageSizeInitialized(databaseName, engine)
+		}
+		info.sizeMu.RLock()
+		total, nodes, edges := info.totalSize, info.nodeSize, info.edgeSize
+		initialized := info.sizeInitialized
+		info.sizeMu.RUnlock()
+		if initialized || err != nil {
+			return total, nodes, edges
+		}
+	}
 }

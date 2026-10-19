@@ -668,6 +668,7 @@ func (b *BadgerEngine) updateNode(node *Node) error {
 // (#703).
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
+		cw.publishKeys, cw.publish = []any{nodeID}, func() {}
 		return cw.replaceEmbeddingKeys(nodeID, embeddings)
 	})
 }
