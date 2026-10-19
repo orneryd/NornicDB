@@ -214,6 +214,7 @@ type BadgerEngine struct {
 	catalogObservers          atomic.Pointer[namespaceCatalogObservers]
 	catalogObserverID         uint64
 	catalogRevision           atomic.Uint64
+	catalogRecordGates        sync.Map
 	// Sidecar publication is the only writer that does not change a body.
 	// Versions are recorded only for live sidecar ranges; the scalar is read
 	// under writeBarrier and avoids any registry walk on ordinary commits.

@@ -19,6 +19,8 @@ type NamespaceDrop struct {
 	phase              atomic.Uint32
 	journalPosition    atomic.Uint64
 	catalogRevision    uint64
+	catalogRevisionChosen bool
+	catalogMutation *NamespaceCatalogMutation
 	once               sync.Once
 	done               chan struct{}
 	journal            func() (bool, error)
@@ -60,7 +62,7 @@ func (op *NamespaceDrop) SetJournal(journal func() (bool, error)) { op.journal =
 
 func (op *NamespaceDrop) SetJournalPosition(position uint64) { op.journalPosition.Store(position) }
 func (op *NamespaceDrop) JournalPosition() uint64            { return op.journalPosition.Load() }
-func (op *NamespaceDrop) SetCatalogRevision(revision uint64) { op.catalogRevision = revision }
+func (op *NamespaceDrop) SetCatalogRevision(revision uint64) { op.catalogRevision = revision; op.catalogRevisionChosen=true }
 func (op *NamespaceDrop) CatalogRevision() uint64            { return op.catalogRevision }
 
 func (op *NamespaceDrop) SetPublicationRelease(release func()) { op.releasePublication = release }
@@ -76,6 +78,7 @@ func (op *NamespaceDrop) physicalComplete(ctx context.Context, err error) error 
 		op.releasePublication()
 		op.releasePublication = nil
 	}
+	err=errors.Join(err,op.applyCatalogMutation())
 	op.physicalDone, op.err = true, errors.Join(op.err, err)
 	if (op.consensus || ctx.Value(deferredDropCompletionKey{}) == true) && op.complete != nil {
 		return op.Result(op.err)
@@ -182,13 +185,15 @@ func (b *BadgerEngine) PrepareNamespaceDrop(ctx context.Context, prefix string, 
 	op.releaseTasks = releaseTasks
 	priorCompletion := op.complete
 	op.complete = func() error {
-		err := b.completeNamespaceRetirement(namespace)
+		var err error
+		if op.dropsNamespace(){err = b.completeNamespaceRetirement(namespace)}
 		if priorCompletion != nil {
 			err = errors.Join(err, priorCompletion())
 		}
 		return err
 	}
-	b.setNamespaceOperation(namespace, op)
+	if err:=op.validateCatalogMutation();err!=nil{return err}
+	if op.fencesNamespace(){b.setNamespaceOperation(namespace, op)}
 	op.phase.Store(dropPrepared)
 	prepared = true
 	return nil
@@ -256,7 +261,7 @@ func (op *NamespaceDrop) commitLocked(ctx context.Context) error {
 		}
 		op.err = err
 	}
-	if op.namespace != "" {
+	if op.namespace != "" && op.dropsNamespace() {
 		op.err = errors.Join(op.err, op.engine.retireNamespace(op.namespace, op.catalogRevision))
 		op.engine.publishLogicalNamespaceRetirement(op.namespace)
 	}
@@ -265,8 +270,10 @@ func (op *NamespaceDrop) commitLocked(ctx context.Context) error {
 }
 
 func (op *NamespaceDrop) chooseCatalogRevision() {
-	if op.catalogRevision == 0 && op.namespace != "" {
-		op.catalogRevision = op.engine.catalogRevision.Load() + 1
+	if !op.catalogRevisionChosen && op.namespace != "" {
+		op.catalogRevision = op.engine.catalogRevision.Load()
+		if op.dropsNamespace(){op.catalogRevision++}
+		op.catalogRevisionChosen=true
 	}
 }
 
