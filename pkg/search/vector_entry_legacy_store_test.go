@@ -128,13 +128,13 @@ func TestLegacyGraphArtifactsAreNotLoaded(t *testing.T) {
 
 	ivfDir := filepath.Join(dir, "hnsw_ivf")
 	writeHNSWSnapshot(t, filepath.Join(ivfDir, "0"), legacy)
-	members, err := loadIVFClusterMemberIDs(ivfDir, 0)
+	members, err := loadIVFClusterMemberIDs(filepath.Join(ivfDir, "0"))
 	require.NoError(t, err)
 	assert.Nil(t, members)
 
 	current := &hnswIndexSnapshot{Version: hnswIndexFormatVersionGraphOnly, Dimensions: 2, InternalToID: []string{"x", nodeChunkVectorKey("x", 1)}}
 	writeHNSWSnapshot(t, filepath.Join(ivfDir, "1"), current)
-	members, err = loadIVFClusterMemberIDs(ivfDir, 1)
+	members, err = loadIVFClusterMemberIDs(filepath.Join(ivfDir, "1"))
 	require.NoError(t, err)
 	assert.Equal(t, current.InternalToID, members)
 }
