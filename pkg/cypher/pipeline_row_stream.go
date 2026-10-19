@@ -472,7 +472,11 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 
 func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
-		projected, scope := pipelineRow{}, pipelineRow{}
+		projected := pipelineRow{}
+		var scope pipelineRow
+		if plan.where != "" {
+			scope = pipelineRow{}
+		}
 		valid := true
 		completed := input(func(row pipelineRow) bool {
 			if err := ctx.Err(); err != nil {

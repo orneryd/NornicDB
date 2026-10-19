@@ -1,0 +1,926 @@
+{
+  "BenchmarkPipelineLimitedCartesianCreateDelete-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 27420.0,
+        "bytes": 22357,
+        "allocs": 287
+      },
+      {
+        "round": 2,
+        "ns": 27556.0,
+        "bytes": 22357,
+        "allocs": 287
+      },
+      {
+        "round": 3,
+        "ns": 53281.0,
+        "bytes": 22361,
+        "allocs": 287
+      },
+      {
+        "round": 4,
+        "ns": 46847.0,
+        "bytes": 22359,
+        "allocs": 287
+      },
+      {
+        "round": 5,
+        "ns": 51876.0,
+        "bytes": 22361,
+        "allocs": 287
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 49217.0,
+        "bytes": 22025,
+        "allocs": 285
+      },
+      {
+        "round": 2,
+        "ns": 52088.0,
+        "bytes": 22024,
+        "allocs": 285
+      },
+      {
+        "round": 3,
+        "ns": 28915.0,
+        "bytes": 22021,
+        "allocs": 285
+      },
+      {
+        "round": 4,
+        "ns": 33953.0,
+        "bytes": 22021,
+        "allocs": 285
+      },
+      {
+        "round": 5,
+        "ns": 46729.0,
+        "bytes": 22024,
+        "allocs": 285
+      }
+    ]
+  },
+  "BenchmarkPipelineWithScope/projection-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 360780.0,
+        "bytes": 14473,
+        "allocs": 874
+      },
+      {
+        "round": 2,
+        "ns": 254839.0,
+        "bytes": 14474,
+        "allocs": 874
+      },
+      {
+        "round": 3,
+        "ns": 473984.0,
+        "bytes": 14613,
+        "allocs": 874
+      },
+      {
+        "round": 4,
+        "ns": 476275.0,
+        "bytes": 14617,
+        "allocs": 874
+      },
+      {
+        "round": 5,
+        "ns": 254325.0,
+        "bytes": 14493,
+        "allocs": 874
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 242370.0,
+        "bytes": 14129,
+        "allocs": 872
+      },
+      {
+        "round": 2,
+        "ns": 286797.0,
+        "bytes": 14147,
+        "allocs": 872
+      },
+      {
+        "round": 3,
+        "ns": 143937.0,
+        "bytes": 14068,
+        "allocs": 872
+      },
+      {
+        "round": 4,
+        "ns": 145989.0,
+        "bytes": 14069,
+        "allocs": 872
+      },
+      {
+        "round": 5,
+        "ns": 238822.0,
+        "bytes": 14129,
+        "allocs": 872
+      }
+    ]
+  },
+  "BenchmarkPipelineWithScope/predicate-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 334213.0,
+        "bytes": 15052,
+        "allocs": 894
+      },
+      {
+        "round": 2,
+        "ns": 320089.0,
+        "bytes": 15042,
+        "allocs": 894
+      },
+      {
+        "round": 3,
+        "ns": 580687.0,
+        "bytes": 15208,
+        "allocs": 894
+      },
+      {
+        "round": 4,
+        "ns": 592324.0,
+        "bytes": 15215,
+        "allocs": 894
+      },
+      {
+        "round": 5,
+        "ns": 309625.0,
+        "bytes": 15036,
+        "allocs": 894
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 590776.0,
+        "bytes": 15214,
+        "allocs": 894
+      },
+      {
+        "round": 2,
+        "ns": 592395.0,
+        "bytes": 15261,
+        "allocs": 894
+      },
+      {
+        "round": 3,
+        "ns": 317762.0,
+        "bytes": 15050,
+        "allocs": 894
+      },
+      {
+        "round": 4,
+        "ns": 312001.0,
+        "bytes": 15038,
+        "allocs": 894
+      },
+      {
+        "round": 5,
+        "ns": 518745.0,
+        "bytes": 15171,
+        "allocs": 894
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/autocommit/simple_match_limit-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 16610.0,
+        "bytes": 11210,
+        "allocs": 138
+      },
+      {
+        "round": 2,
+        "ns": 21381.0,
+        "bytes": 11208,
+        "allocs": 138
+      },
+      {
+        "round": 3,
+        "ns": 30634.0,
+        "bytes": 11242,
+        "allocs": 138
+      },
+      {
+        "round": 4,
+        "ns": 33154.0,
+        "bytes": 11239,
+        "allocs": 138
+      },
+      {
+        "round": 5,
+        "ns": 31528.0,
+        "bytes": 11210,
+        "allocs": 138
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 30595.0,
+        "bytes": 11239,
+        "allocs": 138
+      },
+      {
+        "round": 2,
+        "ns": 35515.0,
+        "bytes": 11248,
+        "allocs": 138
+      },
+      {
+        "round": 3,
+        "ns": 15956.0,
+        "bytes": 11207,
+        "allocs": 138
+      },
+      {
+        "round": 4,
+        "ns": 16474.0,
+        "bytes": 11208,
+        "allocs": 138
+      },
+      {
+        "round": 5,
+        "ns": 30469.0,
+        "bytes": 11239,
+        "allocs": 138
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/explicit_tx/simple_match_limit-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 11446.0,
+        "bytes": 5424,
+        "allocs": 80
+      },
+      {
+        "round": 2,
+        "ns": 15733.0,
+        "bytes": 5427,
+        "allocs": 80
+      },
+      {
+        "round": 3,
+        "ns": 21036.0,
+        "bytes": 5433,
+        "allocs": 80
+      },
+      {
+        "round": 4,
+        "ns": 24181.0,
+        "bytes": 5435,
+        "allocs": 80
+      },
+      {
+        "round": 5,
+        "ns": 11840.0,
+        "bytes": 5424,
+        "allocs": 80
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 21072.0,
+        "bytes": 5433,
+        "allocs": 80
+      },
+      {
+        "round": 2,
+        "ns": 24100.0,
+        "bytes": 5435,
+        "allocs": 80
+      },
+      {
+        "round": 3,
+        "ns": 11138.0,
+        "bytes": 5423,
+        "allocs": 80
+      },
+      {
+        "round": 4,
+        "ns": 10830.0,
+        "bytes": 5423,
+        "allocs": 80
+      },
+      {
+        "round": 5,
+        "ns": 21272.0,
+        "bytes": 5433,
+        "allocs": 80
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/autocommit/property_lookup-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 970363.0,
+        "bytes": 1452306,
+        "allocs": 10199
+      },
+      {
+        "round": 2,
+        "ns": 1708307.0,
+        "bytes": 1452654,
+        "allocs": 10200
+      },
+      {
+        "round": 3,
+        "ns": 1777435.0,
+        "bytes": 1452946,
+        "allocs": 10201
+      },
+      {
+        "round": 4,
+        "ns": 2083467.0,
+        "bytes": 1453151,
+        "allocs": 10201
+      },
+      {
+        "round": 5,
+        "ns": 989306.0,
+        "bytes": 1452341,
+        "allocs": 10199
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 2050799.0,
+        "bytes": 1452974,
+        "allocs": 10201
+      },
+      {
+        "round": 2,
+        "ns": 947536.0,
+        "bytes": 1452404,
+        "allocs": 10199
+      },
+      {
+        "round": 3,
+        "ns": 948780.0,
+        "bytes": 1452392,
+        "allocs": 10199
+      },
+      {
+        "round": 4,
+        "ns": 968620.0,
+        "bytes": 1452401,
+        "allocs": 10199
+      },
+      {
+        "round": 5,
+        "ns": 2097670.0,
+        "bytes": 1453224,
+        "allocs": 10201
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/explicit_tx/property_lookup-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 334249.0,
+        "bytes": 299843,
+        "allocs": 2169
+      },
+      {
+        "round": 2,
+        "ns": 886064.0,
+        "bytes": 308197,
+        "allocs": 2270
+      },
+      {
+        "round": 3,
+        "ns": 701073.0,
+        "bytes": 305178,
+        "allocs": 2233
+      },
+      {
+        "round": 4,
+        "ns": 684940.0,
+        "bytes": 305037,
+        "allocs": 2232
+      },
+      {
+        "round": 5,
+        "ns": 314646.0,
+        "bytes": 299745,
+        "allocs": 2167
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 694309.0,
+        "bytes": 305119,
+        "allocs": 2233
+      },
+      {
+        "round": 2,
+        "ns": 316967.0,
+        "bytes": 299769,
+        "allocs": 2168
+      },
+      {
+        "round": 3,
+        "ns": 326187.0,
+        "bytes": 299901,
+        "allocs": 2169
+      },
+      {
+        "round": 4,
+        "ns": 319270.0,
+        "bytes": 300447,
+        "allocs": 2176
+      },
+      {
+        "round": 5,
+        "ns": 701158.0,
+        "bytes": 305380,
+        "allocs": 2236
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/autocommit/filter_count-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 910037.0,
+        "bytes": 1449321,
+        "allocs": 10155
+      },
+      {
+        "round": 2,
+        "ns": 3041762.0,
+        "bytes": 1450534,
+        "allocs": 10158
+      },
+      {
+        "round": 3,
+        "ns": 1977957.0,
+        "bytes": 1450060,
+        "allocs": 10157
+      },
+      {
+        "round": 4,
+        "ns": 2120457.0,
+        "bytes": 1449982,
+        "allocs": 10157
+      },
+      {
+        "round": 5,
+        "ns": 913529.0,
+        "bytes": 1449315,
+        "allocs": 10155
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 1986112.0,
+        "bytes": 1450052,
+        "allocs": 10157
+      },
+      {
+        "round": 2,
+        "ns": 966412.0,
+        "bytes": 1449308,
+        "allocs": 10155
+      },
+      {
+        "round": 3,
+        "ns": 1020966.0,
+        "bytes": 1449367,
+        "allocs": 10155
+      },
+      {
+        "round": 4,
+        "ns": 923722.0,
+        "bytes": 1449361,
+        "allocs": 10155
+      },
+      {
+        "round": 5,
+        "ns": 1990660.0,
+        "bytes": 1450051,
+        "allocs": 10157
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/explicit_tx/filter_count-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 271969.0,
+        "bytes": 296032,
+        "allocs": 2109
+      },
+      {
+        "round": 2,
+        "ns": 2004201.0,
+        "bytes": 306957,
+        "allocs": 2224
+      },
+      {
+        "round": 3,
+        "ns": 614764.0,
+        "bytes": 300723,
+        "allocs": 2158
+      },
+      {
+        "round": 4,
+        "ns": 625263.0,
+        "bytes": 300946,
+        "allocs": 2161
+      },
+      {
+        "round": 5,
+        "ns": 286872.0,
+        "bytes": 296233,
+        "allocs": 2111
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 712138.0,
+        "bytes": 300795,
+        "allocs": 2159
+      },
+      {
+        "round": 2,
+        "ns": 287223.0,
+        "bytes": 296292,
+        "allocs": 2112
+      },
+      {
+        "round": 3,
+        "ns": 384009.0,
+        "bytes": 297238,
+        "allocs": 2122
+      },
+      {
+        "round": 4,
+        "ns": 311275.0,
+        "bytes": 297289,
+        "allocs": 2122
+      },
+      {
+        "round": 5,
+        "ns": 613850.0,
+        "bytes": 300751,
+        "allocs": 2159
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/autocommit/one_hop_limit-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 86622.0,
+        "bytes": 103926,
+        "allocs": 1255
+      },
+      {
+        "round": 2,
+        "ns": 737264.0,
+        "bytes": 104363,
+        "allocs": 1255
+      },
+      {
+        "round": 3,
+        "ns": 192371.0,
+        "bytes": 104145,
+        "allocs": 1255
+      },
+      {
+        "round": 4,
+        "ns": 185601.0,
+        "bytes": 104150,
+        "allocs": 1255
+      },
+      {
+        "round": 5,
+        "ns": 82444.0,
+        "bytes": 103920,
+        "allocs": 1255
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 202372.0,
+        "bytes": 104236,
+        "allocs": 1255
+      },
+      {
+        "round": 2,
+        "ns": 94299.0,
+        "bytes": 103928,
+        "allocs": 1255
+      },
+      {
+        "round": 3,
+        "ns": 117340.0,
+        "bytes": 103969,
+        "allocs": 1255
+      },
+      {
+        "round": 4,
+        "ns": 94361.0,
+        "bytes": 103920,
+        "allocs": 1255
+      },
+      {
+        "round": 5,
+        "ns": 186315.0,
+        "bytes": 104172,
+        "allocs": 1255
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/explicit_tx/one_hop_limit-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 99575.0,
+        "bytes": 112935,
+        "allocs": 1422
+      },
+      {
+        "round": 2,
+        "ns": 523139.0,
+        "bytes": 113153,
+        "allocs": 1424
+      },
+      {
+        "round": 3,
+        "ns": 212395.0,
+        "bytes": 113056,
+        "allocs": 1423
+      },
+      {
+        "round": 4,
+        "ns": 208312.0,
+        "bytes": 113053,
+        "allocs": 1423
+      },
+      {
+        "round": 5,
+        "ns": 93657.0,
+        "bytes": 112926,
+        "allocs": 1422
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 206891.0,
+        "bytes": 113051,
+        "allocs": 1423
+      },
+      {
+        "round": 2,
+        "ns": 102773.0,
+        "bytes": 112949,
+        "allocs": 1422
+      },
+      {
+        "round": 3,
+        "ns": 141003.0,
+        "bytes": 112976,
+        "allocs": 1423
+      },
+      {
+        "round": 4,
+        "ns": 109705.0,
+        "bytes": 112946,
+        "allocs": 1422
+      },
+      {
+        "round": 5,
+        "ns": 211222.0,
+        "bytes": 113056,
+        "allocs": 1423
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/autocommit/return_literal-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 4939.0,
+        "bytes": 2927,
+        "allocs": 39
+      },
+      {
+        "round": 2,
+        "ns": 16052.0,
+        "bytes": 2940,
+        "allocs": 39
+      },
+      {
+        "round": 3,
+        "ns": 8903.0,
+        "bytes": 2933,
+        "allocs": 39
+      },
+      {
+        "round": 4,
+        "ns": 9938.0,
+        "bytes": 2934,
+        "allocs": 39
+      },
+      {
+        "round": 5,
+        "ns": 4498.0,
+        "bytes": 2926,
+        "allocs": 39
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 10108.0,
+        "bytes": 2934,
+        "allocs": 39
+      },
+      {
+        "round": 2,
+        "ns": 4777.0,
+        "bytes": 2927,
+        "allocs": 39
+      },
+      {
+        "round": 3,
+        "ns": 7812.0,
+        "bytes": 2931,
+        "allocs": 39
+      },
+      {
+        "round": 4,
+        "ns": 6042.0,
+        "bytes": 2928,
+        "allocs": 39
+      },
+      {
+        "round": 5,
+        "ns": 10150.0,
+        "bytes": 2935,
+        "allocs": 39
+      }
+    ]
+  },
+  "BenchmarkStatementRouting/explicit_tx/return_literal-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 4586.0,
+        "bytes": 3058,
+        "allocs": 34
+      },
+      {
+        "round": 2,
+        "ns": 11711.0,
+        "bytes": 3063,
+        "allocs": 34
+      },
+      {
+        "round": 3,
+        "ns": 8352.0,
+        "bytes": 3061,
+        "allocs": 34
+      },
+      {
+        "round": 4,
+        "ns": 8185.0,
+        "bytes": 3061,
+        "allocs": 34
+      },
+      {
+        "round": 5,
+        "ns": 3737.0,
+        "bytes": 3058,
+        "allocs": 34
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 8244.0,
+        "bytes": 3061,
+        "allocs": 34
+      },
+      {
+        "round": 2,
+        "ns": 3727.0,
+        "bytes": 3058,
+        "allocs": 34
+      },
+      {
+        "round": 3,
+        "ns": 7939.0,
+        "bytes": 3060,
+        "allocs": 34
+      },
+      {
+        "round": 4,
+        "ns": 5430.0,
+        "bytes": 3059,
+        "allocs": 34
+      },
+      {
+        "round": 5,
+        "ns": 8263.0,
+        "bytes": 3060,
+        "allocs": 34
+      }
+    ]
+  },
+  "BenchmarkSemanticValidationDistinctText-12": {
+    "control": [
+      {
+        "round": 1,
+        "ns": 22195.0,
+        "bytes": 3559,
+        "allocs": 43
+      },
+      {
+        "round": 2,
+        "ns": 39114.0,
+        "bytes": 3547,
+        "allocs": 43
+      },
+      {
+        "round": 3,
+        "ns": 34286.0,
+        "bytes": 3528,
+        "allocs": 43
+      },
+      {
+        "round": 4,
+        "ns": 30342.0,
+        "bytes": 3528,
+        "allocs": 43
+      },
+      {
+        "round": 5,
+        "ns": 16490.0,
+        "bytes": 3551,
+        "allocs": 43
+      }
+    ],
+    "current": [
+      {
+        "round": 1,
+        "ns": 35024.0,
+        "bytes": 3521,
+        "allocs": 43
+      },
+      {
+        "round": 2,
+        "ns": 16892.0,
+        "bytes": 3550,
+        "allocs": 43
+      },
+      {
+        "round": 3,
+        "ns": 34888.0,
+        "bytes": 3523,
+        "allocs": 43
+      },
+      {
+        "round": 4,
+        "ns": 26268.0,
+        "bytes": 3563,
+        "allocs": 43
+      },
+      {
+        "round": 5,
+        "ns": 34566.0,
+        "bytes": 3520,
+        "allocs": 43
+      }
+    ]
+  }
+}

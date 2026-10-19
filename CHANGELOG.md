@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Avoid allocating and filling an unused predicate scope for streaming WITH
+  projections without WHERE; preserve ordered WITH scope handling (#1472).
+
 - Bound slow-query log redaction to avoid parsing large statements, reuse
   exact-text grammar verdicts, and redact hex/octal integer literals (#1358).
 - Share syntax-verdict and upper-cased statement caches with Bolt and HTTP
