@@ -175,22 +175,34 @@ func (r *RoleEntitlementsStore) All() map[string][]string {
 // PermissionsForRole returns the effective entitlement IDs (permission strings) for a single role.
 // If store is nil or has no override for role, built-in roles use RolePermissions; user-defined return nil.
 func PermissionsForRole(role string, store *RoleEntitlementsStore) []string {
-	role = NormalizeRoleName(role)
 	if store != nil {
-		if ids := store.Get(role); len(ids) > 0 {
-			return ids
-		}
+		store.mu.RLock()
+		defer store.mu.RUnlock()
 	}
-	// Built-in: use RolePermissions
-	perms, ok := RolePermissions[Role(role)]
-	if !ok || len(perms) == 0 {
+	ids, builtin := effectiveRoleEntitlements(role, store)
+	if len(ids) > 0 {
+		return append([]string(nil), ids...)
+	}
+	if len(builtin) == 0 {
 		return nil
 	}
-	ids := make([]string, len(perms))
-	for i, p := range perms {
+	ids = make([]string, len(builtin))
+	for i, p := range builtin {
 		ids[i] = string(p)
 	}
 	return ids
+}
+
+// effectiveRoleEntitlements owns override versus built-in fallback. The caller
+// holds store.mu when store is non-nil; returned slices must not escape it.
+func effectiveRoleEntitlements(role string, store *RoleEntitlementsStore) ([]string, []Permission) {
+	role = NormalizeRoleName(role)
+	if store != nil {
+		if ids := store.entitlements[role]; len(ids) > 0 {
+			return ids, nil
+		}
+	}
+	return nil, RolePermissions[Role(role)]
 }
 
 // EntitlementsAllow is the one check of a global entitlement: entitlements
@@ -221,4 +233,29 @@ func PermissionsForRoles(roles []string, store *RoleEntitlementsStore) []string 
 		}
 	}
 	return out
+}
+
+// RolesAllow tests the effective entitlement union without materializing it.
+// Stored overrides and built-in fallback are identical to PermissionsForRoles.
+func RolesAllow(roles []string, store *RoleEntitlementsStore, permission string) bool {
+	if store != nil {
+		store.mu.RLock()
+		defer store.mu.RUnlock()
+	}
+	permission = strings.ToLower(strings.TrimSpace(permission))
+	for _, role := range roles {
+		ids, builtin := effectiveRoleEntitlements(role, store)
+		if len(ids) > 0 {
+			if EntitlementsAllow(ids, permission) {
+				return true
+			}
+			continue
+		}
+		for _, id := range builtin {
+			if string(id) == permission || id == PermAdmin {
+				return true
+			}
+		}
+	}
+	return false
 }
