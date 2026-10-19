@@ -472,6 +472,11 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	if e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
 		return nil
 	}
+	// Grammar checks consume code from the same lexical expression reader as
+	// projections. Comments cannot introduce operands, quotes or delimiters;
+	// keep the original statement as the validation-cache key.
+	original := cypher
+	cypher = lexicalExpressionText(cypher)
 	if containsNotInOperator(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
@@ -605,7 +610,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 
-	e.markCachedValidSyntax(cypher, syntaxValidNornic)
+	e.markCachedValidSyntax(original, syntaxValidNornic)
 	return nil
 }
 
