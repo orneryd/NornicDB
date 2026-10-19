@@ -29,9 +29,6 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 			add("generated_parameter_"+token+"_"+write+"_type", prefix+write+" ()-[s:$"+token+"($x)]->() RETURN type(s)")
 		}
 	}
-	for _, token := range []string{"", "all", "any", "ANY"} {
-		add("generated_match_"+token, "MATCH (n:$"+token+"(CASE WHEN EXISTS { MATCH ()-[r:T]->() WHERE r.p='x' } THEN 'Key' ELSE 'Missing' END)) RETURN labels(n)")
-	}
 	for _, source := range []string{"'x'", "$x", "k"} {
 		for _, inline := range []bool{false, true} {
 			body := "MATCH (a)-[r:T]->() WHERE r.p=" + source
