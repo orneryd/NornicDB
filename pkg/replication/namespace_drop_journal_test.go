@@ -12,6 +12,11 @@ import (
 )
 
 func TestNamespaceDropJournalFailureLeavesDatabaseIntact(t *testing.T) {
+	t.Run("queued", func(t *testing.T) { testNamespaceDropJournalFailure(t, false) })
+	t.Run("full-queue", func(t *testing.T) { testNamespaceDropJournalFailure(t, true) })
+}
+
+func testNamespaceDropJournalFailure(t *testing.T, fullQueue bool) {
 	b := storage.NewMemoryEngine()
 	defer b.Close()
 	a, err := NewStorageAdapterWithWAL(b, t.TempDir())
@@ -29,6 +34,10 @@ func TestNamespaceDropJournalFailureLeavesDatabaseIntact(t *testing.T) {
 	defer old.Rollback()
 	require.NoError(t, old.SetNamespace("journal_a"))
 	require.NoError(t, a.FlushWAL())
+	if fullQueue {
+		a.stopWALWriterForTest()
+		a.walQueue = make(chan *walWriteRequest)
+	}
 	a.walMu.Lock()
 	err = a.wal.Close()
 	a.walMu.Unlock()

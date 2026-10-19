@@ -1,11 +1,74 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 )
+
+// NamespaceCatalogState is lifecycle metadata carried by replication snapshots,
+// which otherwise contain graph entities only. Runtime transaction fences stay
+// local to their engine and are never replaced by a remote catalog revision.
+type NamespaceCatalogState struct {
+	Revision uint64
+	Retired  map[string]uint64
+}
+
+func CaptureNamespaceCatalogState(engine Engine) NamespaceCatalogState {
+	state := NamespaceCatalogState{Retired: make(map[string]uint64)}
+	if b := namespaceLifecycleOwner(engine); b != nil {
+		state.Revision = b.catalogRevision.Load()
+		if lifetime := b.namespaceLifetimes.Load(); lifetime != nil {
+			for namespace, revision := range lifetime.catalogRetired {
+				state.Retired[namespace] = revision
+			}
+		}
+	}
+	return state
+}
+
+func RestoreNamespaceCatalogState(engine Engine, state NamespaceCatalogState) error {
+	b := namespaceLifecycleOwner(engine)
+	if b == nil {
+		return nil
+	}
+	release, err := AdmitNamespaceLifecycle(context.Background(), engine, "")
+	if err != nil {
+		return err
+	}
+	defer release()
+	next := b.copyNamespaceLifetimes()
+	next.catalogRetired = make(map[string]uint64, len(state.Retired))
+	b.observeCatalogRevision(state.Revision)
+	for namespace, revision := range state.Retired {
+		next.catalogRetired[namespace] = revision
+		b.observeCatalogRevision(revision)
+	}
+	if err := b.db.DropPrefix(namespaceLifetimeKey("")); err != nil {
+		return err
+	}
+	if err := b.withUpdate(func(txn *badger.Txn) error {
+		value := make([]byte, 8)
+		binary.BigEndian.PutUint64(value, b.catalogRevision.Load())
+		if err := txn.Set(namespaceLifetimeKey(""), value); err != nil {
+			return err
+		}
+		for namespace, revision := range next.catalogRetired {
+			value := make([]byte, 8)
+			binary.BigEndian.PutUint64(value, revision)
+			if err := txn.Set(namespaceLifetimeKey(namespace), value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	b.namespaceLifetimes.Store(next)
+	return nil
+}
 
 // One physical counter and one latest retirement per namespace. These are
 // namespace-lifetime metadata, retained across DROP; never per-entity side data.
