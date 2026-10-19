@@ -91,9 +91,9 @@ type EmbedWorker struct {
 	claimMu      sync.Mutex
 	claimedNodes map[string]struct{}
 
-	// embeddingRetries holds generated sidecars after rejected writes. claimMu
+	// embeddingRetries holds generated payloads after rejected writes. claimMu
 	// protects ownership; a claim retries persistence before calling a provider.
-	embeddingRetries map[storage.NodeID]*storage.Node
+	embeddingRetries map[storage.NodeID]*retainedNodeEmbedding
 
 	// workersStarted is true once StartWorkers() has been called (used when DeferWorkerStart is true).
 	workersStarted bool
@@ -1494,41 +1494,43 @@ func (ew *EmbedWorker) claimNextNode() *storage.Node {
 	return node
 }
 
-// claimNextNodeSource reserves a fresh source snapshot or a retained sidecar's
-// node. Persistence retries use the same claims as every provider route.
-func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *storage.Node, bool) {
+// claimNextNodeSource reserves a fresh body snapshot and takes any retained
+// payload. Persistence retries use the same claims as every provider route.
+func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *retainedNodeEmbedding, bool) {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
 
-	var pending *storage.Node
-	for id, retained := range ew.embeddingRetries {
+	var pendingID storage.NodeID
+	for id := range ew.embeddingRetries {
 		if _, claimed := ew.claimedNodes[string(id)]; !claimed {
-			pending = retained
+			pendingID = id
 			break
 		}
 	}
-	if pending == nil {
-		pending = ew.findNodeWithoutEmbedding()
+	if pendingID == "" {
+		if pending := ew.findNodeWithoutEmbedding(); pending != nil {
+			pendingID = pending.ID
+		}
 	}
-	if pending == nil {
+	if pendingID == "" {
 		return nil, nil, false
 	}
 	if ew.claimedNodes == nil {
 		ew.claimedNodes = make(map[string]struct{})
 	}
-	id := string(pending.ID)
+	id := string(pendingID)
 	if _, claimed := ew.claimedNodes[id]; claimed {
 		return nil, nil, false
 	}
 
-	node, err := ew.storage.GetNode(pending.ID)
+	node, err := ew.storage.GetNode(pendingID)
 	if err != nil || node == nil {
 		// A deleted node needs no embedding; one that couldn't be read (for
 		// example while a restore replaces the store) stays pending, as in
 		// markNodeEmbeddingFailed.
 		if nodeGone(node, err) {
-			delete(ew.embeddingRetries, pending.ID)
-			ew.markNodeEmbedded(pending.ID)
+			delete(ew.embeddingRetries, pendingID)
+			ew.markNodeEmbedded(pendingID)
 		}
 		return nil, nil, false
 	}
