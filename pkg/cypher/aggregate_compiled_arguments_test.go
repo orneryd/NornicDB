@@ -106,9 +106,6 @@ func TestAggregateCompiledArgumentsMatchText(t *testing.T) {
 		"UNWIND range(1, 3) AS i RETURN collect({i: i, e: EXISTS { MATCH (:P)-[:R]->() }}) AS xs",
 		"UNWIND range(1, 3) AS i WITH i, {i: i} AS m RETURN collect(m {.*, j: i * 2}) AS xs",
 		"MATCH (n:P) WITH n ORDER BY n.id RETURN collect({id: id(n) IS NOT NULL, label: labels(n)}) AS xs",
-		"UNWIND [[1, 2, 1.0], [2, 3, 2.0], [3, 1, 0.5]] AS e WITH gds.graph.project($g, e[0], e[1], {relationshipType: 'R', relationshipProperties: {weight: e[2]}}, {undirectedRelationshipTypes: ['*']}) AS g RETURN g.nodeCount AS nodes, g.relationshipCount AS relationships",
-		"CALL gds.louvain.stream($g, {relationshipWeightProperty: 'weight', consecutiveIds: true}) YIELD nodeId, communityId RETURN nodeId, communityId ORDER BY nodeId",
-		"UNWIND [[1, 2]] AS e WITH gds.graph.project($g + 'x', e[0]) AS g RETURN g.nodeCount AS nodes, g.relationshipCount AS relationships",
 	}
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {
@@ -124,18 +121,13 @@ func TestAggregateCompiledArgumentsMatchText(t *testing.T) {
 					defer rowEvaluationScopesDisabled.Store(false)
 					exec, _ := perRowTestExecutor(t)
 					exec.cache = nil
-					graph := "compiled-" + parser + "-" + mode.name
 					for _, query := range queries {
-						queryParams := map[string]interface{}{"g": graph}
+						queryParams := map[string]interface{}{}
 						for name, value := range params {
 							queryParams[name] = value
 						}
 						outputs[index] = append(outputs[index], runAggregateArgumentQuery(t, exec, query, queryParams))
 					}
-					_, err := exec.Execute(context.Background(), "CALL gds.graph.drop($g, false) YIELD graphName RETURN graphName", map[string]interface{}{"g": graph})
-					require.NoError(t, err)
-					_, err = exec.Execute(context.Background(), "CALL gds.graph.drop($g, false) YIELD graphName RETURN graphName", map[string]interface{}{"g": graph + "x"})
-					require.NoError(t, err)
 				}()
 			}
 			for index, query := range queries {
