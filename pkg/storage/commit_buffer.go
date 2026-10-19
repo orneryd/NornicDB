@@ -972,10 +972,16 @@ func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool
 	return w.labelOverlayLocked(label)
 }
 
+// Keep closure-backed selection behind the nil check: captured result locals
+// otherwise escape at function entry even when an empty overlay returns early.
 func (w *WriteBehindBuffer) labelOverlayLocked(label string) ([]*Node, map[NodeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
+	return w.selectLabelOverlayLocked(label)
+}
+
+func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string) ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
 	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1003,6 +1009,10 @@ func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string) ([]*Edge, map[Edg
 	if w == nil {
 		return nil, nil
 	}
+	return w.selectTypeOverlayLocked(edgeType)
+}
+
+func (w *WriteBehindBuffer) selectTypeOverlayLocked(edgeType string) ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1066,6 +1076,10 @@ func (w *WriteBehindBuffer) allNodesOverlayLocked() ([]*Node, map[NodeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
+	return w.selectAllNodesOverlayLocked()
+}
+
+func (w *WriteBehindBuffer) selectAllNodesOverlayLocked() ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
 	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1092,6 +1106,10 @@ func (w *WriteBehindBuffer) allEdgesOverlayLocked() ([]*Edge, map[EdgeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
+	return w.selectAllEdgesOverlayLocked()
+}
+
+func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked() ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1258,6 +1276,10 @@ func (w *WriteBehindBuffer) edgeAdjacencyOverlayLocked(nodeID NodeID, outgoing b
 	if w == nil {
 		return nil, nil, false
 	}
+	return w.selectEdgeAdjacencyOverlayLocked(nodeID, outgoing)
+}
+
+func (w *WriteBehindBuffer) selectEdgeAdjacencyOverlayLocked(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
 	nodeDeleted = w.entityStateLocked(bufferedNodeEntity, string(nodeID)).deleted
 	suppressed = make(map[EdgeID]struct{})
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
