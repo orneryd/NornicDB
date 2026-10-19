@@ -163,7 +163,14 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 				dependency.value = executionInputValue{literal: input.StoredText}
 			case input.Field != "":
 				if call.request != nil {
-					dependency.field = input.Field
+					if field, fixedShape := call.request.mapField(input.Field); fixedShape {
+						if !field.bound && field.literal == nil {
+							continue
+						}
+						dependency.value = field
+					} else {
+						dependency.field = input.Field
+					}
 				} else {
 					value := request[input.Field]
 					if value == nil {
