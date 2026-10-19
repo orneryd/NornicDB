@@ -30,8 +30,8 @@ Mechanically enumerated by TestValueContractInventory with Go ASTs. IDs use file
 | `apoc_collections.go:toSet:addByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
 | `apoc_native_functions.go:*StorageExecutor.nativeAPOCPath:cypherEqualityValue:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `case_evaluation.go:runCaseExpression:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
-| `clauses.go:*StorageExecutor.executeUnionBranches:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `coll_functions.go:fnCollDistinct:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `clauses.go:*StorageExecutor.executeUnionBranches:addTupleByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `coll_functions.go:fnCollDistinct:addByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
 | `coll_functions.go:fnCollIndexOf:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `comparison.go:*StorageExecutor.compareEqual:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `comparison.go:nodePropertiesMatch:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |

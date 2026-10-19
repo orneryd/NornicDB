@@ -315,19 +315,19 @@
     "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
   },
   {
-    "id": "clauses.go:*StorageExecutor.executeUnionBranches:cypherValueKey:1",
+    "id": "clauses.go:*StorageExecutor.executeUnionBranches:addTupleByContract:1",
     "file": "clauses.go",
     "caller": "*StorageExecutor.executeUnionBranches",
-    "callee": "cypherValueKey",
+    "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
     "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
   },
   {
-    "id": "coll_functions.go:fnCollDistinct:cypherValueKey:1",
+    "id": "coll_functions.go:fnCollDistinct:addByContract:1",
     "file": "coll_functions.go",
     "caller": "fnCollDistinct",
-    "callee": "cypherValueKey",
+    "callee": "addByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
     "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
@@ -810,10 +810,10 @@
     "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
   },
   {
-    "id": "percentile_semantics.go:*StorageExecutor.evaluatePipelinePercentile:cypherValueKey:1",
+    "id": "percentile_semantics.go:*StorageExecutor.evaluatePipelinePercentile:addByContract:1",
     "file": "percentile_semantics.go",
     "caller": "*StorageExecutor.evaluatePipelinePercentile",
-    "callee": "cypherValueKey",
+    "callee": "addByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
     "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
@@ -907,6 +907,60 @@
     "contract": "three-valued equality adapter",
     "line": 0,
     "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addByContract:1",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addByContract:2",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addTupleValuesByContract:1",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:addTupleValuesByContract:2",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:cypherValueHash:1",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "scoped_distinct_temporal_contract_test.go:TestScopedCallDistinctTemporalContracts:cypherValueHash:2",
+    "file": "scoped_distinct_temporal_contract_test.go",
+    "caller": "TestScopedCallDistinctTemporalContracts",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
   },
   {
     "id": "temporal_accessors.go:compareTemporalByContract:temporalIdentityParts:1",
