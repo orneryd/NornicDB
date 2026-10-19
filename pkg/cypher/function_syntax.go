@@ -40,8 +40,8 @@ func (call functionCallSpan) close(text string) int {
 // functionCallAt reads a name at a known code position, including quoted and
 // qualified components and trivia before "(". Whole-text consumers must use
 // nextFunctionCall so comments and string literals cannot become code.
-func readFunctionIdentity(text string, at int) (functionCallSpan, bool) {
-	if at < 0 || at >= len(text) || !functionNameStartsAt(text, at) ||
+func readFunctionIdentity(text string, at, previous int) (functionCallSpan, bool) {
+	if at < 0 || at >= len(text) || at > 0 && isIdentByte(text[at-1]) || previous >= 0 && text[previous] == '.' ||
 		at > 0 && (text[at-1] == '$' || text[at-1] == ':' && !colonIsMapKeySeparator(text,at-1)) {
 		return functionCallSpan{}, false
 	}
@@ -188,12 +188,13 @@ func readFunctionSyntax(text string) *functionSyntax {
  stack := []int{0}
  pending := make(map[int]functionCallSpan)
  subqueryOpen := make(map[int]int)
+ previous := -1
  for index:=0; index<len(text); {
   if end:=queryCommentEnd(text,index); end>=0 {
    syntax.comments=append(syntax.comments,syntaxSpan{index,end}); index=end; continue
   }
   if text[index]=='\'' || text[index]=='"' {
-   index=skipCypherQuotedText(text,index,text[index]); continue
+   index=skipCypherQuotedText(text,index,text[index]); previous=index-1; continue
   }
   if name,next,ok:=scanIdentifierToken(text,index); ok {
    if text[index]!='`' {
@@ -201,22 +202,22 @@ func readFunctionSyntax(text string) *functionSyntax {
     if strings.EqualFold(name,"CALL") || strings.EqualFold(name,"USE") {
      start:=queryGapEnd(text,next)
      called,end,named:=scanIdentifierToken(text,start)
-     if !named {index=next;continue}
+     if !named {index=next;previous=next-1;continue}
      parts,end:=dottedNameParts(text,end,true)
      if strings.EqualFold(name,"CALL") {
       cursor:=queryGapEnd(text,end)
       call:=functionCallSpan{name:called+parts,start:start,open:-1,next:cursor,procedure:true,syntax:syntax,group:-1}
       if cursor<len(text) && text[cursor]=='(' {call.open=cursor;call.next=cursor+1;pending[cursor]=call} else {syntax.calls=append(syntax.calls,call)}
      }
-     index=end;continue
+     index=end;previous=end-1;continue
     }
    }
-   if call,ok:=readFunctionIdentity(text,index); ok {
+   if call,ok:=readFunctionIdentity(text,index,previous); ok {
     pending[call.open]=call
     // A qualified name is one token; its components are never separate calls.
-    index=next; continue
+    index=next; previous=next-1; continue
    }
-   index=next; continue
+   index=next; previous=next-1; continue
   }
   switch text[index] {
   case '(', '[', '{':
