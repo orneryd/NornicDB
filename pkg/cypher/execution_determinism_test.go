@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -185,4 +186,29 @@ func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, first, second, "proven deterministic parameterized predicates retain result caching")
 	require.Len(t, second.Rows, 1)
+}
+
+func TestExecutionDeterminismFabricEmbeddedDeadline(t *testing.T) {
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	require.NoError(t, manager.CreateDatabase("determinism_local"))
+	require.NoError(t, manager.CreateCompositeDatabase("determinism_composite", []multidb.ConstituentRef{
+		{Alias: "local", DatabaseName: "determinism_local", Type: "local", AccessMode: "read_write"},
+	}))
+	store, err := manager.GetStorage(manager.DefaultDatabaseName())
+	require.NoError(t, err)
+	exec := NewStorageExecutorWithQueryCachePolicy(store, 64, time.Hour)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	ctx := WithPermissionChecker(context.Background(), func(string) bool { return true })
+	const query = "USE determinism_composite CALL { USE determinism_composite.local CALL apoc.cypher.run($statement,{}) YIELD value RETURN value.fresh AS fresh } RETURN fresh"
+	deadline := time.Now().Add(time.Second)
+	params := map[string]any{"statement": "RETURN timestamp() < $deadline AS fresh", "deadline": deadline.UnixMilli()}
+	first, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.Equal(t, [][]any{{true}}, first.Rows)
+	time.Sleep(time.Until(deadline.Add(100 * time.Millisecond)))
+	second, err := exec.Execute(ctx, query, params)
+	require.NoError(t, err)
+	require.Equal(t, [][]any{{false}}, second.Rows, "Fabric must classify the same embedded executable text as local admission")
 }
