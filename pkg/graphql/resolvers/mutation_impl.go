@@ -2,6 +2,8 @@ package resolvers
 
 import (
 	"context"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
@@ -9,6 +11,10 @@ import (
 
 // MutationCreateNode creates a new node
 func (r *mutationResolver) mutationCreateNode(ctx context.Context, input models.CreateNodeInput) (*models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	node, err := r.createNode(ctx, input.Labels, map[string]interface{}(input.Properties))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create node: %w", err)
@@ -18,6 +24,10 @@ func (r *mutationResolver) mutationCreateNode(ctx context.Context, input models.
 
 // MutationUpdateNode updates an existing node
 func (r *mutationResolver) mutationUpdateNode(ctx context.Context, input models.UpdateNodeInput) (*models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	props := map[string]interface{}(input.Properties)
 	node, err := r.updateNode(ctx, input.ID, props)
 	if err != nil {
@@ -28,6 +38,10 @@ func (r *mutationResolver) mutationUpdateNode(ctx context.Context, input models.
 
 // MutationDeleteNode deletes a node
 func (r *mutationResolver) mutationDeleteNode(ctx context.Context, id string) (bool, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return false, err
+	}
+
 	if err := r.deleteNode(ctx, id); err != nil {
 		return false, fmt.Errorf("failed to delete node: %w", err)
 	}
@@ -36,6 +50,10 @@ func (r *mutationResolver) mutationDeleteNode(ctx context.Context, id string) (b
 
 // MutationBulkCreateNodes creates multiple nodes
 func (r *mutationResolver) mutationBulkCreateNodes(ctx context.Context, input models.BulkCreateNodesInput) (*models.BulkCreateResult, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	created := 0
 	skipped := 0
 	var errors []string
@@ -59,6 +77,10 @@ func (r *mutationResolver) mutationBulkCreateNodes(ctx context.Context, input mo
 
 // MutationBulkDeleteNodes deletes multiple nodes
 func (r *mutationResolver) mutationBulkDeleteNodes(ctx context.Context, ids []string) (*models.BulkDeleteResult, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	deleted := 0
 	var notFound []string
 
@@ -78,6 +100,10 @@ func (r *mutationResolver) mutationBulkDeleteNodes(ctx context.Context, ids []st
 
 // MutationMergeNode merges a node (create or update)
 func (r *mutationResolver) mutationMergeNode(ctx context.Context, labels []string, matchProperties models.JSON, setProperties models.JSON) (*models.Node, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	// Try to find existing node by match properties using Cypher
 	matchProps := map[string]interface{}(matchProperties)
 	setProps := map[string]interface{}(setProperties)
@@ -138,6 +164,10 @@ func (r *mutationResolver) mutationMergeNode(ctx context.Context, labels []strin
 
 // MutationCreateRelationship creates a new relationship
 func (r *mutationResolver) mutationCreateRelationship(ctx context.Context, input models.CreateRelationshipInput) (*models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	edge, err := r.createEdge(ctx, input.StartNodeID, input.EndNodeID, input.Type, map[string]interface{}(input.Properties))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create relationship: %w", err)
@@ -147,6 +177,10 @@ func (r *mutationResolver) mutationCreateRelationship(ctx context.Context, input
 
 // MutationUpdateRelationship updates an existing relationship
 func (r *mutationResolver) mutationUpdateRelationship(ctx context.Context, input models.UpdateRelationshipInput) (*models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	// Get existing edge first
 	edge, err := r.getEdge(ctx, input.ID)
 	if err != nil {
@@ -174,6 +208,10 @@ func (r *mutationResolver) mutationUpdateRelationship(ctx context.Context, input
 
 // MutationDeleteRelationship deletes a relationship
 func (r *mutationResolver) mutationDeleteRelationship(ctx context.Context, id string) (bool, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return false, err
+	}
+
 	if err := r.deleteEdge(ctx, id); err != nil {
 		return false, fmt.Errorf("failed to delete relationship: %w", err)
 	}
@@ -182,6 +220,10 @@ func (r *mutationResolver) mutationDeleteRelationship(ctx context.Context, id st
 
 // MutationBulkCreateRelationships creates multiple relationships
 func (r *mutationResolver) mutationBulkCreateRelationships(ctx context.Context, input models.BulkCreateRelationshipsInput) (*models.BulkCreateResult, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	created := 0
 	skipped := 0
 	var errors []string
@@ -205,6 +247,10 @@ func (r *mutationResolver) mutationBulkCreateRelationships(ctx context.Context, 
 
 // MutationBulkDeleteRelationships deletes multiple relationships
 func (r *mutationResolver) mutationBulkDeleteRelationships(ctx context.Context, ids []string) (*models.BulkDeleteResult, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	deleted := 0
 	var notFound []string
 
@@ -224,6 +270,10 @@ func (r *mutationResolver) mutationBulkDeleteRelationships(ctx context.Context, 
 
 // MutationMergeRelationship merges a relationship
 func (r *mutationResolver) mutationMergeRelationship(ctx context.Context, startNodeID string, endNodeID string, typeArg string, properties models.JSON) (*models.Relationship, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
 	// Try to find existing edge
 	edges, err := r.getEdgesForNode(ctx, startNodeID)
 	if err == nil {
@@ -280,6 +330,13 @@ func (r *mutationResolver) mutationExecuteCypher(ctx context.Context, input mode
 
 // MutationTriggerEmbedding triggers embedding generation
 func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regenerate *bool) (*models.EmbeddingStatus, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return nil, err
+	}
+
+	if err := r.authorizeEmbeddingWorker(ctx); err != nil {
+		return nil, err
+	}
 	regen := false
 	if regenerate != nil {
 		regen = *regenerate
@@ -313,7 +370,20 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 
 // MutationRebuildSearchIndex rebuilds the search index
 func (r *mutationResolver) mutationRebuildSearchIndex(ctx context.Context) (bool, error) {
-	if err := r.DB.BuildSearchIndexes(ctx); err != nil {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite); err != nil {
+		return false, err
+	}
+
+	database, engine, err := r.readDatabase(ctx)
+	if err != nil {
+		return false, err
+	}
+	r.DB.ResetSearchService(database)
+	service, err := r.DB.GetOrCreateSearchService(database, engine)
+	if err != nil {
+		return false, err
+	}
+	if err := service.BuildIndexes(ctx); err != nil {
 		return false, fmt.Errorf("failed to rebuild search index: %w", err)
 	}
 	return true, nil
@@ -321,6 +391,10 @@ func (r *mutationResolver) mutationRebuildSearchIndex(ctx context.Context) (bool
 
 // MutationRunDecay runs decay processing
 func (r *mutationResolver) mutationRunDecay(ctx context.Context) (*models.DecayResult, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead); err != nil {
+		return nil, err
+	}
+
 	info := r.DB.GetDecayInfo()
 	if info == nil || !info.Enabled {
 		return &models.DecayResult{
@@ -339,6 +413,10 @@ func (r *mutationResolver) mutationRunDecay(ctx context.Context) (*models.DecayR
 
 // MutationClearAll clears all data
 func (r *mutationResolver) mutationClearAll(ctx context.Context, confirmPhrase string) (bool, error) {
+	if err := r.authorizeDirectOperation(ctx, auth.PermRead, auth.PermWrite, auth.PermAdmin); err != nil {
+		return false, err
+	}
+
 	if confirmPhrase != "DELETE ALL DATA" {
 		return false, fmt.Errorf("invalid confirmation phrase")
 	}
@@ -349,8 +427,12 @@ func (r *mutationResolver) mutationClearAll(ctx context.Context, confirmPhrase s
 		return false, fmt.Errorf("failed to clear database: %w", err)
 	}
 
-	// Clear embeddings
-	_, _ = r.DB.ClearAllEmbeddings()
+	// Deletion was scoped by the executor; invalidate that database's indexes.
+	database, err := r.resolveCypherDatabase(ctx, "")
+	if err != nil {
+		return false, err
+	}
+	r.DB.ResetSearchService(database)
 
 	return true, nil
 }
