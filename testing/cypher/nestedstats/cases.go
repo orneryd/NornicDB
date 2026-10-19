@@ -11,10 +11,10 @@ func Cases() []Case {
 	params := map[string]any{"body": body}
 	return []Case{
 		{Name: "run", Query: "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", Direct: body, Params: params},
-		        {Name: "relationshipCreate", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: "CREATE (a:NestedStats {p:1})-[r:NESTED {p:2}]->(b:NestedStats) RETURN 1 AS value", Params:map[string]any{"body":"CREATE (a:NestedStats {p:1})-[r:NESTED {p:2}]->(b:NestedStats) RETURN 1 AS value"}},
-        {Name: "setRemove", Setup:"CREATE (:NestedStats:OldLabel {p:1})", Query:"CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct:"MATCH (n:NestedStats) SET n.p=2,n:NewLabel REMOVE n:OldLabel RETURN 1 AS value", Params:map[string]any{"body":"MATCH (n:NestedStats) SET n.p=2,n:NewLabel REMOVE n:OldLabel RETURN 1 AS value"}},
-        {Name: "detachDelete", Setup:"CREATE (:NestedStats)-[:NESTED]->(:NestedStats)", Query:"CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct:"MATCH (n:NestedStats) DETACH DELETE n RETURN count(n)", Params:map[string]any{"body":"MATCH (n:NestedStats) DETACH DELETE n RETURN count(n)"}},
-        {Name: "doIt", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: body, Params: params},
+		{Name: "relationshipCreate", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: "CREATE (a:NestedStats {p:1})-[r:NESTED {p:2}]->(b:NestedStats) RETURN 1 AS value", Params: map[string]any{"body": "CREATE (a:NestedStats {p:1})-[r:NESTED {p:2}]->(b:NestedStats) RETURN 1 AS value"}},
+		{Name: "setRemove", Setup: "CREATE (:NestedStats:OldLabel {p:1})", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: "MATCH (n:NestedStats) SET n.p=2,n:NewLabel REMOVE n:OldLabel RETURN 1 AS value", Params: map[string]any{"body": "MATCH (n:NestedStats) SET n.p=2,n:NewLabel REMOVE n:OldLabel RETURN 1 AS value"}},
+		{Name: "detachDelete", Setup: "CREATE (:NestedStats)-[:NESTED]->(:NestedStats)", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: "MATCH (n:NestedStats) DETACH DELETE n RETURN count(n)", Params: map[string]any{"body": "MATCH (n:NestedStats) DETACH DELETE n RETURN count(n)"}},
+		{Name: "doIt", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: body, Params: params},
 		{Name: "doitall", Query: "CALL apoc.cypher.doitall($body,{}) YIELD value RETURN value", Direct: body, Params: params},
 		{Name: "runMany", Query: "CALL apoc.cypher.runMany($body,{}) YIELD row RETURN count(row)", Direct: body, Params: params},
 		{Name: "iterate", Query: "CALL apoc.periodic.iterate('RETURN 1 AS i', $body,{}) YIELD total RETURN total", Direct: body, Params: params},
