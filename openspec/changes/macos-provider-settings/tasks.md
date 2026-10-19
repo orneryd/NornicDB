@@ -31,3 +31,6 @@
 - [x] Add search continuation capacity to shared AI features, load YAML/ENV, persist YAML/LaunchAgent and track Settings edits; zero disables continuation.
 
 - [x] Scope inline downloads to each enabled Local service; share single-model downloader with tray batch action, stage downloads before replacing valid models, test selection and failed-download preservation.
+
+- [x] Show installed valid local models as Ready without download; skip valid existing defaults in downloader, regression-test all three services.
+- [x] Add Open Models Folder alongside each enabled local service’s model state using the existing folder action.

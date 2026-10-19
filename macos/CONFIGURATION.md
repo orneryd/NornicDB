@@ -120,3 +120,11 @@ Search cursor continuation uses `memory.search_cursor_max` and
 `NORNICDB_SEARCH_CURSOR_MAX`. Zero disables continuation; a positive count enables
 it with that process-wide maximum. Existing values are loaded, Settings tracks
 edits, and Review displays the limit. Restart the server to apply changes.
+
+Local model controls show **Ready** when a valid GGUF is already installed and
+hide the download button. If the default exists but a different missing model is
+selected, **Use installed default model** selects it explicitly. Downloads skip
+valid installed defaults, including through the tray batch action.
+**Open Models Folder** sits beside each local model's download/readiness controls
+and opens the shared directory so users can add their own GGUF files. Enter the
+custom filename in that service's model field. Missing directories are created.
