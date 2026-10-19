@@ -12,6 +12,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 // ExecutorFactory creates a fresh executor scoped to a database.
@@ -245,7 +246,13 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 		session.mu.Unlock()
 		return nil, fmt.Errorf("transaction session has expired or closed")
 	}
-	result, err := m.endLocked(ctx, session, "COMMIT")
+	commitCtx, admissionErr := txphase.CommitContext(ctx)
+	if admissionErr != nil {
+		_, _ = m.endLocked(ctx, session, "ROLLBACK")
+		session.mu.Unlock()
+		return nil, admissionErr
+	}
+	result, err := m.endLocked(commitCtx, session, "COMMIT")
 	if err != nil {
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
