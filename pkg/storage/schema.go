@@ -1259,7 +1259,7 @@ func removeNodeID(slice []NodeID, nodeID NodeID) []NodeID {
 				slice[0] = ""
 				return slice[1:]
 			}
-			return append(slice[:i], slice[i+1:]...)
+			return slices.Delete(slice, i, i+1)
 		}
 	}
 	return slice
