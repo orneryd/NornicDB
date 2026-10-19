@@ -744,10 +744,6 @@ type Server struct {
 	slowQueryLogger *log.Logger
 	slowQueryCount  atomic.Int64
 
-	// Cached search services per database (namespace-aware indexes)
-	searchServicesMu sync.RWMutex
-	searchServices   map[string]*search.Service
-
 	// Cached Cypher executors per database (thread-safe, reusable)
 	executorsMu sync.RWMutex
 	executors   map[string]*cypher.StorageExecutor
@@ -1160,7 +1156,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		graphqlHandler:       graphql.NewHandler(db, dbManager),
 		basicAuthCache:       auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 		trustedProxyPrefixes: trustedProxyPrefixes,
-		searchServices:       make(map[string]*search.Service),
 		executors:            make(map[string]*cypher.StorageExecutor),
 		perDBYAMLOverrides:   config.PerDBYAMLOverrides,
 		processConfig:        globalConfig,

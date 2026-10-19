@@ -584,9 +584,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	// Storage event callbacks still provide eventual consistency for external writers.
 	svc, svcErr := db.getOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		indexNode := storage.CopyNode(node)
-		indexNode.ID = actualID
-		if indexErr := svc.IndexNode(indexNode); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -650,7 +648,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// Keep search results immediately consistent after updates.
 	svc, svcErr := db.getOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.IndexNode(n); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -677,13 +675,15 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
-	// Remove from search indexes first (before storage deletion), but wait for any
-	// in-flight build to finish so a stale scan cannot re-add the deleted node.
-	if err := db.removeNodeFromSearchIndexes(ctx, defaultDB, storageEngine, storage.NodeID(id)); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+	if err := storageEngine.DeleteNode(storage.NodeID(id)); err != nil {
 		return err
 	}
-
-	return storageEngine.DeleteNode(storage.NodeID(id))
+	// The refresh reads the deletion, and waits for any in-flight build to
+	// finish so a stale scan cannot re-add the deleted node.
+	if err := db.refreshNodeInSearchIndexes(ctx, defaultDB, storageEngine, storage.NodeID(id)); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+		return err
+	}
+	return nil
 }
 
 // GraphEdge represents an edge for HTTP API.
@@ -1598,9 +1598,13 @@ func isJSONBackupFile(path string) (bool, error) {
 func (db *DB) restartSearchAfterRestore() {
 	// Restart search indexing after releasing the DB write lock; starting the
 	// background search build while Restore still holds db.mu deadlocks via
-	// startBackgroundTask's read lock.
+	// startBackgroundTask's read lock. A restore replaces every database, so
+	// every database's search state goes, loaded or only persisted, including
+	// any service created while storage was being replaced; the default one is
+	// rebuilt now, the others when next used. Consumers resolve the service on
+	// each use, so the default Cypher executor uses the rebuilt one.
+	db.invalidateSearchState(func(string) bool { return true }, true)
 	dbName := db.defaultDatabaseName()
-	db.DropSearchServiceState(dbName)
 	if svc, err := db.getOrCreateSearchService(dbName, db.storage); err == nil && svc != nil {
 		db.searchServicesMu.RLock()
 		entry := db.searchServices[dbName]
@@ -1761,12 +1765,12 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 
 	// Now delete the collected nodes
 	for _, id := range toDelete {
-		// Remove from search indexes first (before storage deletion), but wait for any
-		// in-flight build to finish so a stale scan cannot re-add the deleted node.
-		if err := db.removeNodeFromSearchIndexes(ctx, defaultDB, storageEngine, id); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+		if err := storageEngine.DeleteNode(id); err != nil {
 			return err
 		}
-		if err := storageEngine.DeleteNode(id); err != nil {
+		// The refresh reads the deletion, and waits for any in-flight build
+		// to finish so a stale scan cannot re-add the deleted node.
+		if err := db.refreshNodeInSearchIndexes(ctx, defaultDB, storageEngine, id); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
 			return err
 		}
 	}

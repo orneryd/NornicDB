@@ -225,6 +225,10 @@ func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 	}
 }
 
+// errMutationSuperseded reports a reserved write that a newer reservation
+// superseded before it was admitted: it has nothing to apply.
+var errMutationSuperseded = errors.New("search: mutation superseded")
+
 // lockNodeMutation admits a live write. While a build populates the node
 // sources the write is queued on it (queueOnPopulation) and queued is true;
 // with an index memory budget it waits for the population instead. Otherwise
@@ -235,7 +239,36 @@ func (s *Service) awaitNodeAdmission(job *nodePopulationAdmission) error {
 // Private node/edge batch writers never enter this public boundary. nodeWrite
 // marks a node write: only those change the node sources, so only they make
 // the saved node images stale before a population.
-func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferredIndexWrite) (release func(), queued bool, err error) {
+//
+// A reserved write passes current, which reports, with nodeMutationMu held,
+// whether its reservation is still the newest. Applying at once, the
+// reservation is checked before admission changes anything (parked BM25
+// restored, incomplete sources recorded, empty vector dimensions replaced),
+// and nodeMutationMu is kept until release, so no newer reservation is taken
+// between the check and the write: a superseded write returns
+// errMutationSuperseded with nothing changed. nodeMutationMu is never held
+// while waiting for a population or for the HNSW build to pause.
+func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferredIndexWrite, reserved ...func() bool) (release func(), queued bool, err error) {
+	var current func() bool
+	if len(reserved) > 0 {
+		current = reserved[0]
+	}
+	hold := func() bool {
+		if current == nil {
+			return true
+		}
+		s.nodeMutationMu.Lock()
+		if !current() {
+			s.nodeMutationMu.Unlock()
+			return false
+		}
+		return true
+	}
+	unhold := func() {
+		if current != nil {
+			s.nodeMutationMu.Unlock()
+		}
+	}
 	for {
 		queued, mustWait, err := s.queueOnPopulation(write)
 		if queued || err != nil {
@@ -260,15 +293,21 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferre
 		}
 		s.baseBuildControlMu.Unlock()
 		if !pending {
+			if !hold() {
+				s.indexMu.Unlock()
+				return nil, false, errMutationSuperseded
+			}
 			if err := s.admitNodeWriteLocked(nodeWrite); err != nil {
+				unhold()
 				s.indexMu.Unlock()
 				return nil, false, err
 			}
 			if !s.needsVectorDimensionsLocked(dimensions) {
-				return s.indexMu.Unlock, false, nil
+				return func() { unhold(); s.indexMu.Unlock() }, false, nil
 			}
 			// Joining construction must precede indexMu. Recheck the SAME source
 			// record and dimensions after reacquiring mutation ownership.
+			unhold()
 			s.indexMu.Unlock()
 			resume := s.pauseHNSWBuild()
 			s.indexMu.Lock()
@@ -279,11 +318,11 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferre
 				return nil, false, err
 			}
 			s.baseBuildControlMu.Lock()
-			current := s.nodeAdmission
+			admission := s.nodeAdmission
 			pending = false
-			if current != nil {
+			if admission != nil {
 				select {
-				case <-current.done:
+				case <-admission.done:
 				default:
 					pending = true
 				}
@@ -294,13 +333,19 @@ func (s *Service) lockNodeMutation(dimensions int, nodeWrite bool, write deferre
 				resume()
 				continue
 			}
+			if !hold() {
+				s.indexMu.Unlock()
+				resume()
+				return nil, false, errMutationSuperseded
+			}
 			if err := s.admitNodeWriteLocked(nodeWrite); err != nil {
+				unhold()
 				s.indexMu.Unlock()
 				resume()
 				return nil, false, err
 			}
 			s.replaceEmptyVectorDimensionsLocked(dimensions)
-			return func() { s.indexMu.Unlock(); resume() }, false, nil
+			return func() { unhold(); s.indexMu.Unlock(); resume() }, false, nil
 		}
 		if paused {
 			s.indexMu.Unlock()

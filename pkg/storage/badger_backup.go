@@ -226,6 +226,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.ensureOpen(); err != nil {
 		return 0, 0, err
 	}
+	// Runs after the lock below is released: the reset's consumers may write.
+	var reset *commitNotification
+	defer func() { b.awaitCommitNotification(reset) }()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -486,6 +489,8 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	delete(b.namespaceEdgeCounts, prefix)
 	b.namespaceCountsMu.Unlock()
 
+	// No per-entity event was published for what this removed.
+	reset = b.publishNamespaceReset(prefix)
 	return nodesDeleted, edgesDeleted, nil
 }
 

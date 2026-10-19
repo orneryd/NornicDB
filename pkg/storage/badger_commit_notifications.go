@@ -5,7 +5,11 @@ package storage
 // are released. A buffered ACK reserves its place until replay retires the
 // read overlay. Failed commits make their reserved place ready without ops.
 type commitNotification struct {
-	ops             []Operation
+	ops []Operation
+	// reset, when set, reports a DeleteByPrefix of this prefix instead of ops.
+	reset *string
+	// consumed, when set, is closed once the notification was dispatched.
+	consumed        chan struct{}
 	ready, reserved bool
 	// Buffered commits advance the logical revision at ACK, not again on flush.
 	revisionPublished bool
@@ -40,6 +44,27 @@ func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error
 	}
 	n := &commitNotification{}
 	return n, func() { release(); b.completeCommitNotification(n) }, nil
+}
+
+// publishNamespaceReset reports a DeleteByPrefix after it removed everything,
+// behind the notifications already reserved, so a consumer drops its state for
+// the namespace after the events that preceded the deletion. DeleteByPrefix
+// awaits the returned notification (awaitCommitNotification) once its locks
+// are released, so a database recreated after it returns never meets the
+// dropped one's derived state.
+func (b *BadgerEngine) publishNamespaceReset(prefix string) *commitNotification {
+	n := &commitNotification{reset: &prefix, consumed: make(chan struct{})}
+	b.reserveCommitNotification(n)
+	b.completeCommitNotification(n)
+	return n
+}
+
+// awaitCommitNotification returns once n was dispatched. A consumer that
+// deleted a prefix from its own callback would wait on itself; none does.
+func (b *BadgerEngine) awaitCommitNotification(n *commitNotification) {
+	if n != nil && n.consumed != nil {
+		<-n.consumed
+	}
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
@@ -127,12 +152,19 @@ func (b *BadgerEngine) drainCommitNotifications() {
 		b.notificationMu.Unlock()
 		func() {
 			defer b.notifyWG.Done()
+			if n.consumed != nil {
+				defer close(n.consumed)
+			}
 			defer func() {
 				if p := recover(); p != nil && firstPanic == nil {
 					firstPanic = p
 				}
 			}()
-			b.notifyCommitOperations(n.ops)
+			if n.reset != nil {
+				b.dispatchNamespaceReset(*n.reset)
+			} else {
+				b.notifyCommitOperations(n.ops)
+			}
 		}()
 		b.notificationMu.Lock()
 	}

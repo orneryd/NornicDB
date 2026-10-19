@@ -82,7 +82,7 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	// composite search must come from constituent-scoped executors, not
 	// from a parent-namespace-scoped service.
 	if !isCompositeRoot(store) {
-		cloned.searchService = e.searchService
+		e.shareSearchFor(cloned, storageDatabaseName(store))
 	}
 	cloned.inferenceManager = e.inferenceManager
 	cloned.onNodeMutated = e.onNodeMutated

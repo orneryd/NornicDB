@@ -18,7 +18,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
-	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -35,12 +34,22 @@ type dbSearchService struct {
 	clusterMu               sync.Mutex
 	lastClusteredEmbedCount int
 
+	// pendingOps and pendingEdgeOps hold the refreshes reserved for queued
+	// storage events, by local ID. The drain reads storage, so no payload is kept.
 	pendingMu           sync.Mutex
-	pendingOps          map[string]pendingSearchMutation
+	pendingOps          map[string]search.NodeMutation
+	pendingEdgeOps      map[string]search.EdgeMutation
 	pendingFlushMu      sync.Mutex
 	pendingFlushTimer   *time.Timer
 	pendingFlushRunning bool
 	pendingFlushDelay   time.Duration
+	// retryAttempts counts the retries of refreshes whose storage read failed
+	// (searchRefreshRetry), by "n:"/"e:" and local ID. retired is set once the
+	// entry's generation ended (invalidateSearchState). Both under pendingMu.
+	retryAttempts map[string]int
+	retired       bool
+	// generation is the database's search-state generation this entry is.
+	generation uint64
 }
 
 func (e *dbSearchService) closeBuildDone() {
@@ -58,11 +67,6 @@ func (e *dbSearchService) closeBuildDone() {
 
 const searchMutationDebounceDelay = 250 * time.Millisecond
 
-type pendingSearchMutation struct {
-	node   *storage.Node
-	remove bool
-}
-
 func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 	if err == nil {
 		return false
@@ -76,42 +80,62 @@ func (db *DB) shouldIgnoreSearchIndexingError(err error) bool {
 	return closed
 }
 
-func (e *dbSearchService) queueIndex(node *storage.Node) {
-	if e == nil || node == nil {
-		return
-	}
+// queueRefresh reserves a refresh of a node for the deferred flush. It
+// replaces any refresh already queued for the node: the drain reads storage,
+// and the newer reservation supersedes the older one, even one in flight. The
+// reservation is taken under pendingMu so the queue always holds the newest.
+func (e *dbSearchService) queueRefresh(localID string) search.NodeMutation {
 	e.pendingMu.Lock()
+	defer e.pendingMu.Unlock()
 	if e.pendingOps == nil {
-		e.pendingOps = make(map[string]pendingSearchMutation)
+		e.pendingOps = make(map[string]search.NodeMutation)
 	}
-	e.pendingOps[string(node.ID)] = pendingSearchMutation{node: storage.CopyNode(node), remove: false}
-	e.pendingMu.Unlock()
+	mutation := e.svc.ReserveNodeMutation(storage.NodeID(localID))
+	e.pendingOps[localID] = mutation
+	return mutation
 }
 
-func (e *dbSearchService) queueRemove(localID string) {
-	if e == nil || localID == "" {
-		return
-	}
+// queueEdgeRefresh is queueRefresh for a relationship.
+func (e *dbSearchService) queueEdgeRefresh(localID string) {
 	e.pendingMu.Lock()
-	if e.pendingOps == nil {
-		e.pendingOps = make(map[string]pendingSearchMutation)
+	defer e.pendingMu.Unlock()
+	if e.pendingEdgeOps == nil {
+		e.pendingEdgeOps = make(map[string]search.EdgeMutation)
 	}
-	e.pendingOps[localID] = pendingSearchMutation{remove: true}
-	e.pendingMu.Unlock()
+	e.pendingEdgeOps[localID] = e.svc.ReserveEdgeMutation(storage.EdgeID(localID))
 }
 
-func (e *dbSearchService) drainPending() map[string]pendingSearchMutation {
+func (e *dbSearchService) drainPending() (map[string]search.NodeMutation, map[string]search.EdgeMutation) {
 	if e == nil {
-		return nil
+		return nil, nil
 	}
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
-	if len(e.pendingOps) == 0 {
-		return nil
+	var nodes map[string]search.NodeMutation
+	var edges map[string]search.EdgeMutation
+	if len(e.pendingOps) != 0 {
+		nodes, e.pendingOps = e.pendingOps, nil
 	}
-	out := e.pendingOps
-	e.pendingOps = make(map[string]pendingSearchMutation)
-	return out
+	if len(e.pendingEdgeOps) != 0 {
+		edges, e.pendingEdgeOps = e.pendingEdgeOps, nil
+	}
+	return nodes, edges
+}
+
+// reusePending clears a completed batch and reuses its maps when producers
+// have not already created the next batch. A newer batch, including a retry
+// queued while this one ran, always keeps its own reservations.
+func (e *dbSearchService) reusePending(nodes map[string]search.NodeMutation, edges map[string]search.EdgeMutation) {
+	clear(nodes)
+	clear(edges)
+	e.pendingMu.Lock()
+	if e.pendingOps == nil {
+		e.pendingOps = nodes
+	}
+	if e.pendingEdgeOps == nil {
+		e.pendingEdgeOps = edges
+	}
+	e.pendingMu.Unlock()
 }
 
 func (e *dbSearchService) hasPending() bool {
@@ -120,7 +144,7 @@ func (e *dbSearchService) hasPending() bool {
 	}
 	e.pendingMu.Lock()
 	defer e.pendingMu.Unlock()
-	return len(e.pendingOps) > 0
+	return len(e.pendingOps)+len(e.pendingEdgeOps) > 0
 }
 
 func (e *dbSearchService) flushDelay() time.Duration {
@@ -368,8 +392,9 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	// If a rebuild is required (e.g., missing/incompatible artifacts), IVF-HNSW rebuild at startup
 	// can be long on large datasets (~30 minutes for ~1M embeddings on observed hardware).
 	if persistSearchIndexesEnabled {
-		base, err := searchPersistenceBasePath(db.config.Database.DataDir, dbName)
+		base, err := db.activeSearchStateDir(dbName)
 		if err != nil {
+			_ = svc.Close()
 			return nil, err
 		}
 		fulltextFilename := "bm25"
@@ -418,12 +443,17 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		svc:       svc,
 		buildDone: make(chan struct{}),
 	}
+	svc.SetRefreshRetry(db.searchRefreshRetry(entry))
 
 	db.searchServicesMu.Lock()
 	// Double-check in case another goroutine created it while we were building.
 	if existing, ok := db.searchServices[dbName]; ok {
 		db.searchServicesMu.Unlock()
 		return existing.svc, nil
+	}
+	entry.generation = db.searchGenerations[dbName]
+	if db.defaultSearchMetrics != nil && dbName == db.defaultDatabaseName() {
+		svc.AttachMetrics(db.defaultSearchMetrics)
 	}
 	db.searchServices[dbName] = entry
 	db.searchServicesMu.Unlock()
@@ -520,49 +550,41 @@ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engi
 	return db.getOrCreateSearchService(dbName, storageEngine)
 }
 
-// ResetSearchService drops the cached search service for a database.
-// The next call to GetOrCreateSearchService will create a fresh, empty service.
+// ResetSearchService ends the database's current search state: its service,
+// pending refreshes and persisted files. The next call to
+// GetOrCreateSearchService creates a fresh service, built from storage.
 func (db *DB) ResetSearchService(dbName string) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
-	db.searchServiceCreationMu.Lock()
-	defer db.searchServiceCreationMu.Unlock()
-	db.resetSearchService(dbName)
+	db.invalidateSearchState(func(name string) bool { return name == dbName }, true)
 }
 
-// resetSearchService retires the old service before its replacement can be
-// created. Caller holds searchServiceCreationMu, including through artifact
-// removal on drop so a replacement cannot persist into the directory being removed.
-func (db *DB) resetSearchService(dbName string) {
-	db.searchServicesMu.Lock()
-	defer db.searchServicesMu.Unlock()
-	if entry, ok := db.searchServices[dbName]; ok && entry != nil && entry.svc != nil {
-		// Close is the lifecycle owner: cancel and join construction and
-		// maintenance before releasing the vector store or forgetting the service.
-		_ = entry.svc.Close()
-		entry.svc.SetPersistenceEnabled(false)
-	}
-	delete(db.searchServices, dbName)
-}
-
-// DropSearchServiceState removes cached search service state and best-effort purges
-// on-disk persisted index artifacts for the database.
+// DropSearchServiceState is ResetSearchService, for a database being removed.
 func (db *DB) DropSearchServiceState(dbName string) {
-	if dbName == "" {
-		dbName = db.defaultDatabaseName()
+	db.ResetSearchService(dbName)
+}
+
+// dropSearchForPrefix ends the search state of every database a
+// DeleteByPrefix of prefix removed entities from: a dropped database ("<db>:"),
+// several, or part of one, whether its service is loaded or only persisted. A
+// database recreated under the same name then starts from its stored state,
+// not the dropped one's index.
+func (db *DB) dropSearchForPrefix(prefix string) {
+	db.invalidateSearchState(func(name string) bool {
+		namespace := name + ":"
+		return strings.HasPrefix(namespace, prefix) || strings.HasPrefix(prefix, namespace)
+	}, true)
+}
+
+func (db *DB) searchServiceNames() []string {
+	db.searchServicesMu.RLock()
+	defer db.searchServicesMu.RUnlock()
+	names := make([]string, 0, len(db.searchServices))
+	for name := range db.searchServices {
+		names = append(names, name)
 	}
-	db.searchServiceCreationMu.Lock()
-	defer db.searchServiceCreationMu.Unlock()
-	db.resetSearchService(dbName)
-	if db.config == nil || db.config.Database.DataDir == "" {
-		return
-	}
-	searchPath, err := searchPersistenceBasePath(db.config.Database.DataDir, dbName)
-	if err != nil {
-		return
-	}
-	_ = security.RemoveAllRootedPath(searchPath)
+	return names
 }
 
 // GetDatabaseSearchStatus returns readiness and progress for the database search service.
@@ -657,7 +679,7 @@ func (db *DB) ensurePendingFlushAfterSuccessfulBuild(entry *dbSearchService) {
 }
 
 func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context) {
-	if entry == nil || entry.svc == nil {
+	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return
 	}
 	if ctx == nil {
@@ -708,7 +730,7 @@ func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Con
 }
 
 func (db *DB) ensurePendingFlush(entry *dbSearchService) {
-	if entry == nil || entry.svc == nil {
+	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return
 	}
 	entry.pendingFlushMu.Lock()
@@ -751,40 +773,27 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 			}
 
 			for {
-				ops := entry.drainPending()
-				if len(ops) == 0 {
+				nodes, edges := entry.drainPending()
+				if len(nodes)+len(edges) == 0 {
 					return
 				}
-				ids := make([]string, 0, len(ops))
-				for id := range ops {
-					ids = append(ids, id)
-				}
-				sort.Strings(ids)
-				for _, id := range ids {
-					op := ops[id]
-					if op.remove {
-						if err := entry.svc.RemoveNode(storage.NodeID(id)); err != nil {
-							if db.shouldIgnoreSearchIndexingError(err) {
-								continue
-							}
-							log.Printf("⚠️ Failed to remove node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
-						}
-						continue
-					}
-					if op.node == nil {
-						continue
-					}
-					node := op.node
-					if !carriesChunkEmbedding(node) && entry.svc.VectorEnabled() {
-						node = db.storedNodeForSearch(entry.dbName, id, node)
-					}
-					if err := entry.svc.IndexNode(node); err != nil {
-						if db.shouldIgnoreSearchIndexingError(err) {
-							continue
-						}
-						log.Printf("⚠️ Failed to index node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
+				// A refresh whose read fails is retried (searchRefreshRetry),
+				// not taken for a deletion.
+				for _, id := range sortedKeys(nodes) {
+					err := entry.svc.RefreshNodeWithMutation(nodes[id])
+					db.logSearchRefreshError("node", id, entry, err)
+					if err == nil {
+						entry.clearRetry("n:" + id)
 					}
 				}
+				for _, id := range sortedKeys(edges) {
+					err := entry.svc.RefreshEdgeWithMutation(edges[id])
+					db.logSearchRefreshError("relationship", id, entry, err)
+					if err == nil {
+						entry.clearRetry("e:" + id)
+					}
+				}
+				entry.reusePending(nodes, edges)
 			}
 		})
 		if !started {
@@ -796,27 +805,19 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 	entry.pendingFlushMu.Unlock()
 }
 
-// carriesChunkEmbedding reports whether node carries its managed embedding.
-func carriesChunkEmbedding(node *storage.Node) bool {
-	return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
-// storedNodeForSearch is the stored state of a node whose queued copy came
-// without an embedding, or queued when the node can't be read. A write
-// event's copy can be older than the node's embedding: the embed worker
-// writes the embedding without a node event and queues its own copy, which a
-// bulk write's creation event, still being delivered, can replace. Indexing
-// that copy would drop the vector for good.
-func (db *DB) storedNodeForSearch(dbName, localID string, queued *storage.Node) *storage.Node {
-	engine, err := db.resolveDatabaseStorage(dbName)
-	if err != nil || engine == nil {
-		return queued
+func (db *DB) logSearchRefreshError(kind, id string, entry *dbSearchService, err error) {
+	if err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+		log.Printf("⚠️ Failed to apply deferred search refresh for %s %s in db %s: %v", kind, id, entry.dbName, err)
 	}
-	stored, err := engine.GetNode(storage.NodeID(localID))
-	if err != nil || stored == nil {
-		return queued
-	}
-	return stored
 }
 
 func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error {
@@ -879,7 +880,7 @@ func (db *DB) EnsureSearchIndexesBuilt(ctx context.Context, dbName string, stora
 	return svc, nil
 }
 
-func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, storageEngine storage.Engine, id storage.NodeID) error {
+func (db *DB) refreshNodeInSearchIndexes(ctx context.Context, dbName string, storageEngine storage.Engine, id storage.NodeID) error {
 	if id == "" {
 		return nil
 	}
@@ -890,7 +891,7 @@ func (db *DB) removeNodeFromSearchIndexes(ctx context.Context, dbName string, st
 	if svc == nil {
 		return nil
 	}
-	return svc.RemoveNode(id)
+	return svc.RefreshNode(id)
 }
 
 // EnsureSearchIndexesBuildStarted starts per-database search indexing if not already started
@@ -940,15 +941,20 @@ func (db *DB) EnsureSearchIndexesBuildStarted(dbName string, storageEngine stora
 	return svc, nil
 }
 
+// indexNodeFromEvent queues a refresh for a node a storage event reports as
+// written. Only its ID is used: the refresh reads the node's stored state.
 func (db *DB) indexNodeFromEvent(node *storage.Node) {
 	if node == nil {
 		return
 	}
+	db.queueSearchRefreshEvent(node.ID)
+}
 
-	dbName, local, ok := splitQualifiedID(string(node.ID))
+func (db *DB) queueSearchRefreshEvent(nodeID storage.NodeID) {
+	dbName, local, ok := splitQualifiedID(string(nodeID))
 	if !ok {
 		// Unprefixed IDs are not supported. This indicates a bug in the storage event pipeline.
-		log.Printf("⚠️ storage event had unprefixed node ID: %q", node.ID)
+		log.Printf("⚠️ storage event had unprefixed node ID: %q", nodeID)
 		return
 	}
 	// Qdrant gRPC points are stored under a reserved sub-namespace and are indexed
@@ -962,9 +968,6 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 		return
 	}
 
-	userNode := storage.CopyNode(node)
-	userNode.ID = storage.NodeID(local)
-
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
@@ -972,20 +975,8 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 		return
 	}
 
-	entry.queueIndex(userNode)
-	progress := svc.GetBuildProgress()
-	if db.shouldStartSearchBuildForWriteEvent(dbName, progress) {
-		ctx := db.buildCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		db.startSearchIndexBuild(entry, ctx)
-		db.ensurePendingFlush(entry)
-		return
-	}
-	if progress.Ready {
-		db.ensurePendingFlush(entry)
-	}
+	entry.queueRefresh(local)
+	db.scheduleQueuedRefreshes(entry)
 }
 
 // publishEmbeddedNode indexes a node the embed worker has just persisted into
@@ -994,10 +985,8 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 // running or not yet run, or indexing failed) the caller queues the node like
 // any write event, and the build or the deferred flush publishes it.
 //
-// A queued mutation of the same node is honoured: a pending removal wins and
-// nothing is indexed, and a pending index takes this copy, as queueing this
-// node used to. While a flush runs, the copy is queued too, so an older copy
-// it already drained can't be indexed over this one.
+// Only the node's ID is used: the refresh reads its stored state, so a newer
+// write or delete wins over the worker's copy, and supersedes older queued work.
 func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	if db == nil || node == nil {
 		return false
@@ -1009,36 +998,17 @@ func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
-	if entry == nil || entry.svc == nil {
+	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return false
 	}
 	if progress := entry.svc.GetBuildProgress(); !progress.Ready || progress.Building {
 		return false
 	}
-	userNode := storage.CopyNode(node)
-	userNode.ID = storage.NodeID(local)
-
-	entry.pendingMu.Lock()
-	queued, hasQueued := entry.pendingOps[local]
-	if hasQueued && !queued.remove {
-		entry.pendingOps[local] = pendingSearchMutation{node: storage.CopyNode(userNode)}
-	}
-	entry.pendingMu.Unlock()
-	if hasQueued && queued.remove {
-		return true
-	}
-	entry.pendingFlushMu.Lock()
-	flushing := entry.pendingFlushRunning
-	entry.pendingFlushMu.Unlock()
-	if flushing {
-		entry.queueIndex(userNode)
-		db.ensurePendingFlush(entry)
-	}
-
-	if err := entry.svc.IndexNode(userNode); err != nil {
+	if err := entry.svc.RefreshNode(storage.NodeID(local)); err != nil {
 		if db.shouldIgnoreSearchIndexingError(err) {
 			return true
 		}
+		// The caller queues a retry.
 		log.Printf("⚠️ Failed to index embedded node %s in db %s: %v", local, dbName, err)
 		return false
 	}
@@ -1062,9 +1032,15 @@ func (db *DB) removeNodeFromEvent(nodeID storage.NodeID) {
 		return
 	}
 
-	entry.queueRemove(local)
+	entry.queueRefresh(local)
+	db.scheduleQueuedRefreshes(entry)
+}
+
+// scheduleQueuedRefreshes has queued refreshes applied: by the deferred flush
+// once the service is ready, after starting the build a write may trigger.
+func (db *DB) scheduleQueuedRefreshes(entry *dbSearchService) {
 	progress := entry.svc.GetBuildProgress()
-	if db.shouldStartSearchBuildForWriteEvent(dbName, progress) {
+	if db.shouldStartSearchBuildForWriteEvent(entry.dbName, progress) {
 		ctx := db.buildCtx
 		if ctx == nil {
 			ctx = context.Background()

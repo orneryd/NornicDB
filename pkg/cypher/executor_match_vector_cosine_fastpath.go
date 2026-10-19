@@ -339,12 +339,13 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	needsExactCandidates := (e.searchService == nil || e.searchService.IsReady()) &&
+	svc := e.search()
+	needsExactCandidates := (svc == nil || svc.IsReady()) &&
 		(len(matchProps) > 0 ||
 			(preWhereClause != "" && preWhereNotNullProp != vectorProp) ||
 			scorePredicateRejectsLeadingResults(orderDesc, scoreOp))
 	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "" || len(matchProps) > 0 || scoreOp != "")
-	if needsExactCandidates && e.searchService != nil && candidateLimit >= e.searchService.CountPropertyVectorEntries(vectorProp) {
+	if needsExactCandidates && svc != nil && candidateLimit >= svc.CountPropertyVectorEntries(vectorProp) {
 		needsExactCandidates = false
 	}
 	scoreExprIsAlias := make([]bool, len(returnItems))
@@ -846,10 +847,10 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	if !orderDesc {
 		return e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, limit, queryVector, orderDesc, wantDims)
 	}
-	if e.searchService != nil && !e.searchService.VectorEnabled() {
+	svc := e.search()
+	if svc != nil && !svc.VectorEnabled() {
 		return []vectorNodeScore{}, true
 	}
-	svc := e.searchService
 	if svc == nil || svc.VectorIndexDimensions() != wantDims || (!svc.IsReady() && (targetProperty == "" || svc.CountPropertyVectorEntries(targetProperty) == 0)) {
 		return e.fetchCosineNodeScoresExact(ctx, targetLabel, targetProperty, similarityFunc, limit, queryVector, orderDesc, wantDims)
 	}
@@ -1183,8 +1184,8 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 			similarityFunc = vectorIdx.SimilarityFunc
 		}
 	}
-	if orderDesc && e.searchService != nil && targetProperty != "" && e.searchService.HasRelationshipVectorEntries(targetRelType, targetProperty) {
-		hits, err := e.searchService.VectorQueryRelationships(ctx, vec, search.RelationshipVectorQuerySpec{
+	if svc := e.search(); orderDesc && svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
+		hits, err := svc.VectorQueryRelationships(ctx, vec, search.RelationshipVectorQuerySpec{
 			IndexName:  indexName,
 			Type:       targetRelType,
 			Property:   targetProperty,

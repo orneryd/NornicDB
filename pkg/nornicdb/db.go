@@ -168,10 +168,16 @@ type DB struct {
 	gpuManager        interface{} // *gpu.Manager - interface to avoid circular import
 
 	// Search services (per database) using pre-computed embeddings.
-	embeddingDims        int     // Effective vector index dimensions in use
-	searchMinSimilarity  float64 // Default MinSimilarity threshold for search
-	searchServicesMu     sync.RWMutex
-	searchServices       map[string]*dbSearchService
+	embeddingDims       int     // Effective vector index dimensions in use
+	searchMinSimilarity float64 // Default MinSimilarity threshold for search
+	searchServicesMu    sync.RWMutex
+	searchServices      map[string]*dbSearchService
+	// searchGenerations counts, per database, the generations of its search
+	// state that invalidateSearchState ended (search_state.go).
+	searchGenerations map[string]uint64
+	// defaultSearchMetrics is attached to every default-database search
+	// service (AttachDefaultSearchMetrics), under searchServicesMu.
+	defaultSearchMetrics *observability.SearchMetrics
 	searchContinuationMu sync.Mutex
 	searchContinuation   *resultstream.Registry
 	// searchServiceCreationMu serializes the "create and insert" path in getOrCreateSearchService
@@ -1226,60 +1232,40 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// This preserves Neo4j/Cypher interface compatibility while centralizing the
 	// implementation in the core search layer.
 	if db.cypherExecutor != nil {
-		if svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); err == nil {
-			db.cypherExecutor.SetSearchService(svc)
+		if _, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); err == nil {
+			db.cypherExecutor.SetSearchServiceResolver(db.defaultDatabaseName(), db.SearchServiceResolver())
 		} else {
 			fmt.Printf("⚠️  Search service unavailable for Cypher executor: %v\n", err)
 		}
 	}
 
-	// Wire up storage event callbacks to keep search indexes synchronized
-	// Storage is the single source of truth - it notifies when changes happen
-	// The storage chain is: WALEngine -> BadgerEngine
-	var underlyingEngine storage.Engine = db.storage
-
-	// Unwrap NamespacedEngine first so we can:
-	//  1) Reach the underlying engine that emits events (BadgerEngine)
-	//  2) Receive events with fully-qualified node IDs (<db>:<id>)
-	if namespacedEngine, ok := underlyingEngine.(*storage.NamespacedEngine); ok {
-		underlyingEngine = namespacedEngine.GetInnerEngine()
-	}
-
-	// Unwrap WALEngine if present
-	if walEngine, ok := underlyingEngine.(*storage.WALEngine); ok {
-		underlyingEngine = walEngine.GetInnerEngine()
-	}
-
-	// Set callbacks on the actual storage engine (BadgerEngine which implements StorageEventNotifier)
-	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {
-		// When a node is created/updated/deleted, route the event to the correct
-		// per-database search service based on the namespace prefix (<db>:<id>).
-		// The downstream mutation path is debounced, so we can enqueue inline here
-		// without spawning one goroutine per write event.
-		notifier.OnNodeCreated(func(node *storage.Node) {
-			if node == nil {
-				return
-			}
-			nodeCopy := storage.CopyNode(node)
-			db.indexNodeFromEvent(nodeCopy)
+	// Storage is the single source of truth for search: every node and
+	// relationship event, and every namespace reset (a DeleteByPrefix from any
+	// DROP DATABASE path, or a replicated one), reaches it. The subscription
+	// goes through the engine this DB's namespaced view wraps, so events carry
+	// fully-qualified IDs (<db>:<id>); every wrapper in between forwards it
+	// (storage.EventSubscriber), and one that does not fails Open.
+	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
+		// The downstream mutation path is debounced, so events are queued
+		// inline; only the ID is queued, the refresh reads the stored state.
+		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
+			NodeCreated: db.indexNodeFromEvent,
+			NodeUpdated: db.indexNodeFromEvent,
+			NodeDeleted: db.removeNodeFromEvent,
+			// Relationship vectors are indexed whether or not relationship
+			// search (#1065) is on.
+			EdgeCreated:    db.indexRelationshipFromEvent,
+			EdgeUpdated:    db.indexRelationshipFromEvent,
+			EdgeDeleted:    db.removeRelationshipFromEvent,
+			NamespaceReset: db.dropSearchForPrefix,
 		})
-		notifier.OnNodeUpdated(func(node *storage.Node) {
-			if node == nil {
-				return
-			}
-			nodeCopy := storage.CopyNode(node)
-			db.indexNodeFromEvent(nodeCopy)
-		})
-		notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
-			db.removeNodeFromEvent(nodeID)
-		})
-	}
-
-	// Relationship search (#1065) follows relationship writes too.
-	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok && db.config != nil && db.config.Memory.SearchRelationshipsEnabled {
-		notifier.OnEdgeCreated(func(edge *storage.Edge) { db.indexRelationshipFromEvent(edge) })
-		notifier.OnEdgeUpdated(func(edge *storage.Edge) { db.indexRelationshipFromEvent(edge) })
-		notifier.OnEdgeDeleted(func(edgeID storage.EdgeID) { db.removeRelationshipFromEvent(edgeID) })
+		if err != nil {
+			db.mu.Lock()
+			db.closed = true
+			db.mu.Unlock()
+			_ = db.closeInternal()
+			return nil, fmt.Errorf("subscribing search to storage events: %w", err)
+		}
 	}
 
 	// Enable k-means clustering if feature flag is set (applied lazily per database).

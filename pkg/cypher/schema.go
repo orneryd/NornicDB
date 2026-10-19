@@ -607,8 +607,8 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 	// is gone so concurrent reads can't see a half-dropped index.
 	if droppedVectorIndex != nil {
 		e.afterSchemaCommit(context.Background(), func() {
-			if e.searchService != nil && droppedVectorIndex.Property != "" {
-				e.searchService.RemovePropertyVectorIndex(droppedVectorIndex.Property)
+			if svc := e.search(); svc != nil && droppedVectorIndex.Property != "" {
+				svc.RemovePropertyVectorIndex(droppedVectorIndex.Property)
 			}
 			e.unregisterVectorSpace(name)
 		})
@@ -2530,7 +2530,7 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	// Relationship vector indexes are consumed by relationship vector procedures
 	// directly from relationship properties and schema metadata.
 	// registerVectorSpace is node-vector specific; keep relationship indexes out.
-	if !parsed.isRelationship && (e.searchService == nil || e.searchService.VectorEnabled()) {
+	if svc := e.search(); !parsed.isRelationship && (svc == nil || svc.VectorEnabled()) {
 		e.afterSchemaCommit(ctx, func() {
 			e.registerVectorSpace(indexName, label, property, dimensions, similarityFunc)
 		})

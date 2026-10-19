@@ -186,8 +186,8 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 
 	if !s.dbManager.IsCompositeDatabase(dbName) {
-		if searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-			executor.SetSearchService(searchSvc)
+		if _, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
+			executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
 		}
 	}
 
@@ -263,8 +263,8 @@ func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecut
 	// Reuse DB's cached search service instead of creating a new one.
 	// Composite roots do not own a search service; search/index operations must target constituents.
 	if !s.dbManager.IsCompositeDatabase(dbName) {
-		if searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-			executor.SetSearchService(searchSvc)
+		if _, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
+			executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
 		}
 	}
 
@@ -339,8 +339,9 @@ func (a *databaseManagerAdapter) DropDatabase(name string) error {
 	if err := a.manager.DropDatabase(name); err != nil {
 		return err
 	}
+	// Search drops the database's state on storage's namespace reset, for
+	// every DROP DATABASE path.
 	if a.db != nil {
-		a.db.DropSearchServiceState(name)
 		a.db.ResetInferenceService(name)
 	}
 	// Invalidate cached executor for dropped database

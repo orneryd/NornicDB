@@ -847,7 +847,18 @@ type Service struct {
 	fulltextLabels []string
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
-	indexMu        sync.RWMutex
+	indexMu sync.RWMutex
+
+	// nodeMutationMu orders reservations with their application. Live writes
+	// acquire it after lockNodeMutation finishes population admission.
+	nodeMutationMu       sync.Mutex
+	nextNodeMutation     uint64
+	pendingNodeMutations map[storage.NodeID]uint64
+	pendingEdgeMutations map[storage.EdgeID]uint64
+	// refreshRetry, when set, receives a refresh whose storage read failed
+	// (SetRefreshRetry).
+	refreshRetry atomic.Pointer[RefreshRetryFunc]
+
 	buildMu        baseOperationMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
@@ -1007,6 +1018,11 @@ type Service struct {
 	// cache, are keyed by it (IndexRevision), so a result computed before a
 	// change is never served after it (#945).
 	indexRevision atomic.Uint64
+
+	// instance identifies this service among every one this process created,
+	// so a cache keyed by IndexRevision also tells a replacement service from
+	// the one it replaced (Instance).
+	instance uint64
 
 	// resultCache caches Search() results by query+options (same semantics as Cypher query cache).
 	// All call paths (HTTP search, Cypher, etc.) benefit. Invalidated on IndexNode/RemoveNode.
@@ -1247,6 +1263,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		resultCache.Resize(cacheEntries)
 	}
 	svc := &Service{
+		instance:                   serviceInstances.Add(1),
 		engine:                     engine,
 		vectorIndex:                NewVectorIndex(dimensions),
 		bm25StorageMode:            bm25StorageMode,
@@ -1503,6 +1520,20 @@ func (s *Service) IndexRevision() uint64 {
 		return 0
 	}
 	return s.indexRevision.Load()
+}
+
+// serviceInstances numbers the services this process creates (Instance).
+var serviceInstances atomic.Uint64
+
+// Instance identifies this service among every one created in the process. A
+// database whose search is reset gets a new service whose IndexRevision starts
+// over, so a cache of search results keys by Instance and IndexRevision
+// together.
+func (s *Service) Instance() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.instance
 }
 
 // indexChanged advances IndexRevision. Call it after the change is applied,
@@ -2151,6 +2182,12 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
 	if !s.closeVectorFileStore(true) {
 		s.schedulePersist()
 	}
+}
+
+// Closed reports whether Close was called (its background workers stopped
+// and its file-backed vector store released).
+func (s *Service) Closed() bool {
+	return s != nil && s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil
 }
 
 // Close stops search-service background workers and releases file-backed vector resources.
@@ -2940,6 +2977,8 @@ func (s *Service) ClearVectorIndex() {
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
+	// A payload write for rebuilds and offline sinks; live writers use
+	// RefreshNode (TestLiveIndexWritersRefreshFromStorage).
 	bm25On, vecOn := s.bm25Enabled.Load(), s.vectorEnabled.Load()
 	// The flags are read here only outside a population; during one a queued
 	// SetIndexFlags may change them first (queueOnPopulation decides).
@@ -2978,6 +3017,62 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	} else {
 		err = s.indexNodeAsLocked(node, !s.bm25Enabled.Load(), shouldIndex)
 	}
+	release()
+	if err == nil && !s.buildInProgress.Load() {
+		s.scheduleStrategyTransitionCheck()
+	}
+	return err
+}
+
+// IndexNodeWithMutation applies a previously reserved index mutation. A newer
+// reservation (a later refresh) makes this mutation a no-op.
+func (s *Service) IndexNodeWithMutation(node *storage.Node, mutation NodeMutation) error {
+	if node == nil || mutation.nodeID != node.ID {
+		return nil
+	}
+	bm25On, vecOn := s.bm25Enabled.Load(), s.vectorEnabled.Load()
+	// The flags are read here only outside a population; during one a queued
+	// SetIndexFlags may change them first (queueOnPopulation decides).
+	if !bm25On && !vecOn && !s.populationRunning.Load() {
+		return s.applyNodeMutation(mutation, func() error { return nil })
+	}
+	// During a population the write is queued on it (lockNodeMutation), and
+	// installed only if the reservation is still current at its turn.
+	release, queued, err := s.lockNodeMutation(firstVectorDimensions(node), true, deferredIndexWrite{node: node, valid: mutation.claim}, func() bool { return s.nodeMutationCurrentLocked(mutation) })
+	if errors.Is(err, errMutationSuperseded) {
+		return nil
+	}
+	if err != nil {
+		s.DiscardNodeMutation(mutation)
+		return err
+	}
+	if queued {
+		return nil
+	}
+	// A caller's write is validated before any entry changes, so a mismatched
+	// embedding is returned (as on release/v1.4.4) instead of being skipped
+	// with the node's earlier vectors removed. The build's own stored nodes
+	// keep the logged skip.
+	shouldIndex, temporalErr := s.shouldIndexNode(node)
+	if temporalErr == nil && shouldIndex {
+		if err := s.checkEmbeddingDimensions(node); err != nil {
+			release()
+			s.DiscardNodeMutation(mutation)
+			return err
+		}
+	}
+	if !s.buildInProgress.Load() {
+		defer s.schedulePersist()
+		if s.resultCache != nil {
+			s.resultCache.Invalidate()
+		}
+	}
+	err = s.applyNodeMutationHeld(mutation, func() error {
+		if temporalErr != nil {
+			return s.indexNodeLocked(node, !s.bm25Enabled.Load()) // reports the temporal error
+		}
+		return s.indexNodeAsLocked(node, !s.bm25Enabled.Load(), shouldIndex)
+	})
 	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3726,10 +3821,45 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 	return nil
 }
 
+// RemoveNodeWithMutation applies a previously reserved removal, unless a newer
+// index or removal has superseded it.
+func (s *Service) RemoveNodeWithMutation(mutation NodeMutation) error {
+	// During a population the removal is queued on it, like an index write.
+	release, queued, err := s.lockNodeMutation(0, true, deferredIndexWrite{nodeID: string(mutation.nodeID), valid: mutation.claim}, func() bool { return s.nodeMutationCurrentLocked(mutation) })
+	if errors.Is(err, errMutationSuperseded) {
+		return nil
+	}
+	if err != nil {
+		s.DiscardNodeMutation(mutation)
+		return err
+	}
+	if queued {
+		return nil
+	}
+	if !s.buildInProgress.Load() {
+		defer s.schedulePersist()
+		if s.resultCache != nil {
+			s.resultCache.Invalidate()
+		}
+	}
+	err = s.applyNodeMutationHeld(mutation, func() error {
+		s.removeNodeLocked(string(mutation.nodeID))
+		return nil
+	})
+	release()
+	if !s.buildInProgress.Load() {
+		s.scheduleStrategyTransitionCheck()
+	}
+	return err
+}
+
 // IndexEdge adds vector-shaped relationship properties to in-memory search metadata.
 //
 // Relationship vector queries use this metadata to avoid scanning and decoding every
 // relationship from storage for each db.index.vector.queryRelationships call.
+//
+// Live writers use RefreshEdge; this payload form is for rebuilds and offline
+// sinks, like IndexNode.
 func (s *Service) IndexEdge(edge *storage.Edge) error {
 	if s == nil || edge == nil {
 		return nil
@@ -3753,6 +3883,40 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		}
 	}
 	err = s.indexEdgeLocked(edge)
+	release()
+	if err == nil && !s.buildInProgress.Load() {
+		s.scheduleStrategyTransitionCheck()
+	}
+	return err
+}
+
+// indexEdgeWithMutation applies a reserved relationship write. The
+// relationship-search part is ordered first (updateRelationshipWithMutation);
+// the vector part is queued on a running population, which installs it after
+// the stream's copy while the reservation is current.
+func (s *Service) indexEdgeWithMutation(edge *storage.Edge, mutation EdgeMutation) error {
+	s.updateRelationshipWithMutation(deferredIndexWrite{edge: edge, relationship: true}, mutation)
+	if !s.vectorEnabled.Load() && !s.populationRunning.Load() {
+		return s.applyEdgeMutation(mutation, func() error { return nil })
+	}
+	release, queued, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge), false, deferredIndexWrite{edge: edge, valid: mutation.claim}, func() bool { return s.edgeMutationCurrentLocked(mutation) })
+	if errors.Is(err, errMutationSuperseded) {
+		return nil
+	}
+	if err != nil {
+		s.discardEdgeMutation(mutation)
+		return err
+	}
+	if queued {
+		return nil
+	}
+	if !s.buildInProgress.Load() {
+		defer s.schedulePersist()
+		if s.resultCache != nil {
+			s.resultCache.Invalidate()
+		}
+	}
+	err = s.applyEdgeMutationHeld(mutation, func() error { return s.indexEdgeLocked(edge) })
 	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3852,6 +4016,37 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 		s.scheduleStrategyTransitionCheck()
 	}
 	return nil
+}
+
+// removeEdgeWithMutation is indexEdgeWithMutation for a removal.
+func (s *Service) removeEdgeWithMutation(mutation EdgeMutation) error {
+	s.updateRelationshipWithMutation(deferredIndexWrite{edgeID: string(mutation.edgeID), relationship: true}, mutation)
+	release, queued, err := s.lockNodeMutation(0, false, deferredIndexWrite{edgeID: string(mutation.edgeID), valid: mutation.claim}, func() bool { return s.edgeMutationCurrentLocked(mutation) })
+	if errors.Is(err, errMutationSuperseded) {
+		return nil
+	}
+	if err != nil {
+		s.discardEdgeMutation(mutation)
+		return err
+	}
+	if queued {
+		return nil
+	}
+	if !s.buildInProgress.Load() {
+		defer s.schedulePersist()
+		if s.resultCache != nil {
+			s.resultCache.Invalidate()
+		}
+	}
+	err = s.applyEdgeMutationHeld(mutation, func() error {
+		s.removeEdgeLocked(string(mutation.edgeID))
+		return nil
+	})
+	release()
+	if !s.buildInProgress.Load() {
+		s.scheduleStrategyTransitionCheck()
+	}
+	return err
 }
 
 // HasRelationshipVectorEntries reports whether relationship vector metadata exists
@@ -4005,19 +4200,20 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, job *nodeP
 
 // handleOrphanedEmbedding handles the case where a vector/index hit refers to a node
 // that no longer exists in storage (orphaned embedding). If err is storage.ErrNotFound,
-// it logs once per node ID (when seenOrphans is provided), removes all embeddings for
-// that node from indexes via RemoveNode, and returns true so the caller can skip the result.
+// it logs once per node ID (when seenOrphans is provided), refreshes that node's index
+// entries via RefreshNode, and returns true so the caller can skip the result. The
+// refresh removes them, unless the node was stored again after this read.
 // If seenOrphans is non-nil and the node ID was already seen this request, it returns true
-// without logging or removing again. If err is not ErrNotFound, returns false.
+// without logging or refreshing again. If err is not ErrNotFound, returns false.
 func (s *Service) handleOrphanedEmbedding(ctx context.Context, nodeIDStr string, err error, seenOrphans map[string]bool) bool {
 	if !errors.Is(err, storage.ErrNotFound) {
 		return false
 	}
 	if seenOrphans != nil && seenOrphans[nodeIDStr] {
-		return true // already logged and removed this request
+		return true // already logged and refreshed this request
 	}
 	s.logPrintf("[search] orphaned embedding detected, removing from indexes: nodeID=%s", nodeIDStr)
-	if removeErr := s.RemoveNode(storage.NodeID(nodeIDStr)); removeErr != nil {
+	if removeErr := s.RefreshNode(storage.NodeID(nodeIDStr)); removeErr != nil {
 		s.logPrintf("[search] failed to remove orphaned embedding for nodeID=%s: %v", nodeIDStr, removeErr)
 	}
 	if seenOrphans != nil {

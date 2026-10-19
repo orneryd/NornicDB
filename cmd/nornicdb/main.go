@@ -1128,7 +1128,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// real target for IndexSizeBytes during the first scrape.
 	defaultDBNameForMetrics := defaultBoltDatabaseName(db)
 	if defaultSearchSvc, sErr := db.GetOrCreateSearchService(defaultDBNameForMetrics, db.GetStorage()); sErr == nil && defaultSearchSvc != nil {
-		defaultSearchSvc.AttachMetrics(searchMetrics)
+		// The DB attaches them to every later default service too (a reset
+		// or restore replaces the service).
+		db.AttachDefaultSearchMetrics(searchMetrics)
 		// Re-construct the SearchMetrics bag with a real probe pointing
 		// at the default search service. We cannot do this earlier
 		// because the bag was registered against obs.Registry already;
@@ -1549,8 +1551,8 @@ func newTxScopedExecutor(db *nornicdb.DB, dbName string) (*cypher.StorageExecuto
 		executor.SetLogger(baseExec.Logger())
 		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
-	if searchSvc, err := db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-		executor.SetSearchService(searchSvc)
+	if _, err := db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
+		executor.SetSearchServiceResolver(dbName, db.SearchServiceResolver())
 	}
 
 	if q := db.GetEmbedQueue(); q != nil {
@@ -1601,8 +1603,8 @@ func (e *DBQueryExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageExecutor
 		exec.SetLogger(baseExec.Logger())
 		exec.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 	}
-	if searchSvc, err := e.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-		exec.SetSearchService(searchSvc)
+	if _, err := e.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
+		exec.SetSearchServiceResolver(dbName, e.db.SearchServiceResolver())
 	}
 	if q := e.db.GetEmbedQueue(); q != nil {
 		exec.SetNodeMutatedCallback(func(nodeID string) {

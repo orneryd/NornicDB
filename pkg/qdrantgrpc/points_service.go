@@ -212,12 +212,9 @@ func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb
 
 	searchSvc := s.getSearchService(req.CollectionName, store)
 	if searchSvc != nil {
-		for _, node := range nodesToCreate {
-			_ = searchSvc.IndexNode(node)
-		}
-		for _, node := range nodesToUpdate {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
+		for _, node := range append(nodesToCreate, nodesToUpdate...) {
+			// The refresh reads the point back, so a newer write or delete of it wins.
+			_ = searchSvc.RefreshNode(node.ID)
 		}
 	}
 
@@ -327,9 +324,6 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 	}
 
 	for _, nodeID := range nodeIDs {
-		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(nodeID)
-		}
 		if s.vecIndex != nil {
 			node, err := store.GetNode(nodeID)
 			if err == nil {
@@ -339,6 +333,9 @@ func (s *PointsService) Delete(ctx context.Context, req *qpb.DeletePoints) (*qpb
 			}
 		}
 		_ = store.DeleteNode(nodeID)
+		if searchSvc != nil {
+			_ = searchSvc.RefreshNode(nodeID)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -606,6 +603,7 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 	if err != nil {
 		return nil, err
 	}
+	searchSvc := s.getSearchService(req.CollectionName, store)
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.PointsSelector)
 	if err != nil {
@@ -630,6 +628,9 @@ func (s *PointsService) updatePayload(ctx context.Context, req *qpb.SetPayloadPo
 		}
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
+		if searchSvc != nil {
+			_ = searchSvc.RefreshNode(node.ID)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -655,6 +656,7 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 	if err != nil {
 		return nil, err
 	}
+	searchSvc := s.getSearchService(req.CollectionName, store)
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.PointsSelector)
 	if err != nil {
@@ -671,6 +673,9 @@ func (s *PointsService) DeletePayload(ctx context.Context, req *qpb.DeletePayloa
 		}
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
+		if searchSvc != nil {
+			_ = searchSvc.RefreshNode(node.ID)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -696,6 +701,7 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 	if err != nil {
 		return nil, err
 	}
+	searchSvc := s.getSearchService(req.CollectionName, store)
 
 	nodeIDs, err := s.resolvePointsSelector(ctx, store, req.Points)
 	if err != nil {
@@ -710,6 +716,9 @@ func (s *PointsService) ClearPayload(ctx context.Context, req *qpb.ClearPayloadP
 		node.Properties = nil
 		node.UpdatedAt = time.Now()
 		_ = store.UpdateNode(node)
+		if searchSvc != nil {
+			_ = searchSvc.RefreshNode(node.ID)
+		}
 	}
 
 	return &qpb.PointsOperationResponse{
@@ -767,8 +776,7 @@ func (s *PointsService) UpdateVectors(ctx context.Context, req *qpb.UpdatePointV
 		_ = store.UpdateNode(node)
 
 		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
+			_ = searchSvc.RefreshNode(node.ID)
 		}
 		if s.vecIndex != nil {
 			newNames := nodeVectorNames(node)
@@ -831,8 +839,7 @@ func (s *PointsService) DeleteVectors(ctx context.Context, req *qpb.DeletePointV
 		_ = store.UpdateNode(node)
 
 		if searchSvc != nil {
-			_ = searchSvc.RemoveNode(node.ID)
-			_ = searchSvc.IndexNode(node)
+			_ = searchSvc.RefreshNode(node.ID)
 		}
 		if s.vecIndex != nil {
 			newNames := nodeVectorNames(node)
