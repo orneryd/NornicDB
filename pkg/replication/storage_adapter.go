@@ -847,13 +847,15 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 	}
 
 	snapshot := struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
+		WALPosition        uint64
+		NamespaceLifetimes storage.NamespaceCatalogState
+		Nodes              []*storage.Node
+		Edges              []*storage.Edge
 	}{
-		WALPosition: a.walPosition.Load(),
-		Nodes:       nodes,
-		Edges:       edges,
+		WALPosition:        a.walPosition.Load(),
+		NamespaceLifetimes: storage.CaptureNamespaceCatalogState(a.engine),
+		Nodes:              nodes,
+		Edges:              edges,
 	}
 
 	data, err := encodeGob(snapshot)
@@ -873,13 +875,17 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	}
 
 	var snapshot struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
+		WALPosition        uint64
+		NamespaceLifetimes storage.NamespaceCatalogState
+		Nodes              []*storage.Node
+		Edges              []*storage.Edge
 	}
 
 	if err := decodeGob(data, &snapshot); err != nil {
 		return localizedError(localization.ReplicationStorageDecodeSnapshotFailed(err), err)
+	}
+	if err := storage.RestoreNamespaceCatalogState(a.engine, snapshot.NamespaceLifetimes); err != nil {
+		return err
 	}
 
 	// Restore nodes

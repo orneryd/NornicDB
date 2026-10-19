@@ -44,12 +44,3 @@ func (b *BadgerEngine) publishLogicalNamespaceRetirement(namespace string) {
 		return true
 	})
 }
-
-// LocalCompletionStorage excludes only the replication wrapper during replay
-// completion. The returned chain still contains the native WAL/snapshot owner.
-func LocalCompletionStorage(engine Engine) Engine {
-	if local, ok := engine.(interface{ LocalCompletionStorage() Engine }); ok {
-		return local.LocalCompletionStorage()
-	}
-	return engine
-}

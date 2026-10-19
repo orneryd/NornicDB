@@ -63,17 +63,11 @@ func (m *DatabaseManager) loadMetadata() error {
 				continue
 			}
 			if previous := m.databases[name]; previous != nil && previous.ID == info.ID {
-				// JSON updates only exported metadata, retaining the live size
-				// accounting object and its mutex across catalog publications.
-				encoded, err := json.Marshal(info)
-				if err != nil {
-					return err
-				}
-				if err := json.Unmarshal(encoded, previous); err != nil {
-					return err
-				}
-				previous.namespaceLifetime = info.namespaceLifetime
+				copyDatabaseMetadata(previous, info)
 				databases[name] = previous
+			}
+			if checker := m.limitCheckers[name]; checker != nil {
+				checker.updateLimits(info.Limits)
 			}
 			m.applyChangeCapture(name, info.Options)
 		}
@@ -92,8 +86,27 @@ func (m *DatabaseManager) loadMetadata() error {
 	return nil
 }
 
+// Preserve the live size-accounting object while replacing all catalog fields,
+// including fields omitted by JSON when an alias/limit/option was removed.
+func copyDatabaseMetadata(dst, src *DatabaseInfo) {
+	dst.ID, dst.Name = src.ID, src.Name
+	dst.CreatedAt, dst.CreatedBy = src.CreatedAt, src.CreatedBy
+	dst.Status, dst.Type, dst.IsDefault = src.Status, src.Type, src.IsDefault
+	dst.NodeCount, dst.UpdatedAt = src.NodeCount, src.UpdatedAt
+	dst.Aliases, dst.Limits, dst.Constituents = src.Aliases, src.Limits, src.Constituents
+	dst.Options, dst.namespaceLifetime = src.Options, src.namespaceLifetime
+}
+
 // persistMetadata saves database metadata to storage.
 func (m *DatabaseManager) persistMetadata(completion ...bool) error {
+	if len(completion) != 0 && completion[0] {
+		if leader, ok := m.inner.(interface{ IsLeader() bool }); ok && !leader.IsLeader() {
+			// Committed DROP and its durable markers already retire the
+			// replica catalog. Only the primary publishes full metadata;
+			// a late local snapshot must not overwrite a replayed CREATE.
+			return nil
+		}
+	}
 	if m.serverID == "" {
 		m.serverID = uuid.NewString()
 	}
@@ -119,15 +132,7 @@ func (m *DatabaseManager) persistMetadata(completion ...bool) error {
 		return err
 	}
 
-	// A replica completes committed retirement locally; its catalog mutation
-	// must not forward a new command back into the primary's ACK/apply loop.
-	catalogStorage := m.inner
-	if len(completion) != 0 && completion[0] {
-		if leader, ok := m.inner.(interface{ IsLeader() bool }); ok && !leader.IsLeader() {
-			catalogStorage = storage.LocalCompletionStorage(m.inner)
-		}
-	}
-	systemEngine := storage.NewNamespacedEngine(catalogStorage, m.config.SystemDatabase)
+	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 
 	node := &storage.Node{
 		ID:     storage.NodeID(metadataNodeID),
