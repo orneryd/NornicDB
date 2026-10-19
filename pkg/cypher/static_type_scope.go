@@ -204,14 +204,34 @@ func projectTypeScope(types typeScope, cypher25 bool, clause string) typeScope {
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
 func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) typeScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	input.complete = false
 	projected := make(typeScope)
+	types.forEachProjectedBinding(clause, func(name, expression string, inherited bool) {
+		if inherited {
+			projected[name] = types[name]
+			return
+		}
+		operand := projectedOperand(types, input, expression)
+		if simpleSemanticIdentifier(name) == "" {
+			// Unaliased, a column is named by its text (WITH {a: 1}); only a
+			// name binds a variable whose members are known.
+			operand.members = nil
+		}
+		projected[normalizeProjectionColumnName(name)] = operand
+	})
+	return projected
+}
+
+// forEachProjectedBinding owns projection names and wildcard expansion for
+// type inference and dependency proofs. A proof need not allocate or infer
+// another type scope just to observe which incoming bindings a * consumes.
+func (types typeScope) forEachProjectedBinding(clause string, visit func(name, expression string, inherited bool)) {
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	for _, raw := range splitTopLevelComma(body) {
 		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
 		if expression == "*" {
-			for name, operand := range types {
-				projected[name] = operand
+			for name := range types {
+				visit(name, name, true)
 			}
 			continue
 		}
@@ -222,15 +242,8 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) t
 		if name == "" {
 			continue
 		}
-		operand := projectedOperand(types, input, expression)
-		if simpleSemanticIdentifier(name) == "" {
-			// Unaliased, a column is named by its text (WITH {a: 1}); only a
-			// name binds a variable whose members are known.
-			operand.members = nil
-		}
-		projected[normalizeProjectionColumnName(name)] = operand
+		visit(name, expression, false)
 	}
-	return projected
 }
 
 // projectedOperand is the static type of a projected expression, as Neo4j
