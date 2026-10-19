@@ -165,6 +165,7 @@ type syntaxGroup struct {
  parent int
  separators []int
  punctuation []int
+ arguments []syntaxSpan
 }
 type functionSyntax struct {
  text string
@@ -245,6 +246,14 @@ func readFunctionSyntax(text string) *functionSyntax {
   }
   index++
  }
+ for index:=range syntax.groups {
+  shape:=&syntax.groups[index]
+  if shape.close<0 {continue}
+  start:=shape.open+1
+  shape.arguments=make([]syntaxSpan,0,len(shape.separators)+1)
+  for _,comma:=range shape.separators {shape.arguments=append(shape.arguments,syntaxSpan{start,comma});start=comma+1}
+  shape.arguments=append(shape.arguments,syntaxSpan{start,shape.close})
+ }
  if len(text)<=16384 {functionSyntaxCache.put(text,syntax)}
  return syntax
 }
@@ -266,12 +275,7 @@ func (syntax *functionSyntax) source(span syntaxSpan) string {
 }
 
 func (syntax *functionSyntax) argumentSpans(group int) []syntaxSpan {
- shape:=syntax.groups[group]
- if shape.close<0 {return nil}
- start:=shape.open+1
- spans:=make([]syntaxSpan,0,len(shape.separators)+1)
- for _,comma:=range shape.separators {spans=append(spans,syntaxSpan{start,comma}); start=comma+1}
- return append(spans,syntaxSpan{start,shape.close})
+ return syntax.groups[group].arguments
 }
 
 // appendArguments preserves strict empty entries when requested. Legacy
