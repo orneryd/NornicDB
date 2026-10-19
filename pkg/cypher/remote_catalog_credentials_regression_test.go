@@ -71,31 +71,37 @@ func TestRemoteQueryCredentialPublic(t *testing.T) {
 		require.NoError(t, err)
 		data, err := json.Marshal(result)
 		require.NoError(t, err)
-		for _, value := range []string{secret, url.QueryEscape(secret), "enc:v1:"} {
+		for _, value := range []string{secret, url.QueryEscape(secret), "enc:v1:", "enc%3Av1%3A"} {
 			require.NotContains(t, string(data), value)
 		}
 	}
 }
 
 func TestManagedRemoteCatalogWinnerPublic(t *testing.T) {
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Contains(t, r.URL.Path, "/winner/")
+	var remote *httptest.Server
+	remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/winner/") {
+			t.Error("remote request used the losing database")
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"results":[{"columns":["marker"],"data":[{"row":["winner"],"meta":[null]}]}],"errors":[]}`)
+		fmt.Fprintf(w, `{"commit":%q,"results":[{"columns":["marker"],"data":[{"row":["winner"],"meta":[null]}]}],"errors":[]}`, remote.URL+"/db/winner/tx/commit")
 	}))
 	defer remote.Close()
 	config := multidb.DefaultConfig()
+	config.RemoteCredentialEncryptionKey = "synthetic-winner-key-537162"
 	var selected []string
 	config.RemoteEngineFactory = func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 		selected = append(selected, ref.DatabaseName)
+		require.Equal(t, "winner", ref.User)
+		require.Equal(t, "synthetic-winner-password-749361", ref.Password)
 		return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
 	}
 	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), config)
 	require.NoError(t, err)
 	defer manager.Close()
 	require.NoError(t, manager.CreateCompositeDatabase("probe", []multidb.ConstituentRef{
-		{Alias: "R", DatabaseName: "loser", Type: "remote", AccessMode: "read", URI: remote.URL},
-		{Alias: "r", DatabaseName: "winner", Type: "remote", AccessMode: "read", URI: remote.URL},
+		{Alias: "R", DatabaseName: "loser", Type: "remote", AccessMode: "read", URI: remote.URL, AuthMode: "user_password", User: "loser", Password: "synthetic-loser-password-291753"},
+		{Alias: "r", DatabaseName: "winner", Type: "remote", AccessMode: "read", URI: remote.URL, AuthMode: "user_password", User: "winner", Password: "synthetic-winner-password-749361"},
 	}))
 	for _, name := range []string{"probe.R", "probe.r", "probe"} {
 		_, err := manager.GetStorage(name)
