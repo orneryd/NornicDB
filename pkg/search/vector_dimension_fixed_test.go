@@ -253,3 +253,37 @@ func TestFileStoreMigrationDoesNotDeadlockDimensionAdmission(t *testing.T) {
 	require.True(t, svc.AdmitsVectorDimensions(2))
 	require.False(t, svc.AdmitsVectorDimensions(3))
 }
+
+// Retiring the file-backed store (persistence turned off, the service closed)
+// changes s.vectorFileStore under s.mu, as publishing it does, so readers
+// holding s.mu (VectorIndexDimensions, search) are ordered against it. The
+// reader and the retirement share no other lock, so under -race a retirement
+// that skips s.mu is reported whichever runs first.
+func TestRetiringFileStoreHoldsServiceLock(t *testing.T) {
+	for _, retire := range []struct {
+		name string
+		run  func(*Service)
+	}{
+		{"SetPersistenceEnabled(false)", func(s *Service) { s.SetPersistenceEnabled(false) }},
+		{"Close", func(s *Service) { _ = s.Close() }},
+	} {
+		t.Run(retire.name, func(t *testing.T) {
+			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+			t.Cleanup(func() { _ = svc.Close() })
+			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetPersistenceEnabled(true)
+			svc.indexMu.Lock()
+			svc.ensureVectorFileStore()
+			svc.indexMu.Unlock()
+			require.Equal(t, 2, svc.VectorIndexDimensions())
+
+			read := make(chan int, 1)
+			go func() { read <- svc.VectorIndexDimensions() }()
+			retire.run(svc)
+			require.Equal(t, 2, <-read, "the store or the in-memory index, both 2-dimensional")
+			svc.mu.RLock()
+			require.Nil(t, svc.vectorFileStore)
+			svc.mu.RUnlock()
+		})
+	}
+}
