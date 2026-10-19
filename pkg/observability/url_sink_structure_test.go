@@ -149,6 +149,15 @@ func endpointLocals(fn *ast.FuncDecl, returns map[string]bool) map[string]bool {
 					right = []ast.Expr{x.X}
 				}
 			}
+			// Configured flags/environment reads can originate in a constructor
+			// whose name carries no endpoint type (flag.String, os.Getenv).
+			// Seed their semantic destination names as well as RHS field reads.
+			for _, lhs := range left {
+				if id, ok := lhs.(*ast.Ident); ok && endpointName.MatchString(id.Name) && !locals[id.Name] {
+					locals[id.Name] = true
+					changed = true
+				}
+			}
 			for i, rhs := range right {
 				if !endpointTainted(rhs, locals, returns) {
 					continue
