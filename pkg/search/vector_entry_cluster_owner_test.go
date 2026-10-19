@@ -50,11 +50,10 @@ func TestVectorEntryClusterMarkerTokens(t *testing.T) {
 					defer svc.clusterStateMu.RUnlock()
 					gen := svc.clusterGen
 					require.NotNil(t, gen)
-					for cluster, terms := range gen.terms {
-						canonical := svc.deriveClusterTerms(gen.members(cluster))
-						require.NotNil(t, canonical)
-						require.Equal(t, canonical.counts, terms.counts, "live token deltas must equal canonical vector ownership")
-					}
+					canonical := svc.deriveClusterTerms(gen.members(0))
+					require.NotNil(t, canonical, "the other node remains in the only cluster")
+					require.NotNil(t, gen.terms[0], "deleting the marker node must not erase the other node's lexical routing")
+					require.Equal(t, canonical.counts, gen.terms[0].counts, "live token deltas must equal canonical vector ownership")
 				}
 				checkTerms()
 				marker.Properties["text"] = "updatedtoken"
