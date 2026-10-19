@@ -117,7 +117,7 @@ func TestQueryEmbeddingSnapshotResolvesDatabaseOnce(t *testing.T) {
 			}
 			if mode == "factory error" {
 				db.embedderRegistry = nil
-				db.embedderFactory = func(*embed.Config) (embed.Embedder, error) { return nil, errors.New("unavailable") }
+				db.embedderFactory = func(context.Context, *embed.Config) (embed.Embedder, error) { return nil, errors.New("unavailable") }
 			}
 			var resolutions atomic.Int64
 			db.SetEmbedConfigForDB(func(name string) (*embed.Config, error) {

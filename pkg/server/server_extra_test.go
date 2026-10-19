@@ -2601,12 +2601,13 @@ func TestConstructorAdditionalBranches(t *testing.T) {
 		_ = server.Stop(context.Background())
 	})
 
-	// waitForDurationOrServerClose helper branches.
-	assert.True(t, waitForDurationOrServerClose(nil, 0))
-	assert.True(t, waitForDurationOrServerClose(nil, 5*time.Millisecond))
-	server := &Server{}
-	server.closed.Store(true)
-	assert.False(t, waitForDurationOrServerClose(server, 25*time.Millisecond))
+	// waitForDurationOrDone helper branches.
+	assert.True(t, waitForDurationOrDone(context.Background(), 0))
+	assert.True(t, waitForDurationOrDone(context.Background(), 5*time.Millisecond))
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.False(t, waitForDurationOrDone(done, 0))
+	assert.False(t, waitForDurationOrDone(done, time.Hour))
 }
 
 func TestConstructorHeimdallOpenAIAndStartBranches(t *testing.T) {

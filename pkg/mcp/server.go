@@ -65,6 +65,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"golang.org/x/text/language"
 )
 
@@ -458,7 +459,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.closed = true
 
 	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
+		return util.ShutdownHTTPServer(ctx, s.httpServer)
 	}
 	return nil
 }
@@ -1085,6 +1086,11 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 
 	if s.db != nil {
 		dbName := DatabaseFromContext(ctx) // empty = default database
+		ctx, finishProviderUse, err := s.queryEmbedder.BeginUse(ctx)
+		if err != nil {
+			return nil, localizedError(localization.MCPDiscoverFailed(err), err)
+		}
+		defer finishProviderUse()
 		engine, err := s.storageForContext(ctx)
 		if err != nil {
 			return nil, err

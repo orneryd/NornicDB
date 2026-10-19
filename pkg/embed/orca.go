@@ -17,7 +17,7 @@ const (
 // Example:
 //
 //	config := embed.DefaultOrcaConfig(apiKey)
-//	embedder, err := embed.NewEmbedder(config)
+//	embedder, err := embed.NewEmbedder(context.Background(), config)
 func DefaultOrcaConfig(apiKey string) *Config {
 	return &Config{
 		Provider:   "orca",

@@ -410,67 +410,99 @@ func (e *factoryTestEmbedder) ChunkText(text string, maxTokens, overlap int) ([]
 }
 
 func TestDB_GetOrCreateEmbedderForDB_SingleFlightAndNoStatsBlocking(t *testing.T) {
-	fallback := &chunkingTestEmbedder{dims: 8}
-	db := &DB{
-		embedQueue: &EmbedQueue{embedder: fallback},
-	}
-	db.embedConfigForDB = func(dbName string) (*embed.Config, error) {
-		return &embed.Config{
-			Provider:   "openai",
-			Model:      "test-model",
-			Dimensions: 8,
-			APIURL:     "https://example.invalid",
-			APIKey:     "k",
-		}, nil
-	}
-
-	var createCalls atomic.Int64
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	db.embedderFactory = func(cfg *embed.Config) (embed.Embedder, error) {
-		createCalls.Add(1)
-		select {
-		case started <- struct{}{}:
-		default:
+	t.Run("creation and responsive stats", func(t *testing.T) {
+		fallback := &chunkingTestEmbedder{dims: 8}
+		db := &DB{
+			embedQueue: &EmbedQueue{embedder: fallback},
 		}
-		<-release
-		return &factoryTestEmbedder{dims: cfg.Dimensions}, nil
-	}
+		db.embedConfigForDB = func(dbName string) (*embed.Config, error) {
+			return &embed.Config{
+				Provider:   "openai",
+				Model:      "test-model",
+				Dimensions: 8,
+				APIURL:     "https://example.invalid",
+				APIKey:     "k",
+			}, nil
+		}
 
-	const workers = 6
-	errCh := make(chan error, workers)
-	for i := 0; i < workers; i++ {
+		var createCalls atomic.Int64
+		started := make(chan struct{}, 1)
+		release := make(chan struct{})
+		db.embedderFactory = func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error) {
+			createCalls.Add(1)
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+			return &factoryTestEmbedder{dims: cfg.Dimensions}, nil
+		}
+
+		const workers = 6
+		errCh := make(chan error, workers)
+		for i := 0; i < workers; i++ {
+			go func() {
+				_, err := db.getOrCreateEmbedderForDB("translations")
+				errCh <- err
+			}()
+		}
+
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("embedder factory did not start")
+		}
+
+		// While embedder creation is in-flight, stats paths should remain responsive.
+		statsDone := make(chan struct{}, 1)
 		go func() {
-			_, err := db.getOrCreateEmbedderForDB("translations")
-			errCh <- err
+			_ = db.EmbeddingCountCached()
+			_ = db.PendingEmbeddingsCount()
+			statsDone <- struct{}{}
 		}()
-	}
+		select {
+		case <-statsDone:
+		case <-time.After(300 * time.Millisecond):
+			t.Fatal("stats calls blocked while embedder creation in-flight")
+		}
 
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("embedder factory did not start")
-	}
+		close(release)
 
-	// While embedder creation is in-flight, stats paths should remain responsive.
-	statsDone := make(chan struct{}, 1)
-	go func() {
-		_ = db.EmbeddingCountCached()
-		_ = db.PendingEmbeddingsCount()
-		statsDone <- struct{}{}
-	}()
-	select {
-	case <-statsDone:
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("stats calls blocked while embedder creation in-flight")
-	}
+		for i := 0; i < workers; i++ {
+			require.NoError(t, <-errCh)
+		}
+		require.Equal(t, int64(1), createCalls.Load(), "expected single-flight embedder creation")
+	})
+	t.Run("wait for an existing flight", func(t *testing.T) {
+		global := &factoryTestEmbedder{dims: 6}
+		cfg := &embed.Config{Provider: "openai", Model: "sf", Dimensions: 6}
+		key := embedConfigKey(cfg)
 
-	close(release)
+		db := &DB{
+			embedQueue:       &EmbedQueue{embedder: global},
+			embedderRegistry: map[string]embed.Embedder{},
+			embedConfigForDB: func(dbName string) (*embed.Config, error) { return cfg, nil },
+			embedderCreate:   map[string]chan struct{}{key: make(chan struct{})},
+		}
 
-	for i := 0; i < workers; i++ {
-		require.NoError(t, <-errCh)
-	}
-	require.Equal(t, int64(1), createCalls.Load(), "expected single-flight embedder creation")
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(20 * time.Millisecond)
+			db.embedderRegistryMu.Lock()
+			db.embedderRegistry[key] = global
+			db.embedderRegistryMu.Unlock()
+			db.embedderCreateMu.Lock()
+			close(db.embedderCreate[key])
+			db.embedderCreateMu.Unlock()
+		}()
+
+		got, err := db.getOrCreateEmbedderForDB("tenant")
+		wg.Wait()
+		require.NoError(t, err)
+		require.Same(t, global, got)
+	})
 }
 
 func TestDB_GetOrCreateEmbedderForDB_FallbackBranches(t *testing.T) {
@@ -555,7 +587,7 @@ func TestDB_GetOrCreateEmbedderForDB_FallbackBranches(t *testing.T) {
 					APIKey:     "k",
 				}, nil
 			},
-			embedderFactory: func(cfg *embed.Config) (embed.Embedder, error) {
+			embedderFactory: func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error) {
 				return nil, errors.New("factory failed")
 			},
 		}
@@ -595,7 +627,7 @@ func TestDB_GetOrCreateEmbedderForDB_FallbackBranches(t *testing.T) {
 		started := make(chan struct{}, 1)
 		release := make(chan struct{})
 		var createCalls atomic.Int64
-		db.embedderFactory = func(cfg *embed.Config) (embed.Embedder, error) {
+		db.embedderFactory = func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error) {
 			createCalls.Add(1)
 			select {
 			case started <- struct{}{}:
@@ -690,7 +722,7 @@ func TestDB_GetOrCreateEmbedderForDB_FallbackBranches(t *testing.T) {
 					APIKey:     "k",
 				}, nil
 			},
-			embedderFactory: func(cfg *embed.Config) (embed.Embedder, error) {
+			embedderFactory: func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error) {
 				return nil, nil
 			},
 		}
