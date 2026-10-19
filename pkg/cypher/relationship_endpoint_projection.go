@@ -1,6 +1,43 @@
 package cypher
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+)
+
+// An internal parameter binding survives row-local WITH projection, but is
+// never a user-visible column. The source owns and drops the cache.
+const endpointPropertyCacheKey = "$\x00nornic_endpoint_properties"
+const endpointPropertyCacheBytes = 1 << 20
+
+type endpointPropertyKey struct {
+	id       storage.NodeID
+	property string
+}
+
+type endpointPropertyCache struct {
+	values map[endpointPropertyKey]interface{}
+	bytes  int64
+}
+
+func (c *endpointPropertyCache) keep(key endpointPropertyKey, value interface{}) {
+	// Include map/entry overhead and key storage, not just property payloads.
+	size := int64(128 + len(key.id) + len(key.property)) + util.EstimateValueBytes(value)
+	if size > endpointPropertyCacheBytes {
+		return
+	}
+	if c.bytes+size > endpointPropertyCacheBytes {
+		clear(c.values)
+		c.bytes = 0
+	}
+	if c.values == nil {
+		c.values = make(map[endpointPropertyKey]interface{})
+	}
+	c.values[key] = value
+	c.bytes += size
+}
 
 // rowEndpointPropertyNode selects a property without decoding the endpoint's
 // other properties. Both the text evaluator and compiled value program use
@@ -27,7 +64,21 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 	if err != nil {
 		return nil, false, err
 	}
-	node := e.relationshipEndpointWithProperties(edge, n.end, []string{n.property})
+	id, exists := e.relationshipEndpointID(edge, n.end)
+	if !exists {
+		return nil, true, nil
+	}
+	cache, _ := values[endpointPropertyCacheKey].(*endpointPropertyCache)
+	key := endpointPropertyKey{id: id, property: n.property}
+	if cache != nil {
+		if value, cached := cache.values[key]; cached {
+			return value, true, nil
+		}
+	}
+	node := e.readRelationshipEndpoint(id, []string{n.property})
 	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(node), n.property)
+	if ok && cache != nil {
+		cache.keep(key, value)
+	}
 	return value, ok, nil
 }
