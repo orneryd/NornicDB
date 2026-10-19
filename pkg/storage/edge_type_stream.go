@@ -355,7 +355,6 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 	if visit == nil {
 		return ErrInvalidData
 	}
-	seen := make(map[EdgeID]struct{})
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
@@ -366,10 +365,6 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 			if edge == nil {
 				return nil
 			}
-			if _, exists := seen[edge.ID]; exists {
-				return nil
-			}
-			seen[edge.ID] = struct{}{}
 			if err := visit(edge); err != nil {
 				visitErr = err
 				return err

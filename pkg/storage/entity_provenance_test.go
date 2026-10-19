@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -66,6 +68,75 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 		return nil
 	}))
 	require.Len(t, streamed, 4)
+	streamedEdges := 0
+	require.NoError(t, composite.StreamEdgesByType(context.Background(), "R", func(edge *Edge) error {
+		streamedEdges++
+		require.NotEmpty(t, edge.Database)
+		return nil
+	}))
+	require.Equal(t, 2, streamedEdges)
+	var ids []NodeID
+	require.NoError(t, composite.ForEachNodeIDByLabel("P", func(id NodeID) bool {
+		ids = append(ids, id)
+		node, err := composite.GetNode(id)
+		require.NoError(t, err)
+		require.NotEmpty(t, node.Database)
+		return true
+	}))
+	require.ElementsMatch(t, []NodeID{"one:same", "one:target", "two:same", "two:target"}, ids)
+}
+
+type provenanceStreamEngine struct {
+	Engine
+	count    int
+	database string
+	ids      []EdgeID
+}
+
+func (s *provenanceStreamEngine) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
+	edge := &Edge{Database: s.database, Type: edgeType}
+	for index := 0; index < s.count; index++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		edge.ID = s.ids[index]
+		if err := visit(edge); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestCompositeIdentityStreamKeepsBoundedMemory(t *testing.T) {
+	base := NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	one := &provenanceStreamEngine{Engine: base, database: "one"}
+	two := &provenanceStreamEngine{Engine: base, database: "two"}
+	ids := make([]EdgeID, 10000)
+	for index := range ids {
+		ids[index] = EdgeID(strconv.Itoa(index))
+	}
+	one.ids, two.ids = ids, ids
+	composite := NewCompositeEngine(
+		map[string]Engine{"one": one, "alias": one, "two": two}, nil,
+		map[string]string{"one": "read", "alias": "read", "two": "read"},
+	)
+	run := func(count int) float64 {
+		one.count, two.count = count, count
+		visits := 0
+		allocations := testing.AllocsPerRun(2, func() {
+			visits = 0
+			require.NoError(t, composite.StreamEdgesByType(context.Background(), "R", func(*Edge) error {
+				visits++
+				return nil
+			}))
+		})
+		require.Equal(t, 2*count, visits)
+		return allocations
+	}
+	small := run(50)
+	large := run(10000)
+	require.LessOrEqual(t, large, small+16, "stream bookkeeping must scale with constituents, not entities")
 }
 
 func TestEntityProvenanceDoesNotChangeStoredFormat(t *testing.T) {
