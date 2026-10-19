@@ -1,0 +1,1 @@
+[{"ID":"comment-range","Query":"RETURN toUpper(/* range('bad') */ 'ok') AS v","Rows":[["OK"]]}]
