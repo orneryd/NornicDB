@@ -109,12 +109,13 @@ func TestServiceStrategyPublicationVersusQuantization(t *testing.T) {
 			svc.pipelineMu.Unlock()
 			svc.indexMu.Lock()
 			switched := make(chan error, 1)
+			published := make(chan bool, 1)
+			generation := svc.hnswGeneration.Load()
 			go func() {
 				if transition {
 					svc.runStrategyTransition(strategyModeBruteCPU)
-				} else if !svc.switchBruteStrategy(strategyModeBruteCPU) {
-					switched <- fmt.Errorf("brute strategy did not switch")
-					return
+				} else {
+					published <- svc.switchBruteStrategy(strategyModeBruteCPU)
 				}
 				switched <- nil
 			}()
@@ -133,6 +134,12 @@ func TestServiceStrategyPublicationVersusQuantization(t *testing.T) {
 			svc.indexMu.Unlock()
 			serviceLockResult(t, switched)
 			serviceLockResult(t, configured)
+			if !transition {
+				// Policy preflight retires the snapshot captured by the waiting
+				// strategy. It must finish without publishing that stale source.
+				require.Greater(t, svc.hnswGeneration.Load(), generation)
+				require.False(t, <-published, "a retired strategy snapshot was published")
+			}
 			require.Equal(t, strategyModeUnknown, svc.currentPipelineStrategy())
 			require.NoError(t, svc.Close())
 		})

@@ -52,9 +52,28 @@ func serviceLockDump(t *testing.T, why string) {
 // overlap. A policy update holds indexMu, and ClearVectorIndex holds pipelineMu.
 func TestServiceClearVersusQuantization(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-	svc.mu.Lock()
+	// Let policy preflight read the current configuration and join any build
+	// before staging the admission/publication overlap under the service lock.
+	svc.pipelineMu.Lock()
+	pipelineHeld, serviceHeld := true, false
+	defer func() {
+		if serviceHeld {
+			svc.mu.Unlock()
+		}
+		if pipelineHeld {
+			svc.pipelineMu.Unlock()
+		}
+		_ = svc.Close()
+	}()
 	configured := make(chan error, 1)
 	go func() { configured <- svc.ConfigureHNSWQuantization(context.Background(), HNSWQuantizationConfig{}) }()
+	serviceLockWait(t, "configuration waiting for publication", func() bool {
+		return serviceLockStack("setHNSWQuantizationOverride", "sync.(*RWMutex).Lock")
+	})
+	svc.mu.Lock()
+	serviceHeld = true
+	svc.pipelineMu.Unlock()
+	pipelineHeld = false
 	serviceLockWait(t, "configuration owning indexMu", func() bool {
 		if svc.indexMu.TryLock() {
 			svc.indexMu.Unlock()
@@ -62,10 +81,15 @@ func TestServiceClearVersusQuantization(t *testing.T) {
 		}
 		return true
 	})
+	if svc.pipelineMu.TryLock() {
+		svc.pipelineMu.Unlock()
+		t.Fatal("configuration owns indexMu without first owning pipelineMu")
+	}
 	cleared := make(chan error, 1)
 	go func() { cleared <- svc.ClearVectorIndex() }()
 	serviceLockWait(t, "clear waiting at its lock boundary", func() bool { return serviceLockStack("(*Service).clearIndexes", "sync.(*RWMutex).Lock") })
 	svc.mu.Unlock()
+	serviceHeld = false
 	select {
 	case err := <-configured:
 		if err != nil {
@@ -82,7 +106,6 @@ func TestServiceClearVersusQuantization(t *testing.T) {
 	case <-time.After(time.Second):
 		serviceLockDump(t, "clear did not finish")
 	}
-	_ = svc.Close()
 }
 
 // Pipeline resolution first prepares the index, then takes pipelineMu and mu.
@@ -114,7 +137,9 @@ func TestServicePipelineDimensionsVersusClose(t *testing.T) {
 	svc.vectorIndex.mu.Unlock()
 	select {
 	case err := <-queried:
-		if err != nil {
+		// Close now cancels service-owned graph construction. The query must
+		// still leave its dimension read without recursively locking mu.
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
@@ -124,6 +149,9 @@ func TestServicePipelineDimensionsVersusClose(t *testing.T) {
 	case <-retired:
 	case <-time.After(time.Second):
 		serviceLockDump(t, "retirement did not finish")
+	}
+	if !svc.Closed() || svc.currentPipelineStrategy() != strategyModeUnknown {
+		t.Fatal("shutdown left a live service or published pipeline")
 	}
 	_ = svc.Close()
 }
