@@ -141,7 +141,9 @@ func renderLegacy(reg *prometheus.Registry, now time.Time, scope *LegacyReadScop
 	if scope != nil {
 		for _, m := range legacyMappings {
 			for _, source := range m.Sources {
-				byName[source] = legacyReadFamily(byName[source], scope, !m.DatabaseData || scope.AllDatabasesReadable)
+				if family := byName[source]; family != nil {
+					byName[source] = legacyReadFamily(family, scope, !m.DatabaseData || scope.AllDatabasesReadable)
+				}
 			}
 		}
 	}
