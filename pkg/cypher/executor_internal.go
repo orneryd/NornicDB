@@ -59,10 +59,6 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if cypherVersionFromContext(ctx) == "25" {
 		cypher, _ = separateCypher25Parameters(cypher)
 	}
-	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
-	if err != nil {
-		return nil, err
-	}
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
@@ -115,6 +111,17 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	e.statementAdmitted(ctx)
 	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
+	}
+
+	// Local fragments own their lowering and restore generated names before
+	// returning to Fabric or their containing expression.
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, err
+	}
+	if labelRewrite != nil {
+		cypher = desugared
+		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
