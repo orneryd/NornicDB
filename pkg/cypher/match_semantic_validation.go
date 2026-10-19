@@ -137,6 +137,15 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	var view staticTypeScope
 	stale := true
 	for _, clause := range clauses {
+		// An unresolved option candidate is validated as a normal projection
+		// whenever the engine's existing typed scope binds it. Otherwise defer
+		// the extension decision to the real execution frame, retaining input
+		// bindings for its permitted transparent-option interpretation.
+		if clause.embeddingCandidate != "" {
+			if _, bound := types[clause.embeddingCandidate]; !bound {
+				continue
+			}
+		}
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
 			// legal statement (RETURN 1 AS x RETURN 2 AS y is Neo4j's
