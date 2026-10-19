@@ -2,8 +2,11 @@ package storage
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
-	"strings"
+	"io/fs"
+	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -137,43 +140,73 @@ func TestReadSnapshotUnsupportedEngine(t *testing.T) {
 }
 
 // BenchmarkReadSnapshotDiskRetention measures what a snapshot held open under
-// a write stream keeps on disk: the versions it can still see, which
-// compaction must keep until it closes. Each round overwrites every value of
-// a 4,000-node store (4 KiB of text each) once while a snapshot is open,
-// compacts, and reports the store's size with the snapshot open and after it
-// is closed and compacted again.
+// a write stream keeps on disk: every version written after it opened, which
+// compaction must keep until it closes (a version above the discard
+// timestamp is never dropped). A store of 8,000 nodes, 8 KiB of
+// incompressible text each, is overwritten in full four times (256 MiB)
+// while a snapshot is open, enough to flush the memtables. After each phase
+// the levels are compacted and the SST bytes on disk are reported: without a
+// snapshot, with the snapshot open, after it is closed, and after the same
+// stream once more once it is closed.
 func BenchmarkReadSnapshotDiskRetention(b *testing.B) {
-	const nodes, valueBytes = 4000, 4 << 10
-	text := func(round int) string { return strings.Repeat(fmt.Sprint(round%10), valueBytes) }
+	const nodes, valueBytes, rounds = 8000, 8 << 10, 4
+	r := rand.New(rand.NewSource(1))
+	text := func() string {
+		buf := make([]byte, valueBytes/2)
+		_, _ = r.Read(buf)
+		return hex.EncodeToString(buf)
+	}
 	for range b.N {
 		b.StopTimer()
 		engine := newReadSnapshotTestEngine(b, false)
+		overwrite := func() {
+			for range rounds {
+				for i := range nodes {
+					require.NoError(b, engine.UpdateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}))
+				}
+			}
+		}
 		for i := range nodes {
-			_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text(0)}})
+			_, err := engine.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}})
 			require.NoError(b, err)
 		}
-		compact := func() int64 {
+		dir := engine.db.DB.Opts().Dir
+		sstBytes := func() int64 {
 			require.NoError(b, engine.db.DB.Flatten(1))
-			for engine.db.DB.RunValueLogGC(0.01) == nil {
-			}
-			lsm, vlog := engine.db.DB.Size()
-			return lsm + vlog
+			var total int64
+			require.NoError(b, filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+				if err != nil || entry.IsDir() || filepath.Ext(path) != ".sst" {
+					return err
+				}
+				info, err := entry.Info()
+				if err == nil {
+					total += info.Size()
+				}
+				return err
+			}))
+			return total
 		}
-		baseline := compact()
+		// Control: the same stream with no snapshot open.
+		overwrite()
+		unheld := sstBytes()
 		snapshot, err := engine.OpenReadSnapshot(context.Background())
 		require.NoError(b, err)
 		b.StartTimer()
-		for i := range nodes {
-			require.NoError(b, engine.UpdateNode(&Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"Doc"}, Properties: map[string]any{"text": text(1)}}))
-		}
+		overwrite()
 		b.StopTimer()
-		held := compact()
+		held := sstBytes()
 		snapshot.Close()
 		// The discard timestamp advances on a commit (managedBadgerDB).
-		require.NoError(b, engine.UpdateNode(&Node{ID: "test:n0", Labels: []string{"Doc"}, Properties: map[string]any{"text": text(1)}}))
-		released := compact()
-		b.ReportMetric(float64(nodes*valueBytes), "overwritten-B")
-		b.ReportMetric(float64(held-baseline), "held-growth-B")
-		b.ReportMetric(float64(released-baseline), "released-growth-B")
+		require.NoError(b, engine.UpdateNode(&Node{ID: "test:n0", Labels: []string{"Doc"}, Properties: map[string]any{"text": text()}}))
+		released := sstBytes()
+		// The levels are already flat: the retained versions go when later
+		// compactions rewrite their tables, as the write stream goes on.
+		overwrite()
+		streamed := sstBytes()
+		b.ReportMetric(float64(nodes*valueBytes*rounds), "overwritten-B")
+		b.ReportMetric(float64(unheld), "sst-no-snapshot-B")
+		b.ReportMetric(float64(held), "sst-snapshot-open-B")
+		b.ReportMetric(float64(released), "sst-after-close-B")
+		b.ReportMetric(float64(streamed), "sst-after-close-and-stream-B")
 	}
 }
