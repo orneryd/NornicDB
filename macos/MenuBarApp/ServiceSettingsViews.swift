@@ -105,10 +105,6 @@ struct AdvancedRuntimeSettingsView: View {
                     Button("Add variable") { config.runtimeEnvironment[newName] = ""; newName = "" }
                         .disabled(newName.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) == nil || config.runtimeEnvironment[newName] != nil || newName == "NORNICDB_UPGRADE_STORAGE")
                 }
-                DisclosureGroup("One-time storage upgrade") {
-                    Toggle("Authorize an upgrade on the next start only", isOn: $config.upgradeStorageOnNextStart)
-                    Text("For older existing storage. Back up the database first; upgrades are one-way. This authorization is cleared after a healthy start.").font(.caption)
-                }
                 Divider()
                 Text("Runtime arguments").font(.subheadline)
                 Text("One argument per row, after the binary. Keep ‘serve’ to run the database. Put flags and separate values in separate rows. No shell evaluation.").font(.caption)
@@ -132,6 +128,7 @@ struct ServerSecuritySetupView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                StorageUpgradeSetupControl(config: config)
                 GroupBox("Server") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text("Listen address"); TextField("localhost", text: $config.hostAddress) }
@@ -158,9 +155,21 @@ struct ServerSecuritySetupView: View {
                             .font(.caption).foregroundColor(.secondary)
                     }.padding(8)
                 }
-                Text("Upgrading older storage? The optional Advanced tab includes one-time upgrade authorization. Back up first.")
-                    .font(.caption).foregroundColor(.secondary)
             }.padding()
+        }
+    }
+}
+
+/// One authorization shared by the first setup page and its review.
+struct StorageUpgradeSetupControl: View {
+    @ObservedObject var config: ConfigManager
+    var body: some View {
+        GroupBox("Existing database / storage upgrade") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Authorize storage upgrade on the next start", isOn: $config.upgradeStorageOnNextStart)
+                Text("Enable for older existing storage. Back up your database first: upgrades are one-way. This authorization is cleared after a healthy start.")
+                    .font(.caption).foregroundColor(.secondary)
+            }.padding(8)
         }
     }
 }

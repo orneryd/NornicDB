@@ -83,3 +83,7 @@ review; ten deterministic configuration/startup regression tests remain.
 The first step now uses compact fields, disabled services show their saved provider
 and model, and Advanced has explicit optional value reveal. Argument rows retain
 all arguments after the binary, including the existing position of `serve`.
+
+Maintainer layout correction: the shared one-time storage upgrade control is at
+the front of the first setup page and on Review, never under Advanced. Layout
+captures will be refreshed to match this correction.
