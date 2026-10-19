@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,6 +65,9 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 
 func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 	exec := solR2CacheExecutor(t)
+	require.NoError(t, exec.storage.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CITES", Properties: map[string]any{"content": "library transcript"}}))
+	exec.searchService.EnableRelationshipSearch(nil)
+	exec.searchService.StartRelationshipIndex()
 	seen := map[string]bool{}
 	for _, function := range cypherFunctionCatalog {
 		if function.cacheVolatility == functionStable || strings.HasPrefix(function.name, "gds.") || strings.HasPrefix(function.name, "graph.") || seen[function.name] {
@@ -132,6 +137,8 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN rand() AS value"}, false},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "RETURN 1 AS value"}, true},
 		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CREATE (:Synthetic)"}, false},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript"}}, true},
+		{"CALL apoc.cypher.run($statement,{})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},
 		{"CALL apoc.cypher.run($statement,{request:$request})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, false},
 		{"CALL apoc.cypher.run($statement,{request:{query:'transcript',where:'timestamp() < $deadline'}})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript"}}, false},
 		{"CALL apoc.cypher.run($statement,{request:{query:'transcript'}})", map[string]any{"statement": "CALL db.rretrieve($request)", "request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"}}, true},
@@ -141,6 +148,30 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 			require.Equal(t, test.cacheable, exec.canUseResultCache(ctx, &QueryInfo{IsReadOnly: true}, test.query))
 		})
 	}
+}
+
+func TestExecutionDeterminismNestedParameterBindings(t *testing.T) {
+	exec := solR2CacheExecutor(t)
+	const query = "CALL apoc.cypher.run($statement,{})"
+	deadline := time.Now().Add(time.Second)
+	params := map[string]any{
+		"statement": "CALL db.rretrieve($request)",
+		"request": map[string]any{"query": "transcript", "where": "timestamp() < $deadline"},
+		"deadline": deadline.UnixMilli(),
+	}
+	first, err := exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	require.Len(t, first.Rows, 2)
+	time.Sleep(time.Until(deadline.Add(100*time.Millisecond)))
+	second, err := exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	require.Empty(t, second.Rows, "nested execution retains the caller's actual predicate bindings")
+	params["request"] = map[string]any{"query": "transcript"}
+	first, err = exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	second, err = exec.Execute(context.Background(), query, params)
+	require.NoError(t, err)
+	require.Same(t, first, second, "deterministic nested parameter requests retain the outer cache hit")
 }
 
 func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
