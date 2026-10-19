@@ -84,7 +84,7 @@ func BenchmarkSearchServiceIndexNodeUnchangedVector_CopyScaleHNSW(b *testing.B) 
 	}
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(b, err)
-	require.Equal(b, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(b, svc)
 
 	target := &storage.Node{
 		ID:     "entity-0000",

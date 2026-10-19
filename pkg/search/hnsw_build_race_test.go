@@ -21,12 +21,12 @@ func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 
-	hnswBeforeInstallHook = func() {
+	hnswBeforeInstallHook = func(context.Context) {
 		require.NoError(t, svc.IndexNode(&storage.Node{ID: "during", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 		require.NoError(t, svc.RemoveNode("before"))
 	}
 	t.Cleanup(func() { hnswBeforeInstallHook = nil })
-	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3, svc.pipelineBuildSeeds().hnswHints)
+	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
 	require.NoError(t, err)
 	hnswBeforeInstallHook = nil
 
@@ -54,10 +54,10 @@ func TestHNSWFailedInitialBuildStopsRecording(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := svc.getOrCreateHNSWIndex(ctx, 3, svc.pipelineBuildSeeds().hnswHints)
+	_, err := svc.getOrCreateHNSWIndex(ctx, 3)
 	require.Error(t, err)
 	require.False(t, svc.hnswRebuildInFlight.Load())
-	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3, svc.pipelineBuildSeeds().hnswHints)
+	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return !svc.hnswRebuildInFlight.Load() }, 5*time.Second, time.Millisecond)
 	require.Equal(t, 3, index.Size())
