@@ -118,6 +118,30 @@ func TestPluginNestedNullConsumers(t *testing.T) {
 	for _, clause := range []string{"CREATE (:NestedNull {a:nested.list()})", "MERGE (:NestedNull {a:nested.list()})", "CREATE (n:NestedNull {keep:2}) SET n.a = nested.list()"} {
 		_, err := exec.Execute(ctx, clause, nil)
 		require.Error(t, err, "lists containing null cannot be stored: %s", clause)
+		result, err := exec.Execute(ctx, "MATCH (n:NestedNull) RETURN count(n)", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), result.Rows[0][0], "a failed write must leave no node: %s", clause)
+	}
+}
+
+func BenchmarkPluginResultBoundary(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		value interface{}
+	}{
+		{"scalar", int64(42)},
+		{"canonical", map[string]interface{}{"a": int64(1), "list": []interface{}{nil, "value"}}},
+		{"nested_null", map[string]interface{}{"a": map[string]interface{}(nil), "list": []interface{}{(*storage.Node)(nil)}}},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			handler := func() interface{} { return tc.value }
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := callPluginHandler(handler, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
