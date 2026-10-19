@@ -100,11 +100,11 @@ type registeredProcedure struct {
 // For example, "tenant.Report" and "tenant.report" are distinct registrations;
 // CALL tenant.REPORT() cannot select either.
 type ProcedureRegistry struct {
-	mu       sync.RWMutex
+	mu         sync.RWMutex
 	generation atomic.Uint64
-	builtins map[string]registeredProcedure
-	user     map[string]registeredProcedure
-	userFold map[string]struct{}
+	builtins   map[string]registeredProcedure
+	user       map[string]registeredProcedure
+	userFold   map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
