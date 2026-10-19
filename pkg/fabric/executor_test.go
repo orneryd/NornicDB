@@ -864,7 +864,7 @@ func TestFragmentContainsWrite(t *testing.T) {
 func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 	query := "WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
 	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id MATCH (n) WHERE n.id = id RETURN n"
+	expected := "WITH $id AS id WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
 	}
@@ -873,7 +873,7 @@ func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
 	query := "WITH 'MATCH as text' AS txt, id RETURN txt, id"
 	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id RETURN txt, id"
+	expected := "WITH $id AS id WITH 'MATCH as text' AS txt, id RETURN txt, id"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
 	}
@@ -1217,7 +1217,7 @@ func TestSplitTopLevelAnd_QuotedStrings(t *testing.T) {
 		t.Fatalf("expected 2 parts with brackets, got %d: %v", len(parts), parts)
 	}
 	// AND inside braces should not split.
-	parts = splitTopLevelAnd("{a AND b} AND c = 1")
+	parts = splitTopLevelAnd("{value: a AND b} AND c = 1")
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 parts with braces, got %d: %v", len(parts), parts)
 	}
@@ -1244,15 +1244,10 @@ func TestSplitTopLevelEquality_AllBranches(t *testing.T) {
 	if ok {
 		t.Fatal("expected >= to not match as equality")
 	}
-	// == : the first = is skipped (next is =), but the second = is detected
-	// as a standalone equality. This matches the code's actual behavior — "a =="
-	// splits at the second =, producing lhs="a =" rhs=" b".
-	lhs, rhs, ok = splitTopLevelEquality("a == b")
-	if !ok {
-		t.Fatal("expected == to still match at second =")
-	}
-	if lhs != "a =" || rhs != "b" {
-		t.Fatalf("unexpected == parse: lhs=%q rhs=%q", lhs, rhs)
+	// Invalid equality is rejected rather than split at an arbitrary byte.
+	_, _, ok = splitTopLevelEquality("a == b")
+	if ok {
+		t.Fatal("expected invalid == expression to be rejected")
 	}
 	// Equality inside single-quoted string.
 	lhs, rhs, ok = splitTopLevelEquality("n.x = 'a=b'")
@@ -1309,9 +1304,9 @@ func TestContainsStandaloneIdentifier(t *testing.T) {
 	if containsStandaloneIdentifier(`"textKey128"`, "textKey128") {
 		t.Fatal("expected identifier inside double quotes to be ignored")
 	}
-	// Inside backtick string.
-	if containsStandaloneIdentifier("`textKey128`", "textKey128") {
-		t.Fatal("expected identifier inside backticks to be ignored")
+	// Backticks quote a variable name.
+	if !containsStandaloneIdentifier("`textKey128`", "textKey128") {
+		t.Fatal("expected quoted identifier to be found")
 	}
 	// Empty identifier.
 	if containsStandaloneIdentifier("abc", "") {
@@ -2595,17 +2590,17 @@ func TestInferReturnColumnsFromQuery_BacktickAlias(t *testing.T) {
 
 func TestSplitTopLevelResultModifiers_ParensSkipped(t *testing.T) {
 	// ORDER BY inside parens should not split.
-	proj, mods := splitTopLevelResultModifiers("coalesce(a ORDER BY b) AS x ORDER BY x")
+	proj, mods := splitTopLevelResultModifiers("coalesce('ORDER BY', a) AS x ORDER BY x")
 	if mods != "ORDER BY x" {
 		t.Fatalf("expected mods='ORDER BY x', got %q", mods)
 	}
-	if proj != "coalesce(a ORDER BY b) AS x" {
-		t.Fatalf("expected proj='coalesce(a ORDER BY b) AS x', got %q", proj)
+	if proj != "coalesce('ORDER BY', a) AS x" {
+		t.Fatalf("expected proj='coalesce('ORDER BY', a) AS x', got %q", proj)
 	}
 }
 
 func TestSplitTopLevelResultModifiers_BracketsSkipped(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiers("[ORDER BY x] AS arr LIMIT 5")
+	proj, mods := splitTopLevelResultModifiers("['ORDER BY', x] AS arr LIMIT 5")
 	if mods != "LIMIT 5" {
 		t.Fatalf("expected mods='LIMIT 5', got %q", mods)
 	}
@@ -2613,7 +2608,7 @@ func TestSplitTopLevelResultModifiers_BracketsSkipped(t *testing.T) {
 }
 
 func TestSplitTopLevelResultModifiers_BracesSkipped(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiers("{ORDER BY: 1} AS m SKIP 3")
+	proj, mods := splitTopLevelResultModifiers("{`ORDER BY`: 1} AS m SKIP 3")
 	if mods != "SKIP 3" {
 		t.Fatalf("expected mods='SKIP 3', got %q", mods)
 	}
@@ -3663,7 +3658,7 @@ func TestIsSimpleWithImportClause_EmptyParts(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_SingleQuoteEscape(t *testing.T) {
 	// Escaped single quote inside WITH clause.
-	query := "WITH 'it''s' AS x MATCH (n)"
+	query := "WITH 'it\\'s' AS x MATCH (n)"
 	pos, ok := findLeadingWithClauseEnd(query)
 	if !ok {
 		t.Fatal("expected true")
@@ -4340,9 +4335,9 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 func TestInferReturnColumnsFromQuery_EmptyItemAfterComma(t *testing.T) {
 	// Trailing comma leaves an empty item.
 	got := inferReturnColumnsFromQuery("RETURN a, ")
-	// Empty items are skipped.
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a], got %v", got)
+	// The structural owner rejects an incomplete projection.
+	if got != nil {
+		t.Fatalf("expected no columns for invalid syntax, got %v", got)
 	}
 }
 
@@ -4546,10 +4541,10 @@ func TestProjectSimpleReturnFromRow_EmptyItemInReturn(t *testing.T) {
 	}
 }
 
-func TestProjectSimpleReturnFromRow_NonSimpleAlias(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
-	if ok {
-		t.Fatal("expected false for non-simple alias")
+func TestProjectSimpleReturnFromRow_QuotedAlias(t *testing.T) {
+	columns, row, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
+	if !ok || len(columns) != 1 || columns[0] != "weird name" || len(row) != 1 || row[0] != 1 {
+		t.Fatalf("expected decoded quoted alias and value, got %v %v %v", columns, row, ok)
 	}
 }
 

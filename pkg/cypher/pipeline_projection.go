@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -815,6 +816,30 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
+	if q := fabric.ReadQueryStructure(clause); q.Starts("RETURN") && len(q.Clauses) == 1 && q.Clauses[0].Projection != nil {
+		p := q.Clauses[0].Projection
+		plan := &returnProjectionPlan{modifiers: p.Modifiers, distinct: p.Distinct, star: p.Star}
+		for _, item := range p.Items {
+			alias := item.Alias
+			if alias == "" {
+				alias = item.Name
+			}
+			if alias == "" {
+				alias = item.Expression
+			}
+			if p.Star {
+				text := item.Expression
+				if item.Alias != "" {
+					text += " AS `" + strings.ReplaceAll(item.Alias, "`", "``") + "`"
+				}
+				plan.starItems = append(plan.starItems, text)
+			} else {
+				plan.addProjection(item.Expression, alias)
+			}
+		}
+		plan.valid = p.Star || len(plan.projections) > 0
+		return plan
+	}
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (RETURN by ORDER BY by, #894).
 	body := strings.TrimSpace(clause)

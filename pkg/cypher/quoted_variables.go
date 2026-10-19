@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"hash/fnv"
 	"sort"
 	"strings"
@@ -227,7 +228,7 @@ func (names *quotedVariableNames) parameterName(name string) string {
 // parameter there).
 func isPlainVariableName(name string) bool {
 	_, end, ok := scanIdentifierToken(name, 0)
-	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && strings.IndexByte(name, '$') < 0
+	return ok && end == len(name) && isUnquotedName(name) && !fabric.KeywordName(name) && !isCypherKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
@@ -250,6 +251,15 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 // scanQuotedTokens lists the backtick-quoted symbolic names of query outside
 // string literals, with their positions classified.
 func scanQuotedTokens(query string) []quotedToken {
+	if names, ok := fabric.NameOccurrences(query); ok {
+		var tokens []quotedToken
+		for _, n := range names {
+			if strings.HasPrefix(n.Written, "`") {
+				tokens = append(tokens, quotedToken{start: n.Start, end: n.End, written: n.Written, name: n.Name, variable: n.Variable, binding: n.Binding, parameter: n.Parameter, procColumn: n.ProcedureColumn, selector: n.Selector})
+			}
+		}
+		return tokens
+	}
 	var tokens []quotedToken
 	var brackets []byte // open ( [ { at the current position
 	for i := 0; i < len(query); {
