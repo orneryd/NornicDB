@@ -20,6 +20,9 @@ import (
 //go:embed testdata/temporal_contract_oracle.json
 var temporalContractOracleJSON []byte
 
+//go:embed testdata/temporal_contract_review_oracle.json
+var temporalContractReviewOracleJSON []byte
+
 type temporalContractCase struct {
 	Name         string        `json:"name"`
 	A            string        `json:"a"`
@@ -35,14 +38,18 @@ type temporalContractCase struct {
 
 func temporalContractCases(t *testing.T) []temporalContractCase {
 	t.Helper()
-	var fixture struct {
-		Reference string                 `json:"reference"`
-		Cases     []temporalContractCase `json:"cases"`
+	var cases []temporalContractCase
+	for index, data := range [][]byte{temporalContractOracleJSON, temporalContractReviewOracleJSON} {
+		var fixture struct {
+			Reference string                 `json:"reference"`
+			Cases     []temporalContractCase `json:"cases"`
+		}
+		require.NoError(t, json.Unmarshal(data, &fixture))
+		require.Equal(t, "Neo4j/APOC 5.26.30", fixture.Reference)
+		require.Len(t, fixture.Cases, []int{396, 168}[index])
+		cases = append(cases, fixture.Cases...)
 	}
-	require.NoError(t, json.Unmarshal(temporalContractOracleJSON, &fixture))
-	require.Equal(t, "Neo4j/APOC 5.26.30", fixture.Reference)
-	require.GreaterOrEqual(t, len(fixture.Cases), 300)
-	return fixture.Cases
+	return cases
 }
 
 func temporalOracleValues(values []interface{}) []interface{} {
@@ -161,7 +168,7 @@ func TestApocCollectionsTemporalSemantics(t *testing.T) {
 					}
 				})
 			}
-			require.Equal(t, tc.Equivalence, cypherEquivalenceKey(a) == cypherEquivalenceKey(b), "encoded equivalence")
+			require.Equal(t, tc.Equivalence, cypherValueKey(a, cypherEquivalenceContract) == cypherValueKey(b, cypherEquivalenceContract), "encoded equivalence")
 			require.Equal(t, tc.Lookup[0], cypherValueEquals(a, b), "value lookup")
 		})
 	}

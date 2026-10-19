@@ -32,7 +32,7 @@ func TestCypherEquivalenceKey(t *testing.T) {
 		{[]interface{}{[]interface{}{1}}, []interface{}{[]interface{}{1.0}}},
 	}
 	for _, pair := range equivalent {
-		require.Equal(t, cypherEquivalenceKey(pair[0]), cypherEquivalenceKey(pair[1]), "%#v ≡ %#v", pair[0], pair[1])
+		require.Equal(t, cypherValueKey(pair[0], cypherEquivalenceContract), cypherValueKey(pair[1], cypherEquivalenceContract), "%#v ≡ %#v", pair[0], pair[1])
 	}
 
 	different := [][2]interface{}{
@@ -60,13 +60,13 @@ func TestCypherEquivalenceKey(t *testing.T) {
 		{map[string]interface{}{}, nil},
 	}
 	for _, pair := range different {
-		require.NotEqual(t, cypherEquivalenceKey(pair[0]), cypherEquivalenceKey(pair[1]), "%#v vs %#v", pair[0], pair[1])
+		require.NotEqual(t, cypherValueKey(pair[0], cypherEquivalenceContract), cypherValueKey(pair[1], cypherEquivalenceContract), "%#v vs %#v", pair[0], pair[1])
 	}
 
 	stamp := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
-	require.Equal(t, cypherEquivalenceKey(stamp), cypherEquivalenceKey(stamp.Add(0)), "other values keep their type and value")
-	require.NotEqual(t, cypherEquivalenceKey(stamp), cypherEquivalenceKey(stamp.Add(time.Second)))
-	require.Equal(t, "I18446744073709551616", cypherEquivalenceKey(math.Ldexp(1, 64)), "a whole float past int64 keeps its exact value")
+	require.Equal(t, cypherValueKey(stamp, cypherEquivalenceContract), cypherValueKey(stamp.Add(0), cypherEquivalenceContract), "other values keep their type and value")
+	require.NotEqual(t, cypherValueKey(stamp, cypherEquivalenceContract), cypherValueKey(stamp.Add(time.Second), cypherEquivalenceContract))
+	require.Equal(t, "I18446744073709551616", cypherValueKey(math.Ldexp(1, 64), cypherEquivalenceContract), "a whole float past int64 keeps its exact value")
 }
 
 // TestValueEquivalenceThroughExecute pins Neo4j's equivalence where NornicDB
