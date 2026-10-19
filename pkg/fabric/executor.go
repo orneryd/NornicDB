@@ -29,6 +29,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+ remoteModeUncertain func(string) bool
 }
 
 // SetConcurrentExecution configures whether fragments may execute concurrently.
@@ -137,7 +138,8 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if e.remote == nil {
 			return nil, 0, fmt.Errorf("remote executor not configured")
 		}
-		res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
+		if e.remoteModeUncertain!=nil && e.remoteModeUncertain(f.Query) { ctx=WithUnresolvedRemoteMode(ctx) }
+ res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -2895,4 +2897,10 @@ func (h *fnv64a) writeString(s string) {
 
 func (h *fnv64a) sum64() uint64 {
 	return h.sum
+}
+
+// SetRemoteModeUncertainty marks remote procedure calls whose actual mode must
+// come from their result summary. Missing mode evidence never means READ.
+func (e *FabricExecutor) SetRemoteModeUncertainty(uncertain func(string) bool) {
+ e.remoteModeUncertain=uncertain
 }

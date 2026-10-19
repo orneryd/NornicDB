@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"fmt"
+	
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -17,11 +17,14 @@ type dynamicWriteAdmission func(context.Context,*StorageExecutor,string) error
 // already evaluated their arguments using the normal evaluator. Nested dynamic
 // calls execute through the same gate, with no argument-shape prediction.
 func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context,info *QueryInfo,statement string) error {
-	admit,ok := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission)
-	if !ok { return nil }
-	if info == nil { info = e.analyzer.Analyze(statement) }
-	if !statementWritesGraph(info,statement) { return nil }
-	return admit(ctx,e,statement)
+ admit,hasAdmission := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission)
+ state,_ := ctx.Value(resolvedStatementModeKey{}).(*resolvedStatementMode)
+ if !hasAdmission && state==nil { return nil }
+ if info==nil { info=e.analyzer.Analyze(statement) }
+ if !statementWritesGraph(info,statement) { return nil }
+ if state!=nil { state.write.Store(true) }
+ if hasAdmission { return admit(ctx,e,statement) }
+ return nil
 }
 
 // promoteResolvedStatement changes only the existing participant's admission.
@@ -31,7 +34,7 @@ func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context,info *
 func (c *cypherFabricExecutor) promoteResolvedStatement(ctx context.Context,caller *StorageExecutor,dbName string,engine storage.Engine,statement string) error {
 	sub,ok := fabric.SubTransactionFromContext(ctx)
 	tx := c.fabricTransaction()
-	if !ok || tx == nil { return fmt.Errorf("dynamic statement has no Fabric participant") }
+	if !ok || tx == nil { return localizedError(localization.CypherTransactionsNoActive(),nil) }
 	if err := c.base.authorizeSelectedDatabase(ctx,dbName,statement); err != nil { return err }
 	if _,err := tx.GetOrOpen(sub.ShardName,true); err != nil { return err }
 	participant,err := c.ensureLocalShardTxExecutor(ctx,sub,dbName,engine)
