@@ -16,17 +16,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-type fabricStatsAccumulatorKey struct{}
-type fabricPreparedExecKey struct{}
 
-func fabricStatsAccumulatorFromContext(ctx context.Context) *queryStatsAccumulator {
-	v := ctx.Value(fabricStatsAccumulatorKey{})
-	if v == nil {
-		return nil
-	}
-	acc, _ := v.(*queryStatsAccumulator)
-	return acc
-}
+type fabricPreparedExecKey struct{}
 
 func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 	if e.dbManager == nil {
@@ -129,7 +120,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	}
 
 	statsAcc := &queryStatsAccumulator{}
-	ctx = context.WithValue(ctx, fabricStatsAccumulatorKey{}, statsAcc)
+	ctx = context.WithValue(ctx, queryStatsAccumulatorKey{}, statsAcc)
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
@@ -657,7 +648,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	if result == nil {
 		return []string{}, [][]interface{}{}, nil
 	}
-	if acc := fabricStatsAccumulatorFromContext(ctx); acc != nil {
+	if acc := queryStatsAccumulatorFromContext(ctx); acc != nil {
 		acc.add(result.Stats)
 	}
 	return result.Columns, result.Rows, nil
