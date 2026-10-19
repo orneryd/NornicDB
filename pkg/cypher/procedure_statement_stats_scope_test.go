@@ -54,6 +54,7 @@ func TestProcedureStatementStatsScopeNesting(t *testing.T) {
 	outer.commit(outer.summary())
 	outer.commit(outer.summary())
 	require.Equal(t, &want, parent.stats, "a committed child contributes exactly once")
+	require.Equal(t, QueryStats{}, *parent.committed, "the normal summary covers every committed counter")
 	_, discarded := beginProcedureStatementStatsScope(parent)
 	discarded.stats = &QueryStats{NodesCreated: 100}
 	discarded.discard()
