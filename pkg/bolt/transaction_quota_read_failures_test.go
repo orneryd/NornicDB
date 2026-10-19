@@ -34,17 +34,17 @@ func (e *quotaReadFailureEngine) GetEdge(id storage.EdgeID) (*storage.Edge, erro
 	}
 	return e.MemoryEngine.GetEdge(id)
 }
-func (e *quotaReadFailureEngine) NodeCount() (int64, error) {
+func (e *quotaReadFailureEngine) NodeCountByPrefix(prefix string) (int64, error) {
 	if e.mode.Load() == 3 {
 		return 0, quotaReadFailure
 	}
-	return e.MemoryEngine.NodeCount()
+	return e.MemoryEngine.NodeCountByPrefix(prefix)
 }
-func (e *quotaReadFailureEngine) EdgeCount() (int64, error) {
+func (e *quotaReadFailureEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 	if e.mode.Load() == 4 {
 		return 0, quotaReadFailure
 	}
-	return e.MemoryEngine.EdgeCount()
+	return e.MemoryEngine.EdgeCountByPrefix(prefix)
 }
 func (e *quotaReadFailureEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	if e.mode.Load() == 5 {
