@@ -5,6 +5,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"strings"
@@ -37,14 +38,18 @@ func requireLargeMetalTest(t *testing.T) *MetalHNSWBuildAccelerator {
 }
 
 // largeMetalTestVector returns vector i of a clustered corpus: one of 4,096
-// random centroids plus noise, normalized. It is a pure function of i so tests
-// can regenerate any vector without holding the corpus.
+// unit centroids plus Gaussian noise of norm ~0.35, normalized. It is a pure
+// function of i so tests can regenerate any vector without holding the corpus.
+// Per-dimension noise is scaled by 1/sqrt(dim): unscaled noise would swamp the
+// centroids and make the corpus effectively random, which no HNSW build
+// searches well.
 func largeMetalTestVector(i int, centroids [][]float32) []float32 {
 	rng := rand.New(rand.NewSource(int64(i) + 1))
 	c := centroids[i%len(centroids)]
+	noise := float32(0.35 / math.Sqrt(largeMetalTestDim))
 	v := make([]float32, largeMetalTestDim)
 	for d := range v {
-		v[d] = c[d] + 0.35*float32(rng.NormFloat64())
+		v[d] = c[d] + noise*float32(rng.NormFloat64())
 	}
 	return vector.Normalize(v)
 }
