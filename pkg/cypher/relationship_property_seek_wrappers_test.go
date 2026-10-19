@@ -59,7 +59,7 @@ func TestRelationshipPropertySeekWrappedEngineStack(t *testing.T) {
 				executor := cypher.NewStorageExecutor(view)
 				for _, query := range []string{
 					"CREATE ()-[:KEYED {_ci_key:'hit', tenant:$tenant}]->(), ()-[:KEYED {_ci_key:'other', tenant:$tenant}]->()",
-					"CREATE RANGE INDEX IF NOT EXISTS wrapped_key FOR ()-[r:KEYED]-() ON (r._ci_key)",
+					"CREATE RANGE INDEX wrapped_key IF NOT EXISTS FOR ()-[r:KEYED]-() ON (r._ci_key)",
 				} {
 					_, err := executor.Execute(context.Background(), query, map[string]interface{}{"tenant": database})
 					require.NoError(t, err)
