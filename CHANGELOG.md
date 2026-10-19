@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
 
+### Cluster upgrade requirement
+
+- Replay protection is always enabled for signed cluster traffic: every message requires a nonce and
+  SignatureV2, and repeated messages are rejected. Old-format (v1 or nonce-less) messages are rejected.
+  Upgrade every node in a cluster before resuming replication with this version. During a mixed-version
+  window, peers reject messages and close connections; heartbeats, WAL replication, fencing, promotion, Raft consensus and
+  forwarded writes across the version boundary fail. Plan a coordinated upgrade with a replication
+  interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
+
 ### Fixed
 
 - Register existing quantization localization IDs in the typed catalog and repair

@@ -19,24 +19,10 @@ import (
 // leaves the skew window, after which the timestamp check rejects the message
 // anyway. So the cache holds at most one window of messages.
 //
-// Only require mode guarantees this. Compat mode is for the rolling upgrade
-// to it and gives no replay guarantee: it also sends Signature, the original
-// HMAC without the nonce, so nodes from before this change accept the
-// message, and it accepts messages that carry only Signature. A node can't
-// tell such a message from an upgraded node's message with Nonce and
-// SignatureV2 removed, so in compat mode any captured message can be
-// replayed that way within the window. Intact SignatureV2 messages are still
-// checked against the cache.
+// Every signed message must use this format. Upgrade every cluster node
+// before resuming replication; messages from pre-nonce nodes are rejected.
 
 const (
-	// ReplayProtectionCompat signs both ways and accepts messages without a
-	// nonce. A transition mode with no replay guarantee. Default, for
-	// rolling upgrades.
-	ReplayProtectionCompat = "compat"
-	// ReplayProtectionRequire sends and accepts only nonce-carrying
-	// messages: the replay-protected mode.
-	ReplayProtectionRequire = "require"
-
 	messageNonceSize = 16
 
 	// replayCacheLimit bounds the cache, which is all the per-sender state
@@ -120,7 +106,7 @@ func newMessageNonce() []byte {
 }
 
 // computeMessageSignatureV2 is the HMAC that covers the nonce. The leading
-// version byte keeps it distinct from computeMessageSignature.
+// version byte identifies the nonce-signed protocol.
 func computeMessageSignatureV2(secret []byte, msg *ClusterMessage) string {
 	mac := hmac.New(sha256.New, secret)
 
