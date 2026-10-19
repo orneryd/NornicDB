@@ -63,3 +63,27 @@ func TestFunctionSyntaxUnicodeTrivia(t *testing.T) {
 		require.Equal(t, "custom.fn", name)
 	}
 }
+
+func TestFunctionSyntaxArgumentFactsAgree(t *testing.T) {
+	for _, text := range []string{
+		"",
+		"/* don't split , ) */",
+		"toLower('a,b'), {k:range(1,2), `a,b`: [1,2]}, 2 /* , ' */",
+		"'it\\'s,okay', \"a\\\"b,c\", `a``b,c`, 2",
+		"COLLECT { CALL /* ' , */ custom /* ) */ . proc(1,2) RETURN 1 }, 2",
+		"CALL custom /* ' , */ . proc(1,2), 3",
+		"[1,2], /* ' , */",
+		"[1, {x:2,y:3}",
+		"1, // don't split , (\n 2",
+	} {
+		for _, keepEmpty := range []bool{false, true} {
+			require.Equal(t,
+				readFunctionSyntax(text).appendArguments(nil, 0, keepEmpty),
+				readFunctionSyntaxFacts(text, true).appendArguments(nil, 0, keepEmpty),
+				"text=%q keepEmpty=%v", text, keepEmpty)
+		}
+		require.Empty(t, readFunctionSyntaxFacts(text, true).calls)
+	}
+	// Property names that happen to be keywords do not introduce procedures.
+	require.Empty(t, readFunctionSyntax("WITH {call:1} AS n WITH n.call AS v RETURN v").calls)
+}
