@@ -52,9 +52,25 @@ func TestQueryMemoryStreamedRelationshipEndpointVisibility(t *testing.T) {
 					}
 				})
 			}
+			// Bolt-style pull must filter before the first batch as well as
+			// the materializing Execute adapter used above.
+			run := executeStreamed(ctx, exec, "MATCH ()-[r]->() RETURN startNode(r).id, endNode(r).id", 1)
+			require.True(t, run.stream.streamed())
+			var streamed [][]interface{}
+			for {
+				batch, done := run.stream.Next(1)
+				streamed = append(streamed, batch...)
+				if done {
+					break
+				}
+			}
+			<-run.stream.Done()
+			require.NoError(t, run.err)
 			if namespace == "system" {
+				require.Len(t, streamed, 5)
 				return
 			}
+			require.Equal(t, [][]interface{}{{"a", "b"}}, streamed)
 			// Pending writes use the same endpoint checks through transaction
 			// storage forwarding; internal labels must survive projection.
 			_, err = exec.Execute(ctx, "BEGIN", nil)
