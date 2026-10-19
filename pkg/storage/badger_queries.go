@@ -803,7 +803,6 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 		for _, id := range ids {
 			if state := w.entityStateLocked(bufferedNodeEntity, string(id)); state.found {
 				if states == nil { states = make(map[NodeID]bufferedEntityState) }
-				if states == nil { states = make(map[NodeID]bufferedEntityState) }
 				states[id] = state
 			}
 		}

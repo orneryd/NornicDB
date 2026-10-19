@@ -135,10 +135,11 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 		}
 		return result, true
 	}
-	out, ok := read(outIDs, true)
-	if !ok { return nil, nil, false }
-	in, ok := read(inIDs, false)
-	return out, in, ok
+	var out, in []*Edge
+	var ok bool
+	if wantOut { out, ok = read(outIDs, true); if !ok { return nil, nil, false } }
+	if wantIn { in, ok = read(inIDs, false); if !ok { return nil, nil, false } }
+	return out, in, true
 }
 
 // liveAdjacencyLocked enumerates the overlapping adjacency index, not the
