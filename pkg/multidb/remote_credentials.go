@@ -114,6 +114,7 @@ func (m *DatabaseManager) normalizeRemoteCredentials(ref ConstituentRef, newInpu
 	}
 	return ref, nil
 }
+
 type remoteCredentialCipher struct {
 	aead cipher.AEAD
 }
