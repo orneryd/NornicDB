@@ -35,6 +35,11 @@ func (w *snapshotStoredEdgeWriter) stream(ctx context.Context, engine Engine, sc
 			}
 		}
 	}
+	if scope == "" {
+		// Prefer the reader's public method here: an arbitrary decorator may
+		// override it while inheriting a scoped method from its embedded engine.
+		return StreamStoredEdgesByType(ctx, engine, "", w.visit)
+	}
 	return streamStoredEdgesByTypeInScope(ctx, engine, scope, "", func(edge *Edge) error {
 		if edge == nil || !edgeIDInScope(edge.ID, scope) {
 			return nil
