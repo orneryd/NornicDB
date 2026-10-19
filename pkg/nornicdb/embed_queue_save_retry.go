@@ -18,14 +18,10 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node) {
 // write attempt. All provider paths enter here, so none can re-embed a retained
 // result before its source has been checked.
 func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
-	node, progressed := ew.claimNextNodeSource()
+	node, retained, progressed := ew.claimNextNodeSource()
 	if node == nil {
 		return nil, progressed
 	}
-	ew.claimMu.Lock()
-	retained := ew.embeddingRetries[node.ID]
-	delete(ew.embeddingRetries, node.ID)
-	ew.claimMu.Unlock()
 	if retained == nil {
 		return node, false
 	}
