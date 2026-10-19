@@ -55,6 +55,9 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 	viewport, _ := TemporalViewportFromContext(ctx)
 	if !available || !reader.RelationshipPropertySeeksAvailable() || viewport.Enabled() {
 		access := &relationshipAccess{}
+		if open, close := firstRelationshipBracket(template.pattern); open >= 0 {
+			access.variable = relationshipDeclarationHead(template.pattern[open+1 : close]).variable
+		}
 		return access
 	}
 	plans, _ := ctx.Value(relationshipAccessPlansKey{}).(*relationshipAccessPlans)
