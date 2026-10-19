@@ -89,6 +89,9 @@ type relationshipSearch struct {
 	wake   chan struct{}
 	ready  chan struct{}
 	start  sync.Once
+
+	// beforeSave is a per-service persistence barrier used by tests.
+	beforeSave func()
 }
 
 type relationshipVectorsFile struct {
@@ -446,6 +449,9 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) {
 		}
 	}
 	rs.mu.RUnlock()
+	if rs.beforeSave != nil {
+		rs.beforeSave()
+	}
 	temp := path + ".tmp"
 	file, err := security.CreateRootedFile(temp, 0o600)
 	if err != nil {
