@@ -161,7 +161,7 @@ func rowHasAggregate(items []returnItem) bool {
 
 // splitWithItems splits WITH expressions respecting nested brackets and quotes
 func (e *StorageExecutor) splitWithItems(expr string) []string {
- return readFunctionSyntax(expr).appendArguments(nil,0,false)
+	return readFunctionSyntax(expr).appendArguments(nil, 0, false)
 }
 
 type unwindSimpleSetAssignment struct {

@@ -920,7 +920,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 	})
 }
 
-
 // parseStringArray parses a string that may be an array ['a', 'b'] or single value 'a'
 func (e *StorageExecutor) parseStringArray(s string) []string {
 	s = strings.TrimSpace(s)
