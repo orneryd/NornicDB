@@ -85,7 +85,7 @@ type relationshipSearch struct {
 	saveErr       error
 	// staged belongs to the embedding worker. Failed saves keep the batch
 	// here so retrying persistence never buys the same embeddings again.
-	staged map[string]*relationshipEntry
+	staged map[string]relationshipEntry
 
 	// beforeSave is a per-service persistence barrier used by tests.
 	beforeSave func()
@@ -127,7 +127,7 @@ func (s *Service) EnableRelationshipSearch(embed RelationshipEmbedFunc) {
 		pending:  make(map[string]*storage.Edge),
 		wake:     make(chan struct{}, 1),
 		ready:    make(chan struct{}),
-		staged:   make(map[string]*relationshipEntry),
+		staged:   make(map[string]relationshipEntry),
 		done:     make(chan struct{}),
 	})
 }
@@ -385,7 +385,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		if id == "" {
 			return changed, false
 		}
-		if staged := rs.staged[id]; staged != nil && reported != nil && staged.Source == rs.source(reported) {
+		if staged, ok := rs.staged[id]; ok && reported != nil && staged.Source == rs.source(reported) {
 			continue
 		}
 		// The copy the index took is the version its entry stands for: it
@@ -434,7 +434,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		rs.mu.Lock()
 		current := rs.entries[id]
 		if current != nil && current.Source == source {
-			rs.staged[id] = &relationshipEntry{Source: source, Vectors: normalized, Spans: spans}
+			rs.staged[id] = relationshipEntry{Source: source, Vectors: normalized, Spans: spans}
 		}
 		rs.mu.Unlock()
 		if current != nil && current.Source != source {
@@ -493,11 +493,14 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) error {
 	rs.mu.RLock()
 	entries := make(map[string]*relationshipEntry, len(rs.entries))
 	for id, entry := range rs.entries {
-		if staged := rs.staged[id]; staged != nil && staged.Source == entry.Source {
-			entry = staged
+		if staged, ok := rs.staged[id]; ok && staged.Source == entry.Source {
+			entry = &staged
 		}
 		if len(entry.Vectors) > 0 {
-			entries[id] = &relationshipEntry{Source: entry.Source, Vectors: entry.Vectors, Spans: entry.Spans}
+			// Live writes replace entries rather than mutate their vectors;
+			// the embedding owner cannot publish again until this save ends.
+			// Reuse these stable records instead of copying each one twice.
+			entries[id] = entry
 		}
 	}
 	rs.mu.RUnlock()
