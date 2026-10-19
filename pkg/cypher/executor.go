@@ -1883,6 +1883,11 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	if len(ids) == 0 {
 		return nil
 	}
+	ctx, finish, err := e.queryEmbedder.BeginUse(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	embedder := e.queryEmbedderForStatement(ctx)
 	if embedder == nil {
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
