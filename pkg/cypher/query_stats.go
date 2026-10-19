@@ -1,6 +1,9 @@
 package cypher
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // countCreatedEntity records the properties and labels of a node or
 // relationship a statement created, as Neo4j's result summary does
@@ -75,5 +78,17 @@ func (a *queryStatsAccumulator) snapshot() QueryStats {
 	out := a.stats
 	a.mu.Unlock()
 	return out
+}
+
+
+type queryStatsAccumulatorKey struct{}
+
+func queryStatsAccumulatorFromContext(ctx context.Context) *queryStatsAccumulator {
+	v := ctx.Value(queryStatsAccumulatorKey{})
+	if v == nil {
+		return nil
+	}
+	acc, _ := v.(*queryStatsAccumulator)
+	return acc
 }
 

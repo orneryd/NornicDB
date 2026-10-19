@@ -18,9 +18,9 @@ func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
 	require.EqualValues(t, 2, s.RelationshipsCreated)
 	require.EqualValues(t, 4, s.PropertiesSet)
 
-	require.Nil(t, fabricStatsAccumulatorFromContext(context.Background()))
-	ctx := context.WithValue(context.Background(), fabricStatsAccumulatorKey{}, acc)
-	require.NotNil(t, fabricStatsAccumulatorFromContext(ctx))
+	require.Nil(t, queryStatsAccumulatorFromContext(context.Background()))
+	ctx := context.WithValue(context.Background(), queryStatsAccumulatorKey{}, acc)
+	require.NotNil(t, queryStatsAccumulatorFromContext(ctx))
 
 	m, ok := normalizeFabricRowMap(map[interface{}]interface{}{"k": "v"})
 	require.True(t, ok)
