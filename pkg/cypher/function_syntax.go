@@ -11,15 +11,22 @@ import "strings"
 //
 // Returns ok=false if the expression is not a standalone function call.
 func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
-	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
+	call, ok := standaloneFunctionCall(expr)
 	if !ok {
 		return "", "", false
 	}
-	close := call.close(expr)
-	if close < 0 || queryGapEnd(expr, close+1) != len(expr) {
-		return "", "", false
+	return call.name, call.syntax.source(syntaxSpan{call.open + 1, call.close(expr)}), true
+}
+
+func standaloneFunctionCall(text string) (functionCallSpan, bool) {
+	syntax := readFunctionSyntax(text)
+	index := syntax.callIndex(syntax.leading)
+	if index >= len(syntax.calls) { return functionCallSpan{}, false }
+	call := syntax.calls[index]
+	if call.procedure || call.start != syntax.leading || call.close(text) < 0 || queryGapEnd(text, call.close(text)+1) != len(text) {
+		return functionCallSpan{}, false
 	}
-	return call.name, call.syntax.source(syntaxSpan{call.open + 1, close}), true
+	return call, true
 }
 
 // functionCallSpan refers to the immutable call identity and argument group.
@@ -58,7 +65,12 @@ func readFunctionIdentity(text string, at, previous int) (functionCallSpan, bool
 	if open >= len(text) || text[open] != '(' {
 		return functionCallSpan{}, false
 	}
-	return functionCallSpan{name: name + parts, start: at, nameEnd: end, open: open, next: open + 1}, true
+	if len(name)+len(parts) == end-at {
+		name = text[at:end]
+	} else {
+		name += parts
+	}
+	return functionCallSpan{name: name, start: at, nameEnd: end, open: open, next: open + 1}, true
 }
 
 // nextFunctionCall is the lexical owner for static and runtime call readers.
@@ -201,12 +213,13 @@ type syntaxGroup struct {
 	parent      int
 	separators  []int
 	punctuation []int
-	arguments   []syntaxSpan
+	argumentStart, argumentEnd int
 }
 type functionSyntax struct {
 	text       string
 	calls      []functionCallSpan
 	groups     []syntaxGroup
+	arguments  []syntaxSpan
 	comments   []syntaxSpan
 	quoted     []syntaxSpan
 	subqueries []syntaxSpan
@@ -225,7 +238,8 @@ func readFunctionSyntax(text string) *functionSyntax {
 	// Group zero represents the whole input, including argument-only inputs.
 	syntax.groups = append(syntax.groups, syntaxGroup{open: -1, close: len(text), parent: -1})
 	stack := []int{0}
-	pending := make(map[int]functionCallSpan)
+	var pending functionCallSpan
+	hasPending := false
 	subqueryOpen := make(map[int]int)
 	previous := -1
 	for index := 0; index < len(text); {
@@ -270,7 +284,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 						if cursor < len(text) && text[cursor] == '(' {
 							call.open = cursor
 							call.next = cursor + 1
-							pending[cursor] = call
+							pending, hasPending = call, true
 						} else {
 							syntax.calls = append(syntax.calls, call)
 						}
@@ -281,7 +295,7 @@ func readFunctionSyntax(text string) *functionSyntax {
 				}
 			}
 			if call, ok := readFunctionIdentity(text, index, previous); ok {
-				pending[call.open] = call
+				pending, hasPending = call, true
 				// A qualified name is one token; its components are never separate calls.
 				index = next
 				previous = next - 1
@@ -296,10 +310,12 @@ func readFunctionSyntax(text string) *functionSyntax {
 			group := len(syntax.groups)
 			syntax.groups = append(syntax.groups, syntaxGroup{open: index, close: -1, parent: stack[len(stack)-1]})
 			stack = append(stack, group)
-			if call, ok := pending[index]; ok {
+			if hasPending && pending.open == index {
+				call := pending
 				call.syntax = syntax
 				call.group = group
 				syntax.calls = append(syntax.calls, call)
+				hasPending = false
 			}
 		case ')', ']', '}':
 			if len(stack) > 1 {
@@ -324,18 +340,26 @@ func readFunctionSyntax(text string) *functionSyntax {
 		previous = index
 		index++
 	}
+	totalArguments := 0
+	for index := range syntax.groups {
+		if shape := &syntax.groups[index]; shape.close >= 0 {
+			totalArguments += len(shape.separators)+1
+		}
+	}
+	syntax.arguments = make([]syntaxSpan, 0, totalArguments)
 	for index := range syntax.groups {
 		shape := &syntax.groups[index]
 		if shape.close < 0 {
 			continue
 		}
 		start := shape.open + 1
-		shape.arguments = make([]syntaxSpan, 0, len(shape.separators)+1)
+		shape.argumentStart = len(syntax.arguments)
 		for _, comma := range shape.separators {
-			shape.arguments = append(shape.arguments, syntaxSpan{start, comma})
+			syntax.arguments = append(syntax.arguments, syntaxSpan{start, comma})
 			start = comma + 1
 		}
-		shape.arguments = append(shape.arguments, syntaxSpan{start, shape.close})
+		syntax.arguments = append(syntax.arguments, syntaxSpan{start, shape.close})
+		shape.argumentEnd = len(syntax.arguments)
 	}
 	if len(text) <= 16384 {
 		functionSyntaxCache.put(text, syntax)
@@ -370,7 +394,8 @@ func (syntax *functionSyntax) source(span syntaxSpan) string {
 }
 
 func (syntax *functionSyntax) argumentSpans(group int) []syntaxSpan {
-	return syntax.groups[group].arguments
+	shape := syntax.groups[group]
+	return syntax.arguments[shape.argumentStart:shape.argumentEnd]
 }
 
 // appendArguments preserves strict empty entries when requested. Legacy
@@ -415,19 +440,25 @@ func (syntax *functionSyntax) splitDelimiter(delimiter rune) []string {
 }
 
 func parseFunctionCallArguments(text string) (string, []string, bool) {
-	call, ok := functionCallAt(text, readFunctionSyntax(text).leading)
-	if !ok || call.close(text) < 0 || queryGapEnd(text, call.close(text)+1) != len(text) {
+	return parseFunctionCallArgumentsInto(text, nil)
+}
+
+func parseFunctionCallArgumentsInto(text string, buffer []string) (string, []string, bool) {
+	call, ok := standaloneFunctionCall(text)
+	if !ok {
 		return "", nil, false
 	}
-	return call.name, call.arguments(nil), true
+	return call.name, call.arguments(buffer), true
 }
 
 func singleFunctionArgument(text string) string {
-	_, arguments, ok := parseFunctionCallArguments(text)
-	if !ok || len(arguments) != 1 {
+	call, ok := standaloneFunctionCall(text)
+	if !ok {
 		return ""
 	}
-	return arguments[0]
+	spans := call.syntax.argumentSpans(call.group)
+	if len(spans) != 1 { return "" }
+	return call.syntax.render(spans[0])
 }
 
 // firstProcedureCall adapts statement consumers to the same call inventory.

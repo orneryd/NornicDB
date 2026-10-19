@@ -425,7 +425,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			return nil
 		}
 		inner := call.syntax.render(syntaxSpan{open + 1, closing})
-		inner, _ = cutDistinctArgument(inner)
+		inner, distinct := cutDistinctArgument(inner)
 		if strings.EqualFold(inner, "ALL") {
 			// f(all) is f's ALL modifier with no argument, as in Neo4j
 			// (count(all) fails "Insufficient parameters"), not a variable
@@ -445,11 +445,11 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		}
 		var buffer [8]string
 		expressions := call.arguments(buffer[:0])
-		if len(expressions) > 0 {
-			expressions[0], _ = cutDistinctArgument(expressions[0])
-			if len(expressions) == 1 && strings.EqualFold(expressions[0], "ALL") {
-				expressions = expressions[:0]
-			}
+		if len(expressions) > 0 && distinct {
+			expressions[0] = strings.TrimSpace(expressions[0][len("DISTINCT"):])
+		}
+		if inner == "" {
+			expressions = expressions[:0]
 		}
 		if counted {
 			if err := checkFunctionArity(name, arity, len(expressions)); err != nil {
