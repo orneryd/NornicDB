@@ -43,6 +43,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	pathVariable := extractPathAssignmentVariable(pattern)
 	predicate := prepareRowPredicate(where)
 	store := e.getStorage(ctx)
+	hideSystemNodes := shouldHideSystemNodes(store)
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
 		endpointValues := &endpointPropertyCache{}
@@ -118,11 +119,11 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					}
 				}
 				start, err := load(startID, startProperties)
-				if err != nil || start == nil || !e.matchesEndPattern(start, &match.StartNode) {
+				if err != nil || start == nil || (hideSystemNodes && isSystemNode(start)) || !e.matchesEndPattern(start, &match.StartNode) {
 					return nil
 				}
 				end, err := load(endID, endProperties)
-				if err != nil || end == nil || !e.matchesEndPattern(end, &match.EndNode) {
+				if err != nil || end == nil || (hideSystemNodes && isSystemNode(end)) || !e.matchesEndPattern(end, &match.EndNode) {
 					return nil
 				}
 				if !bind(match.StartNode.variable, start) || !bind(match.EndNode.variable, end) || !bind(match.Relationship.Variable, edge) {
