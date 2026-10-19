@@ -104,3 +104,36 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 		})
 	}
 }
+
+func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
+	for _, writer := range []string{"engine", "transaction", "buffered"} {
+		t.Run(writer, func(t *testing.T) {
+			b := newWriteBehindTestEngine(t, time.Hour)
+			b.writeBehind.Close()
+			for _, id := range []NodeID{"test:hub", "test:peer"} {
+				_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
+				require.NoError(t, err)
+			}
+			require.NoError(t, b.CreateEdge(&Edge{ID: "test:edge", StartNode: "test:hub", EndNode: "test:peer", Type: "R"}))
+			edges, err := b.GetIncomingEdges("test:peer")
+			require.NoError(t, err)
+			require.Len(t, edges, 1, "warm both the adjacency IDs and edge body")
+			if writer == "engine" {
+				require.NoError(t, b.DeleteNode("test:hub"))
+			} else if writer == "buffered" {
+				bufferedDeleteNode(t, b, "test:hub")
+			} else {
+				tx, err := b.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.DeleteNode("test:hub"))
+				require.NoError(t, tx.Commit())
+			}
+			require.NoError(t, b.FlushWriteBehind())
+			_, err = b.GetEdge("test:edge")
+			require.ErrorIs(t, err, ErrNotFound, "the record was physically deleted")
+			edges, err = b.GetIncomingEdges("test:peer")
+			require.NoError(t, err)
+			require.Empty(t, edges, "a retired cascade must also disappear from a warm traversal")
+		})
+	}
+}
