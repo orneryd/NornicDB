@@ -148,7 +148,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 								statement = "CREATE (:U5AdmissionMatrix) RETURN 1 AS value"
 							}
 							_, err := exec.Execute(ctx, admissionMatrixQuery(call, composite, reject), map[string]interface{}{"statement": statement})
- if origin.OwnsTransactions && (composite || explicit) {
+ if origin.OwnsTransactions && composite {
   requireBatchScopeRejected(t,exec,shard,explicit,err)
   require.False(t,invoked,"scope rejection must precede the registered handler")
   return
@@ -171,7 +171,7 @@ func TestRegisteredProcedureAdmissionMatrix(t *testing.T) {
 							nodes, err := shard.GetNodesByLabel("U5AdmissionMatrix")
 							require.NoError(t, err)
 							want := 0
-							if writes && (!reject || origin.OwnsTransactions) {
+							if writes && (!reject || origin.OwnsTransactions && !explicit) {
 								want = 1
 							}
 							require.Len(t, nodes, want)
@@ -226,7 +226,7 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 							"statement": "CREATE (:U5AdmissionMatrix) RETURN 1 AS value",
 							"merge":     "MERGE (:U5AdmissionMatrix {id:1}) RETURN 1 AS value", "file": file,
 						})
-						if procedure.OwnsTransactions && (composite || explicit) {
+						if procedure.OwnsTransactions && composite {
  requireBatchScopeRejected(t,exec,shard,explicit,err)
  return
 }
@@ -249,7 +249,7 @@ func TestRegisteredDynamicProcedureBodiesAndImportIDs(t *testing.T) {
 						if procedure.Name == "apoc.import.json" {
 							want = 2
 						}
-						if reject && !procedure.OwnsTransactions {
+						if reject && (!procedure.OwnsTransactions || explicit) {
 							want = 0
 						}
 						require.Len(t, nodes, want)
