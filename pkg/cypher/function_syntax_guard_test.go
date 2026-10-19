@@ -50,9 +50,13 @@ func alternateFunctionSyntax(body ast.Node) []string {
 	// in a larger statement compiler is a different grammar operation.
 	ast.Inspect(body, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
-		if !ok || len(call.Args) < 2 { return true }
+		if !ok || len(call.Args) < 2 {
+			return true
+		}
 		name, ok := call.Fun.(*ast.Ident)
-		if !ok || (name.Name != "findMatchingDelimiter" && name.Name != "findMatchingParen") { return true }
+		if !ok || (name.Name != "findMatchingDelimiter" && name.Name != "findMatchingParen") {
+			return true
+		}
 		if opening, ok := call.Args[1].(*ast.SelectorExpr); ok && opening.Sel.Name == "open" {
 			reasons["independent callable group matcher"] = true
 		}
@@ -178,29 +182,29 @@ func TestFunctionSyntaxGuardDetectsAlternateReaders(t *testing.T) {
 // not produce callable identities or argument spans. Raw call-text and prefix
 // reading remain forbidden even inside these explicitly named boundaries.
 var functionGrammarBoundary = map[string]string{
-	"parser.go:tokenize":                                 "Execution grammar tokens.",
-	"create.go:scanCreatePatterns":                       "Graph node/relationship steps and offsets.",
-	"executor_subqueries.go:firstVariableOccurrence":     "Free-variable diagnostic position.",
-	"label_expression_rewrite.go:nameSingleNodePaths":    "Generated graph node names.",
-	"set_semantic_validation.go:expressionFreeVariables": "Local variable bindings.",
-	"create.go:parseParamPathParts": "Parameter member paths, not callable identities.",
-	"executor_query_routing.go:validateSyntaxNornic": "Statement grammar and delimiter validity.",
-	"group_by_rewrite.go:projectionWords": "Projection clause words.",
-	"keyword_scan.go:inPatternClause": "Clause and graph-pattern context.",
-	"label_expression_rewrite.go:mayReadPatternInPropertyMap": "Graph expressions in node property maps.",
-	"label_expression_rewrite.go:expression": "Graph-expression rewriting grammar.",
-	"literal_normalization.go:normalizeLiteralText": "Literal and interpolation rewriting.",
-	"map_pattern_context.go:newMapPatternContext": "Map versus graph-pattern context.",
-	"operators.go:enclosingCaseBlockEnd": "CASE block grammar.",
-	"path_selector_search.go:readsPatternVariable": "Pattern variable references.",
-	"pipeline_write_stretch.go:addStretchPropertyReads": "Property dependency tracking.",
-	"property_access_semantic_validation.go:scanPropertyAccesses": "Property and variable references.",
-	"query_structure_rewrite.go:topLevelWords": "Statement clause words.",
+	"parser.go:tokenize":                                                     "Execution grammar tokens.",
+	"create.go:scanCreatePatterns":                                           "Graph node/relationship steps and offsets.",
+	"executor_subqueries.go:firstVariableOccurrence":                         "Free-variable diagnostic position.",
+	"label_expression_rewrite.go:nameSingleNodePaths":                        "Generated graph node names.",
+	"set_semantic_validation.go:expressionFreeVariables":                     "Local variable bindings.",
+	"create.go:parseParamPathParts":                                          "Parameter member paths, not callable identities.",
+	"executor_query_routing.go:validateSyntaxNornic":                         "Statement grammar and delimiter validity.",
+	"group_by_rewrite.go:projectionWords":                                    "Projection clause words.",
+	"keyword_scan.go:inPatternClause":                                        "Clause and graph-pattern context.",
+	"label_expression_rewrite.go:mayReadPatternInPropertyMap":                "Graph expressions in node property maps.",
+	"label_expression_rewrite.go:expression":                                 "Graph-expression rewriting grammar.",
+	"literal_normalization.go:normalizeLiteralText":                          "Literal and interpolation rewriting.",
+	"map_pattern_context.go:newMapPatternContext":                            "Map versus graph-pattern context.",
+	"operators.go:enclosingCaseBlockEnd":                                     "CASE block grammar.",
+	"path_selector_search.go:readsPatternVariable":                           "Pattern variable references.",
+	"pipeline_write_stretch.go:addStretchPropertyReads":                      "Property dependency tracking.",
+	"property_access_semantic_validation.go:scanPropertyAccesses":            "Property and variable references.",
+	"query_structure_rewrite.go:topLevelWords":                               "Statement clause words.",
 	"return_order_semantic_validation.go:forEachSemanticExpressionReference": "Expression variable references.",
-	"set_semantic_validation.go:trailingWordAfterOperand": "Operand-following syntax.",
-	"standalone_order_rewrite.go:scanStandaloneOrderClauses": "Standalone ordering clause grammar.",
-	"static_operator_types.go:staticSliceBounds": "List subscript slice bounds.",
-	"traversal_endpoint_analysis.go:traversalVariablePropertiesRead": "Graph endpoint property dependencies.",
+	"set_semantic_validation.go:trailingWordAfterOperand":                    "Operand-following syntax.",
+	"standalone_order_rewrite.go:scanStandaloneOrderClauses":                 "Standalone ordering clause grammar.",
+	"static_operator_types.go:staticSliceBounds":                             "List subscript slice bounds.",
+	"traversal_endpoint_analysis.go:traversalVariablePropertiesRead":         "Graph endpoint property dependencies.",
 }
 
 func rawCallablePattern(node ast.Node, aliases map[string]bool) bool {

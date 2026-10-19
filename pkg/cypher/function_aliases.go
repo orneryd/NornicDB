@@ -42,7 +42,9 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 		last    int
 	)
 	for _, call := range readFunctionSyntax(query).calls {
-		if call.procedure { continue }
+		if call.procedure {
+			continue
+		}
 		name := lowerASCII(call.name)
 		start, stop, replacement := call.start, call.nameEnd, cypherFunctionAliases[name]
 		if name == "property_exists" {
@@ -74,13 +76,19 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 // or an empty replacement when the call doesn't have that form.
 func propertyExistsKeyName(query string, open int) (start, end int, literal string) {
 	call, ok := functionCallBeforeParen(query, open)
-	if !ok || call.close(query) < 0 { return 0,0,"" }
+	if !ok || call.close(query) < 0 {
+		return 0, 0, ""
+	}
 	spans := call.syntax.argumentSpans(call.group)
-	if len(spans) != 2 || simpleSemanticIdentifier(call.syntax.render(spans[0])) == "" { return 0,0,"" }
-	start = queryGapEnd(query,spans[1].start)
-	key, end, ok := callableIdentifierToken(query,start)
-	if !ok || queryGapEnd(query,end) != spans[1].end { return 0,0,"" }
-	return start,end,"'"+strings.ReplaceAll(strings.ReplaceAll(key,`\`,`\\`),`'`,`\'`)+"'"
+	if len(spans) != 2 || simpleSemanticIdentifier(call.syntax.render(spans[0])) == "" {
+		return 0, 0, ""
+	}
+	start = queryGapEnd(query, spans[1].start)
+	key, end, ok := callableIdentifierToken(query, start)
+	if !ok || queryGapEnd(query, end) != spans[1].end {
+		return 0, 0, ""
+	}
+	return start, end, "'" + strings.ReplaceAll(strings.ReplaceAll(key, `\`, `\\`), `'`, `\'`) + "'"
 }
 
 // mayCallFunctionAlias is canonicalizeFunctionAliases's quick check, in one
