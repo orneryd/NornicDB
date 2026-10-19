@@ -37,6 +37,7 @@ struct FirstRunWizard: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Review your configuration").font(.headline)
+                        StorageUpgradeSetupControl(config: config)
                         Text("Server: \(config.hostAddress), HTTP \(config.httpPortNumber), Bolt \(config.boltPortNumber)")
                         Text("Authentication: \(config.adminUsername). Encryption: \(config.encryptionEnabled ? "enabled" : "disabled")")
                         summary("Embeddings", enabled: config.embeddingsEnabled, provider: config.embeddingProvider, model: config.embeddingModel)

@@ -11,7 +11,9 @@ An unfinished first-run marker is preserved.
 Setup has three steps:
 
 1. **Server / Security:** listen address, ports, authentication, encryption, and
-   automatic startup. Existing values are loaded; opening setup applies no preset.
+   automatic startup. Storage upgrade authorization is visible at the front of
+   this page and again on Review, with the same selected state. Existing values
+   are loaded; opening setup applies no preset.
 2. **Optional AI:** independently enable and configure Embeddings, Reranking,
    and Heimdall. Each service has its own provider, model, endpoint and credential.
    Embeddings also expose dimensions, workers and chunking. Remote model IDs are
