@@ -33,6 +33,7 @@ const (
 	inputTypeDocument        = "document"
 	defaultOutputDType       = "float"
 	defaultRerankReturnDocs  = false
+	maxErrorBodyBytes        = 4096
 )
 
 // Config configures a Voyage API client.
@@ -435,12 +436,15 @@ func (c *Client) postOnce(ctx context.Context, path string, body []byte, respons
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		// Project the complete structured error before limiting its display.
-		// A byte-limited read can turn valid JSON into an unparseable prefix.
-		display := observability.RedactText(strings.TrimSpace(string(raw)), observability.ClientCredentials(c.baseURL, c.apiKey)...)
-		if len(display) > 4096 {
-			display = display[:4096]
+		// One extra byte distinguishes a complete bounded body from a clipped
+		// JSON credential. Never render an incomplete body as unstructured text.
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
+		display := observability.RedactedPlaceholder() + " (error body incomplete or exceeds 4096 bytes)"
+		if readErr == nil && len(raw) <= maxErrorBodyBytes {
+			display = observability.RedactText(strings.TrimSpace(string(raw)), observability.ClientCredentials(c.baseURL, c.apiKey)...)
+			if len(display) > maxErrorBodyBytes {
+				display = display[:maxErrorBodyBytes]
+			}
 		}
 		return apiError{
 			StatusCode: resp.StatusCode,

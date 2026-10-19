@@ -8,6 +8,8 @@ import (
 )
 
 // SensitiveKeys is a compatibility view of the canonical built-in names.
+// Register custom span keys before constructing processors; each processor
+// snapshots the registrations using the canonical name/alias policy.
 // Deprecated: use IsSensitiveFieldName for aliases and compound field names.
 var SensitiveKeys = func() map[string]bool {
 	keys := make(map[string]bool, len(DefaultRedactKeys))
@@ -21,11 +23,22 @@ var SensitiveKeys = func() map[string]bool {
 // forwarding spans to the inner processor. The SDK snapshot is never mutated.
 type redactingSpanProcessor struct {
 	inner sdktrace.SpanProcessor
+	names *sensitiveNames
 }
 
 // NewRedactingSpanProcessor wraps inner with diagnostic redaction (SEC-01).
 func NewRedactingSpanProcessor(inner sdktrace.SpanProcessor) sdktrace.SpanProcessor {
-	return &redactingSpanProcessor{inner: inner}
+	return &redactingSpanProcessor{inner: inner, names: spanSensitiveNames()}
+}
+
+func spanSensitiveNames() *sensitiveNames {
+	keys := defaultRedactSet()
+	for key, sensitive := range SensitiveKeys {
+		if sensitive {
+			keys[key] = struct{}{}
+		}
+	}
+	return newSensitiveNames(keys)
 }
 
 func (r *redactingSpanProcessor) OnStart(parent context.Context, s sdktrace.ReadWriteSpan) {
@@ -33,8 +46,8 @@ func (r *redactingSpanProcessor) OnStart(parent context.Context, s sdktrace.Read
 }
 
 func (r *redactingSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
-	if needsRedaction(s) {
-		r.inner.OnEnd(newRedactedSpan(s))
+	if needsRedaction(s, r.names) {
+		r.inner.OnEnd(newRedactedSpan(s, r.names))
 	} else {
 		r.inner.OnEnd(s)
 	}
@@ -51,13 +64,13 @@ func (r *redactingSpanProcessor) ForceFlush(ctx context.Context) error {
 // isSensitiveKey checks whether a key should be redacted. Case-insensitive
 // and also catches keys that contain a sensitive substring.
 func isSensitiveKey(key string) bool {
-	return IsSensitiveFieldName(key)
+	return isSensitiveKeyName(key, spanSensitiveNames())
 }
 
 // needsRedaction leaves clean snapshots unchanged without allocating.
-func needsRedaction(s sdktrace.ReadOnlySpan) bool {
+func needsRedaction(s sdktrace.ReadOnlySpan, names *sensitiveNames) bool {
 	for _, a := range s.Attributes() {
-		if spanAttributeNeedsRedaction(a) {
+		if spanAttributeNeedsRedaction(a, names) {
 			return true
 		}
 	}
@@ -69,7 +82,7 @@ func needsRedaction(s sdktrace.ReadOnlySpan) bool {
 			return true
 		}
 		for _, a := range event.Attributes {
-			if spanAttributeNeedsRedaction(a) {
+			if spanAttributeNeedsRedaction(a, names) {
 				return true
 			}
 		}
@@ -77,8 +90,8 @@ func needsRedaction(s sdktrace.ReadOnlySpan) bool {
 	return false
 }
 
-func spanAttributeNeedsRedaction(a attribute.KeyValue) bool {
-	if isSensitiveKey(string(a.Key)) {
+func spanAttributeNeedsRedaction(a attribute.KeyValue, names *sensitiveNames) bool {
+	if isSensitiveKeyName(string(a.Key), names) {
 		return true
 	}
 	switch a.Value.Type() {
@@ -103,21 +116,21 @@ type redactedSpan struct {
 	events []sdktrace.Event
 }
 
-func newRedactedSpan(s sdktrace.ReadOnlySpan) *redactedSpan {
+func newRedactedSpan(s sdktrace.ReadOnlySpan, names *sensitiveNames) *redactedSpan {
 	status := s.Status()
 	status.Description = RedactText(status.Description)
 	events := append([]sdktrace.Event(nil), s.Events()...)
 	for i := range events {
 		events[i].Name = RedactText(events[i].Name)
-		events[i].Attributes = redactSpanAttributes(events[i].Attributes)
+		events[i].Attributes = redactSpanAttributes(events[i].Attributes, names)
 	}
-	return &redactedSpan{ReadOnlySpan: s, attrs: redactSpanAttributes(s.Attributes()), status: status, events: events}
+	return &redactedSpan{ReadOnlySpan: s, attrs: redactSpanAttributes(s.Attributes(), names), status: status, events: events}
 }
 
-func redactSpanAttributes(orig []attribute.KeyValue) []attribute.KeyValue {
+func redactSpanAttributes(orig []attribute.KeyValue, names *sensitiveNames) []attribute.KeyValue {
 	filtered := make([]attribute.KeyValue, 0, len(orig))
 	for _, a := range orig {
-		if isSensitiveKey(string(a.Key)) {
+		if isSensitiveKeyName(string(a.Key), names) {
 			filtered = append(filtered, attribute.String(string(a.Key), "REDACTED"))
 		} else if a.Value.Type() == attribute.STRING {
 			filtered = append(filtered, attribute.String(string(a.Key), RedactText(a.Value.AsString())))
