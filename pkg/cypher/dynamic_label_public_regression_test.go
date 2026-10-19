@@ -28,9 +28,17 @@ func TestDynamicLabelPublicExecute(t *testing.T) {
 					require.NoError(t, err)
 					for range 2 {
 						result, err := exec.Execute(ctx, c.Query, c.Params)
-						if c.Code != "" { require.Error(t, err); requireStatusCode(t, err, c.Code); continue }
+						if c.Code != "" {
+							require.Error(t, err)
+							requireStatusCode(t, err, c.Code)
+							continue
+						}
 						require.NoError(t, err, c.Query)
-						if len(c.Rows) == 0 { require.Empty(t, result.Rows, c.Query) } else { require.Equal(t, c.Rows, result.Rows, c.Query) }
+						if len(c.Rows) == 0 {
+							require.Empty(t, result.Rows, c.Query)
+						} else {
+							require.Equal(t, c.Rows, result.Rows, c.Query)
+						}
 					}
 				})
 			}
@@ -44,12 +52,16 @@ func TestDynamicLabelPublicExecute(t *testing.T) {
 func TestDynamicLabelGeneratedFunctionContract(t *testing.T) {
 	seen := map[string]bool{}
 	for _, c := range dynamiclabels.Cases() {
-		if c.Code != "" { continue }
+		if c.Code != "" {
+			continue
+		}
 		query, _ := stripCypherPreamble(c.Query)
 		rewritten, _, err := desugarLabelExpressions(query, c.Params, c.Cypher25)
 		require.NoError(t, err, c.Query)
 		require.NoError(t, forEachFunctionCall(rewritten, func(name, normalized string) error {
-			if !strings.HasPrefix(normalized, "__nornic_") { return nil }
+			if !strings.HasPrefix(normalized, "__nornic_") {
+				return nil
+			}
 			seen[normalized] = true
 			_, known := builtInCypherFunctions[normalized]
 			require.True(t, known, "rewrite emitted an unknown function: %s", name)
@@ -99,7 +111,10 @@ func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
 		"PROFILE USE dynamic_composite CALL { USE dynamic_composite.data WITH $labels AS ls MATCH (n:$any(ls)) RETURN n.id AS id } RETURN id ORDER BY id",
 	} {
 		t.Run(query, func(t *testing.T) {
-			for _, c := range []struct { labels []any; rows [][]any }{
+			for _, c := range []struct {
+				labels []any
+				rows   [][]any
+			}{
 				{[]any{"A"}, [][]any{{int64(1)}, {int64(2)}}},
 				{[]any{"B"}, [][]any{{int64(2)}, {int64(3)}}},
 				{[]any{"A"}, [][]any{{int64(1)}, {int64(2)}}},
@@ -116,7 +131,9 @@ func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
 // evaluator; NornicDB's local lowering functions are not remote functions.
 func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
 	uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
-	if uri == "" { t.Skip("Neo4j reference not configured") }
+	if uri == "" {
+		t.Skip("Neo4j reference not configured")
+	}
 	ctx := context.Background()
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: uri, Database: "neo4j"})
 	require.NoError(t, err)
@@ -142,8 +159,10 @@ func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
 	for _, form := range []string{"$(ls)", "$all(ls)", "$any(ls)"} {
 		t.Run(form, func(t *testing.T) {
 			want := [][]any{{"2"}}
-			if form == "$any(ls)" { want = [][]any{{"1"}, {"2"}, {"3"}} }
-			query := "USE dynamic_remote CALL { USE dynamic_remote.data WITH $labels AS ls MATCH (n:"+form+") RETURN toString(n.id) AS id } RETURN id ORDER BY id"
+			if form == "$any(ls)" {
+				want = [][]any{{"1"}, {"2"}, {"3"}}
+			}
+			query := "USE dynamic_remote CALL { USE dynamic_remote.data WITH $labels AS ls MATCH (n:" + form + ") RETURN toString(n.id) AS id } RETURN id ORDER BY id"
 			result, err := exec.Execute(ctx, query, map[string]any{"labels": []any{"A", "B"}})
 			require.NoError(t, err)
 			require.Equal(t, want, result.Rows)
