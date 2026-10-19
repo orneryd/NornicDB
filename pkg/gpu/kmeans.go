@@ -170,7 +170,9 @@ type ClusterIndex struct {
 	clusterIterations int64
 	centroidDrift     float32
 
-	clusterMu sync.RWMutex // Separate mutex for cluster operations
+	// Protects cluster operations. When both locks are needed, acquire
+	// clusterMu before the embedded EmbeddingIndex.mu.
+	clusterMu sync.RWMutex
 
 	// epoch advances on Clear (under clusterMu). A clustering run publishes
 	// only into the population it copied.
@@ -1408,10 +1410,11 @@ func (ci *ClusterIndex) UpdateCentroidsBatch() {
 		affectedClusters[u.newCluster] = true
 	}
 
-	ci.mu.RLock()
+	// Match ClusterWithContext's publication order to avoid a lock cycle.
 	ci.clusterMu.Lock()
-	defer ci.mu.RUnlock()
+	ci.mu.RLock()
 	defer ci.clusterMu.Unlock()
+	defer ci.mu.RUnlock()
 
 	// Recompute centroids for affected clusters
 	dims := ci.dimensions
