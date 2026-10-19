@@ -21,15 +21,15 @@ import (
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.louvain", args)
+	graph, nodes, config, err := e.readAlgorithmGraph("apoc.algo.louvain", args)
 	if err != nil {
 		return nil, err
 	}
 	// The config map may name the relationship weight property.
-	weightProp, _ := algorithmConfig(args)["weightProperty"].(string)
+	weightProp, _ := config["weightProperty"].(string)
 
 	// Run Louvain algorithm
-	communities := e.computeLouvain(nodes, weightProp)
+	communities := graph.computeLouvain(nodes, weightProp)
 
 	// Build result
 	rows := algorithmRows(nodes, communities)
@@ -256,12 +256,12 @@ func (g *louvainGraph) aggregate(community []int, count int) *louvainGraph {
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.labelPropagation", args)
+	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.labelPropagation", args)
 	if err != nil {
 		return nil, err
 	}
 
-	communities := e.computeLabelPropagation(nodes)
+	communities := graph.computeLabelPropagation(nodes)
 
 	rows := algorithmRows(nodes, communities)
 
@@ -339,12 +339,12 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.wcc", args)
+	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.wcc", args)
 	if err != nil {
 		return nil, err
 	}
 
-	components := e.computeWCC(nodes)
+	components := graph.computeWCC(nodes)
 
 	rows := algorithmRows(nodes, components)
 
