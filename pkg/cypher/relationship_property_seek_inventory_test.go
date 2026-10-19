@@ -93,6 +93,7 @@ func TestRelationshipPropertySeekReviewerInventory(t *testing.T) {
 		{"escaped_variable", "WITH $x AS `a b` MATCH ()-[`r r`:T]->() WHERE `r r`.p=`a b` RETURN `r r`.p"},
 		{"commented", "WITH $x AS k /* scope */ " + g + "RETURN r.p"},
 	}
+	cases = append(cases, relationshipAccessGeneratedCases()...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "r3_inventory"))
