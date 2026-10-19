@@ -95,7 +95,7 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 		if body == "" {
 			return errNonDeterministicExecution
 		}
-		args := splitProcedureTopLevelComma(body)
+		args := splitTopLevelComma(body)
 		if volatility == functionTemporalTruncation && len(args) < 2 {
 			return errNonDeterministicExecution
 		}
