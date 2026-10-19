@@ -80,7 +80,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.Stats()
 
-	totalNodeCount, totalEdgeCount, databaseCount := s.readableDatabaseCounts(r, false)
+	totalNodeCount, totalEdgeCount, databaseCount := s.readableDatabaseCounts(r, false, s.databaseReadPredicate(getClaims(r)))
 	if r.Context().Err() != nil {
 		return
 	}
@@ -188,7 +188,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if registry == nil || !s.isRBACEnforced() {
 		body = observability.RenderLegacy(registry, time.Now())
 	} else {
-		nodes, edges, databases := s.readableDatabaseCounts(r, true)
+		canRead := s.databaseReadPredicate(getClaims(r))
+		nodes, edges, databases := s.readableDatabaseCounts(r, true, canRead)
 		if r.Context().Err() != nil {
 			return
 		}
@@ -197,11 +198,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body = observability.RenderLegacyForRead(registry, time.Now(), observability.LegacyReadScope{
-			CanReadDatabase: func(database string) bool {
-				_, readable := s.databaseReadAccess(getClaims(r), database)
-				return readable
-			},
-			AllDatabasesReadable: s.canReadAllDatabases(r),
+			CanReadDatabase:      canRead,
+			AllDatabasesReadable: s.canReadAllDatabasesWith(canRead),
 			Nodes:                nodes, Edges: edges,
 		})
 	}
@@ -230,7 +228,7 @@ func (s *Server) obsRegistryForHandler() *prometheus.Registry {
 // /status and legacy /metrics. Each namespace passes databaseReadAccess before
 // reading cached prefix counts; aliases/composites cannot double-count storage.
 // Status excludes system; metrics includes it only when the caller can read it.
-func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool) (totalNodeCount, totalEdgeCount int64, databaseCount int) {
+func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, canRead func(string) bool) (totalNodeCount, totalEdgeCount int64, databaseCount int) {
 	// Calculate stats across the caller's readable physical databases.
 	// Primary source: storage-maintained cached per-namespace counters
 	// (NodeCountByPrefix/EdgeCountByPrefix), which are incrementally updated.
@@ -252,7 +250,7 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool) (to
 					if ns == "" || (!includeSystem && ns == "system") {
 						continue
 					}
-					if _, readable := s.databaseReadAccess(getClaims(r), ns); !readable {
+					if !canRead(ns) {
 						continue
 					}
 					databaseCount++
@@ -283,7 +281,7 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool) (to
 			if !includeSystem && dbName == "system" {
 				continue
 			}
-			if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
+			if !canRead(dbName) {
 				continue
 			}
 			if dbInfo.Type == "composite" {
