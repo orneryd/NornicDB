@@ -29,19 +29,37 @@ func (m grpcDatabaseAccessMode) CanAccessDatabase(database string) bool { return
 
 func (s *Server) grpcDatabaseTargets(database string, mode auth.DatabaseAccessMode) ([]string, bool) {
 	physical, allowed := s.graphAccess(mode, database)
-	if !allowed { return nil, false }
-	if s.dbManager == nil { return []string{physical}, true }
-	if resolved, err := s.dbManager.ResolveDatabase(physical); err == nil { physical = resolved }
-	if mode != nil && !mode.CanAccessDatabase(physical) { return nil, false }
+	if !allowed {
+		return nil, false
+	}
+	if s.dbManager == nil {
+		return []string{physical}, true
+	}
+	if resolved, err := s.dbManager.ResolveDatabase(physical); err == nil {
+		physical = resolved
+	}
+	if mode != nil && !mode.CanAccessDatabase(physical) {
+		return nil, false
+	}
 	info, err := s.dbManager.GetDatabase(physical)
-	if err != nil || info.Type != "composite" { return []string{physical}, true }
+	if err != nil || info.Type != "composite" {
+		return []string{physical}, true
+	}
 	targets := []string{physical}
 	for _, constituent := range info.Constituents {
-		if constituent.Type != "local" { return nil, false }
+		if constituent.Type != "local" {
+			return nil, false
+		}
 		target, ok := s.graphAccess(mode, constituent.DatabaseName)
-		if !ok { return nil, false }
-		if resolved, err := s.dbManager.ResolveDatabase(target); err == nil { target = resolved }
-		if mode != nil && !mode.CanAccessDatabase(target) { return nil, false }
+		if !ok {
+			return nil, false
+		}
+		if resolved, err := s.dbManager.ResolveDatabase(target); err == nil {
+			target = resolved
+		}
+		if mode != nil && !mode.CanAccessDatabase(target) {
+			return nil, false
+		}
 		targets = append(targets, target)
 	}
 	return targets, true
@@ -49,7 +67,9 @@ func (s *Server) grpcDatabaseTargets(database string, mode auth.DatabaseAccessMo
 
 func (s *Server) grpcDatabaseAccessForRoles(roles []string, database string) auth.ResolvedAccess {
 	targets, allowed := s.grpcDatabaseTargets(database, nil)
-	if !allowed { return auth.ResolvedAccess{} }
+	if !allowed {
+		return auth.ResolvedAccess{}
+	}
 	access := auth.ResolvedAccess{Read: true, Write: true}
 	for _, target := range targets {
 		resolved := s.GetResolvedAccessForRoles(roles, target)
@@ -146,7 +166,9 @@ func (s *Server) startQdrantGRPC() error {
 	if s.isRBACEnforced() {
 		cfg.DatabaseAccessModeResolver = func(roles []string) auth.DatabaseAccessMode {
 			mode := s.GetDatabaseAccessModeForRoles(roles)
-			if mode == nil { return nil }
+			if mode == nil {
+				return nil
+			}
 			return grpcDatabaseAccessMode{DatabaseAccessMode: mode, allows: func(database string) bool {
 				_, allowed := s.grpcDatabaseTargets(database, mode)
 				return allowed
