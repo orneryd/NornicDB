@@ -146,7 +146,9 @@ func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, 
 }
 
 func commandWaitOutcome(cmd *Command, err error) error {
-	if err == nil || !isNamespaceLifecycle(cmd) {
+	// A queued lifecycle command already owns its receipt. Do not decode its
+	// payload while proposal admission may be stamping the catalog revision.
+	if err == nil || (cmd.namespaceDrop == nil && !isNamespaceLifecycle(cmd)) {
 		return err
 	}
 	return &storage.NamespaceDropError{Committed: cmd.namespaceDrop != nil && cmd.namespaceDrop.Committed(), Cause: err}
