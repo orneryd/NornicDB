@@ -65,6 +65,12 @@ func FunctionResult(value interface{}) interface{} {
 }
 
 func functionResult(value interface{}) (interface{}, bool) {
+	// Primitive scalars cannot contain NULL members or be boxed nils.
+	// Keep their producer path as cheap as the scalar expression boundary.
+	switch value.(type) {
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return value, false
+	}
 	if RuntimeValue(value) == nil {
 		return nil, value != nil
 	}
@@ -123,9 +129,8 @@ func functionResult(value interface{}) (interface{}, bool) {
 	case storage.RemoteEntityValue, storage.RemotePathValue:
 		// These maps are graph values, not user maps. In particular an empty
 		// entity property bag is still a map, not a NULL entity.
-	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
-		float32, float64, []string, []byte, []int, []int64, []float32, []float64, []bool:
-		// Scalar and primitive-list results need no traversal or allocation.
+	case []string, []byte, []int, []int64, []float32, []float64, []bool:
+		// Primitive-list results need no traversal or allocation.
 	default:
 		reflected := reflect.ValueOf(value)
 		switch reflected.Kind() {
