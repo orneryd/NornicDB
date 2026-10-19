@@ -24,6 +24,14 @@ func TestFunctionSyntaxNativeRoutes(t *testing.T) {
 	runFunctionSyntaxRoutes(t, functionsyntaxmatrix.NativeCases())
 }
 
+func TestFunctionSyntaxMapValueColon(t *testing.T) {
+	runFunctionSyntaxRoutes(t, []functionsyntaxmatrix.Case{
+		{"plain", "UNWIND [1,2] AS x RETURN {c:count(x)} AS v", `[[{"c":2}]]`},
+		{"commented-key", "UNWIND [1,2] AS x RETURN {c/* don't split , */:count(x)} AS v", `[[{"c":2}]]`},
+		{"quoted-key", "UNWIND [1,2] AS x RETURN {`c`/* don't split , */:count(x)} AS v", `[[{"c":2}]]`},
+	})
+}
+
 func runFunctionSyntaxRoutes(t *testing.T, cases []functionsyntaxmatrix.Case) {
 	prior := config.IsCypherQueryNormalizationEnabled()
 	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
