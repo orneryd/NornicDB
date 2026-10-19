@@ -2165,29 +2165,19 @@ func graphReadingExpression(cypher string) string {
 			if open < len(cypher) && cypher[open] == '{' {
 				return keyword
 			}
-			// EXISTS((n)-->(m)): a pattern between the parentheses.
-			if keyword == "EXISTS" && open < len(cypher) && cypher[open] == '(' {
-				if close := findMatchingDelimiter(cypher, open, '(', ')'); close > open {
-					inner := strings.TrimSpace(cypher[open+1 : close])
-					if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") {
-						return graphReadingPattern
-					}
-				}
-			}
 			from = end
 		}
 	}
-	for _, keyword := range []string{"shortestPath", "allShortestPaths"} {
-		for from := 0; from < len(cypher); {
-			at := keywordIndexFrom(cypher, keyword, from, opts)
-			if at < 0 {
-				break
+	for _, call := range readFunctionSyntax(cypher).calls {
+		if call.procedure { continue }
+		switch lowerASCII(call.name) {
+		case "shortestpath", "allshortestpaths":
+			return graphReadingPattern
+		case "exists":
+			if close := call.close(cypher); close > call.open {
+				inner := call.syntax.render(syntaxSpan{call.open+1, close})
+				if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") { return graphReadingPattern }
 			}
-			open := queryGapEnd(cypher, at+len(keyword))
-			if open < len(cypher) && cypher[open] == '(' {
-				return graphReadingPattern
-			}
-			from = at + len(keyword)
 		}
 	}
 	if comprehension, _ := classifyPatternComprehensions(cypher); comprehension {

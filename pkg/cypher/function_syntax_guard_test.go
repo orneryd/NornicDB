@@ -45,6 +45,19 @@ var callTextInput = regexp.MustCompile(`(?i)(expr|arg|param|signature|call|conte
 
 func alternateFunctionSyntax(body ast.Node) []string {
 	reasons := map[string]bool{}
+	callIdentity, delimiterMatcher := false, false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if name, ok := node.(*ast.Ident); ok {
+			switch name.Name {
+			case "parseFunctionCallWS", "functionCallAt", "functionCallBeforeParen", "bindingFunctionBeforeParen", "parseReduceForm":
+				callIdentity = true
+			case "findMatchingDelimiter", "findMatchingParen":
+				delimiterMatcher = true
+			}
+		}
+		return true
+	})
+	if callIdentity && delimiterMatcher { reasons["independent callable group matcher"] = true }
 	patterns := map[string]bool{}
 	for changed := true; changed; {
 		changed = false
@@ -66,7 +79,7 @@ func alternateFunctionSyntax(body ast.Node) []string {
 	ast.Inspect(body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.ForStmt, *ast.RangeStmt:
-			quote, comma, group := false, false, false
+			quote, comma, group, dot := false, false, false, false
 			ast.Inspect(n, func(child ast.Node) bool {
 				if identifier, ok := child.(*ast.Ident); ok && (identifier.Name == "delim" || identifier.Name == "delimiter") {
 					comma = true
@@ -75,11 +88,12 @@ func alternateFunctionSyntax(body ast.Node) []string {
 					value, _ := strconv.Unquote(literal.Value)
 					quote = quote || value == "'" || value == `"` || value == "`"
 					comma = comma || value == ","
+					dot = dot || value == "."
 					group = group || value == "(" || value == "[" || value == "{"
 				}
 				return true
 			})
-			if quote && comma && group {
+			if quote && group && (comma || dot) {
 				reasons["independent quote/comma/group scanner"] = true
 			}
 		case *ast.CallExpr:
@@ -150,6 +164,8 @@ func TestFunctionSyntaxGuardDetectsAlternateReaders(t *testing.T) {
 		`package p; func f(s, name string) bool { return strings.Contains(s, name+"(") }`,
 		`package p; func f(expr string) int { return strings.IndexByte(expr, '(') }`,
 		`package p; func f(args string) []string { return strings.Split(args, ",") }`,
+		"package p; func f(s string) { for _, c := range s { switch c { case '\\'': case '.': case '(': } } }",
+		`package p; func f(s string) { functionCallAt(s,0); findMatchingDelimiter(s,0,'(',')') }`,
 		`package p; func f(q string) bool { prefix:="count("; alias:=prefix; return strings.Contains(q,alias) }`,
 	} {
 		file, err := parser.ParseFile(token.NewFileSet(), "mutant.go", source, 0)
