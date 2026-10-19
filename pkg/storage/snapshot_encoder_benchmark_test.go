@@ -51,6 +51,10 @@ func (s snapshotEncoderFixture) StreamEdges(_ context.Context, fn func(*Edge) er
 	return nil
 }
 
+func (s snapshotEncoderFixture) StreamStoredEdgesByType(ctx context.Context, _ string, fn func(*Edge) error) error {
+	return s.StreamEdges(ctx, fn)
+}
+
 func BenchmarkSnapshotEncoder(b *testing.B) {
 	for _, pressure := range []bool{false, true} {
 		name := "normal"
