@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"runtime/metrics"
 	"slices"
+	"unsafe"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -329,9 +330,10 @@ func copyQueuedNode(node *storage.Node) (copied *storage.Node, size int) {
 	if node == nil {
 		return nil, 0
 	}
-	size = queuedEntryBytes
+	size = queuedEntryBytes + int(unsafe.Sizeof(*node))
 	clone := *node
 	clone.Labels = slices.Clone(node.Labels)
+	size += 16 * len(node.Labels)
 	for _, label := range node.Labels {
 		size += len(label)
 	}
@@ -339,6 +341,7 @@ func copyQueuedNode(node *storage.Node) (copied *storage.Node, size int) {
 	clone.EmbedMeta = cloneQueuedMapSized(node.EmbedMeta, &size)
 	if node.NamedEmbeddings != nil {
 		clone.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
+		size += queuedMapBytes(len(node.NamedEmbeddings), 16+24)
 		for name, embedding := range node.NamedEmbeddings {
 			clone.NamedEmbeddings[name] = slices.Clone(embedding)
 			size += len(name) + 4*len(embedding)
@@ -346,6 +349,7 @@ func copyQueuedNode(node *storage.Node) (copied *storage.Node, size int) {
 	}
 	if node.ChunkEmbeddings != nil {
 		clone.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
+		size += 24 * len(node.ChunkEmbeddings)
 		for i, embedding := range node.ChunkEmbeddings {
 			clone.ChunkEmbeddings[i] = slices.Clone(embedding)
 			size += 4 * len(embedding)
@@ -358,15 +362,28 @@ func copyQueuedEdge(edge *storage.Edge) (copied *storage.Edge, size int) {
 	if edge == nil {
 		return nil, 0
 	}
-	size = queuedEntryBytes
+	size = queuedEntryBytes + int(unsafe.Sizeof(*edge))
 	clone := *edge
 	clone.Properties = cloneQueuedMapSized(edge.Properties, &size)
 	return &clone, size
 }
 
-// queuedEntryBytes is what the queue counts for an operation besides its
-// payload: the entry, the struct copy and the map headers, approximately.
-const queuedEntryBytes = 256
+// queuedEntryBytes is what the queue counts for an entry besides what it
+// copies: the entry itself, twice over for the slice's spare capacity.
+const queuedEntryBytes = 2 * int(unsafe.Sizeof(deferredIndexWrite{}))
+
+// queuedMapBytes is what a copied map of entries slots of slotBytes each
+// takes on the heap: its header and its slot groups, allocated eight slots
+// at a time (one control byte each) and filled to seven of eight. The keys'
+// and values' own payload is counted apart.
+func queuedMapBytes(entries, slotBytes int) int {
+	const header = 48
+	if entries == 0 {
+		return header
+	}
+	slots := 8 * ((entries + 6) / 7)
+	return header + slots*(slotBytes+1)
+}
 
 func cloneQueuedMap(source map[string]any) map[string]any {
 	var size int
@@ -378,8 +395,9 @@ func cloneQueuedMapSized(source map[string]any, size *int) map[string]any {
 		return nil
 	}
 	copied := make(map[string]any, len(source))
+	*size += queuedMapBytes(len(source), 16+16)
 	for key, value := range source {
-		*size += len(key) + 16
+		*size += len(key)
 		copied[key] = cloneQueuedValue(value, size)
 	}
 	return copied
@@ -464,8 +482,8 @@ func cloneQueuedReflect(v reflect.Value, size *int) reflect.Value {
 			return v
 		}
 		copied := reflect.MakeMapWithSize(v.Type(), v.Len())
+		*size += queuedMapBytes(v.Len(), int(v.Type().Key().Size()+v.Type().Elem().Size()))
 		for it := v.MapRange(); it.Next(); {
-			*size += int(it.Key().Type().Size()) + 16
 			copied.SetMapIndex(it.Key(), cloneQueuedReflect(it.Value(), size))
 		}
 		return copied
