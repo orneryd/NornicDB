@@ -41,6 +41,7 @@ func TestNamespaceDropCommittedReplayFinishesDespiteSecondaryJournalFailure(t *t
 				cfg.NodeID = "committed"
 				cfg.AdvertiseAddr = "127.0.0.1:17000"
 				cfg.Raft.Peers = nil
+				cfg.Raft.Bootstrap = true
 				r, makeErr := NewRaftReplicator(cfg, a)
 				require.NoError(t, makeErr)
 				r.state, r.currentTerm = StateLeader, 1
