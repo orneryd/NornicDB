@@ -446,6 +446,7 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 			notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
+			b.deleteRelationshipUniqueIndexes(op.DeletedEdgeIDs...)
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
 				// indexes: buffered nodes never entered the engine node
