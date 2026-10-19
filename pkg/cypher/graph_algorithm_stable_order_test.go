@@ -112,12 +112,12 @@ func TestGraphAlgorithmsGiveTheSameRowsEveryCall(t *testing.T) {
 
 func TestAlgorithmRowsListANodeOnce(t *testing.T) {
 	a, b := &storage.Node{ID: "a"}, &storage.Node{ID: "b"}
-	rows := algorithmRows([]*storage.Node{b, a, b, {ID: "c"}}, map[storage.NodeID]int{"a": 1, "b": 2})
+	rows := algorithmRows(algorithmNativeNodes([]*storage.Node{b, a, b, {ID: "c"}}, nil), map[graphEntityKey]int{"a": 1, "b": 2})
 	require.Equal(t, [][]interface{}{{b, 2}, {a, 1}}, rows)
 }
 
 func TestRenumberInNodeOrderSkipsNodesWithoutCommunity(t *testing.T) {
 	a, b, c := &storage.Node{ID: "a"}, &storage.Node{ID: "b"}, &storage.Node{ID: "c"}
-	numbers := renumberInNodeOrder([]*storage.Node{c, a, b}, map[storage.NodeID]int{"a": 7, "b": 3})
-	require.Equal(t, map[storage.NodeID]int{"a": 0, "b": 1}, numbers)
+	numbers := renumberInNodeOrder(algorithmNativeNodes([]*storage.Node{c, a, b}, nil), map[graphEntityKey]int{"a": 7, "b": 3})
+	require.Equal(t, map[graphEntityKey]int{"a": 0, "b": 1}, numbers)
 }

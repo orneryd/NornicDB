@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -305,35 +306,92 @@ func (v *graphIdentityStorage) inputKey(value interface{}) (storage.NodeID, bool
 
 // algorithmIdentityInput gives all whole-graph algorithms one key domain for
 // native arguments, graph scans, adjacency and their computed maps.
-func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, error) {
-	view := graphIdentityView(e.storage, e.graphIdentityScope)
-	graph := e.cloneForStorage(view)
-	input := append([]interface{}(nil), args...)
-	if len(input) > 0 {
-		if items, ok := cypherListValue(input[0]); ok && len(items) > 0 {
-			if _, native := items[0].(*storage.Node); native {
-				values := append([]interface{}(nil), items...)
-				for i, value := range values {
-					if node, ok := value.(*storage.Node); ok {
-						values[i] = view.node(node)
-					}
-				}
-				input[0] = values
-			}
-		}
-	}
-	nodes, err := graph.algorithmNodes(procedure, input)
-	return graph, nodes, err
+// Algorithm keys have a distinct type and exist only in a read-only graph API.
+// Native storage values never masquerade as nodes whose physical ID is a key.
+type graphEntityKey string
+type algorithmGraphNode struct {
+    ID graphEntityKey
+    value *storage.Node
+}
+type algorithmGraphEdge struct {
+    ID graphEntityKey
+    StartNode,EndNode graphEntityKey
+    Type string
+    Properties map[string]interface{}
+}
+type algorithmGraphStorage struct {
+    source,reader storage.Engine
+}
+type algorithmGraphExecutor struct {storage *algorithmGraphStorage}
+
+func algorithmIdentity(source storage.Engine, identity storage.EntityIdentity) storage.EntityIdentity {
+    if identity.Database=="" {identity.Database=storage.DatabaseOf(source)}
+    return identity
 }
 
-func graphAlgorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) [][]interface{} {
-	rows := algorithmRows(nodes, values)
-	for _, row := range rows {
-		if node, ok := row[0].(*storage.Node); ok {
-			row[0] = graphIdentityNodeValue(node)
-		}
-	}
-	return rows
+func algorithmNativeNodes(nodes []*storage.Node, source storage.Engine) []algorithmGraphNode {
+    values:=make([]algorithmGraphNode,0,len(nodes))
+    for _,node:=range nodes {
+        if node!=nil {values=append(values,algorithmGraphNode{ID:graphEntityKey(algorithmIdentity(source,node.Identity()).Key()),value:node})}
+    }
+    return values
+}
+
+func algorithmNodeValue(node algorithmGraphNode) *storage.Node {
+    value:=*node.value
+    return &value
+}
+
+func (g *algorithmGraphStorage) edges(edges []*storage.Edge, err error) ([]algorithmGraphEdge,error) {
+    if err!=nil {return nil,err}
+    values:=make([]algorithmGraphEdge,0,len(edges))
+    for _,edge:=range edges {
+        if edge==nil {continue}
+        values=append(values,algorithmGraphEdge{
+            ID:graphEntityKey(algorithmIdentity(g.source,edge.Identity()).Key()),
+            StartNode:graphEntityKey(algorithmIdentity(g.source,edge.StartIdentity()).Key()),
+            EndNode:graphEntityKey(algorithmIdentity(g.source,edge.EndIdentity()).Key()),
+            Type:edge.Type,Properties:edge.Properties,
+        })
+    }
+    return values,nil
+}
+
+func (g *algorithmGraphStorage) GetOutgoingEdges(key graphEntityKey) ([]algorithmGraphEdge,error) {
+    id,ok:=storage.EntityIdentityFromKey(string(key)).NodeLookupID(g.source)
+    if !ok {return nil,storage.ErrNotFound}
+    return g.edges(g.reader.GetOutgoingEdges(id))
+}
+
+func (g *algorithmGraphStorage) GetIncomingEdges(key graphEntityKey) ([]algorithmGraphEdge,error) {
+    id,ok:=storage.EntityIdentityFromKey(string(key)).NodeLookupID(g.source)
+    if !ok {return nil,storage.ErrNotFound}
+    return g.edges(g.reader.GetIncomingEdges(id))
+}
+
+func (g *algorithmGraphExecutor) getNodeEdges(key graphEntityKey) []algorithmGraphEdge {
+    outgoing,_:=g.storage.GetOutgoingEdges(key)
+    incoming,_:=g.storage.GetIncomingEdges(key)
+    return append(outgoing,incoming...)
+}
+
+func (g *algorithmGraphExecutor) filtered(types map[string]struct{}) *algorithmGraphExecutor {
+    return &algorithmGraphExecutor{storage:&algorithmGraphStorage{source:g.storage.source,reader:&algorithmRelationshipReader{Engine:g.storage.reader,types:types}}}
+}
+
+func (e *StorageExecutor) algorithmIdentityInput(procedure string, args []interface{}) (*algorithmGraphExecutor, []algorithmGraphNode, error) {
+    native,err:=e.algorithmNodes(procedure,args)
+    if err!=nil {return nil,nil,err}
+    graph:=&algorithmGraphExecutor{storage:&algorithmGraphStorage{source:e.storage,reader:e.storage}}
+    nodes:=algorithmNativeNodes(native,e.storage)
+    selected:=false
+    if items,list:=cypherListValue(procedureArgument(args,0)); list && len(items)>0 {_,selected=items[0].(*storage.Node)}
+    if !selected {sort.SliceStable(nodes,func(i,j int)bool{return nodes[i].ID<nodes[j].ID})}
+    return graph,nodes,nil
+}
+
+func graphAlgorithmRows[T any](nodes []algorithmGraphNode, values map[graphEntityKey]T) [][]interface{} {
+    return algorithmRows(nodes,values)
 }
 
 // bindIdentity converts native/config references only after the graph's key

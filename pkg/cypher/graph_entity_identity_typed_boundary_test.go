@@ -78,12 +78,14 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
 			"type identityBoundaryCopy storage.Node\n"+
 			"func unrelatedIdentityReader(input *identityBoundaryAlias, relationship *storage.Edge) []string {\n"+
 			"candidate := identityBoundaryEmbedded{input}; inferred := relationship; copied := identityBoundaryCopy(*input); candidate.Database = inferred.Database\n"+
-			"return []string{string(candidate.ID), string(copied.ID), string(inferred.ID), string(inferred.StartNode), string(inferred.EndNode)}\n}\n", 0)
+			"return []string{string(candidate.ID), string(copied.ID), string(inferred.ID), string(inferred.StartNode), string(inferred.EndNode)}\n}\n"+
+			"type identityBoundaryKeyAlias = graphEntityKey\n"+
+			"func unrelatedKeyConversion(value string) graphEntityKey { return identityBoundaryKeyAlias(value) }\n", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	files = append(files, negative)
-	info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}}
+	info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}, Types: map[ast.Expr]types.TypeAndValue{}}
 	configuration := types.Config{
 		Importer: importer.ForCompiler(positions, "gc", func(path string) (io.ReadCloser, error) {
 			export := exports[path]
@@ -127,8 +129,13 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
 	if len(nativeFields) != 6 {
 		t.Fatalf("incomplete native identity field population: %d/6", len(nativeFields))
 	}
+	canonicalKey := checked.Scope().Lookup("graphEntityKey")
+	if canonicalKey == nil {
+		t.Fatal("canonical graph key type is absent")
+	}
 	var findings []string
 	negativeFindings := 0
+	negativeConversions := 0
 	for _, file := range files {
 		source := positions.Position(file.Pos()).Filename
 		if filepath.Base(source) == "graph_entity_identity.go" {
@@ -145,6 +152,21 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
 				parents[node] = stack[len(stack)-1]
 			}
 			stack = append(stack, node)
+			return true
+		})
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			value := info.Types[call.Fun]
+			if value.IsType() && types.Identical(types.Unalias(value.Type), canonicalKey.Type()) {
+				if source == negativeName {
+					negativeConversions++
+				} else {
+					findings = append(findings, fmt.Sprintf("%s: canonical graph key constructed outside identity owner", positions.Position(call.Pos())))
+				}
+			}
 			return true
 		})
 		for selector, selection := range info.Selections {
@@ -179,6 +201,10 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
 		t.Fatalf("typed identity guard missed its fresh reader or provenance write: caught %d/7 native identity field accesses", negativeFindings)
 	}
 	t.Log("negative control: all 7 native identity accesses caught through aliases, inferred locals, embedded fields, defined copies and provenance writes")
+	if negativeConversions != 1 {
+		t.Fatalf("typed identity guard missed canonical key conversion through an alias: caught %d/1", negativeConversions)
+	}
+	t.Log("negative control: canonical key conversion through an alias caught outside the owner")
 	for _, finding := range findings {
 		t.Log(finding)
 	}

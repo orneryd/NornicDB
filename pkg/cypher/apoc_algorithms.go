@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -299,17 +298,17 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 // computePageRank ranks the given nodes over the relationships between
 // them: a relationship to a node outside the set carries no score, and no
 // outside node is ranked (#1164).
-func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
+func (e *algorithmGraphExecutor) computePageRank(nodes []algorithmGraphNode, damping float64, iterations int) map[graphEntityKey]float64 {
 	if len(nodes) == 0 {
-		return map[storage.NodeID]float64{}
+		return map[graphEntityKey]float64{}
 	}
 	n := float64(len(nodes))
-	scores := make(map[storage.NodeID]float64, len(nodes))
-	newScores := make(map[storage.NodeID]float64, len(nodes))
+	scores := make(map[graphEntityKey]float64, len(nodes))
+	newScores := make(map[graphEntityKey]float64, len(nodes))
 	for _, node := range nodes {
 		scores[node.ID] = 1.0 / n
 	}
-	targets := make(map[storage.NodeID][]storage.NodeID, len(nodes))
+	targets := make(map[graphEntityKey][]graphEntityKey, len(nodes))
 	for _, node := range nodes {
 		edges, _ := e.storage.GetOutgoingEdges(node.ID)
 		for _, edge := range edges {
@@ -351,24 +350,24 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []in
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
-	scores := make(map[storage.NodeID]float64)
+func (e *algorithmGraphExecutor) computeBetweenness(nodes []algorithmGraphNode) map[graphEntityKey]float64 {
+	scores := make(map[graphEntityKey]float64)
 	for _, node := range nodes {
 		scores[node.ID] = 0
 	}
 	for _, s := range nodes {
-		stack := []storage.NodeID{}
-		pred := make(map[storage.NodeID][]storage.NodeID)
-		sigma := make(map[storage.NodeID]float64)
-		dist := make(map[storage.NodeID]int)
+		stack := []graphEntityKey{}
+		pred := make(map[graphEntityKey][]graphEntityKey)
+		sigma := make(map[graphEntityKey]float64)
+		dist := make(map[graphEntityKey]int)
 		for _, node := range nodes {
-			pred[node.ID] = []storage.NodeID{}
+			pred[node.ID] = []graphEntityKey{}
 			sigma[node.ID] = 0
 			dist[node.ID] = -1
 		}
 		sigma[s.ID] = 1
 		dist[s.ID] = 0
-		queue := []storage.NodeID{s.ID}
+		queue := []graphEntityKey{s.ID}
 		for len(queue) > 0 {
 			v := queue[0]
 			queue = queue[1:]
@@ -386,7 +385,7 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 				}
 			}
 		}
-		delta := make(map[storage.NodeID]float64)
+		delta := make(map[graphEntityKey]float64)
 		for _, node := range nodes {
 			delta[node.ID] = 0
 		}
@@ -422,16 +421,16 @@ func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []inte
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.NodeID]float64 {
-	scores := make(map[storage.NodeID]float64)
+func (e *algorithmGraphExecutor) computeCloseness(nodes []algorithmGraphNode) map[graphEntityKey]float64 {
+	scores := make(map[graphEntityKey]float64)
 	n := len(nodes)
 	for _, source := range nodes {
-		dist := make(map[storage.NodeID]int)
+		dist := make(map[graphEntityKey]int)
 		for _, node := range nodes {
 			dist[node.ID] = -1
 		}
 		dist[source.ID] = 0
-		queue := []storage.NodeID{source.ID}
+		queue := []graphEntityKey{source.ID}
 		totalDist := 0
 		reachable := 0
 		for len(queue) > 0 {
@@ -635,25 +634,25 @@ func pathAlgorithmArguments(procedure string, args []interface{}) (start, end st
 // algorithmRows are a whole-graph algorithm's rows, {node, value}, one per
 // given node that has a value, in the given nodes' order (a node listed twice
 // once), so the same call on the same graph gives the same rows (#1183).
-func algorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) [][]interface{} {
+func algorithmRows[T any](nodes []algorithmGraphNode, values map[graphEntityKey]T) [][]interface{} {
 	rows := make([][]interface{}, 0, len(values))
-	seen := make(map[storage.NodeID]struct{}, len(values))
+	seen := make(map[graphEntityKey]struct{}, len(values))
 	for _, node := range nodes {
 		value, ok := values[node.ID]
 		if _, listed := seen[node.ID]; !ok || listed {
 			continue
 		}
 		seen[node.ID] = struct{}{}
-		rows = append(rows, []interface{}{node, value})
+		rows = append(rows, []interface{}{algorithmNodeValue(node), value})
 	}
 	return rows
 }
 
 // renumberInNodeOrder numbers communities 0, 1, … by their first node in the
 // given nodes' order, so community IDs don't depend on map order (#1183).
-func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]int) map[storage.NodeID]int {
+func renumberInNodeOrder(nodes []algorithmGraphNode, communities map[graphEntityKey]int) map[graphEntityKey]int {
 	numbers := make(map[int]int)
-	result := make(map[storage.NodeID]int, len(communities))
+	result := make(map[graphEntityKey]int, len(communities))
 	for _, node := range nodes {
 		community, ok := communities[node.ID]
 		if !ok {
@@ -680,7 +679,7 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	if items, isList := cypherListValue(value); isList {
 		if len(items) == 0 {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return e.storage.GetAllNodes(), nil
 		}
 		if _, isNode := items[0].(*storage.Node); isNode {
 			nodes := make([]*storage.Node, 0, len(items))
@@ -700,24 +699,14 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	switch label := value.(type) {
 	case nil:
-		return nodesInIDOrder(e.storage.GetAllNodes()), nil
+		return e.storage.GetAllNodes(), nil
 	case string:
 		if label == "" {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return e.storage.GetAllNodes(), nil
 		}
 		nodes, _ := e.storage.GetNodesByLabel(label)
-		return nodesInIDOrder(nodes), nil
+		return nodes, nil
 	default:
 		return nil, typeError()
 	}
-}
-
-// nodesInIDOrder sorts the nodes an algorithm reads from storage by ID, so
-// the same graph gives the same order on every engine (#1183); a node list
-// the caller passes keeps its order. It sorts a copy: storage may share the
-// slice it returns.
-func nodesInIDOrder(nodes []*storage.Node) []*storage.Node {
-	sorted := append([]*storage.Node(nil), nodes...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
-	return sorted
 }
