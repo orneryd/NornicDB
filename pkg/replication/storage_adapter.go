@@ -246,6 +246,8 @@ func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) 
 		execErr = a.engine.UpdateEdge(payload.edge)
 	case CmdDeleteEdge:
 		execErr = a.applyDeleteEdge(cmd.Data)
+	case CmdDeleteByPrefix:
+		execErr = a.applyDeleteByPrefixContext(ctx, cmd.Data)
 	case CmdSetProperty:
 		execErr = a.applySetProperty(cmd.Data)
 	case CmdBatchWrite:
