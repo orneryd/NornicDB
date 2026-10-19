@@ -22,6 +22,41 @@ type endpointPropertyCache struct {
 	bytes  int64
 }
 
+// relationshipEndpointReader projects only AFTER the canonical query read.
+// Its transaction view owns pending writes, snapshot visibility, acknowledged
+// write-behind writes and complete policy inputs. A projected storage read is
+// not a substitute for that view. Traversal admission and scalar endpoints use
+// this same owner; only the requested values enter bounded row caches.
+type relationshipEndpointReader struct {
+	executor *StorageExecutor
+	store    storage.Engine
+}
+
+func (e *StorageExecutor) newRelationshipEndpointReader(store storage.Engine) relationshipEndpointReader {
+	return relationshipEndpointReader{executor: e, store: store}
+}
+
+func (reader relationshipEndpointReader) read(id storage.NodeID, properties []string) (*storage.Node, error) {
+	node, err := reader.executor.getQueryNode(reader.store, id)
+	if err != nil || node == nil {
+		return node, err
+	}
+	if shouldHideSystemNodes(reader.store) && isSystemNode(node) {
+		return nil, storage.ErrNotFound
+	}
+	if properties == nil {
+		return node, nil
+	}
+	out := *node
+	out.ChunkEmbeddings, out.NamedEmbeddings = nil, nil
+	out.Properties = make(map[string]interface{}, len(properties))
+	for _, property := range properties {
+		if value, exists := node.Properties[property]; exists {
+			out.Properties[property] = value
+		}
+	}
+	return &out, nil
+}
 func (c *endpointPropertyCache) keep(key endpointPropertyKey, value interface{}) {
 	// Include map/entry overhead and key storage, not just property payloads.
 	size := int64(128+len(key.id)+len(key.property)) + util.EstimateValueBytes(value)
@@ -39,8 +74,7 @@ func (c *endpointPropertyCache) keep(key endpointPropertyKey, value interface{})
 	c.bytes += size
 }
 
-// rowEndpointPropertyNode selects a property without decoding the endpoint's
-// other properties. Both the text evaluator and compiled value program use
+// rowEndpointPropertyNode selects a property after endpoint visibility. Both the text evaluator and compiled value program use
 // this same reader and the ordinary endpoint existence/type contract.
 type rowEndpointPropertyNode struct {
 	argument, property string
