@@ -226,16 +226,17 @@ type deletedEntityRead struct {
 // labels(v), keys(v), properties(v).
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
- for _,call:=range readFunctionSyntax(expression).calls {
-  name:=lowerASCII(call.name)
-  if call.procedure || name!="labels" && name!="keys" && name!="properties" {continue}
-  arguments:=call.arguments(nil)
-  if len(arguments)==1 {
-   if variable:=simpleSemanticIdentifier(arguments[0]);variable!="" {reads=append(reads,deletedEntityRead{variable:variable,relationshipOnly:name!="labels"})}
+ for index := 0; index < len(expression); {
+  if call,ok:=functionCallAt(expression,index);ok {
+   name:=lowerASCII(call.name)
+   if name=="labels" || name=="keys" || name=="properties" {
+    arguments:=call.arguments(nil)
+    if len(arguments)==1 {
+     if variable:=simpleSemanticIdentifier(arguments[0]);variable!="" {reads=append(reads,deletedEntityRead{variable:variable,relationshipOnly:name!="labels"})}
+    }
+   }
   }
- }
-	for index := 0; index < len(expression); {
-		if end:=queryCommentEnd(expression,index);end>=0 {index=end;continue}
+  if end:=queryCommentEnd(expression,index);end>=0 {index=end;continue}
 		switch character := expression[index]; {
 		case character == '\'' || character == '"' || character == '`':
 			index = skipCypherQuotedText(expression,index,character)
@@ -249,7 +250,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 			index++
 		}
 		word := expression[start:index]
-		next := skipSpaceIndex(expression, index)
+		next := queryGapEnd(expression, index)
 		switch {
 		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
 			if !propertyNullTestFollows(expression, next+1) {
