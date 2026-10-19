@@ -261,6 +261,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// returned bindings remain raw for writes and the outer query projects them.
 	identity := e.cloneWithStorage(e.storage)
 	identity.storedPropertyIdentity = true
+	ctx = withRelationshipAccessProgram(ctx, match)
 	matched, err := identity.pipelineMatchRows(ctx, row, match)
 	if err != nil {
 		return nil, nil, false, err

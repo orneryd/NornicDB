@@ -30,7 +30,7 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 		}
 	}
 	for _, token := range []string{"", "all", "any", "ANY"} {
-		add("generated_match_"+token, "WITH $x AS k MATCH (n:$"+token+"(CASE WHEN EXISTS { MATCH ()-[r:T]->() WHERE r.p=k } THEN 'Key' ELSE 'Missing' END)) RETURN labels(n)")
+		add("generated_match_"+token, "MATCH (n:$"+token+"(CASE WHEN EXISTS { MATCH ()-[r:T]->() WHERE r.p='x' } THEN 'Key' ELSE 'Missing' END)) RETURN labels(n)")
 	}
 	for _, source := range []string{"'x'", "$x", "k"} {
 		for _, inline := range []bool{false, true} {
@@ -39,22 +39,28 @@ func relationshipAccessGeneratedCases() []struct{ name, q string } {
 				body = "(a)-[r:T {p:" + source + "}]->()"
 			}
 			for _, kind := range []string{"COUNT", "EXISTS", "COLLECT", "CALL"} {
+				readBody := body
+				if inline && (kind == "CALL" || kind == "COLLECT") { readBody = "MATCH " + body }
 				name := fmt.Sprintf("generated_anchor_%s_%s_%t", kind, source, inline)
 				prefix := "MATCH (a:Key) WITH a,$x AS k "
 				if kind == "CALL" {
-					if inline {
-						body = "MATCH " + body
-					}
-					add(name, prefix+"CALL (a,k) { "+body+" RETURN r.p AS value } RETURN value")
+					add(name, prefix+"CALL (a,k) { "+readBody+" RETURN r.p AS value } RETURN value")
 				} else if kind == "COLLECT" {
-					if inline {
-						body = "MATCH " + body
-					}
-					add(name, prefix+"RETURN COLLECT { "+body+" RETURN r.p }")
+					add(name, prefix+"RETURN COLLECT { "+readBody+" RETURN r.p }")
 				} else {
 					add(name, prefix+"RETURN "+kind+" { "+body+" }")
 				}
 			}
+		}
+	}
+	for _, imports := range []string{"(outer,k)", "(*)", ""} {
+		body := "MATCH ()-[r:T]->() WHERE r.p=outer.p RETURN r.p AS value"
+		if imports == "" { body = "WITH outer,k " + body }
+		call := "CALL " + imports + " { " + body + " }"
+		prefix := "MATCH ()-[outer:T]->() WITH outer,$x AS k "
+		add("generated_anchor_CALL_edge_"+imports, prefix+call+" RETURN value")
+		for _, kind := range []string{"COUNT", "EXISTS", "COLLECT"} {
+			add("generated_anchor_"+kind+"_edge_"+imports, prefix+"RETURN "+kind+" { "+call+" RETURN value }")
 		}
 	}
 	return cases
