@@ -28,11 +28,13 @@ func (t *sizeTrackingEngine) ScopedRelationshipPropertySeeksAvailable() bool {
 
 func (t *sizeTrackingEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*storage.Edge, bool, error) {
 	p, ok := t.Engine.(storage.ScopedRelationshipPropertySeeker)
-	if !ok { return nil, false, nil }
+	if !ok {
+		return nil, false, nil
+	}
 	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
 }
 
 var (
-	_ storage.RelationshipPropertySeeker = (*sizeTrackingEngine)(nil)
+	_ storage.RelationshipPropertySeeker       = (*sizeTrackingEngine)(nil)
 	_ storage.ScopedRelationshipPropertySeeker = (*sizeTrackingEngine)(nil)
 )
