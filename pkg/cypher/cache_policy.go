@@ -70,12 +70,12 @@ func cacheableReadQuery(cypher string, depth int) bool {
 	// db.retrieve can start, pull, or discard durable continuation cursors. Its
 	// stateful lifecycle and owner checks must always reach the continuation
 	// registry, including when qid/discard fields are hidden in parameters.
-	if containsProcedureCallNamed(cypher,"db.retrieve") {
+	if containsProcedureCallNamed(cypher, "db.retrieve") {
 		return false
 	}
 
 	// Inference is non-cacheable by default; allow explicit opt-in via request map.
-	if containsProcedureCallNamed(cypher,"db.infer") {
+	if containsProcedureCallNamed(cypher, "db.infer") {
 		if !inferCacheTrueRe.MatchString(cypher) {
 			return false
 		}
