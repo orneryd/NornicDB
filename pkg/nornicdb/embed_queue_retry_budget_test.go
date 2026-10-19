@@ -5,7 +5,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -69,11 +68,9 @@ func TestEmbedWorkerRetryBudgetOversized(t *testing.T) {
 		require.False(t, worker.processNextBatch())
 	}
 	require.Equal(t, 1, provider.GetEmbedCount())
-	require.LessOrEqual(t, worker.nodeEmbeddingRetryDelay(time.Hour), 30*time.Second)
-	worker.claimMu.Lock()
-	worker.retryBudgetBlockedUntil = time.Time{} // Deterministic expiry, no sleeps.
-	worker.claimMu.Unlock()
-	require.True(t, worker.processNextBatch(), "oversized rejection must not permanently stop admission")
+	require.True(t, worker.retryBudgetBlocked)
+	worker.SetEmbedder(provider) // Explicit invalidation permits a new configuration attempt.
+	require.True(t, worker.processNextBatch(), "invalidation releases oversized-result backpressure")
 	require.Equal(t, 2, provider.GetEmbedCount())
 }
 
