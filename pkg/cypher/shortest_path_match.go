@@ -408,8 +408,9 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 		}
 	}
 	text = maskSubqueryBodies(text)
+	syntax:=readFunctionSyntax(text)
 	for at := 0; at < len(text); {
-		call, ok := nextFunctionCall(text, at)
+		call, ok := syntax.nextCall(at,true,false,false)
 		if !ok {
 			break
 		}
