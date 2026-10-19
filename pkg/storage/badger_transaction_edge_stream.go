@@ -9,6 +9,10 @@ import "context"
 // Committed reads are scoped to the transaction's database. Visited edges are
 // copies, so the callback may keep them.
 func (tx *BadgerTransaction) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
+	return tx.streamEdgesByType(ctx, edgeType, visibleRead, visit)
+}
+
+func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType string, v readVisibility, visit func(*Edge) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -60,9 +64,9 @@ func (tx *BadgerTransaction) StreamEdgesByType(ctx context.Context, edgeType str
 		// Write-behind reads are read-committed: the engine's latest
 		// (overlaid) stream includes flushes that landed after the pinned
 		// snapshot.
-		err = tx.engine.StreamEdgesByTypeInScope(ctx, scope, edgeType, emitCommitted)
+		err = tx.engine.streamEdgesByTypeInScope(ctx, scope, edgeType, v, emitCommitted)
 	} else {
-		err = tx.engine.streamEdgesByTypeVisibleAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, emitCommitted)
+		err = tx.engine.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, v, emitCommitted)
 	}
 	if err != nil {
 		return err
