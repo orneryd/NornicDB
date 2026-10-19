@@ -267,9 +267,9 @@ func (m *Manager) RollbackAndDelete(ctx context.Context, session *Session) error
 }
 
 // endLocked is the only session terminal owner. The operation mutex arbitrates
-// expiry, explicit endings and active statements. Participants end while their
-// transaction lifetime is still live; only then is the session retired and its
-// lifetime cancelled. Cleanup has a bound even for an unresponsive participant.
+// expiry, explicit endings and active statements. No manager lock is held while
+// waiting. A contextless storage rollback may outlive the wait; it retains its
+// private executor, while the expired session is retired at the cleanup bound.
 func (m *Manager) endLocked(ctx context.Context, session *Session, command string) (*cypher.ExecuteResult, error) {
 	if session.closed {
 		return nil, nil
@@ -295,7 +295,22 @@ func (m *Manager) endLocked(ctx context.Context, session *Session, command strin
 	defer cancel()
 	stop := context.AfterFunc(cleanup, session.lifetimeCancel)
 	defer stop()
-	return session.Executor.Execute(cypher.WithTransactionControl(cleanup), command, nil)
+	type terminalResult struct {
+		result *cypher.ExecuteResult
+		err    error
+	}
+	executor := session.Executor
+	done := make(chan terminalResult, 1)
+	go func() {
+		result, err := executor.Execute(cypher.WithTransactionControl(cleanup), command, nil)
+		done <- terminalResult{result, err}
+	}()
+	select {
+	case outcome := <-done:
+		return outcome.result, outcome.err
+	case <-cleanup.Done():
+		return nil, cleanup.Err()
+	}
 }
 
 func (m *Manager) expiredLocked(session *Session) bool {
