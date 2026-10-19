@@ -19,6 +19,12 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		out, _ := materializePipelineSource(source)
 		return out, true, getExpressionFailure(ctx)
 	}
+	return e.pipelineApplySeededTraversalMatch(ctx, rows, clause, hint)
+}
+
+// pipelineApplySeededTraversalMatch retains the existing selective access
+// owners when a streaming input reveals a bound endpoint at execution time.
+func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
