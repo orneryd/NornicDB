@@ -38,7 +38,7 @@ func BenchmarkNodeVectorSearch(b *testing.B) {
 				chunks[c] = randomVector()
 			}
 			nodes[i] = &storage.Node{
-				ID:              storage.NodeID(fmt.Sprintf("nornic:doc-%d", i)),
+				ID:              storage.NodeID(fmt.Sprintf("doc-%d", i)),
 				Labels:          []string{"Doc"},
 				ChunkEmbeddings: chunks,
 			}
@@ -71,6 +71,13 @@ func BenchmarkNodeVectorSearch(b *testing.B) {
 		// Build the ANN pipeline before timing.
 		if _, err := svc.VectorSearchCandidates(ctx, queries[0], options()); err != nil {
 			b.Fatal(err)
+		}
+		response, err := svc.Search(ctx, "", queries[0], options())
+		if err != nil || len(response.Results) == 0 {
+			b.Fatalf("benchmark must materialize stored nodes: response=%v err=%v", response, err)
+		}
+		if svc.EmbeddingCount() != shape.nodes*shape.chunks {
+			b.Fatal("benchmark search removed valid vector entries")
 		}
 
 		b.Run(shape.name+"/candidates", func(b *testing.B) {
