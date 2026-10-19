@@ -54,6 +54,7 @@ func (e *StorageExecutor) unregisterVectorSpace(indexName string) {
 }
 
 func (e *StorageExecutor) databaseName() string {
+ if e.graphIdentityScope != nil { return e.graphIdentityScope.database }
 	return storageDatabaseName(e.storage)
 }
 
