@@ -28,6 +28,8 @@ func configDisplayError(err error, data []byte, defaults *Config) error {
 		case reflect.String:
 			if observability.IsSensitiveFieldName(name) {
 				credentials = append(credentials, value.String())
+			} else {
+				credentials = append(credentials, observability.ClientCredentials(value.String())...)
 			}
 		}
 	}
@@ -43,8 +45,12 @@ func configDisplayError(err error, data []byte, defaults *Config) error {
 			visited[node] = true
 			defer delete(visited, node)
 			sensitive = sensitive || observability.IsSensitiveFieldName(name)
-			if node.Kind == yaml.ScalarNode && sensitive {
-				credentials = append(credentials, node.Value)
+			if node.Kind == yaml.ScalarNode {
+				if sensitive {
+					credentials = append(credentials, node.Value)
+				} else {
+					credentials = append(credentials, observability.ClientCredentials(node.Value)...)
+				}
 			}
 			if node.Kind == yaml.MappingNode {
 				for i := 0; i+1 < len(node.Content); i += 2 {
