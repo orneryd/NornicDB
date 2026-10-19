@@ -10,6 +10,15 @@ func Cases() []Case {
 	body := "CREATE (:NestedStats {p: 1}) RETURN 1 AS value"
 	params := map[string]any{"body": body}
 	return []Case{
+		{Name: "collectExpression", Query: "RETURN COLLECT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: body, Params: params},
+		{Name: "countExpression", Query: "RETURN COUNT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: body, Params: params},
+		{Name: "existsExpression", Query: "RETURN EXISTS { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: body, Params: params},
+		{Name: "nestedExpressions", Query: "RETURN COLLECT { RETURN COUNT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS c } AS nested", Direct: body, Params: params},
+		{Name: "expressionInProcedure", Query: "CALL apoc.cypher.run('RETURN COLLECT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested',{body:$body}) YIELD value RETURN value", Direct: body, Params: params},
+		{Name: "expressionAndOuterWrite", Query: "CREATE (:NestedStats {p:1}) RETURN COLLECT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: "CREATE (:NestedStats {p:1}),(:NestedStats {p:1}) RETURN 1 AS value", Params: params},
+		{Name: "callBodyExpression", Query: "CALL { RETURN COLLECT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested } RETURN nested", Direct: body, Params: params},
+		{Name: "unionExpression", Query: "RETURN COLLECT { CALL apoc.cypher.run($body,{}) YIELD value RETURN value UNION ALL CALL apoc.cypher.run($body,{}) YIELD value RETURN value } AS nested", Direct: "CREATE (:NestedStats {p:1}),(:NestedStats {p:1}) RETURN 1 AS value", Params: params},
+		{Name: "predicateExpression", Setup: "CREATE (:NestedSeed)", Query: "MATCH (n:NestedSeed) WHERE EXISTS { CALL apoc.cypher.run($body,{}) YIELD value RETURN value } RETURN n", Direct: body, Params: params},
 		{Name: "run", Query: "CALL apoc.cypher.run($body,{}) YIELD value RETURN value", Direct: body, Params: params},
 		{Name: "relationshipCreate", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: "CREATE (a:NestedStats {p:1})-[r:NESTED {p:2}]->(b:NestedStats) RETURN 1 AS value", Params: map[string]any{"body": "CREATE (a:NestedStats {p:1})-[r:NESTED {p:2}]->(b:NestedStats) RETURN 1 AS value"}},
 		{Name: "setRemove", Setup: "CREATE (:NestedStats:OldLabel {p:1})", Query: "CALL apoc.cypher.doIt($body,{}) YIELD value RETURN value", Direct: "MATCH (n:NestedStats) SET n.p=2,n:NewLabel REMOVE n:OldLabel RETURN 1 AS value", Params: map[string]any{"body": "MATCH (n:NestedStats) SET n.p=2,n:NewLabel REMOVE n:OldLabel RETURN 1 AS value"}},
