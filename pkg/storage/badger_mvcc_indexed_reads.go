@@ -282,7 +282,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
+				if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
 					return err
 				}
 			}
