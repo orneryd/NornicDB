@@ -15,14 +15,25 @@ import (
 // Close closes the database.
 func (db *DB) Close() error {
 	db.mu.Lock()
-	if db.closed {
+	if db.closeDone != nil {
+		done := db.closeDone
 		db.mu.Unlock()
-		return nil
+		<-done
+		db.mu.RLock()
+		err := db.closeErr
+		db.mu.RUnlock()
+		return err
 	}
 	db.closed = true
+	db.closeDone = make(chan struct{})
 	db.mu.Unlock()
 
-	return db.closeInternal()
+	err := db.closeInternal()
+	db.mu.Lock()
+	db.closeErr = err
+	close(db.closeDone)
+	db.mu.Unlock()
+	return err
 }
 
 // LifetimeContext returns a context that is cancelled when the database
