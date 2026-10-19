@@ -146,8 +146,7 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 // pipelineMu, so pipeline creation resolves them before taking pipelineMu and
 // passes them down.
 type vectorBuildSeeds struct {
-	compressedIDs []string                   // IVF-PQ build seeds; nil unless compressed quality
-	hnswHints     map[string]LexicalSeedHint // HNSW build hints; nil while a graph exists
+	compressedIDs []string // IVF-PQ build seeds; nil unless compressed quality
 }
 
 func (s *Service) pipelineBuildSeeds() vectorBuildSeeds {
@@ -157,12 +156,6 @@ func (s *Service) pipelineBuildSeeds() vectorBuildSeeds {
 	var seeds vectorBuildSeeds
 	if ANNQualityFromEnv() == ANNQualityCompressed {
 		seeds.compressedIDs = s.bm25SeedEmbeddingIDs(bm25SeedDocIDs(fulltext))
-	}
-	s.hnswMu.RLock()
-	hasGraph := s.servingHNSW() != nil
-	s.hnswMu.RUnlock()
-	if !hasGraph {
-		seeds.hnswHints = s.hnswBuildLexicalSeedHints(fulltext, s.hnswConfig().M)
 	}
 	return seeds
 }

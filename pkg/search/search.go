@@ -869,6 +869,10 @@ type Service struct {
 	// HNSW index for approximate nearest neighbor search (optional, lazy-initialized)
 	hnswIndex           *HNSWIndex
 	hnswMu              sync.RWMutex
+	hnswBuild           *hnswBuildJob
+	hnswBuildPaused     int
+	hnswVectorsChanging atomic.Bool
+	hnswGeneration      atomic.Uint64
 	hnswMaintOnce       sync.Once
 	hnswMaintCancel     context.CancelFunc
 	hnswMaintDone       chan struct{}
@@ -1575,6 +1579,10 @@ func (s *Service) setBuildPhase(phase string) {
 }
 
 func (s *Service) resetANNForBuild() {
+	resume := s.pauseHNSWBuild()
+	defer resume()
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
 	s.publishVectorServing(func() {
 		s.hnswMu.Lock()
 		// Drop the pointer without clearing the old graph; readers that already
@@ -2196,12 +2204,16 @@ func (s *Service) setPersistenceEnabledNow(enabled bool) {
 		s.persistTimer = nil
 	}
 	s.persistMu.Unlock()
+	resume := s.pauseHNSWBuild()
+	defer resume()
 	s.persistRunMu.Lock()
 	s.indexMu.Lock()
+	s.mu.Lock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
 		s.vectorFileStore = nil
 	}
+	s.mu.Unlock()
 	s.indexMu.Unlock()
 	s.persistRunMu.Unlock()
 }
@@ -2216,6 +2228,7 @@ func (s *Service) Close() error {
 	if s.lifecycleCancel != nil {
 		s.lifecycleCancel()
 	}
+	s.pauseHNSWBuild() // Service shutdown permanently retires construction.
 	s.continuationMu.Lock()
 	if s.continuationRegistry != nil && s.continuationOwned {
 		s.continuationRegistry.Close()
@@ -2242,10 +2255,12 @@ func (s *Service) Close() error {
 
 	s.persistRunMu.Lock()
 	s.indexMu.Lock()
+	s.mu.Lock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
 		s.vectorFileStore = nil
 	}
+	s.mu.Unlock()
 	// The cluster generation and index retire through the owner, leaving no
 	// index: a clustering finishing later is superseded, admissions find no
 	// index, and the index's native GPU buffers are released once the last
@@ -2771,6 +2786,8 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 		return
 	}
 
+	resume := s.pauseHNSWBuild()
+	defer resume()
 	// Lock order: pipelineMu -> indexMu -> mu -> hnswMu, matching index mutation paths.
 	s.publishVectorServing(func() {}, true)
 
@@ -3942,6 +3959,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.ready.Store(true)
 		return nil
 	}
+	s.hnswVectorsChanging.Store(true)
+	defer s.hnswVectorsChanging.Store(false)
 	s.resetANNForBuild()
 	s.indexChanged()
 	s.ready.Store(false)
@@ -4237,6 +4256,12 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 				// graph, so apply it without paying for an index rebuild.
 				loaded.setSearchBeamFactor(want.SearchBeamFactor)
 				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswBuildLexicalSeedHints(s.fulltext(), want.M)))
+				// Restore the collection's encoding before publishing the saved
+				// graph. Request strategy resolution only reuses ready graphs;
+				// it no longer owns construction or policy activation.
+				if err := loaded.SetQuantization(ctx, want.Quantization); err != nil {
+					return err
+				}
 				s.publishVectorServing(func() {
 					s.hnswMu.Lock()
 					s.hnswIndex = loaded
@@ -4613,6 +4638,7 @@ func (s *Service) warmupVectorPipeline(ctx context.Context, lexicalReady func() 
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	s.hnswVectorsChanging.Store(false)
 	if !s.vectorEnabled.Load() {
 		s.logPrintf("🔍 Vector search disabled — skipping ANN warmup")
 		return
@@ -4631,9 +4657,22 @@ func (s *Service) warmupVectorPipeline(ctx context.Context, lexicalReady func() 
 		s.logPrintf("⚠️ Clustering during warmup failed (will use global HNSW): %v", err)
 	}
 
-	if _, err := s.getOrCreateVectorPipeline(ctx); err != nil {
+	pipeline, err := s.getOrCreateVectorPipeline(ctx)
+	if err != nil {
 		s.logPrintf("⚠️ Vector pipeline warmup failed (first search may be slow): %v", err)
 		return
+	}
+	// Explicit warmup waits for publication; request callers keep serving exact search.
+	switch pipeline.candidateGen.(type) {
+	case *BruteForceCandidateGen, *FileStoreBruteForceCandidateGen:
+		if s.desiredRuntimeStrategy(n) == strategyModeHNSW {
+			if _, err := s.getOrCreateHNSWIndex(ctx, s.VectorIndexDimensions()); err != nil {
+				return
+			}
+			if _, err := s.getOrCreateVectorPipeline(ctx); err != nil {
+				return
+			}
+		}
 	}
 	s.logPrintf("🔍 Vector search pipeline ready in %v", time.Since(start))
 }
@@ -5627,6 +5666,9 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Read the pointer once under the lock: resetANNForBuild may clear it as
 	// soon as the lock is released (#593).
 	s.pipelineMu.RLock()
@@ -5653,6 +5695,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		return s.servingPipeline(), nil
 	}
 
+	snapshot := s.captureVectorSnapshot()
 	s.mu.RLock()
 	vectorCount := s.embeddingCountLocked()
 	dimensions := s.VectorIndexDimensions()
@@ -5690,7 +5733,9 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	exactScorer := s.resolveVectorExactScorer(strategy.scorerPolicy, vi, vfs)
 
 	pipeline = NewVectorSearchPipeline(strategy.candidateGen, exactScorer)
-	s.cacheDerivedVectorPipelineLocked(pipeline)
+	if !strategy.pendingHNSW && s.vectorSnapshotCurrent(snapshot) {
+		s.cacheDerivedVectorPipelineLocked(pipeline)
+	}
 	return pipeline, nil
 }
 
@@ -5799,8 +5844,6 @@ func (s *Service) launchScheduledStrategyTransition() {
 }
 
 func (s *Service) runStrategyTransition(target strategyMode) {
-	s.buildMu.RLock()
-	defer s.buildMu.RUnlock()
 	defer func() {
 		s.strategyTransitionMu.Lock()
 		s.strategyTransitionInProgress = false
@@ -5810,7 +5853,11 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 			s.scheduleDebouncedStrategyTransition(next)
 		}
 	}()
+	if s.lifecycleCtx.Err() != nil {
+		return
+	}
 
+	snapshot := s.captureVectorSnapshot()
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
 	if !current.runtimeManaged() || current == target {
@@ -5823,24 +5870,25 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	)
 	if target == strategyModeHNSW {
 		dim := s.VectorIndexDimensions()
-		targetHNSW, err = s.buildHNSWForTransition(s.lifecycleCtx, dim, vi, vfs)
+		targetHNSW, err = s.getOrCreateHNSWIndex(s.lifecycleCtx, dim)
 		if err != nil {
 			s.logPrintf("⚠️ Runtime strategy transition build failed: %v", err)
 			return
 		}
 	}
 
-	s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
 	s.indexMu.Lock()
+	if !s.vectorSnapshotCurrent(snapshot) {
+		s.indexMu.Unlock()
+		return
+	}
+	// The shared builder can return an already-published graph. Replay is a
+	// live mutation: validate captured sources and exclude source retirement
+	// and newer writes before touching either HNSW or GPU state.
 	lastSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
 	s.applyTransitionSwapLocked(target, targetHNSW, vi, vfs)
-	for {
-		nextSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, lastSeq)
-		if nextSeq == lastSeq {
-			break
-		}
-		lastSeq = nextSeq
-	}
+	// Every production delta append owns indexMu, so no later mutation can
+	// enter this interval; one replay covers the complete pre-swap log.
 	s.clearTransitionDeltaLogLocked(lastSeq)
 	s.indexMu.Unlock()
 	s.logPrintf("🔍 Runtime strategy switch complete: %s -> %s (N=%d)", current.String(), target.String(), vectorCount)
@@ -5866,13 +5914,13 @@ func (s *Service) swapTransitionServingLocked(target strategyMode, targetHNSW *H
 	} else {
 		s.hnswMu.Lock()
 		old := s.servingHNSW()
-		s.hnswIndex = nil
+		s.invalidateHNSWLocked()
 		s.hnswMu.Unlock()
 		if old != nil {
 			old.Clear()
 		}
 	}
-	s.hnswRebuildOverlay.Reset()
+	// The active construction job owns its replay overlay through publication.
 	if target == strategyModeBruteGPU {
 		_ = s.ensureGPUIndexSyncedLocked(vi, vfs)
 	}
@@ -5925,6 +5973,7 @@ func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *
 }
 
 func (s *Service) switchBruteStrategy(target strategyMode) bool {
+	snapshot := s.captureVectorSnapshot()
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
 	if current == target || (current != strategyModeBruteCPU && current != strategyModeBruteGPU) {
@@ -5932,6 +5981,9 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	}
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
+	if !s.vectorSnapshotCurrent(snapshot) {
+		return false
+	}
 	if target == strategyModeBruteGPU {
 		if err := s.ensureGPUIndexSyncedLocked(vi, vfs); err != nil {
 			s.logPrintf("⚠️ Runtime CPU->GPU brute switch skipped: %v", err)
@@ -5944,6 +5996,7 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 			s.servingHNSW().Clear()
 			s.hnswIndex = nil
 		}
+		s.invalidateHNSWLocked()
 		s.hnswMu.Unlock()
 		p := s.buildPipelineForMode(target, vi, vfs)
 		s.pipelineMu.Lock()
@@ -5959,19 +6012,7 @@ func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi
 	s.mu.RLock()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
-	seedHints := s.hnswBuildLexicalSeedHints(fulltext, config.M)
-	if vfs != nil && vfs.Count() > 0 {
-		total := vfs.Count()
-		iter := hnswVectorFileStoreIterator(vfs, seedHints)
-		built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, s.getVectorLookup(), total, iter, nil)
-		return built, err
-	}
-	if vi == nil {
-		return nil, localizedError(localization.SearchVectorIndexUnavailable(), nil)
-	}
-	pairs := hnswOrderedVectorIndexPairs(vi, seedHints)
-	iter := hnswPairSliceIterator(pairs)
-	built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, VectorLookup(vi.getVectorRef), len(pairs), iter, nil)
+	built, _, err := s.buildHNSWSnapshot(ctx, dimensions, config, vi, vfs, s.hnswBuildLexicalSeedHints(fulltext, config.M))
 	return built, err
 }
 
@@ -6188,6 +6229,7 @@ type vectorStrategyDescriptor struct {
 	scorerPolicy exactScorerPolicy
 	// needsGPUUpload is resolved outside pipelineMu, under mutation admission.
 	needsGPUUpload bool
+	pendingHNSW    bool
 }
 
 func (s *Service) resolveVectorStrategy(ctx context.Context, seeds vectorBuildSeeds, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
@@ -6247,6 +6289,9 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, seeds vecto
 }
 
 func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seeds vectorBuildSeeds, vectorCount, dimensions int, vfs *VectorFileStore, allowGPU bool) (*vectorStrategyDescriptor, error) {
+	s.mu.RLock()
+	vi := s.vectorIndex
+	s.mu.RUnlock()
 	// Auto strategy: choose candidate generator based on dataset size and clustering
 	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled()
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
@@ -6281,7 +6326,7 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seed
 		}
 		return &vectorStrategyDescriptor{
 			name:         "CPU brute-force",
-			candidateGen: NewBruteForceCandidateGen(s.vectorIndex),
+			candidateGen: NewBruteForceCandidateGen(vi),
 			scorerPolicy: exactScorerPolicyCPU,
 		}, nil
 	}
@@ -6292,9 +6337,16 @@ func (s *Service) resolveStandardVectorStrategyWithGPU(ctx context.Context, seed
 		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN)
 	}
 	// Large dataset: use HNSW (lazy-initialize if needed)
-	hnswIndex, err := s.getOrCreateHNSWIndex(ctx, dimensions, seeds.hnswHints)
+	hnswIndex, _, err := s.startHNSWBuild(dimensions)
 	if err != nil {
 		return nil, localizedError(localization.SearchHNSWIndexCreationFailed(err), err)
+	}
+	if hnswIndex == nil {
+		var generator CandidateGenerator = NewBruteForceCandidateGen(vi)
+		if vfs != nil {
+			generator = NewFileStoreBruteForceCandidateGen(vfs)
+		}
+		return &vectorStrategyDescriptor{name: "CPU exact (HNSW building)", candidateGen: generator, scorerPolicy: exactScorerPolicyCPU, pendingHNSW: true}, nil
 	}
 	return &vectorStrategyDescriptor{
 		name:         hnswIndex.quantizedStrategyName(),
@@ -6365,377 +6417,6 @@ func (s *Service) resolveVectorExactScorer(policy exactScorerPolicy, vi *VectorI
 		}
 		return NewCPUExactScorer(getter)
 	}
-}
-
-// hnswBeforeInstallHook, set by tests only, runs after an initial HNSW build
-// and before the graph is installed: where a vector stored during the build
-// used to be lost.
-var hnswBeforeInstallHook func()
-
-// hnswBeforeReplayHook, set by tests only, runs once an initial HNSW build is
-// installed and before the vectors stored during it are replayed.
-var hnswBeforeReplayHook func()
-
-// hnswAfterReplayHook, set by tests only, runs once that replay finished.
-var hnswAfterReplayHook func()
-
-// getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
-// seedHints (pipelineBuildSeeds) are resolved by the caller before pipelineMu,
-// since they read the node metadata under indexMu.
-func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int, seedHints map[string]LexicalSeedHint) (*HNSWIndex, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.hnswMu.RLock()
-	if idx := s.servingHNSW(); idx != nil {
-		s.hnswMu.RUnlock()
-		if err := idx.SetQuantization(ctx, s.hnswConfig().Quantization); err != nil {
-			return nil, err
-		}
-		return idx, nil
-	}
-	s.hnswMu.RUnlock()
-
-	config := s.hnswConfig()
-
-	s.mu.RLock()
-	vfs := s.vectorFileStore
-	vi := s.vectorIndex
-	s.mu.RUnlock()
-	if len(seedHints) > 0 {
-		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked vector IDs", len(seedHints))
-	}
-
-	var built *HNSWIndex
-	var buildStats hnswBuildStats
-
-	// A vector stored or removed while the graph is built from its snapshot
-	// would miss it: no index is installed yet to take the change. As during
-	// a rebuild, such changes go to hnswRebuildOverlay from before the
-	// snapshot, and are replayed once the graph is installed.
-	racesTracked := false
-	if !s.hnswRebuildInFlight.Load() {
-		s.hnswRebuildOverlay.Reset()
-		racesTracked = s.hnswRebuildInFlight.CompareAndSwap(false, true)
-	}
-	installed := false
-	defer func() {
-		if !racesTracked {
-			return
-		}
-		if installed {
-			go s.replayHNSWBuildRaces(built)
-			return
-		}
-		s.hnswRebuildOverlay.Reset()
-		s.hnswRebuildInFlight.Store(false)
-	}()
-
-	if vfs != nil && vfs.Count() > 0 {
-		total := vfs.Count()
-		s.logPrintf("[HNSW] 🔨 Building from file store: %d vectors (chunk size 10k)", total)
-		lookup := s.getVectorLookup()
-		iterator := hnswVectorFileStoreIterator(vfs, seedHints)
-		lease, leaseErr := vfs.beginReadLease()
-		if leaseErr == nil {
-			lookup = lease.Lookup
-			iterator = hnswVectorReadLeaseIterator(lease, seedHints)
-		} else {
-			s.logPrintf("[HNSW] read-only vector mapping unavailable; using copied reads: %v", leaseErr)
-		}
-		var err error
-		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, lookup, total, iterator, nil)
-		if err == nil {
-			// Encode while the construction lease still lends normalized views.
-			// Runtime lookups retain their owning-copy contract.
-			err = built.SetQuantization(ctx, config.Quantization)
-		}
-		if built != nil && lease != nil {
-			// The lease accelerates construction only. Runtime lookup retains the
-			// owning-copy contract so compaction and close cannot invalidate views.
-			built.SetVectorLookup(s.getVectorLookup())
-		}
-		if lease != nil {
-			_ = lease.Close()
-		}
-		if err != nil {
-			return nil, err
-		}
-		s.logPrintf("[HNSW] 🔨 Built from file store: %d vectors", built.Size())
-	} else if vi != nil {
-		pairs := hnswOrderedVectorIndexPairs(vi, seedHints)
-		total := len(pairs)
-		s.logPrintf("[HNSW] 🔨 Building from in-memory index: %d vectors", total)
-		var err error
-		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, s.getVectorLookup(), total, hnswPairSliceIterator(pairs), nil)
-		if err != nil {
-			return nil, err
-		}
-		s.logPrintf("[HNSW] 🔨 Built from memory: %d vectors", total)
-	} else {
-		return nil, localizedError(localization.SearchVectorIndexNil(), nil)
-	}
-
-	if err := built.SetQuantization(ctx, config.Quantization); err != nil {
-		return nil, err
-	}
-	if hnswBeforeInstallHook != nil {
-		hnswBeforeInstallHook()
-	}
-	// Install unless someone else won the race.
-	s.hnswMu.Lock()
-	if s.servingHNSW() != nil {
-		existing := s.servingHNSW()
-		s.hnswMu.Unlock()
-		return existing, nil
-	}
-
-	// Log configuration and stats for observability
-	quality := os.Getenv("NORNICDB_VECTOR_ANN_QUALITY")
-	if quality == "" {
-		quality = "fast"
-	}
-	s.logPrintf("🔍 HNSW index created: quality=%s M=%d efConstruction=%d efSearch=%d vectors=%d tombstone_ratio=%.2f build_strategy=%s build_backend=%s build_batches=%d build_kernel_errors=%d build_fallback=%t build_duration=%s",
-		quality, config.M, config.EfConstruction, config.EfSearch, built.Size(), built.TombstoneRatio(),
-		buildStats.Strategy, buildStats.Backend, buildStats.Batches, buildStats.KernelErrors, buildStats.Fallback, buildStats.Duration)
-
-	s.publishVectorServing(func() { s.hnswIndex = built }, false)
-	s.hnswMu.Unlock()
-	installed = true
-
-	s.ensureHNSWMaintenance()
-	return built, nil
-}
-
-// replayHNSWBuildRaces applies to built, once installed, the vector changes
-// that raced its initial build (getOrCreateHNSWIndex), then stops recording
-// them. It holds indexMu, as a rebuild's swap does, so no change lands
-// between the replay and the end of recording; changes made after the
-// install reached built directly, and replaying the latest state of each
-// vector again is idempotent. It runs on its own goroutine because the
-// build runs under pipelineMu, and indexMu is taken before pipelineMu
-// elsewhere.
-func (s *Service) replayHNSWBuildRaces(built *HNSWIndex) {
-	if hnswBeforeReplayHook != nil {
-		hnswBeforeReplayHook()
-	}
-	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
-	s.hnswMu.RLock()
-	current := s.servingHNSW() == built
-	s.hnswMu.RUnlock()
-	// Only a replay that changes the graph is a publication: with nothing
-	// raced, the installed graph already serves the current vectors.
-	if pending := s.hnswRebuildOverlay.snapshot(); current && (len(pending.Vectors) > 0 || len(pending.Tombstones) > 0) {
-		s.publishVectorServing(func() {
-			if err := applyHNSWMutationSnapshot(built, pending); err != nil {
-				s.logPrintf("⚠️ HNSW: replaying the vectors stored during the build failed: %v", err)
-			}
-		}, false)
-	}
-	s.hnswRebuildOverlay.Reset()
-	s.hnswRebuildInFlight.Store(false)
-	if hnswAfterReplayHook != nil {
-		hnswAfterReplayHook()
-	}
-}
-
-func (s *Service) ensureHNSWMaintenance() {
-	s.hnswMaintOnce.Do(func() {
-		ctx := s.lifecycleCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		ctx, cancel := context.WithCancel(ctx)
-		s.hnswMaintCancel = cancel
-		s.hnswMaintDone = make(chan struct{})
-
-		interval := envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000)
-		minRebuildInterval := envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60)
-		rebuildRatio := envFloat("NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO", 0.50)
-		maxOverhead := envFloat("NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR", 2.0)
-		enabled := envutil.GetBoolStrict("NORNICDB_HNSW_REBUILD_ENABLED", true)
-
-		ticker := time.NewTicker(interval)
-		go func() {
-			defer ticker.Stop()
-			defer close(s.hnswMaintDone)
-			for {
-				select {
-				case <-ticker.C:
-					if !enabled {
-						continue
-					}
-					if s.buildInProgress.Load() {
-						continue
-					}
-					_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
-				case <-ctx.Done():
-					// stopHNSWMaintenance and the service's lifecycle
-					// cancel this context; it is the loop's only exit.
-					return
-				}
-			}
-		}()
-	})
-}
-
-func (s *Service) stopHNSWMaintenance() {
-	if s == nil {
-		return
-	}
-	if s.hnswMaintCancel != nil {
-		s.hnswMaintCancel()
-	}
-	if s.hnswMaintDone != nil {
-		<-s.hnswMaintDone
-	}
-}
-
-func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {
-	s.buildMu.RLock()
-	defer s.buildMu.RUnlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if minInterval <= 0 {
-		minInterval = 60 * time.Second
-	}
-
-	last := time.Unix(s.hnswLastRebuildUnix.Load(), 0)
-	if !last.IsZero() && time.Since(last) < minInterval {
-		return nil
-	}
-	s.hnswMu.RLock()
-	old := s.servingHNSW()
-	s.hnswMu.RUnlock()
-	if old == nil {
-		return nil
-	}
-
-	// Derive rebuild condition from a single read lock on the index.
-	old.mu.RLock()
-	total := len(old.nodeLevel)
-	live := old.liveCount
-	old.mu.RUnlock()
-	if total == 0 || live <= 0 {
-		return nil
-	}
-
-	deleted := total - live
-	ratio := float64(deleted) / float64(total)
-	overhead := float64(total) / float64(live)
-	if ratio <= tombstoneRatioThreshold && overhead <= maxOverheadFactor {
-		return nil
-	}
-
-	if !s.hnswRebuildInFlight.CompareAndSwap(false, true) {
-		return nil
-	}
-	s.indexMu.Lock()
-	s.hnswRebuildOverlay.Reset()
-	s.indexMu.Unlock()
-	defer func() {
-		s.indexMu.Lock()
-		s.hnswRebuildInFlight.Store(false)
-		s.hnswRebuildOverlay.Reset()
-		s.indexMu.Unlock()
-	}()
-
-	s.mu.RLock()
-	vfs := s.vectorFileStore
-	vi := s.vectorIndex
-	fulltext := s.fulltext()
-	s.mu.RUnlock()
-
-	rebuilt := NewHNSWIndex(old.dimensions, old.config)
-	rebuilt.SetVectorLookup(s.getVectorLookup())
-	seedHints := s.hnswBuildLexicalSeedHints(fulltext, old.config.M)
-	rebuilt.SetBuildLexicalHints(lexicalHintValues(seedHints))
-	const rebuildProgressInterval = 50000
-	if vfs != nil && vfs.Count() > 0 {
-		total := vfs.Count()
-		s.logPrintf("[HNSW] 🔄 Rebuilding: vectors=%d reason=tombstone_ratio=%.3f overhead=%.3f",
-			total, ratio, overhead)
-		var added int
-		iterator := hnswVectorFileStoreIterator(vfs, seedHints)
-		if err := iterator(10000, func(batch []hnswBuildPair) error {
-			for i := range batch {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				_ = rebuilt.Add(batch[i].id, batch[i].vec)
-			}
-			added += len(batch)
-			if added%rebuildProgressInterval == 0 || added == total {
-				s.logPrintf("[HNSW] 🔄 Rebuild progress: %d / %d vectors", added, total)
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		s.logPrintf("[HNSW] 🔄 Rebuild complete: %d vectors", added)
-	} else if vi != nil {
-		pairs := hnswOrderedVectorIndexPairs(vi, seedHints)
-		total := len(pairs)
-		s.logPrintf("[HNSW] 🔄 Rebuilding: vectors=%d reason=tombstone_ratio=%.3f overhead=%.3f",
-			total, ratio, overhead)
-		for i, p := range pairs {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			_ = rebuilt.Add(p.id, p.vec)
-			if (i+1)%rebuildProgressInterval == 0 || i+1 == total {
-				s.logPrintf("[HNSW] 🔄 Rebuild progress: %d / %d vectors", i+1, total)
-			}
-		}
-		s.logPrintf("[HNSW] 🔄 Rebuild complete: %d vectors", total)
-	} else {
-		return nil
-	}
-
-	// Close the rebuild race under the mutation lock. Replaying the complete
-	// overlay is idempotent for vectors already observed by the store snapshot,
-	// and captures mutations that arrived while the graph was being rebuilt.
-	s.indexMu.Lock()
-	s.hnswMu.RLock()
-	currentIsOld := s.servingHNSW() == old
-	s.hnswMu.RUnlock()
-	if !currentIsOld {
-		s.indexMu.Unlock()
-		return nil
-	}
-	if s.hnswRebuildOverlay != nil {
-		pending := s.hnswRebuildOverlay.snapshot()
-		if err := applyHNSWMutationSnapshot(rebuilt, pending); err != nil {
-			s.indexMu.Unlock()
-			return err
-		}
-	}
-
-	// IMPORTANT: do NOT take pipelineMu while holding hnswMu.
-	// Search pipeline creation uses lock order pipelineMu -> hnswMu, so taking
-	// hnswMu -> pipelineMu here can deadlock.
-	swapped := false
-	s.hnswMu.Lock()
-	if s.servingHNSW() == old {
-		s.publishVectorServing(func() { s.hnswIndex = rebuilt }, false)
-		s.hnswLastRebuildUnix.Store(time.Now().Unix())
-		swapped = true
-	}
-	s.hnswMu.Unlock()
-	s.indexMu.Unlock()
-
-	if swapped {
-		// Invalidate pipeline after releasing hnswMu so lock order remains consistent.
-		s.publishVectorServing(func() {}, true)
-	}
-
-	return nil
 }
 
 func envFloat(key string, fallback float64) float64 {

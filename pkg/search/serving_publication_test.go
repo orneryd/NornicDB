@@ -3,7 +3,7 @@ package search
 // Vector serving publication: every change to what vector search serves is
 // published by one owner and advances IndexRevision after it is visible, so no
 // answer computed before the change is served after it. Tests synchronize on
-// hooks only: the initial build's race replay runs on its own goroutine, and
+// construction publication only: the replay completes before the graph serves, and
 // its revision advance must not land between a test's two cached searches.
 
 import (
@@ -54,14 +54,10 @@ func servingResultIDs(resp *SearchResponse) []string {
 // build schedules: while one is pending (hnswRebuildInFlight), the wait
 // blocks on the replay's completion hook.
 func awaitServingReplays(t *testing.T) func(svc *Service) {
-	done := make(chan struct{}, 64)
-	previous := hnswAfterReplayHook
-	hnswAfterReplayHook = func() { done <- struct{}{} }
-	t.Cleanup(func() { hnswAfterReplayHook = previous })
+	t.Helper()
 	return func(svc *Service) {
-		for svc.hnswRebuildInFlight.Load() {
-			<-done
-		}
+		_, err := svc.getOrCreateHNSWIndex(context.Background(), svc.VectorIndexDimensions())
+		require.NoError(t, err)
 	}
 }
 
@@ -81,51 +77,26 @@ func TestServingPublicationReplayedBuildRaceIsServed(t *testing.T) {
 	engine := newNamespacedEngine(t)
 	svc := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { _ = svc.Close() })
-	addServingNode(t, engine, svc, "far1", []float32{-1, 0.1})
-	addServingNode(t, engine, svc, "far2", []float32{-1, -0.1})
-	addServingNode(t, engine, svc, "mid", []float32{0.1, 1})
-
-	built, release := make(chan struct{}), make(chan struct{})
-	var builtOnce, releaseOnce sync.Once
-	openInstall := func() { releaseOnce.Do(func() { close(release) }) }
-	replayReady, replayRelease, replayed := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	var replayOnce, replayReleaseOnce, replayedOnce sync.Once
-	openReplay := func() { replayReleaseOnce.Do(func() { close(replayRelease) }) }
-	previousInstall, previousReplay, previousReplayed := hnswBeforeInstallHook, hnswBeforeReplayHook, hnswAfterReplayHook
-	hnswBeforeInstallHook = func() { builtOnce.Do(func() { close(built) }); <-release }
-	hnswBeforeReplayHook = func() { replayOnce.Do(func() { close(replayReady) }); <-replayRelease }
-	hnswAfterReplayHook = func() { replayedOnce.Do(func() { close(replayed) }) }
-	t.Cleanup(func() {
-		openInstall()
-		openReplay()
-		hnswBeforeInstallHook, hnswBeforeReplayHook, hnswAfterReplayHook = previousInstall, previousReplay, previousReplayed
-	})
-
+	addServingNode(t, engine, svc, "far", []float32{-1, 0.1})
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	open := func() { once.Do(func() { close(release) }) }
+	hnswBeforeInstallHook = func(context.Context) { close(started); <-release }
+	t.Cleanup(func() { open(); hnswBeforeInstallHook = nil })
 	minimum := -1.0
-	opts := func() *SearchOptions { return &SearchOptions{Limit: 1, MinSimilarity: &minimum} }
-	first := make(chan error, 1)
-	go func() {
-		_, err := svc.Search(context.Background(), "", []float32{1, 0}, opts())
-		first <- err
-	}()
-	<-built
-	// Stored while the graph is built from its snapshot: recorded for replay.
+	opts := &SearchOptions{Limit: 1, MinSimilarity: &minimum}
+	before, err := svc.Search(context.Background(), "", []float32{1, 0}, opts)
+	require.NoError(t, err)
+	<-started
 	addServingNode(t, engine, svc, "new", []float32{1, 0})
-
-	// The replay is parked until an answer is cached from the installed graph
-	// that does not yet contain "new".
-	openInstall()
-	require.NoError(t, <-first)
-	<-replayReady
-	before, err := svc.Search(context.Background(), "", []float32{1, 0}, opts())
+	open()
+	_, err = svc.getOrCreateHNSWIndex(context.Background(), 2)
 	require.NoError(t, err)
-	require.NotContains(t, servingResultIDs(before), "new", "precondition: the installed graph does not contain the raced vector yet")
-	openReplay()
-	<-replayed
-
-	after, err := svc.Search(context.Background(), "", []float32{1, 0}, opts())
+	after, err := svc.Search(context.Background(), "", []float32{1, 0}, opts)
 	require.NoError(t, err)
-	require.Equal(t, []string{"new"}, servingResultIDs(after), "the answer cached before the replay was served after it")
+	require.NotSame(t, before, after)
+	require.Equal(t, []string{"new"}, servingResultIDs(after), "the first published graph must already contain replayed writes")
+	require.Equal(t, "vector_hnsw", after.SearchMethod)
 }
 
 // TestServingPublicationRetiresCachedAnswers: on every path that changes
@@ -134,7 +105,7 @@ func TestServingPublicationReplayedBuildRaceIsServed(t *testing.T) {
 func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 	ctx := context.Background()
 	graphReady := func(t *testing.T, svc *Service) {
-		_, err := svc.getOrCreateHNSWIndex(ctx, 2, nil)
+		_, err := svc.getOrCreateHNSWIndex(ctx, 2)
 		require.NoError(t, err)
 	}
 	disabledGPU := func(t *testing.T) *gpu.Manager {
@@ -153,7 +124,7 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 			require.NotSame(t, old, servingGraph(svc), "precondition: the rebuild swapped the graph")
 		}},
 		{name: "runtime_transition_swap", setup: graphReady, publish: func(t *testing.T, svc *Service) {
-			graph, err := svc.getOrCreateHNSWIndex(ctx, 2, nil)
+			graph, err := svc.getOrCreateHNSWIndex(ctx, 2)
 			require.NoError(t, err)
 			svc.indexMu.Lock()
 			svc.applyTransitionSwapLocked(strategyModeHNSW, graph, svc.vectorIndex, nil)
@@ -220,33 +191,18 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 // that applies entries advances it, also when it fails part-way.
 func TestServingPublicationReplayAdvancesRevisionOnlyWhenItChangesTheGraph(t *testing.T) {
 	servingTestEnv(t)
-	awaitReplays := awaitServingReplays(t)
-	ctx := context.Background()
-	engine := newNamespacedEngine(t)
-	svc := NewServiceWithDimensions(engine, 2)
+	svc := NewServiceWithDimensions(newNamespacedEngine(t), 2)
 	t.Cleanup(func() { _ = svc.Close() })
-	for i, v := range [][]float32{{1, 0.1}, {-1, -0.1}, {0.1, 1}} {
-		addServingNode(t, engine, svc, fmt.Sprintf("n%d", i), v)
-	}
-	require.NoError(t, svc.BuildIndexes(ctx))
-	_, err := svc.getOrCreateHNSWIndex(ctx, 2, nil)
-	require.NoError(t, err)
-	awaitReplays(svc)
-	built := servingGraph(svc)
-	require.NotNil(t, built)
-
-	svc.hnswRebuildOverlay.Reset()
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "item", ChunkEmbeddings: [][]float32{{1, 0}}}))
 	revision := svc.IndexRevision()
-	svc.replayHNSWBuildRaces(built)
-	require.Equal(t, revision, svc.IndexRevision(), "an empty replay published")
-
-	// The removal applies; the vector of the wrong dimension then fails.
-	size := built.Size()
-	svc.hnswRebuildOverlay.Remove("n0")
-	svc.hnswRebuildOverlay.Add("wrong-dimension", []float32{1, 0, 0})
-	svc.replayHNSWBuildRaces(built)
-	require.Equal(t, size-1, built.Size(), "precondition: the replay applied the removal before failing")
-	require.Greater(t, svc.IndexRevision(), revision, "a replay that changed the graph did not publish")
+	graph, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	published := svc.IndexRevision()
+	require.Greater(t, published, revision, "construction publication must retire prior cached answers")
+	again, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
+	require.NoError(t, err)
+	require.Same(t, graph, again)
+	require.Equal(t, published, svc.IndexRevision(), "reusing the same graph must not publish a second replay")
 }
 
 // vectorServingFields are the structures whose change alters what vector
@@ -269,7 +225,7 @@ var vectorServingAccessors = map[string]bool{
 
 // vectorServingHelpers write serving fields on an owner's behalf. They may be
 // called only from an owner's install or another helper.
-var vectorServingHelpers = map[string]bool{"swapTransitionServingLocked": true}
+var vectorServingHelpers = map[string]bool{"swapTransitionServingLocked": true, "invalidateHNSWLocked": true}
 
 // vectorServingConstructors allocate a Service; a Service value may appear
 // only there.
@@ -663,6 +619,7 @@ func (s *Service) servingPipeline() *HNSWIndex                       { return s.
 func (s *Service) servingIVFPQ() *HNSWIndex                 { return s.ivfpqIndex }
 func (s *Service) servingGPUIndex() *HNSWIndex              { s.gpuEmbeddingIndex = nil; return s.gpuEmbeddingIndex }
 func (s *Service) swapTransitionServingLocked()             { s.hnswIndex = nil }
+func (s *Service) invalidateHNSWLocked()                     { s.hnswIndex = nil }
 
 type gen struct{ hnswIndex *HNSWIndex }
 type serviceAlias = Service

@@ -59,7 +59,7 @@ func TestRuntimeStrategy_DefaultsToHNSW(t *testing.T) {
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 }
 
 func TestRuntimeStrategy_CPUBruteForceThresholdOptIn(t *testing.T) {
@@ -98,13 +98,13 @@ func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *test
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 
 	for i := 0; i < 8; i++ {
 		indexTestNode(t, svc, fmt.Sprintf("node-%d", i), testVec4(i))
 	}
 
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 	svc.strategyTransitionMu.Lock()
 	defer svc.strategyTransitionMu.Unlock()
 	require.Equal(t, uint64(0), svc.strategyTransitionStarts)
@@ -119,7 +119,7 @@ func TestRuntimeStrategy_HNSWDefaultIndexesLiveWrites(t *testing.T) {
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 
 	for i := 0; i < 8; i++ {
 		indexTestNode(t, svc, fmt.Sprintf("seed-%d", i), testVec4(i))
