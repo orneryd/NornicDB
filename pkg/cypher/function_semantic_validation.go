@@ -116,73 +116,18 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
-	return forEachSemanticCall(text, func(name, normalized string, _ int, procedure bool) error {
-		if procedure {
-			return nil
-		}
-		return visit(name, normalized)
-	})
-}
-
-// forEachSemanticCall is the token-aware owner for function and procedure
-// detection. arguments is the position after the opening parenthesis (or the
-// end of a procedure name when its optional parentheses are absent).
-func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
-	expression := text
-	for index := 0; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' {
-			index = skipQuotedSemanticText(expression, index)
-			continue
-		}
-		if end := queryCommentEnd(expression, index); end >= 0 {
-			index = end
-			continue
-		}
-		name, next, ok := scanIdentifierToken(expression, index)
+	for index := 0; index < len(text); {
+		call, ok := nextFunctionCall(text, index)
 		if !ok {
-			index++
-			continue
+			break
 		}
-		procedure := expression[index] != '`' && strings.EqualFold(name, "CALL")
-		if procedure || expression[index] != '`' && strings.EqualFold(name, "USE") {
-			start := queryGapEnd(expression, next)
-			called, end, named := scanIdentifierToken(expression, start)
-			if !named {
-				index = next
-				continue
-			}
-			name, next = called, end
-			if !procedure {
-				_, index = dottedNameParts(expression, next, true)
-				continue
-			}
-		}
-		parts, cursor := dottedNameParts(expression, next, true)
-		name += parts
-		cursor = queryGapEnd(expression, cursor)
-		parenthesis := cursor < len(expression) && expression[cursor] == '('
-		if !parenthesis && !procedure {
-			index = next
-			continue
-		}
-		index = cursor
-		if parenthesis {
-			index++
-		}
-		normalized := lowerASCII(normalizeProjectionColumnName(name))
-		// Clause and predicate keywords can legally be followed by a parenthesized
-		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
-		// function invocations.
-		if !procedure && isNonFunctionSemanticKeyword(normalized) {
-			continue
-		}
-		if err := visit(name, normalized, index, procedure); err != nil {
+		if err := visit(call.name, lowerASCII(call.name)); err != nil {
 			return err
 		}
+		index = call.open + 1
 	}
 	return nil
 }
-
 func isNonFunctionSemanticKeyword(name string) bool {
 	switch name {
 	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
@@ -192,6 +137,33 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
+// skipCalledName returns where the name after CALL or USE ends: a procedure
+// or graph name, dotted, which is not a function call. Anything else after
+// the keyword (a subquery, its imports) is scanned on.
+func skipCalledName(expression string, start int) int {
+	_, end, ok := scanIdentifierToken(expression, queryGapEnd(expression, start))
+	if !ok {
+		return start
+	}
+	_, end = dottedNameParts(expression, end, true)
+	return end
+}
+
+// forEachSemanticCall retains the procedure dependency inventory, using the
+// same lexical spans as runtime and static function consumers.
+func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
+	for index := 0; index < len(text); {
+		call, ok := nextCallSpan(text, index, true, true)
+		if !ok {
+			break
+		}
+		if err := visit(call.name, lowerASCII(call.name), call.next, call.procedure); err != nil {
+			return err
+		}
+		index = call.next
+	}
+	return nil
+}
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
 // at end, and where they end. Each name is read as the code that runs it
 // reads it: whitespace may stand around a dot only when spaced is set, for a

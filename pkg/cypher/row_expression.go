@@ -1265,22 +1265,8 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 // isQualifiedFunctionCall reports whether expr is one call of a qualified
 // function name: name.name… followed by an argument list that ends expr.
 func isQualifiedFunctionCall(expr string) bool {
-	_, end, ok := scanSymbolicName(expr, 0)
-	if !ok {
-		return false
-	}
-	segments := 0
-	for end < len(expr) && expr[end] == '.' {
-		_, next, ok := scanSymbolicName(expr, end+1)
-		if !ok {
-			return false
-		}
-		end, segments = next, segments+1
-	}
-	for end < len(expr) && isASCIIWhitespace(expr[end]) {
-		end++
-	}
-	return segments > 0 && end < len(expr) && expr[end] == '(' && findMatchingParen(expr, end) == len(expr)-1
+	name, _, ok := parseFunctionCallWS(expr)
+	return ok && strings.Contains(name, ".")
 }
 
 // rowPropertyChainTypeError is the TypeError of a property chain that

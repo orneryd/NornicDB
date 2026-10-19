@@ -154,43 +154,22 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 }
 
 func namedFunctionArguments(expression, function string) []string {
-	lower := lowerASCII(expression)
-	function = lowerASCII(function)
 	arguments := make([]string, 0)
-	for index := 0; index < len(lower); {
-		quote := lower[index]
-		if quote == '\'' || quote == '"' || quote == '`' {
-			index++
-			for index < len(lower) {
-				if lower[index] == quote && !isBackslashEscaped(lower, index) {
-					index++
-					break
-				}
-				index++
-			}
+	for index := 0; index < len(expression); {
+		call, ok := nextFunctionCall(expression, index)
+		if !ok {
+			break
+		}
+		index = call.open + 1
+		if !strings.EqualFold(call.name, function) {
 			continue
 		}
-		if !strings.HasPrefix(lower[index:], function) || !functionNameStartsAt(expression, index) {
-			index++
-			continue
-		}
-		open := index + len(function)
-		if open < len(lower) && isIdentByte(lower[open]) {
-			index++
-			continue
-		}
-		for open < len(lower) && isWhitespace(lower[open]) {
-			open++
-		}
-		if open >= len(lower) || lower[open] != '(' {
-			index++
-			continue
-		}
-		close := findMatchingDelimiter(expression, open, '(', ')')
+		close := call.close(expression)
 		if close < 0 {
-			return arguments
+			break
 		}
-		arguments = append(arguments, expression[open+1:close])
+		arguments = append(arguments, expression[call.open+1:close])
+		// The selected call evaluates its own nested arguments.
 		index = close + 1
 	}
 	return arguments

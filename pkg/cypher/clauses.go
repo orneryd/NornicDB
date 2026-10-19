@@ -105,9 +105,12 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 // expression at the top level. Recognizes the canonical forms
 // `collect(...)`, `count(...)`, etc., case-insensitively.
 func isAggregateExpression(expr string) bool {
-	trimmed := lowerASCII(strings.TrimSpace(expr))
-	for _, fn := range cypherAggregateNames {
-		if strings.HasPrefix(trimmed, fn+"(") || strings.HasPrefix(trimmed, fn+" (") {
+	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
+	if !ok {
+		return false
+	}
+	for _, name := range cypherAggregateNames {
+		if strings.EqualFold(call.name, name) {
 			return true
 		}
 	}
@@ -126,13 +129,14 @@ func isAggregateExpression(expr string) bool {
 //
 // stdev / stdevp follow the avg convention (null on empty input).
 func aggregateIdentity(expr string) interface{} {
-	trimmed := lowerASCII(strings.TrimSpace(expr))
-	switch {
-	case strings.HasPrefix(trimmed, "collect("), strings.HasPrefix(trimmed, "collect ("):
+	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
+	if !ok {
+		return nil
+	}
+	switch lowerASCII(call.name) {
+	case "collect":
 		return []interface{}{}
-	case strings.HasPrefix(trimmed, "count("), strings.HasPrefix(trimmed, "count ("):
-		return int64(0)
-	case strings.HasPrefix(trimmed, "sum("), strings.HasPrefix(trimmed, "sum ("):
+	case "count", "sum":
 		return int64(0)
 	}
 	return nil

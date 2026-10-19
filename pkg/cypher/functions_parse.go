@@ -11,60 +11,88 @@ import "strings"
 //
 // Returns ok=false if the expression is not a standalone function call.
 func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
+	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
+	if !ok {
 		return "", "", false
 	}
-
-	openIdx := strings.Index(expr, "(")
-	if openIdx <= 0 {
+	close := call.close(expr)
+	if close < 0 || queryGapEnd(expr, close+1) != len(expr) {
 		return "", "", false
 	}
+	return call.name, expr[call.open+1 : close], true
+}
 
-	var valid bool
-	name, valid = canonicalCallableName(expr[:openIdx])
-	if !valid {
-		return "", "", false
+// functionCallSpan is the shared lexical identity of a call. Delimiter matching
+// is lazy: name-only validation does not rescan every nested argument list.
+type functionCallSpan struct {
+	name        string
+	start, open int
+}
+
+func (call functionCallSpan) close(text string) int {
+	return findMatchingDelimiter(text, call.open, '(', ')')
+}
+
+// functionCallAt reads a name at a known code position, including quoted and
+// qualified components and trivia before "(". Whole-text consumers must use
+// nextFunctionCall so comments and string literals cannot become code.
+func functionCallAt(text string, at int) (functionCallSpan, bool) {
+	if at < 0 || at >= len(text) || !functionNameStartsAt(text, at) ||
+		at > 0 && (text[at-1] == '$' || text[at-1] == ':') {
+		return functionCallSpan{}, false
 	}
+	name, next, ok := scanIdentifierToken(text, at)
+	if !ok {
+		return functionCallSpan{}, false
+	}
+	parts, end := dottedNameParts(text, next, true)
+	open := queryGapEnd(text, end)
+	if open >= len(text) || text[open] != '(' {
+		return functionCallSpan{}, false
+	}
+	return functionCallSpan{name: name + parts, start: at, open: open}, true
+}
 
-	// Find matching closing paren.
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-	closeIdx := -1
-	for i := openIdx; i < len(expr); i++ {
-		ch := rune(expr[i])
-		if inQuote {
-			if ch == quoteChar && !isBackslashEscaped(expr, i) {
-				inQuote = false
-				quoteChar = 0
-			}
+// nextFunctionCall is the lexical owner for static and runtime call readers.
+// It advances into arguments so nested calls are visited, and excludes syntax,
+// procedure/graph names, type annotations, comments and string literals.
+func nextFunctionCall(text string, index int) (functionCallSpan, bool) {
+	return nextFunctionCallIn(text, index, true)
+}
+
+func nextFunctionCallIn(text string, index int, descendSubqueries bool) (functionCallSpan, bool) {
+	for index < len(text) {
+		if end := queryGapEnd(text, index); end > index {
+			index = end
 			continue
 		}
-		switch ch {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = ch
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				closeIdx = i
-				i = len(expr) // break
+		if text[index] == '\'' || text[index] == '"' {
+			index = skipCypherQuotedText(text, index, text[index])
+			continue
+		}
+		if !descendSubqueries {
+			if end := subqueryExpressionEnd(text, index); end > index {
+				index = end
+				continue
 			}
 		}
+		name, next, ok := scanIdentifierToken(text, index)
+		if !ok {
+			index++
+			continue
+		}
+		if text[index] != '`' && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
+			index = skipCalledName(text, next)
+			continue
+		}
+		call, called := functionCallAt(text, index)
+		if called && !precededByTypeAnnotation(text, index) &&
+			!isNonFunctionSemanticKeyword(lowerASCII(call.name)) {
+			return call, true
+		}
+		index = next
 	}
-	if closeIdx == -1 {
-		return "", "", false
-	}
-
-	// Ensure no trailing non-space content after the matching close paren.
-	if strings.TrimSpace(expr[closeIdx+1:]) != "" {
-		return "", "", false
-	}
-
-	return name, expr[openIdx+1 : closeIdx], true
+	return functionCallSpan{}, false
 }
 
 // functionNameStartsAt prevents a builtin scanner from matching only the last
