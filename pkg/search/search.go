@@ -1592,6 +1592,8 @@ func (s *Service) setBuildPhase(phase string) {
 func (s *Service) resetANNForBuild() {
 	resume := s.pauseHNSWBuild()
 	defer resume()
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	s.publishVectorServing(func() {
@@ -1601,24 +1603,19 @@ func (s *Service) resetANNForBuild() {
 		s.hnswIndex = nil
 		s.hnswRebuildOverlay.Reset()
 		s.hnswMu.Unlock()
-	}, true)
-
-	// The build derives the cluster population again from the canonical store
-	// it (re)loads: the build's own admissions and the warmup's backfill.
-	s.clusterStateMu.Lock()
-	s.mu.Lock()
-	s.retireClusterGeneration(emptyClusterIndex)
-	s.mu.Unlock()
-	s.clusterStateMu.Unlock()
-	s.publishClusterServing()
-	// The compressed index retires last: retiring the pipeline again drops one
-	// cached since the cluster publication, which could still serve it.
-	s.publishVectorServing(func() {
+		// Retire every derived source under the same publication boundary;
+		// no pipeline can be cached between the individual retirements.
+		s.clusterStateMu.Lock()
+		s.mu.Lock()
+		s.retireClusterGeneration(emptyClusterIndex)
+		s.mu.Unlock()
+		s.clusterStateMu.Unlock()
 		s.ivfpqMu.Lock()
 		s.ivfpqIndex = nil
 		s.ivfpqOverlay.Reset()
 		s.ivfpqMu.Unlock()
-	}, true)
+		s.cacheDerivedVectorPipelineLocked(nil)
+	}, false)
 }
 
 // SetGPUManager enables GPU acceleration for exact brute-force vector search.
@@ -3866,6 +3863,16 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if s.lifecycleCtx != nil {
+		if err := s.lifecycleCtx.Err(); err != nil {
+			return err
+		}
+		buildCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(s.lifecycleCtx, cancel)
+		defer cancel()
+		defer stop()
+		ctx = buildCtx
+	}
 	// The build reads its baseline (nodes, relationships) through one storage
 	// snapshot, opened after the queue: a write whose search call ran live
 	// before the queue opened committed before the snapshot, which therefore
@@ -3891,19 +3898,6 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		return snapErr
 	}
 	defer closeSnapshot()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if s.lifecycleCtx != nil {
-		if err := s.lifecycleCtx.Err(); err != nil {
-			return err
-		}
-		buildCtx, cancel := context.WithCancel(ctx)
-		stop := context.AfterFunc(s.lifecycleCtx, cancel)
-		defer cancel()
-		defer stop()
-		ctx = buildCtx
-	}
 	s.buildAttempted.Store(true)
 	// When both indexes are disabled, skip population without entering the
 	// build-in-progress state (the search handler reports search_disabled_for_database).
