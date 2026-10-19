@@ -56,3 +56,26 @@ Commit finalized tests, establish red on pinned baseline, then final implementat
 - Read common brief, audit in-scope sections, parked #1468/#1391 and #1385 notes, working/testing rules, release AGENTS and develop Rule73/standing design principles.
 - Dedicated pinned-release reproduction worktree created. No production edits yet.
 - Reproduction jobs: none submitted yet. PRs: none. No item disposition established yet.
+
+### Checkpoint 1 (12:17 UTC)
+
+Test-only WIP pushed at 1fe65f7d1 (last own pushed SHA); no production changes. Initial imported test population had compile-only dependencies on newer internal APIs; removed those internal assertions and retained public-path tests. Compile-only attempts i20261019121212-70960-5782 / i20261019121216-70960-1537 and i20261019121404-54644-d0fb / i20261019121408-54644-6b5b are not red semantic evidence. Corrected matrix running: i20261019121538-612-9234 default, i20261019121543-612-57ce ANTLR. ONE collector process, log undefer-cypher-scope-red3.log.
+
+Neo4j 5.26.30: j20261019121417-5396-b82c success for YIELD subquery, scoped DISTINCT, CALL(*), dotted boolean keyword, commented COUNT, null upper slice and valid mixed CASE. j20261019121450-5940-ec83 rejects CASE list alternatives on empty input; j20261019121522-65736-ce16 rejects Float-or-Duration aggregate-import index on empty input. These confirm expected semantics, not NornicDB outcomes.
+
+Codeintel complete reverse closure semanticScopeWalk: 447 files / 3666 functions, truncated=false, same pinned graph metadata as above. Direct queryGapEnd, callSubqueryImports, projectTypeScopeIn caller inventories saved as undefer-cypher-scope-*-callers.json, all untruncated. Static scope walker/types files unchanged between graph base 24d08776 and requested release b4bee5d5. Graph's broad recursive reverse closure includes clients; causal owner boundary remains walker + its type/import consumers, not all reachable packages.
+
+### Checkpoint 2 (12:28 UTC)
+
+All initial release matrix jobs terminal. Default i20261019121538-612-9234 and ANTLR i20261019121543-612-57ce show matching family failures. Null/scalar-slice population passes both and is NOT ported. Aggregate map result values also pass; its issue is repeated work and remains a performance investigation. Node-lookup and optional-null semi-join comparison controls pass; bound pattern consumer test fails, so do not attribute all #1395 family controls to one optimization.
+
+Draft release PRs opened and linked to this child T3 thread:
+- #1546, fix/1.4.4-cypher-yield-scope @2df988a6505ade97fc9c04b976bfb17e85d4276b: #1330 three unchanged -x picks. Focused green default i20261019122009-70928-9c11, ANTLR i20261019122015-70928-f934. Dups retry c1792412693213-f21254c2 COMPLETE, detector_exit=0, analysis_complete=true, no truncated inventory (first try got busy/retry-after30). WIP backup wip-1.4.4-cypher-scope-yield pushed at same head.
+- #1547, fix/1.4.4-cypher-lexical-scope @8a5567f79b0b6f627b8ba229d8da582f9273cdfe: #1347/#1357 eleven unchanged -x picks. Focused green Cypher i20261019122050-37468-fae0 / i20261019122054-37468-892f; Bolt i20261019122050-37468-a907 / i20261019122058-37468-0d57; HTTP i20261019122051-37468-0a69 / i20261019122054-37468-b4f2. WIP backup wip-1.4.4-cypher-scope-lexical pushed at same head.
+Parent orchestrator 075cf8e3-9632-45e4-a74b-ecbe4e778f84 notified; independent review requested while remaining implementation continues. No merges/ready marking. Paired costs pending; PR bodies say so.
+
+Projection/type owner local branch fix/1.4.4-cypher-projection-scope @97a9dc29a includes #1546 prerequisite plus #1331/#1335/#1337/#1345/#1354/#1356. Testing now: i20261019122614-54824-c346 default, i20261019122618-54824-e3ea ANTLR. Adaptations: changelog keeps release mapping note, omits develop-only test-hygiene note; #548e07 keeps already-ported #1345 exclusions beside union flag; #1356 intentionally empty -x provenance commit because final state already present (temporary #1351 revert omitted). No production behavior from a future graph-expression frame copied. PR must avoid duplicating #1546 once parent merges it.
+
+Runtime host restarted during a tool call; checked actual worktree state before resuming. Initial collector had downloaded default red only; remaining red and first green jobs collected ONCE together into undefer-cypher-scope-collect4.log. All those jobs terminal. No lost/resubmitted remote work.
+
+Fresh Neo4j import matrix j20261019121834-37108-6733: every non-error case from 51-body fixture ran successfully; raw results undefer-cypher-scope-neo-import-matrix.log. Error cases retain pinned fixtures and separate focused error controls.
