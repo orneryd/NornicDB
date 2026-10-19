@@ -18,7 +18,7 @@ import (
 //	    // handle error
 //	}
 
-//	// ast.Clauses contains structured representation
+// // ast.Clauses contains structured representation
 type ASTBuilder struct {
 	// Precompiled patterns for performance
 	nodePattern     *regexp.Regexp

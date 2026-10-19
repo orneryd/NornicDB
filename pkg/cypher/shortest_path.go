@@ -37,7 +37,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 			if close < 0 {
 				return name, "", call.start, false
 			}
-			return name, strings.TrimSpace(cypher[call.open+1:close]), call.start, true
+			return name, strings.TrimSpace(cypher[call.open+1 : close]), call.start, true
 		}
 	}
 	return "", "", -1, false

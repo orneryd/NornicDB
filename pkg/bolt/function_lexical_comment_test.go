@@ -86,5 +86,3 @@ func TestFunctionLexicalCommentBolt(t *testing.T) {
 		}
 	}
 }
-
-
