@@ -2189,9 +2189,10 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
 		return
 	}
 	// A base build owns its file source until its final checkpoint completes.
-	// Join it before persistence or source locks, which the build also takes.
-	s.buildMu.Lock()
-	defer s.buildMu.Unlock()
+	// Join its exclusive ownership before persistence/source locks. Shared
+	// ownership leaves ongoing clustering free to retire its source too.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	s.persistEnabled.Store(false)
 	s.persistMu.Lock()
 	if s.persistTimer != nil {
@@ -2243,8 +2244,10 @@ func (s *Service) Close() error {
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
 
-	s.buildMu.Lock()
-	defer s.buildMu.Unlock()
+	// Join the exclusive base build without excluding derived operations.
+	// indexMu below serializes retirement with their final publications.
+	s.buildMu.RLock()
+	defer s.buildMu.RUnlock()
 	s.persistRunMu.Lock()
 	s.indexMu.Lock()
 	// The cluster generation and index retire through the owner, leaving no
@@ -3078,8 +3081,8 @@ func (s *Service) ensureVectorFileStore() {
 
 // closeVectorFileStoreLocked closes and drops the file-backed vector store.
 // Caller holds s.mu for writing, so a reader holding s.mu never sees the store
-// change or close under it. The caller also holds buildMu exclusively (base
-// build/retirement), or indexMu (clear), to exclude source-owning operations.
+// change or close under it. The caller also holds buildMu exclusively (the
+// base build), or indexMu (retirement/clear), to exclude source mutations.
 func (s *Service) closeVectorFileStoreLocked() {
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
