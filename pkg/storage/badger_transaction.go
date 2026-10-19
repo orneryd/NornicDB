@@ -1156,9 +1156,7 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 		if _, deleted := tx.deletedEdges[edgeID]; deleted {
 			return true
 		}
-		// An earlier transaction's acknowledged delete stays in the
-		// committed index until the flusher lands it.
-		return tx.engine.writeBehind != nil && tx.engine.writeBehind.EdgeDeleted(edgeID)
+		return false
 	}
 
 	// Relationships this transaction created or rewrote: the committed index
@@ -1171,17 +1169,23 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 		// when its new endpoints no longer include this node.
 		listed[edgeID] = struct{}{}
 	}
-	// Acknowledged relationships the buffer has not flushed yet, read before
-	// the committed index so a flush between the two reads lists them there.
-	if wb := tx.engine.writeBehind; wb != nil {
-		for _, outgoing := range [...]bool{true, false} {
-			live, _, _ := wb.EdgeAdjacencyOverlay(nodeID, outgoing)
-			for _, edge := range live {
+	// Buffered transactions read committed state through the same capture
+	// owner as engine adjacency. Overlay selection and committed IDs must
+	// not straddle replay/retirement. Transaction-local rewrites and deletes
+	// still take precedence over that captured stored view.
+	if tx.engine.writeBehind != nil {
+		outgoing, incoming, err := tx.engine.readAdjacency(nodeID, true, true, storedRead)
+		if err != nil {
+			return nil, err
+		}
+		for _, adjacent := range [...][]*Edge{outgoing, incoming} {
+			for _, edge := range adjacent {
 				if !skip(edge.ID) {
 					include(copyEdge(edge))
 				}
 			}
 		}
+		return edges, nil
 	}
 
 	committed := func(index, bodies *badger.Txn) error {
@@ -1220,17 +1224,6 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 			include(edge)
 		}
 		return nil
-	}
-	if tx.engine.writeBehind != nil {
-		// Read-committed, as every write-behind read is
-		// (getCommittedAdjacentEdgesLocked): the pinned snapshot predates
-		// flusher commits that landed after the transaction began, so it
-		// would list relationships a flushed delete already removed and miss
-		// ones a flush moved out of the buffer.
-		err := tx.engine.withView(func(view *badger.Txn) error {
-			return committed(view, view)
-		})
-		return edges, err
 	}
 	// The index is read through the snapshot view, not badgerTx: a badgerTx
 	// iterator also merges the transaction's MVCC history archives, which
@@ -3307,13 +3300,10 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
 	if tx.engine != nil && tx.engine.writeBehind != nil {
-		if v == storedRead {
-			return tx.engine.getNode(nodeID, storedRead)
-		}
 		if vectors {
-			return tx.engine.GetNode(nodeID)
+			return tx.engine.getNode(nodeID, v)
 		}
-		return tx.engine.GetQueryNode(nodeID)
+		return tx.engine.getQueryNode(nodeID, v)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyRead(node), nil
@@ -3524,7 +3514,7 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	// latest-committed state the update read from (monster retest part 1,
 	// "SET on a buffered relationship fails with a conflict").
 	if tx.engine != nil && tx.engine.writeBehind != nil {
-		return tx.engine.GetEdge(edgeID)
+		return tx.engine.getEdge(edgeID, storedRead)
 	}
 	if tx.readTS.IsZero() {
 		return tx.getCommittedEdgeLocked(edgeID)
