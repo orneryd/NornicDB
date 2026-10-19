@@ -158,26 +158,26 @@ func TestEmbedWorkerSaveRetryRetainsProviderResult(t *testing.T) {
 func TestEmbedWorkerSaveRetryPreservesDocumentBatch(t *testing.T) {
 	for _, mode := range []string{"document-batch", "resolved-document-batch", "property-batch"} {
 		for _, rejections := range []int{1, 100} {
-		t.Run(fmt.Sprintf("%s/rejections_%d", mode, rejections), func(t *testing.T) {
-			worker, queue, provider := nodeSaveRetryFixture(t, mode, 16, rejections)
-			var published int
-			worker.SetOnEmbedded(func(*storage.Node) { published++ })
-			require.True(t, worker.processNextBatch())
-			require.Zero(t, published)
-			require.Equal(t, 16, provider.GetEmbedCount())
-			require.True(t, worker.processNextBatch())
-			if rejections == 1 {
-				require.Equal(t, 16, published, "retained writes must finish as one bounded batch, without a worker delay per node")
-			} else {
+			t.Run(fmt.Sprintf("%s/rejections_%d", mode, rejections), func(t *testing.T) {
+				worker, queue, provider := nodeSaveRetryFixture(t, mode, 16, rejections)
+				var published int
+				worker.SetOnEmbedded(func(*storage.Node) { published++ })
+				require.True(t, worker.processNextBatch())
 				require.Zero(t, published)
-			}
-			attempts := 0
-			for _, count := range queue.attempts {
-				attempts += count
-			}
-			require.Equal(t, 32, attempts, "one retry pass must remain bounded by the batch size, including rejected retries")
-			require.Equal(t, 16, provider.GetEmbedCount())
-		})
+				require.Equal(t, 16, provider.GetEmbedCount())
+				require.True(t, worker.processNextBatch())
+				if rejections == 1 {
+					require.Equal(t, 16, published, "retained writes must finish as one bounded batch, without a worker delay per node")
+				} else {
+					require.Zero(t, published)
+				}
+				attempts := 0
+				for _, count := range queue.attempts {
+					attempts += count
+				}
+				require.Equal(t, 32, attempts, "one retry pass must remain bounded by the batch size, including rejected retries")
+				require.Equal(t, 16, provider.GetEmbedCount())
+			})
 		}
 	}
 }
