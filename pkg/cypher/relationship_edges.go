@@ -87,3 +87,53 @@ func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID 
 	}
 	return outgoing, incoming, ctx.Err()
 }
+
+// relationshipAccessIncidentEdgeListsContext is the storage leaf reserved for
+// parsed relationship access. Other graph facilities have their own storage
+// ownership and cannot become an alternate caller of this kernel.
+func relationshipAccessIncidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if direction == "outgoing" {
+		edges, err := store.GetOutgoingEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return edges, nil, err
+	}
+	if direction == "incoming" {
+		edges, err := store.GetIncomingEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return nil, edges, err
+	}
+	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
+		out, in, err := adjacent.GetAdjacentEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return out, in, err
+	}
+	outgoing, err := store.GetOutgoingEdges(nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	incoming, err := store.GetIncomingEdges(nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return outgoing, incoming, ctx.Err()
+}
+
+func relationshipAccessUndirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := relationshipAccessIncidentEdgeListsContext(context.Background(), store, nodeID, "both")
+	if err != nil {
+		return nil, err
+	}
+	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
+}

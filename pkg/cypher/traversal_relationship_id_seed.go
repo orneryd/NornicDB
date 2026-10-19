@@ -7,7 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// relationshipIDSeedNodes is the start nodes of a one-hop match whose WHERE
+// scanRelationshipIDSeedNodes is the start nodes of a one-hop match whose WHERE
 // pins its relationship by id(r) or elementId(r) (idEqualityLookup), such as
 // MATCH ()-[r]->() WHERE elementId(r) = $id: that
 // relationship's endpoint in the pattern's direction (outgoing: its start,
@@ -15,7 +15,7 @@ import (
 // every node. The traversal still checks the whole pattern and WHERE from
 // each start node. none is true when no such relationship can match (it
 // doesn't exist, or has another type); ok is false for any other shape.
-func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool) {
+func (e *StorageExecutor) scanRelationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool) {
 	variable, lookupID, empty, ok := e.idEqualityLookup(ctx, whereClause, "5")
 	if !ok {
 		return nil, false, false
@@ -60,4 +60,10 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 		return nil, true, true
 	}
 	return nodes, false, true
+}
+
+// relationshipIDSeedNodes keeps the focused parser tests on the public
+// executor helper while routing the storage read through the access owner.
+func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool) {
+	return e.relationshipExecutionFor(ctx, pattern, whereClause).idSeedNodes(ctx)
 }

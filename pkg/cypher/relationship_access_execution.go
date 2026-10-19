@@ -15,12 +15,58 @@ type relationshipAccessExecution struct {
 	access                        *relationshipAccess
 }
 
+type relationshipVectorAccess struct {
+	index, relType, property string
+	estimatedRows            int64
+}
+
+type relationshipVectorProbeKey struct{}
+type relationshipVectorProbe struct {
+	planOnly          bool
+	access            *relationshipVectorAccess
+	candidates, rows  int64
+}
+
 func (e *StorageExecutor) relationshipExecutionFor(ctx context.Context, pattern, where string) relationshipAccessExecution {
 	physicalWhere := where
 	if original, ok := ctx.Value(relationshipSeekPredicateKey{}).(relationshipSeekPredicate); ok && original.pattern == pattern {
 		where = original.where
 	}
 	return relationshipAccessExecution{executor: e, pattern: pattern, where: where, physicalWhere: physicalWhere, access: e.relationshipAccessFor(ctx, pattern, where)}
+}
+
+func (e *StorageExecutor) relationshipExecutionForQuery(ctx context.Context, query string) (relationshipAccessExecution, bool) {
+	program := relationshipProgramFromContext(ctx, query)
+	if len(program.sites) != 1 || len(program.graphQueries) != 0 {
+		return relationshipAccessExecution{}, false
+	}
+	template := program.sites[0]
+	return e.relationshipExecutionFor(ctx, template.pattern, template.where), true
+}
+
+func (run relationshipAccessExecution) vectorPlan(ctx context.Context, query string) *relationshipVectorAccess {
+	probe := &relationshipVectorProbe{planOnly: true}
+	ctx = context.WithValue(ctx, relationshipVectorProbeKey{}, probe)
+	if _, handled := run.executor.tryRawMatchRelationshipVectorCosine(ctx, query); !handled {
+		_, _ = run.executor.tryRawMatchWithRelationshipVectorCosineProjection(ctx, query)
+	}
+	return probe.access
+}
+
+func (run relationshipAccessExecution) vector(ctx context.Context, query string) (*ExecuteResult, bool) {
+	probe := &relationshipVectorProbe{}
+	ctx = context.WithValue(ctx, relationshipVectorProbeKey{}, probe)
+	result, handled := run.executor.tryRawMatchRelationshipVectorCosine(ctx, query)
+	if !handled {
+		result, handled = run.executor.tryRawMatchWithRelationshipVectorCosineProjection(ctx, query)
+	}
+	if handled && probe.access != nil {
+		if result != nil {
+			probe.rows = int64(len(result.Rows))
+		}
+		recordRelationshipVectorAccess(ctx, run.pattern, run.where, run.access.variable, probe.access, probe.candidates, probe.rows)
+	}
+	return result, handled
 }
 
 func (run relationshipAccessExecution) count(ctx context.Context, match *TraversalMatch, item returnItem) (int64, bool, error) {
@@ -48,6 +94,15 @@ func (run relationshipAccessExecution) aggregate(ctx context.Context, match *Tra
 func (run relationshipAccessExecution) degree(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
 	recordRelationshipSeekFallback(ctx, run.pattern, run.where, shape.relationship)
 	return run.executor.nodeDegreeCount(ctx, node, shape)
+}
+
+func (run relationshipAccessExecution) idSeedNodes(ctx context.Context) (nodes []*storage.Node, none, ok bool) {
+	return run.executor.scanRelationshipIDSeedNodes(ctx, run.pattern, run.physicalWhere)
+}
+
+func (run relationshipAccessExecution) selectedPaths(ctx context.Context, plan *selectedPathPlan, automaton *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
+	recordRelationshipSeekFallback(ctx, run.pattern, run.where, run.access.variable)
+	return run.executor.scanSelectedPaths(ctx, plan, automaton, reversed, row, maxLength, source, target, ends, count, groups)
 }
 
 func (run relationshipAccessExecution) anchoredCount(ctx context.Context, match *TraversalMatch, seed *storage.Node, values map[string]interface{}, first bool) (int64, bool) {

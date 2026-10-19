@@ -18,6 +18,7 @@ type relationshipAccess struct {
 	alternatives []relationshipSeek
 	expressions  [][]string
 	inline       map[string]bool
+	vector       *relationshipVectorAccess
 }
 
 type relationshipAccessKey struct {
@@ -48,6 +49,9 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 	if template == nil {
 		recordUnregisteredRelationshipAccess(ctx, pattern, where)
 		return &relationshipAccess{}
+	}
+	if template.scanOnly {
+		return &relationshipAccess{variable: template.syntax.variable}
 	}
 	// MERGE identity compares stored properties. Preserve its existing scan
 	// contract instead of using a visible-property RANGE lookup for writes.

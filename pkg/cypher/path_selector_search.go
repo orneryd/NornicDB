@@ -970,8 +970,9 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 		return nil, nil
 	}
 	var rows []pipelineRow
+	execution := e.relationshipExecutionFor(ctx, m.pattern, "")
 	search := func(a *pathSearchAutomaton, reversed bool, source, target *storage.Node, ends []*storage.Node) {
-		rows = append(rows, e.searchSelectedPaths(ctx, plan, a, reversed, row, maxLength, source, target, ends, count, m.selector.groups)...)
+		rows = append(rows, execution.selectedPaths(ctx, plan, a, reversed, row, maxLength, source, target, ends, count, m.selector.groups)...)
 	}
 	switch {
 	case startBound && endBound:
@@ -1046,11 +1047,11 @@ func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedP
 	return maxLength, true
 }
 
-// searchSelectedPaths runs one search of a plan's automaton a (the
+// scanSelectedPaths runs one search of a plan's automaton a (the
 // reversed pattern when reversed) from source for row and returns the rows
 // of the count shortest paths (count lengths for groups) to each end node:
 // to target only when it is given, to the nodes of ends only when they are.
-func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
+func (e *StorageExecutor) scanSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
 	bind := func(path pathSearchPath) (pipelineRow, bool) {
 		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
 	}

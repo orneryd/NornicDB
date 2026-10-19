@@ -73,6 +73,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			return nil, true, err
 		}
 		if !handled {
+			execution := e.relationshipExecutionFor(rowCtx, materializedPattern, physicalWhere)
 			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
 			if seedRejected {
 				// The bound node fails the pattern's own labels or inline
@@ -86,7 +87,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			if startSeedNodes == nil && endSeedNodes == nil {
 				// A relationship pinned by id / elementId starts from its
 				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
+				if seeds, none, pinned := execution.idSeedNodes(rowCtx); pinned {
 					if none {
 						continue
 					}

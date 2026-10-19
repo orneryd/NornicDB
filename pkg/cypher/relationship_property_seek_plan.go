@@ -111,6 +111,27 @@ func recordRelationshipSeek(ctx context.Context, pattern, where, variable string
 	add(profile.sites, id+"\x00"+seek.name)
 }
 
+func recordRelationshipVectorAccess(ctx context.Context, pattern, where, variable string, access *relationshipVectorAccess, candidates, rows int64) {
+	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+	if profile == nil || access == nil {
+		return
+	}
+	profile.mu.Lock()
+	defer profile.mu.Unlock()
+	id := GetUseDatabaseFromContext(ctx) + "\x00" + relationshipAccessID(pattern, where)
+	site := profile.accessSite(id, variable)
+	site.graph = GetUseDatabaseFromContext(ctx)
+	site.access.vector = access
+	stats := profile.sites[id+"\x00"+access.index]
+	if stats == nil {
+		stats = &relationshipSeekStats{variable: variable}
+		profile.sites[id+"\x00"+access.index] = stats
+	}
+	stats.lookups++
+	stats.candidates += candidates
+	stats.rows += rows
+}
+
 type relationshipAccessSite struct {
 	id          string
 	access      *relationshipAccess
@@ -143,11 +164,21 @@ func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query str
 func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, query string) []*relationshipAccessSite {
 	program := relationshipProgramFromContext(ctx, query)
 	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, program)
+	var vector *relationshipVectorAccess
+	if indexASCIIFold(query, "vector.similarity.cosine") >= 0 {
+		if execution, ok := e.relationshipExecutionForQuery(ctx, query); ok {
+			vector = execution.vectorPlan(ctx, query)
+		}
+	}
 	sites := make([]*relationshipAccessSite, 0, len(program.sites))
 	for _, template := range program.sites {
+		access := e.relationshipAccessFor(ctx, template.pattern, template.where)
+		if vector != nil {
+			access = &relationshipAccess{variable: template.syntax.variable, vector: vector}
+		}
 		sites = append(sites, &relationshipAccessSite{
 			id: template.id, occurrences: template.occurrences,
-			access: e.relationshipAccessFor(ctx, template.pattern, template.where),
+			access: access,
 		})
 	}
 	for _, query := range program.graphQueries {
@@ -156,7 +187,108 @@ func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, quer
 	return sites
 }
 
+func firstRelationshipExpand(operator *PlanOperator) *PlanOperator {
+	if operator == nil {
+		return nil
+	}
+	if operator.OperatorType == "Expand" {
+		return operator
+	}
+	for _, child := range operator.Children {
+		if found := firstRelationshipExpand(child); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func adjustRelationshipAccessParentHits(operator, target *PlanOperator, delta int64) bool {
+	if operator == target {
+		return true
+	}
+	for _, child := range operator.Children {
+		if adjustRelationshipAccessParentHits(child, target, delta) {
+			operator.DBHits += delta
+			return true
+		}
+	}
+	return false
+}
+
+// The common EXPLAIN shape has one immutable program template and one access
+// alternative. Reuse the schematic Expand that the general planner already
+// allocated instead of building parallel site/operator slices and copying a
+// replacement over it.
+func (e *StorageExecutor) annotateSingleRelationshipAccess(ctx context.Context, query string, plan *ExecutionPlan) bool {
+	if plan.Mode == ModeProfile || e.shouldUseFabricPlanner(query) {
+		return false
+	}
+	program := relationshipProgramFromContext(ctx, query)
+	if len(program.sites) != 1 || len(program.graphQueries) != 0 {
+		return false
+	}
+	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, program)
+	template := program.sites[0]
+	access := e.relationshipAccessFor(ctx, template.pattern, template.where)
+	if indexASCIIFold(query, "vector.similarity.cosine") >= 0 {
+		if execution, ok := e.relationshipExecutionForQuery(ctx, query); ok {
+			if vector := execution.vectorPlan(ctx, query); vector != nil {
+				access = &relationshipAccess{variable: template.syntax.variable, vector: vector}
+			}
+		}
+	}
+	if access.vector == nil && len(access.alternatives) > 1 {
+		return false
+	}
+	operator := firstRelationshipExpand(plan.Root)
+	if operator == nil {
+		return false
+	}
+	oldHits := operator.DBHits
+	if operator.Arguments == nil {
+		operator.Arguments = make(map[string]interface{}, 6)
+	} else {
+		clear(operator.Arguments)
+	}
+	if cap(operator.Identifiers) > 0 {
+		operator.Identifiers = operator.Identifiers[:1]
+		operator.Identifiers[0] = access.variable
+	} else {
+		operator.Identifiers = []string{access.variable}
+	}
+	operator.DBHits = 0
+	operator.ActualRows = 0
+	operator.EstimatedRows = 100
+	operator.Description = "Relationship scan"
+	operator.Arguments["accessOccurrences"] = template.occurrences
+	if access.vector != nil {
+		vector := access.vector
+		operator.OperatorType = "RelationshipVectorIndexSeek"
+		operator.Description = fmt.Sprintf("Vector seek on :%s(%s) using %s", vector.relType, vector.property, vector.index)
+		operator.EstimatedRows = vector.estimatedRows
+		operator.Arguments["index"] = vector.index
+		operator.Arguments["relationshipType"] = vector.relType
+		operator.Arguments["property"] = vector.property
+	} else if len(access.alternatives) == 1 {
+		seek := access.alternatives[0]
+		operator.OperatorType = "RelationshipIndexSeek"
+		operator.Description = fmt.Sprintf("Equality seek on :%s using %s", seek.relType, seek.name)
+		operator.EstimatedRows = seek.estimatedRows
+		operator.Arguments["index"] = seek.name
+		operator.Arguments["relationshipType"] = seek.relType
+		operator.Arguments["properties"] = seek.properties
+		operator.Arguments["runtimeKeyCheck"] = "resolve against incoming row; scan fallback for unbound or unsupported keys"
+	}
+	delta := operator.DBHits - oldHits
+	adjustRelationshipAccessParentHits(plan.Root, operator, delta)
+	plan.TotalDBHits += delta
+	return true
+}
+
 func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, query string, plan *ExecutionPlan) {
+	if e.annotateSingleRelationshipAccess(ctx, query, plan) {
+		return
+	}
 	var sites []*relationshipAccessSite
 	profile, _ := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
 	if plan.Mode == ModeProfile && profile != nil {
@@ -183,6 +315,24 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 			fallbacks = profile.fallbacks[site.id]
 		}
 		var alternatives []*PlanOperator
+		if access.vector != nil {
+			vector := access.vector
+			op := &PlanOperator{OperatorType: "RelationshipVectorIndexSeek", Description: fmt.Sprintf("Vector seek on :%s(%s) using %s", vector.relType, vector.property, vector.index), Identifiers: []string{access.variable}, EstimatedRows: vector.estimatedRows, Arguments: map[string]interface{}{
+				"index": vector.index, "relationshipType": vector.relType, "property": vector.property, "accessOccurrences": site.occurrences,
+			}}
+			if plan.Mode == ModeProfile && profile != nil {
+				stats := profile.sites[site.id+"\x00"+vector.index]
+				if stats != nil {
+					op.ActualRows = stats.rows
+					op.DBHits = stats.lookups + stats.candidates
+					op.Arguments["indexLookups"] = stats.lookups
+					op.Arguments["relationshipCandidates"] = stats.candidates
+				}
+				delete(op.Arguments, "accessOccurrences")
+				op.Arguments["accessAttempts"] = site.occurrences
+			}
+			alternatives = append(alternatives, op)
+		}
 		for _, seek := range access.alternatives {
 			var stats *relationshipSeekStats
 			if plan.Mode == ModeProfile && profile != nil {
@@ -210,7 +360,7 @@ func (e *StorageExecutor) annotateRelationshipSeekPlan(ctx context.Context, quer
 			}
 			alternatives = append(alternatives, op)
 		}
-		if len(alternatives) == 0 || fallbacks > 0 {
+		if access.vector == nil && (len(alternatives) == 0 || fallbacks > 0) {
 			scan := &PlanOperator{OperatorType: "Expand", Description: "Relationship scan", Identifiers: []string{access.variable}, EstimatedRows: 100, Arguments: map[string]interface{}{"accessOccurrences": site.occurrences}}
 			if fallbacks > 0 {
 				delete(scan.Arguments, "accessOccurrences")

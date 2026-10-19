@@ -20,6 +20,7 @@ type relationshipAccessProgram struct {
 type relationshipAccessTemplate struct {
 	id, pattern, where string
 	occurrences        int64
+	scanOnly           bool
 
 	syntax relationshipAccessSyntax
 }
@@ -57,13 +58,22 @@ func withRelationshipAccessProgram(ctx context.Context, query string) context.Co
 	return context.WithValue(ctx, relationshipAccessProgramKey{}, relationshipProgramFor(query))
 }
 
+func relationshipProgramShortestPattern(pattern string) (string, bool) {
+	candidate := strings.TrimSpace(pattern)
+	if variable := extractPathAssignmentVariable(candidate); variable != "" {
+		candidate = strings.TrimSpace(candidate[strings.Index(candidate, "=")+1:])
+	}
+	_, inner, index, ok := extractShortestPathCall(candidate)
+	return inner, ok && index == 0
+}
+
 // This compiler uses the existing clause, subquery and pattern readers. It is
 // independent of storage and never evaluates expressions, including write tokens.
 func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 	program := &relationshipAccessProgram{query: query, byID: make(map[string]*relationshipAccessTemplate)}
 	seen := make(map[string]*relationshipAccessTemplate)
 	graphDepth := 0
-	add := func(pattern, where string) {
+	addSite := func(pattern, where string, scanOnly bool) {
 		if !patternHasRelationship(pattern) {
 			return
 		}
@@ -71,19 +81,23 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 		if graphDepth > 0 {
 			if program.byID[id] == nil {
 				program.byID[id] = newRelationshipAccessTemplate(id, pattern, where)
+				program.byID[id].scanOnly = scanOnly
 			}
 			return
 		}
 		if site := seen[id]; site != nil {
 			site.occurrences++
+			site.scanOnly = site.scanOnly || scanOnly
 			return
 		}
 		site := newRelationshipAccessTemplate(id, pattern, where)
+		site.scanOnly = scanOnly
 		site.occurrences = 1
 		seen[id] = site
 		program.byID[id] = site
 		program.sites = append(program.sites, site)
 	}
+	add := func(pattern, where string) { addSite(pattern, where, false) }
 	var statement func(string)
 	var expressions func(string)
 	patternExpressions := func(pattern string) {
@@ -191,7 +205,11 @@ func compileRelationshipAccessProgram(query string) *relationshipAccessProgram {
 				}
 				split := relationshipAccessMatchWhere(text)
 				for _, pattern := range splitTopLevelComma(split.pattern) {
-					add(pattern, split.where)
+					if selected, ok := relationshipProgramShortestPattern(pattern); ok {
+						addSite(selected, "", true)
+					} else {
+						add(pattern, split.where)
+					}
 				}
 				// Maps can contain graph expressions, but the pattern itself is
 				// already registered with its full predicate.

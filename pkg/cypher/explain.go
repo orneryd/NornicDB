@@ -130,6 +130,9 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	// leaking plan metadata into ordinary cached reads of the same query.
 	ctx = context.WithValue(ctx, profileExecutionKey{}, true)
 	ctx = withRelationshipSeekProfile(ctx)
+	if containsInternalFunctionPrefix(query) {
+		ctx = withRewrittenStatement(ctx)
+	}
 
 	// Execute the actual query to collect statistics
 	startTime := time.Now()

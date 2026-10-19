@@ -185,8 +185,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	// The statement as the client sent it may not call NornicDB's internal
 	// functions; the rewrites below produce them (#1105).
-	if err := internalFunctionCallError(cypher); err != nil {
-		return nil, err
+	if !isRewrittenStatement(ctx) {
+		if err := internalFunctionCallError(cypher); err != nil {
+			return nil, err
+		}
 	}
 	// The statement as sent, which GDS's Cypher aggregation projection
 	// reports as its query (#1194).
