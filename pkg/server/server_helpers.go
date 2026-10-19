@@ -311,15 +311,8 @@ func (s *Server) canReadAllDatabases(r *http.Request) bool {
 }
 
 func (s *Server) canReadAllDatabasesWith(canRead func(string) bool, includeSystem bool) bool {
-	for _, database := range s.dbManager.ListDatabaseNames() {
-		if !includeSystem && database == "system" {
-			continue
-		}
-		if !canRead(database) {
-			return false
-		}
-	}
-	return true
+	_, allReadable := s.databaseReadCoverage(canRead, includeSystem, true)
+	return allReadable
 }
 
 // withBifrostRBAC enriches the request context with RBAC (principal roles, DatabaseAccessMode, ResolvedAccess)

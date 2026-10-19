@@ -193,13 +193,14 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
-		if databases == 0 {
+		anyReadable, allReadable := s.databaseReadCoverage(canRead, true, databases > 0)
+		if !anyReadable {
 			s.writeNeo4jDatabaseAccessDenied(w, r, "")
 			return
 		}
 		body = observability.RenderLegacyForRead(registry, time.Now(), observability.LegacyReadScope{
 			CanReadDatabase:      canRead,
-			AllDatabasesReadable: s.canReadAllDatabasesWith(canRead, true),
+			AllDatabasesReadable: allReadable,
 			Nodes:                nodes, Edges: edges,
 		})
 	}

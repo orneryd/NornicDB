@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/prometheus/client_golang/prometheus"
@@ -89,10 +90,10 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			embedMetrics := observability.NewEmbedMetrics(registry, nil)
 			embedMetrics.Processed.WithLabelValues("local", "test", "success", "cpu").Add(9)
 			s.SetObsRegistry(registry)
-			check := func(t *testing.T, nodes, edges, slow float64) {
+			check := func(t *testing.T, nodes, edges, slow float64, denied ...bool) {
 				t.Helper()
 				response := makeRequest(t, s, http.MethodGet, "/metrics", nil, token)
-				if nodes == 0 && edges == 0 {
+				if len(denied) > 0 && denied[0] {
 					require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 					require.NotContains(t, response.Body.String(), "nornicdb_nodes_total ")
 					return
@@ -135,7 +136,23 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 			t.Run("allowlist-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", false, false))
-			t.Run("no-database-read", func(t *testing.T) { check(t, 0, 0, 0) })
+			t.Run("no-database-read", func(t *testing.T) { check(t, 0, 0, 0, true) })
+			require.NoError(t, s.dbManager.CreateCompositeDatabase("metrics_remote", []multidb.ConstituentRef{{
+				Alias: "leaf", DatabaseName: "external_metrics", Type: "remote", AccessMode: "read", URI: "bolt://localhost:1",
+			}}))
+			cypherMetrics.BindSlowQueries("metrics_remote").Add(5)
+			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"metrics_remote", "external_metrics"}))
+			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "metrics_remote", true, false))
+			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "external_metrics", true, false))
+			remoteSlow := float64(0)
+			if tenantLabels {
+				remoteSlow = 5
+			}
+			t.Run("remote-only", func(t *testing.T) { check(t, 0, 0, remoteSlow) })
+			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "external_metrics", false, false))
+			t.Run("remote-revoked", func(t *testing.T) { check(t, 0, 0, 0, true) })
+			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "external_metrics", true, false))
+			t.Run("remote-restored", func(t *testing.T) { check(t, 0, 0, remoteSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"system"}))
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", true, false))
 			system, err := s.dbManager.GetStorage("system")
@@ -149,7 +166,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 				systemSlow = 11
 			}
 			t.Run("system-only", func(t *testing.T) { check(t, float64(systemNodes), float64(systemEdges), systemSlow) })
-			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_alias", "metrics_private", "system"}))
+			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_alias", "metrics_private", "system", "metrics_remote", "external_metrics"}))
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, false))
 			for _, control := range []string{"full-reader", "admin", "auth-off"} {
 				t.Run(control, func(t *testing.T) {
@@ -167,9 +184,9 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 					require.Equal(t, http.StatusOK, response.Code)
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.NodeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.EdgeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
-					fullSlow := float64(20)
+					fullSlow := float64(25)
 					if tenantLabels {
-						fullSlow = 24
+						fullSlow = 29
 					}
 					require.Equal(t, fullSlow, legacyMetricValue(t, response.Body.String(), "nornicdb_slow_queries_total"))
 					require.Equal(t, float64(9), legacyMetricValue(t, response.Body.String(), "nornicdb_embeddings_processed"))
