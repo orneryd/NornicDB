@@ -8,6 +8,7 @@ import (
  "testing"
 
  "github.com/orneryd/nornicdb/pkg/storage"
+ "github.com/orneryd/nornicdb/pkg/cypher"
  "github.com/stretchr/testify/require"
 )
 
@@ -33,6 +34,20 @@ func TestRemoteDynamicHTTPModePreservesStandardUpdateCounters(t *testing.T) {
   var result TransactionResponse; require.NoError(t,json.Unmarshal(response.Body.Bytes(),&result))
   require.Empty(t,result.Errors); require.Len(t,result.Results,1)
   require.Equal(t,tc.mode,result.Results[0].Stats.QueryType)
-  require.Equal(t,tc.updates,result.Results[0].Stats.ContainsUpdates,"mode must not fabricate mutation counters")
+  native,err:=server.db.ExecuteCypher(context.Background(),query,map[string]interface{}{"body":tc.body}); require.NoError(t,err)
+  expected:=queryStatsFromResult(native)
+  require.Equal(t,expected.ContainsUpdates,result.Results[0].Stats.ContainsUpdates,"mode must preserve execution counters")
+  if !tc.updates { require.False(t,result.Results[0].Stats.ContainsUpdates,"mode must not fabricate mutation counters") }
  }) }
+}
+func TestRemoteHTTPModeLeavesCountersIndependent(t *testing.T) {
+ for _,mode:=range []string{"r","w","rw","s"} {
+  for _,created:=range []int{0,1} {
+   result:=&cypher.ExecuteResult{Metadata:map[string]interface{}{"resolved_query_type":mode},Stats:&cypher.QueryStats{NodesCreated:created}}
+   stats:=queryStatsFromResult(result)
+   require.Equal(t,mode,stats.QueryType)
+   require.Equal(t,created>0,stats.ContainsUpdates)
+   require.Equal(t,created,stats.NodesCreated)
+  }
+ }
 }
