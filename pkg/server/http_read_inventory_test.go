@@ -44,7 +44,8 @@ func TestHTTPReadInventoryCoversRegisteredRoutes(t *testing.T) {
 		disposition[path] = "delegated public MCP / GraphQL / Heimdall inventories"
 	}
 	for _, tc := range rule73HTTPInventory() {
-		disposition[tc.path("{database}")] = "public HTTP admission/population regression"
+		path := strings.SplitN(tc.path("{database}"), "?", 2)[0]
+		disposition[path] = "public HTTP admission/population regression"
 	}
 	registered := map[string]bool{}
 	add := func(expr ast.Expr) {
