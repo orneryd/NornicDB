@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"reflect"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestStatementCacheFamilyGraphQLRequests(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			db := testDB(t)
-			manager := testDBManager(t, db)
+			manager := testutil.DatabaseManager(t, db)
 			resolver := NewResolver(db, manager)
 			if !withDB {
 				resolver.DB = nil

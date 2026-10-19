@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // must not inherit a mutation producer's REVEAL or the default database policy.
 func TestSubscriptionPropertiesHonorSourcePolicyDuringReveal(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)
 	be, ok := storage.UnwrapEngine(db.GetStorage()).(*storage.BadgerEngine)
