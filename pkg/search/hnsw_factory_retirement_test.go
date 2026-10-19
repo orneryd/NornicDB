@@ -106,9 +106,10 @@ func TestVectorFactorySnapshotRetiredByReset(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("factory waited for reset's mutation boundary")
 				}
-				svc.pipelineMu.RLock()
+				// factoryDone synchronizes the factory's final cache write; indexMu
+				// still gates reset's cache retirement. Read before releasing that
+				// gate, without waiting for pipelineMu behind the blocked reset.
 				cached := svc.vectorPipeline
-				svc.pipelineMu.RUnlock()
 				releaseIndex()
 				select {
 				case <-resetDone:
