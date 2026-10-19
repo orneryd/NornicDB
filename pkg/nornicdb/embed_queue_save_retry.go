@@ -33,14 +33,20 @@ const nodeEmbeddingRetryMaxBytes int64 = 64 << 20
 // without retaining their payload. Their bounded batch memory is not a cache.
 func (ew *EmbedWorker) nodeEmbeddingRetryBudget() (int, int64) {
 	count, bytes := ew.retryMaxCount, ew.retryMaxBytes
-	if count <= 0 { count = nodeEmbeddingRetryMaxCount }
-	if bytes <= 0 { bytes = nodeEmbeddingRetryMaxBytes }
+	if count <= 0 {
+		count = nodeEmbeddingRetryMaxCount
+	}
+	if bytes <= 0 {
+		bytes = nodeEmbeddingRetryMaxBytes
+	}
 	return count, bytes
 }
 
 func (ew *EmbedWorker) nodeEmbeddingRetryBytes() int64 {
 	var bytes int64
-	for _, result := range ew.embeddingRetries { bytes += result.bytes }
+	for _, result := range ew.embeddingRetries {
+		bytes += result.bytes
+	}
 	return bytes
 }
 
@@ -48,40 +54,70 @@ func (ew *EmbedWorker) nodeEmbeddingRetryBytes() int64 {
 // metadata and spare slice capacity. Unknown pointer graphs are not retained.
 // Accounting is an admission budget, not a Go heap measurement.
 func nodeEmbeddingRetryValueBytes(v reflect.Value, budget int64, depth int) int64 {
-	if budget < 0 { return 1 }
-	if depth > 32 { return budget + 1 }
-	if !v.IsValid() { return 0 }
+	if budget < 0 {
+		return 1
+	}
+	if depth > 32 {
+		return budget + 1
+	}
+	if !v.IsValid() {
+		return 0
+	}
 	bytes := int64(32)
 	add := func(value reflect.Value) { bytes += nodeEmbeddingRetryValueBytes(value, budget-bytes, depth+1) }
 	switch v.Kind() {
 	case reflect.Interface:
-		if !v.IsNil() { add(v.Elem()) }
+		if !v.IsNil() {
+			add(v.Elem())
+		}
 	case reflect.String:
 		bytes += int64(v.Len())
 	case reflect.Map:
 		bytes += int64(v.Len()) * 128
 		if bytes <= budget {
 			it := v.MapRange()
-			for it.Next() { add(it.Key()); add(it.Value()); if bytes > budget { break } }
+			for it.Next() {
+				add(it.Key())
+				add(it.Value())
+				if bytes > budget {
+					break
+				}
+			}
 		}
 	case reflect.Slice, reflect.Array:
 		n := v.Len()
-		if v.Kind() == reflect.Slice { n = v.Cap() }
+		if v.Kind() == reflect.Slice {
+			n = v.Cap()
+		}
 		bytes += int64(n) * int64(v.Type().Elem().Size())
 		if bytes <= budget {
 			switch v.Type().Elem().Kind() {
 			case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 				reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
 			default:
-				for i := 0; i < v.Len(); i++ { add(v.Index(i)); if bytes > budget { break } }
+				for i := 0; i < v.Len(); i++ {
+					add(v.Index(i))
+					if bytes > budget {
+						break
+					}
+				}
 			}
 		}
 	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ { add(v.Field(i)); if bytes > budget { break } }
+		for i := 0; i < v.NumField(); i++ {
+			add(v.Field(i))
+			if bytes > budget {
+				break
+			}
+		}
 	case reflect.Pointer, reflect.UnsafePointer, reflect.Func, reflect.Chan:
-		if !v.IsNil() { return budget + 1 }
+		if !v.IsNil() {
+			return budget + 1
+		}
 	}
-	if bytes > budget { return budget + 1 }
+	if bytes > budget {
+		return budget + 1
+	}
 	return bytes
 }
 
@@ -119,7 +155,9 @@ func (ew *EmbedWorker) retainNodeEmbedding(node *storage.Node, provider embed.Em
 		retained.bytes = 512 + int64(len(node.ID)+len(retained.identity))
 		for _, value := range []any{retained.labels, retained.properties, retained.vectors, retained.meta} {
 			retained.bytes += nodeEmbeddingRetryValueBytes(reflect.ValueOf(value), byteLimit-retained.bytes, 0)
-			if retained.bytes > byteLimit { break }
+			if retained.bytes > byteLimit {
+				break
+			}
 		}
 		if len(ew.embeddingRetries) >= countLimit || retained.bytes > byteLimit-ew.nodeEmbeddingRetryBytes() {
 			// A batch/another worker may already have bought this result before
@@ -185,7 +223,9 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 	countLimit, byteLimit := ew.nodeEmbeddingRetryBudget()
 	count := len(ew.embeddingRetries)
 	for id := range ew.claimedNodes {
-		if _, retained := ew.embeddingRetries[storage.NodeID(id)]; !retained { count++ }
+		if _, retained := ew.embeddingRetries[storage.NodeID(id)]; !retained {
+			count++
+		}
 	}
 	if count >= countLimit || ew.nodeEmbeddingRetryBytes() >= byteLimit || now.Before(ew.retryBudgetBlockedUntil) {
 		return due // Saving retained work needs no new provider result.
@@ -230,7 +270,9 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 func (ew *EmbedWorker) nodeEmbeddingRetryDelay(delay time.Duration) time.Duration {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
-	if remaining := time.Until(ew.retryBudgetBlockedUntil); remaining > 0 && remaining < delay { delay = remaining }
+	if remaining := time.Until(ew.retryBudgetBlockedUntil); remaining > 0 && remaining < delay {
+		delay = remaining
+	}
 	for id, result := range ew.embeddingRetries {
 		if _, claimed := ew.claimedNodes[string(id)]; claimed {
 			continue
@@ -255,7 +297,9 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 	// reaches every dispatch route without waiting for a new wakeup.
 	for attempts := 0; attempts <= nodeEmbeddingRetryMaxCount; attempts++ {
 		node, progressed, attempted := ew.tryNextNodeResult()
-		if node != nil || progressed || !attempted { return node, progressed }
+		if node != nil || progressed || !attempted {
+			return node, progressed
+		}
 	}
 	return nil, false
 }

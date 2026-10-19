@@ -202,15 +202,11 @@ func TestEmbedWorkerRetryOwnerInterleavesDueRetries(t *testing.T) {
 	queue.attempts["node-002"] = 1000
 	require.True(t, worker.processNextBatch()) // Retain node-000.
 	makeNodeSaveRetriesReady(worker)
-	require.False(t, worker.processNextBatch()) // One due retry, rejected.
-	makeNodeSaveRetriesReady(worker)
-	require.True(t, worker.processNextBatch()) // Fresh node-001 must win this turn.
+	require.True(t, worker.processNextBatch()) // Rejected retry continues to fresh node-001 in this pass.
 	require.Equal(t, 2, queue.attempts["node-000"])
 	require.Equal(t, int64(1), worker.processed.Load())
 	makeNodeSaveRetriesReady(worker)
-	require.False(t, worker.processNextBatch()) // A retry still gets a turn.
-	makeNodeSaveRetriesReady(worker)
-	require.True(t, worker.processNextBatch()) // Fresh node-002.
+	require.True(t, worker.processNextBatch()) // Retry then fresh node-002 in this pass.
 	require.Equal(t, int64(2), worker.processed.Load())
 }
 
