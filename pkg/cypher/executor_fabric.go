@@ -599,7 +599,13 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	if keywords["MATCH"] || keywords["STARTNODE"] || keywords["ENDNODE"] || keywords["SHORTESTPATH"] {
 		return nil, nil, false, nil
 	}
-	executor := c.base.cloneForStorage(c.base.storage)
+	engine := c.base.storage
+	if c.base.dbManager != nil && storageDatabaseName(engine) != dbName {
+		selected, err := c.base.dbManager.GetStorage(dbName)
+		if err != nil { return nil, nil, true, err }
+		engine = selected
+	}
+	executor := c.base.cloneForStorage(engine)
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
 	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params, recordBindings)
 	return columns, rows, true, err

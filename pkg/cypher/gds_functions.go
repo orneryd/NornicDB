@@ -97,7 +97,7 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 	if !projected {
 		return nil, localizedError(localization.CypherGraphProceduresNodePropertyNotInGraph(key), nil)
 	}
-	id, ok := gdsNodeID(values[1])
+	id, ok := projection.nodeReference(values[1])
 	if !ok {
 		return nil, fmt.Errorf("%s expects a node or node id as argument 2, got %s", name, cypherTypeSystemName(values[1]))
 	}
@@ -191,22 +191,25 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		if err != nil {
 			return nil, err
 		}
-		left, err := gdsNeighbors(ctx.Storage, first.ID, config)
+		var store storage.Engine = ctx.Storage
+		if store != nil { store = graphIdentityView(store) }
+		firstID, secondID := storage.NodeID(first.IdentityKey()), storage.NodeID(second.IdentityKey())
+		left, err := gdsNeighbors(store, firstID, config)
 		if err != nil {
 			return nil, err
 		}
-		right, err := gdsNeighbors(ctx.Storage, second.ID, config)
+		right, err := gdsNeighbors(store, secondID, config)
 		if err != nil {
 			return nil, err
 		}
 		// A node and itself share no neighbours, as GDS scores them.
-		left.same = first.ID == second.ID
+		left.same = firstID == secondID
 		// The common neighbours' degrees, for Adamic-Adar and resource
 		// allocation; a failed read is the statement's error, not an empty
 		// neighbourhood.
 		degrees := map[storage.NodeID]int{}
 		for _, id := range gdsCommon(left, right) {
-			neighbors, err := gdsNeighbors(ctx.Storage, id, config)
+			neighbors, err := gdsNeighbors(store, id, config)
 			if err != nil {
 				return nil, err
 			}
@@ -214,14 +217,14 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		}
 		degree := func(id storage.NodeID) int {
 			switch id {
-			case first.ID:
+			case firstID:
 				return left.degree
-			case second.ID:
+			case secondID:
 				return right.degree
 			}
 			return degrees[id]
 		}
-		return linkpredict.PairScore(algorithm, first.ID, second.ID, linkpredict.NodeSet(left.nodes), linkpredict.NodeSet(right.nodes), degree), nil
+		return linkpredict.PairScore(algorithm, firstID, secondID, linkpredict.NodeSet(left.nodes), linkpredict.NodeSet(right.nodes), degree), nil
 	}
 }
 

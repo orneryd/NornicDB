@@ -276,7 +276,7 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.algo.pageRank"
-	nodes, err := e.algorithmNodes(procedure, args)
+	graph, nodes, err := e.algorithmIdentityInput(procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -289,8 +289,8 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 	if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
 		damping = d
 	}
-	scores := e.computePageRank(nodes, damping, iterations)
-	rows := algorithmRows(nodes, scores)
+	scores := graph.computePageRank(nodes, damping, iterations)
+	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -340,12 +340,12 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.betweenness", args)
+	graph, nodes, err := e.algorithmIdentityInput("apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computeBetweenness(nodes)
-	rows := algorithmRows(nodes, scores)
+	scores := graph.computeBetweenness(nodes)
+	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -411,12 +411,12 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.closeness", args)
+	graph, nodes, err := e.algorithmIdentityInput("apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computeCloseness(nodes)
-	rows := algorithmRows(nodes, scores)
+	scores := graph.computeCloseness(nodes)
+	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
