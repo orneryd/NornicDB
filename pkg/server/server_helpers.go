@@ -174,9 +174,12 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 	if mode != nil && !mode.CanAccessDatabase(physical) {
 		return nil, false
 	}
-	info, err := s.dbManager.GetDatabase(physical)
-	if err != nil || info.Type != "composite" {
+	if !s.dbManager.IsCompositeDatabase(physical) {
 		return []string{physical}, true
+	}
+	info, err := s.dbManager.GetDatabase(physical)
+	if err != nil {
+		return nil, false
 	}
 	targets := []string{physical}
 	for _, constituent := range info.Constituents {
