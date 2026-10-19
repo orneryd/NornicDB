@@ -45,7 +45,7 @@ func TestSearchContinuationPageSizeHTTPConfigured(t *testing.T) {
 			t.Cleanup(func() { stopTestServer(t, server) })
 			store, err := server.dbManager.GetStorage(server.dbManager.DefaultDatabaseName())
 			require.NoError(t, err)
-			nodes := make([]*storage.Node, limit + 2)
+			nodes := make([]*storage.Node, limit+2)
 			for i := range nodes {
 				nodes[i] = &storage.Node{ID: storage.NodeID(fmt.Sprintf("page-%04d", i))}
 			}
