@@ -40,6 +40,7 @@ struct FirstRunWizard: View {
                         StorageUpgradeSetupControl(config: config)
                         Text("Server: \(config.hostAddress), HTTP \(config.httpPortNumber), Bolt \(config.boltPortNumber)")
                         Text("Authentication: \(config.adminUsername). Encryption: \(config.encryptionEnabled ? "enabled" : "disabled")")
+                        Text("AI features: K-Means \(config.kmeansEnabled ? "on" : "off"), Memory Decay \(config.memoryDecayEnabled ? "on" : "off"), Auto-TLP \(config.autoTLPEnabled ? "on" : "off")")
                         summary("Embeddings", enabled: config.embeddingsEnabled, provider: config.embeddingProvider, model: config.embeddingModel)
                         summary("Reranking", enabled: config.searchRerankEnabled, provider: config.searchRerankProvider, model: config.searchRerankModel)
                         summary("Heimdall", enabled: config.heimdallEnabled, provider: config.heimdallProvider, model: config.heimdallModel)
@@ -87,45 +88,8 @@ struct FirstRunWizard: View {
             isSaving = false
             return
         }
-        saveProgress = "Waiting for server readiness..."
-        waitForServerHealth(attempts: 20) { success in
-            isSaving = false
-            guard success else {
-                saveProgress = "Server is not ready. Check its logs and settings before retrying."
-                return
-            }
-            config.completeFirstRun()
-            if config.upgradeStorageOnNextStart {
-                config.upgradeStorageOnNextStart = false
-                try? writeLaunchAgentPlist(config: config, to: path)
-            }
-            onComplete()
-        }
+        config.completeFirstRun()
+        appDelegate.serverLaunchSubmitted()
+        onComplete()
     }
-
-    private func waitForServerHealth(attempts: Int, completion: @escaping (Bool) -> Void) {
-        guard attempts > 0 else {
-            completion(false)
-            return
-        }
-
-        // Health endpoint is always on HTTP port 7474
-        let url = URL(string: "http://localhost:\(config.httpPortNumber)/health")!
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 2.0
-
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            DispatchQueue.main.async {
-                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                    completion(true)
-                } else {
-                    // Retry after 1 second
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        waitForServerHealth(attempts: attempts - 1, completion: completion)
-                    }
-                }
-            }
-        }.resume()
-    }
-
 }

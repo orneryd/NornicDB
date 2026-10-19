@@ -646,28 +646,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
+    private var statusGeneration = 0
+
+    /// Launch submission is complete; readiness is observed independently of windows.
+    func serverLaunchSubmitted() {
+        updateStatus(.starting)
+        checkHealth()
+    }
+
     private func checkHealth() {
         retireLegacyMenuBarInstances()
-        let url = URL(string: "http://localhost:7474/health")!
-        
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+        let generation = statusGeneration
+        guard let url = URL(string: "http://localhost:\(configManager.httpPortNumber)/health") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
+            let healthy = (response as? HTTPURLResponse)?.statusCode == 200
+            let processRunning = serverLaunchAgentHasProcess()
             DispatchQueue.main.async {
-                if let httpResponse = response as? HTTPURLResponse,
-                   httpResponse.statusCode == 200 {
-                    self?.updateStatus(.running)
-                } else {
-                    self?.updateStatus(.stopped)
+                guard let self = self, self.statusGeneration == generation else { return }
+                self.updateStatus(observedServerStatus(healthy: healthy, processRunning: processRunning))
+                if healthy && self.configManager.upgradeStorageOnNextStart {
+                    let path = NSString(string: "~/Library/LaunchAgents/com.nornicdb.server.plist").expandingTildeInPath
+                    self.configManager.upgradeStorageOnNextStart = false
+                    do { try writeLaunchAgentPlist(config: self.configManager, to: path) }
+                    catch { self.configManager.upgradeStorageOnNextStart = true }
                 }
             }
         }.resume()
     }
-    
+
     private func updateStatus(_ status: ServerStatus) {
+        statusGeneration += 1
         guard serverStatus != status else { return }
         serverStatus = status
         updateStatusIcon(for: status)
     }
-    
+
     private func updateStatusIcon(for status: ServerStatus) {
         guard let button = statusItem.button else { return }
         
@@ -1017,6 +1032,8 @@ func executeLaunchctl(arguments: [String], wait: Bool = true) -> Int32? {
     let task = Process()
     task.launchPath = "/usr/bin/env"
     task.arguments = ["launchctl"] + arguments
+    task.standardOutput = FileHandle.nullDevice
+    task.standardError = FileHandle.nullDevice
 
     do {
         try task.run()
@@ -1114,7 +1131,7 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             // Tab selector
             Picker("", selection: $selectedTab) {
-                Text("Features").tag(0)
+                Text("AI features").tag(0)
                 Text("Server").tag(1)
                 Text("AI services").tag(2)
                 Text("Security").tag(3)
@@ -1270,45 +1287,10 @@ struct SettingsView: View {
 
     var featuresTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 15) {
-                Text("AI & Analytics Features")
-                    .font(.headline)
-                    .padding(.bottom, 5)
-                
-                Text("Toggle advanced features. Changes require a server restart.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.bottom, 10)
-                
-                FeatureToggle(
-                    title: "K-Means Clustering",
-                    description: "Automatic node clustering and organization",
-                    isEnabled: $config.kmeansEnabled,
-                    icon: "circle.hexagongrid.fill"
-                )
-
-
-
-                FeatureToggle(
-                    title: "Memory Decay",
-                    description: "Natural episodic, semantic, and procedural memory decay",
-                    isEnabled: $config.memoryDecayEnabled,
-                    icon: "brain.filled.head.profile"
-                )
-                
-                FeatureToggle(
-                    title: "Auto-TLP",
-                    description: "Automatic Topological Link prediction",
-                    isEnabled: $config.autoTLPEnabled,
-                    icon: "point.3.connected.trianglepath.dotted"
-                )
-                
-
-            }
-            .padding()
+            AIFeatureSettingsView(config: config).padding()
         }
     }
-    
+
     var serverTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -1803,3 +1785,33 @@ struct FeatureToggle: View {
 
 // MARK: - First Run Wizard
 
+
+/// A live launchd process can initialize for longer than a health polling interval.
+func observedServerStatus(healthy: Bool, processRunning: Bool) -> ServerStatus {
+    healthy ? .running : (processRunning ? .starting : .stopped)
+}
+
+func launchAgentHasProcess(_ output: String) -> Bool {
+    // Only inspect the job's top-level PID, never nested environment values.
+    output.split(separator: "\n").contains { line in
+        let prefix = "\tpid = "
+        guard line.hasPrefix(prefix), let pid = Int32(line.dropFirst(prefix.count)), pid > 0 else { return false }
+        return true
+    }
+}
+
+private func serverLaunchAgentHasProcess() -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    process.arguments = ["print", launchdServiceTarget(for: "com.nornicdb.server")]
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return false }
+        return launchAgentHasProcess(String(decoding: data, as: UTF8.self))
+    } catch { return false }
+}
