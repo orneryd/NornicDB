@@ -2710,9 +2710,16 @@ func (v *vectorLookupGetter) GetVector(id string) ([]float32, bool) {
 // vector similarity, matching the file-backed vector-store behavior.
 func (s *Service) getVectorForCypher(vecID string) ([]float32, bool) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getVectorForCypherLocked(vecID)
+}
+
+// getVectorForCypherLocked reads from the vector source protected by mu.
+// Exact scoring already owns mu for its metadata snapshot and must not acquire
+// it recursively: a queued administrative writer would block the second RLock.
+func (s *Service) getVectorForCypherLocked(vecID string) ([]float32, bool) {
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
-	s.mu.RUnlock()
 	if vfs != nil {
 		return vfs.GetVector(vecID)
 	}

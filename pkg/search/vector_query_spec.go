@@ -578,7 +578,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		// Apply Cypher precedence for selecting which vector represents this node.
 		if named := s.nodeNamedVector[nodeID]; named != nil {
 			if vecID, ok := named[vectorName]; ok {
-				if v, ok := s.getVectorForCypher(vecID); ok {
+				if v, ok := s.getVectorForCypherLocked(vecID); ok {
 					bestScore = prepared.score(v)
 				}
 			}
@@ -586,7 +586,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			// fall through to managed named embeddings (any key) before chunk fallback.
 			if math.IsInf(bestScore, -1) && spec.Property == "" {
 				for _, vecID := range named {
-					if v, ok := s.getVectorForCypher(vecID); ok {
+					if v, ok := s.getVectorForCypherLocked(vecID); ok {
 						score := prepared.score(v)
 						if score > bestScore {
 							bestScore = score
@@ -599,7 +599,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		if math.IsInf(bestScore, -1) && spec.Property != "" {
 			if props := s.nodePropVector[nodeID]; props != nil {
 				if vecID, ok := props[spec.Property]; ok {
-					if v, ok := s.getVectorForCypher(vecID); ok {
+					if v, ok := s.getVectorForCypherLocked(vecID); ok {
 						bestScore = prepared.score(v)
 					}
 				}
@@ -608,7 +608,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 
 		if math.IsInf(bestScore, -1) {
 			for _, vecID := range s.nodeChunkVectors[nodeID] {
-				if v, ok := s.getVectorForCypher(vecID); ok {
+				if v, ok := s.getVectorForCypherLocked(vecID); ok {
 					score := prepared.score(v)
 					if score > bestScore {
 						bestScore = score
