@@ -565,9 +565,8 @@ func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (Cons
 	if !exists || info.Type != "composite" {
 		return ConstituentRef{}, "", false
 	}
-	aliasKey := strings.ToLower(constituentAlias)
 	for key, ref := range canonicalConstituents(info.Constituents) {
-		if key != aliasKey {
+		if !constituentAliasMatches(key, constituentAlias) {
 			continue
 		}
 		resolvedName := ref.DatabaseName

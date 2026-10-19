@@ -330,6 +330,28 @@ func canonicalConstituents(refs []ConstituentRef) iter.Seq2[string, ConstituentR
 	}
 }
 
+// constituentAliasMatches compares against the catalog's lowercase key. ASCII
+// lookups avoid allocating another lowercase string; non-ASCII input retains
+// strings.ToLower semantics, including distinctions broader EqualFold erases.
+func constituentAliasMatches(key, alias string) bool {
+	if len(key) != len(alias) {
+		return key == strings.ToLower(alias)
+	}
+	for i := 0; i < len(alias); i++ {
+		c := alias[i]
+		if c >= 128 {
+			return key == strings.ToLower(alias)
+		}
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if key[i] != c {
+			return false
+		}
+	}
+	return true
+}
+
 // snapshotConstituents returns the same winners in their stored order for
 // metadata/catalog callers that need an independent slice.
 func snapshotConstituents(refs []ConstituentRef) []ConstituentRef {
@@ -398,7 +420,7 @@ func (m *DatabaseManager) ExistsOrIsConstituent(name string) bool {
 		info, exists := m.databases[compositeName]
 		if exists && info.Type == "composite" {
 			for key := range canonicalConstituents(info.Constituents) {
-				if key == strings.ToLower(constituentAlias) {
+				if constituentAliasMatches(key, constituentAlias) {
 					return true
 				}
 			}
