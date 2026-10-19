@@ -21,26 +21,9 @@ type grammarSymbolRole struct {
 	variable, binding, queryBinding, expression, selector, procedureColumn bool
 }
 
-func symbolRole(symbol grammar.ISymbolContext, parent antlr4.Tree) (role grammarSymbolRole) {
-	switch p := parent.(type) {
-	case grammar.IAtomContext, grammar.IMapProjectionContext:
-		role.variable, role.expression = true, true
-	case grammar.IMapProjectionItemContext:
-		role.variable, role.expression, role.selector = true, true, true
-	case grammar.IFabricCallScopeContext, grammar.ICallSubqueryContext, grammar.ISetItemContext, grammar.IRemoveItemContext, grammar.ISchemaCommandContext:
-		role.variable = true
-	case grammar.INodePatternContext, grammar.IRelationDetailContext, grammar.IPatternPartContext, grammar.IUnwindStContext, grammar.IForStContext, grammar.IProjectionItemContext, grammar.ILetItemContext, grammar.IFabricLoadCsvContext:
-		role.variable, role.binding, role.queryBinding = true, true, true
-	case grammar.IForeachStContext, grammar.IFilterExpressionContext, grammar.IReduceExpressionContext, grammar.IAllReduceExpressionContext, grammar.ILhsContext:
-		role.variable, role.binding = true, true
-	case grammar.IYieldItemContext:
-		symbols := p.AllSymbol()
-		role.variable = true
-		role.binding = len(symbols) == 1 || symbols[0] != symbol
-		role.queryBinding = role.binding
-		role.procedureColumn = len(symbols) == 1 || symbols[0] == symbol
-	}
-	return role
+func symbolRole(symbol grammar.ISymbolContext, parent antlr4.Tree) grammarSymbolRole {
+	r := grammar.RoleOfSymbol(symbol, parent)
+	return grammarSymbolRole{variable: r.Variable, binding: r.Binding, queryBinding: r.QueryBinding, expression: r.Expression, selector: r.Selector, procedureColumn: r.ProcedureColumn}
 }
 
 // NameOccurrences supplies the grammar role of every symbolic name to the
@@ -157,4 +140,29 @@ func StandaloneOrderEdits(text string) ([]QueryTextEdit, bool) {
 	}
 	visit(q)
 	return edits, true
+}
+
+// PreserveNameRoles freezes grammar-owned keyword/name decisions before a
+// planner removes imports or splits a query into fragments. Quoting a variable
+// preserves its role even when its binding belongs to an earlier fragment.
+func PreserveNameRoles(text string) string {
+	names, ok := NameOccurrences(text)
+	if !ok {
+		return text
+	}
+	var out strings.Builder
+	end := 0
+	for _, name := range names {
+		if !name.Variable || name.Parameter || strings.HasPrefix(name.Written, "`") || !KeywordName(name.Name) {
+			continue
+		}
+		out.WriteString(text[end:name.Start])
+		out.WriteString("`" + strings.ReplaceAll(name.Name, "`", "``") + "`")
+		end = name.End
+	}
+	if end == 0 {
+		return text
+	}
+	out.WriteString(text[end:])
+	return out.String()
 }
