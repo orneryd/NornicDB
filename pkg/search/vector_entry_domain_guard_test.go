@@ -248,6 +248,26 @@ func domainKeyMethod(method string) bool {
 	return method != "Save" && method != "Load"
 }
 
+// Vector lookup and score-reader callbacks share one entry-key input contract.
+// Detect it structurally so aliases and returned reader closures are covered.
+func domainEntryReader(t types.Type) bool {
+	sig, ok := t.Underlying().(*types.Signature)
+	if !ok || sig.Params().Len() != 1 || sig.Results().Len() != 2 {
+		return false
+	}
+	id, ok := sig.Params().At(0).Type().Underlying().(*types.Basic)
+	if !ok || id.Kind() != types.String || !types.Identical(sig.Results().At(1).Type(), types.Typ[types.Bool]) {
+		return false
+	}
+	result := sig.Results().At(0).Type().Underlying()
+	if basic, ok := result.(*types.Basic); ok && basic.Kind() == types.Float64 {
+		return true
+	}
+	if slice, ok := result.(*types.Slice); ok {
+		return types.Identical(slice.Elem(), types.Typ[types.Float32])
+	}
+	return false
+}
 // Explicit logical API contracts. Generic backend strings are already entry
 // identities; graph/fulltext identities remain nodes. These do not bless call
 // sites: every supplied argument is still derived and checked independently.
@@ -274,7 +294,7 @@ func domainParam(fn *types.Func, n int) vectorDomain {
 			return domainEntry
 		}
 	}
-		if n == 3 && (name == "BuildIVFPQFromVectorStore" || name == "ivfpqCollectTrainingSample" || name == "Service.getOrBuildIVFPQIndex") {
+	if n == 3 && (name == "BuildIVFPQFromVectorStore" || name == "ivfpqCollectTrainingSample" || name == "Service.getOrBuildIVFPQIndex") {
 		sig := fn.Type().(*types.Signature)
 		if slice, ok := sig.Params().At(n).Type().Underlying().(*types.Slice); ok {
 			if elem, ok := slice.Elem().Underlying().(*types.Basic); ok && elem.Kind() == types.String {
@@ -340,7 +360,7 @@ func (g *vectorDomainGuard) infer(e ast.Expr) vectorDomain {
 			return domainEntry
 		case "Service.nodeChunkVectors", "Service.nodeNamedVector", "Service.nodePropVector":
 			return domainEntry
-		case "vectorQueryCandidateMeta.named", "vectorQueryCandidateMeta.properties", "vectorQueryCandidateMeta.chunks", "vectorBuildSeeds.compressedIDs":
+		case "vectorQueryCandidateMeta.named", "vectorQueryCandidateMeta.properties", "vectorQueryCandidateMeta.props", "vectorQueryCandidateMeta.chunks", "vectorBuildSeeds.compressedIDs":
 			return domainEntry
 		}
 		if field == "MatchID" {
@@ -489,7 +509,18 @@ func (g *vectorDomainGuard) closeDomains() {
 							}
 						}
 					}
+				case *ast.CompositeLit:
+					for _, el := range x.Elts {
+						if kv, ok := el.(*ast.KeyValueExpr); ok {
+							if field, ok := g.object(kv.Key).(*types.Var); ok && field.IsField() && field.Name() != "ID" && field.Name() != "id" {
+								g.env[field] |= g.infer(kv.Value)
+							}
+						}
+					}
 				case *ast.FuncLit:
+					if domainEntryReader(g.p.info.TypeOf(x)) {
+						g.env[g.p.info.TypeOf(x).(*types.Signature).Params().At(0)] = domainEntry
+					}
 					if domainFuncName(fn) == "hnswVectorChunkIterator" {
 						params := g.p.info.TypeOf(x).(*types.Signature).Params()
 						if params.Len() == 2 {
@@ -546,6 +577,19 @@ func (g *vectorDomainGuard) checkIdentitySyntax(where string, root ast.Node, own
 				}
 			}
 		case *ast.CompositeLit:
+			if !owner {
+				recv := domainTypeName(g.p.info.TypeOf(x))
+				for _, el := range x.Elts {
+					kv, ok := el.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := kv.Key.(*ast.Ident)
+					if ok && ((key.Name == "ID" && (recv == "Candidate" || recv == "ScoredCandidate" || recv == "ANNResult")) || (key.Name == "id" && recv == "hnswBuildPair")) && g.infer(kv.Value)&domainNode != 0 {
+						g.flag(where, "document identity assigned to a vector entry record")
+					}
+				}
+			}
 			if !owner && domainTypeName(g.p.info.TypeOf(x)) == "nodeLexicalHint" && len(x.Elts) > 0 {
 				g.flag(where, "constructs a document hint outside the key owner")
 			}
@@ -591,7 +635,7 @@ func (g *vectorDomainGuard) checkKeyCall(where string, call *ast.CallExpr, owner
 		}
 		// VectorLookup is the backend's typed function contract, including
 		// callback values captured without a directly named method object.
-		if domainTypeName(g.p.info.TypeOf(call.Fun)) == "VectorLookup" && len(call.Args) > 0 {
+		if domainEntryReader(g.p.info.TypeOf(call.Fun)) && len(call.Args) > 0 {
 			g.population[where+" -> VectorLookup"] = true
 			if g.infer(call.Args[0]) != domainEntry {
 				g.flag(where, "VectorLookup receives an unproved/non-entry identity")
@@ -600,6 +644,12 @@ func (g *vectorDomainGuard) checkKeyCall(where string, call *ast.CallExpr, owner
 		return
 	}
 	name := domainFuncName(fn)
+	if name == "HNSWIndex.SetBuildLexicalHints" {
+		g.flag(where, "production hint bridge must use the typed setter")
+	}
+	if name == "HNSWIndex.setBuildLexicalHints" {
+		g.population[where+" -> "+name] = true
+	}
 	if decl := g.decls[fn]; decl != nil && filepath.Base(gFileName(g, decl)) == "vector_entry_key.go" {
 		g.population[where+" -> "+name] = true
 	}
@@ -775,6 +825,7 @@ func (s *Service) domainFixtureMethodExpression(id storage.NodeID) {
 func domainFixtureWrongMap() map[string]LexicalSeedHint { return nil }
 var domainFixtureGlobal = func(s *Service, id storage.NodeID) { s.removeVectorLocked(string(id)) }
 func domainFixtureNodeLookup(pair hnswBuildPair) { nodeHintForID(nil, pair.id) }
+func domainFixtureCandidate(id storage.NodeID) Candidate { return Candidate{ID:string(id)} }
 func (s *Service) domainFixtureHintBridge() { s.hnswIndex.SetBuildLexicalHints(nil) }
 type domainFixtureBackend struct{}
 func (*domainFixtureBackend) Add(string, []float32) error { return nil }
@@ -787,7 +838,7 @@ func domainFixtureNewLookup(id storage.NodeID) {
 
 func TestVectorEntryDomainGuardRejectsBypasses(t *testing.T) {
 	g := newVectorDomainGuard(t, vectorDomainNegativeFixture)
-	for _, name := range []string{"domainFixtureCast", "domainFixtureMethodValue", "domainFixtureMethodExpression", "domainFixtureWrongMap", "domainFixtureNodeLookup", "domainFixtureHintBridge", "domainFixtureNewLookup", "declaration in vector-domain-fixture.go"} {
+	for _, name := range []string{"domainFixtureCast", "domainFixtureMethodValue", "domainFixtureMethodExpression", "domainFixtureWrongMap", "domainFixtureNodeLookup", "domainFixtureCandidate", "domainFixtureHintBridge", "domainFixtureNewLookup", "declaration in vector-domain-fixture.go"} {
 		found := false
 		for issue := range g.violations {
 			if strings.Contains(issue, name) {
