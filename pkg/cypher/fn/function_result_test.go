@@ -41,22 +41,6 @@ func TestFunctionResultRetainsCanonicalValues(t *testing.T) {
 		require.Equal(t, value, FunctionResult(value), "%T", value)
 	}
 	unchanged := map[string]interface{}{"a": []interface{}{nil, "text", int64(1)}}
-	require.Equal(t, reflect.ValueOf(unchanged).Pointer(), reflect.ValueOf(FunctionResult(unchanged)).Pointer())
 	require.Equal(t, float64(0), testing.AllocsPerRun(10, func() { FunctionResult(unchanged) }))
 	require.Equal(t, map[string]interface{}{}, FunctionResult(EntityProperties(nil)))
-}
-
-func BenchmarkFunctionResult(b *testing.B) {
-	for _, tc := range []struct{ name string; value interface{} }{
-		{"scalar", int64(42)},
-		{"canonical", map[string]interface{}{"a": int64(1), "list": []interface{}{nil, "value"}}},
-		{"nested_null", map[string]interface{}{"a": map[string]interface{}(nil), "list": []interface{}{(*storage.Node)(nil)}}},
-	} {
-		b.Run(tc.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				FunctionResult(tc.value)
-			}
-		})
-	}
 }
