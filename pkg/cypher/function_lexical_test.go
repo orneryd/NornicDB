@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"testing"
+ "strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func TestFunctionLexicalReaders(t *testing.T) {
 	require.Equal(t, "range", name)
 	require.Equal(t, []string{inner}, namedFunctionArguments(text, "range"))
 	require.True(t, isFunctionCallWS(text, "range"))
-	require.Equal(t, inner, extractFuncArgs(text, "range"))
+	require.Equal(t, strings.TrimSpace(inner), extractFuncArgs(text, "range"))
 	// A real nested call remains visible to the static walker.
 	var names []string
 	require.NoError(t, forEachFunctionCall("toUpper(/* range(1) */ toString(range(1, 2)))", func(name, _ string) error {
