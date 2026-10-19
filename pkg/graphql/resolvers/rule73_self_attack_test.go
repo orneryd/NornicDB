@@ -19,6 +19,7 @@ const (
 	rule73Write     rule73GraphQLClass = "write"
 	rule73ReadWrite rule73GraphQLClass = "read_write"
 	rule73Admin     rule73GraphQLClass = "admin"
+	rule73Global rule73GraphQLClass = "global_worker"
 )
 
 func rule73GraphQLInventory() map[string]rule73GraphQLClass {
@@ -44,9 +45,10 @@ func rule73GraphQLInventory() map[string]rule73GraphQLClass {
 		"mutationResolver.UpdateNode", "mutationResolver.DeleteNode", "mutationResolver.BulkDeleteNodes", "mutationResolver.MergeNode",
 		"mutationResolver.CreateRelationship", "mutationResolver.UpdateRelationship", "mutationResolver.DeleteRelationship",
 		"mutationResolver.BulkCreateRelationships", "mutationResolver.BulkDeleteRelationships", "mutationResolver.MergeRelationship",
-		"mutationResolver.ExecuteCypher", "mutationResolver.TriggerEmbedding", "mutationResolver.RebuildSearchIndex",
+		"mutationResolver.ExecuteCypher", "mutationResolver.RebuildSearchIndex",
 	)
 	add(rule73Admin, "mutationResolver.ClearAll")
+	add(rule73Global, "mutationResolver.TriggerEmbedding")
 	return classes
 }
 
@@ -127,13 +129,13 @@ func TestRule73SelfAttackEveryGraphQLDataResolver(t *testing.T) {
 		ctx               context.Context
 		allowed           func(rule73GraphQLClass) bool
 	}{
-		{"default-only", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic"}, true, true, false), func(class rule73GraphQLClass) bool { return class != rule73Admin }},
-		{"named-only", rule73GraphQLContext("", map[string]string{"rule73_named": "rule73_named"}, true, true, false), func(class rule73GraphQLClass) bool { return class != rule73Admin }},
+		{"default-only", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic"}, true, true, false), func(class rule73GraphQLClass) bool { return class != rule73Admin && class != rule73Global }},
+		{"named-only", rule73GraphQLContext("", map[string]string{"rule73_named": "rule73_named"}, true, true, false), func(class rule73GraphQLClass) bool { return class != rule73Admin && class != rule73Global }},
 		{"write-only-default", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic"}, false, true, false), func(class rule73GraphQLClass) bool { return class == rule73Write }},
 		{"write-only-named", rule73GraphQLContext("", map[string]string{"rule73_named": "rule73_named"}, false, true, false), func(class rule73GraphQLClass) bool { return class == rule73Write }},
 		{"no-access", rule73GraphQLContext("", nil, false, false, false), func(rule73GraphQLClass) bool { return false }},
 		{"admin", rule73GraphQLContext("nornic", map[string]string{"nornic": "nornic", "rule73_named": "rule73_named"}, true, true, true), func(rule73GraphQLClass) bool { return true }},
-		{"auth-off", context.Background(), func(rule73GraphQLClass) bool { return true }},
+		{"auth-off", auth.WithRequestAuthenticationDisabled(context.Background()), func(rule73GraphQLClass) bool { return true }},
 	}
 
 	classes := rule73GraphQLInventory()

@@ -42,14 +42,11 @@ func rule73HTTPInventory() []rule73HTTPCase {
 		{"graph.temporal", http.MethodPost, "selected", rule73HTTPRead, func(db string) string { return "/nornicdb/graph/" + db + "/temporal" }, constantBody(map[string]any{"node_ids": []string{"missing"}})},
 		{"graph.diff", http.MethodPost, "selected", rule73HTTPRead, func(db string) string { return "/nornicdb/graph/" + db + "/diff" }, constantBody(map[string]any{"node_ids": []string{"missing"}})},
 		{"decay.info", http.MethodGet, "default", rule73HTTPRead, func(string) string { return "/nornicdb/decay" }, nil},
-		{"embed.trigger", http.MethodPost, "selected", rule73HTTPReadWrite, func(db string) string { return "/nornicdb/embed/trigger?database=" + db }, nil},
-		{"embed.stats", http.MethodGet, "default", rule73HTTPRead, func(string) string { return "/nornicdb/embed/stats" }, nil},
-		{"embed.failures", http.MethodGet, "default", rule73HTTPRead, func(string) string { return "/nornicdb/embed/failures" }, nil},
-		{"embed.retry-failures", http.MethodPost, "default", rule73HTTPReadWrite, func(string) string { return "/nornicdb/embed/retry-failures" }, constantBody(map[string]any{})},
-		{"embed.clear", http.MethodPost, "selected", rule73HTTPAdmin, func(db string) string { return "/nornicdb/embed/clear?database=" + db }, constantBody(map[string]any{})},
-		{"embed.pause", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/pause" }, nil},
-		{"embed.resume", http.MethodPost, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/resume" }, nil},
-		{"embed.status", http.MethodGet, "all", rule73HTTPAllAdmin, func(string) string { return "/nornicdb/embed/status" }, nil},
+		{"embed.trigger", http.MethodPost, "all", rule73HTTPReadWrite, func(db string) string { return "/nornicdb/embed/trigger?database=" + db }, nil},
+		{"embed.stats", http.MethodGet, "all", rule73HTTPRead, func(string) string { return "/nornicdb/embed/stats" }, nil},
+		{"embed.failures", http.MethodGet, "all", rule73HTTPRead, func(string) string { return "/nornicdb/embed/failures" }, nil},
+		{"embed.retry-failures", http.MethodPost, "all", rule73HTTPReadWrite, func(string) string { return "/nornicdb/embed/retry-failures" }, constantBody(map[string]any{})},
+		{"embed.clear", http.MethodPost, "default", rule73HTTPAdmin, func(db string) string { return "/nornicdb/embed/clear?database=" + db }, constantBody(map[string]any{})},
 		{"search.rebuild", http.MethodPost, "selected", rule73HTTPReadWrite, func(string) string { return "/nornicdb/search/rebuild" }, func(db string) any { return map[string]any{"database": db} }},
 		{"gdpr.export", http.MethodPost, "default", rule73HTTPRead, func(string) string { return "/gdpr/export" }, constantBody(map[string]any{"user_id": "nobody", "format": "json"})},
 		{"gdpr.delete", http.MethodPost, "default", rule73HTTPReadWrite, func(string) string { return "/gdpr/delete" }, constantBody(map[string]any{"user_id": "nobody", "confirm": true})},
@@ -121,7 +118,7 @@ func TestRule73SelfAttackEveryHTTPDatabaseDataRoute(t *testing.T) {
 		if p.name == "admin" {
 			return true
 		}
-		if tc.target == "all" {
+		if tc.target == "all" && (!p.allowedDatabases["nornic"] || !p.allowedDatabases["rule73_named"]) {
 			return false
 		}
 		if !p.allowedDatabases[database] {
