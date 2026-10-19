@@ -14,6 +14,10 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			name = "namespaced"
 		}
 		t.Run(name, func(t *testing.T) {
+			prefix := ""
+			if !namespaced { prefix = "raw:" }
+			same,localTarget := NodeID(prefix+"same"),NodeID(prefix+"target")
+			relation := EdgeID(prefix+"same-rel")
 			engines := make(map[string]Engine)
 			names := map[string]string{"one": "one", "one_alias": "one", "two": "two"}
 			modes := map[string]string{"one": "read_write", "one_alias": "read", "two": "read_write"}
@@ -27,13 +31,13 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = engine.Close() })
 				engines[database] = engine
-				for _, id := range []NodeID{"same", "target"} {
+				for _, id := range []NodeID{same, localTarget} {
 					_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"db": database}})
 					require.NoError(t, err)
 				}
-				require.NoError(t, engine.CreateEdge(&Edge{ID: "same-rel", StartNode: "same", EndNode: "target", Type: "R"}))
+				require.NoError(t, engine.CreateEdge(&Edge{ID: relation, StartNode: same, EndNode: localTarget, Type: "R"}))
 				if provider,ok := engine.(MVCCHeadEngine); ok {
-					head,err := provider.GetEdgeCurrentHead("same-rel")
+					head,err := provider.GetEdgeCurrentHead(relation)
 					require.NoError(t,err)
 					if head.Version.Compare(version)>0 { version = head.Version }
 				}
@@ -51,20 +55,20 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			for label, read := range readers {
 				t.Run(label, func(t *testing.T) {
 					for _, database := range []string{"one", "two"} {
-						node, err := read(NodeID("4:" + database + ":same"))
+						node, err := read(NodeID("4:" + database + ":"+string(same)))
 						require.NoError(t, err)
-						require.Equal(t, NodeID("same"), node.ID)
+						require.Equal(t, same, node.ID)
 						require.Equal(t, database, node.Database)
 						require.Equal(t, database, node.Properties["db"])
 					}
-					_, err := read("4:missing:same")
+					_, err := read(NodeID("4:missing:"+string(same)))
 					require.ErrorIs(t, err, ErrNotFound)
-					_, err = read("5:one:same")
+					_, err = read(NodeID("5:one:"+string(same)))
 					require.ErrorIs(t, err, ErrNotFound)
 				})
 			}
 			for _, database := range []string{"one", "two"} {
-				source, target := NodeID("4:"+database+":same"), NodeID("4:"+database+":target")
+				source, target := NodeID("4:"+database+":"+string(same)), NodeID("4:"+database+":"+string(localTarget))
 				adjacency := []func() ([]*Edge, error){
 					func() ([]*Edge, error) { return composite.GetOutgoingEdges(source) },
 					func() ([]*Edge, error) { return composite.GetIncomingEdges(target) },
@@ -87,19 +91,20 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 					require.NoError(t,err)
 				}
 				for _, read := range []func(EdgeID) (*Edge, error){composite.GetEdge, composite.GetEdgeLatestEffective, composite.GetEdgeLatestVisible} {
-					edge, err := read(EdgeID("5:" + database + ":same-rel"))
+					edge, err := read(EdgeID("5:" + database + ":"+string(relation)))
 					require.NoError(t, err)
 					require.Equal(t, database, edge.Database)
 				}
 			}
-			edges, err := composite.GetEdgesBetween("4:one:same", "4:two:target")
+			edges, err := composite.GetEdgesBetween(NodeID("4:one:"+string(same)), NodeID("4:two:"+string(localTarget)))
 			require.NoError(t, err)
 			require.Empty(t, edges)
-			batch, err := composite.BatchGetNodes([]NodeID{"4:one:same", "4:two:same", "4:missing:same"})
+			one,two := NodeID("4:one:"+string(same)),NodeID("4:two:"+string(same))
+			batch, err := composite.BatchGetNodes([]NodeID{one,two,NodeID("4:missing:"+string(same))})
 			require.NoError(t, err)
 			require.Len(t, batch, 2)
-			require.Equal(t, "one", batch["4:one:same"].Database)
-			require.Equal(t, "two", batch["4:two:same"].Database)
+			require.Equal(t, "one", batch[one].Database)
+			require.Equal(t, "two", batch[two].Database)
 			seen := make(map[string]bool)
 			require.NoError(t, composite.StreamNodesWithOptions(context.Background(), StreamNodesOptions{}, func(node *Node) error {
 				seen[node.IdentityKey()] = true
@@ -113,7 +118,7 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			}))
 			require.Len(t, seen, 2)
 			if !namespaced {
-				node, err := engines["one"].GetNode("same")
+				node, err := engines["one"].GetNode(same)
 				require.NoError(t, err)
 				require.Empty(t, node.Database, "composite provenance must not mutate constituent records")
 			}
