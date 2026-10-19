@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -49,12 +50,18 @@ func BenchmarkMetricsDatabaseReadAdmission(b *testing.B) {
 				s.auth = nil
 				token = ""
 			}
+			handler := s.buildRouter()
 			for _, path := range []string{"/metrics", "/status"} {
 				b.Run(path, func(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						response := makeRequest(b, s, http.MethodGet, path, nil, token)
+						request := httptest.NewRequest(http.MethodGet, path, nil)
+						if token != "" {
+							request.Header.Set("Authorization", token)
+						}
+						response := httptest.NewRecorder()
+						handler.ServeHTTP(response, request)
 						if response.Code != http.StatusOK {
 							b.Fatalf("%s: %d %s", path, response.Code, response.Body.String())
 						}
