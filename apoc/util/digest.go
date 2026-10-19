@@ -72,6 +72,18 @@ func writeJavaString(out *strings.Builder, value interface{}) {
 		out.WriteString(JavaDoubleString(float64(v)))
 	case float64:
 		out.WriteString(JavaDoubleString(v))
+	case []byte:
+		// APOC's Utils.toHashString uses Arrays.toString(byte[]): Java
+		// bytes are signed, unlike Go's byte. Keep binary values as bytes.
+		out.WriteByte('[')
+		var text [4]byte // -128 is the longest signed byte.
+		for index, item := range v {
+			if index > 0 {
+				out.WriteString(", ")
+			}
+			out.Write(strconv.AppendInt(text[:0], int64(int8(item)), 10))
+		}
+		out.WriteByte(']')
 	case []interface{}:
 		out.WriteByte('[')
 		for index, item := range v {
