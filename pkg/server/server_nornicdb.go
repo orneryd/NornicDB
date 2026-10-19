@@ -438,7 +438,7 @@ func (s *Server) setEmbeddingPaused(w http.ResponseWriter, r *http.Request, paus
 // handleEmbedStatus reports whether automatic embedding is paused and how
 // many nodes are pending (GET, admin; db.embedding.status).
 func (s *Server) handleEmbedStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAllDatabaseOperation(w, r) {
+	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermAdmin) {
 		return
 	}
 	if r.Method != http.MethodGet {
