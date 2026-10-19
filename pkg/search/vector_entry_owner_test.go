@@ -120,6 +120,27 @@ func vectorOwnerCases() []vectorOwnerCase {
 		entries: 1,
 		queries: []vectorOwnerQuery{{axis: 0, owner: "x", property: "p-chunk-1"}},
 	})
+	// A raw node ID may equal an encoded vector key of any entry kind.
+	// Its own main entry is escaped, and insert/update/delete must use that
+	// same domain rather than deleting the other node's entry by raw ID.
+	for _, marker := range []struct {
+		name    string
+		key     string
+		node    *storage.Node
+		query   vectorOwnerQuery
+		entries int
+	}{
+		{name: "named", key: nodeNamedVectorKey("doc", "v"), node: &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "named owner"}, NamedEmbeddings: map[string][]float32{"v": vectorOwnerAxis(0)}}, query: vectorOwnerQuery{axis: 0, owner: "doc", property: "v"}, entries: 2},
+		{name: "property", key: nodePropertyVectorKey("doc", "emb"), node: &storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "property owner", "emb": vectorOwnerAxis(0)}}, query: vectorOwnerQuery{axis: 0, owner: "doc", property: "emb"}, entries: 2},
+		{name: "chunk", key: nodeChunkVectorKey("doc", 1), node: vectorOwnerChunkNode("doc", 0, 2), query: vectorOwnerQuery{axis: 2, owner: "doc"}, entries: 3},
+	} {
+		cases = append(cases, vectorOwnerCase{
+			name:    "encoded entry vs marker-prefixed node " + marker.name,
+			nodes:   []*storage.Node{marker.node, vectorOwnerChunkNode(marker.key, 1)},
+			entries: marker.entries,
+			queries: []vectorOwnerQuery{marker.query, {axis: 1, owner: marker.key}},
+		})
+	}
 	return cases
 }
 
