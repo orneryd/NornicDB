@@ -201,7 +201,7 @@ func TestStatementCacheFamilyPreciseReferenceInvalidation(t *testing.T) {
 				t.Fatal("routed body was not cached")
 			}
 			// Full text/explain and uppercase routing entries reference the same selection.
-			if err := root.validateSyntax(query, false); err != nil {
+			if err := root.validateSyntax(context.Background(), query, false); err != nil {
 				t.Fatal(err)
 			}
 			root.cachedUpperQuery(query)
