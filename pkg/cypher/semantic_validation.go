@@ -12,7 +12,11 @@ import (
 // under the text the client wrote: statements that differ only in quoting
 // canonicalize alike but can validate differently (their column names
 // differ).
-func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
+func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string, recordings ...*scopeRecording) error {
+	scopeText := cypher
+	if record := firstScopeRecording(recordings); record != nil && record.source != "" {
+		scopeText = record.source
+	}
 	names := quotedVariableNamesFor(ctx, cypher)
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher
@@ -35,6 +39,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		cached = normalized && e.semanticValidationCache.contains(canonical)
 	}
 	if cached && names == nil && !normalized {
+		if firstScopeRecording(recordings) != nil {
+			return e.validateMatchSemanticScopes(scopeText, cypher25, recordings...)
+		}
 		return nil
 	}
 	if err := validateExpressionLexicalTokens(cypher); err != nil {
@@ -46,7 +53,13 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		// value-dependent: LIMIT 2-3 and LIMIT 5-1 share one canonical form,
 		// yet only the latter is a non-negative integer. Re-evaluate them on
 		// this text before returning (monster retest part 3).
-		return e.validateStaticPaginationExpressions(cypher)
+		if err := e.validateStaticPaginationExpressions(cypher); err != nil {
+			return err
+		}
+		if firstScopeRecording(recordings) != nil {
+			return e.validateMatchSemanticScopes(scopeText, cypher25, recordings...)
+		}
+		return nil
 	}
 	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
@@ -156,7 +169,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateMergeSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
+	if err := e.validateMatchSemanticScopes(scopeText, cypher25, recordings...); err != nil {
 		return err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {

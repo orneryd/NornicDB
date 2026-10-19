@@ -454,6 +454,8 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		case clause.FabricLoadCsv() != nil:
 			c.Kind = "LOAD CSV"
 			c.tree = clause.FabricLoadCsv()
+			c.Name = unquoteSyntaxName(r.source(clause.FabricLoadCsv().Symbol()))
+			c.Expression = r.source(clause.FabricLoadCsv().Expression())
 			headEnd = r.end(clause.FabricLoadCsv().CSV().GetSymbol())
 		case clause.SchemaCommand() != nil:
 			c.Kind = "SCHEMA"
@@ -723,11 +725,9 @@ func StripLeadingImportsForRecord(text string, bindings map[string]interface{}) 
 			return text
 		}
 	}
-	rest := q.Clauses[0].Remaining
-	for _, name := range names {
-		rest = RewriteQueryVariable(rest, name, "$"+quoteCypherIdentifier(name))
-	}
-	return rest
+	// The local execution frame carries these names as records. Replacing
+	// them with parameters would merge two independent binding namespaces.
+	return q.Clauses[0].Remaining
 }
 
 func (q *QueryStructure) keywordAt(pos int, kind string) bool {
@@ -936,30 +936,36 @@ func syntaxVariable(tree, parent antlr4.Tree) (grammar.ISymbolContext, bool) {
 // BranchDeclaresVariable distinguishes a binding from a read by its grammar
 // parent. A quoted name has exactly the same role as an unquoted name.
 func BranchDeclaresVariable(text, name string) bool {
+	return BranchBindings(text)[name]
+}
+
+// BranchBindings supplies the first query binding or expression reference of
+// every name from the native grammar. True denotes a branch-local declaration;
+// false denotes a read from its incoming frame. CALL compilation and execution
+// consume these same facts instead of rescanning names in source text.
+func BranchBindings(text string) map[string]bool {
 	q := ReadQueryStructure(text)
 	if q.Err != nil {
-		return false
+		return nil
 	}
-	found, declares := false, false
+	bindings := make(map[string]bool)
 	for _, clause := range q.Clauses {
 		walkSyntaxParents(clause.tree, nil, func(node, parent antlr4.Tree) {
-			if found {
+			symbol, ok := node.(grammar.ISymbolContext)
+			if !ok {
 				return
 			}
-			symbol, ok := node.(grammar.ISymbolContext)
-			if !ok || unquoteSyntaxName(symbol.GetText()) != name {
+			name := unquoteSyntaxName(symbol.GetText())
+			if _, found := bindings[name]; found {
 				return
 			}
 			role := symbolRole(symbol, parent)
 			if role.queryBinding || role.expression {
-				found, declares = true, role.queryBinding
+				bindings[name] = role.queryBinding
 			}
 		})
-		if found {
-			return declares
-		}
 	}
-	return false
+	return bindings
 }
 func syntaxHasVariable(text, name string) bool {
 	_, tree := readExpression(text)

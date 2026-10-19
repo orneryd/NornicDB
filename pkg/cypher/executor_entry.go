@@ -462,7 +462,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+			recording := newScopeRecording(fabric.PreserveNameRoles(modeQuery), cypherVersionFromContext(ctx) == "25")
+			if err := e.validateSemanticScopes(ctx, fabric.SemanticQuery(recording.source), recording); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {

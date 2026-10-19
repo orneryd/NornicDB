@@ -187,5 +187,5 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 		return nil, err
 	}
 	plan := pipelineRowWith{star: true, projections: projections}
-	return e.pipelineWithRowSource(ctx, input, plan), nil
+	return e.pipelineWithRowSource(ctx, input, plan.withImports(ctx)), nil
 }

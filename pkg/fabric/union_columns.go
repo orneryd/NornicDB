@@ -4,7 +4,7 @@ import "fmt"
 
 // All UNION routes reconcile the declared/runtime schema before concatenation
 // or DISTINCT. Conversion is lazy, preserving the row-stream close contract.
-func mergeUnionRows(f *FragmentUnion, lhs []string, left RowIterator, rhs []string, right RowIterator) ([]string, RowIterator, error) {
+func (e *FabricExecutor) mergeUnionRows(f *FragmentUnion, lhs []string, left RowIterator, rhs []string, right RowIterator) ([]string, RowIterator, error) {
 	columns := f.Columns
 	if len(columns) == 0 {
 		columns = lhs
@@ -51,7 +51,7 @@ func mergeUnionRows(f *FragmentUnion, lhs []string, left RowIterator, rhs []stri
 	}
 	out := NewConcatRowIterator(l, r)
 	if f.Distinct {
-		out = NewDistinctRowIterator(out)
+		out = NewDistinctRowIterator(out, e.rowEquivalence())
 	}
 	return columns, out, nil
 }

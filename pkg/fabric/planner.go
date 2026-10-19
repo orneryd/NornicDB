@@ -11,7 +11,8 @@ import (
 //
 // This mirrors Neo4j's FabricPlanner.scala.
 type FabricPlanner struct {
-	catalog *Catalog
+	catalog        *Catalog
+	resolveColumns ColumnResolver
 }
 
 func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
@@ -69,7 +70,11 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 	trimmed = PreserveNameRoles(trimmed)
 	session := planTarget{name: sessionDB}
 	scope := compositeScopeRoot(sessionDB)
-	return p.planQuery(trimmed, session, scope, false)
+	fragment, err := p.planQuery(trimmed, session, scope, false)
+	if err == nil && p.resolveColumns != nil {
+		_, err = p.resolveLogicalColumns(fragment, nil, trimmed)
+	}
+	return fragment, err
 }
 
 // planQuery is the entry for every statement and CALL body. Split UNION before
@@ -138,12 +143,12 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 	}
 	fabricBlocks := make([]callSubqueryBlock, 0, len(callBlocks))
 	for _, block := range callBlocks {
-		isFabricBlock, err := callBlockContainsFabricUse(block.body)
+		isFabricBlock, err := callBlockContainsFabricUse(block.Body)
 		if err != nil {
 			return nil, err
 		}
 		if isFabricBlock {
-			if block.inTransactions {
+			if block.InTransactions {
 				return nil, fmt.Errorf("CALL IN TRANSACTIONS across composite constituents is not supported")
 			}
 			fabricBlocks = append(fabricBlocks, block)
@@ -175,10 +180,12 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 			}
 			prefixExec := newExec(ensureRowProducingPrefix(prefix), top, scope)
 			return &FragmentApply{
+				Projection: true,
 				Input: &FragmentApply{
-					Input:   &FragmentInit{Columns: nil},
-					Inner:   prefixExec,
-					Columns: nil,
+					Projection: true,
+					Input:      &FragmentInit{Columns: nil},
+					Inner:      prefixExec,
+					Columns:    nil,
 				},
 				Inner:   inner,
 				Columns: nil,
@@ -269,18 +276,18 @@ func isValidIdentifier(s string) bool {
 // planMultiGraph builds a Fragment tree for queries with top-level CALL {} subqueries.
 // Each CALL block is planned recursively so nested USE variants are decomposed correctly.
 func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery string, blocks []callSubqueryBlock) (Fragment, error) {
-	init := &FragmentInit{Columns: nil}
+	init := &FragmentInit{Columns: nil, logicalQuery: fullQuery}
 	var currentInput Fragment = init
 	lastPos := 0
 
 	for _, block := range blocks {
 		// Preserve outer query segments before each CALL block.
-		prefix := strings.TrimSpace(fullQuery[lastPos:block.startPos])
+		prefix := strings.TrimSpace(fullQuery[lastPos:block.Start])
 		if prefix != "" {
 			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Projection: true, Columns: nil}
 		}
 
-		subqueryFragment, err := p.planQuery(block.body, top, scope, true)
+		subqueryFragment, err := p.planQuery(block.Body, top, scope, true)
 		if err != nil {
 			return nil, err
 		}
@@ -288,9 +295,10 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 		currentInput = &FragmentApply{
 			Input:   currentInput,
 			Inner:   subqueryFragment,
+			Call:    &block,
 			Columns: nil, // determined at execution time
 		}
-		lastPos = block.endPos
+		lastPos = block.End
 	}
 
 	// Preserve trailing outer query clauses after the final CALL block.
@@ -367,19 +375,6 @@ func parseLeadingWithUse(body string) (use UseClause, rewritten string, ok bool,
 		return UseClause{}, body, false, nil
 	}
 	return use, strings.TrimSpace(withClause + " " + remaining), true, nil
-}
-
-// callSubqueryBlock represents a top-level CALL { ... } block for a single scope.
-type callSubqueryBlock struct {
-	// body is the Cypher body inside the CALL block (without the CALL { } wrapper).
-	body string
-
-	// startPos is the byte offset in the original query where CALL { starts.
-	startPos int
-
-	// endPos is the byte offset after the closing }.
-	endPos         int
-	inTransactions bool
 }
 
 func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
@@ -480,7 +475,7 @@ func newExec(query string, target planTarget, scope string) *FragmentExec {
 		Input:     &FragmentInit{Columns: nil},
 		Query:     query,
 		GraphName: target.name,
-		Columns:   nil, // determined at execution time
+		Columns:   ReadQueryStructure(query).ResultColumns(), // stars are resolved at execution
 		IsWrite:   queryIsWrite(query),
 	}
 	if target.dynamic != nil {
@@ -501,7 +496,7 @@ func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
 		if clause.Kind != "CALL" || clause.Nested == nil {
 			continue
 		}
-		blocks = append(blocks, callSubqueryBlock{body: clause.Body, startPos: clause.Start, endPos: clause.End, inTransactions: clause.InTransactions})
+		blocks = append(blocks, clause)
 	}
 	return blocks, nil
 }
@@ -530,7 +525,7 @@ func callBlockContainsFabricUse(body string) (bool, error) {
 		return false, err
 	}
 	for _, block := range nested {
-		found, err := callBlockContainsFabricUse(block.body)
+		found, err := callBlockContainsFabricUse(block.Body)
 		if err != nil {
 			return false, err
 		}

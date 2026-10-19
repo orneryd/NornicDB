@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"maps"
 	"strings"
 )
@@ -88,10 +89,14 @@ func typedOperand(typeName string) staticOperand {
 		if operand := knownOperand(typeName); operand.numeric() {
 			return operand
 		}
-		operand := staticOperand{display: typeName, union: true}
+		operand := staticOperand{display: typeName, union: true, alternatives: choices}
 		allLists, allNumbers, allMaps := true, true, true
+		operand.nonInteger, operand.nonBoolean, operand.nonEntity = true, true, true
 		for _, choice := range choices {
 			member := knownOperand(choice)
+			operand.nonInteger = operand.nonInteger && member.excludesInteger()
+			operand.nonBoolean = operand.nonBoolean && member.excludesBoolean()
+			operand.nonEntity = operand.nonEntity && member.excludesEntity()
 			allLists = allLists && member.list()
 			allNumbers = allNumbers && member.numeric()
 			allMaps = allMaps && containsString(staticCatalogTypeNames["MAP"], choice)
@@ -409,12 +414,11 @@ func carryStaticSubqueryImports(projected, input, imports typeScope, projection 
 // alternative defers it.
 func commonStaticOperand(left, right staticOperand) staticOperand {
 	common := staticOperand{
-		nonBoolean:        left.nonBoolean && right.nonBoolean,
+		nonBoolean:        left.excludesBoolean() && right.excludesBoolean(),
 		predicateDeferred: left.predicateDeferred || right.predicateDeferred,
-		nonInteger:        left.nonInteger && right.nonInteger,
-		nonEntity:         left.nonEntity && right.nonEntity,
-		// A union in either alternative keeps only an operator category in
-		// kind, so the common operand can't claim that kind as known.
+		nonInteger:        left.excludesInteger() && right.excludesInteger(),
+		nonEntity:         left.excludesEntity() && right.excludesEntity(),
+		// Alternative membership and common operator categories are independent.
 		union: left.union || right.union,
 	}
 	if left.kind == right.kind {
@@ -425,6 +429,10 @@ func commonStaticOperand(left, right staticOperand) staticOperand {
 	}
 	if left.parameter == right.parameter {
 		common.parameter = left.parameter
+	}
+	if choices, complete := joinedOperandAlternatives(left, right); complete {
+		joined := typedOperand(joinTypeNames(choices))
+		common.kind, common.display, common.union, common.alternatives = joined.kind, joined.display, joined.union, choices
 	}
 	for name, member := range left.members {
 		if other, exists := right.members[name]; exists {
@@ -442,27 +450,17 @@ func commonStaticOperand(left, right staticOperand) staticOperand {
 // every outer variable (the latter's leading WITH picks them). ok is false
 // for a CALL without a body; scoped is set for CALL (…) { }.
 func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
-	trimmed := strings.TrimSpace(callText)
-	open := strings.IndexByte(trimmed, '{')
-	call := indexASCIIFold(trimmed, "call")
-	if open < 0 || call < 0 || call > open {
+	q := fabric.ReadQueryStructure(callText)
+	call := q.First("CALL")
+	if q.Err != nil || call == nil || call.Nested == nil {
 		return nil, false, false
 	}
-	initial := make(typeScope)
-	scope := readCallSubqueryScope(callText)
-	imports, scoped := scope.names, scope.scoped
-	if scoped && imports != nil {
-		for _, name := range imports {
-			if operand, bound := outer[name]; bound {
-				initial[name] = operand
-			}
-		}
-		return initial, scoped, true
+	plan, err := planCallBranchBindings(call.Body, outer, call.Scoped, call.ScopeNames)
+	if err != nil {
+		return nil, call.Scoped, false
 	}
-	for name, operand := range outer {
-		initial[name] = operand
-	}
-	return initial, scoped, true
+	initial, _, missing := callBranchBindingValues(plan, outer)
+	return initial, call.Scoped, missing == ""
 }
 
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
@@ -474,54 +472,40 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, scoped, ok := callSubqueryImports(callText, outer)
-	if !ok {
+func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool, recordings ...*scopeRecording) (typeScope, error) {
+	call := fabric.ReadQueryStructure(callText).First("CALL")
+	if call == nil || call.Nested == nil {
 		return nil, nil
 	}
 	var returned typeScope
 	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
+		clauses, ok := semanticScopeClauses(branch)
 		if !ok || len(clauses) == 0 {
 			continue
 		}
-		retained := initial
-		importing := false
-		if !scoped {
-			// Unlisted outer names remain implicit imports under the documented
-			// gh648 extension. A leading importing WITH explicitly projects its
-			// listed names (including *), so those names follow ordinary WITH
-			// scope instead. A branch's own declarations never become imports.
-			retained = maps.Clone(initial)
-			_, importing, _ = branchLeadingWithImport(branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
-			if importing {
-				for name := range projectTypeScope(initial, cypher25, clauses[0].text) {
-					delete(retained, name)
-				}
-			}
-			for name := range retained {
-				if branchDeclaresVariable(branch, name) {
-					delete(retained, name)
-				}
-			}
-		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
+		plan, err := planCallBranchBindings(branch, outer, call.Scoped, call.ScopeNames)
 		if err != nil {
-			if !scoped {
-				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
-					return nil, err
-				}
-				// An old-style CALL { … } keeps NornicDB's implicit imports
-				// (gh648: an outer name it doesn't import is visible, or
-				// declared anew), so its walk only types its columns.
-				return nil, nil
-			}
+			return nil, err
+		}
+		branchInitial, retained, missing := callBranchBindingValues(plan, outer)
+		if missing != "" {
+			return nil, createUndefinedVariableError(missing)
+		}
+		final, complete, err := e.semanticScopeWalk(clauses, branchInitial, cypher25, subqueryScope{visible: retained}, recordings...)
+		if err != nil {
 			return nil, err
 		}
 		last := clauses[len(clauses)-1]
-		if len(branches) == 1 && complete && last.kind == pipelineClauseReturn {
+		if complete && last.kind == pipelineClauseReturn {
 			returnClause := strings.TrimSpace(last.text)
-			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+			projected := projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+			if returned == nil {
+				returned = projected
+			} else {
+				for name, operand := range returned {
+					returned[name] = commonStaticOperand(operand, projected[name])
+				}
+			}
 		}
 	}
 	return returned, nil

@@ -5,10 +5,40 @@ import (
 	"time"
 )
 
-type subTransactionContextKey struct{}
-type fabricTransactionContextKey struct{}
-type recordBindingsContextKey struct{}
+type executionValuesKey struct{}
 type transactionLifetimeContextKey struct{}
+
+// executionValues carries one Fabric invocation. Scope and records are bound
+// together; prepareExecDispatch fills routing metadata before handing it to a
+// physical executor. Subsequent bindings copy the snapshot rather than changing
+// their parent. A standard value context keeps unrelated native evaluator
+// lookups from recursing through a custom Context.Value at every fragment.
+type executionValues struct {
+	frame   *LogicalFrame
+	scope   CallScope
+	records map[string]interface{}
+	graph   string
+	sub     *SubTransaction
+	tx      *FabricTransaction
+}
+
+var emptyExecutionValues = &executionValues{}
+
+func executionValuesFromContext(ctx context.Context) *executionValues {
+	if ctx != nil {
+		if values, ok := ctx.Value(executionValuesKey{}).(*executionValues); ok {
+			return values
+		}
+	}
+	return emptyExecutionValues
+}
+
+func withExecutionValues(ctx context.Context, values executionValues) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, executionValuesKey{}, &values)
+}
 
 // WithTransactionLifetime carries the protocol-owned transaction lifetime on a
 // statement context. Request/statement cancellation still governs query work;
@@ -39,51 +69,39 @@ func (c transactionLifetimeValues) AfterFunc(f func()) func() bool {
 
 // WithSubTransaction returns a context carrying the active fabric sub-transaction.
 func WithSubTransaction(ctx context.Context, sub *SubTransaction) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, subTransactionContextKey{}, sub)
+	values := *executionValuesFromContext(ctx)
+	values.sub = sub
+	return withExecutionValues(ctx, values)
 }
 
 // SubTransactionFromContext returns the active fabric sub-transaction from context.
 func SubTransactionFromContext(ctx context.Context) (*SubTransaction, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-	sub, ok := ctx.Value(subTransactionContextKey{}).(*SubTransaction)
-	return sub, ok && sub != nil
+	sub := executionValuesFromContext(ctx).sub
+	return sub, sub != nil
 }
 
 // WithFabricTransaction returns a context carrying the active Fabric transaction.
 func WithFabricTransaction(ctx context.Context, tx *FabricTransaction) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, fabricTransactionContextKey{}, tx)
+	values := *executionValuesFromContext(ctx)
+	values.tx = tx
+	return withExecutionValues(ctx, values)
 }
 
 // FabricTransactionFromContext returns the active Fabric transaction from context.
 func FabricTransactionFromContext(ctx context.Context) (*FabricTransaction, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-	tx, ok := ctx.Value(fabricTransactionContextKey{}).(*FabricTransaction)
-	return tx, ok && tx != nil
+	tx := executionValuesFromContext(ctx).tx
+	return tx, tx != nil
 }
 
 // WithRecordBindings stores correlated outer-row bindings for Fabric APPLY execution.
 func WithRecordBindings(ctx context.Context, bindings map[string]interface{}) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, recordBindingsContextKey{}, bindings)
+	values := *executionValuesFromContext(ctx)
+	values.records = bindings
+	return withExecutionValues(ctx, values)
 }
 
 // RecordBindingsFromContext returns correlated outer-row bindings if present.
 func RecordBindingsFromContext(ctx context.Context) (map[string]interface{}, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-	v, ok := ctx.Value(recordBindingsContextKey{}).(map[string]interface{})
-	return v, ok && v != nil
+	bindings := executionValuesFromContext(ctx).records
+	return bindings, bindings != nil
 }
