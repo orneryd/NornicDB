@@ -35,7 +35,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	} else if len(rows) > 0 {
 		for name := range rows[0] { if !strings.HasPrefix(name, "$") { outerScope[name] = staticOperand{} } }
 	}
-	model, scopeErr := e.callQueryScope(clause, outerScope, nil, cypherVersionFromContext(ctx) == "25")
+	model, scopeErr := e.runtimeCallQueryScope(ctx, clause, outerScope)
 	if scopeErr != nil { return nil, nil, true, scopeErr }
 	if len(rows) == 0 {
 		if metadata != nil && model != nil {

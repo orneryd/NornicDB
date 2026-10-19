@@ -311,9 +311,7 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
 	ctx = withoutLocalSubqueryScope(ctx)
-	visible := make(typeScope)
-	for name := range values { if !strings.HasPrefix(name, "$") && !strings.HasPrefix(name, "\x00") { visible[name] = staticOperand{} } }
-	model, scopeErr := e.scalarQueryScope(kind, body, visible, nil, cypherVersionFromContext(ctx) == "25")
+	model, scopeErr := e.runtimeScalarQueryScope(ctx, kind, body, values)
 	if scopeErr != nil { return nil, false, scopeErr }
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.

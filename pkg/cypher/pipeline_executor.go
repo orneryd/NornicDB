@@ -1107,13 +1107,15 @@ func (e *StorageExecutor) forEachPipelineImport(ctx context.Context, clauses []p
 // pipelineReadsImportedBinding declines statement shortcuts unless the shared
 // scope owner proves the body independent of the complete imported row.
 func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	imports := make(typeScope)
+	var buffer [8]string
+	names := buffer[:0]
 	e.forEachPipelineImport(ctx, clauses, func(name string, _ interface{}) {
-		if !strings.HasPrefix(name, "$") { imports[name] = staticOperand{} }
+		if !strings.HasPrefix(name, "$") && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
 	})
-	return !imports.pipelineIndependent(clauses)
+	return semanticRuntimeDependencies(clauses, names, cypherVersionFromContext(ctx) == "25")
 }
-
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of
 // the pipeline's MATCH -> count reduction for relationship patterns (issue
 // #638). Without it, the row pipeline binds the relationship variable for
