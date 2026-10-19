@@ -139,7 +139,7 @@ func TestIteratorErrorPropagationBranches(t *testing.T) {
 	concatWithCloseErr := NewConcatRowIterator(&fabricErrorIterator{idx: -1, closeErr: closeErr})
 	require.ErrorIs(t, concatWithCloseErr.Close(), closeErr)
 
-	distinct := NewDistinctRowIterator(&fabricErrorIterator{idx: -1, err: baseErr})
+	distinct := newTestDistinctRowIterator(&fabricErrorIterator{idx: -1, err: baseErr})
 	require.False(t, distinct.Next())
 	require.Nil(t, distinct.Row())
 	require.ErrorIs(t, distinct.Err(), baseErr)
@@ -153,7 +153,7 @@ func TestFabricExecutorExecuteRowsIteratorPaths(t *testing.T) {
 	}}
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	cols, it, err := exec.executeRows(context.Background(), nil, &FragmentInit{Columns: []string{"seed"}}, nil, "")
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestFabricExecutorUnionRowsBranches(t *testing.T) {
 	}}
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	union := &FragmentUnion{
 		LHS:      &FragmentExec{GraphName: "db1", Query: "RETURN 'a' AS v"},
 		RHS:      &FragmentExec{GraphName: "db1", Query: "RETURN 'b' AS v", IsWrite: true},
@@ -237,7 +237,7 @@ func TestFabricExecutorUnionMaterializers(t *testing.T) {
 	}}
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	union := &FragmentUnion{
 		LHS:     &FragmentExec{GraphName: "db1", Query: "RETURN 'a' AS v", IsWrite: true},
 		RHS:     &FragmentExec{GraphName: "db1", Query: "RETURN 'b' AS v"},

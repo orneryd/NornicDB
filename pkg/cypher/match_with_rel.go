@@ -140,7 +140,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	// Direct lookup: callers store pre-computed values under the expression
 	// text itself (call-tail plans set values["max(length(p))"] per row), and
 	// plain variable references are the hot path.
-	if val, ok := values[expr]; ok {
+	if val, ok := rowExpressionBinding(values, expr); ok {
 		return val
 	}
 

@@ -454,6 +454,8 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		case clause.FabricLoadCsv() != nil:
 			c.Kind = "LOAD CSV"
 			c.tree = clause.FabricLoadCsv()
+			c.Name = unquoteSyntaxName(r.source(clause.FabricLoadCsv().Symbol()))
+			c.Expression = r.source(clause.FabricLoadCsv().Expression())
 			headEnd = r.end(clause.FabricLoadCsv().CSV().GetSymbol())
 		case clause.SchemaCommand() != nil:
 			c.Kind = "SCHEMA"

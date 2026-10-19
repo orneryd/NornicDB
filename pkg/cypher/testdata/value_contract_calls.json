@@ -423,6 +423,15 @@
     "reason": "Ordering is a separate temporal contract, outside equality/equivalence identity."
   },
   {
+    "id": "fabric_equivalence.go:*fabricRowEquivalence.Duplicate:addTupleByContract:1",
+    "file": "fabric_equivalence.go",
+    "caller": "*fabricRowEquivalence.Duplicate",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Fabric UNION and DISTINCT delegate tuple equivalence to the native canonical index, including numeric kinds, containers and temporal offsets."
+  },
+  {
     "id": "functions_eval_functions.go:*StorageExecutor.evaluateExpressionWithContextFullFunctions:apocSameValue:1",
     "file": "functions_eval_functions.go",
     "caller": "*StorageExecutor.evaluateExpressionWithContextFullFunctions",
@@ -810,58 +819,49 @@
     "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
   },
   {
-    "id": "pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:cypherValueKey:1",
+    "id": "pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:addTupleByContract:1",
     "file": "pipeline_aggregate_stream.go",
     "caller": "*StorageExecutor.pipelineAggregateGroups",
-    "callee": "cypherValueKey",
+    "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
-    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
   },
   {
-    "id": "pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:cypherValueKey:2",
-    "file": "pipeline_aggregate_stream.go",
-    "caller": "*StorageExecutor.pipelineAggregateGroups",
-    "callee": "cypherValueKey",
-    "contract": "cypherEquivalenceContract",
-    "line": 0,
-    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
-  },
-  {
-    "id": "pipeline_aggregate_stream.go:*StorageExecutor.tryCartesianAggregatePartitions:cypherValueKey:1",
+    "id": "pipeline_aggregate_stream.go:*StorageExecutor.tryCartesianAggregatePartitions:addTupleByContract:1",
     "file": "pipeline_aggregate_stream.go",
     "caller": "*StorageExecutor.tryCartesianAggregatePartitions",
-    "callee": "cypherValueKey",
+    "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
-    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
   },
   {
-    "id": "pipeline_aggregate_stream.go:*pipelineAggregateState.add:cypherValueKey:1",
+    "id": "pipeline_aggregate_stream.go:*pipelineAggregateState.add:addByContract:1",
     "file": "pipeline_aggregate_stream.go",
     "caller": "*pipelineAggregateState.add",
-    "callee": "cypherValueKey",
+    "callee": "addByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
-    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
   },
   {
-    "id": "pipeline_projection.go:deduplicatePipelineResultRows:cypherValueKey:1",
+    "id": "pipeline_projection.go:deduplicatePipelineResultRows:addTupleByContract:1",
     "file": "pipeline_projection.go",
     "caller": "deduplicatePipelineResultRows",
-    "callee": "cypherValueKey",
+    "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
-    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
   },
   {
-    "id": "pipeline_projection.go:deduplicatePipelineRowsWithScopes:cypherValueKey:1",
+    "id": "pipeline_projection.go:deduplicatePipelineRowsWithScopes:addTupleByContract:1",
     "file": "pipeline_projection.go",
     "caller": "deduplicatePipelineRowsWithScopes",
-    "callee": "cypherValueKey",
+    "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
-    "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
+    "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
   },
   {
     "id": "row_expression.go:compareCypherOrderedValues:compareTemporalOrdering:1",
@@ -1465,6 +1465,177 @@
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:addTupleValuesByContract:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addByContract",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addByContract",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:cypherValueHash:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addByContract",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:addByContract:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleByContract",
+    "callee": "addByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:addTupleValuesByContract:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleByContract",
+    "callee": "addTupleValuesByContract",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:cypherValueHash:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleByContract",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract:cypherValuesMatch:1",
+    "file": "value_equivalence_index.go",
+    "caller": "*cypherValueIndex.addTupleValuesByContract",
+    "callee": "cypherValuesMatch",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:3",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:4",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherComparableKey:cypherValueKey:5",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherComparableKey",
+    "callee": "cypherValueKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHash:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHash",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHash:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHash",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHash:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHash",
+    "callee": "cypherValueHash",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherComparableKey",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherValuesMatch",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:2",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatch",
+    "callee": "cypherValuesMatch",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
     "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:1",

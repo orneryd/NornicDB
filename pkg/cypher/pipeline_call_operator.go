@@ -30,7 +30,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	// (unscopedCallImports, #907).
 	scoped := callSubqueryHasScopeClause(clause)
 	if metadata != nil {
-		declared := parseCallSubqueryImportVariables(clause)
+		declared := readCallSubqueryScope(clause).names
 		if declared == nil && !scoped {
 			var importErr error
 			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
@@ -74,30 +74,10 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		body = remaining
 	}
 
-	scopedImports := parseCallSubqueryImportVariables(clause)
-	hasLegacyImports := false
-	if !scoped {
-		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(body, func(name string) bool {
-			_, exists := rows[0][name]
-			return exists && !strings.HasPrefix(name, "$")
-		}, false)
-		if importErr != nil {
-			return nil, nil, true, importErr
-		}
-	}
-	// CALL (*) imports every outer variable the body reads. So does an
-	// unscoped subquery without an importing WITH: a NornicDB extension.
-	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
-	// defined"); NornicDB keeps running such statements as before, since
-	// the import is unambiguous (#907, kept at the owner's direction).
-	imports := scopedImports
-	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && isIdentifierReferenced(body, name) {
-				imports = append(imports, name)
-			}
-		}
+	scopedImports := readCallSubqueryScope(clause).names
+	imports, hasLegacyImports, importErr := callSubqueryBindingImports(body, rows[0], scoped, scopedImports)
+	if importErr != nil {
+		return nil, nil, true, importErr
 	}
 	write := callSubqueryQueryIsWrite(body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
@@ -171,18 +151,15 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					delete(branchInput, name)
 					delete(scope, name)
 				}
-				// A CALL (…) body's imports stay bound through its WITH
-				// clauses (pipelineWithCarrying).
-				state := &pipelineRowOutput{}
+				var carried pipelineRow
 				if scoped {
-					state.carried = make(pipelineRow, len(imports))
+					carried = make(pipelineRow, len(imports))
 					for _, name := range imports {
-						if value, imported := branchInput[name]; imported {
-							state.carried[name] = value
-						}
+						carried[name] = branchInput[name]
 					}
 				}
-				inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, branchInput), []pipelineRow{branchInput}, scope, branchClauses, branchClauses, state)
+				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
+				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}

@@ -2,9 +2,7 @@ package fabric
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +27,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	rowEquivalence         RowEquivalenceFactory
 }
 
 // SetConcurrentExecution configures whether fragments may execute concurrently.
@@ -50,11 +49,12 @@ const (
 )
 
 // NewFabricExecutor creates a fabric executor.
-func NewFabricExecutor(catalog *Catalog, local *LocalFragmentExecutor, remote *RemoteFragmentExecutor) *FabricExecutor {
+func NewFabricExecutor(catalog *Catalog, local *LocalFragmentExecutor, remote *RemoteFragmentExecutor, equivalence RowEquivalenceFactory) *FabricExecutor {
 	return &FabricExecutor{
-		catalog: catalog,
-		local:   local,
-		remote:  remote,
+		catalog:        catalog,
+		local:          local,
+		remote:         remote,
+		rowEquivalence: equivalence,
 	}
 }
 
@@ -72,7 +72,7 @@ func (e *FabricExecutor) Execute(ctx context.Context, tx *FabricTransaction, fra
 	}
 	switch f := fragment.(type) {
 	case *FragmentInit:
-		return e.executeInit(f)
+		return e.executeInit(ctx, f)
 	case *FragmentLeaf:
 		return nil, fmt.Errorf("FragmentLeaf should be resolved to FragmentExec before execution")
 	case *FragmentExec:
@@ -87,11 +87,16 @@ func (e *FabricExecutor) Execute(ctx context.Context, tx *FabricTransaction, fra
 }
 
 // executeInit produces a single empty row — the entry point of the Fragment tree.
-func (e *FabricExecutor) executeInit(f *FragmentInit) (*ResultStream, error) {
+func (e *FabricExecutor) executeInit(ctx context.Context, f *FragmentInit) (*ResultStream, error) {
 	// A single empty row with no columns, matching Neo4j's Init semantics.
+	bindings, _ := RecordBindingsFromContext(ctx)
+	row := make([]interface{}, len(f.Columns))
+	for i, name := range f.Columns {
+		row[i] = bindings[name]
+	}
 	return &ResultStream{
 		Columns: f.Columns,
-		Rows:    [][]interface{}{{}},
+		Rows:    [][]interface{}{row},
 	}, nil
 }
 
@@ -105,6 +110,7 @@ func (e *FabricExecutor) executeExec(ctx context.Context, tx *FabricTransaction,
 // Local and remote row APIs already collect their results before returning an
 // iterator; keeping that dispatch here also keeps transaction state serialized.
 func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}, authToken string) (*ResultStream, int, error) {
+	ctx = withLogicalFrame(ctx, f.Frame)
 	if e.serializeExec {
 		e.execMu.Lock()
 		defer e.execMu.Unlock()
@@ -137,7 +143,10 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if e.remote == nil {
 			return nil, 0, fmt.Errorf("remote executor not configured")
 		}
-		res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
+		// The local execution frame receives records directly. Remote Cypher
+		// receives parameters, so render the same declared imports at dispatch.
+		query, execParams := RemoteRecordQuery(ctx, f.Query, recordBindings, execParams)
+		res, err := e.remote.Execute(ctx, l, query, execParams, authToken)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -154,7 +163,7 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 func (e *FabricExecutor) executeRows(ctx context.Context, tx *FabricTransaction, fragment Fragment, params map[string]interface{}, authToken string) ([]string, RowIterator, error) {
 	switch f := fragment.(type) {
 	case *FragmentInit:
-		res, err := e.executeInit(f)
+		res, err := e.executeInit(ctx, f)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -201,20 +210,9 @@ func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) Row
 
 // prepareExecDispatch resolves the graph a fragment runs on
 // (resolveExecGraph), preserves its catalog name for selection checks, joins the distributed
-// transaction, and merges the row's variables into the parameters.
+// transaction, and retains parameters separately from the logical row frame.
 func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, map[string]interface{}, context.Context, error) {
-	recordBindings, _ := RecordBindingsFromContext(ctx)
-	execParams := params
-	if len(recordBindings) > 0 {
-		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(recordBindings)))
-		for k, v := range params {
-			execParams[k] = v
-		}
-		for k, v := range recordBindings {
-			execParams[k] = v
-		}
-	}
-	graph, loc, err := e.resolveExecGraph(ctx, f, execParams)
+	graph, loc, err := e.resolveExecGraph(ctx, f, params)
 	if err != nil {
 		return nil, nil, ctx, err
 	}
@@ -233,7 +231,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		ctx = WithFabricTransaction(ctx, tx)
 		ctx = WithSubTransaction(ctx, sub)
 	}
-	return loc, execParams, ctx, nil
+	return loc, params, ctx, nil
 }
 
 // SetGraphAuthorizer installs the statement owner's selection check. Dispatch
@@ -315,10 +313,10 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 
 	// The remaining paths execute correlated CALL bodies per outer record. Their
 	// lookup rewrites do not apply to the outer continuation above.
-	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil {
+	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil && f.supportsRecordRewrites() {
 		// Streaming fast path: avoid full outer materialization when correlated
 		// batched row lookup rewrite can consume the iterator directly.
-		if streamed, handled, err := e.tryExecuteApplyBatchedLookupRowsIter(ctx, tx, inputCols, inputIter, execFrag, params, authToken); handled {
+		if streamed, handled, err := e.tryExecuteApplyBatchedLookupRowsIter(ctx, tx, inputCols, inputIter, execFrag, params, authToken, f.optional()); handled {
 			_ = inputIter.Close()
 			if err != nil {
 				return nil, fmt.Errorf("apply inner failed: %w", err)
@@ -329,8 +327,8 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, fmt.Errorf("apply input failed: %w", err)
 		}
-		if !f.Projection && len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
-			if streamRes, handled := executeApplyInMemoryProjection(inputResult, execFrag.Query); handled {
+		if !f.Projection && !f.optional() && len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
+			if streamRes, handled := e.executeApplyInMemoryProjection(inputResult, execFrag.Query); handled {
 				return streamRes, nil
 			}
 		}
@@ -346,7 +344,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 			}
 			return batched, nil
 		}
-		if batched, handled, err := e.tryExecuteApplyBatchedLookupRows(ctx, tx, inputResult, execFrag, params, authToken); handled {
+		if batched, handled, err := e.tryExecuteApplyBatchedLookupRows(ctx, tx, inputResult, execFrag, params, authToken, f.optional()); handled {
 			if err != nil {
 				return nil, fmt.Errorf("apply inner failed: %w", err)
 			}
@@ -366,9 +364,13 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	for inputIter.Next() {
 		inputRow := inputIter.Row()
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
-		innerCtx := WithRecordBindings(ctx, mergedBind)
+		innerCtx := ctx
+		if f.Call != nil {
+			innerCtx, mergedBind = withCallScope(innerCtx, f.Call, mergedBind)
+		}
+		innerCtx = WithRecordBindings(innerCtx, mergedBind)
 
-		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && execFrag.Graph == nil {
+		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && !f.optional() && execFrag.Graph == nil && f.supportsRecordRewrites() {
 			if cols, projected, ok := projectSimpleReturnFromRow(execFrag.Query, inputCols, inputRow); ok {
 				if len(result.Columns) == 0 {
 					result.Columns = cols
@@ -385,6 +387,13 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 
 		if innerResult == nil {
 			innerResult = &ResultStream{}
+		}
+		if f.unit() {
+			if result.Columns == nil {
+				result.Columns = append([]string{}, inputCols...)
+			}
+			result.Rows = append(result.Rows, append([]interface{}{}, inputRow...))
+			continue
 		}
 		if len(innerResult.Rows) == 0 {
 			if execFrag, ok := innerFragment.(*FragmentExec); ok {
@@ -403,20 +412,25 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 				result.Columns = combineColumns(inputCols, innerResult.Columns)
 			}
 		}
-		if len(innerResult.Rows) == 0 {
+		if len(innerResult.Rows) == 0 && !f.optional() {
 			continue
 		}
 		innerIdx := buildColumnIndex(innerResult.Columns)
 		combiner := newCompiledRowCombiner(result.Columns, outerIdx, innerIdx)
-		for _, innerRow := range innerResult.Rows {
-			combined := combiner.combine(inputRow, innerRow)
-			result.Rows = append(result.Rows, combined)
-		}
+		result.Rows = combiner.appendRows(result.Rows, inputRow, innerResult.Rows, f.optional())
 	}
 	if err := inputIter.Err(); err != nil {
 		return nil, fmt.Errorf("apply input failed: %w", err)
 	}
 	_ = inputIter.Close()
+	// An empty intermediate CALL still declares its exports. Keep their schema
+	// for an enclosing OPTIONAL CALL without executing a body for absent inputs.
+	if len(result.Columns) == 0 {
+		result.Columns = innerFragment.OutputColumns()
+		if !f.Projection {
+			result.Columns = combineColumns(inputCols, result.Columns)
+		}
+	}
 
 	return result, nil
 }
@@ -432,6 +446,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	inner *FragmentExec,
 	params map[string]interface{},
 	authToken string,
+	optional bool,
 ) (*ResultStream, bool, error) {
 	if len(inputCols) == 0 || inputIter == nil || inner == nil {
 		return nil, false, nil
@@ -543,6 +558,9 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 			distinctKeys = append(distinctKeys, key)
 		}
 		if len(distinctKeys) == 0 {
+			for _, outerRow := range rows {
+				result.Rows = combiner.appendRows(result.Rows, outerRow, nil, optional)
+			}
 			return nil
 		}
 
@@ -599,13 +617,11 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 		}
 
 		for i, outerRow := range rows {
-			if !outerHasKey[i] {
-				continue
+			var matches [][]interface{}
+			if outerHasKey[i] {
+				matches = groupedRows[outerKeys[i]]
 			}
-			matches := groupedRows[outerKeys[i]]
-			for _, innerRow := range matches {
-				result.Rows = append(result.Rows, combiner.combine(outerRow, innerRow))
-			}
+			result.Rows = combiner.appendRows(result.Rows, outerRow, matches, optional)
 		}
 		return nil
 	}
@@ -1101,6 +1117,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	inner *FragmentExec,
 	params map[string]interface{},
 	authToken string,
+	optional bool,
 ) (*ResultStream, bool, error) {
 	if inputResult == nil || len(inputResult.Rows) == 0 || len(inputResult.Columns) == 0 || inner == nil {
 		return nil, false, nil
@@ -1201,6 +1218,9 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 			distinctKeys = append(distinctKeys, key)
 		}
 		if len(distinctKeys) == 0 {
+			for _, outerRow := range chunkRows {
+				result.Rows = combiner.appendRows(result.Rows, outerRow, nil, optional)
+			}
 			continue
 		}
 
@@ -1343,16 +1363,11 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 		}
 
 		for i, outerRow := range chunkRows {
-			if !outerHasKey[i] {
-				continue
+			var matches [][]interface{}
+			if outerHasKey[i] {
+				matches = groupedRows[outerKeys[i]]
 			}
-			matches := groupedRows[outerKeys[i]]
-			if len(matches) == 0 {
-				continue
-			}
-			for _, innerRow := range matches {
-				result.Rows = append(result.Rows, combiner.combine(outerRow, innerRow))
-			}
+			result.Rows = combiner.appendRows(result.Rows, outerRow, matches, optional)
 		}
 	}
 
@@ -1668,7 +1683,7 @@ func mergeBindings(parent, row map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*ResultStream, bool) {
+func (e *FabricExecutor) executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*ResultStream, bool) {
 	if inputResult == nil {
 		return nil, false
 	}
@@ -1737,7 +1752,7 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 				out.Rows = append(out.Rows, row)
 			}
 			if projection.Distinct {
-				out.Rows = deduplicateRows(out.Rows)
+				out.Rows = deduplicateRows(out.Rows, e.rowEquivalence())
 			}
 			applySimpleResultModifiers(out, modifierClause, aliasToCol)
 			return out, true
@@ -2553,7 +2568,7 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 			_ = lhsIt.Close()
 			return nil, nil, fmt.Errorf("union RHS failed: %w", err)
 		}
-		return mergeUnionRows(f, lhsCols, lhsIt, rhsCols, rhsIt)
+		return e.mergeUnionRows(f, lhsCols, lhsIt, rhsCols, rhsIt)
 	}
 
 	var (
@@ -2602,7 +2617,7 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 		}
 		return nil, nil, err
 	}
-	return mergeUnionRows(f, lhsCols, lhsIt, rhsCols, rhsIt)
+	return e.mergeUnionRows(f, lhsCols, lhsIt, rhsCols, rhsIt)
 }
 
 // executeUnionSequential preserves direct test-call compatibility while using
@@ -2617,7 +2632,7 @@ func (e *FabricExecutor) executeUnionSequential(ctx context.Context, tx *FabricT
 		_ = lhsIt.Close()
 		return nil, fmt.Errorf("union RHS failed: %w", err)
 	}
-	cols, out, err := mergeUnionRows(f, lhsCols, lhsIt, rhsCols, rhsIt)
+	cols, out, err := e.mergeUnionRows(f, lhsCols, lhsIt, rhsCols, rhsIt)
 	if err != nil {
 		return nil, err
 	}
@@ -2671,7 +2686,7 @@ func (e *FabricExecutor) executeUnionParallel(ctx context.Context, tx *FabricTra
 		}
 		return nil, err
 	}
-	cols, out, err := mergeUnionRows(f, lhs, lit, rhs, rit)
+	cols, out, err := e.mergeUnionRows(f, lhs, lit, rhs, rit)
 	if err != nil {
 		return nil, err
 	}
@@ -2760,7 +2775,6 @@ func newCompiledRowCombiner(resultCols []string, outerIdx map[string]int, innerI
 	for i, col := range resultCols {
 		if idx, ok := innerIdx[col]; ok {
 			c.fromInner[i] = idx
-			continue
 		}
 		if idx, ok := outerIdx[col]; ok {
 			c.fromOuter[i] = idx
@@ -2773,126 +2787,14 @@ func (c compiledRowCombiner) combine(outerRow []interface{}, innerRow []interfac
 	return NewJoinedRowView(outerRow, innerRow, c.fromOuter, c.fromInner).Materialize()
 }
 
-// deduplicateRows removes duplicate rows based on string representation.
-func deduplicateRows(rows [][]interface{}) [][]interface{} {
-	seen := make(map[uint64]struct{}, len(rows))
-	result := make([][]interface{}, 0, len(rows))
-	for _, row := range rows {
-		key := hashRow(row)
-		if _, ok := seen[key]; !ok {
-			seen[key] = struct{}{}
-			result = append(result, row)
-		}
+// appendRows owns CALL's inner/left join for generic and batched execution.
+// A nil inner row leaves its columns null while retaining the outer bindings.
+func (c compiledRowCombiner) appendRows(rows [][]interface{}, outerRow []interface{}, innerRows [][]interface{}, optional bool) [][]interface{} {
+	if optional && len(innerRows) == 0 {
+		return append(rows, c.combine(outerRow, nil))
 	}
-	return result
-}
-
-func hashRow(row []interface{}) uint64 {
-	h := newFNV64a()
-	for _, v := range row {
-		writeAnyHash(&h, v)
-		h.writeByte(0)
+	for _, innerRow := range innerRows {
+		rows = append(rows, c.combine(outerRow, innerRow))
 	}
-	return h.sum64()
-}
-
-func writeAnyHash(h *fnv64a, v interface{}) {
-	switch t := v.(type) {
-	case nil:
-		h.writeByte('n')
-	case string:
-		h.writeByte('s')
-		h.writeString(t)
-	case bool:
-		h.writeByte('b')
-		if t {
-			h.writeByte(1)
-		} else {
-			h.writeByte(0)
-		}
-	case int:
-		writeUint64Hash(h, uint64(t), 'i')
-	case int8:
-		writeUint64Hash(h, uint64(t), 'j')
-	case int16:
-		writeUint64Hash(h, uint64(t), 'k')
-	case int32:
-		writeUint64Hash(h, uint64(t), 'l')
-	case int64:
-		writeUint64Hash(h, uint64(t), 'I')
-	case uint:
-		writeUint64Hash(h, uint64(t), 'u')
-	case uint8:
-		writeUint64Hash(h, uint64(t), 'v')
-	case uint16:
-		writeUint64Hash(h, uint64(t), 'w')
-	case uint32:
-		writeUint64Hash(h, uint64(t), 'x')
-	case uint64:
-		writeUint64Hash(h, t, 'U')
-	case float32:
-		writeUint64Hash(h, uint64(math.Float32bits(t)), 'F')
-	case float64:
-		writeUint64Hash(h, math.Float64bits(t), 'f')
-	case []interface{}:
-		h.writeByte('a')
-		for _, item := range t {
-			writeAnyHash(h, item)
-			h.writeByte(0)
-		}
-	case map[string]interface{}:
-		h.writeByte('m')
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			h.writeString(k)
-			h.writeByte('=')
-			writeAnyHash(h, t[k])
-			h.writeByte(0)
-		}
-	default:
-		h.writeByte('x')
-		h.writeString(fmt.Sprintf("%T:", t))
-		h.writeString(fmt.Sprint(t))
-	}
-}
-
-func writeUint64Hash(h *fnv64a, n uint64, marker byte) {
-	var b [9]byte
-	b[0] = marker
-	binary.LittleEndian.PutUint64(b[1:], n)
-	h.writeBytes(b[:])
-}
-
-type fnv64a struct {
-	sum uint64
-}
-
-func newFNV64a() fnv64a {
-	return fnv64a{sum: 14695981039346656037}
-}
-
-func (h *fnv64a) writeByte(b byte) {
-	const prime uint64 = 1099511628211
-	h.sum ^= uint64(b)
-	h.sum *= prime
-}
-
-func (h *fnv64a) writeBytes(bs []byte) {
-	for _, b := range bs {
-		h.writeByte(b)
-	}
-}
-
-func (h *fnv64a) writeString(s string) {
-	for i := 0; i < len(s); i++ {
-		h.writeByte(s[i])
-	}
-}
-
-func (h *fnv64a) sum64() uint64 {
-	return h.sum
+	return rows
 }

@@ -30,9 +30,10 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	if plan, ok := parsePipelineRowWith(clause); ok {
+		invocation := plan.withImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
+			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, invocation, nil, nil)
 			if !resolved {
 				return nil, false
 			}
@@ -93,7 +94,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(out, pipelineRowColumns(out))
+			out = deduplicatePipelineRows(out, pipelineWildcardColumns(out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
@@ -196,6 +197,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 					projectedExpressions[projection.expr] = value
 				}
 			}
+			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
 				out = append(out, newRow)
 				continue
@@ -238,12 +240,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
+	invocation := rowPlan.withImports(ctx)
 	for _, row := range rows {
 		var scope pipelineRow
 		if postWithWhere != "" || needsOrderScopes {
 			scope = make(pipelineRow, len(row)+len(projections))
 		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
+		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, invocation, nil, scope)
 		if !ok {
 			return nil, false
 		}
@@ -579,19 +582,17 @@ func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow
 }
 
 func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
-	keys := make([]string, len(columns))
+	values := make([]interface{}, len(columns))
 	for rowIndex, row := range rows {
 		for i, column := range columns {
-			keys[i] = cypherValueKey(row[column], cypherEquivalenceContract)
+			values[i] = row[column]
 		}
-		key := strings.Join(keys, "\x1f")
-		if _, exists := seen[key]; exists {
+		if _, exists := seen.addTupleByContract(values, cypherEquivalenceContract); exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 	}
@@ -829,7 +830,7 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 				}
 				plan.starItems = append(plan.starItems, text)
 			} else {
-				plan.addProjection(item.Expression, alias)
+				plan.addProjection(lexicalExpressionText(item.Expression), alias)
 			}
 		}
 		plan.valid = p.Star || len(plan.projections) > 0
@@ -923,7 +924,7 @@ func starProjectionItems(columns, items []string) []string {
 // projectionVariableText is a variable as an expression: backtick-quoted when
 // it isn't a plain identifier.
 func projectionVariableText(name string) string {
-	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
+	if isPlainVariableName(name) {
 		return name
 	}
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
@@ -1283,23 +1284,12 @@ func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool 
 }
 
 func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	unique := make([][]interface{}, 0, len(rows))
-	keys := make([]string, 0)
 	for _, row := range rows {
-		if cap(keys) < len(row) {
-			keys = make([]string, len(row))
-		} else {
-			keys = keys[:len(row)]
-		}
-		for index, value := range row {
-			keys[index] = cypherValueKey(value, cypherEquivalenceContract)
-		}
-		key := strings.Join(keys, "\x1f")
-		if _, exists := seen[key]; exists {
+		if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 	}
 	return unique
@@ -1338,7 +1328,7 @@ func pipelineScopeColumns(scope map[string]struct{}) []string {
 // binding row. Returns (value, true) on success, (nil, false) otherwise.
 func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
-	if val, ok := row[expr]; ok {
+	if val, ok := rowExpressionBinding(row, expr); ok {
 		return val, true
 	}
 	upperExpr := upperASCII(expr)

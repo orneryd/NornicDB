@@ -12,7 +12,11 @@ import (
 // under the text the client wrote: statements that differ only in quoting
 // canonicalize alike but can validate differently (their column names
 // differ).
-func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
+func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string, recordings ...*scopeRecording) error {
+	scopeText := cypher
+	if record := firstScopeRecording(recordings); record != nil && record.source != "" {
+		scopeText = record.source
+	}
 	names := quotedVariableNamesFor(ctx, cypher)
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher
@@ -35,6 +39,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		cached = normalized && e.semanticValidationCache.contains(canonical)
 	}
 	if cached && names == nil && !normalized {
+		if firstScopeRecording(recordings) != nil {
+			return e.validateMatchSemanticScopes(scopeText, cypher25, recordings...)
+		}
 		return nil
 	}
 	if err := validateExpressionLexicalTokens(cypher); err != nil {
@@ -46,7 +53,13 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		// value-dependent: LIMIT 2-3 and LIMIT 5-1 share one canonical form,
 		// yet only the latter is a non-negative integer. Re-evaluate them on
 		// this text before returning (monster retest part 3).
-		return e.validateStaticPaginationExpressions(cypher)
+		if err := e.validateStaticPaginationExpressions(cypher); err != nil {
+			return err
+		}
+		if firstScopeRecording(recordings) != nil {
+			return e.validateMatchSemanticScopes(scopeText, cypher25, recordings...)
+		}
+		return nil
 	}
 	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
@@ -156,7 +169,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateMergeSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
+	if err := e.validateMatchSemanticScopes(scopeText, cypher25, recordings...); err != nil {
 		return err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
@@ -235,26 +248,13 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		return nil
 	}
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		index := skipSpaces(cypher, position+len("CALL"))
-		imports := ""
-		scoped := false
-		if index < len(cypher) && cypher[index] == '(' {
-			closeParen := findMatchingCallParen(cypher, index)
-			if closeParen < 0 {
-				continue
-			}
-			imports = strings.TrimSpace(cypher[index+1 : closeParen])
-			scoped = true
-			if imports != "" && imports != "*" {
-				for _, name := range splitTopLevelComma(imports) {
-					if simpleSemanticIdentifier(strings.TrimSpace(name)) == "" {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-							"CALL imports must contain only variable names")
-					}
-				}
-			}
-			index = skipSpaces(cypher, closeParen+1)
+		scope := readCallSubqueryScope(cypher[position:])
+		if scope.invalid {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
+				"CALL imports must contain only variable names")
 		}
+		index := position + scope.bodyOffset
+		imports, scoped := scope.text, scope.scoped
 		if index >= len(cypher) || cypher[index] != '{' {
 			continue // a procedure call
 		}
@@ -309,29 +309,25 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 				}
 			}
 		}
-		if imports == "*" || startsWithKeywordFold(body, "WITH *") {
+		if scoped && scope.names == nil || startsWithKeywordFold(body, "WITH *") {
 			continue
 		}
-		if scoped && imports != "" {
-			// The imports stay in scope through the body's WITH clauses,
-			// as when it runs (pipelineWithCarrying).
-			carried := pipelineRow{}
-			for _, name := range splitTopLevelComma(imports) {
-				carried[normalizeProjectionColumnName(strings.TrimSpace(name))] = nil
-			}
-			body = "WITH " + imports + " " + callSubqueryBodyCarrying(body, carried)
+		var retained []string
+		if scoped && len(scope.names) > 0 {
+			retained = scope.names
+			body = "WITH " + imports + " " + body
 		}
 		if body == "" {
 			continue
 		}
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
-		if scoped && imports == "" {
+		if scoped && len(scope.names) == 0 {
 			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
 				return err
 			}
 		}
-		if err := e.validateSetSemanticScopes(body); err != nil {
+		if err := e.validateSetSemanticScopes(body, retained...); err != nil {
 			return err
 		}
 		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
@@ -770,37 +766,4 @@ func invalidAggregationInListComprehension(cypher string) bool {
 		}
 	}
 	return false
-}
-
-// callSubqueryBodyCarrying is a CALL (…) body's text with each of its WITH
-// clauses projecting the imports it carries (pipelineWithCarrying), for the
-// update-clause scope check: SET x.p = y after WITH 1 AS y reads the
-// imported x. Each UNION branch is rewritten alike.
-func callSubqueryBodyCarrying(body string, carried pipelineRow) string {
-	branches, unionAll, mixed, union := parseTopLevelUnionBranches(body)
-	if !union || mixed || len(branches) < 2 {
-		branches = []string{body}
-	}
-	for index, branch := range branches {
-		clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
-		if !ok {
-			continue
-		}
-		texts := make([]string, len(clauses))
-		for position, clause := range clauses {
-			texts[position] = clause.text
-			if clause.kind == pipelineClauseWith {
-				texts[position] = pipelineWithCarrying(clause.text, carried)
-			}
-		}
-		branches[index] = strings.Join(texts, " ")
-	}
-	if len(branches) == 1 {
-		return branches[0]
-	}
-	separator := " UNION "
-	if unionAll {
-		separator = " UNION ALL "
-	}
-	return strings.Join(branches, separator)
 }

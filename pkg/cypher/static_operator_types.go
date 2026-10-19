@@ -45,6 +45,9 @@ type staticOperand struct {
 	// path or list of them whose type isn't otherwise known (a node's
 	// property, an aggregate): the match validator's value kind (#1055).
 	nonEntity bool
+	// union retains the source type name while kind is a common category.
+	union        bool
+	alternatives []string
 	// members are the static types of a map literal's entries by key, in a
 	// Cypher 25 statement (Neo4j 2026.09 types {a: 2}.a as an Integer;
 	// Neo4j 5.26 doesn't): staticMapMember reads them.
@@ -355,12 +358,12 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (result st
 	// Multiplying a Float by an unresolved value can produce a Float or a
 	// Duration, never an Integer. Retain this exclusion for list subscripts.
 	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
-		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+		return typedOperand("Float or Duration"), nil
 	}
 	// Multiplying a Float by an unresolved value can produce a Float or a
 	// Duration, never an Integer. Retain this exclusion for list subscripts.
 	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
-		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+		return typedOperand("Float or Duration"), nil
 	}
 	return staticOperand{display: "Float, Integer or Duration", nonBoolean: true}, nil
 }
@@ -532,7 +535,8 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 }
 
 // checkCase type-checks a CASE expression: a searched CASE's conditions must
-// be booleans. Its type is the one type all its results share, if they do.
+// be booleans. Its result retains every possible branch type, so a function
+// signature is rejected only when none of the alternatives fits.
 func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOperand, error) {
 	if parsed.isSimple {
 		if _, err := checker.check(parsed.testExpression); err != nil {
@@ -540,24 +544,35 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 		}
 	}
 	var result staticOperand
-	agree := true
+	var choices []string
+	unknown := false
 	merge := func(text string) error {
 		operand, err := checker.check(text)
 		if err != nil {
 			return err
 		}
-		switch {
-		case !operand.known():
-			agree = false
-		case !result.known():
+		if strings.EqualFold(strings.TrimSpace(text), "null") {
+			operand = knownOperand("Null")
+		}
+		name := operand.typeName()
+		if name == "" {
+			unknown = true
+			return nil
+		}
+		if result.typeName() == "" {
 			result = operand
-		case result.kind != operand.kind && result.numeric() && operand.numeric():
-			// Integer/Float alternatives are a numeric union, not an unknown
-			// result. Keep that constraint even when the selected branch depends
-			// on a row (and when an outer stream is empty).
-			result = knownOperand("Number")
-		case result.kind != operand.kind:
-			agree = false
+			return nil
+		}
+		if name == result.typeName() {
+			return nil
+		}
+		if choices == nil {
+			choices = staticTypeChoices(result.typeName())
+		}
+		for _, choice := range staticTypeChoices(name) {
+			if !containsString(choices, choice) {
+				choices = append(choices, choice)
+			}
 		}
 		return nil
 	}
@@ -584,8 +599,11 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 			return staticOperand{}, err
 		}
 	}
-	if !agree {
+	if unknown {
 		return staticOperand{}, nil
+	}
+	if len(choices) > 1 {
+		return typedOperand(joinTypeNames(choices)), nil
 	}
 	return result, nil
 }
@@ -775,8 +793,8 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if invalidIntegerKey {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreListIndexTypeMismatch(key.display))
 		}
-		if element := strings.TrimSuffix(strings.TrimPrefix(receiver.kind, "List<"), ">"); element != "T" && !strings.ContainsAny(element, "<,") {
-			return knownOperand(element), nil
+		if element := elementOfType(receiver.typeName()); element != "" {
+			return typedOperand(element), nil
 		}
 	case receiver.kind == "Map" || receiver.kind == "Map, Node or Relationship":
 		if keyKnown && key.kind != "String" {

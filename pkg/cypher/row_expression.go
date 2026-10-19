@@ -104,7 +104,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		scope[caseBinding] = caseValue
 		return e.evaluateRowValue(caseBinding+expr[caseEnd:], scope)
 	}
-	if value, ok := values[expr]; ok && !isLiteralKeyword(expr) {
+	if value, ok := rowExpressionBinding(values, expr); ok {
 		return value, true, nil
 	}
 	// Relationship arrows contain comparison and subtraction characters.
