@@ -202,19 +202,13 @@ func rowStatementContext(values map[string]interface{}) context.Context {
 // scores at the statement's time (#866). A row expression with one carries
 // the statement context (rowStatementContextKey).
 func containsStatementClockCall(expression string) bool {
-	for index := 0; index < len(expression); index++ {
-		if expression[index] != '(' {
-			continue
+	for index := 0; index < len(expression); {
+		call, ok := nextFunctionCall(expression, index)
+		if !ok {
+			break
 		}
-		end := index
-		for end > 0 && isASCIISpace(expression[end-1]) {
-			end--
-		}
-		start := end
-		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
-			start--
-		}
-		name := expression[start:end]
+		index = call.open + 1
+		name := call.name
 		if dot := strings.IndexByte(name, '.'); dot >= 0 {
 			name = name[:dot]
 		}

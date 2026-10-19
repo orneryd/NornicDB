@@ -156,16 +156,11 @@ func staticFunctionResultType(function, arguments string) string {
 // does; other function results stay unchecked in argument and list
 // positions.
 func staticValueCallType(expression string) string {
-	expression = strings.TrimSpace(expression)
-	name, end, ok := scanIdentifierToken(expression, 0)
+	name, arguments, ok := parseFunctionCallWS(expression)
 	if !ok {
 		return ""
 	}
-	open := queryGapEnd(expression, end)
-	if open >= len(expression) || expression[open] != '(' || findMatchingParen(expression, open) != len(expression)-1 {
-		return ""
-	}
-	switch result := staticFunctionResultType(name, expression[open+1:len(expression)-1]); result {
+	switch result := staticFunctionResultType(name, arguments); result {
 	case "Vector", "UUID":
 		return result
 	}
