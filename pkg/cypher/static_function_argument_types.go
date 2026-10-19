@@ -935,7 +935,7 @@ func uniformListElementType(list string) string {
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
 func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
-	closing := call.close(text)
+	closing := findMatchingDelimiter(text, open, '(', ')')
 	if closing < 0 {
 		return nil
 	}
