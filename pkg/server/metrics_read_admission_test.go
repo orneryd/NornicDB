@@ -82,6 +82,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			cypherMetrics := observability.NewCypherMetrics(registry, tenantLabels, nil)
 			cypherMetrics.BindSlowQueries("nornic").Add(2)
 			cypherMetrics.BindSlowQueries("metrics_private").Add(7)
+			cypherMetrics.BindSlowQueries("system").Add(11)
 			if tenantLabels {
 				cypherMetrics.BindSlowQueries("metrics_alias").Add(4)
 			}
@@ -101,13 +102,15 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 				require.Equal(t, nodes, legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
 				require.Equal(t, edges, legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
 				require.Equal(t, slow, legacyMetricValue(t, response.Body.String(), "nornicdb_slow_queries_total"))
-				if nodes < 5 {
-					require.Equal(t, float64(0), legacyMetricValue(t, response.Body.String(), "nornicdb_embeddings_processed"))
-				}
+				require.Equal(t, float64(0), legacyMetricValue(t, response.Body.String(), "nornicdb_embeddings_processed"))
 			}
 			visibleSlow := float64(0)
 			if tenantLabels {
 				visibleSlow = 2
+			}
+			userSlow := float64(0)
+			if tenantLabels {
+				userSlow = 9
 			}
 			t.Run("omitted-allowlist", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_alias"}))
@@ -119,7 +122,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 			t.Run("alias-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_private"}))
-			t.Run("granted", func(t *testing.T) { check(t, 5, 2, 9) })
+			t.Run("granted", func(t *testing.T) { check(t, 5, 2, userSlow) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "metrics_private", false, false))
 			t.Run("read-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			private, err := s.dbManager.GetStorage("metrics_private")
@@ -128,14 +131,32 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			require.NoError(t, err)
 			t.Run("unreadable-mutation", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "metrics_private", true, false))
-			t.Run("read-restored", func(t *testing.T) { check(t, 6, 2, 9) })
+			t.Run("read-restored", func(t *testing.T) { check(t, 6, 2, userSlow) })
 			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))
 			t.Run("allowlist-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", false, false))
 			t.Run("no-database-read", func(t *testing.T) { check(t, 0, 0, 0) })
-			for _, control := range []string{"admin", "auth-off"} {
+			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"system"}))
+			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "system", true, false))
+			system, err := s.dbManager.GetStorage("system")
+			require.NoError(t, err)
+			systemNodes, err := system.NodeCount()
+			require.NoError(t, err)
+			systemEdges, err := system.EdgeCount()
+			require.NoError(t, err)
+			systemSlow := float64(0)
+			if tenantLabels {
+				systemSlow = 11
+			}
+			t.Run("system-only", func(t *testing.T) { check(t, float64(systemNodes), float64(systemEdges), systemSlow) })
+			require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic", "metrics_alias", "metrics_private", "system"}))
+			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", true, false))
+			for _, control := range []string{"full-reader", "admin", "auth-off"} {
 				t.Run(control, func(t *testing.T) {
 					controlToken := "Bearer " + getAuthToken(t, users, "admin")
+					if control == "full-reader" {
+						controlToken = token
+					}
 					if control == "auth-off" {
 						saved := s.auth
 						s.auth = nil
@@ -146,9 +167,9 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 					require.Equal(t, http.StatusOK, response.Code)
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.NodeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_nodes_total"))
 					require.Equal(t, float64(metricsReadStorageProbe{badger}.EdgeCount()), legacyMetricValue(t, response.Body.String(), "nornicdb_edges_total"))
-					fullSlow := float64(9)
+					fullSlow := float64(20)
 					if tenantLabels {
-						fullSlow = 13
+						fullSlow = 24
 					}
 					require.Equal(t, fullSlow, legacyMetricValue(t, response.Body.String(), "nornicdb_slow_queries_total"))
 					require.Equal(t, float64(9), legacyMetricValue(t, response.Body.String(), "nornicdb_embeddings_processed"))
