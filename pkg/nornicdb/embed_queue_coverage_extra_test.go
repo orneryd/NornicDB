@@ -156,10 +156,7 @@ func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
 		})
 		t.Cleanup(func() { w.Close() })
 
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			w.cancel()
-		}()
+		w.cancel()
 
 		embs, err := w.embedBatchWithRetry([]string{"a", "b"})
 		require.Error(t, err)

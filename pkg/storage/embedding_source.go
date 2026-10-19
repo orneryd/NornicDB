@@ -6,6 +6,11 @@ import "github.com/orneryd/nornicdb/pkg/embeddingsource"
 // a retained result, or persisted managed vectors. The first node owns the
 // consumed-source record; legacy vectors retain their engine text policy.
 func EmbeddingSourceMatches(source, current *Node, legacy EmbeddingTextPolicy) bool {
+	// Failure metadata belongs to one body attempt, rather than an embedding
+	// space. Any later body version clears terminal state and starts MAIN anew.
+	if failed, _ := source.EmbedMeta["embedding_failed"].(bool); failed && !source.UpdatedAt.Equal(current.UpdatedAt) {
+		return false
+	}
 	s, present, valid := embeddingsource.ReadView(source.EmbedMeta)
 	if !valid {
 		return false

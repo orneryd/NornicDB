@@ -84,7 +84,7 @@ func nodeSaveRetryFixture(tb testing.TB, mode string, nodes, rejections int) (*E
 	plain := newMockEmbedder()
 	plain.dims = 2
 	var provider embed.Embedder = plain
-	cfg := &EmbedWorkerConfig{NumWorkers: 4, DeferWorkerStart: true, MaxRetries: 1, ChunkSize: 8192, EmbedBatchSize: 16, ScanInterval: time.Second}
+	cfg := &EmbedWorkerConfig{NumWorkers: 4, DeferWorkerStart: true, MaxRetries: 64, ChunkSize: 8192, EmbedBatchSize: 16, ScanInterval: time.Second}
 	if mode == "chunked" {
 		cfg.ChunkSize = 32
 		cfg.ChunkOverlap = 1

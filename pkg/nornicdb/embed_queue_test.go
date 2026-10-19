@@ -2108,7 +2108,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []float32{2, 3}, averageEmbeddings([][]float32{{1, 2}, {3, 4}}))
 	})
 
-	t.Run("embedBatchWithRetry success after retry", func(t *testing.T) {
+	t.Run("embedBatchWithRetry leaves retries to DLQ", func(t *testing.T) {
 		emb := &flakyBatchEmbedder{dims: 3, failUntil: 1, returnSize: -1}
 		ew := &EmbedWorker{
 			embedder: emb,
@@ -2116,11 +2116,11 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			ctx:      context.Background(),
 		}
 		out, err := ew.embedBatchWithRetry([]string{"a", "b"})
-		require.NoError(t, err)
-		require.Len(t, out, 2)
+		require.Error(t, err)
+		require.Nil(t, out)
 		emb.mu.Lock()
 		defer emb.mu.Unlock()
-		require.Equal(t, 2, emb.callCount)
+		require.Equal(t, 1, emb.callCount)
 	})
 
 	t.Run("embedBatchWithRetry returns context error", func(t *testing.T) {

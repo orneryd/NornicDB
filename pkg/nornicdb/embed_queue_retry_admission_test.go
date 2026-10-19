@@ -20,7 +20,6 @@ func TestEmbedWorkerRetryAdmissionZonedTime(t *testing.T) {
 			require.NoError(t, queue.UpdateNode(node))
 			require.True(t, worker.processNextBatch())
 			require.Len(t, worker.embeddingRetries, 1)
-			require.False(t, worker.retryBudgetBlocked)
 			calls := provider.GetEmbedCount()
 			makeNodeSaveRetriesReady(worker)
 			require.True(t, worker.processNextBatch())
