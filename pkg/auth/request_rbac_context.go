@@ -9,15 +9,15 @@ import (
 	"strings"
 )
 
-type requestRBACKey string
+type requestRBACKey uint8
 
-var (
-	requestRBACKeyResolvedAccessResolver = requestRBACKey("resolved_access_resolver")
-	requestRBACKeyPrincipalRoles         = requestRBACKey("principal_roles")
-	requestRBACKeyDatabaseAccessMode     = requestRBACKey("database_access_mode")
-	requestRBACKeyEntitlementResolver    = requestRBACKey("entitlement_resolver")
-	requestRBACKeyDatabaseScope          = requestRBACKey("database_scope")
-	requestRBACKeyAuthenticationDisabled = requestRBACKey("authentication_disabled")
+const (
+    requestRBACKeyResolvedAccessResolver requestRBACKey = iota
+    requestRBACKeyPrincipalRoles
+    requestRBACKeyDatabaseAccessMode
+    requestRBACKeyEntitlementResolver
+    requestRBACKeyDatabaseScope
+    requestRBACKeyAuthenticationDisabled
 )
 
 // RequestEntitlementResolver checks an effective permission for a database.
