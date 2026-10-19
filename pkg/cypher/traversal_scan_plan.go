@@ -91,17 +91,21 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 				return nil
 			}
+			traversal := &TraversalContext{relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match), cancelCtx: ctx}
 			var edges []*storage.Edge
 			var err error
 			switch match.Relationship.Direction {
 			case "incoming":
-				edges, err = store.GetIncomingEdges(node.ID)
+				edges = e.traversalEdges(traversal, node.ID, false)
 			case "both":
 				edges, err = undirectedIncidentEdges(store, node.ID)
 			default:
-				edges, err = store.GetOutgoingEdges(node.ID)
+				edges = e.traversalEdges(traversal, node.ID, true)
 			}
 			if err != nil {
+				return err
+			}
+			if err := getExpressionFailure(ctx); err != nil {
 				return err
 			}
 			for _, edge := range edges {
