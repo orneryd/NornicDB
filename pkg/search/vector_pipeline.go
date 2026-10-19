@@ -426,7 +426,13 @@ func (c *CPUExactScorer) ScoreCandidates(ctx context.Context, query []float32, c
 		default:
 		}
 
-		vec, exists := c.getter.GetVector(cand.ID)
+		var vec []float32
+		var exists bool
+		if index, ok := c.getter.(*VectorIndex); ok {
+			vec, exists = index.getVectorRef(cand.ID) // read-only: no copy
+		} else {
+			vec, exists = c.getter.GetVector(cand.ID)
+		}
 		if !exists {
 			continue // Skip candidates that no longer exist
 		}

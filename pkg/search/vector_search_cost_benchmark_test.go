@@ -118,6 +118,9 @@ func BenchmarkSelectiveClusteredServiceSearch(b *testing.B) {
 			}
 			b.StopTimer()
 			b.ReportMetric(float64(rows), "docs/op")
+			if response.Metrics != nil {
+				b.ReportMetric(float64(response.Metrics.VectorOverfetchRetries), "retries/op")
+			}
 		})
 	}
 }
