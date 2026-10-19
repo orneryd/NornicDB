@@ -48,9 +48,9 @@ func TestGraphQLStatsRequireSelectedDatabaseRead(t *testing.T) {
 			relationships, relationshipErr := query.queryRelationshipCount(ctx, nil)
 			stats, statsErr := query.queryStats(ctx)
 			if !tc.read {
-				require.ErrorContains(t, nodeErr, tc.database)
-				require.ErrorContains(t, relationshipErr, tc.database)
-				require.ErrorContains(t, statsErr, tc.database)
+				require.ErrorContains(t, nodeErr, "read permission")
+				require.ErrorContains(t, relationshipErr, "read permission")
+				require.ErrorContains(t, statsErr, "read permission")
 				require.Nil(t, stats)
 				return
 			}
