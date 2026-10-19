@@ -1416,19 +1416,13 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 
 	// Fallback: Export as JSON for non-backupable engines (memory). A backup
 	// holds every stored entity, those the visibility layer hides included.
-	var nodes []*storage.Node
-	if err := storage.StreamStoredNodes(context.Background(), db.storage, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
-		nodes = append(nodes, node)
-		return nil
-	}); err != nil {
+	nodes, err := storage.CollectStoredNodes(ctx, db.storage)
+	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupNodesReadFailed(err), err)
 	}
 
-	var edges []*storage.Edge
-	if err := storage.StreamStoredEdgesByType(context.Background(), db.storage, "", func(edge *storage.Edge) error {
-		edges = append(edges, edge)
-		return nil
-	}); err != nil {
+	edges, err := storage.CollectStoredEdges(ctx, db.storage)
+	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupEdgesReadFailed(err), err)
 	}
 

@@ -98,6 +98,7 @@ package storage
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -320,13 +321,13 @@ func SaveToNeo4jExport(engine Engine, path string) error {
 	}
 
 	var err error
-	allNodes, err = exportable.AllNodes()
+	allNodes, err = exportNodes(exportable)
 	if err != nil {
 		return localizedError(localization.StorageLoaderGettingAllNodes(err), err)
 	}
 
 	// Collect all edges
-	allEdges, err := exportable.AllEdges()
+	allEdges, err := exportEdges(exportable)
 	if err != nil {
 		return localizedError(localization.StorageLoaderGettingAllEdges(err), err)
 	}
@@ -541,12 +542,12 @@ func FindNodeNeedingEmbedding(engine Engine) *Node {
 
 // GenericSaveToNeo4jExport works with any ExportableEngine.
 func GenericSaveToNeo4jExport(engine ExportableEngine, path string) error {
-	nodes, err := engine.AllNodes()
+	nodes, err := exportNodes(engine)
 	if err != nil {
 		return localizedError(localization.StorageLoaderGettingNodes(err), err)
 	}
 
-	edges, err := engine.AllEdges()
+	edges, err := exportEdges(engine)
 	if err != nil {
 		return localizedError(localization.StorageLoaderGettingEdges(err), err)
 	}
@@ -570,3 +571,25 @@ func GenericSaveToNeo4jExport(engine ExportableEngine, path string) error {
 
 // Verify MemoryEngine implements ExportableEngine
 var _ ExportableEngine = (*MemoryEngine)(nil)
+
+// exportNodes returns the nodes an export holds: every stored node when the
+// engine can read the ones the visibility layer hides (CollectStoredNodes),
+// else what its AllNodes returns.
+func exportNodes(engine ExportableEngine) ([]*Node, error) {
+	if full, ok := engine.(Engine); ok {
+		if _, stored := StoredReader(full); stored {
+			return CollectStoredNodes(context.Background(), full)
+		}
+	}
+	return engine.AllNodes()
+}
+
+// exportEdges is exportNodes for relationships (CollectStoredEdges).
+func exportEdges(engine ExportableEngine) ([]*Edge, error) {
+	if full, ok := engine.(Engine); ok {
+		if _, stored := StoredReader(full); stored {
+			return CollectStoredEdges(context.Background(), full)
+		}
+	}
+	return engine.AllEdges()
+}
