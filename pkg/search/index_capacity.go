@@ -242,14 +242,16 @@ func (s *Service) reconcileVectorSourceCapacityLocked(memory *VectorIndex) {
 	for id, value := range memory.vectors {
 		owner, ok := owners[id]
 		if !ok {
-			if owner, ok = vectorEntryOwner(id); !ok {
-				owner = id // an undecodable key is still resident payload
-			}
+			owner, ok = vectorEntryOwner(id)
 		}
 		bytes := int64(len(value)+len(memory.rawVectors[id])) * 4
-		usage := s.indexCapacityByNode[owner]
-		usage.vectorResident += bytes
-		s.indexCapacityByNode[owner] = usage
+		if ok {
+			usage := s.indexCapacityByNode[owner]
+			usage.vectorResident += bytes
+			s.indexCapacityByNode[owner] = usage
+		}
+		// An undecodable entry is still resident payload, but its bytes are not
+		// a graph node ID. Charge it globally without inventing a node owner.
 		resident += bytes
 	}
 	s.vectorResidentBytes = resident
