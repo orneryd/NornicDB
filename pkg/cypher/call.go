@@ -1485,6 +1485,9 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)
 		}
+		if proc.User {
+			result = runtimeProcedureResult(result)
+		}
 		if yield != nil {
 			result, err = e.applyYieldFilter(ctx, result, yield)
 			if err != nil {
