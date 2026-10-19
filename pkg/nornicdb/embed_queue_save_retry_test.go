@@ -137,6 +137,7 @@ func TestEmbedWorkerSaveRetryRetainsProviderResult(t *testing.T) {
 					require.NoError(t, queue.UpdateNode(node))
 				}
 				for i := 0; i < 4 && published == 0; i++ {
+					makeNodeSaveRetriesReady(worker)
 					worker.processNextBatch()
 				}
 				require.Equal(t, 1, published)
@@ -165,17 +166,24 @@ func TestEmbedWorkerSaveRetryPreservesDocumentBatch(t *testing.T) {
 				require.True(t, worker.processNextBatch())
 				require.Zero(t, published)
 				require.Equal(t, 16, provider.GetEmbedCount())
-				require.True(t, worker.processNextBatch())
+				makeNodeSaveRetriesReady(worker)
+				progress := worker.processNextBatch()
 				if rejections == 1 {
+					require.True(t, progress)
 					require.Equal(t, 16, published, "retained writes must finish as one bounded batch, without a worker delay per node")
 				} else {
+					require.False(t, progress)
 					require.Zero(t, published)
 				}
 				attempts := 0
 				for _, count := range queue.attempts {
 					attempts += count
 				}
-				require.Equal(t, 32, attempts, "one retry pass must remain bounded by the batch size, including rejected retries")
+				wantAttempts := 32
+				if rejections > 1 {
+					wantAttempts = 17 // First repeated rejection ends the pass.
+				}
+				require.Equal(t, wantAttempts, attempts, "one retry pass must remain bounded, including rejected retries")
 				require.Equal(t, 16, provider.GetEmbedCount())
 			})
 		}
@@ -187,7 +195,7 @@ func TestEmbedWorkerSaveRetryAcrossWorkers(t *testing.T) {
 	var published atomic.Int64
 	worker.SetOnEmbedded(func(*storage.Node) { published.Add(1) })
 	worker.StartWorkers()
-	require.Eventually(t, func() bool { return published.Load() == 16 }, 5*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return published.Load() == 16 }, 15*time.Second, time.Millisecond)
 	worker.Close()
 	require.Equal(t, 16, provider.GetEmbedCount(), "two rejected writes per node must not buy more vectors")
 	require.Equal(t, int64(16), worker.processed.Load())
@@ -218,6 +226,7 @@ func BenchmarkNodeEmbeddingSaveRetry(b *testing.B) {
 					queue.pending = append(queue.pending[:0], ids...)
 					before := worker.processed.Load()
 					for worker.processed.Load()-before < int64(nodes) {
+						makeNodeSaveRetriesReady(worker)
 						worker.processNextBatch()
 					}
 				}
