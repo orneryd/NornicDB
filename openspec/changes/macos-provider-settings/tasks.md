@@ -8,9 +8,9 @@
 - [x] Add shared optional Advanced tab in setup/Settings; load and preserve existing environment/runtime arguments, validate and apply at startup.
 - [x] Nine focused Swift tests, two isolated installer tests, shell syntax checks, native app/server builds, Lite/Full packages.
 - [x] Install rebuilt app/server; verify restored config/environment/plist hashes unchanged and live OpenAI configuration.
-- [ ] Complete required verification: make targets hit global hook/fixture integration; last rerun canceled to stop temporary main-ref ingestion. Five newly created fixture DBs removed via API.
+- [ ] Complete required verification. After pausing all hooks per maintainer direction, verify-list passed; full verification is next. Earlier failed/canceled attempts and fixture cleanup remain recorded.
 - [ ] Validate latest packaged postinstall GUI-domain correction on a new privileged install (second authentication canceled).
 - [ ] Rebuild/reinstall, restore local OpenAI settings, re-embed nornicdbcode.
 - [ ] Publish separate release PR and verification evidence; resume #1487.
 
-- [ ] Clarify the maintainer's additional macOS PR requirement (latest message ended at “we also need to”).
+- [x] Maintainer clarified: no additional feature scope; pause all installed duplication/ingest hooks and continue this installer work.
