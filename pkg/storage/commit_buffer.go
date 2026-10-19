@@ -129,9 +129,8 @@ type CommitBuffer struct {
 	countsApplied atomic.Bool
 	draining      atomic.Bool // claims the single flusher slot for this generation
 
-	// retired guards the buffer's pending-node index retirement: a
-	// generation that reached the applied state retires its nodes from the
-	// index exactly once, whichever drain path reaches it first.
+	// retired guards the complete retirement under WriteBehindBuffer.mu:
+	// queue, read scopes, pending index and finally the applied flag.
 	retired atomic.Bool
 }
 
@@ -732,7 +731,6 @@ func (w *WriteBehindBuffer) drainOne() {
 		}
 	}
 	w.setLastErr(nil) // this generation applied; a prior failure is resolved
-	buf.markApplied()
 	w.removeDrained(buf)
 }
 
@@ -742,11 +740,18 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 	w.errMu.Unlock()
 }
 
-// removeDrained drops the applied generation from the draining queue and
-// retires its nodes from the pending-node index exactly once: the committed
-// schema index covers them from the replay onward.
+// removeDrained completes the oldest generation after its replay has published.
+// Snapshot capture, queue removal, read epochs and pending-index retirement
+// share mu. Publish applied last, so admission/frontier waiters and listeners
+// cannot pass completion while any reader still selects this generation.
+// Replay calls this before listeners; drainOne also calls it for generic apply
+// callbacks and after replay returns. The whole transition is idempotent.
 func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	if buf.retired.Swap(true) {
+		return
+	}
 	if len(w.draining) > 0 && w.draining[0] == buf {
 		// Release the retired generation before repairing the pending index.
 		// Reslicing alone retains it through the queue's backing array.
@@ -759,7 +764,7 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	// now covers its nodes, so retire them from the pending index exactly
 	// once. A later generation may already have replaced a node's entries;
 	// the repair re-adds the newest still-pending version.
-	if w.pendingIndex != nil && buf.retired.CompareAndSwap(false, true) {
+	if w.pendingIndex != nil {
 		for _, c := range buf.commits {
 			for _, op := range c.ops {
 				switch op.Type {
@@ -786,7 +791,7 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	if w.opCount == 0 && len(w.draining) == 0 {
 		w.readEpoch.Store((w.readEpoch.Load() + 2) &^ 1)
 	}
-	w.mu.Unlock()
+	buf.markApplied()
 }
 
 // nodeLocked resolves the newest buffered version of id across the active
