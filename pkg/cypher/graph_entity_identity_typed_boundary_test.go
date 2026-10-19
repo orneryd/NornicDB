@@ -62,9 +62,11 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
     negative,err:=parser.ParseFile(positions,negativeName,
         "package cypher\nimport storage \"github.com/orneryd/nornicdb/pkg/storage\"\n"+
         "type identityBoundaryAlias = storage.Node\n"+
+        "type identityBoundaryEmbedded struct { *identityBoundaryAlias }\n"+
+        "type identityBoundaryCopy storage.Node\n"+
         "func unrelatedIdentityReader(input *identityBoundaryAlias, relationship *storage.Edge) []string {\n"+
-        "candidate := input; inferred := relationship; candidate.Database = inferred.Database\n"+
-        "return []string{string(candidate.ID), string(inferred.ID), string(inferred.StartNode), string(inferred.EndNode)}\n}\n",0)
+        "candidate := identityBoundaryEmbedded{input}; inferred := relationship; copied := identityBoundaryCopy(*input); candidate.Database = inferred.Database\n"+
+        "return []string{string(candidate.ID), string(copied.ID), string(inferred.ID), string(inferred.StartNode), string(inferred.EndNode)}\n}\n",0)
     if err!=nil {t.Fatal(err)}
     files=append(files,negative)
     info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}}
@@ -76,16 +78,30 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
         }),
         Sizes: types.SizesFor("gc", runtime.GOARCH),
     }
-    if _, err := configuration.Check(current.ImportPath, positions, files, info); err != nil {
+    checked,err:=configuration.Check(current.ImportPath, positions, files, info)
+    if err != nil {
         t.Fatalf("incomplete identity consumer type graph: %v", err)
     }
-    native := func(typ types.Type) bool {
-        typ = types.Unalias(typ)
-        if pointer, ok := typ.(*types.Pointer); ok { typ = types.Unalias(pointer.Elem()) }
-        named, ok := typ.(*types.Named)
-        if !ok || named.Obj().Pkg() == nil { return false }
-        return named.Obj().Pkg().Path() == "github.com/orneryd/nornicdb/pkg/storage" && (named.Obj().Name() == "Node" || named.Obj().Name() == "Edge")
+    // Field objects retain their declaring type through aliases, newly defined
+    // copies and promoted embedded fields. Selection.Recv alone would miss an
+    // embedded Node.ID because the receiver is the enclosing wrapper type.
+    nativeFields:=map[types.Object]string{}
+    for _,imported:=range checked.Imports() {
+        if imported.Path()!="github.com/orneryd/nornicdb/pkg/storage" {continue}
+        for _,name:=range []string{"Node","Edge"} {
+            object:=imported.Scope().Lookup(name)
+            if object==nil {t.Fatalf("native identity type %s is absent",name)}
+            structure,ok:=types.Unalias(object.Type()).Underlying().(*types.Struct)
+            if !ok {t.Fatalf("native identity type %s is not a struct",name)}
+            for index:=0; index<structure.NumFields(); index++ {
+                field:=structure.Field(index)
+                switch field.Name() {
+                case "ID","Database","StartNode","EndNode":nativeFields[field]=name+"."+field.Name()
+                }
+            }
+        }
     }
+    if len(nativeFields)!=6 {t.Fatalf("incomplete native identity field population: %d/6",len(nativeFields))}
     var findings []string
     negativeFindings:=0
     for _, file := range files {
@@ -100,23 +116,23 @@ func TestGraphEntityIdentityTypedBoundary(t *testing.T) {
             return true
         })
         for selector, selection := range info.Selections {
-            if selector.Pos() < file.Pos() || selector.End() > file.End() || selection.Kind() != types.FieldVal || !native(selection.Recv()) { continue }
-            field := selection.Obj().Name()
-            if field != "ID" && field != "Database" && field != "StartNode" && field != "EndNode" { continue }
+            if selector.Pos() < file.Pos() || selector.End() > file.End() || selection.Kind() != types.FieldVal { continue }
+            field,native:=nativeFields[selection.Obj()]
+            if !native {continue}
             owner := "<initializer>"
             for parent := parents[selector]; parent != nil; parent = parents[parent] {
                 if function, ok := parent.(*ast.FuncDecl); ok { owner = function.Name.Name; break }
             }
             // The sole deferred row-similarity adapter is the accepted key-domain
             // exception. Its projection/filter siblings receive no exemption.
-            if filepath.Base(source) == "gds_node_similarity_rows.go" && owner == "similarityNodeID" { continue }
+            if filepath.Base(source) == "gds_node_similarity_rows.go" && owner == "similarityNodeID" && field=="Node.ID" { continue }
             if source==negativeName {negativeFindings++;continue}
-            findings = append(findings, fmt.Sprintf("%s: %s reads native %s.%s outside identity owner", positions.Position(selector.Pos()), owner, selection.Recv(), field))
+            findings = append(findings, fmt.Sprintf("%s: %s accesses native %s outside identity owner (receiver %s)", positions.Position(selector.Pos()), owner, field, selection.Recv()))
         }
     }
     sort.Strings(findings)
-    if negativeFindings!=6 {t.Fatalf("typed identity guard missed its fresh aliased/inferred reader or provenance write: caught %d/6 native identity field accesses",negativeFindings)}
-    t.Log("negative control: all 6 native identity accesses caught, including aliased/inferred readers and provenance writes")
+    if negativeFindings!=7 {t.Fatalf("typed identity guard missed its fresh reader or provenance write: caught %d/7 native identity field accesses",negativeFindings)}
+    t.Log("negative control: all 7 native identity accesses caught through aliases, inferred locals, embedded fields, defined copies and provenance writes")
     for _, finding := range findings { t.Log(finding) }
     if len(findings) != 0 { t.Fatalf("%d native identity consumers still bypass the owner", len(findings)) }
     t.Logf("complete compiler inventory: %d production files, no native identity owner bypasses", len(files)-1)
