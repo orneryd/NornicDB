@@ -503,9 +503,9 @@ func (c *CPUExactScorer) scoreCandidateValues(ctx context.Context, query []float
 	if len(candidates) == 0 {
 		return scored, nil
 	}
-	err := c.withVectorScores(ctx, query, func(read vectorScoreReader) error {
+	err := c.withVectorScores(ctx, query, func(read *vectorScoreReader) error {
 		for _, candidate := range candidates {
-			score, ok, err := read(candidate.ID)
+			score, ok, err := read.score(candidate.ID)
 			if err != nil {
 				return err
 			}
@@ -521,12 +521,37 @@ func (c *CPUExactScorer) scoreCandidateValues(ctx context.Context, query []float
 	return scored, nil
 }
 
-type vectorScoreReader func(string) (float64, bool, error)
+type vectorScoreReader struct {
+	ctx    context.Context
+	query  []float32
+	index  *VectorIndex
+	getter VectorGetter
+}
+
+func (r *vectorScoreReader) score(id string) (float64, bool, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, false, r.ctx.Err()
+	default:
+	}
+	var vec []float32
+	var ok bool
+	if r.index != nil {
+		vec, ok = r.index.getVectorRefLocked(id)
+	} else {
+		vec, ok = r.getter.GetVector(id)
+	}
+	if !ok {
+		return 0, false, nil
+	}
+	return float64(vector.DotProduct(r.query, vec)), true, nil
+}
 
 // withVectorScores owns CPU value computation for both batch output and
 // direct node accumulation. An in-memory batch borrows the index once; its
-// callback reads no Service state while holding that read lock.
-func (c *CPUExactScorer) withVectorScores(ctx context.Context, query []float32, visit func(vectorScoreReader) error) error {
+// callback reads no Service state while holding that read lock. The concrete
+// reader keeps per-member scoring out of indirect function dispatch.
+func (c *CPUExactScorer) withVectorScores(ctx context.Context, query []float32, visit func(*vectorScoreReader) error) error {
 	if c.getter == nil {
 		return nil
 	}
@@ -535,25 +560,13 @@ func (c *CPUExactScorer) withVectorScores(ctx context.Context, query []float32, 
 		return ctx.Err()
 	default:
 	}
-	normalizedQuery := vector.Normalize(query)
-	lookup := c.getter.GetVector
+	reader := vectorScoreReader{ctx: ctx, query: vector.Normalize(query), getter: c.getter}
 	if index, ok := c.getter.(*VectorIndex); ok {
 		index.mu.RLock()
 		defer index.mu.RUnlock()
-		lookup = index.getVectorRefLocked
+		reader.index = index
 	}
-	return visit(func(id string) (float64, bool, error) {
-		select {
-		case <-ctx.Done():
-			return 0, false, ctx.Err()
-		default:
-		}
-		vec, ok := lookup(id)
-		if !ok {
-			return 0, false, nil
-		}
-		return float64(vector.DotProduct(normalizedQuery, vec)), true, nil
-	})
+	return visit(&reader)
 }
 
 // GPUExactScorer implements ExactScorer using GPU-accelerated exact scoring.
@@ -1007,10 +1020,10 @@ func recordStageScore(node *stageNode, id string, score float64) {
 // map or member-score slice. Additional surfaced vectors use a node-local
 // set to keep the same vector from being scored twice.
 func (p *VectorSearchPipeline) scoreCPUStageBatch(ctx context.Context, query []float32, batch []*stageNode, byNode map[string][]string, cpu *CPUExactScorer) error {
-	return cpu.withVectorScores(ctx, query, func(read vectorScoreReader) error {
+	return cpu.withVectorScores(ctx, query, func(read *vectorScoreReader) error {
 		for _, node := range batch {
 			score := func(id string) error {
-				value, ok, err := read(id)
+				value, ok, err := read.score(id)
 				if err == nil && ok {
 					recordStageScore(node, id, value)
 				}

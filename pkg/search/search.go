@@ -5293,32 +5293,33 @@ func requestCoversCandidatePopulation(ctx context.Context, pipeline *VectorSearc
 
 // memoizedVectorMembers is vectorMembersOf remembering, for one query, the
 // nodes it already resolved: the widening passes rescore many of the same
-// nodes. Not safe for concurrent use; each query takes its own.
+// nodes. The stage addresses requested IDs in the accumulated query-local
+// cache, so it needs no copied result map. Not safe for concurrent use.
 func (s *Service) memoizedVectorMembers() vectorMemberResolver {
-	known := map[string][]string{}
+	var known map[string][]string
 	return func(nodeIDs []string) map[string][]string {
-		out := make(map[string][]string, len(nodeIDs))
+		if known == nil {
+			known = s.vectorMembersOf(nodeIDs)
+			for _, nodeID := range nodeIDs {
+				if _, ok := known[nodeID]; !ok {
+					known[nodeID] = nil
+				}
+			}
+			return known
+		}
 		var missing []string
 		for _, nodeID := range nodeIDs {
-			if ids, ok := known[nodeID]; ok {
-				if ids != nil {
-					out[nodeID] = ids
-				}
-				continue
+			if _, ok := known[nodeID]; !ok {
+				missing = append(missing, nodeID)
 			}
-			missing = append(missing, nodeID)
 		}
 		if len(missing) > 0 {
 			fetched := s.vectorMembersOf(missing)
 			for _, nodeID := range missing {
-				ids := fetched[nodeID]
-				known[nodeID] = ids
-				if ids != nil {
-					out[nodeID] = ids
-				}
+				known[nodeID] = fetched[nodeID]
 			}
 		}
-		return out
+		return known
 	}
 }
 
