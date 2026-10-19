@@ -543,14 +543,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if configManager.isFirstRun() { showFirstRunWizard() }
     }
     
-    func applicationDidBecomeActive(_ notification: Notification) {
-        if ownsAppSession && statusItem != nil && configManager.isFirstRun() {
-            showFirstRunWizard()
-        }
-    }
-
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         guard ownsAppSession && statusItem != nil else { return false }
+        guard !hasVisibleWindows else { return true }
         if configManager.isFirstRun() { showFirstRunWizard() }
         else { openSettings() }
         return false
@@ -836,6 +831,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func openSettings() {
+        // Explicit navigation replaces setup without marking its review complete.
+        // Activation itself must never route back into setup.
+        firstRunWindowController?.window?.close()
         if settingsWindowController == nil {
             let settingsView = SettingsView(config: configManager, appDelegate: self)
             let hostingController = NSHostingController(rootView: settingsView)

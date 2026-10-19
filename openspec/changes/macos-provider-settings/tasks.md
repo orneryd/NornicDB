@@ -25,3 +25,5 @@
 - [x] Close setup after launch submission and keep startup status yellow until actual readiness or process failure.
 
 - [x] Restore default local model download action directly in setup and Settings AI controls using the existing shared downloader.
+
+- [x] Remove activation-triggered wizard routing; explicit Settings closes setup without clearing pending review, and app reopen respects an already visible window.
