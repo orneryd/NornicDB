@@ -97,8 +97,8 @@ func TestVectorEntryLexicalProjectionPassesAndErrors(t *testing.T) {
 	ids := []string{nodeMainVectorKey(" doc "), nodeMainVectorKey("\x00n\x03docv"), nodeChunkVectorKey(" doc ", 1)}
 	vectors := [][]float32{{1, 0}, {0, 1}, {1, 1}}
 	for _, tc := range []struct {
-		name string
-		hints nodeLexicalHints
+		name   string
+		hints  nodeLexicalHints
 		passes int
 	}{{"no hints", nil, 1}, {"all mains", hints, 2}} {
 		t.Run(tc.name, func(t *testing.T) {
