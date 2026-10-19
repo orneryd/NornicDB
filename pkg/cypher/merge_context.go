@@ -307,7 +307,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		node = existingNode
 	} else {
 		node = &storage.Node{
-			Database: storage.DatabaseOf(store),
+			Database:   storage.DatabaseOf(store),
 			ID:         storage.NodeID(e.generateID()),
 			Labels:     labels,
 			Properties: matchProps,
@@ -463,7 +463,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	} else {
 		// Create new relationship
 		edge = &storage.Edge{
-			Database: storage.DatabaseOf(store),
+			Database:   storage.DatabaseOf(store),
 			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
 			Type:       parsedPattern.relType,
 			StartNode:  mergeStartNode.ID,

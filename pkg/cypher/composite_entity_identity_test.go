@@ -34,7 +34,7 @@ func TestCompositeConstituentEntityIdentity(t *testing.T) {
 	prefix := "USE comp CALL { USE comp.one MATCH p=(n:P)-[r:R]->(z:Q) RETURN n,r,p } CALL { USE comp.two MATCH q=(m:P)-[s:R]->(y:Q) RETURN m,s,q } "
 	for _, tt := range []struct {
 		name, query string
-		want interface{}
+		want        interface{}
 	}{
 		{"element ids", "RETURN elementId(n) = elementId(m)", false},
 		{"equality", "RETURN n = m", false},
@@ -47,6 +47,9 @@ func TestCompositeConstituentEntityIdentity(t *testing.T) {
 		{"path equality", "RETURN p = q", false},
 		{"path distinct", "UNWIND [p,q,p] AS x RETURN count(DISTINCT x)", int64(2)},
 		{"map distinct", "UNWIND [{n:n},{n:m},{n:n}] AS x RETURN count(DISTINCT x)", int64(2)},
+		{"membership", "RETURN elementId(n) IN [elementId(m)]", false},
+		{"comparison chain", "RETURN elementId(n) = elementId(n) = elementId(m)", false},
+		{"raw id extension", "RETURN elementId(n) = 'same'", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := exec.Execute(context.Background(), prefix+tt.query, nil)
