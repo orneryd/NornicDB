@@ -277,6 +277,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 // the call's evaluated STRING argument.
 // Syntax: CALL db.index.vector.embed('query text') YIELD embedding
 func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	ctx, finish, err := e.queryEmbedder.BeginUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finish()
 	embedder := e.queryEmbedderForStatement(ctx)
 	if embedder == nil {
 		return nil, localizedError(localization.CypherSpecializedCallsEmbedderNotConfigured(), nil)
