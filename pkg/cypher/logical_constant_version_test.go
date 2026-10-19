@@ -11,9 +11,6 @@ import (
 func TestLogicalConstantFoldsPreserveCypherVersion(t *testing.T) {
 	for range []bool{false} {
 		mode := "compiled"
-		if text {
-			mode = "text"
-		}
 		t.Run(mode, func(t *testing.T) {
 			exec, _ := perRowTestExecutor(t)
 			exec.cache = nil
