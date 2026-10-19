@@ -584,7 +584,7 @@ func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []str
 	keys := make([]string, len(columns))
 	for rowIndex, row := range rows {
 		for i, column := range columns {
-			keys[i] = cypherEquivalenceKey(row[column])
+			keys[i] = cypherValueKey(row[column], cypherEquivalenceContract)
 		}
 		key := strings.Join(keys, "\x1f")
 		if _, exists := seen[key]; exists {
@@ -1273,7 +1273,7 @@ func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
 			keys = keys[:len(row)]
 		}
 		for index, value := range row {
-			keys[index] = cypherEquivalenceKey(value)
+			keys[index] = cypherValueKey(value, cypherEquivalenceContract)
 		}
 		key := strings.Join(keys, "\x1f")
 		if _, exists := seen[key]; exists {

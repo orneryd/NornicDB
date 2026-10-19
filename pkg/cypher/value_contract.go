@@ -1,18 +1,20 @@
 package cypher
 
-// The zero value is equivalence: DISTINCT, grouping, UNION and collection
-// set/frequency indexes use it. Value lookup is a separate, explicit contract;
-// in particular equal civil datetimes can be different overlap occurrences.
+// Every key, comparison, hash and index operation requires its caller's
+// contract. Zero is not a contract. Equal civil datetimes can be different
+// overlap occurrences under equivalence.
 type cypherComparisonContract uint8
 
 const (
-	cypherEquivalenceContract cypherComparisonContract = iota
+	cypherEquivalenceContract cypherComparisonContract = iota + 1
 	cypherValueEqualityContract
 )
 
-func (contract cypherComparisonContract) temporalKey(value interface{}) (temporalValueKey, bool) {
-	if contract == cypherValueEqualityContract {
-		return temporalEqualityParts(value)
-	}
-	return temporalEquivalenceParts(value)
-}
+// Java-object removal sets have a separate numeric representation boundary;
+// temporal identity still uses the same explicit equality/equivalence owner.
+type cypherNumericComparisonPolicy uint8
+
+const (
+	cypherNumericValues cypherNumericComparisonPolicy = iota
+	cypherNumericKinds
+)
