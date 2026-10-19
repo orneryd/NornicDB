@@ -108,14 +108,14 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time) storage.NodeID {
 	// same storage eligibility predicate, excluding the retry owner's IDs.
 	if _, indexed := ew.storage.(EmbeddingIndexManager); !indexed && len(ew.embeddingRetries) > 0 {
 		var fresh storage.NodeID
-		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{}, func(node *storage.Node) bool {
+		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{}, func(node *storage.Node) error {
 			_, retained := ew.embeddingRetries[node.ID]
 			_, claimed := ew.claimedNodes[string(node.ID)]
 			if !retained && !claimed && storage.NodeNeedsEmbedding(node) {
 				fresh = node.ID
-				return false
+				return storage.ErrIterationStopped
 			}
-			return true
+			return nil
 		})
 		if fresh != "" {
 			ew.retryTurn = true

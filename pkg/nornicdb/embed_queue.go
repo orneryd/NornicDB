@@ -1490,7 +1490,6 @@ func (ew *EmbedWorker) waitForProviderRetry(provider embed.Embedder) bool {
 		if delay <= 0 {
 			return true
 		}
-		delay = ew.nodeEmbeddingRetryDelay(delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ew.ctx.Done():

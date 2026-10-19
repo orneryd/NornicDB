@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,6 +49,14 @@ func TestEmbedWorkerRetryOwnerReportsIdleDuringBackoff(t *testing.T) {
 	require.Equal(t, 2, retry.failures)
 	require.Greater(t, time.Until(retry.retryAt), time.Second)
 	worker.claimMu.Unlock()
+	for i := 0; i < 10; i++ {
+		makeNodeSaveRetriesReady(worker)
+		require.False(t, worker.processNextBatch())
+	}
+	worker.claimMu.Lock()
+	require.Equal(t, 6, retry.failures, "backoff exponent must be capped")
+	require.InDelta(t, 30, time.Until(retry.retryAt).Seconds(), 0.5)
+	worker.claimMu.Unlock()
 }
 
 func TestEmbedWorkerRetryOwnerRejectsChangedProvider(t *testing.T) {
@@ -82,6 +91,7 @@ func TestEmbedWorkerRetryOwnerRejectsChangedProvider(t *testing.T) {
 				}
 				saved, err := queue.GetNode("node-000")
 				require.NoError(t, err)
+				require.NotEmpty(t, saved.ChunkEmbeddings)
 				require.Equal(t, replacement.Model(), saved.EmbedMeta["embedding_model"])
 				require.Len(t, saved.ChunkEmbeddings[0], replacement.Dimensions())
 				require.Positive(t, replacement.GetEmbedCount())
@@ -89,6 +99,54 @@ func TestEmbedWorkerRetryOwnerRejectsChangedProvider(t *testing.T) {
 			})
 		}
 	}
+}
+
+type retryOwnerBlockingEmbedder struct {
+	*mockEmbedder
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *retryOwnerBlockingEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	close(e.started)
+	select {
+	case <-e.release:
+		return e.mockEmbedder.EmbedBatch(ctx, texts)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestEmbedWorkerRetryOwnerInvalidatesInFlightRetention(t *testing.T) {
+	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 1, 1)
+	old := &retryOwnerBlockingEmbedder{mockEmbedder: newMockEmbedder(), started: make(chan struct{}), release: make(chan struct{})}
+	old.dims = 2
+	worker.SetEmbedder(old)
+	done := make(chan struct{})
+	go func() { worker.processNextBatch(); close(done) }()
+	<-old.started
+	replacement := newMockEmbedder()
+	replacement.model, replacement.dims = "new-space", 3
+	worker.SetEmbedder(replacement)
+	close(old.release)
+	<-done
+	worker.claimMu.Lock()
+	require.Empty(t, worker.embeddingRetries, "a rejected in-flight old-generation result must not refill retention")
+	worker.claimMu.Unlock()
+	require.True(t, worker.processNextBatch())
+	saved, err := queue.GetNode("node-000")
+	require.NoError(t, err)
+	require.Equal(t, "new-space", saved.EmbedMeta["embedding_model"])
+	require.Len(t, saved.ChunkEmbeddings[0], 3)
+}
+
+func TestEmbedWorkerRetryOwnerInvalidatesPolicy(t *testing.T) {
+	worker, _, provider := nodeSaveRetryFixture(t, "whole", 1, 1)
+	require.True(t, worker.processNextBatch())
+	worker.config.IncludeLabels = !worker.config.IncludeLabels
+	makeNodeSaveRetriesReady(worker)
+	require.True(t, worker.processNextBatch())
+	require.Equal(t, 2, provider.GetEmbedCount(), "a changed text policy must regenerate even for identical source")
 }
 
 func TestEmbedWorkerRetryOwnerInterleavesDueRetries(t *testing.T) {
