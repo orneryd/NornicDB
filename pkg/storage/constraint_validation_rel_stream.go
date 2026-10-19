@@ -37,7 +37,7 @@ func runRelEdgeCheck(engine Engine, edgeType string, chk relEdgeCheck) error {
 		return nil
 	}
 	var violation error
-	err := StreamEdgesByType(context.Background(), engine, edgeType, func(edge *Edge) error {
+	err := StreamStoredEdgesByType(context.Background(), engine, edgeType, func(edge *Edge) error {
 		if err := chk.visit(edge); err != nil {
 			violation = err
 			return errRelEdgeCheckStopped
@@ -332,11 +332,11 @@ func newRelPolicyCheck(engine Engine, c Constraint) relEdgeCheck {
 	}
 
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
-		srcNode, err := engine.GetNode(edge.StartNode)
+		srcNode, err := GetStoredNode(engine, edge.StartNode)
 		if err != nil || srcNode == nil {
 			return nil
 		}
-		tgtNode, err := engine.GetNode(edge.EndNode)
+		tgtNode, err := GetStoredNode(engine, edge.EndNode)
 		if err != nil || tgtNode == nil {
 			return nil
 		}
