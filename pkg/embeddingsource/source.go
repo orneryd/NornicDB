@@ -1,6 +1,11 @@
 // Package embeddingsource defines the input contract carried by managed vectors.
 package embeddingsource
 
+import (
+	"strconv"
+	"strings"
+)
+
 // MetaKey is reserved for the persisted consumed-source descriptor.
 const MetaKey = "__nornic_embedding_source"
 
@@ -18,61 +23,63 @@ type Source struct {
 	AllProperties bool
 }
 
-// Metadata returns an owned, codec-neutral snapshot for the result sidecar.
-// The private v1 tuple is [version,text,all,labels,include,exclude,properties].
-// It avoids per-node field-name maps while preserving absent-key dependencies.
-func (s Source) Metadata() []any {
-	return []any{"1", s.Text, s.AllProperties, s.IncludeLabels, append([]string(nil), s.Include...), append([]string(nil), s.Exclude...), append([]string(nil), s.Properties...)}
+// Metadata returns an immutable, codec-neutral snapshot. Its private v1 format
+// is version:flags: followed by three counted, byte-length-prefixed key lists
+// (include, exclude, properties). Flags are text=1, all=2, labels=4. Key bytes
+// need no delimiter escaping. A string avoids repeated deep copies of a nested
+// descriptor on every node/transaction copy; both JSON and msgpack preserve it.
+func (s Source) Metadata() string {
+	flags := 0
+	if s.Text { flags |= 1 }
+	if s.AllProperties { flags |= 2 }
+	if s.IncludeLabels { flags |= 4 }
+	var b strings.Builder
+	size := 32
+	for _, keys := range [][]string{s.Include,s.Exclude,s.Properties} { for _, key := range keys { size += len(key)+8 } }
+	b.Grow(size)
+	b.WriteString("1:")
+	b.WriteString(strconv.Itoa(flags))
+	b.WriteByte(':')
+	for _, keys := range [][]string{s.Include,s.Exclude,s.Properties} {
+		b.WriteString(strconv.Itoa(len(keys)));b.WriteByte(':')
+		for _, key := range keys { b.WriteString(strconv.Itoa(len(key)));b.WriteByte(':');b.WriteString(key) }
+	}
+	return b.String()
 }
 
-// Read accepts in-memory and storage-decoded tuples. An unsupported present
-// descriptor never falls back to a narrower legacy source definition.
+// Read decodes an immutable snapshot. Unsupported or malformed present records
+// never fall back to a narrower legacy source definition. Counts and lengths
+// are bounded by the record itself before allocating or slicing.
 func Read(meta map[string]any) (s Source, present, valid bool) {
 	raw, present := meta[MetaKey]
-	if !present {
-		return s, false, true
-	}
-	fields, ok := raw.([]any)
-	if !ok || len(fields) != 7 || fields[0] != "1" {
-		return s, true, false
-	}
-	if s.Text, ok = fields[1].(bool); !ok {
-		return s, true, false
-	}
-	if s.AllProperties, ok = fields[2].(bool); !ok {
-		return s, true, false
-	}
-	if s.IncludeLabels, ok = fields[3].(bool); !ok {
-		return s, true, false
-	}
-	read := func(v any) ([]string, bool) {
-		switch x := v.(type) {
-		case nil:
-			return nil, true
-		case []string:
-			return x, true
-		case []any:
-			out := make([]string, len(x))
-			for i, item := range x {
-				var ok bool
-				out[i], ok = item.(string)
-				if !ok {
-					return nil, false
-				}
-			}
-			return out, true
-		default:
-			return nil, false
+	if !present { return s,false,true }
+	data,ok:=raw.(string)
+	if !ok { return s,true,false }
+	at:=0
+	number:=func()(int,bool) {
+		start,n:=at,0
+		for at<len(data)&&data[at]!=':' {
+			d:=int(data[at]-'0')
+			if data[at]<'0'||data[at]>'9'||n>len(data)/10||n*10+d>len(data) { return 0,false }
+			n=n*10+d;at++
 		}
+		if at==start||at>=len(data) { return 0,false }
+		at++;return n,true
 	}
-	if s.Include, ok = read(fields[4]); !ok {
-		return s, true, false
+	version,ok:=number();if !ok||version!=1 { return s,true,false }
+	flags,ok:=number();if !ok||flags&^7!=0 { return s,true,false }
+	s.Text,s.AllProperties,s.IncludeLabels=flags&1!=0,flags&2!=0,flags&4!=0
+	read:=func()([]string,bool) {
+		n,ok:=number();if !ok||n>len(data)-at { return nil,false }
+		keys:=make([]string,n)
+		for i:=range keys {
+			length,ok:=number();if !ok||length>len(data)-at { return nil,false }
+			keys[i]=data[at:at+length];at+=length
+		}
+		return keys,true
 	}
-	if s.Exclude, ok = read(fields[5]); !ok {
-		return s, true, false
-	}
-	if s.Properties, ok = read(fields[6]); !ok {
-		return s, true, false
-	}
-	return s, true, true
+	if s.Include,ok=read();!ok { return s,true,false }
+	if s.Exclude,ok=read();!ok { return s,true,false }
+	if s.Properties,ok=read();!ok { return s,true,false }
+	return s,true,at==len(data)
 }
