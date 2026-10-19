@@ -20,9 +20,14 @@ type lifecycleSnapshotEngine struct {
 }
 
 func (e *lifecycleSnapshotEngine) GetInnerEngine() storage.Engine { return e.MemoryEngine }
-func (e *lifecycleSnapshotEngine) StreamNodesWithoutEmbeddings(ctx context.Context, visit func(*storage.Node) error) error {
-	e.once.Do(func() { close(e.entered); <-e.resume })
-	return e.MemoryEngine.StreamNodesWithoutEmbeddings(ctx, visit)
+
+// Native snapshots collect stored bodies through this stream after #1532.
+func (e *lifecycleSnapshotEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	// Startup cleanup streams prefixes through the same API before snapshots start.
+	if opts.Prefix == "" {
+		e.once.Do(func() { close(e.entered); <-e.resume })
+	}
+	return e.MemoryEngine.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 type lifecycleSnapshotManager struct{ *testDatabaseManagerAdapter }
