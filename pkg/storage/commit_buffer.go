@@ -1328,7 +1328,9 @@ func (w *WriteBehindBuffer) PendingOps() int {
 	total := w.opCount
 	for _, buf := range w.draining {
 		if !buf.IsApplied() {
-			total += len(buf.Mutations())
+			// Rotated generations carry both legacy mutations and captured
+			// transaction commits. AddCommit does not populate Mutations().
+			total += buf.ops
 		}
 	}
 	return total
