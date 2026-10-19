@@ -102,6 +102,8 @@ func BenchmarkFunctionSyntaxWholeQueryWalk(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := forEachFunctionCall(query, func(_, _ string) error { return nil }); err != nil { b.Fatal(err) }
+		if err := forEachFunctionCall(query, func(_, _ string) error { return nil }); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
