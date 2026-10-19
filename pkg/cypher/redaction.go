@@ -160,23 +160,17 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 	if err != nil || trimmed == "" {
 		return RedactedPlaceholder
 	}
-	toks, ok := redactLexCheckedContext(ctx, query)
+	checked, ok := redactLexCheckedContext(ctx, query)
 	if !ok {
 		return RedactedPlaceholder
 	}
+	toks := checked.tokens
 	// Strip comments from the same checked token stream; do not restart an
 	// unbounded comment/quoted-text scan before observing cancellation.
-	hasComments := false
-	for _, tok := range toks {
-		if tok.GetTokenType() == cantlr.CypherLexerCOMMENT || tok.GetTokenType() == cantlr.CypherLexerLINE_COMMENT {
-			hasComments = true
-			break
-		}
-	}
-	if stripComments && hasComments {
+	if stripComments && checked.hasComments {
 		var normalized strings.Builder
-		for _, tok := range toks {
-			if ctx.Err() != nil {
+		for i, tok := range toks {
+			if i&1023 == 0 && ctx.Err() != nil {
 				return RedactedPlaceholder
 			}
 			text := tok.GetText()
@@ -199,8 +193,8 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 	// inside a node or relationship pattern, never inside a map.
 	var stack []int
 	prev := noPrevToken
-	for _, tok := range toks {
-		if ctx.Err() != nil {
+	for i, tok := range toks {
+		if i&1023 == 0 && ctx.Err() != nil {
 			return RedactedPlaceholder
 		}
 		ttype := tok.GetTokenType()
@@ -247,48 +241,52 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 // token types are >= 1), so it never collides with a real token type.
 const noPrevToken = -1
 
-// redactLexCheckedContext lexes query and applies the step-1 fail-closed signals
-// documented on RedactLiterals. It returns ok=false when the statement must
-// be redacted whole.
-func redactLexChecked(query string) ([]antlr4.Token, bool) {
-	return redactLexCheckedContext(context.Background(), query)
+type checkedRedactionTokens struct {
+	tokens      []antlr4.Token
+	hasComments bool
 }
 
-func redactLexCheckedContext(ctx context.Context, query string) ([]antlr4.Token, bool) {
+// redactLexCheckedContext applies the step-1 fail-closed signals and records
+// comments in that same pass, avoiding a separate scan of the checked tokens.
+func redactLexCheckedContext(ctx context.Context, query string) (checkedRedactionTokens, bool) {
 	toks, err := cantlr.LexContext(ctx, query)
 	if err != nil {
-		return nil, false
+		return checkedRedactionTokens{}, false
 	}
+	checked := checkedRedactionTokens{tokens: toks}
 	var stack []int
 	prev := noPrevToken
-	for _, tok := range toks {
-		if ctx.Err() != nil {
-			return nil, false
+	for i, tok := range toks {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return checkedRedactionTokens{}, false
 		}
 		ttype := tok.GetTokenType()
 		if ttype == cantlr.CypherLexerERRCHAR {
-			return nil, false
+			return checkedRedactionTokens{}, false
+		}
+		if ttype == cantlr.CypherLexerCOMMENT || ttype == cantlr.CypherLexerLINE_COMMENT {
+			checked.hasComments = true
 		}
 		switch ttype {
 		case cantlr.CypherLexerLPAREN, cantlr.CypherLexerLBRACE, cantlr.CypherLexerLBRACK:
 			stack = append(stack, ttype)
 		case cantlr.CypherLexerRPAREN, cantlr.CypherLexerRBRACE, cantlr.CypherLexerRBRACK:
 			if len(stack) == 0 || stack[len(stack)-1] != redactOpenerFor(ttype) {
-				return nil, false
+				return checkedRedactionTokens{}, false
 			}
 			stack = stack[:len(stack)-1]
 		}
 		if tok.GetChannel() == antlr4.TokenDefaultChannel {
 			if ttype == cantlr.CypherLexerID && prev == cantlr.CypherLexerID {
-				return nil, false
+				return checkedRedactionTokens{}, false
 			}
 			prev = ttype
 		}
 	}
-	if len(stack) != 0 {
-		return nil, false
+	if len(stack) != 0 || ctx.Err() != nil {
+		return checkedRedactionTokens{}, false
 	}
-	return toks, true
+	return checked, true
 }
 
 // redactOpenerFor returns the opening bracket token type that closer must

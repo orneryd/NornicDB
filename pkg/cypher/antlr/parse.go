@@ -128,8 +128,8 @@ func ValidateContext(ctx context.Context, query string) (err error) {
 	defer func() {
 		// Tokens can retain their lexer's character stream. Drop the statement
 		// context as well as the parser wrapper before pooling the validator.
-		if input, ok := v.lexer.GetInputStream().(*contextCharStream); ok {
-			input.ctx = context.Background()
+		if input, ok := v.lexer.GetInputStream().(interface{ releaseContext() }); ok {
+			input.releaseContext()
 		}
 		v.parser.SetTokenStream(v.tokens)
 		validatorPool.Put(v)

@@ -31,8 +31,15 @@ func TestValidateContextCancellationReleasesValidator(t *testing.T) {
 	func() {
 		pooled := validatorPool.Get().(*pooledValidator)
 		defer validatorPool.Put(pooled)
-		if input, ok := pooled.lexer.GetInputStream().(*contextCharStream); ok {
-			require.Equal(t, context.Background(), input.ctx, "idle validators must release the statement context")
+		var requestContext context.Context
+		switch input := pooled.lexer.GetInputStream().(type) {
+		case *contextCharStream:
+			requestContext = input.ctx
+		case *contextASCIICharStream:
+			requestContext = input.ctx
+		}
+		if requestContext != nil {
+			require.Equal(t, context.Background(), requestContext, "idle validators must release the statement context")
 		}
 	}()
 	require.NoError(t, Validate("RETURN 1"), "the interrupted pooled validator is reusable")
