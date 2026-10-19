@@ -87,6 +87,9 @@ func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
 			result, err := exec.Execute(context.Background(), "USE comp CALL gds.fastRP.stream('composite_identity', {embeddingDimension: 4}) YIELD nodeId RETURN count(DISTINCT nodeId)", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
+			result, err = exec.Execute(context.Background(), "USE comp CALL gds.fastRP.stream('composite_identity', {embeddingDimension: 4}) YIELD nodeId RETURN count(DISTINCT elementId(gds.util.asNode(nodeId)))", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
 		})
 	}
 }

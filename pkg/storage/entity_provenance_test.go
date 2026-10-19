@@ -83,7 +83,20 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 		require.NotEmpty(t, node.Database)
 		return true
 	}))
-	require.ElementsMatch(t, []NodeID{"one:same", "one:target", "two:same", "two:target"}, ids)
+	require.ElementsMatch(t, []NodeID{"4:one:same", "4:one:target", "4:two:same", "4:two:target"}, ids)
+	for _, database := range []string{"one", "two"} {
+		node, err := composite.GetNode(NodeID("4:" + database + ":same"))
+		require.NoError(t, err)
+		require.Equal(t, database, node.Database)
+		node, err = composite.GetNodeProjected(NodeID("4:" + database + ":same"), nil)
+		require.NoError(t, err)
+		require.Equal(t, database, node.Database)
+		edge, err := composite.GetEdge(EdgeID("5:" + database + ":rel"))
+		require.NoError(t, err)
+		require.Equal(t, database, edge.Database)
+	}
+	_, err = composite.GetNode("4:missing:same")
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 type provenanceStreamEngine struct {
