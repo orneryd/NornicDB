@@ -8,8 +8,8 @@ import (
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
-// (), [], {} groups and quoted strings. The parts are trimmed substrings of
-// input, so splitting copies no text.
+// (), [], {} groups, comments and quoted strings. Comment-free parts retain
+// source slices; comments are rendered from the lexical owner's recorded spans.
 func splitTopLevelComma(input string) []string {
 	var buffer [8]string
 	parts := appendTopLevelComma(buffer[:0], input)
@@ -23,38 +23,9 @@ func splitTopLevelComma(input string) []string {
 
 // appendTopLevelComma appends input's comma-separated parts outside quotes
 // and brackets, trimmed, to parts (splitTopLevelComma). A caller passing a
-// fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
-// allocating.
+// fixed-size buffer reuses its result storage and the immutable argument spans.
 func appendTopLevelComma(parts []string, input string) []string {
-	if strings.TrimSpace(input) == "" {
-		return parts
-	}
-
-	start := 0
-	depth := 0
-
-	for i := 0; i < len(input); i++ {
-		switch input[i] {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(input, i, input[i]) - 1
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, strings.TrimSpace(input[start:i]))
-				start = i + 1
-			}
-		}
-	}
-
-	if s := strings.TrimSpace(input[start:]); s != "" {
-		parts = append(parts, s)
-	}
-	return parts
+	return appendFunctionArguments(parts, input, false)
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {

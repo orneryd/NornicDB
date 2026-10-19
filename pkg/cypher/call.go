@@ -216,11 +216,11 @@ func splitCallAndTail(cypher string) callSplit {
 		if !strings.HasPrefix(upperASCII(strings.TrimSpace(normalized)), "CALL ") {
 			return callSplit{callOnly: strings.TrimSpace(cypher)}
 		}
-		open := strings.Index(normalized, "(")
-		if open < 0 {
+		call, called := firstProcedureCall(normalized)
+		if !called || call.open < 0 {
 			return callSplit{callOnly: strings.TrimSpace(cypher)}
 		}
-		close := findMatchingCallParen(normalized, open)
+		close := call.close(normalized)
 		if close < 0 {
 			return callSplit{callOnly: strings.TrimSpace(cypher)}
 		}
@@ -1115,40 +1115,9 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 }
 
 func findTopLevelByte(input string, target byte) int {
-	inSingle := false
-	inDouble := false
-	parenDepth := 0
-	bracketDepth := 0
-	braceDepth := 0
-	for i := 0; i < len(input); i++ {
-		ch := input[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-		case ch == '\'':
-			inSingle = true
-		case ch == '"':
-			inDouble = true
-		case ch == '(':
-			parenDepth++
-		case ch == ')':
-			parenDepth--
-		case ch == '[':
-			bracketDepth++
-		case ch == ']':
-			bracketDepth--
-		case ch == '{':
-			braceDepth++
-		case ch == '}':
-			braceDepth--
-		case ch == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0:
-			return i
+	for _, at := range readFunctionSyntax(input).rootPunctuation {
+		if input[at] == target {
+			return at
 		}
 	}
 	return -1

@@ -354,69 +354,25 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	indexName = "default"
 	input = &vectorQueryInput{}
 
-	// Find the procedure call (supports both queryNodes and queryRelationships)
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "DB.INDEX.VECTOR.QUERYNODES")
-	if callIdx == -1 {
-		callIdx = strings.Index(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS")
+	var call functionCallSpan
+	found := false
+	for _, candidate := range readFunctionSyntax(cypher).calls {
+		if strings.EqualFold(candidate.name, "db.index.vector.queryNodes") || strings.EqualFold(candidate.name, "db.index.vector.queryRelationships") {
+			call = candidate
+			found = true
+			break
+		}
 	}
-	if callIdx == -1 {
+	if !found {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorProcedureNotFound(), nil)
 	}
-
-	// Find the opening parenthesis
-	rest := cypher[callIdx:]
-	parenIdx := strings.Index(rest, "(")
-	if parenIdx == -1 {
+	if call.open < 0 {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
 	}
-
-	// Find matching closing parenthesis (while respecting quoted strings).
-	parenContent := rest[parenIdx+1:]
-	depth := 1
-	endIdx := -1
-	inQuote := false
-	quoteChar := rune(0)
-	escaped := false
-	for i, c := range parenContent {
-		if inQuote {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if c == '\'' || c == '"' {
-			inQuote = true
-			quoteChar = c
-			continue
-		}
-		if c == '(' || c == '[' {
-			depth++
-		} else if c == ')' || c == ']' {
-			depth--
-			if depth == 0 {
-				endIdx = i
-				break
-			}
-		}
-	}
-	if endIdx == -1 {
+	if call.close(cypher) < 0 {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
 	}
-
-	params := parenContent[:endIdx]
-
-	// Split parameters (careful with nested brackets)
-	parts := splitParamsCarefully(params)
-
+	parts := call.arguments(nil)
 	if len(parts) >= 1 {
 		// First param is index name (quoted string)
 		indexName = strings.Trim(strings.TrimSpace(parts[0]), "'\"")
@@ -461,51 +417,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 // splitParamsCarefully splits comma-separated parameters while respecting
 // brackets and quoted strings.
 func splitParamsCarefully(params string) []string {
-	var result []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-	escaped := false
-
-	for _, c := range params {
-		if inQuote {
-			current.WriteRune(c)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if c == '\\' {
-				escaped = true
-				continue
-			}
-			if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-		if c == '\'' || c == '"' {
-			inQuote = true
-			quoteChar = c
-			current.WriteRune(c)
-		} else if c == '[' || c == '(' || c == '{' {
-			depth++
-			current.WriteRune(c)
-		} else if c == ']' || c == ')' || c == '}' {
-			depth--
-			current.WriteRune(c)
-		} else if c == ',' && depth == 0 {
-			result = append(result, current.String())
-			current.Reset()
-		} else {
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-
-	return result
+	return readFunctionSyntax(params).appendArguments(nil, 0, false)
 }
 
 // parseInlineVector parses an inline vector like [0.1, 0.2, 0.3]; nil for
@@ -516,7 +428,7 @@ func parseInlineVector(s string) []float32 {
 	}
 	s = s[1 : len(s)-1]
 
-	parts := strings.Split(s, ",")
+	parts := splitTopLevelComma(s)
 	result := make([]float32, 0, len(parts))
 
 	for _, p := range parts {

@@ -92,21 +92,12 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
 	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
 	var procedures []ProcedureSpec
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
+	for _, call := range readFunctionSyntax(query).calls {
+		if !call.procedure {
 			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
 		}
+		name := call.name
 		if procedure, found := globalProcedureRegistry.Get(name); found {
 			procedures = append(procedures, procedure.Spec)
 			continue
@@ -128,72 +119,7 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.
 func procedureNameAt(query string, offset int) (string, bool) {
-	i := offset
-	skipSpace := func() {
-		for i < len(query) && isASCIISpace(query[i]) {
-			i++
-		}
-	}
-	// Keep the ordinary dotted name as a source slice. Only quoted parts
-	// or spaces around separators need normalization, shared by auth and CALL.
-	var normalized strings.Builder
-	normalizing := false
-	startName, endName, components := offset, offset, 0
-	for {
-		skipSpace()
-		if i >= len(query) {
-			break
-		}
-		partStart := i
-		quoted := query[i] == '`'
-		var part string
-		if quoted {
-			end := strings.IndexByte(query[i+1:], '`')
-			if end < 0 {
-				return "", false
-			}
-			part = query[i+1 : i+1+end]
-			i += end + 2
-		} else {
-			for i < len(query) && (query[i] == '_' || query[i] == '$' || query[i] >= '0' && query[i] <= '9' || query[i] >= 'a' && query[i] <= 'z' || query[i] >= 'A' && query[i] <= 'Z') {
-				i++
-			}
-			if i == partStart {
-				break
-			}
-			part = query[partStart:i]
-		}
-		if components == 0 {
-			startName = partStart
-		}
-		if !normalizing && (quoted || components > 0 && partStart != endName+1) {
-			if components > 0 {
-				normalized.WriteString(query[startName:endName])
-			}
-			normalizing = true
-		}
-		if normalizing {
-			if components > 0 {
-				normalized.WriteByte('.')
-			}
-			normalized.WriteString(part)
-		}
-		endName = i
-		components++
-		skipSpace()
-		if i < len(query) && query[i] == '.' {
-			i++
-			continue
-		}
-		break
-	}
-	if components == 0 {
-		return "", false
-	}
-	if normalizing {
-		return normalized.String(), true
-	}
-	return query[startName:endName], true
+	return lexicalProcedureNameAt(query, offset)
 }
 
 func isSchemaPermissionQuery(query string) bool {

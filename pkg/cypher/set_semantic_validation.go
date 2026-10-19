@@ -430,9 +430,9 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
+		if call, called := functionCallAt(expression, index); called {
 			delimiters = append(delimiters, '(')
-			index = functionEnd + 1
+			index = call.open + 1
 			continue
 		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own

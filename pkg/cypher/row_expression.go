@@ -84,7 +84,7 @@ func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right
 // rowValueProgram keeps the decisions it makes about a text and calls it
 // for the forms it doesn't compile.
 func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return nil, false, nil
 	}
@@ -1300,22 +1300,8 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 // isQualifiedFunctionCall reports whether expr is one call of a qualified
 // function name: name.name… followed by an argument list that ends expr.
 func isQualifiedFunctionCall(expr string) bool {
-	_, end, ok := scanSymbolicName(expr, 0)
-	if !ok {
-		return false
-	}
-	segments := 0
-	for end < len(expr) && expr[end] == '.' {
-		_, next, ok := scanSymbolicName(expr, end+1)
-		if !ok {
-			return false
-		}
-		end, segments = next, segments+1
-	}
-	for end < len(expr) && isASCIIWhitespace(expr[end]) {
-		end++
-	}
-	return segments > 0 && end < len(expr) && expr[end] == '(' && findMatchingParen(expr, end) == len(expr)-1
+	name, _, ok := parseFunctionCallWS(expr)
+	return ok && strings.Contains(name, ".")
 }
 
 // rowPropertyChainTypeError is the TypeError of a property chain that
@@ -1412,40 +1398,7 @@ func nextRowPropertySeparator(chain string, start int) int {
 }
 
 func stripEnclosingExpressionParentheses(expr string) (string, bool) {
-	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
-		return "", false
-	}
-	depth := 0
-	quote := byte(0)
-	for i := 0; i < len(expr); i++ {
-		character := expr[i]
-		if quote != 0 {
-			if character == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
-			continue
-		}
-		if character == '\'' || character == '"' {
-			quote = character
-			continue
-		}
-		switch character {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 && i != len(expr)-1 {
-				return "", false
-			}
-			if depth < 0 {
-				return "", false
-			}
-		}
-	}
-	if depth != 0 || quote != 0 {
-		return "", false
-	}
-	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+	return parenthesizedFunctionExpression(expr)
 }
 
 // stripEnclosingRowDelimiter returns the inside of expr when expr is one
@@ -1966,13 +1919,13 @@ func isRelationshipPatternOperand(expression string) bool {
 // literal.
 func containsRelationshipPattern(expression string) bool {
 	for i := 0; i < len(expression); i++ {
+		if end := queryCommentEnd(expression, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		switch c := expression[i]; c {
 		case '\'', '"', '`':
-			j := i + 1
-			for j < len(expression) && (expression[j] != c || isBackslashEscaped(expression, j)) {
-				j++
-			}
-			i = j
+			i = skipCypherQuotedText(expression, i, c) - 1
 		case '(':
 			if _, chain := relationshipChainEnd(expression, i, len(expression)); chain {
 				return true

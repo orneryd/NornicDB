@@ -352,10 +352,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 			return true
 		}
 	}
-	j := end
-	for j < len(s) && isASCIISpace(s[j]) {
-		j++
-	}
+	j := queryGapEnd(s, end)
 	if j < len(s) && s[j] == ':' {
 		return true // a map key: {set: 1}
 	}
@@ -1353,6 +1350,21 @@ func queryGapStart(query string, index int) int {
 		start = at
 	}
 	return start
+}
+
+// trimQueryTrivia removes surrounding whitespace and comments without changing
+// quoted data or expression offsets within the retained text. Evaluation must
+// accept trivia even when optional statement normalization is disabled.
+func trimQueryTrivia(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.IndexByte(text, '/') < 0 {
+		return text
+	}
+	start, end := queryGapEnd(text, 0), queryGapStart(text, len(text))
+	if end < start {
+		end = start
+	}
+	return text[start:end]
 }
 
 // hasOwnStatementSyntax reports whether query is one of NornicDB's

@@ -78,6 +78,7 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 	if requirements.Write || requirements.Schema || requirements.Admin {
 		return policy
 	}
+	syntax := readFunctionSyntax(text)
 	if err := forEachFunctionInvocation(text, func(name, normalized string, open int) error {
 		volatility, known := functionCacheDeclarations[normalized]
 		if !known || volatility == functionVolatile {
@@ -87,15 +88,14 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 		if volatility == functionStable {
 			return nil
 		}
-		close := findMatchingCallParen(text, open)
-		if close < 0 {
+		invocation, found := syntax.callBeforeParen(open)
+		if !found || invocation.close(text) < 0 {
 			return errNonDeterministicExecution
 		}
-		body := strings.TrimSpace(text[open+1 : close])
-		if body == "" {
+		args := invocation.arguments(nil)
+		if len(args) == 0 {
 			return errNonDeterministicExecution
 		}
-		args := splitProcedureTopLevelComma(body)
 		if volatility == functionTemporalTruncation && len(args) < 2 {
 			return errNonDeterministicExecution
 		}
@@ -116,16 +116,11 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 	}); err != nil {
 		return policy
 	}
-	for from := 0; from < len(text); {
-		at := keywordIndexFrom(text, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, named := procedureNameAt(text, queryGapEnd(text, from))
-		if !named {
+	for _, invocation := range syntax.calls {
+		if !invocation.procedure {
 			continue
 		} // CALL { ... }: this pass also scans its body.
+		name := invocation.name
 		procedure, known := globalProcedureRegistry.Get(name)
 		if !known || procedure.User || procedure.Spec.Mode != ProcedureModeRead || !procedure.Spec.ResultCache.Deterministic {
 			return policy
@@ -134,7 +129,10 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 		if len(declaration.CypherInputs) == 0 {
 			continue
 		}
-		arguments := explicitProcedureArgumentTexts(text[at:])
+		var arguments []string
+		if invocation.group >= 0 && invocation.close(text) >= 0 {
+			arguments = invocation.arguments(nil)
+		}
 		call := executionCallPolicy{name: name, continuation: declaration.Continuation}
 		var request map[string]any
 		if declaration.RetrievalRequest {

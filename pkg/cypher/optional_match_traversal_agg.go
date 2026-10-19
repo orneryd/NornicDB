@@ -50,68 +50,30 @@ type aggregateSpan struct {
 // not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
 // is skipped: its aggregates are the subquery's own (#907).
 func findAggregateSpans(expr string) []aggregateSpan {
-	// The first letters of the aggregates, and E (EXISTS { … }).
-	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('E'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
+	syntax := readFunctionSyntax(expr)
 	var spans []aggregateSpan
-	i := 0
-	for i < len(expr) {
-		c := expr[i]
-		if c == '\'' || c == '"' || c == '`' {
-			j := i + 1
-			for j < len(expr) && (expr[j] != c || isBackslashEscaped(expr, j)) {
-				j++
-			}
-			i = j + 1
-			continue
-		}
-		// Only a letter at a word start can begin an aggregate or a subquery
-		// expression. A qualified function whose terminal component happens to
-		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
-		// aggregate. It is evaluated once per row by the same expression path.
-		folded := asciiUpper(c)
-		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
-			i++
-			continue
-		}
-		matched := false
-		for _, fn := range traversalAggFnNames {
-			if fn.upper[0] != folded {
-				continue
-			}
-			if !strings.HasPrefix(expr[i:], fn.lower) && !startsWithKeywordFold(expr[i:], fn.upper) {
-				continue
-			}
-			j := i + len(fn.lower)
-			for j < len(expr) && isWhitespace(expr[j]) {
-				j++
-			}
-			if j >= len(expr) || expr[j] != '(' {
-				continue
-			}
-			close := findMatchingParen(expr, j)
-			if close < 0 {
-				continue
-			}
-			end := close + 1
-			spans = append(spans, aggregateSpan{start: i, end: end})
-			i = end
-			matched = true
+	for index := 0; index < len(expr); {
+		call, ok := syntax.nextCall(index, false, false, false)
+		if !ok {
 			break
 		}
-		if matched {
-			continue
-		}
-		// EXISTS / COUNT / COLLECT { … } is skipped whole: its aggregates
-		// are the subquery's own. An aggregate call is read first: count(…)
-		// is not a subquery, and is then read once.
-		if folded == 'E' || folded == 'C' {
-			if end := subqueryExpressionEnd(expr, i); end > i {
-				i = end
-				continue
+		index = call.open + 1
+		aggregate := false
+		for _, function := range traversalAggFnNames {
+			if strings.EqualFold(call.name, function.lower) {
+				aggregate = true
+				break
 			}
 		}
-		i++
+		if !aggregate {
+			continue
+		}
+		close := call.close(expr)
+		if close < 0 {
+			continue
+		}
+		spans = append(spans, aggregateSpan{start: call.start, end: close + 1})
+		index = close + 1
 	}
 	return spans
 }

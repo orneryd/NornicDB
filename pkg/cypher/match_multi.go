@@ -455,8 +455,8 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	}
 
 	// elementId(var) — check node bindings first, then relationship bindings.
-	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
-		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
+	if name, _, ok := parseFunctionCallWS(expr); ok && strings.EqualFold(name, "elementId") {
+		inner := singleFunctionArgument(expr)
 		if node := b[inner]; node != nil {
 			return storage.NodeElementID(e.executionDatabaseName(ctx), node.ID)
 		}
@@ -467,7 +467,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	}
 
 	// Reuse shared COALESCE evaluator used in MATCH row projection paths.
-	if strings.HasPrefix(upperASCII(expr), "COALESCE(") && strings.HasSuffix(expr, ")") {
+	if isFunctionCallWS(expr, "coalesce") {
 		return e.evaluateCoalesceInContext(expr, b, edgeRelationshipBindings(rels), nil)
 	}
 

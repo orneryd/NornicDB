@@ -207,8 +207,7 @@ skipArrayIndexing:
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
-		args := e.splitFunctionArgs(inner)
+	if name, args, ok := parseFunctionCallArguments(expr); ok {
 		fnCtx := cypherfn.Context{
 			Nodes:    nodes,
 			Rels:     rels,

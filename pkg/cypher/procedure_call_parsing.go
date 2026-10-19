@@ -10,21 +10,19 @@ import (
 // extractCallArguments parses top-level CALL arguments as interface{} literals.
 // It supports numbers, booleans, null, quoted strings, and leaves complex values as raw strings.
 func extractCallArguments(cypher string) ([]interface{}, error) {
-	open := strings.Index(cypher, "(")
-	if open == -1 {
+	var call functionCallSpan
+	found := false
+	for _, candidate := range readFunctionSyntax(cypher).calls {
+		if candidate.procedure {
+			call = candidate
+			found = true
+			break
+		}
+	}
+	if !found || call.open < 0 || call.close(cypher) < 0 {
 		return nil, nil
 	}
-	close := findMatchingCallParen(cypher, open)
-	if close == -1 || close < open {
-		return nil, nil
-	}
-
-	body := strings.TrimSpace(cypher[open+1 : close])
-	if body == "" {
-		return []interface{}{}, nil
-	}
-
-	parts := splitProcedureTopLevelComma(body)
+	parts := call.arguments(nil)
 	args := make([]interface{}, 0, len(parts))
 	for _, p := range parts {
 		v, err := parseProcedureArgLiteral(strings.TrimSpace(p))
@@ -37,67 +35,16 @@ func extractCallArguments(cypher string) ([]interface{}, error) {
 }
 
 func findMatchingCallParen(s string, open int) int {
-	return findMatchingDelimiter(s, open, '(', ')')
+	for _, group := range readFunctionSyntax(s).groups {
+		if group.open == open {
+			return group.close
+		}
+	}
+	return -1
 }
 
 func splitProcedureTopLevelComma(s string) []string {
-	var out []string
-	var cur strings.Builder
-	paren := 0
-	bracket := 0
-	brace := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, ch := range s {
-		if inQuote {
-			cur.WriteRune(ch)
-			if ch == quoteChar && !isBackslashEscaped(s, i) {
-				inQuote = false
-				quoteChar = 0
-			}
-			continue
-		}
-
-		switch ch {
-		case '\'', '"':
-			inQuote = true
-			quoteChar = ch
-			cur.WriteRune(ch)
-		case '(':
-			paren++
-			cur.WriteRune(ch)
-		case ')':
-			paren--
-			cur.WriteRune(ch)
-		case '[':
-			bracket++
-			cur.WriteRune(ch)
-		case ']':
-			bracket--
-			cur.WriteRune(ch)
-		case '{':
-			brace++
-			cur.WriteRune(ch)
-		case '}':
-			brace--
-			cur.WriteRune(ch)
-		case ',':
-			if paren == 0 && bracket == 0 && brace == 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			} else {
-				cur.WriteRune(ch)
-			}
-		default:
-			cur.WriteRune(ch)
-		}
-	}
-
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
+	return readFunctionSyntax(s).appendArguments(nil, 0, false)
 }
 
 func parseProcedureArgLiteral(s string) (interface{}, error) {

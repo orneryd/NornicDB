@@ -219,13 +219,24 @@ type deletedEntityRead struct {
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
 	for index := 0; index < len(expression); {
+		if call, ok := functionCallAt(expression, index); ok {
+			name := call.normalized
+			if name == "labels" || name == "keys" || name == "properties" {
+				arguments := call.arguments(nil)
+				if len(arguments) == 1 {
+					if variable := simpleSemanticIdentifier(arguments[0]); variable != "" {
+						reads = append(reads, deletedEntityRead{variable: variable, relationshipOnly: name != "labels"})
+					}
+				}
+			}
+		}
+		if end := queryCommentEnd(expression, index); end >= 0 {
+			index = end
+			continue
+		}
 		switch character := expression[index]; {
 		case character == '\'' || character == '"' || character == '`':
-			end := strings.IndexByte(expression[index+1:], character)
-			if end < 0 {
-				return reads
-			}
-			index += end + 2
+			index = skipCypherQuotedText(expression, index, character)
 			continue
 		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
 			index++
@@ -236,20 +247,11 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 			index++
 		}
 		word := expression[start:index]
-		next := skipSpaceIndex(expression, index)
+		next := queryGapEnd(expression, index)
 		switch {
 		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
 			if !propertyNullTestFollows(expression, next+1) {
 				reads = append(reads, deletedEntityRead{variable: word})
-			}
-		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
-			argumentStart := skipSpaceIndex(expression, next+1)
-			argumentEnd := argumentStart
-			for argumentEnd < len(expression) && isIdentByte(expression[argumentEnd]) {
-				argumentEnd++
-			}
-			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
-				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
 			}
 		}
 	}

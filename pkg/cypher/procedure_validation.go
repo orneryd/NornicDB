@@ -28,7 +28,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 	if err := validateProcedureCallArguments(callCypher); err != nil {
 		return nil, err
 	}
-	if strings.Index(callCypher, "(") >= 0 {
+	if call, ok := firstProcedureCall(callCypher); ok && call.open >= 0 {
 		args, err := extractCallArguments(callCypher)
 		if err != nil {
 			return nil, err
@@ -94,7 +94,8 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 }
 
 func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string, hasTail bool) error {
-	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
+	call, explicit := firstProcedureCall(callCypher)
+	if len(spec.Params) == 0 || explicit && call.open >= 0 {
 		return nil
 	}
 	if parseYieldClause(callCypher) == nil && !hasTail {
@@ -169,23 +170,11 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 }
 
 func explicitProcedureArgumentTexts(callCypher string) []string {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
+	call, ok := firstProcedureCall(callCypher)
+	if !ok || call.open < 0 || call.close(callCypher) < 0 {
 		return nil
 	}
-	close := findMatchingCallParen(callCypher, open)
-	if close < 0 {
-		return nil
-	}
-	body := strings.TrimSpace(callCypher[open+1 : close])
-	if body == "" {
-		return []string{}
-	}
-	parts := splitProcedureTopLevelComma(body)
-	for index := range parts {
-		parts[index] = strings.TrimSpace(parts[index])
-	}
-	return parts
+	return call.arguments([]string{})
 }
 
 func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string) ([]interface{}, error) {
@@ -436,19 +425,9 @@ func isFloatProcedureValue(value interface{}) bool {
 }
 
 func procedureCallContainsAggregation(callCypher string) bool {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
+	call, ok := firstProcedureCall(callCypher)
+	if !ok || call.open < 0 || call.close(callCypher) < 0 {
 		return false
 	}
-	close := findMatchingCallParen(callCypher, open)
-	if close < 0 {
-		return false
-	}
-	body := callCypher[open+1 : close]
-	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
-		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
-			return true
-		}
-	}
-	return false
+	return containsAggregateFunc(callCypher[call.open+1 : call.close(callCypher)])
 }

@@ -75,78 +75,16 @@ func forEachStrictMapEntry(s string, entry func(key, value string)) error {
 		entry(key, value)
 		return nil
 	}
-	inSingle, inDouble, depth, start := false, false, 0, 0
-	for i, r := range inner {
-		switch r {
-		case '\'':
-			if !inDouble && !isBackslashEscaped(inner, i) {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle && !isBackslashEscaped(inner, i) {
-				inDouble = !inDouble
-			}
-		case '(', '[', '{':
-			if !inSingle && !inDouble {
-				depth++
-			}
-		case ')', ']', '}':
-			if !inSingle && !inDouble && depth > 0 {
-				depth--
-			}
-		case ',':
-			if !inSingle && !inDouble && depth == 0 {
-				if err := check(inner[start:i]); err != nil {
-					return err
-				}
-				start = i + 1
-			}
+	for _, pair := range readFunctionSyntax(inner).appendArguments(nil, 0, true) {
+		if err := check(pair); err != nil {
+			return err
 		}
 	}
-	return check(inner[start:])
+	return nil
 }
 
 // splitTopLevelCommaKeepEmpty is like splitTopLevelComma but preserves empty
 // entries so strict callers can reject malformed forms such as trailing commas.
 func splitTopLevelCommaKeepEmpty(input string) []string {
-	if strings.TrimSpace(input) == "" {
-		return nil
-	}
-
-	var parts []string
-	var current strings.Builder
-	inSingle := false
-	inDouble := false
-	depth := 0
-
-	for i, r := range input {
-		switch r {
-		case '\'':
-			if !inDouble && !isBackslashEscaped(input, i) {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle && !isBackslashEscaped(input, i) {
-				inDouble = !inDouble
-			}
-		case '(', '[', '{':
-			if !inSingle && !inDouble {
-				depth++
-			}
-		case ')', ']', '}':
-			if !inSingle && !inDouble && depth > 0 {
-				depth--
-			}
-		case ',':
-			if !inSingle && !inDouble && depth == 0 {
-				parts = append(parts, strings.TrimSpace(current.String()))
-				current.Reset()
-				continue
-			}
-		}
-		current.WriteRune(r)
-	}
-
-	parts = append(parts, strings.TrimSpace(current.String()))
-	return parts
+	return readFunctionSyntax(input).appendArguments(nil, 0, true)
 }
