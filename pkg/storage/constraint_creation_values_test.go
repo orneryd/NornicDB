@@ -23,9 +23,9 @@ func TestConstraintCreationValuesPreserveUnsupportedAndNumericForms(t *testing.T
 		require.False(t, duplicate)
 	}
 	for _, pair := range [][2]interface{}{{int64(math.MaxInt64), float64(math.MaxInt64)}, {uint64(math.MaxUint64), float64(math.MaxUint64)}} {
-		require.False(t, constraintCreationValueEqual(pair[0], pair[1]))
+		require.False(t, compareValues(pair[0], pair[1]))
 	}
-	require.True(t, constraintCreationValueEqual(nil, nil))
+	require.True(t, compareValues(nil, nil))
 }
 
 func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
@@ -176,7 +176,7 @@ func TestConstraintCreationByteListEquivalenceBothOrders(t *testing.T) {
 	for _, tc := range cases {
 		for direction, pair := range [][2]interface{}{{tc.a, tc.b}, {tc.b, tc.a}} {
 			t.Run(fmt.Sprintf("%s/order%d", tc.name, direction), func(t *testing.T) {
-				require.Equal(t, tc.equal, constraintCreationValueEqual(pair[0], pair[1]), "pin existing shared equality semantics")
+				require.Equal(t, tc.equal, compareValues(pair[0], pair[1]), "pin existing shared equality semantics")
 				seen := make(constraintCreationValues)
 				_, duplicate := seen.add("first", []interface{}{pair[0]})
 				require.False(t, duplicate)

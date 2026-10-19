@@ -1142,12 +1142,15 @@ func (idx *CompositeIndex) LookupFull(values ...interface{}) []NodeID {
 	if !ok {
 		return nil // a value no index entry can hold: no match
 	}
+	return idx.lookupFullHash(NewCompositeKey(canonical...).Hash)
+}
 
+// lookupFullHash returns a copy of the nodes an arity >= 2 index files under
+// a full composite key hash, for callers that already hold the hash.
+func (idx *CompositeIndex) lookupFullHash(hash string) []NodeID {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
-	key := NewCompositeKey(canonical...)
-	if nodes, exists := idx.fullIndex[key.Hash]; exists {
+	if nodes, exists := idx.fullIndex[hash]; exists {
 		// Return a copy to avoid race conditions
 		result := make([]NodeID, len(nodes))
 		copy(result, nodes)
