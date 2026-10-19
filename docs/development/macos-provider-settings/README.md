@@ -58,7 +58,10 @@ are read before service start, including failure propagation.
   prove that the code database's existing embeddings were reset. Complete the
   requested code-graph regeneration through a verified scoped path before resuming
   #1487. Ordinary OpenAI processing is running; zero pending has not been established.
-- The maintainer's latest additional PR requirement is awaiting clarification.
+- The maintainer clarified that there is no additional feature request. All
+  installed duplication/ingestion Git hooks are now paused as `.disabled` files
+  at their explicit request. A subsequent full `make verify-list` passed without
+  fixture ingestion. Full verification is being rerun with that local state.
 
 No CI job was dispatched and no release branch was merged or tagged. Performance
 benchmarks are not applicable: this PR changes native configuration UI and installer
