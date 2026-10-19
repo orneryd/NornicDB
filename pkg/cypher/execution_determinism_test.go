@@ -22,7 +22,7 @@ func TestExecutionDeterminismRegisteredInputs(t *testing.T) {
 		}
 		seen[function.name] = true
 		functions++
-		invocation := function.name + "()"
+		invocation := volatileTestInvocation(function)
 		t.Run(function.name+"/outer", func(t *testing.T) {
 			require.False(t, isCacheableReadQuery("RETURN "+invocation+" AS value"))
 		})
@@ -70,8 +70,20 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 		}
 		seen[function.name] = true
 		t.Run(function.name, func(t *testing.T) {
-			for _, query := range []string{"RETURN " + function.name + "() AS value", "CALL db.rretrieve($request)"} {
-				params := map[string]any{"request": map[string]any{"query": "transcript", "where": function.name + "() IS NOT NULL"}}
+			invocation := volatileTestInvocation(function)
+			queries := []string{"RETURN " + invocation + " AS value"}
+			for _, procedure := range globalProcedureRegistry.ListBuiltIns() {
+				if procedure.ResultCache.RetrievalRequest {
+					queries = append(queries, "CALL "+procedure.Name+"($request)")
+				} else if procedure.ResultCache.Deterministic && len(procedure.ResultCache.CypherInputs) != 0 {
+					queries = append(queries, "CALL "+procedure.Name+"($statement, {})")
+				}
+			}
+			for _, query := range queries {
+				params := map[string]any{
+					"request": map[string]any{"query": "transcript", "where": invocation + " IS NOT NULL"},
+					"statement": "RETURN " + invocation + " AS value",
+				}
 				first, err := exec.Execute(context.Background(), query, params)
 				require.NoError(t, err, query)
 				second, err := exec.Execute(context.Background(), query, params)
@@ -80,6 +92,18 @@ func TestExecutionDeterminismPublicPredicates(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Use valid temporal/default and entity inputs, rather than proving rejection
+// only with calls whose missing mandatory arguments would already fail.
+func volatileTestInvocation(function cypherFunctionSpec) string {
+	if function.cacheVolatility == functionTemporalTruncation {
+		return function.name + "('day')"
+	}
+	if function.name == "decay" || function.name == "decayScore" {
+		return function.name + "(null)"
+	}
+	return function.name + "()"
 }
 
 func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
@@ -94,6 +118,9 @@ func TestExecutionDeterminismResolvedDependencies(t *testing.T) {
 		{"RETURN `randomUUID` ( ) AS id", nil, false},
 		{"RETURN date('2020-01-01') AS day", nil, true},
 		{"RETURN datetime({timezone:'UTC'}) AS now", nil, false},
+		{"RETURN datetime.statement('UTC') AS now", nil, false},
+		{"RETURN datetime.truncate('day') AS now", nil, false},
+		{"RETURN datetime.truncate('day',datetime('2020-01-01T00:00:00Z')) AS fixed", nil, true},
 		{"RETURN unknownFunction() AS value", nil, false},
 		{"CALL unknown.procedure()", nil, false},
 		{"CALL db.infer({prompt:'x',cache:true})", nil, false},
