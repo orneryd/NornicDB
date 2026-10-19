@@ -900,9 +900,8 @@ func pathLengthBoundOf(term, pathVariable string) (pathLengthBound, bool) {
 		}
 		left, right := strings.TrimSpace(term[:index]), strings.TrimSpace(term[index+len(operator):])
 		isLength := func(text string) bool {
-			open := strings.IndexByte(text, '(')
-			return open > 0 && strings.EqualFold(strings.TrimSpace(text[:open]), "length") && strings.HasSuffix(text, ")") &&
-				findMatchingParen(text, open) == len(text)-1 && strings.TrimSpace(text[open+1:len(text)-1]) == pathVariable
+			name, inner, ok := parseFunctionCallWS(text)
+			return ok && strings.EqualFold(name, "length") && trimQueryTrivia(inner) == pathVariable
 		}
 		switch {
 		case isLength(left) && (operator == "<=" || operator == "<"):

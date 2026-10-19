@@ -244,8 +244,8 @@ func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 func aggregateContains(expression string, predicate func(string) bool) bool {
 	for _, span := range findAggregateSpans(expression) {
 		call := expression[span.start:span.end]
-		open := strings.IndexByte(call, '(')
-		if predicate(call[open+1 : len(call)-1]) {
+		_, inner, _ := parseFunctionCallWS(call)
+		if predicate(inner) {
 			return true
 		}
 	}
