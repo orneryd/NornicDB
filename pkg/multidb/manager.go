@@ -489,7 +489,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		constituentNames := make(map[string]string)
 		accessModes := make(map[string]string)
 
-		for _, ref := range canonicalConstituents(info.Constituents) {
+		for _, ref := range canonicalConstituents(info.Constituents, "") {
 			var constituentStorage storage.Engine
 			actualName := ref.DatabaseName
 			var err error
@@ -555,10 +555,7 @@ func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (Cons
 	if !exists || info.Type != "composite" {
 		return ConstituentRef{}, "", false
 	}
-	for key, ref := range canonicalConstituents(info.Constituents) {
-		if !constituentAliasMatches(key, constituentAlias) {
-			continue
-		}
+	for _, ref := range canonicalConstituents(info.Constituents, constituentAlias) {
 		resolvedName := ref.DatabaseName
 		if !strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
 			var err error
