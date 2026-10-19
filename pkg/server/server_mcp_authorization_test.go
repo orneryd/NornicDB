@@ -18,7 +18,7 @@ func TestMCPHTTPAuthorizationResolvesScopeBeforeDatabaseAccess(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateDatabase("tenant_a"))
 	require.NoError(t, server.dbManager.CreateDatabase("private"))
 	require.NoError(t, server.dbManager.CreateAlias("primary", "tenant_a"))
-	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{"tenant_a"}))
+	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{"tenant_a", "primary"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", true, false))
 	token := getAuthToken(t, authenticator, "reader")
 
