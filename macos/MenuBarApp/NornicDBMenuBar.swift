@@ -919,7 +919,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @objc func downloadModels() {
         let alert = NSAlert()
         alert.messageText = "Download Default Models"
-        alert.informativeText = "This will download:\n• BGE-M3 embedding model (~400MB)\n• BGE reranker model (~440MB)\n• qwen3-0.6b-Instruct model (~350MB)\n\nTotal: ~890MB\n\nDownloading from HuggingFace..."
+        alert.informativeText = "This will download:\n• BGE-M3 embedding model (~400MB)\n• BGE reranker model (~440MB)\n• qwen3-0.6b-Instruct model (~350MB)\n\nTotal: ~1.2GB\n\nDownloading from HuggingFace..."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Download")
         alert.addButton(withTitle: "Cancel")
@@ -955,7 +955,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                         && isValidGGUFFile(atPath: qwenPath)
                     if task.terminationStatus == 0 && downloadsValid {
                         result.messageText = "Download Complete"
-                        result.informativeText = "Models downloaded successfully!\n\nYou can now select them in Settings → Models tab."
+                        result.informativeText = "Models downloaded successfully!\n\nYou can now select them in Settings → AI services."
                         result.alertStyle = .informational
                     } else {
                         _ = removeInvalidGGUFFile(atPath: bgePath)
@@ -1356,7 +1356,7 @@ struct SettingsView: View {
         }
     }
     
-    var modelsTab: some View { AIServiceSettingsView(config: config) }
+    var modelsTab: some View { AIServiceSettingsView(config: config, downloadModels: { appDelegate.downloadModels() }) }
 
     var securityTab: some View {
         ScrollView {
