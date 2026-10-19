@@ -173,6 +173,7 @@ func TestRelationshipAccessProgramOwnsIDAndSelectedPathRoutes(t *testing.T) {
 				selected.query, selected.rows = tc.query, tc.rows
 				break
 			}
+		}
 		query := selected.query
 		require.NotEmpty(t, query)
 		ctx := context.WithValue(context.Background(), relationshipAccessProgramKey{}, &relationshipAccessProgram{query: query, byID: map[string]*relationshipAccessTemplate{}})
