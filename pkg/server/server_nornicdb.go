@@ -739,10 +739,16 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 		status = http.StatusGone
 		requestStatus = "continuation_gone"
 	}
-	s.writeJSON(w, status, map[string]any{
+	body := map[string]any{
 		"error": err.Error(), "retryable": retryable,
 		"http_code": status, "request_status": requestStatus,
-	})
+	}
+	var oversized *resultstream.PageSizeExceededError
+	if errors.As(err, &oversized) {
+		body["request_status"] = "page_size_exceeded"
+		body["max_page_size"] = oversized.MaxPageSize
+	}
+	s.writeJSON(w, status, body)
 }
 
 func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Request, owner, database string, page *search.SearchContinuationPage) {
@@ -772,6 +778,7 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Requ
 		"ranked_pool_exhausted": page.RankedPoolExhausted,
 		"collection_exhausted":  page.CollectionExhausted,
 		"completion":            page.Completion,
+		"max_page_size":         page.MaxPageSize,
 	}
 	if provider, ok := any(response).(interface{ ResultMetadata() map[string]any }); ok {
 		for key, value := range provider.ResultMetadata() {

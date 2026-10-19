@@ -3,6 +3,7 @@ package nornicgrpc
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"golang.org/x/text/language"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -201,6 +203,9 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		if err != nil {
 			return nil, s.continuationStatus(ctx, err)
 		}
+		if page.MaxPageSize > 0 {
+			_ = grpc.SetHeader(ctx, metadata.Pairs("max_page_size", strconv.Itoa(page.MaxPageSize)))
+		}
 		if provider, ok := any(page.SearchResponse()).(interface{ ResponseTrailers() map[string]string }); ok {
 			for key, value := range provider.ResponseTrailers() {
 				grpc.SetTrailer(ctx, metadata.Pairs(key, value))
@@ -248,6 +253,18 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 }
 
 func (s *Service) continuationStatus(ctx context.Context, err error) error {
+	var oversized *resultstream.PageSizeExceededError
+	if errors.As(err, &oversized) {
+		localized := status.Convert(s.localizedStatus(ctx, codes.InvalidArgument, oversized.Message))
+		detailed, detailErr := localized.WithDetails(&errdetails.ErrorInfo{
+			Reason: "PAGE_SIZE_EXCEEDED", Domain: "nornicdb.search",
+			Metadata: map[string]string{"request_status": "page_size_exceeded", "max_page_size": strconv.Itoa(oversized.MaxPageSize), "http_code": "400"},
+		})
+		if detailErr == nil {
+			return detailed.Err()
+		}
+		return localized.Err()
+	}
 	code := codes.InvalidArgument
 	switch {
 	case errors.Is(err, resultstream.ErrDisabled):
