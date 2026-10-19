@@ -3877,11 +3877,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
 	defer func() {
-		resultErr = errors.Join(resultErr, s.endBuildWrites())
-		if resultErr != nil {
-			s.ready.Store(false)
-			s.setBuildPhase("idle")
-		}
+		resultErr = s.endBuildWrites(resultErr)
 	}()
 	s.startBuildWrites()
 	snapshot, closeSnapshot, snapErr := s.openBuildSnapshot(ctx)
@@ -3903,19 +3899,14 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		ctx = buildCtx
 	}
 	s.buildAttempted.Store(true)
-	// Per-DB master switches: when both indexes are disabled, mark ready
-	// (search handler returns 503 search_disabled_for_database upstream)
-	// and return BEFORE we touch s.ready/s.buildInProgress — otherwise a
-	// concurrent reader (indexNodeFromEvent / pendingFlush goroutine)
-	// observing s.ready=false would call startSearchIndexBuild and recurse.
-	// Check the flag first; the disabled path is the cheapest possible.
+	// When both indexes are disabled, skip population without entering the
+	// build-in-progress state (the search handler reports search_disabled_for_database).
+	// endBuildWrites still completes the sequence before publishing readiness.
 	bm25On := s.bm25Enabled.Load()
 	vecOn := s.vectorEnabled.Load()
 	if !bm25On && !vecOn {
 		s.logPrintf("📇 Search: both BM25 and vector disabled — skipping index build")
 		s.setFulltext(disabledBM25Index{})
-		s.setBuildPhase("ready")
-		s.ready.Store(true)
 		return nil
 	}
 	s.hnswVectorsChanging.Store(true)
@@ -4593,8 +4584,8 @@ func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 	s.buildInProgress.Store(false)
 	s.indexChanged()
 	s.runPersistWithContext(ctx)
-	s.ready.Store(true)
-	s.setBuildPhase("ready")
+	// endBuildWrites owns readiness: acknowledged writes can still be queued
+	// behind an atEnd operation, or handed to another waiting build.
 }
 
 // warmupVectorPipeline creates the vector search pipeline (and builds HNSW or IVF-HNSW if needed) so that
