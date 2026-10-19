@@ -26,7 +26,7 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 		{ID: undecodableVectorKey, Score: 1}, {ID: "doc", Score: 0.5},
 	}))
 
-	hints := map[string]LexicalSeedHint{"x": {ID: "x", Rank: 1}}
+	hints := nodeLexicalHints{"x": {ID: "x", Rank: 1}}
 	_, ok := lexicalHintForVectorID(undecodableVectorKey, hints)
 	assert.False(t, ok)
 	hint, ok := lexicalHintForVectorID(nodeChunkVectorKey("x", 2), hints)
@@ -38,14 +38,14 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 	graph := NewHNSWIndex(2, DefaultHNSWConfig())
 	require.NoError(t, graph.Add(undecodableVectorKey, []float32{1, 0}))
 	require.NoError(t, graph.Add(nodeChunkVectorKey("doc", 1), []float32{0.9, 0.1}))
-	graph.buildLexicalHints = map[string]LexicalSeedHint{"doc": {ID: "doc", Rank: 1}, "x": {ID: "x", Rank: 2}}
+	graph.SetBuildLexicalHints([]LexicalSeedHint{{ID: nodeChunkVectorKey("doc", 1), Rank: 1}, {ID: "x", Rank: 2}})
 	for internalID, key := range graph.internalToID {
 		hint, ok := graph.buildLexicalHintLocked(uint32(internalID))
 		if key == undecodableVectorKey {
 			assert.False(t, ok, "an undecodable key gets no lexical hint")
 		} else {
 			assert.True(t, ok)
-			assert.Equal(t, "doc", hint.ID)
+			assert.Equal(t, vectorNodeID("doc"), hint.ID)
 		}
 	}
 	candidates, err := NewHNSWCandidateGen(graph).SearchCandidates(context.Background(), []float32{1, 0}, 5, -1)

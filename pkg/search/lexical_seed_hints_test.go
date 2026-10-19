@@ -77,7 +77,7 @@ func TestHNSWBuildMetadataDoesNotExecuteBM25Queries(t *testing.T) {
 	index := &metadataOnlySeedIndex{bm25Index: NewFulltextIndexV2()}
 
 	hints := service.hnswLexicalSeedHints(index, 16)
-	require.Contains(t, hints, "document")
+	require.Contains(t, hints, vectorNodeID("document"))
 	require.Zero(t, index.searchCalls)
 }
 
@@ -87,7 +87,7 @@ func TestHNSWBuildIteratorPrioritizesRankedDocumentsAndAnnotatesTheirChunks(t *t
 	iterate := func(_ int, fn func([]string, [][]float32) error) error {
 		return fn(ids, vectors)
 	}
-	hints := map[string]LexicalSeedHint{
+	hints := nodeLexicalHints{
 		"doc-a": {ID: "doc-a", Rank: 1, Signature: 1},
 		"doc-b": {ID: "doc-b", Rank: 0, Signature: 2},
 	}
@@ -117,7 +117,7 @@ func TestHNSWInMemoryBuildOrderUsesLexicalRank(t *testing.T) {
 	require.NoError(t, index.Add("doc-a", []float32{1}))
 	require.NoError(t, index.Add("doc-b", []float32{1}))
 	require.NoError(t, index.Add("other", []float32{1}))
-	pairs := hnswOrderedVectorIndexPairs(index, map[string]LexicalSeedHint{
+	pairs := hnswOrderedVectorIndexPairs(index, nodeLexicalHints{
 		"doc-a": {ID: "doc-a", Rank: 1},
 		"doc-b": {ID: "doc-b", Rank: 0},
 	})

@@ -146,7 +146,7 @@ func (s *Service) bm25SeedEmbeddingIDs(nodeIDs []string) []string {
 // before taking pipelineMu and passes those inputs down.
 type vectorBuildSeeds struct {
 	compressedIDs []string                   // IVF-PQ build seeds; nil unless compressed quality
-	hnswHints     map[string]LexicalSeedHint // HNSW build hints; nil while a graph exists
+	hnswHints     nodeLexicalHints // HNSW build hints; nil while a graph exists
 }
 
 func (s *Service) pipelineBuildSeeds() vectorBuildSeeds {
