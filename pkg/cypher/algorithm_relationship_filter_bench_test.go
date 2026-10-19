@@ -21,7 +21,9 @@ func BenchmarkAlgorithmRelationshipFilters(b *testing.B) {
 	for i := 0; i < size; i++ {
 		for _, kind := range []string{"K", "L"} {
 			step := 1
-			if kind == "L" { step = 7 }
+			if kind == "L" {
+				step = 7
+			}
 			if err := store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("%s%d", kind, i)), StartNode: storage.NodeID(fmt.Sprint(i)), EndNode: storage.NodeID(fmt.Sprint((i+step)%size)), Type: kind}); err != nil {
 				b.Fatal(err)
 			}
@@ -32,8 +34,10 @@ func BenchmarkAlgorithmRelationshipFilters(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/filtered=%t", proc, filtered), func(b *testing.B) {
 				exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 				args := "['P']"
-				if filtered { args += ", ['K']" }
-				query := "CALL apoc.algo."+proc+"("+args+") YIELD node RETURN count(node)"
+				if filtered {
+					args += ", ['K']"
+				}
+				query := "CALL apoc.algo." + proc + "(" + args + ") YIELD node RETURN count(node)"
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
