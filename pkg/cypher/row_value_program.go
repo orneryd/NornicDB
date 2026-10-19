@@ -394,6 +394,9 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 			}
 			dot += next + 1
 		}
+		if endpoint := endpointPropertyNode(strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
+			return bound(expr, endpoint, impureRowValue())
+		}
 		base, info := c.part(strings.TrimSpace(expr[:dot]))
 		parts, infos := []rowValueNode{base}, []rowValueInfo{info}
 		c.compose(info, parts, infos)
