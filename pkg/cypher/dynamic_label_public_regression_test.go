@@ -2,9 +2,12 @@ package cypher
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/testing/cypher/dynamiclabels"
@@ -27,12 +30,36 @@ func TestDynamicLabelPublicExecute(t *testing.T) {
 						result, err := exec.Execute(ctx, c.Query, c.Params)
 						if c.Code != "" { require.Error(t, err); requireStatusCode(t, err, c.Code); continue }
 						require.NoError(t, err, c.Query)
-						require.Equal(t, c.Rows, result.Rows, c.Query)
+						if len(c.Rows) == 0 { require.Empty(t, result.Rows, c.Query) } else { require.Equal(t, c.Rows, result.Rows, c.Query) }
 					}
 				})
 			}
 		})
 	}
+}
+
+// Every function emitted by the label rewrite must be known to semantic
+// validation and implemented by the evaluator. Test the emitted text rather
+// than maintaining another list of internal function names in the test.
+func TestDynamicLabelGeneratedFunctionContract(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range dynamiclabels.Cases() {
+		if c.Code != "" { continue }
+		query, _ := stripCypherPreamble(c.Query)
+		rewritten, _, err := desugarLabelExpressions(query, c.Params, c.Cypher25)
+		require.NoError(t, err, c.Query)
+		require.NoError(t, forEachFunctionCall(rewritten, func(name, normalized string) error {
+			if !strings.HasPrefix(normalized, "__nornic_") { return nil }
+			seen[normalized] = true
+			_, known := builtInCypherFunctions[normalized]
+			require.True(t, known, "rewrite emitted an unknown function: %s", name)
+			_, registered, _ := cypherfn.EvaluateFunction(name, nil, cypherfn.Context{})
+			require.True(t, registered, "rewrite emitted an unregistered function: %s", name)
+			return nil
+		}))
+	}
+	require.Contains(t, seen, dynamicLabelTestFunction)
+	require.Contains(t, seen, dynamicLabelPredicateFunction)
 }
 
 func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
@@ -66,6 +93,45 @@ func TestDynamicLabelPublicDatabaseRouting(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, c.rows, result.Rows)
 			}
+		})
+	}
+}
+
+// A remote Fabric fragment must arrive as supported Cypher at the Neo4j
+// evaluator; NornicDB's local lowering functions are not remote functions.
+func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
+	uri := os.Getenv("NORNICDB_NEO4J_REFERENCE_HTTP_URI")
+	if uri == "" { t.Skip("Neo4j reference not configured") }
+	ctx := context.Background()
+	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: uri, Database: "neo4j"})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, remote.Close()) })
+	_, _, err = remote.QueryCypher(ctx, "MATCH (n) DETACH DELETE n", nil)
+	require.NoError(t, err)
+	_, _, err = remote.QueryCypher(ctx, dynamiclabels.Fixture, nil)
+	require.NoError(t, err)
+	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), &multidb.Config{
+		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
+			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	require.NoError(t, manager.CreateCompositeDatabase("dynamic_remote", []multidb.ConstituentRef{
+		{Alias: "data", DatabaseName: "neo4j", URI: uri, Type: "remote", AccessMode: "read_write", AuthMode: "oidc_forwarding"},
+	}))
+	store, err := manager.GetStorage(manager.DefaultDatabaseName())
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
+	for _, form := range []string{"$(ls)", "$all(ls)", "$any(ls)"} {
+		t.Run(form, func(t *testing.T) {
+			want := [][]any{{"2"}}
+			if form == "$any(ls)" { want = [][]any{{"1"}, {"2"}, {"3"}} }
+			query := "USE dynamic_remote CALL { USE dynamic_remote.data WITH $labels AS ls MATCH (n:"+form+") RETURN toString(n.id) AS id } RETURN id ORDER BY id"
+			result, err := exec.Execute(ctx, query, map[string]any{"labels": []any{"A", "B"}})
+			require.NoError(t, err)
+			require.Equal(t, want, result.Rows)
 		})
 	}
 }
