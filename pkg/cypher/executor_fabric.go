@@ -577,7 +577,6 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	if err := executor.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, true, err
 	}
-	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
 	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params, recordBindings)
 	return columns, rows, true, err
@@ -603,7 +602,6 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 		return nil, nil, err
 	}
 	if len(recordBindings) > 0 {
-		exec.fabricRecordBindings = recordBindings
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
 	ctx = withExecutionDatabase(ctx, dbName)
