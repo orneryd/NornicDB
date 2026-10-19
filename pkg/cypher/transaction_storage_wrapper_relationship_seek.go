@@ -7,6 +7,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+var _ storage.RelationshipPropertySeeker = (*transactionStorageWrapper)(nil)
+
 // RelationshipPropertySeeksAvailable reports the active transaction's capability.
 func (w *transactionStorageWrapper) RelationshipPropertySeeksAvailable() bool {
 	if w.tx != nil {

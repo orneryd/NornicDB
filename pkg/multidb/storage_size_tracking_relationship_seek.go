@@ -21,4 +21,18 @@ func (t *sizeTrackingEngine) SeekRelationships(ctx context.Context, relType stri
 	return p.SeekRelationships(ctx, relType, properties, values)
 }
 
-var _ storage.RelationshipPropertySeeker = (*sizeTrackingEngine)(nil)
+func (t *sizeTrackingEngine) ScopedRelationshipPropertySeeksAvailable() bool {
+	p, ok := t.Engine.(storage.ScopedRelationshipPropertySeeker)
+	return ok && p.ScopedRelationshipPropertySeeksAvailable()
+}
+
+func (t *sizeTrackingEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*storage.Edge, bool, error) {
+	p, ok := t.Engine.(storage.ScopedRelationshipPropertySeeker)
+	if !ok { return nil, false, nil }
+	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
+}
+
+var (
+	_ storage.RelationshipPropertySeeker = (*sizeTrackingEngine)(nil)
+	_ storage.ScopedRelationshipPropertySeeker = (*sizeTrackingEngine)(nil)
+)

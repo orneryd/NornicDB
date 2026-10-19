@@ -21,8 +21,10 @@ type RelationshipPropertySeeker interface {
 
 // ScopedRelationshipPropertySeeker is the inner engine's database-bound seek.
 // namespace is a database name, without the ID separator.
+// Its availability is separate from the local form: a transparent wrapper may
+// expose both methods while its immediate inner view supports only one form.
 type ScopedRelationshipPropertySeeker interface {
-	RelationshipPropertySeeksAvailable() bool
+	ScopedRelationshipPropertySeeksAvailable() bool
 	SeekRelationshipsInNamespace(context.Context, string, string, []string, []interface{}) ([]*Edge, bool, error)
 }
 
@@ -54,6 +56,11 @@ func (b *BadgerEngine) RelationshipPropertySeeksAvailable() bool {
 	return b.writeBehind == nil && !b.decayEnabled
 }
 
+// ScopedRelationshipPropertySeeksAvailable describes the qualified backing view.
+func (b *BadgerEngine) ScopedRelationshipPropertySeeksAvailable() bool {
+	return b.RelationshipPropertySeeksAvailable()
+}
+
 func relationshipSeekValues(properties []string, values []interface{}) ([]interface{}, bool) {
 	if len(properties) == 0 || len(properties) != len(values) {
 		return nil, false
@@ -74,36 +81,6 @@ func RelationshipIndexValuesSupported(values []interface{}) bool {
 	}
 	_, ok := relationshipSeekValues(properties, values)
 	return ok
-}
-
-// RelationshipPropertySeeksAvailable forwards the WAL engine's read capability.
-func (w *WALEngine) RelationshipPropertySeeksAvailable() bool {
-	p, ok := w.engine.(ScopedRelationshipPropertySeeker)
-	return ok && p.RelationshipPropertySeeksAvailable()
-}
-
-// SeekRelationshipsInNamespace forwards a database-bound seek through WAL.
-func (w *WALEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
-	p, ok := w.engine.(ScopedRelationshipPropertySeeker)
-	if !ok {
-		return nil, false, nil
-	}
-	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
-}
-
-// RelationshipPropertySeeksAvailable forwards the traced engine's capability.
-func (t *TracedEngine) RelationshipPropertySeeksAvailable() bool {
-	p, ok := t.Engine.(ScopedRelationshipPropertySeeker)
-	return ok && p.RelationshipPropertySeeksAvailable()
-}
-
-// SeekRelationshipsInNamespace forwards a traced database-bound seek.
-func (t *TracedEngine) SeekRelationshipsInNamespace(ctx context.Context, namespace, relType string, properties []string, values []interface{}) ([]*Edge, bool, error) {
-	p, ok := t.Engine.(ScopedRelationshipPropertySeeker)
-	if !ok {
-		return nil, false, nil
-	}
-	return p.SeekRelationshipsInNamespace(ctx, namespace, relType, properties, values)
 }
 
 // SeekRelationshipsInNamespace uses the same populated, maintained equality
@@ -168,7 +145,7 @@ func (b *BadgerEngine) SeekRelationshipsInNamespace(ctx context.Context, namespa
 // RelationshipPropertySeeksAvailable forwards the inner seek capability.
 func (n *NamespacedEngine) RelationshipPropertySeeksAvailable() bool {
 	p, ok := n.inner.(ScopedRelationshipPropertySeeker)
-	return ok && p.RelationshipPropertySeeksAvailable()
+	return ok && p.ScopedRelationshipPropertySeeksAvailable()
 }
 
 // SeekRelationships returns only this database's candidates, with local IDs.
