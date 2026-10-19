@@ -18,8 +18,11 @@ import (
 )
 
 func TestRemoteQueryCredentialPublic(t *testing.T) {
+	previous := observability.DefaultRedactKeys
+	observability.DefaultRedactKeys = append(append([]string(nil), previous...), "url_query_fixture_seal")
+	t.Cleanup(func() { observability.DefaultRedactKeys = previous })
 	const secret = "synthetic-query-public-492715 /+&=?"
-	aliases := []string{"password", "api_key", "X-Amz-Signature", "X-Goog-Signature", "AWSAccessKeyId", "clientSecret"}
+	aliases := []string{"password", "api_key", "X-Amz-Signature", "X-Goog-Signature", "AWSAccessKeyId", "clientSecret", "fixture_seal"}
 	for _, key := range observability.DefaultRedactKeys {
 		if alias, ok := strings.CutPrefix(key, "url_query_"); ok {
 			aliases = append(aliases, alias)
