@@ -20,3 +20,6 @@
 - [x] Add per-user app lock, legacy-copy retirement, exact canonical launch path and reopen routing for pending setup.
 - [x] Thirteen Swift regressions and seven isolated installer tests pass on the corrected lifecycle source.
 - [ ] Build corrected lifecycle package and verify actual replacement, one tray owner and visible review wizard on local reinstall.
+
+- [x] Restore shared K-Means, memory decay and Auto-TLP switches in setup AI page and Settings AI features; show choices on Review.
+- [x] Close setup after launch submission and keep startup status yellow until actual readiness or process failure.

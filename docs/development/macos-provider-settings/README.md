@@ -101,7 +101,8 @@ known installed executable locations, launches the canonical app executable once
 and creates `.setup_review` before that launch. It does not auto-start the server.
 The app holds a kernel-backed per-user lock before creating its tray item, retires
 legacy copies when it is the installed owner, and presents pending setup when
-reopened. Completing review clears its marker after successful server health.
+reopened. Completing review clears its marker after launch submission and closes the wizard
+immediately. Readiness is monitored independently by the tray.
 
 The updated postinstall tests fail on the preceding source (missing review marker).
 Preinstall regression tests also fail on the preceding source. Corrected source
@@ -109,3 +110,23 @@ passes seven isolated script tests and thirteen Swift tests, including lock
 exclusion/release, symlink refusal, and preserving YAML while completing upgrade
 review. Actual privileged reinstall and two-launch tray acceptance are still
 pending; earlier installer success does not prove this latest correction.
+
+## AI controls and startup feedback follow-up
+
+Setup's Optional AI page and Settings' AI features tab share K-Means Clustering,
+Memory Decay and Auto-TLP controls. Review displays their selections. Existing
+YAML and LaunchAgent environment loading remain the configuration owners; a
+regression verifies saved feature values and edited values reaching startup ENV.
+
+Save and Start no longer polls readiness before closing. The tray health check
+uses the configured HTTP port and privately inspects launchd's top-level PID:
+health succeeds → green; an initializing server process → yellow; no process and
+no health → red. Obsolete HTTP responses cannot overwrite a newer explicit status
+change. One-time storage authorization is removed from the LaunchAgent after
+health succeeds, independently of the closed wizard.
+
+Sixteen Swift tests pass on this source, including initializing/healthy/stopped
+status cases and feature loading/startup propagation. These are focused tests;
+actual installed-window acceptance remains pending. Earlier layout captures
+predate the restored feature controls. Full verification of the previous frozen
+head is still running and is not evidence for this follow-up head.

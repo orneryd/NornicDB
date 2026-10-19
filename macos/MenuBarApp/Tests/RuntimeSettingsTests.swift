@@ -2,6 +2,25 @@ import XCTest
 @testable import NornicDB
 
 final class RuntimeSettingsTests: XCTestCase {
+    func testSavedAIFeaturesLoadAndEditsReachServerEnvironment() {
+        let config = ConfigManager()
+        config.loadRuntimeSettings(["EnvironmentVariables": [
+            "NORNICDB_KMEANS_CLUSTERING_ENABLED": "true",
+            "NORNICDB_MEMORY_DECAY_ENABLED": "false",
+            "NORNICDB_AUTO_TLP_ENABLED": "true"]])
+        XCTAssertTrue(config.kmeansEnabled)
+        XCTAssertFalse(config.memoryDecayEnabled)
+        XCTAssertTrue(config.autoTLPEnabled)
+        XCTAssertTrue(config.runtimeEnvironment.isEmpty)
+        config.kmeansEnabled = false
+        config.memoryDecayEnabled = true
+        config.autoTLPEnabled = false
+        let environment = launchAgentEnvironmentVariables(config: config, homeDir: "/fixture")
+        XCTAssertEqual(environment["NORNICDB_KMEANS_CLUSTERING_ENABLED"], "false")
+        XCTAssertEqual(environment["NORNICDB_MEMORY_DECAY_ENABLED"], "true")
+        XCTAssertEqual(environment["NORNICDB_AUTO_TLP_ENABLED"], "false")
+    }
+
     func testExistingLaunchSettingsLoadIntoTheirEditableOwners() {
         let config = ConfigManager()
         config.loadProviderSettings(["embedding": ["provider": "local", "model": "bge-m3.gguf"]])
