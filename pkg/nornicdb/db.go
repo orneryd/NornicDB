@@ -157,6 +157,9 @@ type DB struct {
 	mu     sync.RWMutex
 	closed bool
 
+	closeDone chan struct{}
+	closeErr  error
+
 	// Internal components
 	storage           storage.Engine // Namespaced storage for default database (all DB operations use this)
 	baseStorage       storage.Engine // Underlying storage chain (must be closed to release Badger/WAL locks)
