@@ -25,7 +25,7 @@ func splitTopLevelComma(input string) []string {
 // and brackets, trimmed, to parts (splitTopLevelComma). A caller passing a
 // fixed-size buffer reuses its result storage and the immutable argument spans.
 func appendTopLevelComma(parts []string, input string) []string {
-	return appendFunctionArguments(parts,input,false)
+	return appendFunctionArguments(parts, input, false)
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {
