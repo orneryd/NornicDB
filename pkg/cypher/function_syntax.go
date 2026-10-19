@@ -347,7 +347,9 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 			// previous live position survive comments and quoted map keys.
 			group := syntax.groups[stack[len(stack)-1]]
 			var groupOpening byte
-			if group.open >= 0 { groupOpening = text[group.open] }
+			if group.open >= 0 {
+				groupOpening = text[group.open]
+			}
 			if call, ok := readFunctionIdentity(text, index, previous, groupOpening); ok {
 				pending, hasPending = call, true
 				// A qualified name is one token; its components are never separate calls.
