@@ -30,7 +30,6 @@ package nornicdb
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -249,10 +248,12 @@ type DB struct {
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
-	defaultEmbedKey    string // key for the embedder set via SetEmbedder (global default)
+	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
+	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
+	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
-	embedderFactory func(cfg *embed.Config) (embed.Embedder, error)
+	embedderFactory func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error)
 	// in-flight embedder creations keyed by embedConfigKey(cfg), used to avoid duplicate
 	// expensive model loads under concurrent query traffic.
 	embedderCreateMu sync.Mutex
@@ -643,8 +644,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					fmt.Println("🔐 Loading existing encryption salt")
 				} else {
 					// Generate new salt for new encrypted database
-					salt = make([]byte, 32)
-					if _, err := rand.Read(salt); err != nil {
+					var err error
+					salt, err = encryption.GenerateSalt()
+					if err != nil {
 						return nil, localizedError(localization.NornicDBCoreEncryptionSaltGenerateFailed(err), err)
 					}
 					// Persist salt (required for decryption after restart)
@@ -975,6 +977,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)
+	db.cypherExecutor.QueryEmbedderBinding().SetLifetime(db.beginProviderUse)
 	// The base executor is shared by every embedded caller of DB.Cypher /
 	// ExecuteCypher: a statement must never leave it inside a transaction.
 	// Embedded callers that want explicit transactions create their own
@@ -1385,8 +1388,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 
 		// Start embed queue workers after warmup so they don't compete with index build on startup.
-		if db.embedQueue != nil {
-			db.embedQueue.StartWorkers()
+		db.mu.RLock()
+		embedQueue := db.embedQueue
+		db.mu.RUnlock()
+		if embedQueue != nil {
+			embedQueue.StartWorkers()
 		}
 	})
 
@@ -1574,15 +1580,30 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 // SetEmbedder configures the auto-embed queue with the given embedder.
 // This should be called by the server after creating a working embedder.
 // The embedder is shared with the MCP server and Cypher executor for consistency.
-func (db *DB) SetEmbedder(embedder embed.Embedder) {
+// It reports whether the database took the embedder. A closing or closed
+// database refuses it and closes it, so a caller can't be left holding a
+// model (and its warmup goroutine) after DB.Close: the decision is made
+// under db.mu, where Close sets closed, not by a cancellation check made
+// before the call.
+func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
-		return
+		return false
+	}
+	if _, accepted := db.OwnEmbedder(embedder); !accepted {
+		return false
+	}
+
+	db.mu.Lock()
+	if db.closed {
+		// Close has stopped, or is stopping, the queue and timers this
+		// would start.
+		db.mu.Unlock()
+		// Ownership was already registered; Close releases it after joining users.
+		return false
 	}
 	// Relationships whose embedding failed for want of an embedder are
 	// embedded now, not after the retry delay (#1065).
 	defer db.wakeRelationshipEmbedding()
-
-	db.mu.Lock()
 
 	if db.baseStorage == nil {
 		// baseStorage is required for correctness (it’s the only engine that can see all namespaces).
@@ -1612,7 +1633,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 				db.startClusteringTimer(interval)
 			}
 		}
-		return
+		return true
 	}
 
 	// Create embed queue against the un-namespaced base storage so it can pull work
@@ -1658,6 +1679,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	if startClusterTimer {
 		db.startClusteringTimer(clusterInterval)
 	}
+	return true
 }
 
 // SetEmbedQueueShouldYield sets an optional foreground-pressure callback used to
@@ -1681,8 +1703,9 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 	}
 	db.mu.Lock()
 	eq := db.embedQueue
+	closed := db.closed
 	db.mu.Unlock()
-	if eq == nil {
+	if eq == nil || closed {
 		return
 	}
 	defaultEmbedder := eq.currentEmbedder()
@@ -1748,6 +1771,17 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 // embedderForConfig shares the model registry and single-flight creation between
 // document workers and query snapshots. The caller owns its fallback provider.
 func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
+	// Per-database model construction is also part of the DB lifetime. In
+	// particular, a constructor ignoring cancellation cannot outlive Close.
+	db.mu.RLock()
+	if db.closed {
+		db.mu.RUnlock()
+		return nil
+	}
+	db.bgWg.Add(1)
+	db.mu.RUnlock()
+	defer db.bgWg.Done()
+
 	key := embedConfigKey(cfg)
 	db.embedderRegistryMu.RLock()
 	if db.embedderRegistry != nil {
@@ -1805,17 +1839,29 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	db.embedderCreate[key] = ch
 	db.embedderCreateMu.Unlock()
 
-	newEmbedder, createErr := create(cfg)
+	newEmbedder, createErr := create(db.LifetimeContext(), cfg)
+	release, accepted := db.OwnEmbedder(newEmbedder)
+	if createErr != nil || !accepted {
+		_ = release()
+		newEmbedder = nil
+	}
 
+	discard := false
 	db.embedderRegistryMu.Lock()
 	if createErr == nil && newEmbedder != nil {
 		if existing, ok := db.embedderRegistry[key]; ok {
+			// SetDefaultEmbedConfig may publish this key during construction.
+			// The unused model still has to be released.
+			discard = !sameEmbedder(existing, newEmbedder)
 			newEmbedder = existing
 		} else {
 			db.embedderRegistry[key] = newEmbedder
 		}
 	}
 	db.embedderRegistryMu.Unlock()
+	if discard {
+		_ = release()
+	}
 
 	db.embedderCreateMu.Lock()
 	close(ch)
@@ -1933,6 +1979,14 @@ func (db *DB) startBackgroundTask(fn func()) bool {
 		fn()
 	}()
 	return true
+}
+
+// RunBackgroundTask runs fn in a goroutine that Close waits for, so work
+// started for the database can't outlive it. fn should return once
+// LifetimeContext ends. It returns false, without running fn, once the
+// database is closing.
+func (db *DB) RunBackgroundTask(fn func()) bool {
+	return db.startBackgroundTask(fn)
 }
 
 // GetRetentionManager returns the retention manager or nil when retention is disabled.
@@ -2297,14 +2351,16 @@ func (db *DB) GetReplicator() replication.Replicator {
 // Cypher executes a Cypher query.
 func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) ([]map[string]any, error) {
 	db.mu.RLock()
-	defer db.mu.RUnlock()
-
 	if db.closed {
+		db.mu.RUnlock()
 		return nil, ErrClosed
 	}
+	executor := db.cypherExecutor
+	db.mu.RUnlock()
 
-	// Execute query through Cypher executor
-	result, err := db.cypherExecutor.Execute(ctx, query, params)
+	// The executor's shared lifetime guard joins this statement. Do not hold
+	// mu while it runs: Close needs the lock to cancel a blocked embedding.
+	result, err := executor.Execute(ctx, query, params)
 	if err != nil {
 		return nil, err
 	}

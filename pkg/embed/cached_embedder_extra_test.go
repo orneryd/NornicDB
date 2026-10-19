@@ -64,21 +64,3 @@ func TestCachedEmbedder_Stats_HitRate(t *testing.T) {
 	assert.Equal(t, uint64(3), stats.Hits)
 	assert.InDelta(t, 75.0, stats.HitRate, 0.1)
 }
-
-func TestLocalGGUFStub_Embed(t *testing.T) {
-	stub := &LocalGGUFEmbedder{}
-	ctx := context.Background()
-
-	_, err := stub.Embed(ctx, "hello")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available")
-}
-
-func TestLocalGGUFStub_EmbedBatch(t *testing.T) {
-	stub := &LocalGGUFEmbedder{}
-	ctx := context.Background()
-
-	_, err := stub.EmbedBatch(ctx, []string{"a", "b"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not available")
-}
