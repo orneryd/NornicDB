@@ -227,6 +227,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, item 
 	if b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
+	if loaded { atomic.AddInt64(&b.cacheMisses, 1) } else { atomic.AddInt64(&b.cacheHits, 1) }
 	if loaded && cacheFill != nil {
 		cacheFill(gen, node)
 	}

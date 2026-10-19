@@ -232,6 +232,23 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 
 	var state bufferedEntityState
 	var edge *Edge
+	cached := func(w *WriteBehindBuffer) (bool, error) {
+		edge = nil
+		if w != nil {
+			state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+			if state.found {
+				if state.deleted || b.filterEdgeByDecay(state.edge, DecayScoringTime()) { return true, ErrNotFound }
+				edge = copyEdge(state.edge)
+				return true, nil
+			}
+		}
+		if value, ok := b.cacheLoadEdge(id); ok {
+			if b.filterEdgeByDecay(value, DecayScoringTime()) { return true, ErrNotFound }
+			edge = copyEdge(value)
+			return true, nil
+		}
+		return false, nil
+	}
 	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedEdgeEntity, string(id)) }, func(txn *badger.Txn) error {
 		if state.found {
 			if state.deleted || b.filterEdgeByDecay(state.edge, DecayScoringTime()) {
@@ -247,7 +264,7 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 			return ErrNotFound
 		}
 		return readErr
-	})
+	}, readViewOptions{scope: namespaceForEdgeID(id), cached: cached})
 
 	return edge, err
 }
