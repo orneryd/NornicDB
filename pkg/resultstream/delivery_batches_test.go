@@ -26,14 +26,15 @@ func TestStreamDeliveryBatchBoundaries(t *testing.T) {
 			require.NoError(t, err)
 			pb, err := r.Start(WithDelivery(context.Background(), second), scope, b, 1)
 			require.NoError(t, err)
-			records := [][]any{{map[string]any{"page": map[string]any{"qid": pa.QID}}}}
+			record := []byte("{\"page\":{\"qid\":\"" + pa.QID + "\"}}")
 			switch end {
 			case "complete_first", "next_batch":
 				first.Delivered()
 			case "partial_records":
-				first.DeliveredValues(records)
+				first.ObserveWritten(record)
+				first.DeliveredWritten()
 			case "discard_first":
-				first.DiscardValues(records)
+				first.DiscardEncoded(record)
 				require.EqualValues(t, 1, a.closes.Load())
 			}
 			connection.Fail()
