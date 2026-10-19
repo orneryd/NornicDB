@@ -1881,7 +1881,7 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
-				key := cypherEquivalenceKey(row)
+				key := cypherValueKey(row, cypherEquivalenceContract)
 				if !seen[key] {
 					combinedResult.Rows = append(combinedResult.Rows, row)
 					seen[key] = true

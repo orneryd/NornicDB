@@ -108,15 +108,12 @@ func formatZonedDateTimeString(value time.Time, zoneID string) string {
 	return formatTemporalDateTime(value, true, zoneID, true)
 }
 
-// compareTemporalValues applies Neo4j temporal equality without depending on
+// compareTemporalByContract applies the explicit temporal contract without
 // Go location-pointer identity or the incidental representation of durations.
-func compareTemporalValues(left, right interface{}) (bool, bool) {
-	return compareTemporalByContract(left, right, cypherValueEqualityContract)
-}
 
 func compareTemporalByContract(left, right interface{}, contract cypherComparisonContract) (bool, bool) {
-	leftParts, leftOK := contract.temporalKey(left)
-	rightParts, rightOK := contract.temporalKey(right)
+	leftParts, leftOK := temporalIdentityParts(left, contract)
+	rightParts, rightOK := temporalIdentityParts(right, contract)
 	if !leftOK && !rightOK {
 		return false, false
 	}
@@ -250,68 +247,64 @@ type temporalValueKey struct {
 // Equality ignores a named DATETIME's overlap offset. Equivalence retains it:
 // both civil timestamps are equal, but DISTINCT/grouping/set maps keep both.
 // Both contracts use the same normalization owner below.
-func temporalEqualityParts(value interface{}) (temporalValueKey, bool) {
-	return temporalIdentityParts(value, false)
-}
 
-func temporalEquivalenceParts(value interface{}) (temporalValueKey, bool) {
-	return temporalIdentityParts(value, true)
-}
-
-func temporalIdentityParts(value interface{}, equivalence bool) (temporalValueKey, bool) {
+func temporalIdentityParts(value interface{}, contract cypherComparisonContract) (temporalValueKey, bool) {
+	if contract != cypherValueEqualityContract && contract != cypherEquivalenceContract {
+		panic("temporal comparison requires an explicit contract")
+	}
 	switch typed := value.(type) {
 	case CypherDate:
-		return dateEqualityParts(typed.Time)
+		return dateEqualityParts(typed.Time, contract)
 	case *CypherDate:
 		if typed != nil {
-			return dateEqualityParts(typed.Time)
+			return dateEqualityParts(typed.Time, contract)
 		}
 	case CypherLocalTime:
-		return clockEqualityParts('l', typed.Time)
+		return clockEqualityParts('l', typed.Time, contract)
 	case *CypherLocalTime:
 		if typed != nil {
-			return clockEqualityParts('l', typed.Time)
+			return clockEqualityParts('l', typed.Time, contract)
 		}
 	case CypherTime:
-		return clockEqualityParts('t', typed.Time)
+		return clockEqualityParts('t', typed.Time, contract)
 	case *CypherTime:
 		if typed != nil {
-			return clockEqualityParts('t', typed.Time)
+			return clockEqualityParts('t', typed.Time, contract)
 		}
 	case CypherLocalDateTime:
-		return localDateTimeEqualityParts(typed.Time)
+		return localDateTimeEqualityParts(typed.Time, contract)
 	case *CypherLocalDateTime:
 		if typed != nil {
-			return localDateTimeEqualityParts(typed.Time)
+			return localDateTimeEqualityParts(typed.Time, contract)
 		}
 	case CypherDateTime:
-		return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, equivalence)
+		return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, contract)
 	case *CypherDateTime:
 		if typed != nil {
-			return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, equivalence)
+			return zonedDateTimeIdentityParts(typed.Time, typed.ZoneID, contract)
 		}
 	case time.Time:
-		return zonedDateTimeIdentityParts(typed, "", equivalence)
+		return zonedDateTimeIdentityParts(typed, "", contract)
 	case *time.Time:
 		if typed != nil {
-			return zonedDateTimeIdentityParts(*typed, "", equivalence)
+			return zonedDateTimeIdentityParts(*typed, "", contract)
 		}
 	case CypherDuration:
-		return durationEqualityParts(&typed)
+		return durationEqualityParts(&typed, contract)
 	case *CypherDuration:
 		if typed != nil {
-			return durationEqualityParts(typed)
+			return durationEqualityParts(typed, contract)
 		}
 	}
 	return temporalValueKey{}, false
 }
 
-func dateEqualityParts(value time.Time) (temporalValueKey, bool) {
+func dateEqualityParts(value time.Time, contract cypherComparisonContract) (temporalValueKey, bool) {
 	year, month, day := value.Date()
 	return temporalValueKey{kind: 'd', parts: [7]int64{int64(year), int64(month), int64(day)}}, true
 }
 
-func clockEqualityParts(kind byte, value time.Time) (temporalValueKey, bool) {
+func clockEqualityParts(kind byte, value time.Time, contract cypherComparisonContract) (temporalValueKey, bool) {
 	hour, minute, second := value.Clock()
 	key := temporalValueKey{kind: kind, parts: [7]int64{int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}
 	// TIME is an offset time, even when projected from a named-zone datetime.
@@ -321,14 +314,14 @@ func clockEqualityParts(kind byte, value time.Time) (temporalValueKey, bool) {
 	return key, true
 }
 
-func localDateTimeEqualityParts(value time.Time) (temporalValueKey, bool) {
+func localDateTimeEqualityParts(value time.Time, contract cypherComparisonContract) (temporalValueKey, bool) {
 	year, month, day := value.Date()
 	hour, minute, second := value.Clock()
 	return temporalValueKey{kind: 'L', parts: [7]int64{int64(year), int64(month), int64(day), int64(hour), int64(minute), int64(second), int64(value.Nanosecond())}}, true
 }
 
-func zonedDateTimeIdentityParts(value time.Time, zoneID string, equivalence bool) (temporalValueKey, bool) {
-	key, _ := localDateTimeEqualityParts(value)
+func zonedDateTimeIdentityParts(value time.Time, zoneID string, contract cypherComparisonContract) (temporalValueKey, bool) {
+	key, _ := localDateTimeEqualityParts(value, contract)
 	key.kind = 'D'
 	// Explicit region IDs include UTC and CET, which have no slash. A bare
 	// Go time carries named-zone identity when its location is an IANA path;
@@ -339,13 +332,13 @@ func zonedDateTimeIdentityParts(value time.Time, zoneID string, equivalence bool
 	if zoneID != "" && zoneID != "Z" && zoneID[0] != '+' && zoneID[0] != '-' {
 		key.zone = zoneID
 	}
-	if key.zone == "" || equivalence {
+	if key.zone == "" || contract == cypherEquivalenceContract {
 		_, key.offset = value.Zone()
 	}
 	return key, true
 }
 
-func durationEqualityParts(value *CypherDuration) (temporalValueKey, bool) {
+func durationEqualityParts(value *CypherDuration, contract cypherComparisonContract) (temporalValueKey, bool) {
 	seconds := value.Hours*3_600 + value.Minutes*60 + value.Seconds + value.Nanos/1_000_000_000
 	nanos := value.Nanos % 1_000_000_000
 	if nanos < 0 {
