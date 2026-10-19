@@ -94,7 +94,7 @@ func TestTemporalEquivalenceCanonicalOwner(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.equal, cypherEquality(tc.a, tc.b))
-			require.Equal(t, tc.equal, cypherEquivalenceKey(tc.a) == cypherEquivalenceKey(tc.b))
+			require.Equal(t, tc.equal, cypherValueKey(tc.a, cypherEquivalenceContract) == cypherValueKey(tc.b, cypherEquivalenceContract))
 			require.Equal(t, tc.equal, cypherValueEquals(tc.a, tc.b))
 		})
 	}

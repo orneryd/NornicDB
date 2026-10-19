@@ -921,7 +921,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 				c.prop = p
 				c.allowed = make(map[string]struct{}, len(vals))
 				for _, raw := range vals {
-					c.allowed[cartesianValueKey(raw)] = struct{}{}
+					c.allowed[cypherValueKey(raw, cypherValueEqualityContract)] = struct{}{}
 				}
 				c.hasValues = true
 			}
@@ -980,7 +980,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 		if !ok {
 			continue
 		}
-		patternMatches[idx].nodes = filterNodesByAllowedPropSet(patternMatches[idx].nodes, c.prop, c.allowed)
+		patternMatches[idx].nodes = filterNodesByAllowedPropSet(patternMatches[idx].nodes, c.prop, c.allowed, cypherValueEqualityContract)
 	}
 
 	// Propagate equality constraints both directions until stable.
@@ -992,8 +992,8 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			if !lok || !rok {
 				continue
 			}
-			leftAllowed := collectPropValues(patternMatches[leftIdx].nodes, c.leftProp)
-			rightAllowed := collectPropValues(patternMatches[rightIdx].nodes, c.rightProp)
+			leftAllowed := collectPropValues(patternMatches[leftIdx].nodes, c.leftProp, cypherValueEqualityContract)
+			rightAllowed := collectPropValues(patternMatches[rightIdx].nodes, c.rightProp, cypherValueEqualityContract)
 			if len(leftAllowed) == 0 || len(rightAllowed) == 0 {
 				continue
 			}
@@ -1003,17 +1003,17 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			rightCandidates := leftAllowed
 			leftCandidates := rightAllowed
 			if c.offset != 0 {
-				rightCandidates = shiftCartesianIntKeySet(leftAllowed, -c.offset)
-				leftCandidates = shiftCartesianIntKeySet(rightAllowed, c.offset)
+				rightCandidates = shiftCartesianIntKeySet(leftAllowed, -c.offset, cypherValueEqualityContract)
+				leftCandidates = shiftCartesianIntKeySet(rightAllowed, c.offset, cypherValueEqualityContract)
 				if len(rightCandidates) == 0 || len(leftCandidates) == 0 {
 					continue
 				}
 			}
-			if filtered := filterNodesByAllowedPropSet(patternMatches[rightIdx].nodes, c.rightProp, rightCandidates); len(filtered) != len(patternMatches[rightIdx].nodes) {
+			if filtered := filterNodesByAllowedPropSet(patternMatches[rightIdx].nodes, c.rightProp, rightCandidates, cypherValueEqualityContract); len(filtered) != len(patternMatches[rightIdx].nodes) {
 				patternMatches[rightIdx].nodes = filtered
 				changed = true
 			}
-			if filtered := filterNodesByAllowedPropSet(patternMatches[leftIdx].nodes, c.leftProp, leftCandidates); len(filtered) != len(patternMatches[leftIdx].nodes) {
+			if filtered := filterNodesByAllowedPropSet(patternMatches[leftIdx].nodes, c.leftProp, leftCandidates, cypherValueEqualityContract); len(filtered) != len(patternMatches[leftIdx].nodes) {
 				patternMatches[leftIdx].nodes = filtered
 				changed = true
 			}
@@ -1026,7 +1026,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 // set by offset, dropping keys that are not integers. The shifted set names
 // the property values that may pair with the original set under an
 // lv.lp = rv.rp + offset constraint (#692).
-func shiftCartesianIntKeySet(set map[string]struct{}, offset int64) map[string]struct{} {
+func shiftCartesianIntKeySet(set map[string]struct{}, offset int64, contract cypherComparisonContract) map[string]struct{} {
 	out := make(map[string]struct{}, len(set))
 	for key := range set {
 		var digits string
@@ -1247,7 +1247,7 @@ func addInt64Offset(value, offset int64) (int64, bool) {
 // (no float64 rounding above 2^53, #692), keeping its stored type in the
 // key. It reports false when the value is not an integer or the shift
 // overflows.
-func cartesianShiftValueKey(v interface{}, offset int64) (string, bool) {
+func cartesianShiftValueKey(v interface{}, offset int64, contract cypherComparisonContract) (string, bool) {
 	var base int64
 	switch x := v.(type) {
 	case int:
@@ -1263,9 +1263,9 @@ func cartesianShiftValueKey(v interface{}, offset int64) (string, bool) {
 	}
 	switch v.(type) {
 	case int:
-		return cartesianValueKey(int(sum)), true
+		return cypherValueKey(int(sum), contract), true
 	default:
-		return cartesianValueKey(sum), true
+		return cypherValueKey(sum, contract), true
 	}
 }
 
@@ -1297,11 +1297,11 @@ func int64OfValue(v interface{}) (int64, bool) {
 	}
 }
 
-func cartesianValueKey(v interface{}) string {
-	return cypherEquivalenceKey(v)
-}
+// Cartesian keys implement predicate equality for both candidate pushdown
+// and indexed MATCH joins (including MATCH ... CREATE). DISTINCT/grouping
+// equivalence would discard equal named-zone overlap datetimes here.
 
-func collectPropValues(nodes []*storage.Node, prop string) map[string]struct{} {
+func collectPropValues(nodes []*storage.Node, prop string, contract cypherComparisonContract) map[string]struct{} {
 	out := make(map[string]struct{}, len(nodes))
 	for _, n := range nodes {
 		if n == nil || n.Properties == nil {
@@ -1311,12 +1311,12 @@ func collectPropValues(nodes []*storage.Node, prop string) map[string]struct{} {
 		if !ok {
 			continue
 		}
-		out[cartesianValueKey(val)] = struct{}{}
+		out[cypherValueKey(val, contract)] = struct{}{}
 	}
 	return out
 }
 
-func filterNodesByAllowedPropSet(nodes []*storage.Node, prop string, allowed map[string]struct{}) []*storage.Node {
+func filterNodesByAllowedPropSet(nodes []*storage.Node, prop string, allowed map[string]struct{}, contract cypherComparisonContract) []*storage.Node {
 	if len(nodes) == 0 || len(allowed) == 0 {
 		return nodes
 	}
@@ -1329,7 +1329,7 @@ func filterNodesByAllowedPropSet(nodes []*storage.Node, prop string, allowed map
 		if !ok {
 			continue
 		}
-		if _, keep := allowed[cartesianValueKey(val)]; keep {
+		if _, keep := allowed[cypherValueKey(val, contract)]; keep {
 			out = append(out, n)
 		}
 	}

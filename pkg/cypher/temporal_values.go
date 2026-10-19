@@ -579,7 +579,11 @@ func projectTemporalValue(kind string, value interface{}) (interface{}, bool) {
 		if hasTime {
 			location := time.UTC
 			if zoned {
-				location = clock.Location()
+				// A TIME carries the offset at the source instant. Reusing a
+				// region on the placeholder date can select a different DST
+				// or historical offset (for example St John's in summer).
+				_, offset := clock.Zone()
+				location = time.FixedZone("", offset)
 			}
 			return CypherTime{Time: time.Date(1970, 1, 1, clock.Hour(), clock.Minute(), clock.Second(), clock.Nanosecond(), location)}, true
 		}

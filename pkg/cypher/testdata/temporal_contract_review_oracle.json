@@ -1,0 +1,4426 @@
+{
+  "reference": "Neo4j/APOC 5.26.30",
+  "source": "sol-temporal-r3-inputs.json and sol-temporal-r3-apoc-reference.log",
+  "neoRefJob": "j20261019003416-43512-451d",
+  "referenceCrossCheck": "sol-temporal-r3-reference-comparison-final.log: 166/168 rows agree between instances; Chicago deep directions have eight core-field differences",
+  "dispositions": [
+    {
+      "name": "review-stjohns-overlap/list",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "stjohns-overlap/list",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-stjohns-overlap/map",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "stjohns-overlap/map",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-stjohns-reverse/list",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "stjohns-reverse/list",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-stjohns-reverse/map",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "stjohns-reverse/map",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-chicago-overlap/deep",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "chicago-overlap/deep",
+        "groups": 1,
+        "equality": null,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-chicago-reverse/deep",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "chicago-reverse/deep",
+        "groups": 1,
+        "equality": null,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-chatham-overlap/list",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "chatham-overlap/list",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-chatham-overlap/map",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "chatham-overlap/map",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-chatham-reverse/list",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "chatham-reverse/list",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-chatham-reverse/map",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "chatham-reverse/map",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-troll-overlap/scalar",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "troll-overlap/scalar",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    },
+    {
+      "name": "review-troll-reverse/scalar",
+      "observed": {
+        "lookup": [
+          true,
+          true,
+          0,
+          1,
+          2
+        ],
+        "distinctRows": 1,
+        "equivalence": true,
+        "sets": [
+          2,
+          2,
+          0,
+          1,
+          2
+        ],
+        "name": "troll-reverse/scalar",
+        "groups": 1,
+        "equality": true,
+        "unionRows": 1
+      },
+      "required": {
+        "equivalence": false,
+        "distinctRows": 2,
+        "groups": 2,
+        "unionRows": 2
+      },
+      "reason": "User requires stable equivalence retaining the overlap offset recursively. Preserve the measured reference divergence; do not reproduce its inconsistent/hash-dependent core cardinality."
+    }
+  ],
+  "cases": [
+    {
+      "name": "review-stjohns-overlap/scalar",
+      "a": "datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')",
+      "b": "datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-overlap/list",
+      "a": "[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')]",
+      "b": "[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-overlap/map",
+      "a": "{p:[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')]}",
+      "b": "{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-overlap/deep",
+      "a": "[{p:[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-reverse/scalar",
+      "a": "datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')",
+      "b": "datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-reverse/list",
+      "a": "[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]",
+      "b": "[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-reverse/map",
+      "a": "{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]}",
+      "b": "{p:[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-reverse/deep",
+      "a": "[{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-same/scalar",
+      "a": "datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')",
+      "b": "datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-stjohns-same/list",
+      "a": "[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]",
+      "b": "[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-stjohns-same/map",
+      "a": "{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]}",
+      "b": "{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-stjohns-same/deep",
+      "a": "[{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-stjohns-fixed/scalar",
+      "a": "datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')",
+      "b": "datetime('2025-11-02T01:45:12.000000019-02:30')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed/list",
+      "a": "[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')]",
+      "b": "[datetime('2025-11-02T01:45:12.000000019-02:30')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed/map",
+      "a": "{p:[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]')]}",
+      "b": "{p:[datetime('2025-11-02T01:45:12.000000019-02:30')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed/deep",
+      "a": "[{p:[datetime('2025-11-02T01:45:12.000000019-02:30[America/St_Johns]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:45:12.000000019-02:30'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed-reverse/scalar",
+      "a": "datetime('2025-11-02T01:45:12.000000019-03:30')",
+      "b": "datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed-reverse/list",
+      "a": "[datetime('2025-11-02T01:45:12.000000019-03:30')]",
+      "b": "[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed-reverse/map",
+      "a": "{p:[datetime('2025-11-02T01:45:12.000000019-03:30')]}",
+      "b": "{p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-stjohns-fixed-reverse/deep",
+      "a": "[{p:[datetime('2025-11-02T01:45:12.000000019-03:30'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:45:12.000000019-03:30[America/St_Johns]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-overlap/scalar",
+      "a": "datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')",
+      "b": "datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-overlap/list",
+      "a": "[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')]",
+      "b": "[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-overlap/map",
+      "a": "{p:[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')]}",
+      "b": "{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-overlap/deep",
+      "a": "[{p:[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-reverse/scalar",
+      "a": "datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')",
+      "b": "datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-reverse/list",
+      "a": "[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]",
+      "b": "[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-reverse/map",
+      "a": "{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]}",
+      "b": "{p:[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-reverse/deep",
+      "a": "[{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-same/scalar",
+      "a": "datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')",
+      "b": "datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-same/list",
+      "a": "[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]",
+      "b": "[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-same/map",
+      "a": "{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]}",
+      "b": "{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-same/deep",
+      "a": "[{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-fixed/scalar",
+      "a": "datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')",
+      "b": "datetime('2023-10-29T02:20:11.000000023+02:00')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed/list",
+      "a": "[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')]",
+      "b": "[datetime('2023-10-29T02:20:11.000000023+02:00')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed/map",
+      "a": "{p:[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]')]}",
+      "b": "{p:[datetime('2023-10-29T02:20:11.000000023+02:00')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed/deep",
+      "a": "[{p:[datetime('2023-10-29T02:20:11.000000023+02:00[Europe/Paris]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2023-10-29T02:20:11.000000023+02:00'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed-reverse/scalar",
+      "a": "datetime('2023-10-29T02:20:11.000000023+01:00')",
+      "b": "datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed-reverse/list",
+      "a": "[datetime('2023-10-29T02:20:11.000000023+01:00')]",
+      "b": "[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed-reverse/map",
+      "a": "{p:[datetime('2023-10-29T02:20:11.000000023+01:00')]}",
+      "b": "{p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-fixed-reverse/deep",
+      "a": "[{p:[datetime('2023-10-29T02:20:11.000000023+01:00'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2023-10-29T02:20:11.000000023+01:00[Europe/Paris]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-overlap/scalar",
+      "a": "datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')",
+      "b": "datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-overlap/list",
+      "a": "[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')]",
+      "b": "[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-overlap/map",
+      "a": "{p:[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')]}",
+      "b": "{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-overlap/deep",
+      "a": "[{p:[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-reverse/scalar",
+      "a": "datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')",
+      "b": "datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-reverse/list",
+      "a": "[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]",
+      "b": "[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-reverse/map",
+      "a": "{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]}",
+      "b": "{p:[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-reverse/deep",
+      "a": "[{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-same/scalar",
+      "a": "datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')",
+      "b": "datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chicago-same/list",
+      "a": "[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]",
+      "b": "[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chicago-same/map",
+      "a": "{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]}",
+      "b": "{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chicago-same/deep",
+      "a": "[{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chicago-fixed/scalar",
+      "a": "datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')",
+      "b": "datetime('2025-11-02T01:10:09.000000031-05:00')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed/list",
+      "a": "[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')]",
+      "b": "[datetime('2025-11-02T01:10:09.000000031-05:00')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed/map",
+      "a": "{p:[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]')]}",
+      "b": "{p:[datetime('2025-11-02T01:10:09.000000031-05:00')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed/deep",
+      "a": "[{p:[datetime('2025-11-02T01:10:09.000000031-05:00[America/Chicago]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:10:09.000000031-05:00'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed-reverse/scalar",
+      "a": "datetime('2025-11-02T01:10:09.000000031-06:00')",
+      "b": "datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed-reverse/list",
+      "a": "[datetime('2025-11-02T01:10:09.000000031-06:00')]",
+      "b": "[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed-reverse/map",
+      "a": "{p:[datetime('2025-11-02T01:10:09.000000031-06:00')]}",
+      "b": "{p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chicago-fixed-reverse/deep",
+      "a": "[{p:[datetime('2025-11-02T01:10:09.000000031-06:00'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-11-02T01:10:09.000000031-06:00[America/Chicago]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-overlap/scalar",
+      "a": "datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')",
+      "b": "datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-overlap/list",
+      "a": "[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')]",
+      "b": "[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-overlap/map",
+      "a": "{p:[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')]}",
+      "b": "{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-overlap/deep",
+      "a": "[{p:[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-reverse/scalar",
+      "a": "datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')",
+      "b": "datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-reverse/list",
+      "a": "[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]",
+      "b": "[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-reverse/map",
+      "a": "{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]}",
+      "b": "{p:[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-reverse/deep",
+      "a": "[{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-same/scalar",
+      "a": "datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')",
+      "b": "datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-same/list",
+      "a": "[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]",
+      "b": "[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-same/map",
+      "a": "{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]}",
+      "b": "{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-same/deep",
+      "a": "[{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-fixed/scalar",
+      "a": "datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')",
+      "b": "datetime('2025-04-06T03:15:08.000000037+13:45')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed/list",
+      "a": "[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')]",
+      "b": "[datetime('2025-04-06T03:15:08.000000037+13:45')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed/map",
+      "a": "{p:[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]')]}",
+      "b": "{p:[datetime('2025-04-06T03:15:08.000000037+13:45')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed/deep",
+      "a": "[{p:[datetime('2025-04-06T03:15:08.000000037+13:45[Pacific/Chatham]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-04-06T03:15:08.000000037+13:45'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed-reverse/scalar",
+      "a": "datetime('2025-04-06T03:15:08.000000037+12:45')",
+      "b": "datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed-reverse/list",
+      "a": "[datetime('2025-04-06T03:15:08.000000037+12:45')]",
+      "b": "[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed-reverse/map",
+      "a": "{p:[datetime('2025-04-06T03:15:08.000000037+12:45')]}",
+      "b": "{p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-chatham-fixed-reverse/deep",
+      "a": "[{p:[datetime('2025-04-06T03:15:08.000000037+12:45'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-04-06T03:15:08.000000037+12:45[Pacific/Chatham]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-overlap/scalar",
+      "a": "datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')",
+      "b": "datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-overlap/list",
+      "a": "[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')]",
+      "b": "[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-overlap/map",
+      "a": "{p:[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')]}",
+      "b": "{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-overlap/deep",
+      "a": "[{p:[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-reverse/scalar",
+      "a": "datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')",
+      "b": "datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-reverse/list",
+      "a": "[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]",
+      "b": "[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-reverse/map",
+      "a": "{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]}",
+      "b": "{p:[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-reverse/deep",
+      "a": "[{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-same/scalar",
+      "a": "datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')",
+      "b": "datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-troll-same/list",
+      "a": "[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]",
+      "b": "[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-troll-same/map",
+      "a": "{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]}",
+      "b": "{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-troll-same/deep",
+      "a": "[{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-troll-fixed/scalar",
+      "a": "datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')",
+      "b": "datetime('2025-10-26T01:30:07.000000041+02:00')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed/list",
+      "a": "[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')]",
+      "b": "[datetime('2025-10-26T01:30:07.000000041+02:00')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed/map",
+      "a": "{p:[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]')]}",
+      "b": "{p:[datetime('2025-10-26T01:30:07.000000041+02:00')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed/deep",
+      "a": "[{p:[datetime('2025-10-26T01:30:07.000000041+02:00[Antarctica/Troll]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-10-26T01:30:07.000000041+02:00'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed-reverse/scalar",
+      "a": "datetime('2025-10-26T01:30:07.000000041Z')",
+      "b": "datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed-reverse/list",
+      "a": "[datetime('2025-10-26T01:30:07.000000041Z')]",
+      "b": "[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed-reverse/map",
+      "a": "{p:[datetime('2025-10-26T01:30:07.000000041Z')]}",
+      "b": "{p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-troll-fixed-reverse/deep",
+      "a": "[{p:[datetime('2025-10-26T01:30:07.000000041Z'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-10-26T01:30:07.000000041Z[Antarctica/Troll]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-overlap/scalar",
+      "a": "datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')",
+      "b": "datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-overlap/list",
+      "a": "[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')]",
+      "b": "[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-overlap/map",
+      "a": "{p:[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')]}",
+      "b": "{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-overlap/deep",
+      "a": "[{p:[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-reverse/scalar",
+      "a": "datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')",
+      "b": "datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-reverse/list",
+      "a": "[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]",
+      "b": "[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')]",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-reverse/map",
+      "a": "{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]}",
+      "b": "{p:[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')]}",
+      "equality": true,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-reverse/deep",
+      "a": "[{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-same/scalar",
+      "a": "datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')",
+      "b": "datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-casablanca-same/list",
+      "a": "[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]",
+      "b": "[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-casablanca-same/map",
+      "a": "{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]}",
+      "b": "{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-casablanca-same/deep",
+      "a": "[{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-casablanca-fixed/scalar",
+      "a": "datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')",
+      "b": "datetime('2025-02-23T02:30:06.000000043+01:00')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed/list",
+      "a": "[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')]",
+      "b": "[datetime('2025-02-23T02:30:06.000000043+01:00')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed/map",
+      "a": "{p:[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]')]}",
+      "b": "{p:[datetime('2025-02-23T02:30:06.000000043+01:00')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed/deep",
+      "a": "[{p:[datetime('2025-02-23T02:30:06.000000043+01:00[Africa/Casablanca]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-02-23T02:30:06.000000043+01:00'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed-reverse/scalar",
+      "a": "datetime('2025-02-23T02:30:06.000000043Z')",
+      "b": "datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed-reverse/list",
+      "a": "[datetime('2025-02-23T02:30:06.000000043Z')]",
+      "b": "[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed-reverse/map",
+      "a": "{p:[datetime('2025-02-23T02:30:06.000000043Z')]}",
+      "b": "{p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-casablanca-fixed-reverse/deep",
+      "a": "[{p:[datetime('2025-02-23T02:30:06.000000043Z'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-02-23T02:30:06.000000043Z[Africa/Casablanca]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-paris-gap/scalar",
+      "a": "datetime('2025-03-30T02:15[Europe/Paris]')",
+      "b": "datetime('2025-03-30T03:15+02:00[Europe/Paris]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-gap/list",
+      "a": "[datetime('2025-03-30T02:15[Europe/Paris]')]",
+      "b": "[datetime('2025-03-30T03:15+02:00[Europe/Paris]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-gap/map",
+      "a": "{p:[datetime('2025-03-30T02:15[Europe/Paris]')]}",
+      "b": "{p:[datetime('2025-03-30T03:15+02:00[Europe/Paris]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-paris-gap/deep",
+      "a": "[{p:[datetime('2025-03-30T02:15[Europe/Paris]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-03-30T03:15+02:00[Europe/Paris]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-gap/scalar",
+      "a": "datetime('2025-09-28T03:15[Pacific/Chatham]')",
+      "b": "datetime('2025-09-28T04:15+13:45[Pacific/Chatham]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-gap/list",
+      "a": "[datetime('2025-09-28T03:15[Pacific/Chatham]')]",
+      "b": "[datetime('2025-09-28T04:15+13:45[Pacific/Chatham]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-gap/map",
+      "a": "{p:[datetime('2025-09-28T03:15[Pacific/Chatham]')]}",
+      "b": "{p:[datetime('2025-09-28T04:15+13:45[Pacific/Chatham]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-chatham-gap/deep",
+      "a": "[{p:[datetime('2025-09-28T03:15[Pacific/Chatham]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-09-28T04:15+13:45[Pacific/Chatham]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-santiago-gap/scalar",
+      "a": "datetime('2025-09-07T00:15[America/Santiago]')",
+      "b": "datetime('2025-09-07T01:15-03:00[America/Santiago]')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-santiago-gap/list",
+      "a": "[datetime('2025-09-07T00:15[America/Santiago]')]",
+      "b": "[datetime('2025-09-07T01:15-03:00[America/Santiago]')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-santiago-gap/map",
+      "a": "{p:[datetime('2025-09-07T00:15[America/Santiago]')]}",
+      "b": "{p:[datetime('2025-09-07T01:15-03:00[America/Santiago]')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-santiago-gap/deep",
+      "a": "[{p:[datetime('2025-09-07T00:15[America/Santiago]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-09-07T01:15-03:00[America/Santiago]'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-region-alias/scalar",
+      "a": "datetime('2025-01-17T12:00[Asia/Kolkata]')",
+      "b": "datetime('2025-01-17T12:00[Asia/Calcutta]')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-region-alias/list",
+      "a": "[datetime('2025-01-17T12:00[Asia/Kolkata]')]",
+      "b": "[datetime('2025-01-17T12:00[Asia/Calcutta]')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-region-alias/map",
+      "a": "{p:[datetime('2025-01-17T12:00[Asia/Kolkata]')]}",
+      "b": "{p:[datetime('2025-01-17T12:00[Asia/Calcutta]')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-region-alias/deep",
+      "a": "[{p:[datetime('2025-01-17T12:00[Asia/Kolkata]'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-01-17T12:00[Asia/Calcutta]'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-string/scalar",
+      "a": "datetime('2025-01-17T12:00Z')",
+      "b": "'2025-01-17T12:00Z'",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-string/list",
+      "a": "[datetime('2025-01-17T12:00Z')]",
+      "b": "['2025-01-17T12:00Z']",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-string/map",
+      "a": "{p:[datetime('2025-01-17T12:00Z')]}",
+      "b": "{p:['2025-01-17T12:00Z']}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-string/deep",
+      "a": "[{p:[datetime('2025-01-17T12:00Z'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:['2025-01-17T12:00Z',null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-duration/scalar",
+      "a": "date('2025-01-17')",
+      "b": "duration('P17D')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-duration/list",
+      "a": "[date('2025-01-17')]",
+      "b": "[duration('P17D')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-duration/map",
+      "a": "{p:[date('2025-01-17')]}",
+      "b": "{p:[duration('P17D')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-mixed-duration/deep",
+      "a": "[{p:[date('2025-01-17'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[duration('P17D'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-null-both/scalar",
+      "a": "null",
+      "b": "null",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-null-both/list",
+      "a": "[null]",
+      "b": "[null]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-null-both/map",
+      "a": "{p:[null]}",
+      "b": "{p:[null]}",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-null-both/deep",
+      "a": "[{p:[null,null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[null,null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-null-temporal/scalar",
+      "a": "null",
+      "b": "datetime('2025-01-17T12:00Z')",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-null-temporal/list",
+      "a": "[null]",
+      "b": "[datetime('2025-01-17T12:00Z')]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-null-temporal/map",
+      "a": "{p:[null]}",
+      "b": "{p:[datetime('2025-01-17T12:00Z')]}",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-null-temporal/deep",
+      "a": "[{p:[null,null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[datetime('2025-01-17T12:00Z'),null]}]",
+      "equality": null,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-both/scalar",
+      "a": "toFloat('NaN')",
+      "b": "toFloat('NaN')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-both/list",
+      "a": "[toFloat('NaN')]",
+      "b": "[toFloat('NaN')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-both/map",
+      "a": "{p:[toFloat('NaN')]}",
+      "b": "{p:[toFloat('NaN')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-both/deep",
+      "a": "[{p:[toFloat('NaN'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[toFloat('NaN'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-temporal/scalar",
+      "a": "toFloat('NaN')",
+      "b": "time('12:00+05:45')",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-temporal/list",
+      "a": "[toFloat('NaN')]",
+      "b": "[time('12:00+05:45')]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-temporal/map",
+      "a": "{p:[toFloat('NaN')]}",
+      "b": "{p:[time('12:00+05:45')]}",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-nan-temporal/deep",
+      "a": "[{p:[toFloat('NaN'),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[time('12:00+05:45'),null]}]",
+      "equality": false,
+      "equivalence": false,
+      "lookup": [
+        false,
+        false,
+        -1,
+        0,
+        1
+      ],
+      "sets": [
+        2,
+        2,
+        0,
+        1,
+        2
+      ],
+      "distinctRows": 2,
+      "groups": 2,
+      "unionRows": 2
+    },
+    {
+      "name": "review-duration-carry/scalar",
+      "a": "duration({seconds:-2,nanoseconds:2500000001})",
+      "b": "duration('PT0.500000001S')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-duration-carry/list",
+      "a": "[duration({seconds:-2,nanoseconds:2500000001})]",
+      "b": "[duration('PT0.500000001S')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-duration-carry/map",
+      "a": "{p:[duration({seconds:-2,nanoseconds:2500000001})]}",
+      "b": "{p:[duration('PT0.500000001S')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-duration-carry/deep",
+      "a": "[{p:[duration({seconds:-2,nanoseconds:2500000001}),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[duration('PT0.500000001S'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-time-projected/scalar",
+      "a": "time(datetime('2025-07-17T12:13:14.000000017[America/St_Johns]'))",
+      "b": "time('12:13:14.000000017-02:30')",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-time-projected/list",
+      "a": "[time(datetime('2025-07-17T12:13:14.000000017[America/St_Johns]'))]",
+      "b": "[time('12:13:14.000000017-02:30')]",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-time-projected/map",
+      "a": "{p:[time(datetime('2025-07-17T12:13:14.000000017[America/St_Johns]'))]}",
+      "b": "{p:[time('12:13:14.000000017-02:30')]}",
+      "equality": true,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    },
+    {
+      "name": "review-time-projected/deep",
+      "a": "[{p:[time(datetime('2025-07-17T12:13:14.000000017[America/St_Johns]')),null],q:[7,'s',date('2001-02-03')]}]",
+      "b": "[{q:[7.0,'s',date('2001-02-03')],p:[time('12:13:14.000000017-02:30'),null]}]",
+      "equality": null,
+      "equivalence": true,
+      "lookup": [
+        true,
+        true,
+        0,
+        1,
+        2
+      ],
+      "sets": [
+        1,
+        1,
+        1,
+        0,
+        1
+      ],
+      "distinctRows": 1,
+      "groups": 1,
+      "unionRows": 1
+    }
+  ]
+}

@@ -412,7 +412,7 @@ func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	require.EqualValues(t, int64(5), exec.resolveWhereValue(ctx, "$v", map[string]interface{}{"v": int64(5)}))
 	require.Equal(t, "x", exec.resolveWhereValue(ctx, "'x'", nil))
 	for _, value := range []interface{}{nil, "abc", 1, int64(2), 3.5, true} {
-		require.Equal(t, cypherEquivalenceKey(value), cartesianValueKey(value))
+		require.Equal(t, cypherValueKey(value, cypherEquivalenceContract), cypherValueKey(value, cypherValueEqualityContract))
 	}
 
 	// binding_where_compile helpers
