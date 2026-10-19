@@ -6,40 +6,42 @@ import (
 )
 
 const (
-	MessageQdrantInvalidVectorsConfig      MessageID = "qdrant.invalid_vectors_config"
-	MessageQdrantVectorSizePositive        MessageID = "qdrant.vector_size_positive"
-	MessageQdrantCreateCollectionFailed    MessageID = "qdrant.create_collection_failed"
-	MessageQdrantListCollectionsFailed     MessageID = "qdrant.list_collections_failed"
-	MessageQdrantDeleteCollectionFailed    MessageID = "qdrant.delete_collection_failed"
-	MessageQdrantStoreNotConfigured        MessageID = "qdrant.collection_store_not_configured"
-	MessageQdrantTooManyPoints             MessageID = "qdrant.too_many_points"
-	MessageQdrantReadPointsFailed          MessageID = "qdrant.read_existing_points_failed"
-	MessageQdrantCreatePointsFailed        MessageID = "qdrant.create_points_failed"
-	MessageQdrantUpdatePointFailed         MessageID = "qdrant.update_point_failed"
-	MessageQdrantMissingVector             MessageID = "qdrant.missing_vector_for_point"
-	MessageQdrantIndexPointFailed          MessageID = "qdrant.index_point_failed"
-	MessageQdrantOffsetTooLarge            MessageID = "qdrant.offset_too_large"
-	MessageQdrantHNSWEfTooLarge            MessageID = "qdrant.hnsw_ef_too_large"
-	MessageQdrantPointVectorRequired       MessageID = "qdrant.point_id_and_vectors_required"
-	MessageQdrantQueryVariantMissing       MessageID = "qdrant.query_variant_missing"
-	MessageQdrantQueryVariantUnsupported   MessageID = "qdrant.query_variant_unsupported"
-	MessageQdrantPointNotFoundCause        MessageID = "qdrant.point_not_found_with_cause"
-	MessageQdrantVectorNotFound            MessageID = "qdrant.vector_not_found_for_point"
-	MessageQdrantInputVariantUnsupported   MessageID = "qdrant.vector_input_variant_unsupported"
-	MessageQdrantPositiveRequired          MessageID = "qdrant.positive_example_required"
-	MessageQdrantPositiveAverageFailed     MessageID = "qdrant.positive_average_failed"
-	MessageQdrantNegativeAverageFailed     MessageID = "qdrant.negative_average_failed"
-	MessageQdrantRecommendDimMismatch      MessageID = "qdrant.recommend_dimension_mismatch"
-	MessageQdrantVectorKindUnsupported     MessageID = "qdrant.vector_kind_unsupported"
-	MessageQdrantScanPointsFailed          MessageID = "qdrant.scan_points_failed"
-	MessageQdrantSearchFailed              MessageID = "qdrant.search_failed"
-	MessageQdrantSelectorInvalid           MessageID = "qdrant.points_selector_invalid"
-	MessageQdrantVectorsTypeUnsupported    MessageID = "qdrant.vectors_type_unsupported"
-	MessageQdrantGetCollectionPointsFailed MessageID = "qdrant.get_collection_points_failed"
-	MessageQdrantFullSnapshotStorage       MessageID = "qdrant.full_snapshot_storage_required"
-	MessageQdrantCreateBackupFailed        MessageID = "qdrant.create_backup_failed"
-	MessageQdrantGetNodesFailed            MessageID = "qdrant.get_nodes_failed"
-	MessageQdrantGetEdgesFailed            MessageID = "qdrant.get_edges_failed"
+	MessageQdrantInvalidQuantizationOversampling MessageID = "qdrant.invalid_quantization_oversampling"
+	MessageQdrantInvalidQuantizationConfig       MessageID = "qdrant.invalid_quantization_config"
+	MessageQdrantInvalidVectorsConfig            MessageID = "qdrant.invalid_vectors_config"
+	MessageQdrantVectorSizePositive              MessageID = "qdrant.vector_size_positive"
+	MessageQdrantCreateCollectionFailed          MessageID = "qdrant.create_collection_failed"
+	MessageQdrantListCollectionsFailed           MessageID = "qdrant.list_collections_failed"
+	MessageQdrantDeleteCollectionFailed          MessageID = "qdrant.delete_collection_failed"
+	MessageQdrantStoreNotConfigured              MessageID = "qdrant.collection_store_not_configured"
+	MessageQdrantTooManyPoints                   MessageID = "qdrant.too_many_points"
+	MessageQdrantReadPointsFailed                MessageID = "qdrant.read_existing_points_failed"
+	MessageQdrantCreatePointsFailed              MessageID = "qdrant.create_points_failed"
+	MessageQdrantUpdatePointFailed               MessageID = "qdrant.update_point_failed"
+	MessageQdrantMissingVector                   MessageID = "qdrant.missing_vector_for_point"
+	MessageQdrantIndexPointFailed                MessageID = "qdrant.index_point_failed"
+	MessageQdrantOffsetTooLarge                  MessageID = "qdrant.offset_too_large"
+	MessageQdrantHNSWEfTooLarge                  MessageID = "qdrant.hnsw_ef_too_large"
+	MessageQdrantPointVectorRequired             MessageID = "qdrant.point_id_and_vectors_required"
+	MessageQdrantQueryVariantMissing             MessageID = "qdrant.query_variant_missing"
+	MessageQdrantQueryVariantUnsupported         MessageID = "qdrant.query_variant_unsupported"
+	MessageQdrantPointNotFoundCause              MessageID = "qdrant.point_not_found_with_cause"
+	MessageQdrantVectorNotFound                  MessageID = "qdrant.vector_not_found_for_point"
+	MessageQdrantInputVariantUnsupported         MessageID = "qdrant.vector_input_variant_unsupported"
+	MessageQdrantPositiveRequired                MessageID = "qdrant.positive_example_required"
+	MessageQdrantPositiveAverageFailed           MessageID = "qdrant.positive_average_failed"
+	MessageQdrantNegativeAverageFailed           MessageID = "qdrant.negative_average_failed"
+	MessageQdrantRecommendDimMismatch            MessageID = "qdrant.recommend_dimension_mismatch"
+	MessageQdrantVectorKindUnsupported           MessageID = "qdrant.vector_kind_unsupported"
+	MessageQdrantScanPointsFailed                MessageID = "qdrant.scan_points_failed"
+	MessageQdrantSearchFailed                    MessageID = "qdrant.search_failed"
+	MessageQdrantSelectorInvalid                 MessageID = "qdrant.points_selector_invalid"
+	MessageQdrantVectorsTypeUnsupported          MessageID = "qdrant.vectors_type_unsupported"
+	MessageQdrantGetCollectionPointsFailed       MessageID = "qdrant.get_collection_points_failed"
+	MessageQdrantFullSnapshotStorage             MessageID = "qdrant.full_snapshot_storage_required"
+	MessageQdrantCreateBackupFailed              MessageID = "qdrant.create_backup_failed"
+	MessageQdrantGetNodesFailed                  MessageID = "qdrant.get_nodes_failed"
+	MessageQdrantGetEdgesFailed                  MessageID = "qdrant.get_edges_failed"
 )
 
 func QdrantInvalidVectorsConfig() Message {
@@ -187,10 +189,10 @@ func qdrantCauseMessage(id MessageID, prefix string, cause error) Message {
 
 // QdrantInvalidQuantizationOversampling identifies an invalid quantized search budget.
 func QdrantInvalidQuantizationOversampling() Message {
-	return Message{ID: MessageID("qdrant.invalid_quantization_oversampling"), Fallback: "quantization oversampling must be finite and at least 1"}
+	return Message{ID: MessageQdrantInvalidQuantizationOversampling, Fallback: "quantization oversampling must be finite and at least 1"}
 }
 
 // QdrantInvalidQuantizationConfig identifies an unsupported compression request.
 func QdrantInvalidQuantizationConfig(cause error) Message {
-	return qdrantCauseMessage(MessageID("qdrant.invalid_quantization_config"), "invalid quantization configuration: ", cause)
+	return qdrantCauseMessage(MessageQdrantInvalidQuantizationConfig, "invalid quantization configuration: ", cause)
 }

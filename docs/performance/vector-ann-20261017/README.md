@@ -180,7 +180,7 @@ and per-segment rescoring/merging in its shared vector-index search and collecti
 segment searcher. The alignment provides the same compression families and
 rescoring controls, with original-vector construction retained in NornicDB.
 
-For mm0nst3r's machine, use the existing [native backend commands](../../../testing/benchmarks/vector_ann/README.md#review-and-gpu-handoff)
+For mm0nst3r's machine, use the existing [native backend commands](https://github.com/orneryd/NornicDB/blob/714b95e326cddc6bba449437b1cec542eecb8060/testing/benchmarks/vector_ann/README.md#review-and-gpu-handoff)
 and select `VECTOR_MODES=sq-int8,pq-x16,pq-x32,pq-x64,bq,bq-asym4,bq-asym8`.
 Keep the cached corpus, confirm the native `build_backend` in every HNSW result,
 and compare CPU/GPU on the same machine. CUDA/Vulkan skips remain unverified.
