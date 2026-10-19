@@ -1,56 +1,81 @@
 package nornicdb
 
 import (
- "reflect"
- "strings"
- "sync"
- "testing"
- "github.com/orneryd/nornicdb/pkg/storage"
- "github.com/stretchr/testify/require"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
 )
 
 // The maintainer's MAIN-first rule supersedes global admission backpressure.
 // Cache count/bytes stay bounded, including payloads currently being saved.
 func TestEmbedWorkerRetryBudgetCount(t *testing.T) {
- for _,mode:=range []string{"whole","chunked","document-batch","resolved-document-batch","property","property-batch"} {
-  t.Run(mode,func(t *testing.T){
-   worker,queue,provider:=nodeSaveRetryFixture(t,mode,8,1000)
-   worker.retryMaxCount=2
-   for i:=0;i<12;i++ {worker.processNextBatch()}
-   require.Len(t,worker.embeddingRetries,2)
-   require.Len(t,worker.nodeRetries,8,"MAIN completes all first attempts despite a full cache")
-   calls:=provider.GetEmbedCount()
-   for i:=0;i<12;i++ {worker.processNextBatch()}
-   require.Equal(t,calls,provider.GetEmbedCount(),"DLQ backoff prevents immediate repurchases")
-   require.LessOrEqual(t,worker.nodeEmbeddingRetryBytes(),nodeEmbeddingRetryMaxBytes)
-   queue.rejections=0
-   for i:=0;i<20 && worker.processed.Load()<8;i++ {makeNodeSaveRetriesReady(worker);worker.processNextBatch()}
-   require.Equal(t,int64(8),worker.processed.Load())
-   require.Empty(t,worker.embeddingRetries);require.Empty(t,worker.nodeRetries)
-  })
- }
+	for _, mode := range []string{"whole", "chunked", "document-batch", "resolved-document-batch", "property", "property-batch"} {
+		t.Run(mode, func(t *testing.T) {
+			worker, queue, provider := nodeSaveRetryFixture(t, mode, 8, 1000)
+			worker.retryMaxCount = 2
+			for i := 0; i < 12; i++ {
+				worker.processNextBatch()
+			}
+			require.Len(t, worker.embeddingRetries, 2)
+			require.Len(t, worker.nodeRetries, 8, "MAIN completes all first attempts despite a full cache")
+			calls := provider.GetEmbedCount()
+			for i := 0; i < 12; i++ {
+				worker.processNextBatch()
+			}
+			require.Equal(t, calls, provider.GetEmbedCount(), "DLQ backoff prevents immediate repurchases")
+			require.LessOrEqual(t, worker.nodeEmbeddingRetryBytes(), nodeEmbeddingRetryMaxBytes)
+			queue.rejections = 0
+			for i := 0; i < 20 && worker.processed.Load() < 8; i++ {
+				makeNodeSaveRetriesReady(worker)
+				worker.processNextBatch()
+			}
+			require.Equal(t, int64(8), worker.processed.Load())
+			require.Empty(t, worker.embeddingRetries)
+			require.Empty(t, worker.nodeRetries)
+		})
+	}
 }
 func TestEmbedWorkerRetryBudgetBytes(t *testing.T) {
- worker,queue,provider:=nodeSaveRetryFixture(t,"whole",4,1000)
- require.True(t,worker.processNextBatch()); size:=worker.nodeEmbeddingRetryBytes();require.Positive(t,size)
- worker.retryMaxBytes=size+1
- for i:=0;i<12;i++ {worker.processNextBatch()}
- require.Len(t,worker.embeddingRetries,1);require.Len(t,worker.nodeRetries,4)
- require.Equal(t,4,provider.GetEmbedCount());require.LessOrEqual(t,worker.nodeEmbeddingRetryBytes(),worker.retryMaxBytes)
- queue.rejections=0;makeNodeSaveRetriesReady(worker)
- for i:=0;i<8 && worker.processed.Load()<4;i++ {worker.processNextBatch()}
- require.Equal(t,int64(4),worker.processed.Load())
+	worker, queue, provider := nodeSaveRetryFixture(t, "whole", 4, 1000)
+	require.True(t, worker.processNextBatch())
+	size := worker.nodeEmbeddingRetryBytes()
+	require.Positive(t, size)
+	worker.retryMaxBytes = size + 1
+	for i := 0; i < 12; i++ {
+		worker.processNextBatch()
+	}
+	require.Len(t, worker.embeddingRetries, 1)
+	require.Len(t, worker.nodeRetries, 4)
+	require.Equal(t, 4, provider.GetEmbedCount())
+	require.LessOrEqual(t, worker.nodeEmbeddingRetryBytes(), worker.retryMaxBytes)
+	queue.rejections = 0
+	makeNodeSaveRetriesReady(worker)
+	for i := 0; i < 8 && worker.processed.Load() < 4; i++ {
+		worker.processNextBatch()
+	}
+	require.Equal(t, int64(4), worker.processed.Load())
 }
 func TestEmbedWorkerRetryBudgetOversized(t *testing.T) {
- worker,queue,provider:=nodeSaveRetryFixture(t,"whole",3,1000);worker.retryMaxBytes=64
- for i:=0;i<3;i++ {require.True(t,worker.processNextBatch())}
- require.Empty(t,worker.embeddingRetries,"oversized payloads never bypass the cap")
- require.Len(t,worker.nodeRetries,3,"only small DLQ records remain")
- for i:=0;i<20;i++ {require.False(t,worker.processNextBatch())}
- require.Equal(t,3,provider.GetEmbedCount(),"each MAIN item runs exactly once before DLQ backoff")
- queue.rejections=0;makeNodeSaveRetriesReady(worker)
- for i:=0;i<3;i++ {require.True(t,worker.processNextBatch())}
- require.Equal(t,int64(3),worker.processed.Load())
+	worker, queue, provider := nodeSaveRetryFixture(t, "whole", 3, 1000)
+	worker.retryMaxBytes = 64
+	for i := 0; i < 3; i++ {
+		require.True(t, worker.processNextBatch())
+	}
+	require.Empty(t, worker.embeddingRetries, "oversized payloads never bypass the cap")
+	require.Len(t, worker.nodeRetries, 3, "only small DLQ records remain")
+	for i := 0; i < 20; i++ {
+		require.False(t, worker.processNextBatch())
+	}
+	require.Equal(t, 3, provider.GetEmbedCount(), "each MAIN item runs exactly once before DLQ backoff")
+	queue.rejections = 0
+	makeNodeSaveRetriesReady(worker)
+	for i := 0; i < 3; i++ {
+		require.True(t, worker.processNextBatch())
+	}
+	require.Equal(t, int64(3), worker.processed.Load())
 }
 func TestEmbedWorkerRetryBudgetChargesPayload(t *testing.T) {
 	const budget = int64(4096)

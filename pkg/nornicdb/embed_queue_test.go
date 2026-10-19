@@ -2196,7 +2196,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []storage.NodeID{"ghost"}, qe.marked)
 	})
 
-	t.Run("processNextBatch retains local batch work after bounded request retries", func(t *testing.T) {
+	t.Run("processNextBatch sends failed local batch work to DLQ", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2222,12 +2222,13 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		didWork := ew.processNextBatch()
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{node.ID}, qe.added)
+		require.Empty(t, qe.added, "failed work leaves MAIN")
+		require.Contains(t, ew.nodeRetries, node.ID)
 		require.Zero(t, ew.parked.Load())
 		require.Nil(t, qe.updatedEmbedding)
 	})
 
-	t.Run("processNextBatch marks non-retryable embed failures permanent", func(t *testing.T) {
+	t.Run("processNextBatch makes provider failures terminal after DLQ limit", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2253,12 +2254,21 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 
 		didWork := ew.processNextBatch()
 		require.True(t, didWork)
-		require.Equal(t, 1, emb.callCount, "non-retryable errors must not consume the retry budget")
+		require.Equal(t, 1, emb.callCount, "one provider request per attempt")
 		require.Equal(t, int64(1), ew.failed.Load())
 		require.Empty(t, qe.added, "permanent errors must not be requeued")
 		// The claim removes the pending work; the terminal failure's writeback
 		// removes it again in its own commit, not by a separate call (#889).
 		require.Equal(t, []storage.NodeID{node.ID}, qe.marked, "the claim removes pending work")
+		require.Zero(t, ew.parked.Load())
+		require.Contains(t, ew.nodeRetries, node.ID)
+		for i := 0; i < 3; i++ {
+			makeNodeSaveRetriesReady(ew)
+			qe.findReturned = false
+			require.True(t, ew.processNextBatch())
+		}
+		require.Equal(t, 4, emb.callCount)
+		require.Equal(t, int64(1), ew.parked.Load())
 		require.NotNil(t, qe.updatedEmbedding)
 		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 		require.Equal(t, false, qe.updatedEmbedding.EmbedMeta["has_embedding"])
@@ -2289,7 +2299,9 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		for attempt := 1; attempt <= 3; attempt++ {
 			qe.findReturned = false
 			require.True(t, ew.processNextBatch())
-			require.Len(t, qe.added, attempt, "retryable failure must remain pending after an attempt budget is exhausted")
+			require.Empty(t, qe.added, "DLQ owns the failed attempt")
+			require.Equal(t, attempt, ew.nodeRetries[node.ID].failures)
+			makeNodeSaveRetriesReady(ew)
 		}
 		require.Equal(t, 3, emb.callCount)
 		require.Equal(t, int64(3), ew.failed.Load())
@@ -2335,7 +2347,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Equal(t, []string{"chunk-one", "chunk-two"}, emb.batchCalls[0])
 	})
 
-	t.Run("processNextBatch parks an empty embedding response", func(t *testing.T) {
+	t.Run("processNextBatch retries then parks an empty embedding response", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
@@ -2362,6 +2374,10 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.True(t, didWork)
 		require.Equal(t, int64(1), ew.failed.Load())
 		require.Empty(t, qe.added)
+		require.Zero(t, ew.parked.Load())
+		makeNodeSaveRetriesReady(ew)
+		qe.findReturned = false
+		require.True(t, ew.processNextBatch())
 		require.Equal(t, int64(1), ew.parked.Load())
 		require.Equal(t, true, qe.updatedEmbedding.EmbedMeta["embedding_failed"])
 	})

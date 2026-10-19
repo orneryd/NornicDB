@@ -62,15 +62,16 @@ func TestEmbedWorkerRetryOwnerAllowsFreshUnindexedWork(t *testing.T) {
 // A sidecar/index outage may prevent deletion of the stale pending marker.
 // Its void index API must not let that failed ID hide another MAIN node.
 type stuckIndexedRetryOwnerQueue struct{ *unindexedRetryOwnerQueue }
+
 func (*stuckIndexedRetryOwnerQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
-func (*stuckIndexedRetryOwnerQueue) MarkNodeEmbedded(storage.NodeID) {}
+func (*stuckIndexedRetryOwnerQueue) MarkNodeEmbedded(storage.NodeID)    {}
 func TestEmbedWorkerRetryOwnerAllowsFreshWithStuckIndex(t *testing.T) {
-	worker,queue,_:=nodeSaveRetryFixture(t,"whole",2,1000)
-	queue.attempts["node-001"]=1000
-	worker.storage=&stuckIndexedRetryOwnerQueue{&unindexedRetryOwnerQueue{Engine:queue.Engine,queue:queue}}
-	require.True(t,worker.processNextBatch())
-	require.True(t,worker.processNextBatch())
-	require.Equal(t,int64(1),worker.processed.Load(),"a retained failure cannot block MAIN behind an undeletable marker")
+	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 2, 1000)
+	queue.attempts["node-001"] = 1000
+	worker.storage = &stuckIndexedRetryOwnerQueue{&unindexedRetryOwnerQueue{Engine: queue.Engine, queue: queue}}
+	require.True(t, worker.processNextBatch())
+	require.True(t, worker.processNextBatch())
+	require.Equal(t, int64(1), worker.processed.Load(), "a retained failure cannot block MAIN behind an undeletable marker")
 }
 
 func TestEmbedWorkerRetryOwnerReportsIdleDuringBackoff(t *testing.T) {
@@ -218,12 +219,13 @@ func TestEmbedWorkerRetryOwnerMainBeforeDueRetries(t *testing.T) {
 	queue.attempts["node-002"] = 1000
 	require.True(t, worker.processNextBatch()) // Retain node-000.
 	makeNodeSaveRetriesReady(worker)
-	require.True(t, worker.processNextBatch()) // Rejected retry continues to fresh node-001 in this pass.
-	require.Equal(t, 2, queue.attempts["node-000"])
+	require.True(t, worker.processNextBatch()) // MAIN node-001 runs before a ready retry.
+	require.Equal(t, 1, queue.attempts["node-000"], "MAIN drains before a ready retry")
 	require.Equal(t, int64(1), worker.processed.Load())
 	makeNodeSaveRetriesReady(worker)
-	require.True(t, worker.processNextBatch()) // Retry then fresh node-002 in this pass.
+	require.True(t, worker.processNextBatch()) // MAIN node-002 runs before a ready retry.
 	require.Equal(t, int64(2), worker.processed.Load())
+	require.Equal(t, 1, queue.attempts["node-000"])
 }
 
 func TestEmbedWorkerRetryOwnerPublicWorkerBacksOffAndRecovers(t *testing.T) {

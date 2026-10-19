@@ -67,7 +67,9 @@ type EmbedWorker struct {
 
 	// Recently processed node IDs to prevent re-processing before DB commit is visible
 	// This prevents the same node being processed multiple times in quick succession
-	recentlyProcessed map[string]time.Time
+	recentlyProcessed  map[string]time.Time
+	nodeUpdates        map[string]struct{} // mu; mutation notifications consumed by retry owner
+	nodeUpdatesPending atomic.Bool
 
 	// Track nodes we've already logged as skipped (to avoid log spam)
 	loggedSkip map[string]bool
@@ -88,12 +90,12 @@ type EmbedWorker struct {
 
 	// embeddingRetries holds generated payloads after rejected writes. claimMu
 	// protects ownership; a claim retries persistence before calling a provider.
-	embeddingRetries   map[storage.NodeID]*retainedNodeEmbedding
-	retryMaxCount      int // zero uses the shared owner default
-	retryMaxBytes      int64
-	nodeRetries map[storage.NodeID]*nodeEmbeddingRetry // claimMu: DLQ/terminal records
-	retrySequence uint64 // claimMu: FIFO failure order, independent of deadline
-	invalidatedClaims map[storage.NodeID]bool // claimMu: updates reject in-flight work
+	embeddingRetries  map[storage.NodeID]*retainedNodeEmbedding
+	retryMaxCount     int // zero uses the shared owner default
+	retryMaxBytes     int64
+	nodeRetries       map[storage.NodeID]*nodeEmbeddingRetry // claimMu: DLQ/terminal records
+	retrySequence     uint64                                 // claimMu: FIFO failure order, independent of deadline
+	invalidatedClaims map[storage.NodeID]bool                // claimMu: updates reject in-flight work
 
 	embeddingEpoch atomic.Uint64
 
@@ -954,7 +956,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 		} else {
 			results, resultErrors = ew.embedDocumentBatchIsolated(group.batcher, texts)
 		}
-			for _, resultErr := range resultErrors {
+		for _, resultErr := range resultErrors {
 			if resultErr != nil {
 				fmt.Printf("⚠️  Failed to embed %d-node batch: %s\n", len(group.nodes), compactWorkerError(resultErr, 300))
 				break
@@ -1085,7 +1087,6 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 	if len(nodes) == 0 {
 		return skipped
 	}
-
 
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	sources := make([]embeddingutil.EmbedText, len(nodes))
@@ -1248,7 +1249,6 @@ func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node, provider embed.Embe
 	ew.claimMu.Unlock()
 	if !validEpoch {
 		ew.dropNodeEmbeddingRetry(node.ID)
-		ew.addNodeToPendingEmbeddings(node.ID)
 		return true
 	}
 	// The worker writes ONLY the embedding key space (chunk vectors plus the
@@ -1395,11 +1395,17 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 		return
 	}
 	ew.claimMu.Lock()
+	ew.applyNodeUpdatesLocked()
 	state := ew.nodeRetries[nodeID]
-	changed := state != nil && (!state.updatedAt.Equal(node.UpdatedAt) || ew.invalidatedClaims[nodeID])
-	if changed { ew.dropNodeEmbeddingRetryLocked(nodeID) }
+	changed := ew.invalidatedClaims[nodeID] || (state != nil && !state.updatedAt.Equal(node.UpdatedAt))
+	if changed {
+		ew.dropNodeEmbeddingRetryLocked(nodeID)
+	}
 	ew.claimMu.Unlock()
-	if changed { ew.addNodeToPendingEmbeddings(nodeID); return }
+	if changed {
+		ew.addNodeToPendingEmbeddings(nodeID)
+		return
+	}
 	node = copyNodeForEmbedding(node)
 	if node.EmbedMeta == nil {
 		node.EmbedMeta = make(map[string]any)
@@ -1450,10 +1456,15 @@ func (ew *EmbedWorker) claimNextNode() *storage.Node {
 // claimNextNodeSource reserves a fresh body snapshot and takes any retained
 // payload. Persistence retries use the same claims as every provider route.
 func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *retainedNodeEmbedding, bool) {
+	return ew.claimNextNodeSourceFrom(false)
+}
+
+func (ew *EmbedWorker) claimNextNodeSourceFrom(mainOnly bool) (*storage.Node, *retainedNodeEmbedding, bool) {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
+	ew.applyNodeUpdatesLocked()
 
-	pendingID := ew.nextEmbeddingNodeID(time.Now())
+	pendingID := ew.nextEmbeddingNodeID(time.Now(), mainOnly)
 	if pendingID == "" {
 		return nil, nil, false
 	}
@@ -1480,6 +1491,7 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *retainedNodeEmbedd
 		return nil, nil, false
 	}
 
+	ew.applyNodeUpdatesLocked() // Include notifications received while finding/reading the fresh body.
 	ew.claimedNodes[id] = ew.embeddingEpoch.Load()
 	ew.inFlight.Add(1)
 	ew.markNodeEmbedded(node.ID)
@@ -1493,12 +1505,13 @@ func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, *retainedNodeEmbedd
 func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
 	ew.claimMu.Lock()
 	id := string(nodeID)
-	if _, claimed := ew.claimedNodes[id]; claimed {
+	epoch, claimed := ew.claimedNodes[id]
+	if claimed {
 		delete(ew.claimedNodes, id)
 		ew.inFlight.Add(-1)
 	}
-	if ew.invalidatedClaims[nodeID] {
-		delete(ew.invalidatedClaims,nodeID)
+	if ew.invalidatedClaims[nodeID] || (claimed && (epoch != ew.embeddingEpoch.Load() || ew.ctx.Err() != nil)) {
+		delete(ew.invalidatedClaims, nodeID)
 		ew.addNodeToPendingEmbeddings(nodeID)
 	}
 	ew.claimMu.Unlock()
@@ -1649,23 +1662,36 @@ func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error)
 }
 
 func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []string) ([][]float32, error) {
- select { case <-ew.ctx.Done(): return nil,ew.ctx.Err(); default: }
- // One request per queue attempt. The shared DLQ owns every retry.
- type embedResult struct { vectors [][]float32; err error }
- resultCh := make(chan embedResult,1)
- go func() {
-  var vectors [][]float32
-  var err error
-  if typed,ok:=provider.(embed.TypedEmbedder);ok { vectors,err=typed.EmbedBatchWithInputType(ew.ctx,chunks,embed.InputTypeDocument) } else { vectors,err=provider.EmbedBatch(ew.ctx,chunks) }
-  resultCh<-embedResult{vectors,err}
- }()
- select {
- case <-ew.ctx.Done(): return nil,ew.ctx.Err()
- case result:=<-resultCh:
-  ew.waitAfterProviderRequest()
-  return result.vectors,result.err
- }
+	select {
+	case <-ew.ctx.Done():
+		return nil, ew.ctx.Err()
+	default:
+	}
+	// One request per queue attempt. The shared DLQ owns every retry.
+	type embedResult struct {
+		vectors [][]float32
+		err     error
+	}
+	resultCh := make(chan embedResult, 1)
+	go func() {
+		var vectors [][]float32
+		var err error
+		if typed, ok := provider.(embed.TypedEmbedder); ok {
+			vectors, err = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
+		} else {
+			vectors, err = provider.EmbedBatch(ew.ctx, chunks)
+		}
+		resultCh <- embedResult{vectors, err}
+	}()
+	select {
+	case <-ew.ctx.Done():
+		return nil, ew.ctx.Err()
+	case result := <-resultCh:
+		ew.waitAfterProviderRequest()
+		return result.vectors, result.err
+	}
 }
+
 // averageEmbeddings computes the element-wise average of multiple embeddings.
 func averageEmbeddings(embeddings [][]float32) []float32 {
 	if len(embeddings) == 0 {
@@ -1769,23 +1795,16 @@ func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *Embe
 // later change to the node, which may have changed its embedding source and
 // is checked at once (#963). nodeID may carry its database prefix or not.
 func (ew *EmbedWorker) Enqueue(nodeID string) {
-	// A mutation pulls the node out of DLQ/terminal ownership and rejects its
-	// in-flight result, even if its old provider request has not returned yet.
-	ew.claimMu.Lock()
-	for id := range ew.nodeRetries {
-		if string(id)==nodeID || strings.HasSuffix(string(id), ":"+nodeID) {
-			ew.dropNodeEmbeddingRetryLocked(id)
-			ew.addNodeToPendingEmbeddings(id)
-		}
+	if ew.closed.Load() {
+		return
 	}
-	for id := range ew.claimedNodes {
-		if id==nodeID || strings.HasSuffix(id, ":"+nodeID) {
-			if ew.invalidatedClaims==nil { ew.invalidatedClaims=make(map[storage.NodeID]bool) }
-			ew.invalidatedClaims[storage.NodeID(id)]=true
-		}
-	}
-	ew.claimMu.Unlock()
+	// Do not wait on claimMu/storage: updates also wake an idle empty claim.
 	ew.mu.Lock()
+	if ew.nodeUpdates == nil {
+		ew.nodeUpdates = make(map[string]struct{})
+	}
+	ew.nodeUpdates[nodeID] = struct{}{}
+	ew.nodeUpdatesPending.Store(true)
 	for id := range ew.recentlyProcessed {
 		if id == nodeID || strings.HasSuffix(id, ":"+nodeID) {
 			delete(ew.recentlyProcessed, id)
