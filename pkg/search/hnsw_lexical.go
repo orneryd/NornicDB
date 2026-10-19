@@ -101,8 +101,8 @@ func hnswOrderedVectorIndexPairs(vi *VectorIndex, seedHints map[string]LexicalSe
 func prioritizedLexicalBuildPairs(pairs []hnswBuildPair) []hnswBuildPair {
 	anchors := make(map[string]struct{})
 	for _, pair := range pairs {
-		if pair.hasHint && pair.id == pair.hint.ID {
-			anchors[pair.id] = struct{}{}
+		if pair.hasHint && pair.id == nodeMainVectorKey(pair.hint.ID) {
+			anchors[pair.hint.ID] = struct{}{}
 		}
 	}
 	out := make([]hnswBuildPair, 0)
@@ -111,7 +111,7 @@ func prioritizedLexicalBuildPairs(pairs []hnswBuildPair) []hnswBuildPair {
 			continue
 		}
 		_, hasAnchor := anchors[pair.hint.ID]
-		if !hasAnchor || pair.id == pair.hint.ID {
+		if !hasAnchor || pair.id == nodeMainVectorKey(pair.hint.ID) {
 			out = append(out, pair)
 		}
 	}
