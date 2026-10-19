@@ -105,6 +105,10 @@ type EmbedWorker struct {
 	claimMu      sync.Mutex
 	claimedNodes map[string]struct{}
 
+	// embeddingRetries holds generated sidecars after rejected writes. claimMu
+	// protects ownership; a claim retries persistence before calling a provider.
+	embeddingRetries map[storage.NodeID]*storage.Node
+
 	// workersStarted is true once StartWorkers() has been called (used when DeferWorkerStart is true).
 	workersStarted bool
 
@@ -645,6 +649,7 @@ func (ew *EmbedWorker) Reset() {
 	ew.mu.Unlock()
 	ew.claimMu.Lock()
 	ew.claimedNodes = make(map[string]struct{})
+	ew.embeddingRetries = nil
 	ew.claimMu.Unlock()
 	ew.processed.Store(0)
 	ew.failed.Store(0)
@@ -696,6 +701,9 @@ func (ew *EmbedWorker) Close() {
 	// Context cancellation is enough to stop workers.
 	// Wait synchronously for worker shutdown to complete.
 	ew.wg.Wait()
+	ew.claimMu.Lock()
+	ew.embeddingRetries = nil
+	ew.claimMu.Unlock()
 }
 
 // scheduleClusteringDebounced accumulates embedding counts and debounces the k-means trigger.
@@ -1365,7 +1373,11 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 		node.EmbedMeta[key] = value
 	}
 	embeddingutil.RecordChunkSpans(node, source, chunks)
+	return ew.writeEmbeddedNode(node)
+}
 
+// writeEmbeddedNode is shared by first writes and retained-result retries.
+func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node) bool {
 	// The worker writes ONLY the embedding key space (chunk vectors plus the
 	// metadata record): no node-record transaction, no MVCC version, no
 	// UpdatedAt bump. The writeback lands only while the stored node still
@@ -1376,6 +1388,7 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
 	if !ok {
 		fmt.Printf("⚠️  Storage engine %T does not support embedding sidecar writes; re-queuing node %s\n", ew.storage, node.ID)
+		ew.retainNodeEmbedding(node)
 		ew.addNodeToPendingEmbeddings(node.ID)
 		ew.failed.Add(1)
 		return true
@@ -1399,6 +1412,7 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 	}
 	if updateErr != nil {
 		fmt.Printf("⚠️  Failed to update node embedding state: %s; re-queuing for retry\n", compactWorkerError(updateErr, 300))
+		ew.retainNodeEmbedding(node)
 		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
 		ew.failed.Add(1)
 		return true // Failed but we tried - continue to next node
@@ -1627,9 +1641,9 @@ func (ew *EmbedWorker) claimNextNode() *storage.Node {
 	return node
 }
 
-// claimNextNodeResult distinguishes a removed candidate from an empty lookup.
-// The bool is true only when a deleted candidate was skipped and marked done.
-func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
+// claimNextNodeSource reserves a fresh source snapshot or a retained sidecar's
+// node. Persistence retries use the same claims as every provider route.
+func (ew *EmbedWorker) claimNextNodeSource() (*storage.Node, bool) {
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
 
@@ -1638,7 +1652,16 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 	if ew.operatorPaused.Load() || ew.restoreHolds.Load() > 0 {
 		return nil, false
 	}
-	pending := ew.findNodeWithoutEmbedding()
+	var pending *storage.Node
+	for id, retained := range ew.embeddingRetries {
+		if _, claimed := ew.claimedNodes[string(id)]; !claimed {
+			pending = retained
+			break
+		}
+	}
+	if pending == nil {
+		pending = ew.findNodeWithoutEmbedding()
+	}
 	if pending == nil {
 		return nil, false
 	}
@@ -1656,6 +1679,7 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 		// example while a restore replaces the store) stays pending, as in
 		// markNodeEmbeddingFailed.
 		if nodeGone(node, err) {
+			delete(ew.embeddingRetries, pending.ID)
 			ew.markNodeEmbedded(pending.ID)
 			return nil, true
 		}
