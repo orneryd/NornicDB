@@ -266,7 +266,9 @@ func (policy *executionDeterminismPolicy) allows(bindings executionBindings, dep
 				}
 				// The same inheritance as executeInternal: the supplied map
 				// overrides caller bindings. No merged map/context is needed.
-				if childBindings.count >= len(childBindings.scopes) { return false }
+				if childBindings.count >= len(childBindings.scopes) {
+					return false
+				}
 				childBindings.scopes[childBindings.count] = params
 				childBindings.count++
 			}

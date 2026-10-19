@@ -24,17 +24,17 @@ type executionInputEntry struct {
 // allocating a merged map for admission of every nested statement.
 type executionBindings struct {
 	scopes [16]map[string]any
-	count int
+	count  int
 }
 
 func newExecutionBindings(ctx context.Context) executionBindings {
-    var bindings executionBindings
-    bindings.scopes[0], bindings.count = getParamsFromContext(ctx), 1
-    return bindings
+	var bindings executionBindings
+	bindings.scopes[0], bindings.count = getParamsFromContext(ctx), 1
+	return bindings
 }
 
 func (bindings executionBindings) lookup(name string) (any, bool) {
-	for i := bindings.count-1; i >= 0; i-- {
+	for i := bindings.count - 1; i >= 0; i-- {
 		if value, found := bindings.scopes[i][name]; found {
 			return value, true
 		}
