@@ -30,8 +30,7 @@ func BenchmarkListInputCollections(b *testing.B) {
 					defer func() { PluginFunctionLookup = previous }()
 					prefix = "apoc.convert."
 				}
-				store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "list_bench")
-				defer store.Close()
+				store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "list_bench")
 				exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 				query := "RETURN " + prefix + function + "($xs"
 				if function == "union" {
@@ -69,8 +68,7 @@ func BenchmarkUnsignedIntegerInputs(b *testing.B) {
 	}{{"bound", math.MaxInt64}, {"overflow", math.MaxUint64}} {
 		for _, function := range []string{"apoc.convert.toInteger", "apoc.convert.toIntList", "apoc.coll.sumLongs"} {
 			b.Run(input.name+"/"+function, func(b *testing.B) {
-				store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "unsigned_bench")
-				defer store.Close()
+				store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "unsigned_bench")
 				exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 				argument := "$xs"
 				if function == "apoc.convert.toInteger" {

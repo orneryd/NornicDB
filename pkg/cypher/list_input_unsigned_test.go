@@ -75,7 +75,7 @@ func TestListInputUnsignedBoundaries(t *testing.T) {
 							t.Run(template, func(t *testing.T) {
 								want := encoded(t, read(t, listinputs.Query(template, "$boxed"), params))
 								got := encoded(t, read(t, form.prefix+listinputs.Query(template, form.list), params))
-									require.Equal(t, want, got, "typed/boxed parity for every registered list consumer")
+								require.Equal(t, want, got, "typed/boxed parity for every registered list consumer")
 							})
 						}
 					})
