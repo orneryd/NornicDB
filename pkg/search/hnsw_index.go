@@ -236,9 +236,14 @@ func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 // insertions and maintenance rebuilds without retaining BM25 postings here.
 // Hint IDs are graph document IDs; entry ownership is decoded by the key owner.
 func (h *HNSWIndex) SetBuildLexicalHints(hints []LexicalSeedHint) {
+	h.setBuildLexicalHints(nodeHintsFromValues(hints))
+}
+
+// Internal callers retain the key domain instead of round-tripping strings.
+func (h *HNSWIndex) setBuildLexicalHints(hints nodeLexicalHints) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.buildLexicalHints = nodeHintsFromValues(hints)
+	h.buildLexicalHints = hints
 }
 
 func (h *HNSWIndex) setBuildLexicalHint(key string, hint nodeLexicalHint) {

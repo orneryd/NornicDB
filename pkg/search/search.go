@@ -5058,11 +5058,11 @@ func (s *Service) adaptiveVectorSearch(
 		}
 		stats.rawCandidates = len(scored)
 		stats.exhausted = exhausted
-		results := make([]indexResult, 0, len(scored))
+		entryResults := make([]indexResult, 0, len(scored))
 		for _, result := range scored {
-			results = append(results, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
+			entryResults = append(entryResults, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
 		}
-		results = collapseIndexResultsByNodeID(results)
+		results := collapseIndexResultsByNodeID(entryResults)
 		if postProcess != nil {
 			results = postProcess(results)
 		}
@@ -5162,14 +5162,14 @@ func (s *Service) completeVectorSearch(
 	}
 	stats.rawCandidates = len(scored)
 	minSimilarity := opts.GetMinSimilarity(0.5)
-	ranked := make([]indexResult, 0, len(scored))
+	entryResults := make([]indexResult, 0, len(scored))
 	for _, result := range scored {
 		if result.Score < minSimilarity {
 			break
 		}
-		ranked = append(ranked, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
+		entryResults = append(entryResults, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
 	}
-	ranked = collapseIndexResultsByNodeID(ranked)
+	ranked := collapseIndexResultsByNodeID(entryResults)
 	results := make([]indexResult, 0, target)
 	for start := 0; start < len(ranked) && len(results) < target; start += target {
 		if err := ctx.Err(); err != nil {
