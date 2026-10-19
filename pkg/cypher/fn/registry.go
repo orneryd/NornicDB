@@ -81,5 +81,5 @@ func EvaluateFunction(name string, args []string, ctx Context) (value interface{
 		ctx.Now = func() time.Time { return time.Now() }
 	}
 	val, err := fn(ctx, args)
-	return val, true, err
+	return FunctionResult(val), true, err
 }
