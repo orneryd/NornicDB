@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -11,7 +12,7 @@ import (
 
 func TestGraphQLStatsRequireSelectedDatabaseRead(t *testing.T) {
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	query := &queryResolver{NewResolver(db, dbManager)}
 
 	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "default-node", Labels: []string{"DefaultDoc"}})

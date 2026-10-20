@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ import (
 // must reach administration execution without creating a data search service.
 func TestSystemCypherSkipsDataSearchSetup(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	handler := NewHandler(db, manager)
 	system := manager.SystemDatabaseName()
 	var systemSetups atomic.Int64

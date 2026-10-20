@@ -35,7 +35,7 @@ func TestProviderHTTPOllamaCustomBatchRoute(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{0, 1}, {1, 1}}, "prompt_eval_count": 14})
 			}))
 			t.Cleanup(server.Close)
-			base, err := embed.NewEmbedder(&embed.Config{Provider: "ollama", APIURL: server.URL, APIPath: tc.path, Model: "mock", Dimensions: 2})
+			base, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: "ollama", APIURL: server.URL, APIPath: tc.path, Model: "mock", Dimensions: 2})
 			require.NoError(t, err)
 			e := embed.NewTracedEmbedder(embed.NewCachedEmbedder(base, 16))
 			results, err := e.EmbedDocumentBatchChunks(context.Background(), []string{"0", "1"}, 512, 0)
