@@ -214,7 +214,7 @@ func TestConcatAndDistinctRowIterator(t *testing.T) {
 		Rows:    [][]interface{}{{"b"}, {"c"}},
 	})
 
-	it := NewDistinctRowIterator(NewConcatRowIterator(a, b))
+	it := newTestDistinctRowIterator(NewConcatRowIterator(a, b))
 	defer func() { _ = it.Close() }()
 	var got []string
 	for it.Next() {

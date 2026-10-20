@@ -31,55 +31,6 @@ func (s *semanticBindingScope) contains(name string) bool {
 	return exists
 }
 
-// validateCreateSemanticScopes applies one symbol contract before routing to
-// any of the specialized CREATE executors. It intentionally consumes the same
-// top-level clause decomposition as the semantic pipeline so fast paths cannot
-// disagree about whether a name is new, bound, or undefined.
-func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isCreateSchemaOrAdministrationCommand(cypher) {
-		return nil
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-
-	scope := newSemanticBindingScope()
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
-		case pipelineClauseMerge:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 	return isSystemCommandNoGraph(cypher) || isCreateProcedureCommand(cypher) ||
 		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
@@ -95,54 +46,10 @@ func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
 }
 
-func projectedBindingScope(input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	output := newSemanticBindingScope()
-	for _, raw := range splitTopLevelComma(body) {
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if expr == "*" {
-			for name := range input.names {
-				output.bind(name)
-			}
-			continue
-		}
-		if alias != "" {
-			output.bind(alias)
-		} else if name, next, ok := scanIdentifierToken(expr, 0); ok && strings.TrimSpace(expr[next:]) == "" {
-			output.bind(name)
-		}
-	}
-	return output
-}
-
-// validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
-// variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
-// and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
-func validateUnwindAlias(clause string) error {
-	_, alias, ok := parsePipelineIteration(clause)
-	if !ok {
-		return sharedClauseSyntaxError("iteration requires a variable and an expression")
-	}
-	_, next, identifier := scanIdentifierToken(alias, 0)
-	if !identifier {
-		return nil
-	}
-	if rest := strings.TrimSpace(alias[next:]); rest != "" {
-		token := strings.Fields(rest)[0]
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInput(token))
-	}
-	return nil
-}
-
 // unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
 func unwindBindingName(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
-		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
-			return normalizeProjectionColumnName(name)
-		}
-	}
-	return ""
+	_, alias, _ := parsePipelineIteration(clause)
+	return alias
 }
 
 func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {

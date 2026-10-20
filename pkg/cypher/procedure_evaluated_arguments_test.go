@@ -13,7 +13,8 @@ import (
 // expression or a parameter is read like a literal, and the call's own
 // parentheses end at its argument list, not at the statement's last ")".
 // null for an argument the procedure needs is the procedure's failure
-// (ProcedureCallFailed), and a value of another type a TypeError.
+// (ProcedureCallFailed). A statically known incompatible argument is a
+// compile SyntaxError; a row-dependent incompatible value remains a TypeError.
 func TestProcedureEvaluatedArguments(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "procedure_evaluated_arguments"))
 	ctx := context.Background()
@@ -59,11 +60,20 @@ func TestProcedureEvaluatedArguments(t *testing.T) {
 	// No index was named "null" by the calls above.
 	result = run("SHOW INDEXES YIELD name WHERE name = 'null' RETURN count(*) AS c", nil)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-	for query, params := range map[string]map[string]interface{}{
-		"CALL db.index.fulltext.queryNodes($index, 'graph')":                 {"index": int64(1)},
-		"CALL db.index.fulltext.createNodeIndex('ft_z', $labels, ['title'])": {"labels": []interface{}{int64(1)}},
-		"CALL db.index.fulltext.queryNodes('ft_doc', 'graph', $options)":     {"options": int64(1)},
+	for _, item := range []struct {
+		query string
+		params map[string]interface{}
+		code string
+	}{
+		{"CALL db.index.fulltext.queryNodes($index, 'graph')", map[string]interface{}{"index": int64(1)}, "Neo.ClientError.Statement.SyntaxError"},
+		{"CALL db.index.fulltext.createNodeIndex('ft_z', $labels, ['title'])", map[string]interface{}{"labels": []interface{}{int64(1)}}, "Neo.ClientError.Statement.TypeError"},
+		{"CALL db.index.fulltext.queryNodes('ft_doc', 'graph', $options)", map[string]interface{}{"options": int64(1)}, "Neo.ClientError.Statement.SyntaxError"},
 	} {
-		requireCode(query, params, "Neo.ClientError.Statement.TypeError")
+		requireCode(item.query, item.params, item.code)
 	}
+
+	// A property value has no compile-time scalar category in Cypher5.
+	requireCode("CALL db.index.fulltext.queryNodes($cfg.index, 'graph')",
+		map[string]interface{}{"cfg": map[string]interface{}{"index": int64(1)}}, "Neo.ClientError.Statement.TypeError")
+
 }

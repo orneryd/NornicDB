@@ -74,32 +74,11 @@ func staticLiteralTypeName(expression string) string {
 // Neo4j does: List<Integer>, List<List<String>>, …; List<T> when the list is
 // empty, holds null, or mixes unrelated types.
 func staticListTypeName(inner string) string {
-	if strings.TrimSpace(inner) == "" {
-		return "List<T>"
-	}
-	elementType := ""
-	numeric := false
+	var facts staticListFacts
 	for _, item := range splitTopLevelComma(inner) {
-		itemType := staticLiteralTypeName(item)
-		if itemType == "" {
-			return "List<T>"
-		}
-		switch {
-		case elementType == "" || elementType == itemType:
-			elementType = itemType
-		case (elementType == "Integer" || elementType == "Float") && (itemType == "Integer" || itemType == "Float"):
-			numeric = true
-		default:
-			return "List<T>"
-		}
+		facts.add(typedOperand(staticLiteralTypeName(item)))
 	}
-	if numeric {
-		return "List<Float>, List<Integer> or List<Number>"
-	}
-	if elementType == "Map" {
-		return "List<Map>, List<Node> or List<Relationship>"
-	}
-	return "List<" + elementType + ">"
+	return facts.operand().typeName()
 }
 
 // staticArithmeticTypeName types a top-level +, -, *, /, % or ^ over operands

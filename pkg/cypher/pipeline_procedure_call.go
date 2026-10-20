@@ -185,7 +185,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 // argumentUsesRowVariable reports whether a procedure argument refers to a
 // variable bound in the row (parameters are already substituted).
 func argumentUsesRowVariable(argument string, row pipelineRow) bool {
-	for _, reference := range semanticExpressionReferences(argument) {
+	for _, reference := range physicalReadReferences(argument) {
 		base := strings.SplitN(reference, ".", 2)[0]
 		if _, bound := row[base]; bound {
 			return true

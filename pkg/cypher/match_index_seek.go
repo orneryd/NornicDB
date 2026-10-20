@@ -1478,7 +1478,7 @@ func parseSimpleSingleIndexedIsNotNull(variable, clause string) (property string
 }
 
 func unwrapOuterParens(clause string) string {
-	out := strings.TrimSpace(clause)
+	out := lexicalExpressionText(clause)
 	// Only a pair that encloses the whole clause: (a) OR (b) starts and ends
 	// with a parenthesis, but they don't match each other.
 	for strings.HasPrefix(out, "(") && findMatchingDelimiter(out, 0, '(', ')') == len(out)-1 {

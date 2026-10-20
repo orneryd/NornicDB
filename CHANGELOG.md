@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve OPTIONAL and unit CALL rows, scoped imports and static type facts through
+  Fabric fragments. Validate logical scopes before cached or skipped execution and
+  use the native value-equivalence contract for Fabric UNION and DISTINCT.
+
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).

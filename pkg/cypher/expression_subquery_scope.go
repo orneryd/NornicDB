@@ -1,7 +1,5 @@
 package cypher
 
-import "strings"
-
 // expressionSubqueryClauseBindingError protects an expression subquery's
 // outer variables from declarations in its clauses. Passing a variable
 // through WITH or RETURN, including redundant grouping, keeps its binding;
@@ -12,7 +10,7 @@ func expressionSubqueryClauseBindingError(clause pipelineClause, enclosing subqu
 		return nil
 	}
 	check := func(expression, alias string) error {
-		name := normalizeProjectionColumnName(alias)
+		name := alias
 		if simpleSemanticIdentifier(unwrapOuterParens(expression)) != name {
 			return enclosing.redeclarationError(name)
 		}
@@ -20,17 +18,10 @@ func expressionSubqueryClauseBindingError(clause pipelineClause, enclosing subqu
 	}
 	switch clause.kind {
 	case pipelineClauseUnwind:
-		return check("", unwindBindingName(clause.text))
+		return check("", clause.iterationAlias)
 	case pipelineClauseWith, pipelineClauseReturn:
-		keyword := "WITH"
-		if clause.kind == pipelineClauseReturn {
-			keyword = "RETURN"
-		}
-		projection, _ := projectionSemanticBodyAndTail(clause.text, keyword)
-		projection, _ = cutDistinct(strings.TrimSpace(projection))
-		for _, raw := range splitTopLevelComma(projection) {
-			expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-			if err := check(expression, alias); err != nil {
+		for _, item := range admittedProjection(clause).Items {
+			if err := check(item.Expression, item.Column); err != nil {
 				return err
 			}
 		}

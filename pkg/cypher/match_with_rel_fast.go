@@ -49,8 +49,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	if asIdx < 0 {
 		return nil, false, nil
 	}
-	sumExpr := strings.TrimSpace(second[:asIdx])
-	revenueVar := strings.TrimSpace(second[asIdx+len("AS"):])
+	sumExpr, revenueVar := parseProjectionExprAlias(second)
 
 	m := exprMatcher{}
 	wantSumKey := m.key("sum(" + pVar + ".unitPrice*" + rVar + ".quantity)")

@@ -33,8 +33,7 @@ func TestSubTransactionFromContext_MissingKey(t *testing.T) {
 }
 
 func TestSubTransactionFromContext_NilValue(t *testing.T) {
-	// Store a nil *SubTransaction in the context.
-	ctx := context.WithValue(context.Background(), subTransactionContextKey{}, (*SubTransaction)(nil))
+	ctx := WithSubTransaction(context.Background(), nil)
 	sub, ok := SubTransactionFromContext(ctx)
 	if ok || sub != nil {
 		t.Fatalf("expected false for nil stored value, got ok=%v sub=%v", ok, sub)
@@ -69,7 +68,7 @@ func TestFabricTransactionFromContext_MissingKey(t *testing.T) {
 }
 
 func TestFabricTransactionFromContext_NilValue(t *testing.T) {
-	ctx := context.WithValue(context.Background(), fabricTransactionContextKey{}, (*FabricTransaction)(nil))
+	ctx := WithFabricTransaction(context.Background(), nil)
 	tx, ok := FabricTransactionFromContext(ctx)
 	if ok || tx != nil {
 		t.Fatalf("expected false for nil stored value, got ok=%v", ok)
@@ -104,7 +103,7 @@ func TestRecordBindingsFromContext_MissingKey(t *testing.T) {
 }
 
 func TestRecordBindingsFromContext_NilValue(t *testing.T) {
-	ctx := context.WithValue(context.Background(), recordBindingsContextKey{}, (map[string]interface{})(nil))
+	ctx := WithRecordBindings(context.Background(), nil)
 	bindings, ok := RecordBindingsFromContext(ctx)
 	if ok || bindings != nil {
 		t.Fatalf("expected false for nil stored value, got ok=%v", ok)

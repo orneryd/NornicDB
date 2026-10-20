@@ -28,7 +28,7 @@ func TestDevelopCanonicalSubqueryDependencies(t *testing.T) {
 					_, _, split := staticMapProjectionSplit(expression)
 					require.False(t, split)
 					require.Empty(t, expressionFreeVariables(expression))
-					require.NoError(t, scanPropertyAccesses(expression, map[string]string{kind: "Integer"}, nil, true))
+					require.NoError(t, checkExpressionPropertyAccesses(expression, map[string]string{kind: "Integer"}, nil))
 				})
 			}
 		}
@@ -147,8 +147,8 @@ func TestDevelopCanonicalSubqueryDependencies(t *testing.T) {
 		rewritten, mapping := desugarStandaloneOrderClauses(query)
 		require.NotNil(t, mapping)
 		require.Contains(t, rewritten, "WITH * LIMIT 1 RETURN 1 AS v")
-		require.NoError(t, scanPropertyAccesses("COUNT /*gap*/ { RETURN n.value AS v }", map[string]string{"COUNT": "Integer"}, nil, true))
-		require.NoError(t, scanPropertyAccesses("n.value", map[string]string{"n": "Map"}, nil, true))
+		require.NoError(t, checkExpressionPropertyAccesses("COUNT /*gap*/ { RETURN n.value AS v }", map[string]string{"COUNT": "Integer", "n": "Node"}, nil))
+		require.NoError(t, checkExpressionPropertyAccesses("n.value", map[string]string{"n": "Map"}, nil))
 		require.False(t, hasPatternOrSubquery("n.value = 1"))
 		require.False(t, hasPatternOrSubquery("'COUNT { RETURN 1 }'"))
 		require.True(t, hasPatternOrSubquery("(n)-->(m)"))

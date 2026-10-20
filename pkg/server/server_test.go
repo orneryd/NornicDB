@@ -4429,16 +4429,18 @@ func TestRequestTimeoutMiddleware_TxRoute_UsesConfigAndOverride(t *testing.T) {
 	t.Setenv("NORNICDB_HTTP_TX_TIMEOUT", "5ms")
 	s2 := &Server{config: &Config{WriteTimeout: 10 * time.Second}}
 	slowTimeout := s2.requestTimeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(30 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		_, bounded := r.Context().Deadline()
+		require.True(t, bounded)
+		<-r.Context().Done()
+		http.Error(w, r.Context().Err().Error(), http.StatusGatewayTimeout)
 	}))
 	req2 := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", nil)
 	rr2 := httptest.NewRecorder()
 	slowTimeout.ServeHTTP(rr2, req2)
-	if rr2.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when tx timeout override expires, got %d", rr2.Code)
+	if rr2.Code != http.StatusGatewayTimeout {
+		t.Fatalf("expected handler timeout outcome when execution deadline expires, got %d", rr2.Code)
 	}
-	if !strings.Contains(rr2.Body.String(), "request timeout: transaction busy") {
+	if !strings.Contains(rr2.Body.String(), "context deadline exceeded") {
 		t.Fatalf("expected tx timeout body, got %q", rr2.Body.String())
 	}
 }

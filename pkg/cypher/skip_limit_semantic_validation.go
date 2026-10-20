@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"strings"
 )
 
@@ -15,7 +16,7 @@ type paginationExpression struct {
 // statement's WITH and RETURN clauses. Each UNION branch has its own SKIP /
 // LIMIT, so the branches are read one by one; otherwise the last RETURN of a
 // branch would run into the next branch (LIMIT 2 UNION ALL MATCH …).
-func extractPaginationExpressions(cypher string) []paginationExpression {
+func extractPaginationExpressions(cypher string, inputs ...*semanticStatementInput) []paginationExpression {
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		var result []paginationExpression
 		for _, branch := range branches {
@@ -23,7 +24,7 @@ func extractPaginationExpressions(cypher string) []paginationExpression {
 		}
 		return result
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := sharedSemanticClauses(cypher, inputs...)
 	if !ok {
 		return nil
 	}
@@ -45,7 +46,13 @@ func extractPaginationExpressions(cypher string) []paginationExpression {
 	return result
 }
 
-func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
+func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string, inputs ...*semanticStatementInput) error {
+	if len(inputs) > 0 && inputs[0] != nil {
+		if syntax := inputs[0].syntax(); syntax != nil && syntax.Err == nil {
+			return e.validateOwnedPagination(syntax)
+		}
+	}
+
 	braces := newSubqueryBraceScanner(cypher, 0)
 	// Check original subquery bodies before imported variables are replaced
 	// with their row values. A substituted integer is still a row dependency.
@@ -70,7 +77,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 			}
 		}
 	}
-	for _, pagination := range extractPaginationExpressions(cypher) {
+	for _, pagination := range extractPaginationExpressions(cypher, inputs...) {
 		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
 			return err
 		}
@@ -82,11 +89,11 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 // the statement is compiled: it must not use a row variable, and unless it
 // reads a parameter it must be a non-negative integer. WITH, RETURN and a
 // procedure call's YIELD share it.
-func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string) error {
+func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string, inputs ...fabric.ExpressionInput) error {
 	if expression == "" {
 		return paginationCompileTypeError(keyword, nil)
 	}
-	if paginationExpressionUsesRowVariable(expression) {
+	if paginationExpressionUsesRowVariable(expression, inputs...) {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"NonConstantExpression",
@@ -159,8 +166,13 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 // keys, function names and variables the expression binds itself (list
 // comprehensions, reduce) are not variables; expressionFreeVariables is the
 // one scanner that knows them (#829).
-func paginationExpressionUsesRowVariable(expression string) bool {
-	return len(expressionFreeVariables(expression)) > 0
+func paginationExpressionUsesRowVariable(expression string, inputs ...fabric.ExpressionInput) bool {
+	// Literal values have no variable operand. Reuse the default parser's
+	// value owner; no native symbolic-name acquisition is needed for them.
+	if _, literal := parseLiteralValueFromComputedRow(expression); literal {
+		return false
+	}
+	return len(expressionFreeVariables(expression, inputs...)) > 0
 }
 
 func paginationCompileTypeError(keyword string, value interface{}) error {
@@ -177,4 +189,39 @@ func paginationCompileNegativeError(keyword string) error {
 		"NegativeIntegerArgument",
 		keyword+" requires a non-negative INTEGER",
 	)
+}
+
+// validateOwnedPagination traverses retained query descriptors. CALL, UNION
+// and expression-query bodies never reconstruct a statement from sliced text.
+func (e *StorageExecutor) validateOwnedPagination(root *fabric.QueryStructure) error {
+	seen := make(map[fabric.ExpressionInput]bool)
+	var visit func(*fabric.QueryStructure) error
+	visit = func(query *fabric.QueryStructure) error {
+		if seen[query.Input] {
+			return nil
+		}
+		seen[query.Input] = true
+		for _, clause := range query.Clauses {
+			for _, operand := range clause.PaginationOperands() {
+				if err := e.validateStaticPaginationExpression(operand.Pagination, operand.Input.Text(), operand.Input); err != nil {
+					return err
+				}
+			}
+			if clause.Nested != nil {
+				if err := visit(clause.Nested); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := visit(root); err != nil {
+		return err
+	}
+	for _, nested := range root.Input.QueryScopes() {
+		if err := visit(nested); err != nil {
+			return err
+		}
+	}
+	return nil
 }

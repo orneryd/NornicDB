@@ -68,17 +68,20 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 		assert.Equal(t, "name", withClause.Items[0].Alias)
 		assert.Equal(t, "", withClause.Items[1].Alias)
 
-		ret = builder.parseReturn("RETURN {name: 'Alice', age: 1} AS profile, , n")
+		ret = builder.parseReturn("RETURN {name: 'Alice', age: 1} AS profile, n")
 		require.Len(t, ret.Items, 2)
 		assert.Equal(t, ASTExprMap, ret.Items[0].Expression.Type)
 		assert.Equal(t, "profile", ret.Items[0].Alias)
 		assert.Equal(t, ASTExprVariable, ret.Items[1].Expression.Type)
 
-		withClause = builder.parseWith("WITH n, , {active: true} AS meta")
+		withClause = builder.parseWith("WITH n, {active: true} AS meta")
 		require.Len(t, withClause.Items, 2)
 		assert.Equal(t, ASTExprVariable, withClause.Items[0].Expression.Type)
 		assert.Equal(t, ASTExprMap, withClause.Items[1].Expression.Type)
 		assert.Equal(t, "meta", withClause.Items[1].Alias)
+		// Invalid native projection syntax cannot manufacture declarations.
+		require.Empty(t, builder.parseReturn("RETURN 1 AS value, , 2 AS other").Items)
+		require.Empty(t, builder.parseWith("WITH 1 AS value, , 2 AS other").Items)
 	})
 
 	t.Run("parseOrderBy parseLimit parseSkip and parseCall cover edge branches", func(t *testing.T) {

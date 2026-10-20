@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -15,22 +16,18 @@ import (
 // count(*)). Anything else read from before the clause (ORDER BY x after
 // RETURN x + 1 AS y, count(*); ORDER BY sum(x) after RETURN count(*)) is a
 // SyntaxError. A projection with * carries every variable.
-func validateAggregatingProjectionScopes(cypher string) error {
-	clauses, ok := splitPipelineClauses(cypher)
+func validateAggregatingProjectionScopes(cypher string, inputs ...*semanticStatementInput) error {
+	clauses, ok := sharedSemanticClauses(cypher, inputs...)
 	if !ok {
 		return nil
 	}
 	for _, clause := range clauses {
-		keyword := ""
 		switch clause.kind {
-		case pipelineClauseWith:
-			keyword = "WITH"
-		case pipelineClauseReturn:
-			keyword = "RETURN"
+		case pipelineClauseWith, pipelineClauseReturn:
 		default:
 			continue
 		}
-		if err := aggregatingProjectionScopeError(strings.TrimSpace(clause.text), keyword); err != nil {
+		if err := aggregatingProjectionClauseScopeError(clause); err != nil {
 			return err
 		}
 	}
@@ -39,26 +36,46 @@ func validateAggregatingProjectionScopes(cypher string) error {
 
 // aggregatingProjectionScopeError checks one WITH or RETURN clause
 // (validateAggregatingProjectionScopes).
-func aggregatingProjectionScopeError(clause, keyword string) error {
-	body, tail := projectionSemanticBodyAndTail(clause, keyword)
-	_, distinct := cutDistinct(clause[len(keyword):])
-	tail = strings.TrimSpace(tail)
-	if tail == "" {
+func aggregatingProjectionScopeError(clause, keyword string, syntax ...*fabric.QueryClause) error {
+	kind := pipelineClauseWith
+	if keyword == "RETURN" {
+		kind = pipelineClauseReturn
+	}
+	input := pipelineClause{kind: kind, text: clause}
+	if len(syntax) > 0 {
+		input.syntax = syntax[0]
+	}
+	return aggregatingProjectionClauseScopeError(input)
+}
+
+func aggregatingProjectionClauseScopeError(clause pipelineClause) error {
+	if clause.noLocalScopes && clause.projection == nil && clause.projectionTail == "" {
 		return nil
 	}
-	items := splitTopLevelComma(body)
-	aliases := make(map[string]struct{}, len(items)+1)
-	aliases[projectedExpressionPlaceholder] = struct{}{}
-	expressions := make([]string, 0, len(items))
-	aggregates := false
-	for _, item := range items {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		expression = strings.TrimSpace(expression)
-		if expression == "*" {
+	if clause.projection == nil && (clause.syntax == nil || clause.syntax.Projection == nil) {
+		keyword := "WITH"
+		if clause.kind == pipelineClauseReturn {
+			keyword = "RETURN"
+		}
+		_, tail := projectionSemanticBodyAndTail(clause.text, keyword, clause.syntax)
+		if strings.TrimSpace(tail) == "" {
 			return nil
 		}
+	}
+	projection := admittedProjection(clause)
+	tail := strings.TrimSpace(projection.Tail)
+	if tail == "" || projection.Star {
+		return nil
+	}
+	distinct := projection.Distinct
+	aliases := make(map[string]struct{}, len(projection.Items)+1)
+	aliases[projectedExpressionPlaceholder] = struct{}{}
+	expressions := make([]string, 0, len(projection.Items))
+	aggregates := false
+	for _, item := range projection.Items {
+		expression := strings.TrimSpace(item.Expression)
 		aggregates = aggregates || containsAggregateFunc(expression)
-		aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+		aliases[item.Column] = struct{}{}
 		expressions = append(expressions, strings.Join(strings.Fields(expression), " "))
 	}
 	if !aggregates && !distinct {

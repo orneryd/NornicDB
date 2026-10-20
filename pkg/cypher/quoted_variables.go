@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"hash/fnv"
 	"sort"
 	"strings"
@@ -30,10 +32,7 @@ import (
 // backtick-quoted name without its quotes and with each doubled backtick as
 // one backtick; any other text as is.
 func symbolicNameValue(written string) string {
-	if len(written) >= 2 && written[0] == '`' && written[len(written)-1] == '`' {
-		return strings.ReplaceAll(written[1:len(written)-1], "``", "`")
-	}
-	return written
+	return cyphertext.SymbolicNameValue(written)
 }
 
 // isOneSymbolicName reports whether text (surrounding whitespace ignored) is
@@ -100,6 +99,21 @@ type quotedToken struct {
 // query (see the file comment). It returns nil when there is nothing to
 // rewrite; a query without a backtick isn't scanned.
 func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
+	return canonicalizeQuotedVariablesWithBindings(query, nil)
+}
+
+// Fabric's planner and remote participants consume native Cypher names.
+// Local fragments translate identifiers at the local execution boundary.
+func canonicalizeLocalQuotedVariables(query string, fabricQuery bool) (string, *quotedVariableNames) {
+	if fabricQuery {
+		return query, nil
+	}
+	return canonicalizeQuotedVariables(query)
+}
+
+// External row bindings have the same identifier roles as bindings declared
+// in the query. The local query and its row keys are translated together.
+func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]interface{}, owners ...*quotedVariableNames) (string, *quotedVariableNames) {
 	if strings.IndexByte(query, '`') < 0 {
 		return query, nil
 	}
@@ -108,6 +122,34 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 		return query, nil
 	}
 	bound := make(map[string]struct{})
+	for name := range bindings {
+		bound[name] = struct{}{}
+	}
+	var owner *quotedVariableNames
+	if len(owners) > 0 {
+		owner = owners[0]
+	}
+	if owner != nil {
+		for internal, original := range owner.internal {
+			if _, parameter := owner.parameters[internal]; !parameter {
+				bound[original.name] = struct{}{}
+			}
+		}
+	}
+	identifierFor := func(name string, parameter bool, used map[string]struct{}) string {
+		if owner != nil {
+			for internal, original := range owner.internal {
+				_, isParameter := owner.parameters[internal]
+				if original.name == name && isParameter == parameter {
+					return internal
+				}
+			}
+		}
+		if parameter {
+			name = "$" + name
+		}
+		return internalVariableIdentifier(query, name, used)
+	}
 	for _, token := range tokens {
 		if token.binding {
 			bound[token.name] = struct{}{}
@@ -123,7 +165,7 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 		}
 		identifier := token.name
 		if !isPlainVariableName(identifier) {
-			identifier = internalVariableIdentifier(query, token.name, used)
+			identifier = identifierFor(token.name, false, used)
 			names.internal[identifier] = quotedVariableName{name: token.name, written: token.written}
 		}
 		identifiers[token.name] = identifier
@@ -144,7 +186,7 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 				if identifier, ok := identifiers[key]; ok {
 					replacement = identifier
 				} else {
-					replacement = internalVariableIdentifier(query, key, used)
+					replacement = identifierFor(token.name, true, used)
 					identifiers[key] = replacement
 					used[replacement] = struct{}{}
 					names.internal[replacement] = quotedVariableName{name: token.name, written: token.written}
@@ -156,9 +198,13 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 			}
 		case token.procColumn:
 			if !isPlainVariableName(token.name) {
-				continue
+				if !token.binding {
+					continue
+				}
+				replacement = token.written + " AS " + replacementFor(token)
+			} else {
+				replacement = token.name
 			}
-			replacement = token.name
 		case token.variable && (isBound || isPlainVariableName(token.name)):
 			// A quoted name that can be written plain is the plain name
 			// (`x` is x), bound here or not.
@@ -190,6 +236,34 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 		return names.internalOrder[i] < names.internalOrder[j]
 	})
 	return names.canonical, names
+}
+
+func (names *quotedVariableNames) bindingValues(bindings map[string]interface{}) map[string]interface{} {
+	if names == nil || len(bindings) == 0 {
+		return bindings
+	}
+	var out map[string]interface{}
+	for internal, original := range names.internal {
+		if _, parameter := names.parameters[internal]; parameter {
+			continue
+		}
+		value, exists := bindings[original.name]
+		if !exists {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]interface{}, len(bindings))
+			for name, value := range bindings {
+				out[name] = value
+			}
+		}
+		delete(out, original.name)
+		out[internal] = value
+	}
+	if out != nil {
+		return out
+	}
+	return bindings
 }
 
 // parameterValues returns params with each internal parameter name bound
@@ -226,8 +300,8 @@ func (names *quotedVariableNames) parameterName(name string) string {
 // '$', which only Cypher 5 reads inside a name (Cypher 25 starts a
 // parameter there).
 func isPlainVariableName(name string) bool {
-	_, end, ok := scanIdentifierToken(name, 0)
-	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && strings.IndexByte(name, '$') < 0
+	value, end, ok := scanIdentifierToken(name, 0)
+	return ok && value == name && end == len(name) && isUnquotedName(name) && !fabric.KeywordName(name) && !isCypherKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
@@ -250,122 +324,19 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 // scanQuotedTokens lists the backtick-quoted symbolic names of query outside
 // string literals, with their positions classified.
 func scanQuotedTokens(query string) []quotedToken {
+	names, ok := fabric.NameOccurrences(query)
+	if !ok {
+		// No guessed roles for syntax outside the maintained grammar. Preserve
+		// the original text for its existing extension execution path.
+		return nil
+	}
 	var tokens []quotedToken
-	var brackets []byte // open ( [ { at the current position
-	for i := 0; i < len(query); {
-		switch c := query[i]; c {
-		case '\'', '"':
-			i = skipQuotedText(query, i)
-			continue
-		case '(', '[', '{':
-			brackets = append(brackets, c)
-		case ')', ']', '}':
-			if len(brackets) > 0 {
-				brackets = brackets[:len(brackets)-1]
-			}
-		case '$':
-			// A quoted parameter name ($`a b`) becomes a plain one, like a
-			// quoted variable.
-			if i+1 < len(query) && query[i+1] == '`' {
-				if written, end, ok := scanSymbolicName(query, i+1); ok {
-					tokens = append(tokens, quotedToken{start: i + 1, end: end, written: written, name: symbolicNameValue(written), parameter: true})
-					i = end
-					continue
-				}
-			}
-		case '`':
-			written, end, ok := scanSymbolicName(query, i)
-			if !ok {
-				i++
-				continue
-			}
-			inner := byte(0)
-			if len(brackets) > 0 {
-				inner = brackets[len(brackets)-1]
-			}
-			token := quotedToken{start: i, end: end, written: written, name: symbolicNameValue(written)}
-			classifyQuotedToken(query, &token, inner)
-			tokens = append(tokens, token)
-			i = end
-			continue
+	for _, n := range names {
+		if strings.HasPrefix(n.Written, "`") {
+			tokens = append(tokens, quotedToken{start: n.Start, end: n.End, written: n.Written, name: n.Name, variable: n.Variable, binding: n.Binding, parameter: n.Parameter, procColumn: n.ProcedureColumn, selector: n.Selector})
 		}
-		i++
 	}
 	return tokens
-}
-
-// classifyQuotedToken decides from its surroundings whether a quoted name is
-// a variable, and whether it binds one.
-func classifyQuotedToken(query string, token *quotedToken, inner byte) {
-	prev, prevIndex := previousSignificant(query, token.start)
-	next, nextIndex := nextSignificant(query, token.end)
-	prevWord := upperASCII(previousWord(query, token.start))
-	nextWord := upperASCII(nextWordAt(query, nextIndex))
-	switch {
-	case prev == '.' && !(prevIndex > 0 && query[prevIndex-1] == '.'):
-		return // property key (n.`p q`) or map projection property selector
-	case next == '(':
-		return // function or procedure name
-	case next == '.' && dottedNameCall(query, nextIndex):
-		return // procedure or function namespace
-	case prev == ':' && isLabelColon(query, prevIndex, inner):
-		return // label or relationship type
-	case (prev == '|' || prev == '&' || prev == '!') && inLabelExpression(query, prevIndex, inner):
-		return // label expression
-	case next == ':' && inner == '{' && (prev == '{' || prev == ','):
-		return // map key
-	case isNonVariableKeyword(prevWord):
-		return // database, index, constraint, alias, user or role name
-	}
-	token.variable = true
-	switch {
-	case inner == '{' && (prev == '{' || prev == ',') && (next == ',' || next == '}') && mapProjectionBrace(query, token.start):
-		token.selector = true
-	case prevWord == "AS":
-		token.binding = true
-	case (prev == '[' || prev == '(' || prev == ',') && declaredAt(query, prevIndex+1, token.start):
-		token.binding = true // comprehension, quantifier, reduce, FOREACH or named path variable
-	case prev == '(' && (next == ':' || next == ')' || next == '{') && !callParenthesis(query, prevIndex):
-		token.binding = true // node pattern variable
-	case prev == '[' && (next == ':' || next == ']' || next == '*' || next == '{'):
-		token.binding = true // relationship pattern variable
-	case next == '=' && !followsOperator(query, nextIndex) && (prev == ',' || prev == '(' || prevWord == "MATCH" || prevWord == "MERGE" || prevWord == "CREATE"):
-		token.binding = true // path variable or reduce accumulator
-	case inYieldList(query, token.start):
-		if nextWord != "AS" {
-			token.procColumn = true
-			token.variable = false
-		}
-	}
-}
-
-// callParenthesis reports whether the '(' at index opens a call's
-// arguments (f(x), CALL (x)) rather than a pattern or a grouping.
-func callParenthesis(query string, index int) bool {
-	before, _ := previousSignificant(query, index)
-	if before == '`' {
-		return true
-	}
-	word := previousWord(query, index)
-	return word != "" && !isCypherKeyword(word)
-}
-
-func previousSignificant(query string, index int) (byte, int) {
-	for i := index - 1; i >= 0; i-- {
-		if !isWhitespace(query[i]) {
-			return query[i], i
-		}
-	}
-	return 0, -1
-}
-
-func nextSignificant(query string, index int) (byte, int) {
-	for i := index; i < len(query); i++ {
-		if !isWhitespace(query[i]) {
-			return query[i], i
-		}
-	}
-	return 0, len(query)
 }
 
 // previousWord is the identifier that ends right before index (whitespace
@@ -380,154 +351,6 @@ func previousWord(query string, index int) string {
 		start--
 	}
 	return query[start:end]
-}
-
-func nextWordAt(query string, index int) string {
-	word, _, ok := scanIdentifierToken(query, index)
-	if !ok {
-		return ""
-	}
-	return word
-}
-
-// dottedNameCall reports whether the dotted name continuing at dot (the
-// index of a '.') ends in a call: `db`.labels().
-func dottedNameCall(query string, dot int) bool {
-	for i := dot; i < len(query) && query[i] == '.'; {
-		_, end, ok := scanSymbolicName(query, i+1)
-		if !ok {
-			return false
-		}
-		next, nextIndex := nextSignificant(query, end)
-		if next == '(' {
-			return true
-		}
-		i = nextIndex
-	}
-	return false
-}
-
-// isLabelColon reports whether the ':' at colon starts a label or a
-// relationship type rather than a map value ({key: value}).
-func isLabelColon(query string, colon int, inner byte) bool {
-	if inner != '{' {
-		return true
-	}
-	before, beforeIndex := previousSignificant(query, colon)
-	if before == 0 {
-		return true
-	}
-	start := beforeIndex
-	if before == '`' {
-		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
-		}
-	} else {
-		for start > 0 && isIdentByte(query[start-1]) {
-			start--
-		}
-	}
-	keyPrev, _ := previousSignificant(query, start)
-	return !(keyPrev == '{' || keyPrev == ',')
-}
-
-// inLabelExpression reports whether the operator at index continues a label
-// expression (:A|B, :A&B, :!A).
-func inLabelExpression(query string, index int, inner byte) bool {
-	before, beforeIndex := previousSignificant(query, index)
-	if before == ':' {
-		return isLabelColon(query, beforeIndex, inner)
-	}
-	start := beforeIndex
-	if before == '`' {
-		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
-		}
-	} else if isIdentByte(before) {
-		for start > 0 && isIdentByte(query[start-1]) {
-			start--
-		}
-	} else {
-		return false
-	}
-	operator, operatorIndex := previousSignificant(query, start)
-	switch operator {
-	case ':':
-		return isLabelColon(query, operatorIndex, inner)
-	case '|', '&', '!':
-		return inLabelExpression(query, operatorIndex, inner)
-	}
-	return false
-}
-
-// followsOperator reports whether the '=' at index is part of an operator
-// (=~, <=, >=, <>, ==).
-func followsOperator(query string, index int) bool {
-	if index+1 < len(query) && (query[index+1] == '~' || query[index+1] == '=') {
-		return true
-	}
-	return index > 0 && (query[index-1] == '<' || query[index-1] == '>' || query[index-1] == '!' || query[index-1] == '=')
-}
-
-// mapProjectionBrace reports whether the '{' enclosing index follows a
-// variable (n {…}), making it a map projection rather than a map literal.
-func mapProjectionBrace(query string, index int) bool {
-	depth := 0
-	for i := index - 1; i >= 0; i-- {
-		switch query[i] {
-		case '}', ')', ']':
-			depth++
-		case '(', '[':
-			if depth == 0 {
-				return false
-			}
-			depth--
-		case '{':
-			if depth > 0 {
-				depth--
-				continue
-			}
-			before, _ := previousSignificant(query, i)
-			return before == '`' || isIdentByte(before)
-		}
-	}
-	return false
-}
-
-// inYieldList reports whether index is inside the item list of a YIELD.
-func inYieldList(query string, index int) bool {
-	yield := lastKeywordBefore(query, index, "YIELD")
-	if yield < 0 {
-		return false
-	}
-	between := query[yield:index]
-	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "MATCH", "UNWIND", "CALL", "ORDER", "SKIP", "LIMIT"} {
-		if FindKeywordIndex(between, keyword) >= 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func lastKeywordBefore(query string, index int, keyword string) int {
-	found := -1
-	for from := 0; from < index; {
-		rel := FindKeywordIndex(query[from:index], keyword)
-		if rel < 0 {
-			break
-		}
-		found = from + rel
-		from = found + len(keyword)
-	}
-	return found
-}
-
-// isNonVariableKeyword reports whether a quoted name after word names a
-// database, graph, index, constraint, alias, user or role.
-func isNonVariableKeyword(word string) bool {
-	switch word {
-	case "USE", "DATABASE", "DATABASES", "GRAPH", "INDEX", "CONSTRAINT", "ALIAS", "COMPOSITE", "USER", "ROLE", "ROLES", "USERS":
-		return true
-	}
-	return false
 }
 
 // isCypherKeyword reports whether name is a Cypher keyword, which a plain
@@ -780,14 +603,18 @@ func (names *quotedVariableNames) originalText(start, end int) string {
 	return names.restoreText(names.canonical[start:end])
 }
 
-// finalReturnBody locates the body of text's last top-level RETURN (after
-// the keyword).
+// finalReturnBody locates the public projection's body. The structural owner
+// selects the first UNION branch, also for result-name restoration.
 func finalReturnBody(text string) (int, int, bool) {
-	positions := findAllTopLevelPipelineKeywordPositions(text, "RETURN")
-	if len(positions) == 0 {
+	syntax := logicalStatementSyntax(text)
+	if syntax.Err != nil {
 		return 0, 0, false
 	}
-	return positions[len(positions)-1] + len("RETURN"), len(text), true
+	clause := syntax.ResultClause()
+	if clause == nil {
+		return 0, 0, false
+	}
+	return clause.BodyStart, clause.End, true
 }
 
 // restoreProjection names the result columns from the client's final RETURN
@@ -858,16 +685,4 @@ func (names *quotedVariableNames) restoreStatementText(text string) string {
 		}
 	}
 	return names.restoreText(text)
-}
-
-// declaredAt reports whether the name written at offset at is the variable
-// a declaration after text[from] declares, as the declaration readers read
-// it: v IN … (bindingDeclaration, also FOREACH's) or p = (…)
-// (namedPathDeclaration).
-func declaredAt(text string, from, at int) bool {
-	if _, declared, _, ok := bindingDeclaration(text, from); ok && declared == at {
-		return true
-	}
-	_, declared, _, ok := namedPathDeclaration(text, from)
-	return ok && declared == at
 }

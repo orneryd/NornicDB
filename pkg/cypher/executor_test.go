@@ -725,13 +725,9 @@ func TestParseYieldClause(t *testing.T) {
 			},
 		},
 		{
-			name:   "yield star with WHERE",
-			cypher: "CALL db.index.fulltext.queryNodes('idx', 'search') YIELD * WHERE score > 0.8",
-			expected: &yieldClause{
-				yieldAll: true,
-				items:    []yieldItem{},
-				where:    "score > 0.8",
-			},
+			name:     "invalid yield star with WHERE has no recovered declaration",
+			cypher:   "CALL db.index.fulltext.queryNodes('idx', 'search') YIELD * WHERE score > 0.8",
+			expected: nil,
 		},
 		{
 			name:   "yield with WHERE and RETURN",

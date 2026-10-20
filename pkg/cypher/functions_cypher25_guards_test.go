@@ -60,6 +60,8 @@ func TestCypher25FunctionArgumentErrors(t *testing.T) {
 		{"CYPHER 25 RETURN coll.sort($l) AS v", map[string]interface{}{"l": map[string]interface{}{"a": int64(1)}}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'l': expected List<T> but was Map, Node or Relationship"},
 		{"CYPHER 25 RETURN coll.insert([1], $i, 1) AS v", map[string]interface{}{"i": "x"}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'i': expected Integer but was String"},
 		{"RETURN toUpper( $s ) AS v", map[string]interface{}{"s": int64(1)}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 's': expected String but was Integer"},
+		{"RETURN tail($l) AS v", map[string]interface{}{"l": int64(1)}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'l': expected List<T> but was Integer"},
+		{"WITH $s AS x RETURN toUpper(x) AS v", map[string]interface{}{"s": int64(1)}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch: expected String but was Integer"},
 		{"CYPHER 25 RETURN coll.insert([1], $i, 1) AS v", map[string]interface{}{"i": 1.5}, "Neo.ClientError.Statement.TypeError", "coll.insert"},
 		{"CYPHER 25 UNWIND [1, [2]] AS x RETURN coll.sort(x) AS v", nil, "Neo.ClientError.Statement.TypeError", "coll.sort"},
 	} {

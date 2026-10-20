@@ -173,11 +173,28 @@ func TestExecutorConfusableAndEmbeddingSuffixHelpers(t *testing.T) {
 	_, ok = cypherSyntaxConfusableReplacement('—')
 	require.False(t, ok)
 
-	stripped, found := stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING RETURN n")
-	require.True(t, found)
-	require.Equal(t, "CREATE (n) RETURN n", stripped)
+	// Nonterminal options are resolved against the execution frame, not stripped
+	// eagerly: a bound variable named embedding must remain a normal projection.
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "embedding_suffix")
+	exec := NewStorageExecutor(store)
+	embedCalls := 0
+	exec.SetEmbedder(&queryEmbedderStub{embedFn: func(context.Context, string) ([]float32, error) {
+		embedCalls++
+		return []float32{1, 2}, nil
+	}})
+	result, err := exec.Execute(context.Background(), "CREATE (n) WITH EMBEDDING RETURN n", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Len(t, result.Rows[0], 1)
+	node, ok := result.Rows[0][0].(*storage.Node)
+	require.True(t, ok)
+	stored, err := store.GetNode(node.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, embedCalls)
+	require.Equal(t, [][]float32{{1, 2}}, stored.ChunkEmbeddings)
+	require.Equal(t, true, stored.EmbedMeta["has_embedding"])
 
-	stripped, found = stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING")
+	stripped, found := stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING")
 	require.True(t, found)
 	require.Equal(t, "CREATE (n)", stripped)
 

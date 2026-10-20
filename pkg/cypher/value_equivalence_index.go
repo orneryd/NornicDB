@@ -10,7 +10,6 @@ import (
 
 type cypherEncodedKey string
 type cypherNaNKey uint64
-type cypherEmptyTupleKey struct{}
 type cypherEntityKey struct {
 	kind byte
 	id   string
@@ -174,6 +173,8 @@ type cypherValueIndex struct {
 	single map[interface{}]int
 	tuples map[uint64][]cypherTupleEntry
 	count  int
+
+	emptyOrdinal int // Position plus one; zero means the empty tuple is unseen.
 }
 
 func (index *cypherValueIndex) add(value interface{}) (position int, existed bool) {
@@ -199,7 +200,15 @@ func (index *cypherValueIndex) addComparable(key interface{}) (position int, exi
 
 func (index *cypherValueIndex) addTuple(values []interface{}) (int, bool) {
 	if len(values) == 0 {
-		return index.addComparable(cypherEmptyTupleKey{})
+		// Zero-column tuples have one equivalence class. Keep its position in
+		// the index itself; global aggregation must not hash a synthetic key
+		// or allocate a map merely to find that same class for every input row.
+		if index.emptyOrdinal != 0 {
+			return index.emptyOrdinal - 1, true
+		}
+		index.count++
+		index.emptyOrdinal = index.count
+		return index.emptyOrdinal - 1, false
 	}
 	if len(values) == 1 {
 		return index.add(values[0])

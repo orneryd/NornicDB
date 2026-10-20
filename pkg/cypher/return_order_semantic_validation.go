@@ -1,6 +1,10 @@
 package cypher
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
+)
 
 func validateReturnOrderBySemanticScope(clause string) error {
 	return validateReturnOrderBySemanticScopeIn(clause, nil)
@@ -38,7 +42,7 @@ func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) err
 			continue
 		}
 		if alias != "" && alias != expression {
-			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+			aliases[alias] = struct{}{}
 		}
 		if containsAggregateFunc(expression) {
 			hasProjectionAggregate = true
@@ -186,7 +190,7 @@ func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {
-			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+			aliases[alias] = struct{}{}
 		}
 		if !containsAggregateFunc(expression) {
 			if reference := directSemanticReference(expression); reference != "" {
@@ -272,24 +276,11 @@ func containsFunctionCallNamed(expression, expected string) bool {
 }
 
 func pipelineReturnSourceColumns(clause string) []string {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
-	if body == "*" || body == "" {
+	plan := returnProjectionPlanFor(clause)
+	if !plan.valid || plan.star {
 		return nil
 	}
-	columns := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		columns = append(columns, alias)
-	}
-	return columns
+	return append([]string(nil), plan.columns...)
 }
 
 func directSemanticReference(expression string) string {
@@ -303,81 +294,32 @@ func directSemanticReference(expression string) string {
 	return ""
 }
 
-func semanticExpressionReferences(expression string) []string {
+func semanticExpressionReferences(expression string, inputs ...fabric.ExpressionInput) []string {
+	if strings.TrimSpace(expression) == "" {
+		return nil
+	}
 	references := make([]string, 0, 2)
 	forEachSemanticExpressionReference(expression, func(reference string, _ int) {
 		references = append(references, reference)
-	})
+	}, inputs...)
 	return references
 }
 
 // forEachSemanticExpressionReference calls visit with each reference
 // semanticExpressionReferences finds and the offset of its variable.
-func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
-	for index := 0; index < len(expression); {
-		if end := queryGapEnd(expression, index); end > index {
-			index = end
-			continue
+func forEachSemanticExpressionReference(expression string, visit func(reference string, at int), inputs ...fabric.ExpressionInput) {
+	var occurrences []fabric.ExpressionReference
+	if len(inputs) > 0 && inputs[0].Valid() {
+		occurrences = inputs[0].References()
+	} else {
+		occurrences = fabric.ExpressionReferences(expression)
+	}
+	for _, occurrence := range occurrences {
+		reference := occurrence.Name
+		if occurrence.Property != "" {
+			reference += "." + occurrence.Property
 		}
-		if expression[index] == '\'' || expression[index] == '"' {
-			index = skipQuotedSemanticText(expression, index)
-			continue
-		}
-		if expression[index] == '$' {
-			_, next, ok := scanIdentifierToken(expression, index+1)
-			if ok {
-				index = next
-				continue
-			}
-		}
-		name, next, ok := scanSymbolicName(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		// A name after a dot is a property key, not a variable: the receiver
-		// may be a list element or a call's result (collect(n)[0].id,
-		// head(xs).id), which the scan doesn't read as a reference itself.
-		start := index
-		before := index
-		for before > 0 && isASCIIWhitespace(expression[before-1]) {
-			before--
-		}
-		index = next
-		if before > 0 && expression[before-1] == '.' && (before < 2 || expression[before-2] != '.') {
-			continue
-		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if cursor < len(expression) && expression[cursor] == '(' {
-			continue
-		}
-		if cursor < len(expression) && expression[cursor] == ':' {
-			continue
-		}
-		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
-			// apoc.coll.sort(…): a namespaced function's name, not a
-			// variable and its property.
-			index = end
-			continue
-		}
-		normalized := normalizeProjectionColumnName(name)
-		propertyAccess := cursor < len(expression) && expression[cursor] == '.'
-		// A keyword-named variable (where.id, #894) is still a variable when
-		// a property access follows it; a keyword is never followed by '.'.
-		if name[0] != '`' && !propertyAccess && isSemanticLiteralWord(normalized) {
-			continue
-		}
-		if propertyAccess {
-			property, propertyEnd, propertyOK := scanSymbolicName(expression, cursor+1)
-			if propertyOK {
-				normalized += "." + normalizePropertyKey(property)
-				index = propertyEnd
-			}
-		}
-		visit(normalized, start)
+		visit(reference, occurrence.Start)
 	}
 }
 
@@ -397,27 +339,40 @@ func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
 // references an expression reads from its scope: the names
 // semanticExpressionReferences finds, without the occurrences that read one
 // of the expression's own bindings where it is bound (list comprehension,
-// quantifier, reduce and named path variables; localReader) and without anything
+// quantifier, reduce and named path variables; native grammar scopes) and without anything
 // inside braces (a COUNT / EXISTS / COLLECT subquery binds its own pattern
 // variables; a map projection's keys aren't variables). The base of a map
 // projection (n in n {.k}) is a reference.
-func semanticFreeReferences(expression string) []string {
-	return semanticFreeReferencesIn(expression, expression)
+func semanticFreeReferences(expression string, inputs ...fabric.ExpressionInput) []string {
+	return semanticFreeReferencesIn(expression, expression, inputs...)
 }
 
 // semanticFreeReferencesIn is semanticFreeReferences of text with the local
 // scopes read from scopes, a text of the same length text was blanked from
 // (removeAggregateCalls): blanking reduce(acc = 0, y IN collect(x) | …)'s
 // list would leave no reduce to bind y.
-func semanticFreeReferencesIn(scopes, text string) []string {
-	locals := newLocalReader(scopes)
+func semanticFreeReferencesIn(scopes, text string, inputs ...fabric.ExpressionInput) []string {
 	free := make([]string, 0, 2)
-	// maskSemanticBraceBodies keeps offsets: each one is the scopes text's.
-	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(reference string, at int) {
-		if !locals.shadows(strings.SplitN(reference, ".", 2)[0], at) {
-			free = append(free, reference)
+	masked := maskSemanticBraceBodies(text)
+	if strings.TrimSpace(masked) == "" {
+		return free
+	}
+	var occurrences []fabric.ExpressionReference
+	if len(inputs) > 0 && inputs[0].Valid() {
+		occurrences = inputs[0].References()
+	} else {
+		occurrences = fabric.ExpressionReferences(scopes)
+	}
+	for _, occurrence := range occurrences {
+		if occurrence.Local || occurrence.Start < 0 || occurrence.End > len(masked) || strings.TrimSpace(masked[occurrence.Start:occurrence.End]) == "" {
+			continue
 		}
-	})
+		reference := occurrence.Name
+		if occurrence.Property != "" {
+			reference += "." + occurrence.Property
+		}
+		free = append(free, reference)
+	}
 	return free
 }
 
@@ -464,22 +419,6 @@ func maskSemanticBraceBodies(expression string) string {
 		index = close
 	}
 	return string(masked)
-}
-
-// isSemanticLiteralWord reports whether an identifier-shaped word is a
-// literal or an operator / expression keyword, not a variable.
-func isSemanticLiteralWord(value string) bool {
-	if isLiteralKeyword(value) {
-		return true
-	}
-	switch upperASCII(value) {
-	case "ASC", "ASCENDING", "DESC", "DESCENDING",
-		"AND", "IN", "NOT", "OR", "WHERE", "XOR", "IS", "STARTS", "ENDS", "WITH", "CONTAINS",
-		"CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT":
-		return true
-	default:
-		return false
-	}
 }
 
 // removeAggregateCalls blanks expression's aggregate calls

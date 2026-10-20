@@ -65,10 +65,10 @@ func TestVectorProceduresReadEvaluatedArguments(t *testing.T) {
 			require.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", status(err), query)
 		}
 	})
-	t.Run("value of another type is a TypeError", func(t *testing.T) {
+	t.Run("statically incompatible parameter is a SyntaxError", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('vi_bad', 'LINKS', 'embedding', $dimension)", map[string]interface{}{"dimension": "3"})
 		require.Error(t, err)
-		require.Equal(t, "Neo.ClientError.Statement.TypeError", status(err))
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", status(err))
 	})
 	t.Run("unsupported similarity function", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('vi_bad', 'LINKS', 'embedding', 3, 'manhattan')", nil)

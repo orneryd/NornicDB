@@ -50,10 +50,10 @@ func TestStaticPredicateTypesMatchNeo4j(t *testing.T) {
 }
 
 func TestStaticFunctionResultType(t *testing.T) {
-	require.Equal(t, "Integer", staticFunctionResultType("REDUCE", "a = 0, x IN l | a + x"))
-	require.Equal(t, "String", staticFunctionResultType("reduce", "a = '', x IN l | a + x"))
+	require.Equal(t, "Integer", literalFunctionResultType("REDUCE", "a = 0, x IN l | a + x"))
+	require.Equal(t, "String", literalFunctionResultType("reduce", "a = '', x IN l | a + x"))
 	// The accumulator's type is unknown without a literal initializer.
-	require.Equal(t, "", staticFunctionResultType("reduce", "a = $p, x IN l | a + x"))
-	require.Equal(t, "", staticFunctionResultType("reduce", "x IN l | x"))
-	require.Equal(t, "Date", staticFunctionResultType("date.truncate", "'day', d"))
+	require.Equal(t, "", literalFunctionResultType("reduce", "a = $p, x IN l | a + x"))
+	require.Equal(t, "", literalFunctionResultType("reduce", "x IN l | x"))
+	require.Equal(t, "Date", literalFunctionResultType("date.truncate", "'day', d"))
 }

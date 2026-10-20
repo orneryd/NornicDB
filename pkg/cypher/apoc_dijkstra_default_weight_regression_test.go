@@ -23,7 +23,8 @@ func TestApocDijkstraHonorsAcceptedDefaultWeight(t *testing.T) {
 		require.Equal(t, tc.want, result.Rows[0][0])
 	}
 	_, err = exec.Execute(ctx, `MATCH(a:WeightAudit {name:'a'}),(b:WeightAudit {name:'b'}) CALL apoc.algo.dijkstra(a,b,'R>','cost',$fallback) YIELD path,weight RETURN weight`, map[string]interface{}{"fallback": "invalid"})
-	require.ErrorContains(t, err, "defaultWeight")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.ErrorContains(t, err, "fallback")
 	// Handler validation remains fail-closed for callers that already hold
 	// evaluated arguments, independently of literal signature validation.
 	_, err = exec.callApocAlgoDijkstra(ctx, []interface{}{"default_weight:a", "default_weight:b", "R>", "cost", "invalid"})

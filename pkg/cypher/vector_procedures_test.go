@@ -1834,7 +1834,7 @@ func TestCallDbIndexFulltextDrop(t *testing.T) {
 
 	t.Run("invalid_drop_arguments_error", func(t *testing.T) {
 		// null is the procedure's failure; a parameter that isn't a
-		// string is a TypeError.
+		// string is a compile-time SyntaxError.
 		_, err := exec.Execute(context.Background(), "CALL db.index.fulltext.drop(null)", nil)
 		require.Error(t, err)
 		code, _ := nornicerrors.Neo4jStatus(err)
@@ -1843,7 +1843,7 @@ func TestCallDbIndexFulltextDrop(t *testing.T) {
 		_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.drop($name)", map[string]interface{}{"name": int64(1)})
 		require.Error(t, err)
 		code, _ = nornicerrors.Neo4jStatus(err)
-		assert.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+		assert.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 	})
 }
 

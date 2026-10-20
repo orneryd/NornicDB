@@ -672,19 +672,23 @@ var paramRowsKey = paramRowsKeyType{}
 // context.WithValue did.
 type queryParamsContext struct {
 	context.Context
-	params map[string]interface{}
-	once   sync.Once
-	rows   map[string]interface{}
+	params  map[string]interface{}
+	version any // Snapshot even an absent key; avoid repeated parent-chain walks.
+	once    sync.Once
+	rows    map[string]interface{}
 }
 
-// Value answers paramsKey and paramRowsKey and defers every other key to
-// the parent context.
+// Value answers parameters and their inherited language version. Keeping a
+// missing version nil preserves withCypherVersion's nested-statement behavior;
+// the row evaluator need not traverse the whole invocation context per value.
 func (c *queryParamsContext) Value(key any) any {
 	switch key {
 	case paramsKey:
 		return c.params
 	case paramRowsKey:
 		return c
+	case cypherVersionKey{}:
+		return c.version
 	}
 	return c.Context.Value(key)
 }
@@ -713,7 +717,7 @@ func mergeInheritedQueryParams(ctx context.Context, params map[string]interface{
 // converting a parameter walks all of it: converted per evaluation, a
 // 500-row $rows list made UNWIND $rows CREATE quadratic (#823).
 func withQueryParams(ctx context.Context, params map[string]interface{}) context.Context {
-	return &queryParamsContext{Context: ctx, params: params}
+	return &queryParamsContext{Context: ctx, params: params, version: ctx.Value(cypherVersionKey{})}
 }
 
 // parameterRowValues returns the context's parameters as row values,

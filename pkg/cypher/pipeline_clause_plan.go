@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -275,6 +276,7 @@ func quantifiedPathMatchFor(ctx context.Context, body string) (*quantifiedPathMa
 // callSubqueryParse is a CALL subquery clause read once: parseCallSubquery's
 // parts, its scope clause and the variables that clause imports.
 type callSubqueryParse struct {
+	syntax         *fabric.QueryClause
 	body           string
 	afterCall      string
 	inTransactions bool
@@ -283,12 +285,19 @@ type callSubqueryParse struct {
 	scopedImports  []string
 }
 
-func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause string) callSubqueryParse {
+func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause string, syntax ...*fabric.QueryClause) callSubqueryParse {
 	return clauseAnalysisFor(ctx, clauseAnalysisCallSubquery, clause, func(clause string) callSubqueryParse {
 		var parsed callSubqueryParse
-		parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize = e.parseCallSubquery(clause)
-		callScope := readCallSubqueryScope(clause)
-		parsed.scoped, parsed.scopedImports = callScope.scoped, callScope.names
+		if len(syntax) > 0 {
+			parsed.syntax = syntax[0]
+		}
+		if len(syntax) == 0 {
+			parsed.syntax, _ = statementNativeClause(clause, "CALL")
+		}
+		parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize = e.parseCallSubquery(clause, parsed.syntax)
+		if parsed.syntax != nil {
+			parsed.scoped, parsed.scopedImports = parsed.syntax.Scoped, parsed.syntax.ScopeNames
+		}
 		return parsed
 	})
 }

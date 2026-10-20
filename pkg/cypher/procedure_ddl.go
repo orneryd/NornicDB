@@ -61,7 +61,9 @@ func isCreateProcedureCommand(cypher string) bool {
 }
 
 func isDropProcedureCommand(cypher string) bool {
-	return strings.HasPrefix(upperASCII(strings.TrimSpace(cypher)), "DROP PROCEDURE")
+	trimmed := strings.TrimSpace(cypher)
+	const prefix = "DROP PROCEDURE"
+	return len(trimmed) >= len(prefix) && strings.EqualFold(trimmed[:len(prefix)], prefix)
 }
 
 func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher string) (*ExecuteResult, error) {

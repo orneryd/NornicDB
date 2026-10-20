@@ -15,7 +15,7 @@ func TestFragmentSelectionAuthorization(t *testing.T) {
 	} {
 		catalog := NewCatalog()
 		catalog.Register("composite.source", location)
-		executor := NewFabricExecutor(catalog, nil, nil)
+		executor := newTestFabricExecutor(catalog, nil, nil)
 		refused := errors.New("selection refused")
 		executor.SetGraphAuthorizer(func(_ context.Context, graph, query string) error {
 			require.Equal(t, "composite.source", graph)
