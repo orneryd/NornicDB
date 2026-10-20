@@ -122,7 +122,7 @@ func TestQueryMemoryOutputStreamedCarrierVisibility(t *testing.T) {
 				defer cancel()
 				run := executeStreamed(ctx, exec, query, 1)
 				defer func() { cancel(); <-run.stream.Done() }()
-				require.True(t, run.stream.streamed(), "%v", run.err)
+				require.True(t, run.stream.streamed(), "%v", run.errIfDone())
 				for {
 					rows, done := run.stream.Next(1)
 					queryMemoryOutputCheck(t, rows)
