@@ -17,8 +17,8 @@ func decodeRemoteHTTPValue(raw json.RawMessage, metadata []interface{}, index *i
 // empty maps/lists. A graph marker requires the serializer's distinct envelope,
 // not merely equality between an ordinary map and an entity's property map.
 func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []interface{}, index *int, entities map[string]interface{}) (interface{}, error) {
-	var plain interface{}
-	if err := json.Unmarshal(raw, &plain); err != nil {
+	plain, err := decodeRemoteHTTPJSONValue(raw)
+	if err != nil {
 		return nil, err
 	}
 	if len(restRaw) > 0 && !json.Valid(restRaw) {
@@ -144,8 +144,8 @@ func remoteHTTPRESTEntity(raw json.RawMessage, plain interface{}, metadata map[s
 	if json.Unmarshal(raw, &envelope) != nil || envelope.Metadata.ElementID != identity || envelope.Self == "" || len(envelope.Data) == 0 {
 		return false
 	}
-	var properties interface{}
-	if json.Unmarshal(envelope.Data, &properties) != nil {
+	properties, err := decodeRemoteHTTPJSONValue(envelope.Data)
+	if err != nil {
 		return false
 	}
 	// An ordinary REST map equals its row representation and cannot also equal

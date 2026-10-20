@@ -527,7 +527,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 		return nil, err
 	}
 	var txResp remoteTxResponse
-	if err := json.Unmarshal(respBody, &txResp); err != nil {
+	if err := decodeRemoteHTTPJSON(respBody, &txResp); err != nil {
 		return nil, localizedError(localization.StorageRemoteTransactionDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(txResp.Errors) > 0 {
@@ -542,15 +542,23 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 			}
 			entities := make(map[string]interface{})
 			for _, node := range data.Graph.Nodes {
+				properties, err := normalizeRemoteHTTPNumbers(node["properties"])
+				if err != nil {
+					return nil, err
+				}
 				entities[fmt.Sprint(node["elementId"])] = map[string]interface{}{
 					remoteIdentityKey: remoteNumericIdentity{id: remoteHTTPNumericID(node["id"]), start: -1, end: -1},
-					"elementId":       node["elementId"], "labels": node["labels"], "properties": node["properties"],
+					"elementId":       node["elementId"], "labels": node["labels"], "properties": properties,
 				}
 			}
 			for _, edge := range data.Graph.Relationships {
+				properties, err := normalizeRemoteHTTPNumbers(edge["properties"])
+				if err != nil {
+					return nil, err
+				}
 				entities[fmt.Sprint(edge["elementId"])] = map[string]interface{}{
 					remoteIdentityKey: remoteNumericIdentity{id: remoteHTTPNumericID(edge["id"]), start: remoteHTTPEndpointID(edge, "startNode", entities), end: remoteHTTPEndpointID(edge, "endNode", entities)},
-					"elementId":       edge["elementId"], "type": edge["type"], "properties": edge["properties"],
+					"elementId":       edge["elementId"], "type": edge["type"], "properties": properties,
 					"startNodeElementId": edge["startNodeElementId"], "endNodeElementId": edge["endNodeElementId"],
 				}
 			}
