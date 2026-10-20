@@ -88,12 +88,21 @@ func containsReservedKeyword(s string) bool {
 //	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
 func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) (nodePatternInfo, error) {
+	return readNodePattern(ctx, pattern, e.parsePropertyMap)
+}
+
+func readNodePattern(ctx context.Context, pattern string, properties patternPropertyReader) (nodePatternInfo, error) {
 	head, props := splitNodePatternProperties(pattern)
 	info := nodePatternInfo{labels: []string{}}
-	var err error
-	info.properties, err = e.parsePropertyMap(ctx, props, true)
-	if err != nil {
-		return nodePatternInfo{}, err
+	if props == "" {
+		// No property span has no value phase, for either reader.
+		info.properties = make(map[string]interface{})
+	} else {
+		var err error
+		info.properties, err = properties(ctx, props, true)
+		if err != nil {
+			return nodePatternInfo{}, err
+		}
 	}
 	info.variable, info.labels, info.labelErr = parseNodeHead(head)
 	return info, nil

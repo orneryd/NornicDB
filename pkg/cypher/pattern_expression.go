@@ -339,6 +339,16 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 		return cypherfn.RuntimeValue(value), true
 	}
+	// A bare parameter already has a native value. Preserve the ordinary
+	// binding precedence without copying whole scopes for each prepared value.
+	if len(expr) > 1 && expr[0] == '$' {
+		if value, bound := valueBindingsFromContext(ctx)[expr]; bound {
+			return cypherfn.RuntimeValue(value), true
+		}
+		if value, bound := resolveDirectParamRef(ctx, expr); bound {
+			return cypherfn.RuntimeValue(value), true
+		}
+	}
 	shape := rowContextShapeOf(expr)
 	// A legacy fallback can reenter through an ordinary literal reader too.
 	// Its dispatch/depth context must survive independently of the expression's
