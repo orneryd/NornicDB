@@ -617,12 +617,13 @@ func parseBoundNodeShape(body string) boundNodeShape {
 // boundTraversalCount is boundChainCount for any chain: the paths the
 // traversal finds from seed that agree with the row's nodes and
 // relationships and pass where.
-func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
+func (run relationshipAccessExecution) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
+	e := run.executor
 	var paths []PathResult
 	if matches.IsChained && len(matches.Segments) > 1 {
-		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
+		paths = run.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
 	} else {
-		paths = e.traverseFromNode(ctx, seed, matches)
+		paths = run.traverseFromNode(ctx, seed, matches)
 	}
 	return e.countRelationshipPaths(ctx, paths, matches, where, values, first)
 }
@@ -636,7 +637,8 @@ func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *Trav
 // first match. It gives the rows the traversal below gives the same body;
 // expanded is false for any other chain, and under a temporal viewport,
 // which the traversal handles.
-func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+func (run relationshipAccessExecution) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+	e := run.executor
 	rel := matches.Relationship
 	if matches.IsChained || rel.VariableLength || rel.MinHops != 1 || rel.MaxHops != 1 {
 		return 0, false
@@ -671,7 +673,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	if end != nil {
 		target = end.ID
 		reversed := reverseRelationshipDirection(rel.Direction)
-		if end.ID != seed.ID && e.relationshipDegree(end.ID, reversed) < e.relationshipDegree(seed.ID, rel.Direction) {
+		if end.ID != seed.ID && run.relationshipDegree(end.ID, reversed) < run.relationshipDegree(seed.ID, rel.Direction) {
 			from, target, rel.Direction = end, seed.ID, reversed
 		}
 	}
@@ -679,12 +681,12 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	var edges []*storage.Edge
 	switch rel.Direction {
 	case "outgoing":
-		edges = e.traversalEdges(traversal, from.ID, true)
+		edges = run.traversalEdges(traversal, from.ID, true)
 	case "incoming":
-		edges = e.traversalEdges(traversal, from.ID, false)
+		edges = run.traversalEdges(traversal, from.ID, false)
 	default:
 		var err error
-		if edges, err = undirectedIncidentEdges(e.storage, from.ID); err != nil {
+		if edges, err = run.undirectedIncidentEdges(ctx, e.storage, from.ID); err != nil {
 			recordExpressionFailure(ctx, err)
 			return 0, true
 		}
@@ -776,7 +778,8 @@ func reverseRelationshipDirection(direction string) string {
 
 // relationshipDegree is how many relationships a node has in direction: an
 // estimate to choose the cheaper end of an expansion by, never a result.
-func (e *StorageExecutor) relationshipDegree(id storage.NodeID, direction string) int {
+func (run relationshipAccessExecution) relationshipDegree(id storage.NodeID, direction string) int {
+	e := run.executor
 	switch direction {
 	case "outgoing":
 		return e.storage.GetOutDegree(id)

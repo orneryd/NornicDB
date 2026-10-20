@@ -100,9 +100,9 @@ func TestBoundExpandCountMatchesTraversal(t *testing.T) {
 					}
 					seed := values[matches.StartNode.variable].(*storage.Node)
 					for _, first := range []bool{false, true} {
-						got, expanded := exec.boundExpandCount(ctx, matches, seed, shape.where, values, first)
+						got, expanded := exec.relationshipExecutionFor(nil, "", "").boundExpandCount(ctx, matches, seed, shape.where, values, first)
 						require.True(t, expanded, body)
-						want := exec.boundTraversalCount(ctx, exec.parseTraversalPattern(ctx, shape.pattern), seed, shape.where, values, first)
+						want := exec.relationshipExecutionFor(nil, "", "").boundTraversalCount(ctx, exec.parseTraversalPattern(ctx, shape.pattern), seed, shape.where, values, first)
 						require.Equal(t, want, got, "%s with a=%s b=%v r=%v first=%v", body, start, end, rel, first)
 						cases++
 					}
@@ -125,7 +125,7 @@ func TestBoundExpandCountDeclinesLongerChains(t *testing.T) {
 		require.True(t, shape.ok, body)
 		matches := exec.parseTraversalPattern(ctx, shape.pattern)
 		require.NotNil(t, matches, body)
-		_, expanded := exec.boundExpandCount(ctx, matches, a, shape.where, map[string]interface{}{"a": a}, true)
+		_, expanded := exec.relationshipExecutionFor(nil, "", "").boundExpandCount(ctx, matches, a, shape.where, map[string]interface{}{"a": a}, true)
 		require.False(t, expanded, body)
 	}
 }
