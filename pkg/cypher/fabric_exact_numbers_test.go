@@ -13,7 +13,7 @@ import (
 
 func TestFabricExactNumbersPublicComposite(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name         string
 		outer, inner interface{}
 	}{
 		{"string", "x", "x"},
