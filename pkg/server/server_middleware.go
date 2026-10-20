@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -120,6 +121,13 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 
 		// Add claims to request context
 		ctx := context.WithValue(r.Context(), contextKeyClaims, claims)
+		// Forward the credential that actually authenticated this request,
+		// independently of its header, cookie or query-token source.
+		credential := authHeader
+		if token != "" {
+			credential = "Bearer " + token
+		}
+		ctx = cypher.WithAuthToken(ctx, credential)
 		handler(w, r.WithContext(ctx))
 	}
 }

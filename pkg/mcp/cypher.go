@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	cypherDefaultRows = 100
-	cypherMaxRows     = 1000
-	cypherMaxBytes    = 1 << 20
+	cypherDefaultRows          = 100
+	cypherMaxRows              = 1000
+	cypherMaxBytes             = 1 << 20
+	cypherExecutionMemoryBytes = 16 << 20
 )
 
 func getCypherTool(defaultDatabase string) Tool {
@@ -57,6 +58,7 @@ type cypherToolResult struct {
 	Stats      *cypher.QueryStats     `json:"stats"`
 	Metadata   map[string]interface{} `json:"metadata"`
 	Truncation cypherTruncation       `json:"truncation"`
+	wire       []byte
 }
 
 type cypherTruncation struct {
@@ -65,13 +67,6 @@ type cypherTruncation struct {
 	ReturnedRows int      `json:"returned_rows"`
 	MaxRows      int      `json:"max_rows"`
 	MaxBytes     int      `json:"max_bytes"`
-}
-
-func cypherStructuredContent(result interface{}) interface{} {
-	if native, ok := result.(*cypherToolResult); ok {
-		return native
-	}
-	return nil
 }
 
 func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -127,7 +122,10 @@ func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) 
 	if executor == nil {
 		return nil, fmt.Errorf("native Cypher executor unavailable")
 	}
-	result, err := executor.Execute(ctx, query, parameters)
+	budget := newCypherResultBudget(ctx, maxRows)
+	stream := cypher.NewBoundedResultStream(budget.consume)
+	executionCtx := cypher.WithResultStream(cypher.WithStatementMemoryLimit(ctx, cypherExecutionMemoryBytes), stream)
+	result, err := executor.Execute(executionCtx, query, parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -137,56 +135,5 @@ func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) 
 	if result == nil {
 		return nil, fmt.Errorf("native Cypher executor returned no result")
 	}
-	return boundedCypherResult(ctx, result, maxRows)
-}
-
-func boundedCypherResult(ctx context.Context, native *cypher.ExecuteResult, maxRows int) (*cypherToolResult, error) {
-	result := &cypherToolResult{
-		Columns: native.Columns, Rows: make([][]interface{}, 0), Stats: native.Stats, Metadata: native.Metadata,
-		Truncation: cypherTruncation{MaxRows: maxRows, MaxBytes: cypherMaxBytes},
-	}
-	if result.Columns == nil {
-		result.Columns = []string{}
-	}
-	// Reserve the largest marker before adding whole rows. The final marker is
-	// no larger; values and native metadata are never shortened or rewritten.
-	result.Truncation.Reasons = []string{"database_max_results", "max_rows", "max_bytes"}
-	result.Truncation.ReturnedRows = maxRows
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return nil, err
-	}
-	remaining := cypherMaxBytes - len(encoded)
-	if remaining < 0 {
-		return nil, fmt.Errorf("Cypher columns and metadata exceed the %d byte result bound", cypherMaxBytes)
-	}
-	result.Truncation.Reasons = []string{}
-	result.Truncation.ReturnedRows = 0
-	if truncated, _ := native.Metadata["result_truncated"].(bool); truncated {
-		result.Truncation.Reasons = append(result.Truncation.Reasons, "database_max_results")
-	}
-	if len(native.Rows) > maxRows {
-		result.Truncation.Reasons = append(result.Truncation.Reasons, "max_rows")
-	}
-	for index, row := range native.Rows {
-		if index >= maxRows {
-			break
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return nil, err
-		}
-		if len(encoded)+1 > remaining {
-			result.Truncation.Reasons = append(result.Truncation.Reasons, "max_bytes")
-			break
-		}
-		remaining -= len(encoded) + 1
-		result.Rows = append(result.Rows, row)
-	}
-	result.Truncation.Truncated = len(result.Truncation.Reasons) > 0
-	result.Truncation.ReturnedRows = len(result.Rows)
-	return result, nil
+	return budget.finish(ctx, result)
 }

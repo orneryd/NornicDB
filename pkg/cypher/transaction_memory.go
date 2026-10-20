@@ -316,7 +316,8 @@ var transactionMemoryTrackers = sync.Pool{New: func() any {
 // beginTransactionMemory starts tracking the statement tx runs, when a
 // limit is configured.
 func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, statement *statementContext) {
-	if !transactionMemoryActive.Load() {
+	requestLimit, _ := statement.parent.Value(statementMemoryLimitKey{}).(int64)
+	if !transactionMemoryActive.Load() && requestLimit <= 0 {
 		if tx.memory.Load() != nil {
 			tx.memory.Store(nil)
 		}
@@ -335,6 +336,9 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 	// The statement keeps the limits it starts with (dynamic settings apply
 	// to the statements that start after a change).
 	tracker.limit = database.transactionMax.Load()
+	if requestLimit > 0 && (tracker.limit == 0 || requestLimit < tracker.limit) {
+		tracker.limit = requestLimit
+	}
 	tracker.databaseLimit = database.pool.limit.Load()
 	tracker.globalLimit = transactionMemory.global.limit.Load()
 	tracker.statement = statement
@@ -345,6 +349,18 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 	tracker.mu.Unlock()
 	tracker.failure.Store(nil)
 	tx.memory.Store(tracker)
+}
+
+type statementMemoryLimitKey struct{}
+
+// WithStatementMemoryLimit caps one request's native memory accounting. It
+// only tightens configured database limits, uses the existing reservation,
+// cancellation and rollback owner, and is inherited by nested execution.
+func WithStatementMemoryLimit(ctx context.Context, bytes int64) context.Context {
+	if current, _ := ctx.Value(statementMemoryLimitKey{}).(int64); current > 0 && current < bytes {
+		bytes = current
+	}
+	return context.WithValue(ctx, statementMemoryLimitKey{}, bytes)
 }
 
 // memoryFailure is the memory-limit error of the statement s registered,

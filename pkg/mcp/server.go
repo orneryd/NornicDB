@@ -298,7 +298,9 @@ func (s *Server) registerHandlers() {
 
 	// Task management and listing share one tool surface
 	s.handlers[ToolTasks] = s.handleTasks
-	s.handlers[ToolCypher] = s.handleCypher
+	if s.config.NativeCypherEnabled {
+		s.handlers[ToolCypher] = s.handleCypher
+	}
 }
 
 // RegisterRoutes registers MCP handlers on an existing http.ServeMux.
@@ -537,7 +539,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		result = s.doListTools(r.Context())
 	case "tools/call":
-		toolResult, err := s.doCallTool(r.Context(), req.Params)
+		callCtx := withCypherEnvelope(r.Context(), req.ID)
+		toolResult, err := s.doCallTool(callCtx, req.Params)
+		if req.Params["name"] == ToolCypher {
+			s.writeCypherResponse(w, callCtx, toolResult, err)
+			return
+		}
 		if err != nil {
 			// Wrap error in MCP content format
 			result = CallToolResponse{
@@ -548,8 +555,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			// Wrap result in MCP content format (required by MCP spec)
 			resultJSON, _ := json.Marshal(toolResult)
 			result = CallToolResponse{
-				Content:           []Content{{Type: "text", Text: string(resultJSON)}},
-				StructuredContent: cypherStructuredContent(toolResult),
+				Content: []Content{{Type: "text", Text: string(resultJSON)}},
 			}
 		}
 	default:
@@ -631,6 +637,10 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 		"name":      req.Name,
 		"arguments": req.Arguments,
 	})
+	if req.Name == ToolCypher {
+		s.writeCypherResponse(w, r.Context(), result, err)
+		return
+	}
 
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, CallToolResponse{
@@ -643,8 +653,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	// Convert result to JSON string
 	resultJSON, _ := json.Marshal(result)
 	s.writeJSON(w, http.StatusOK, CallToolResponse{
-		Content:           []Content{{Type: "text", Text: string(resultJSON)}},
-		StructuredContent: cypherStructuredContent(result),
+		Content: []Content{{Type: "text", Text: string(resultJSON)}},
 	})
 }
 
@@ -688,8 +697,27 @@ func (s *Server) doListTools(ctx context.Context) ListToolsResponse {
 		database = s.DefaultDatabaseName()
 	}
 	return ListToolsResponse{
-		Tools: GetToolDefinitionsWithDefaultDatabase(database),
+		Tools: s.toolDefinitions(database, s.nativeCypherAuthenticated(ctx)),
 	}
+}
+
+func (s *Server) nativeCypherAuthenticated(ctx context.Context) bool {
+	return s.config.NativeCypherEnabled && strings.TrimSpace(cypher.GetAuthenticatedPrincipalFromContext(ctx)) != "" &&
+		auth.RequestDatabaseScopeFromContext(ctx) != nil && auth.RequestEntitlementResolverFromContext(ctx) != nil
+}
+
+func (s *Server) toolDefinitions(database string, native bool) []Tool {
+	definitions := GetToolDefinitionsWithDefaultDatabase(database)
+	if native {
+		return definitions
+	}
+	filtered := make([]Tool, 0, len(definitions)-1)
+	for _, definition := range definitions {
+		if definition.Name != ToolCypher {
+			filtered = append(filtered, definition)
+		}
+	}
+	return filtered
 }
 
 func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) (interface{}, error) {
@@ -697,6 +725,11 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 	args, _ := params["arguments"].(map[string]interface{})
 	if args == nil {
 		args = make(map[string]interface{})
+	}
+	// Every dispatch path, including CallTool and standalone HTTP, shares
+	// this admission check. Missing authentication is never embedded/admin.
+	if name == ToolCypher && !s.nativeCypherAuthenticated(ctx) {
+		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 	}
 
 	handler, ok := s.handlers[name]
@@ -782,7 +815,7 @@ func (s *Server) DefaultDatabaseName() string {
 // ToolDefinitions returns the MCP tool definitions for this server instance.
 // The `database` parameter schema will reflect the configured default database name.
 func (s *Server) ToolDefinitions() []Tool {
-	return GetToolDefinitionsWithDefaultDatabase(s.DefaultDatabaseName())
+	return s.toolDefinitions(s.DefaultDatabaseName(), s.config.NativeCypherEnabled)
 }
 
 // getExecutorAndGetNode returns the Cypher executor and node getter for this request.

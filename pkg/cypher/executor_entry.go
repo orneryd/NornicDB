@@ -775,7 +775,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the same text can mean different things in Cypher 5 and Cypher 25
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
-	if e.canUseResultCache(ctx, info, cypher) {
+	if !stream.bounded() && e.canUseResultCache(ctx, info, cypher) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
@@ -838,7 +838,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// produces them (#939). The result-limit truncation and the restores of
 	// rewritten rows below need the whole result, so a statement with
 	// either keeps it. A streamed result is not cached.
-	if stream != nil && info.IsReadOnly && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
+	if stream != nil && (info.IsReadOnly || stream.bounded()) && !rowsRewritten && !finishTerminated && (e.maxResults() == 0 || stream.bounded()) {
+		stream.drain = !info.IsReadOnly
+		if stream.bounded() {
+			permissions := QueryPermissionRequirements(cypher)
+			// A CALL can execute a dynamically supplied statement, and native
+			// functions can write a catalog. Never stop those effects at an
+			// output boundary; keep executing while the sink discards rows.
+			stream.drain = stream.drain || info.HasCall || permissions.Write || permissions.Schema || permissions.Admin
+		}
+		stream.rowLimit = e.maxResults()
 		ctx = armResultStream(ctx, stream, cypher, func(columns []string) []string {
 			restored, _ := rewrite.restore(&ExecuteResult{Columns: columns}, nil)
 			return restored.Columns
@@ -866,13 +875,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Apply result limit if set
 	if err == nil && result != nil {
+		if stream.bounded() && stream.limitTruncated {
+			markResultTruncated(result, stream.rowLimit)
+		}
 		if maxResults := e.maxResults(); maxResults > 0 && int64(len(result.Rows)) > maxResults {
 			result.Rows = result.Rows[:maxResults]
-			if result.Metadata == nil {
-				result.Metadata = make(map[string]interface{})
-			}
-			result.Metadata["result_truncated"] = true
-			result.Metadata["result_limit"] = maxResults
+			markResultTruncated(result, maxResults)
 		}
 	}
 
@@ -901,6 +909,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	return result, err
+}
+
+func markResultTruncated(result *ExecuteResult, limit int64) {
+	if result.Metadata == nil {
+		result.Metadata = make(map[string]interface{})
+	}
+	result.Metadata["result_truncated"] = true
+	result.Metadata["result_limit"] = limit
 }
 
 // maxResults is the database's result-row limit (0 for none): the result of

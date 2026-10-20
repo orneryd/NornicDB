@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
-
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -1208,6 +1206,9 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 }
 
 func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
+	if converted, scalar := cypher.JSONScalar(value); scalar {
+		return converted, []interface{}{nil}
+	}
 	entityMeta := func(id, elementID, entityType string) []interface{} {
 		return []interface{}{map[string]interface{}{
 			"id": s.hashStringToInt64(id), "elementId": elementID,
@@ -1215,26 +1216,6 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}}
 	}
 	switch typed := value.(type) {
-	case []byte:
-		// Neo4j HTTP writes the signed Java byte values, including in maps.
-		bytes := make([]int8, len(typed))
-		for index, value := range typed {
-			bytes[index] = int8(value)
-		}
-		return bytes, []interface{}{nil}
-	case float32:
-		return transactionHTTPFloat(float64(typed), 32), []interface{}{nil}
-	case float64:
-		return transactionHTTPFloat(typed, 64), []interface{}{nil}
-	case cypher.CypherDate, cypher.CypherLocalTime, cypher.CypherTime, cypher.CypherLocalDateTime, cypher.CypherDateTime:
-		return typed.(fmt.Stringer).String(), []interface{}{nil}
-	case *cypher.CypherDuration:
-		if typed == nil {
-			return nil, []interface{}{nil}
-		}
-		return typed.String(), []interface{}{nil}
-	case cypher.CypherUUID:
-		return typed.String(), []interface{}{nil}
 	case cypher.CypherVector:
 		return transactionHTTPVector(typed), []interface{}{nil}
 	case cypher.CypherPoint:
@@ -1396,11 +1377,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 // number in Java's text (cypher.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
 // value JSON can't hold, the string "Infinity", "-Infinity" or "NaN".
 func transactionHTTPFloat(value float64, bits int) interface{} {
-	text := cypher.FormatFloat(value, bits)
-	if math.IsInf(value, 0) || math.IsNaN(value) {
-		return text
-	}
-	return json.Number(text)
+	return cypher.JSONFloat(value, bits)
 }
 
 // entityDatabase resolves the database an entity actually lives in for

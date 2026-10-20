@@ -1088,6 +1088,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	var mcpServer *mcp.Server
 	if config.MCPEnabled {
 		mcpConfig := mcp.DefaultServerConfig()
+		mcpConfig.NativeCypherEnabled = true
 		mcpConfig.EmbeddingEnabled = config.EmbeddingEnabled
 		mcpConfig.EmbeddingModel = config.EmbeddingModel
 		mcpConfig.EmbeddingDimensions = config.EmbeddingDimensions

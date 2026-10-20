@@ -190,7 +190,6 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	// Native MCP tools also run in process with this context. Keep native
 	// identity and continuation ownership with the same request principal.
 	ctx := s.withRequestIdentity(r.Context(), r, claims)
-	ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(r, claims))
 	if !s.isRBACEnforced() {
 		ctx = cypher.WithAuthenticationDisabled(ctx)

@@ -140,21 +140,18 @@ func TestMCPNativeReviewCredentialForwarding(t *testing.T) {
 	token := getAuthToken(t, authenticator, "admin")
 	var mu sync.Mutex
 	var seen string
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		seen = r.Header.Get("Authorization")
-		mu.Unlock()
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			http.Error(w, "credential missing", http.StatusUnauthorized)
-			return
+	require.NoError(t, s.dbManager.CreateDatabase("native_remote"))
+	router := s.buildRouter()
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/db/native_remote/") {
+			mu.Lock()
+			seen = r.Header.Get("Authorization")
+			mu.Unlock()
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"results":[{"columns":["value"],"data":[{"row":[1],"meta":[null]}]}],"errors":[]}`)
+		router.ServeHTTP(w, r)
 	}))
-	t.Cleanup(remote.Close)
-	require.NoError(t, s.dbManager.CreateCompositeDatabase("native_cmp", []multidb.ConstituentRef{{Alias: "remote", DatabaseName: "native_remote", Type: "remote", AccessMode: "read", URI: remote.URL, AuthMode: "oidc_forwarding"}}))
-	host := httptest.NewServer(s.buildRouter())
 	t.Cleanup(host.Close)
+	require.NoError(t, s.dbManager.CreateCompositeDatabase("native_cmp", []multidb.ConstituentRef{{Alias: "remote", DatabaseName: "native_remote", Type: "remote", AccessMode: "read", URI: host.URL, AuthMode: "oidc_forwarding"}}))
 	credentials := map[string]func(*http.Request){
 		"bearer":        func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) },
 		"api_key":       func(r *http.Request) { r.Header.Set("X-API-Key", token) },

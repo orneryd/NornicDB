@@ -33,8 +33,17 @@ import (
 // over rows the pipeline produces one at a time. Every other statement runs
 // as before and returns its whole result.
 type ResultStream struct {
-	threshold int
-	onStart   ResultStreamStarter
+	// consume is a synchronous bounded sink. It shares the projection/scan
+	// stream with pull consumers, without channels or retained result rows.
+	consume        func([]string, []interface{}) (bool, error)
+	consumeErr     error
+	full           bool
+	drain          bool
+	rowLimit       int64
+	produced       int64
+	limitTruncated bool
+	threshold      int
+	onStart        ResultStreamStarter
 
 	// Set by Execute before the statement runs; read by the statement.
 	statement    string
@@ -60,6 +69,16 @@ type ResultStream struct {
 	demanded      bool
 	exhausted     bool
 }
+
+// NewBoundedResultStream consumes final rows as they are produced. Returning
+// false stops an auto-commit read; writes keep executing and validating their
+// remaining rows without retaining output. The sink must not retain an
+// unbounded number of rows. No continuation state is created.
+func NewBoundedResultStream(consume func([]string, []interface{}) (bool, error)) *ResultStream {
+	return &ResultStream{consume: consume}
+}
+
+func (s *ResultStream) bounded() bool { return s != nil && s.consume != nil }
 
 // ResultStreamStarter is told when a statement starts streaming.
 type ResultStreamStarter interface {
@@ -149,12 +168,35 @@ func streamsScan(ctx context.Context, clauses []pipelineClause) bool {
 // begin records the RETURN's columns before its first row.
 func (s *ResultStream) begin(columns []string) {
 	s.columns = columns
+	if s.bounded() {
+		if s.mapColumns != nil {
+			s.columns = s.mapColumns(columns)
+		}
+		s.started = true
+	}
 }
 
 // emit hands one RETURN row to the stream. It returns false when the
 // statement must stop: ctx was cancelled while the stream waited for the
 // consumer.
 func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
+	if s.bounded() {
+		if s.rowLimit > 0 && s.produced >= s.rowLimit {
+			s.limitTruncated = true
+			s.full = true
+			return s.drain
+		}
+		s.produced++
+		if !s.full {
+			keepGoing, err := s.consume(s.columns, row)
+			s.consumeErr = err
+			s.full = !keepGoing || err != nil
+			if keepGoing && err == nil {
+				s.recordBatch([][]interface{}{row})
+			}
+		}
+		return s.consumeErr == nil && (!s.full || s.drain)
+	}
 	if !s.started {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {

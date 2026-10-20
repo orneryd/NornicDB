@@ -1291,7 +1291,10 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	buffered, streamed := stream.end()
 	switch {
 	case stopped:
-		return nil, nil, true, ctx.Err()
+		if stream.consumeErr != nil {
+			return nil, nil, true, stream.consumeErr
+		}
+		return named.Columns, nil, true, ctx.Err()
 	case validationErr != nil:
 		stream.discard()
 		return nil, nil, true, validationErr
