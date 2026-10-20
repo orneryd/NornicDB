@@ -29,6 +29,7 @@ func BuildText(properties map[string]interface{}, labels []string, opts *EmbedTe
 // EmbedText is a node's embedding text, with where each string property's
 // value lies in it, so a chunk of the text can be traced to its properties.
 type EmbedText struct {
+	Policy storage.EmbeddingTextPolicy
 	Text   string
 	fields []embedTextField
 }
@@ -64,7 +65,7 @@ func BuildEmbedText(properties map[string]interface{}, labels []string, opts *Em
 	// One rule decides which properties feed the text: storage's, which also
 	// decides when an update changes a node's embedding source (#963). Keys
 	// are taken in order so the same content always gives the same text.
-	policy := storage.EmbeddingTextPolicy{Include: opts.Include, Exclude: opts.Exclude, IncludeLabels: opts.IncludeLabels}
+	policy := storage.EmbeddingTextPolicy{Include: append([]string(nil), opts.Include...), Exclude: append([]string(nil), opts.Exclude...), IncludeLabels: opts.IncludeLabels}
 	keys := make([]string, 0, len(properties))
 	for key := range properties {
 		if policy.FeedsText(key) {
@@ -116,9 +117,9 @@ func BuildEmbedText(properties map[string]interface{}, labels []string, opts *Em
 
 	result := strings.Join(parts, "\n")
 	if result == "" {
-		return EmbedText{Text: "node"}
+		return EmbedText{Text: "node", Policy: policy}
 	}
-	return EmbedText{Text: result, fields: fields}
+	return EmbedText{Text: result, fields: fields, Policy: policy}
 }
 
 // ChunkSpan is where a chunk of a node's embedding text lies in one of its
@@ -256,7 +257,7 @@ func TextPolicy(opts *EmbedTextOptions) storage.EmbeddingTextPolicy {
 	if opts == nil {
 		return storage.EmbeddingTextPolicy{IncludeLabels: true}
 	}
-	return storage.EmbeddingTextPolicy{Include: opts.Include, Exclude: opts.Exclude, IncludeLabels: opts.IncludeLabels}
+	return storage.EmbeddingTextPolicy{Include: append([]string(nil), opts.Include...), Exclude: append([]string(nil), opts.Exclude...), IncludeLabels: opts.IncludeLabels}
 }
 
 // InvalidateManagedEmbeddings clears worker-managed embedding state on a node.

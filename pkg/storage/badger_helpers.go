@@ -873,6 +873,29 @@ func embeddingPrefix(nodeID NodeID) []byte {
 	return key
 }
 
+// visitEmbeddingKeys owns enumeration for every embedding replacement and
+// cleanup. Each callback receives a key it may retain until its write commits.
+type embeddingKeyScanOptions struct {
+	after []byte
+}
+
+func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	return visitEmbeddingKeysExcept(txn, nodeID, embeddingRangeRetention{}, visit, options...)
+}
+
+// visitEmbeddingKeysExcept observes the full range but copies only keys whose
+// old values are not already replaced by the caller's final write set.
+func visitEmbeddingKeysExcept(txn *badger.Txn, nodeID NodeID, retained embeddingRangeRetention, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	var scan embeddingKeyScanOptions
+	if len(options) > 0 {
+		scan = options[0]
+	}
+	if indexed, err := visitEmbeddingManifestKeys(txn, nodeID, retained, visit, scan.after); indexed || err != nil {
+		return err
+	}
+	return visitEmbeddingPrefixKeys(txn, embeddingPrefix(nodeID), scan.after, visit, retained)
+}
+
 // extractEdgeNumIDFromOutgoingKey pulls the trailing 8-byte edge numID from
 // an outgoing/incoming index key. Returns (0, false) if the key is malformed.
 //

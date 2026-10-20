@@ -159,6 +159,7 @@ type nodeReadCacheMode uint8
 const (
 	nodeReadCacheFull nodeReadCacheMode = iota
 	nodeReadCacheQuery
+	nodeReadCacheSnapshot
 )
 
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
@@ -189,6 +190,9 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 				return true, nil
 			}
 		}
+		if cacheMode == nodeReadCacheSnapshot {
+			return false, nil
+		}
 		b.nodeCacheMu.RLock()
 		value, found := b.nodeCache[id]
 		if !found && cacheMode == nodeReadCacheQuery {
@@ -215,6 +219,9 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 				return err
 			}
 			node, err = decode(txn, item)
+			if node != nil {
+				node.embeddingRevision = EmbeddingBodyRevision{physical: item.Version()}
+			}
 			return err
 		})
 	}
@@ -229,6 +236,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		// capture so copying does not extend either read lock or its hot frame.
 		node = hitCopy(node)
 	}
+	node.embeddingOwner, node.embeddingOwnerID = b, id
 	if b.hidesNode(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -254,9 +262,21 @@ func (b *BadgerEngine) GetStoredNode(id NodeID) (*Node, error) {
 }
 
 func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {
+	return b.getNodeSnapshotForRead(id, false, v)
+}
+
+func (b *BadgerEngine) getNodeSnapshot(id NodeID, force bool) (*Node, error) {
+	return b.getNodeSnapshotForRead(id, force, visibleRead)
+}
+
+func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisibility) (*Node, error) {
+	mode := nodeReadCacheFull
+	if force {
+		mode = nodeReadCacheSnapshot
+	}
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
-	}, copyNode, b.cacheFillNode, nodeReadCacheFull)
+	}, copyNode, b.cacheFillNode, mode)
 }
 
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
@@ -523,15 +543,8 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			embeddingsToPersist = node.ChunkEmbeddings
 		} else {
 			// Node fits inline - clean up any old separately stored embeddings
-			embPrefix := embeddingPrefix(node.ID)
-			opts := badgerIteratorOptions()
-			opts.Prefix = embPrefix
-			it := txn.NewIterator(opts)
-			defer it.Close()
-			for it.Rewind(); it.Valid(); it.Next() {
-				if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
-					return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
-				}
+			if err := visitEmbeddingKeys(txn, node.ID, txn.Delete); err != nil {
+				return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
 			}
 		}
 
@@ -638,39 +651,9 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 // (withUpdateUnits). Readers see the old chunks or the new ones, never a mix
 // (#703).
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
-	prefix := embeddingPrefix(nodeID)
-	var units []func(txn *badger.Txn) error
-	if err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			units = append(units, func(txn *badger.Txn) error { return txn.Delete(key) })
-		}
-		return nil
-	}); err != nil {
-		return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
-	}
-	for i, emb := range embeddings {
-		kvs, err := buildEmbeddingChunkWriteKVs(nodeID, i, emb)
-		if err != nil {
-			return err
-		}
-		chunkIndex := i
-		for _, kv := range kvs {
-			kv := kv
-			units = append(units, func(txn *badger.Txn) error {
-				if err := txn.Set(kv.key, kv.val); err != nil {
-					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(chunkIndex, err), err)
-				}
-				return nil
-			})
-		}
-	}
-	if len(units) == 0 {
-		return nil
-	}
-	return b.withUpdateUnits(units)
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		return cw.replaceEmbeddingRange(nodeID, embeddings, nil)
+	})
 }
 
 // DeleteNode removes a node and all its edges.

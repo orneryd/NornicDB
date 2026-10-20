@@ -60,6 +60,10 @@ func (b *BadgerEngine) cacheStoreNode(node *Node) {
 	b.nodeCacheMu.Lock()
 	b.nodeCacheGen.advance()
 	b.putNodeLocked(node)
+	// Only the cache copy is modified; buffered ACK bodies remain immutable.
+	cached := b.nodeCache[node.ID]
+	cached.embeddingRevision = EmbeddingBodyRevision{}
+	cached.embeddingAttempt = nil
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNodeBody(node.ID)
 }
