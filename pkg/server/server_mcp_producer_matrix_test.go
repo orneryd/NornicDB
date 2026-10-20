@@ -61,7 +61,7 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 	require.NoError(t, s.dbManager.CreateCompositeDatabase("matrix_cmp", []multidb.ConstituentRef{
 		{Alias: "local", DatabaseName: "nornic", Type: "local", AccessMode: "read"},
 		{Alias: "remote", DatabaseName: "matrix_remote", Type: "remote", AccessMode: "read", URI: host.URL, AuthMode: "oidc_forwarding"},
-		{Alias: "bolt", DatabaseName: "matrix_remote", Type: "remote", AccessMode: "write", URI: "bolt://" + listener.Addr().String(), AuthMode: "user_password", User: "admin", Password: "password123"},
+		{Alias: "bolt", DatabaseName: "matrix_remote", Type: "remote", AccessMode: "write", URI: "bolt://" + listener.Addr().String(), AuthMode: "oidc_forwarding"},
 	}))
 	token := getAuthToken(t, authenticator, "admin")
 	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
