@@ -184,7 +184,7 @@ func (e *StorageExecutor) relationshipAccessSites(ctx context.Context, query str
 
 func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, query string) []*relationshipAccessSite {
 	program := relationshipProgramFromContext(ctx, query)
-	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, program)
+	ctx = relationshipProgramContext(ctx, program)
 	var vector *relationshipVectorAccess
 	if indexASCIIFold(query, "vector.similarity.cosine") >= 0 {
 		if execution, ok := e.relationshipExecutionForQuery(ctx, query); ok {
@@ -193,7 +193,7 @@ func (e *StorageExecutor) relationshipLocalAccessSites(ctx context.Context, quer
 	}
 	sites := make([]*relationshipAccessSite, 0, len(program.sites))
 	for _, template := range program.sites {
-		access := e.relationshipAccessFor(ctx, template.pattern, template.where)
+		access := e.relationshipTemplateAccess(ctx, template)
 		if vector != nil {
 			access = &relationshipAccess{variable: template.syntax.variable, vector: vector}
 		}
@@ -248,9 +248,9 @@ func (e *StorageExecutor) annotateSingleRelationshipAccess(ctx context.Context, 
 	if len(program.sites) != 1 || len(program.graphQueries) != 0 {
 		return false
 	}
-	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, program)
+	ctx = relationshipProgramContext(ctx, program)
 	template := program.sites[0]
-	access := e.relationshipAccessFor(ctx, template.pattern, template.where)
+	access := e.relationshipTemplateAccess(ctx, template)
 	if indexASCIIFold(query, "vector.similarity.cosine") >= 0 {
 		if execution, ok := e.relationshipExecutionForQuery(ctx, query); ok {
 			if vector := execution.vectorPlan(ctx, query); vector != nil {
@@ -262,8 +262,12 @@ func (e *StorageExecutor) annotateSingleRelationshipAccess(ctx context.Context, 
 		return false
 	}
 	operator := firstRelationshipExpand(plan.Root)
+	// Expression-only sites have no schematic Expand. Project their one
+	// choice here too, rather than resolving it again through temporary
+	// site/alternative/operator slices in the general multi-site projection.
 	if operator == nil {
-		return false
+		operator = &PlanOperator{OperatorType: "Expand"}
+		plan.Root.Children = append(plan.Root.Children, operator)
 	}
 	oldHits := operator.DBHits
 	if operator.Arguments == nil {
