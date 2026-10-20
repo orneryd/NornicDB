@@ -14,3 +14,6 @@ Preserve prior failed evidence. Reuse the existing lifecycle implementation and
 tests, correct its unresolved auto-embedding detached-call review finding, and
 verify the integrated source across both parsers and native/non-native builds.
 Do not change the installed mandatory duplicate hooks.
+
+See [Implementation and verification notes](design.md) for the ownership
+contracts, constructor migration and recorded verification limits.
