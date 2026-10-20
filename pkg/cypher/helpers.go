@@ -21,7 +21,8 @@ func toFloat64(v interface{}) (float64, bool) {
 	return convert.ToFloat64(v)
 }
 
-// toFloat64Slice is a package-level alias to convert.ToFloat64Slice for internal use.
+// toFloat64Slice keeps the numeric fast paths and reads other runtime lists
+// through the same input owner as collection functions.
 func toFloat64Slice(v interface{}) ([]float64, bool) {
 	return convert.ToFloat64Slice(v)
 }

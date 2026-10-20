@@ -115,28 +115,23 @@ func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
 		nodes, nil,
 	))
 
-	// Array indexing and slicing.
-	assert.EqualValues(t, int64(10), exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"n.nums[0]",
-		nodes, nil, nil, nil, nil, 0,
-	))
-	assert.EqualValues(t, int64(30), exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"n.nums[-1]",
-		nodes, nil, nil, nil, nil, 0,
-	))
-	sliceVal := exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"n.nums[1..3]",
-		nodes, nil, nil, nil, nil, 0,
-	)
+	// Subscripts dispatch through the full evaluator, before the function-only
+	// evaluator. Read the same persisted fixture through public Cypher.
+	createTestNode(t, exec, string(nodes["n"].ID), nodes["n"].Labels, nodes["n"].Properties)
+	read := func(expression string) interface{} {
+		return typedNumericRead(t, exec, "MATCH (n:Person) RETURN "+expression+" AS v", nil)
+	}
+	assert.EqualValues(t, int64(10), read("n.nums[0]"))
+	assert.EqualValues(t, int64(30), read("n.nums[-1]"))
+	sliceVal := read("n.nums[1..3]")
 	sliceList, ok := sliceVal.([]interface{})
 	require.True(t, ok)
 	assert.Equal(t, []interface{}{int64(20), int64(30)}, sliceList)
 
-	// Indexing on string.
-	assert.Equal(t, "e", exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"n.text[1]",
-		nodes, nil, nil, nil, nil, 0,
-	))
+	// Neo4j string characters use substring; [] requires a list receiver.
+	assert.Equal(t, "e", read("substring(n.text,1,1)"))
+	_, err := exec.Execute(ctx, "MATCH (n:Person) RETURN n.text[1] AS v", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// Ensure list concatenation is not misdetected as indexing.
 	concatVal := exec.evaluateExpressionWithContextFullFunctions(ctx,

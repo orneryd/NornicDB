@@ -28,6 +28,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 )
 
@@ -755,40 +756,9 @@ func propEqKeyBatch(v interface{}) string {
 }
 
 func coerceInt64(v interface{}) (int64, bool) {
-	switch x := v.(type) {
-	case int:
-		return int64(x), true
-	case int8:
-		return int64(x), true
-	case int16:
-		return int64(x), true
-	case int32:
-		return int64(x), true
-	case int64:
-		return x, true
-	case uint:
-		return int64(x), true
-	case uint8:
-		return int64(x), true
-	case uint16:
-		return int64(x), true
-	case uint32:
-		return int64(x), true
-	case uint64:
-		return int64(x), true
-	}
-	return 0, false
+	return valueconvert.IntegerValue(v)
 }
 
 func coerceFloat64(v interface{}) (float64, bool) {
-	switch x := v.(type) {
-	case float32:
-		return float64(x), true
-	case float64:
-		return x, true
-	}
-	if i, ok := coerceInt64(v); ok {
-		return float64(i), true
-	}
-	return 0, false
+	return valueconvert.NumericFloat64(v)
 }

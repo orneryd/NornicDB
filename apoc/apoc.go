@@ -6,6 +6,7 @@ package apoc
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sync"
 
 	"github.com/orneryd/nornicdb/apoc/agg"
@@ -1393,7 +1394,7 @@ func callFunction(handler interface{}, args []interface{}) (interface{}, error) 
 		if len(args) != 1 {
 			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
 		}
-		list, ok := args[0].([]interface{})
+		list, ok := valueconvert.ListValue(args[0])
 		if !ok {
 			return nil, fmt.Errorf("expected list argument")
 		}
@@ -1403,7 +1404,7 @@ func callFunction(handler interface{}, args []interface{}) (interface{}, error) 
 		if len(args) != 1 {
 			return nil, fmt.Errorf("expected 1 argument, got %d", len(args))
 		}
-		list, ok := args[0].([]interface{})
+		list, ok := valueconvert.ListValue(args[0])
 		if !ok {
 			return nil, fmt.Errorf("expected list argument")
 		}
@@ -1413,7 +1414,7 @@ func callFunction(handler interface{}, args []interface{}) (interface{}, error) 
 		if len(args) != 2 {
 			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
 		}
-		list, ok := args[0].([]interface{})
+		list, ok := valueconvert.ListValue(args[0])
 		if !ok {
 			return nil, fmt.Errorf("expected list as first argument")
 		}
@@ -1424,8 +1425,9 @@ func callFunction(handler interface{}, args []interface{}) (interface{}, error) 
 		if len(args) != 2 {
 			return nil, fmt.Errorf("expected 2 arguments, got %d", len(args))
 		}
-		list, ok := args[0].([]string)
-		if !ok {
+		view, isList := valueconvert.ReadList(args[0])
+		list := valueconvert.ToStringSlice(args[0])
+		if !isList || list == nil && view.Len() != 0 {
 			return nil, fmt.Errorf("expected string list")
 		}
 		delim, ok := args[1].(string)
@@ -1530,42 +1532,10 @@ func callFunction(handler interface{}, args []interface{}) (interface{}, error) 
 
 // toFloat64 converts various numeric types to float64
 func toFloat64(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case int32:
-		return float64(val), true
-	}
-	return 0, false
+	return valueconvert.NumericFloat64(v)
 }
 
 // toFloat64Slice converts various slice types to []float64
 func toFloat64Slice(v interface{}) ([]float64, bool) {
-	switch val := v.(type) {
-	case []float64:
-		return val, true
-	case []float32:
-		result := make([]float64, len(val))
-		for i, f := range val {
-			result[i] = float64(f)
-		}
-		return result, true
-	case []interface{}:
-		result := make([]float64, len(val))
-		for i, item := range val {
-			f, ok := toFloat64(item)
-			if !ok {
-				return nil, false
-			}
-			result[i] = f
-		}
-		return result, true
-	}
-	return nil, false
+	return valueconvert.NumericFloat64Slice(v)
 }

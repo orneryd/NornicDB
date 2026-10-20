@@ -302,7 +302,9 @@ func TestFunctionEvaluator_ArrayIndexSliceAndMapLiteral(t *testing.T) {
 	// Array/string indexing paths
 	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext(ctx, "labels(n)[0]", nodes, nil))
 	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext(ctx, "labels(n)[-1]", nodes, nil))
-	assertEqual(t, "'abc'[1]", "b", e.evaluateExpressionWithContext(ctx, "'abc'[1]", nodes, nil))
+	assertEqual(t, "substring('abc',1,1)", "b", typedNumericRead(t, e, "RETURN substring('abc',1,1) AS v", nil))
+	_, err := e.Execute(ctx, "RETURN 'abc'[1] AS v", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Slice notation paths
 	s1 := e.evaluateExpressionWithContext(ctx, "labels(n)[..1]", nodes, nil)
@@ -2436,8 +2438,12 @@ func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext(ctx, "n.arrAny[-1]", nodes, nil))
 	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext(ctx, "n.arrStr[0]", nodes, nil))
 	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext(ctx, "n.arrStr[-1]", nodes, nil))
-	assertEqual(t, "n.text[1]", "e", e.evaluateExpressionWithContext(ctx, "n.text[1]", nodes, nil))
-	assertEqual(t, "n.text[-1]", "o", e.evaluateExpressionWithContext(ctx, "n.text[-1]", nodes, nil))
+	assertEqual(t, "substring(n.text,1,1)", "e", typedNumericRead(t, e, "MATCH (n:Person) RETURN substring(n.text,1,1) AS v", nil))
+	assertEqual(t, "right(n.text,1)", "o", typedNumericRead(t, e, "MATCH (n:Person) RETURN right(n.text,1) AS v", nil))
+	for _, expression := range []string{"n.text[1]", "n.text[-1]"} {
+		_, err := e.Execute(ctx, "MATCH (n:Person) RETURN "+expression+" AS v", nil)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
+	}
 
 	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[99]", nodes, nil); got != nil {
 		t.Fatalf("n.arrAny[99] should be nil, got %#v", got)
@@ -2483,9 +2489,14 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "n.text[..1]", nodes, nil); !reflect.DeepEqual([]interface{}{"xy"}, got) {
 		t.Fatalf("n.text[..1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny['2']", nodes, nil); got != int64(3) {
-		t.Fatalf("n.arrAny['2'] unexpected: %#v", got)
-	}
+	// Neo4j list indices are integers, without implicit numeric-string coercion.
+	// Preserve the successful selection with an explicit conversion and retain
+	// an error assertion for the original invalid expression.
+	assertEqual(t, "n.arrAny[toInteger('2')]", int64(3), typedNumericRead(t, e, "MATCH (n:Person) RETURN n.arrAny[toInteger('2')] AS v", nil))
+	_, err := e.Execute(ctx, "MATCH (n:Person) RETURN n.arrAny['2'] AS v", nil)
+	// The literal STRING index is rejected during statement validation;
+	// dynamic invalid indices are separately checked as runtime TypeErrors.
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Scalar conversions.
 	if got := e.evaluateExpressionWithContext(ctx, "toInteger(2.9)", nodes, nil); got != int64(2) {

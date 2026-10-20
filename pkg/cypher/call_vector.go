@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -76,44 +77,29 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			}
 		}
 
-		// Convert parameter value to []float32
-		// Parameter can be []float32, []float64, []interface{}, or string (to embed)
-		switch val := paramValue.(type) {
-		case []float32:
-			queryVector = val
-		case []float64:
-			queryVector = make([]float32, len(val))
-			for i, v := range val {
-				queryVector[i] = float32(v)
-			}
-		case []interface{}:
-			queryVector = make([]float32, 0, len(val))
-			for _, item := range val {
-				switch v := item.(type) {
-				case float32:
-					queryVector = append(queryVector, v)
-				case float64:
-					queryVector = append(queryVector, float32(v))
-				case int:
-					queryVector = append(queryVector, float32(v))
-				case int64:
-					queryVector = append(queryVector, float32(v))
-				default:
-					return nil, localizedError(localization.CypherSpecializedCallsParameterNonNumeric(input.paramName, fmt.Sprintf("%T", v)), nil)
-				}
-			}
-		case string:
+		if text, isText := paramValue.(string); isText {
 			// String parameter - embed it
 			if e.queryEmbedderForStatement(ctx) == nil {
 				return nil, localizedError(localization.CypherSpecializedCallsParameterStringEmbedderRequired(input.paramName), nil)
 			}
-			embedded, embedErr := e.embedVectorQueryText(ctx, val)
+			embedded, embedErr := e.embedVectorQueryText(ctx, text)
 			if embedErr != nil {
-				return nil, localizedError(localization.CypherSpecializedCallsEmbedParameterFailed(input.paramName, val, embedErr), embedErr)
+				return nil, localizedError(localization.CypherSpecializedCallsEmbedParameterFailed(input.paramName, text, embedErr), embedErr)
 			}
 			queryVector = embedded
-		default:
-			return nil, localizedError(localization.CypherSpecializedCallsParameterUnsupportedType(input.paramName, cypherTypeName(val)), nil)
+		} else {
+			list, ok := valueconvert.ReadList(paramValue)
+			if !ok {
+				return nil, localizedError(localization.CypherSpecializedCallsParameterUnsupportedType(input.paramName, cypherTypeName(paramValue)), nil)
+			}
+			var issue *valueconvert.NumberListIssue
+			queryVector, issue = list.Numbers32()
+			if issue != nil {
+				if issue.OutOfRange {
+					return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", fmt.Sprint(issue.Value)), nil)
+				}
+				return nil, localizedError(localization.CypherSpecializedCallsParameterNonNumeric(input.paramName, fmt.Sprintf("%T", issue.Value)), nil)
+			}
 		}
 	} else {
 		// No query input provided - check if this might be a substituted invalid parameter
@@ -124,12 +110,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			var unsupportedParams []string
 			for paramName, paramValue := range params {
 				// Check if this parameter has an unsupported type for vector queries
-				switch paramValue.(type) {
-				case []float32, []float64, []interface{}, string:
-					// Supported types - skip
-					continue
-				default:
-					// Unsupported type - add to list
+				_, list := valueconvert.ReadList(paramValue)
+				_, text := paramValue.(string)
+				if !list && !text {
 					unsupportedParams = append(unsupportedParams, fmt.Sprintf("$%s (%T)", paramName, paramValue))
 				}
 			}

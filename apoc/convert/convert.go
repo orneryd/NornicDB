@@ -7,8 +7,9 @@ package convert
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // ToBoolean converts a value to boolean.
@@ -22,13 +23,12 @@ func ToBoolean(value interface{}) bool {
 	switch v := value.(type) {
 	case bool:
 		return v
-	case int, int64, int32:
-		return v != 0
-	case float64, float32:
-		return v != 0.0
 	case string:
 		lower := strings.ToLower(strings.TrimSpace(v))
 		return lower == "true" || lower == "yes" || lower == "1"
+	}
+	if number, ok := valueconvert.ToFloat64(value); ok {
+		return number != 0
 	}
 	return false
 }
@@ -40,25 +40,10 @@ func ToBoolean(value interface{}) bool {
 //	apoc.convert.toInteger('42') => 42
 //	apoc.convert.toInteger(3.14) => 3
 func ToInteger(value interface{}) int64 {
-	switch v := value.(type) {
-	case int:
-		return int64(v)
-	case int64:
-		return v
-	case int32:
-		return int64(v)
-	case float64:
-		return int64(v)
-	case float32:
-		return int64(v)
-	case string:
-		i, _ := strconv.ParseInt(v, 10, 64)
-		return i
-	case bool:
-		if v {
-			return 1
-		}
-		return 0
+	// APOC keeps integer-only strings and its boolean extension; recognition
+	// and checked narrowing, including ParseInt range failures, have one owner.
+	if integer, ok := valueconvert.Int64(value, valueconvert.IntegerFloat|valueconvert.IntegerStrings|valueconvert.IntegerBool); ok {
+		return integer
 	}
 	return 0
 }
@@ -70,27 +55,16 @@ func ToInteger(value interface{}) int64 {
 //	apoc.convert.toFloat('3.14') => 3.14
 //	apoc.convert.toFloat(42) => 42.0
 func ToFloat(value interface{}) float64 {
-	switch v := value.(type) {
-	case float64:
-		return v
-	case float32:
-		return float64(v)
-	case int:
-		return float64(v)
-	case int64:
-		return float64(v)
-	case int32:
-		return float64(v)
-	case string:
-		f, _ := strconv.ParseFloat(v, 64)
-		return f
-	case bool:
-		if v {
+	if boolean, ok := value.(bool); ok {
+		if boolean {
 			return 1.0
 		}
 		return 0.0
 	}
-	return 0.0
+	if number, ok := valueconvert.ToFloat64(value); ok {
+		return number
+	}
+	return 0
 }
 
 // ToString converts a value to string.
@@ -110,9 +84,10 @@ func ToString(value interface{}) string {
 //	apoc.convert.toList('hello') => ['h','e','l','l','o']
 //	apoc.convert.toList(42) => [42]
 func ToList(value interface{}) []interface{} {
+	if list, ok := valueconvert.ListValue(value); ok {
+		return list
+	}
 	switch v := value.(type) {
-	case []interface{}:
-		return v
 	case string:
 		result := make([]interface{}, len(v))
 		for i, c := range v {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 	"time"
@@ -44,136 +45,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			return e.evaluateExpressionWithContextFull(ctx, expr[1:len(expr)-1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
-
-	// ========================================
-	// Array Indexing - handle expr[index] patterns
-	// ========================================
-	// This handles expressions like labels(n)[0], collect(...)[..10], etc.
-	if strings.HasSuffix(expr, "]") {
-		// Find the matching opening bracket
-		bracketEnd := len(expr) - 1
-		depth := 1
-		bracketStart := -1
-		for i := bracketEnd - 1; i >= 0; i-- {
-			if expr[i] == ']' {
-				depth++
-			} else if expr[i] == '[' {
-				depth--
-				if depth == 0 {
-					bracketStart = i
-					break
-				}
-			}
-		}
-		if bracketStart > 0 {
-			baseExpr := expr[:bracketStart]
-			indexExpr := expr[bracketStart+1 : bracketEnd]
-
-			// Avoid misclassifying list literals in larger expressions as indexing.
-			// Example: "file_tags + ['hello']" should parse as list concatenation,
-			// not "(file_tags +)['hello']".
-			lastNonSpace := byte(0)
-			for i := len(baseExpr) - 1; i >= 0; i-- {
-				if baseExpr[i] != ' ' && baseExpr[i] != '\t' && baseExpr[i] != '\n' && baseExpr[i] != '\r' {
-					lastNonSpace = baseExpr[i]
-					break
-				}
-			}
-			switch lastNonSpace {
-			case '+', '-', '*', '/', '%', '(', ',', '=', '<', '>', '|':
-				goto skipArrayIndexing
-			}
-
-			// Skip if this is an IN expression (e.g., "1 IN [1, 2, 3]")
-			// The base would be "1 IN " which ends with " IN "
-			baseUpper := upperASCII(strings.TrimSpace(baseExpr))
-			if strings.HasSuffix(baseUpper, " IN") || strings.HasSuffix(baseUpper, " NOT IN") {
-				// This is an IN expression, not array indexing - skip this section
-				goto skipArrayIndexing
-			}
-
-			// Check for slice notation [..N] or [N..M] or [N..]
-			if lowerExpr, upperExpr, slice := staticSliceBounds(indexExpr); slice {
-				// This is a slice, not an index
-				baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
-				var lower, upper interface{}
-				if lowerExpr != "" {
-					lower = e.evaluateExpressionWithContextFull(ctx, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				}
-				if upperExpr != "" {
-					upper = e.evaluateExpressionWithContextFull(ctx, upperExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				}
-				if value, ok := cypherListSlice(baseVal, lower, upper, lowerExpr != "", upperExpr != ""); ok {
-					return value
-				}
-				return nil
-			}
-
-			// Single index access [N]
-			baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if baseVal == nil {
-				return nil
-			}
-
-			// Evaluate the index
-			index := e.evaluateExpressionWithContextFull(ctx, indexExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if key, ok := index.(string); ok {
-				switch value := baseVal.(type) {
-				case map[string]interface{}:
-					return value[key]
-				case *storage.Node:
-					if value != nil {
-						return e.queryEntityProperties(value)[key]
-					}
-					return nil
-				case *storage.Edge:
-					if value != nil {
-						return e.queryEntityProperties(value)[key]
-					}
-					return nil
-				}
-			}
-			var idx int64
-			switch v := index.(type) {
-			case int64:
-				idx = v
-			case int:
-				idx = int64(v)
-			case float64:
-				idx = int64(v)
-			case string:
-				// Try to parse as number
-				idx, _ = strconv.ParseInt(v, 10, 64)
-			}
-
-			// Apply the index to the base value
-			switch list := baseVal.(type) {
-			case []interface{}:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return list[idx]
-				}
-				return nil
-			case []string:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return list[idx]
-				}
-				return nil
-			case string:
-				if character, ok := cyphertext.At(list, int(idx)); ok {
-					return character
-				}
-				return nil
-			}
-		}
-	}
-skipArrayIndexing:
 
 	// ========================================
 	// Map Literals - handle { key: value, ... } patterns
@@ -284,22 +155,18 @@ skipArrayIndexing:
 			recordExpressionFailure(ctx, err)
 			return value
 		}
+		if list, ok := valueconvert.ReadList(innerVal); ok {
+			return int64(list.Len())
+		}
 		switch v := innerVal.(type) {
 		case string:
 			return int64(cyphertext.Length(v))
-		case []interface{}:
-			return int64(len(v))
 		case map[string]interface{}:
 			// A path carried as a computed-row map (WITH p AS path): read the
 			// recorded length, then the node list as a fallback.
 			if length, ok := v["length"]; ok {
-				switch distance := length.(type) {
-				case int:
-					return int64(distance)
-				case int64:
+				if distance, valid := valueconvert.Int64(length, valueconvert.IntegerFloat); valid {
 					return distance
-				case float64:
-					return int64(distance)
 				}
 			}
 			if nodesList, _, hasNodes, _ := pathValueParts(v); hasNodes {
@@ -358,7 +225,7 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "tail") {
 		inner := extractFuncArgs(expr, "tail")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 1 {
+		if list, ok := cypherListValue(innerVal); ok && len(list) > 1 {
 			return list[1:]
 		}
 		return []interface{}{}
@@ -398,7 +265,7 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			startIdx, _ := strconv.ParseInt(strings.TrimSpace(args[1]), 10, 64)
-			if list, ok := listVal.([]interface{}); ok {
+			if list, ok := cypherListValue(listVal); ok {
 				endIdx := int64(len(list))
 				if len(args) >= 3 {
 					endIdx, _ = strconv.ParseInt(strings.TrimSpace(args[2]), 10, 64)
@@ -431,7 +298,7 @@ skipArrayIndexing:
 		if len(args) == 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			searchVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if list, ok := listVal.([]interface{}); ok {
+			if list, ok := cypherListValue(listVal); ok {
 				for i, item := range list {
 					if e.compareEqual(item, searchVal) {
 						return int64(i)
@@ -478,7 +345,7 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			if node, ok := nodes[strings.TrimSpace(args[0])]; ok {
 				labelsVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				if labels, ok := labelsVal.([]interface{}); ok {
+				if labels, ok := cypherListValue(labelsVal); ok {
 					for _, reqLabel := range labels {
 						labelStr, _ := reqLabel.(string)
 						found := false
@@ -889,15 +756,10 @@ skipArrayIndexing:
 			if s, ok := sepVal.(string); ok {
 				sep = strings.Trim(s, "'\"")
 			}
-			// Convert list to string slice
-			var parts []string
-			switch v := listVal.(type) {
-			case []interface{}:
-				for _, item := range v {
-					parts = append(parts, fmt.Sprintf("%v", item))
-				}
-			case []string:
-				parts = v
+			items, _ := cypherListValue(listVal)
+			parts := make([]string, len(items))
+			for index, item := range items {
+				parts[index] = fmt.Sprint(item)
 			}
 			return strings.Join(parts, sep)
 		}

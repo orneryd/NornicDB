@@ -4,6 +4,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
 	"sync"
@@ -733,34 +734,12 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 }
 
 func pipelineAggregateNumber(value interface{}) (float64, int64, bool, bool) {
-	switch number := value.(type) {
-	case int:
-		return float64(number), int64(number), true, true
-	case int8:
-		return float64(number), int64(number), true, true
-	case int16:
-		return float64(number), int64(number), true, true
-	case int32:
-		return float64(number), int64(number), true, true
-	case int64:
-		return float64(number), number, true, true
-	case uint:
-		return float64(number), int64(number), true, true
-	case uint8:
-		return float64(number), int64(number), true, true
-	case uint16:
-		return float64(number), int64(number), true, true
-	case uint32:
-		return float64(number), int64(number), true, true
-	case uint64:
-		return float64(number), int64(number), true, true
-	case float32:
-		return float64(number), 0, false, true
-	case float64:
-		return number, 0, false, true
-	default:
+	number, ok := valueconvert.ReadNumber(value)
+	if !ok {
 		return 0, 0, false, false
 	}
+	integer, exact := number.Int64(valueconvert.IntegerOnly)
+	return number.Float64(), integer, exact, true
 }
 
 // returnProjection is one RETURN item: its expression, its column name, and

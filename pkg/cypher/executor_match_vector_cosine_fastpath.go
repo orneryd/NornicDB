@@ -3,6 +3,7 @@ package cypher
 import (
 	"container/heap"
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strconv"
 	"strings"
@@ -1348,32 +1349,7 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 	if len(fields) == 0 {
 		return 0, false
 	}
-	tok := fields[0]
-	if strings.HasPrefix(tok, "$") {
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return 0, false
-		}
-		v, ok := params[strings.TrimPrefix(tok, "$")]
-		if !ok {
-			return 0, false
-		}
-		switch t := v.(type) {
-		case int:
-			return t, true
-		case int64:
-			return int(t), true
-		case float64:
-			return int(t), true
-		default:
-			return 0, false
-		}
-	}
-	limit, err := strconv.Atoi(tok)
-	if err != nil {
-		return 0, false
-	}
-	return limit, true
+	return resolveIntLiteralOrParam(ctx, fields[0])
 }
 
 func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
@@ -1450,31 +1426,18 @@ func (e *StorageExecutor) resolveCosineQueryVector(ctx context.Context, queryExp
 		recordExpressionFailure(ctx, err)
 		return nil, false
 	}
-	switch v := value.(type) {
-	case []float32:
-		return append([]float32(nil), v...), len(v) > 0
-	case []float64:
-		out := make([]float32, len(v))
-		for i, val := range v {
-			out[i] = float32(val)
-		}
-		return out, len(out) > 0
-	case []interface{}:
-		out := toFloat32Slice(v)
-		return out, len(out) > 0
-	case string:
-		if strings.TrimSpace(v) == "" || e.queryEmbedderForStatement(ctx) == nil {
+	if text, isText := value.(string); isText {
+		if strings.TrimSpace(text) == "" || e.queryEmbedderForStatement(ctx) == nil {
 			return nil, false
 		}
-		embedded, err := e.embedVectorQueryText(ctx, v)
+		embedded, err := e.embedVectorQueryText(ctx, text)
 		if err != nil {
 			return nil, false
 		}
 		return embedded, len(embedded) > 0
-	default:
-		out := toFloat32Slice(value)
-		return out, len(out) > 0
 	}
+	vector := valueconvert.ToFloat32Slice(value)
+	return append([]float32(nil), vector...), len(vector) > 0
 }
 
 func formatInlineFloat32Vector(vec []float32) string {

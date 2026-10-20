@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -1080,13 +1081,15 @@ func isQuantifierOrReduceFunction(name string) bool {
 // it when it type-checks a statement with its parameters: a list of strings is
 // List<String>, any other list List<T>, a map "Map, Node or Relationship".
 func staticParameterOperand(value interface{}) staticOperand {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if number.IsInteger() {
+			return knownOperand("Integer")
+		}
+		return knownOperand("Float")
+	}
 	switch value.(type) {
 	case nil:
 		return staticOperand{}
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return knownOperand("Integer")
-	case float32, float64:
-		return knownOperand("Float")
 	case string:
 		return knownOperand("String")
 	case bool:

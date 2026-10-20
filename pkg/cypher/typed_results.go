@@ -6,6 +6,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"strings"
 	"time"
@@ -195,75 +196,99 @@ func assignValue(field reflect.Value, val interface{}) error {
 	if val == nil {
 		return nil
 	}
-
-	valReflect := reflect.ValueOf(val)
-
-	// Handle time.Time specially
+	source := reflect.ValueOf(val)
+	failed := func() error {
+		return localizedError(localization.CypherCoreTypedAssignmentFailed(val, field.Type().String()), nil)
+	}
 	if field.Type() == reflect.TypeOf(time.Time{}) {
-		switch v := val.(type) {
+		switch value := val.(type) {
 		case time.Time:
-			field.Set(reflect.ValueOf(v))
+			field.Set(reflect.ValueOf(value))
 			return nil
 		case string:
-			t, err := time.Parse(time.RFC3339, v)
+			parsed, err := time.Parse(time.RFC3339, value)
 			if err != nil {
-				t, err = time.Parse("2006-01-02 15:04:05", v)
+				parsed, err = time.Parse("2006-01-02 15:04:05", value)
 			}
 			if err != nil {
-				return localizedError(localization.CypherCoreTypedTimeParseFailed(v, err), err)
+				return localizedError(localization.CypherCoreTypedTimeParseFailed(value, err), err)
 			}
-			field.Set(reflect.ValueOf(t))
+			field.Set(reflect.ValueOf(parsed))
 			return nil
-		case int64:
-			field.Set(reflect.ValueOf(time.Unix(v, 0)))
+		}
+		if integer, ok := valueconvert.IntegerValue(val); ok {
+			field.Set(reflect.ValueOf(time.Unix(integer, 0)))
 			return nil
 		}
 	}
-
-	// Direct assignment if types match
-	if valReflect.Type().AssignableTo(field.Type()) {
-		field.Set(valReflect)
+	if source.Type().AssignableTo(field.Type()) {
+		field.Set(source)
 		return nil
 	}
-
-	// Handle numeric conversions
 	switch field.Kind() {
 	case reflect.String:
 		field.SetString(fmt.Sprintf("%v", val))
 		return nil
 	case reflect.Bool:
-		switch v := val.(type) {
-		case bool:
-			field.SetBool(v)
-			return nil
-		case int:
-			field.SetBool(v != 0)
-			return nil
-		case int64:
-			field.SetBool(v != 0)
+		if number, numeric := valueconvert.ReadNumber(val); numeric && number.IsInteger() {
+			field.SetBool(number.Float64() != 0)
 			return nil
 		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		number, numeric := valueconvert.ReadReflectNumber(source)
+		if !numeric {
+			return failed()
+		}
+		integer, fits := number.Int64Bits(field.Type().Bits(), valueconvert.IntegerFloat)
+		if !fits {
+			return failed()
+		}
+		field.SetInt(integer)
+		return nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		number, numeric := valueconvert.ReadReflectNumber(source)
+		if !numeric {
+			return failed()
+		}
+		integer, fits := number.Uint64Bits(field.Type().Bits(), valueconvert.IntegerFloat)
+		if !fits {
+			return failed()
+		}
+		field.SetUint(integer)
+		return nil
+	case reflect.Float32, reflect.Float64:
+		number, numeric := valueconvert.ReadReflectNumber(source)
+		if !numeric {
+			return failed()
+		}
+		floating := number.Float64()
+		if field.Kind() == reflect.Float32 {
+			narrowed, fits := number.Float32()
+			if !fits {
+				return failed()
+			}
+			floating = float64(narrowed)
+		}
+		field.SetFloat(floating)
+		return nil
 	case reflect.Slice:
-		// Handle slice assignment
-		if valReflect.Kind() == reflect.Slice {
-			newSlice := reflect.MakeSlice(field.Type(), valReflect.Len(), valReflect.Len())
-			for i := 0; i < valReflect.Len(); i++ {
-				if err := assignValue(newSlice.Index(i), valReflect.Index(i).Interface()); err != nil {
+		if list, ok := valueconvert.ReadList(val); ok {
+			result := reflect.MakeSlice(field.Type(), list.Len(), list.Len())
+			for i := 0; i < list.Len(); i++ {
+				if err := assignValue(result.Index(i), list.At(i)); err != nil {
 					return err
 				}
 			}
-			field.Set(newSlice)
+			field.Set(result)
 			return nil
 		}
 	}
-
-	// Type conversion
-	if valReflect.Type().ConvertibleTo(field.Type()) {
-		field.Set(valReflect.Convert(field.Type()))
+	// Non-numeric named values still use the ordinary Go assignment contract.
+	if source.Type().ConvertibleTo(field.Type()) {
+		field.Set(source.Convert(field.Type()))
 		return nil
 	}
-
-	return localizedError(localization.CypherCoreTypedAssignmentFailed(val, field.Type().String()), nil)
+	return failed()
 }
 
 // ============================================
