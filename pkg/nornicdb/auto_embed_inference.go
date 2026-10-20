@@ -12,24 +12,15 @@ import (
 // persisted embeddings for a node. The node ID is expected to be fully-qualified
 // (<db>:<id>) because the embed worker operates on the un-namespaced base storage.
 //
-// This callback keeps the hybrid search indexes in sync and ensures automatic
+// The accepted storage event owns search publication; this callback runs automatic
 // relationship inference (Auto-TLP / auto-links) also runs for server-side
 // embeddings (i.e., when a node was stored without embeddings initially).
 func (db *DB) onNodeEmbedded(node *storage.Node) {
 	if node == nil {
 		return
 	}
+	// Full-text publication belongs exclusively to the accepted storage event. Only inference is asynchronous.
 	nodeCopy := storage.CopyNode(node)
-	// Publish into a ready search service before returning: the worker reports
-	// the node embedded only after this callback, and a search must then find
-	// the vector. Otherwise the deferred mutation queue publishes it.
-	published := db.publishEmbeddedNode(nodeCopy)
-	if !published {
-		// Admit the refresh before the asynchronous inference work. A delayed
-		// goroutine must not register an old callback after a newer source event.
-		db.queueSearchRefreshEvent(nodeCopy.ID)
-	}
-	// Keep embed worker hot: inference can be expensive, so run asynchronously.
 	go func(n *storage.Node) {
 		db.runInferenceForEmbeddedNode(n)
 	}(nodeCopy)
