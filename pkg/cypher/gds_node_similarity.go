@@ -92,11 +92,18 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := nodeSimilarityRows(projection, graph, config)
+	pairs, err := nodeSimilarityPairs(projection, graph, config)
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: rows, gdsProjection: projection}, nil
+	result, err := indexedOutput(ctx, []string{"node1", "node2", "similarity", "shared"}, len(pairs), func(i int) []any {
+		pair := pairs[i]
+		return []any{graph.nodes[pair.source], graph.nodes[pair.target], pair.similarity, pair.shared}
+	})
+	if result != nil {
+		result.gdsProjection = projection
+	}
+	return result, err
 }
 
 func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, options map[string]interface{}, filtered bool, nodeExists ...func(string) bool) (nodeSimilarityConfig, error) {
@@ -325,7 +332,7 @@ func nodeSimilarityNeighbors(graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
 	return neighbors, incoming
 }
 
-func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) ([][]interface{}, error) {
+func nodeSimilarityPairs(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) ([]nodeSimilarityPair, error) {
 	size := len(graph.nodes)
 	neighbors, incoming := nodeSimilarityNeighbors(graph)
 	eligible := func(node int) bool {
@@ -394,11 +401,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 			pairs = pairs[:config.topN]
 		}
 	}
-	rows := make([][]interface{}, len(pairs))
-	for i, pair := range pairs {
-		rows[i] = []interface{}{graph.nodes[pair.source], graph.nodes[pair.target], pair.similarity, pair.shared}
-	}
-	return rows, nil
+	return pairs, nil
 }
 
 // nodeSimilarityComponents is each node's component for useComponents: the

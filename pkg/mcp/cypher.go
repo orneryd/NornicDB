@@ -145,5 +145,5 @@ func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) 
 	for _, reason := range output.Reasons {
 		budget.reason(reason)
 	}
-	return budget.finish(ctx, result)
+	return budget.finish(executionCtx, result)
 }

@@ -3,6 +3,7 @@ package resultstream
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Consumer is the execution row handoff. False stops a read upstream; an
@@ -41,6 +42,8 @@ type Budget struct {
 	Columns           []string
 	Rows              [][]any
 	Reasons           []string
+	Produced          int64
+	stopped           bool
 	remaining         int
 	codec             func([]any, int) ([]any, int, error)
 }
@@ -50,6 +53,9 @@ func NewBudget(rows, bytes int, codec func([]any, int) ([]any, int, error)) *Bud
 }
 
 func (b *Budget) Mark(reason string) {
+	if reason == "max_rows" || reason == "max_bytes" {
+		b.stopped = true
+	}
 	for _, current := range b.Reasons {
 		if current == reason {
 			return
@@ -59,10 +65,11 @@ func (b *Budget) Mark(reason string) {
 }
 
 func (b *Budget) Consume(columns []string, row []any) (bool, error) {
+	b.Produced++
 	if b.Columns == nil {
 		b.Columns = append([]string{}, columns...)
 	}
-	if len(b.Reasons) > 0 {
+	if b.stopped {
 		return false, nil
 	}
 	if len(b.Rows) >= b.MaxRows {
@@ -80,6 +87,27 @@ func (b *Budget) Consume(columns []string, row []any) (bool, error) {
 	b.remaining -= cost
 	b.Rows = append(b.Rows, converted)
 	return true, nil
+}
+
+func (b *Budget) Exhausted() bool { return b.stopped }
+
+// EncodeFinal charges late columns/summary/envelope through the same output
+// owner. The protocol only supplies its serialized representation.
+func (b *Budget) EncodeFinal(maxBytes int, encode func() ([]byte, error)) ([]byte, error) {
+	for {
+		encoded, err := encode()
+		if err != nil {
+			return nil, err
+		}
+		if len(encoded) <= maxBytes {
+			return encoded, nil
+		}
+		if len(b.Rows) == 0 {
+			return nil, fmt.Errorf("result metadata and envelope exceed response byte limit")
+		}
+		b.Rows = b.Rows[:len(b.Rows)-1]
+		b.Mark("max_bytes")
+	}
 }
 
 type budgetKey struct{}

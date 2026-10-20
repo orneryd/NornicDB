@@ -104,8 +104,9 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 		return nil, err
 	}
 
-	queryUpper := upperASCII(strings.TrimSpace(queryBody))
-	result, err := e.executeInTransaction(ctx, queryBody, queryUpper)
+	// The body is a nested statement, with the same output/memory contract
+	// as every other transaction statement and routed execution.
+	result, err := e.executeInternal(ctx, queryBody, nil)
 	if err != nil {
 		return nil, e.abortTransaction(ctx, err)
 	}

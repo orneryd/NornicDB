@@ -183,7 +183,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 			return nil, fabricGraphReferenceError(err)
 		}
 		if autoCommit {
-			if budget := resultstream.BudgetFromContext(ctx); budget != nil && len(budget.Reasons) > 0 && !output.drain {
+			if budget := resultstream.BudgetFromContext(ctx); budget != nil && budget.Exhausted() && !output.drain {
 				_ = tx.Rollback(nil)
 			} else if err := tx.Commit(nil, nil); err != nil {
 				return nil, err

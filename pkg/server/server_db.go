@@ -819,7 +819,8 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 
 // handleTransactionEndpoint routes transaction-related requests
 func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Request, dbName string, remaining []string) {
-	if r.Header.Get(resultstream.StreamHeader) == "1" && r.Method == http.MethodPost {
+	w.Header().Set(resultstream.StreamHeader, "pull-v1")
+	if (r.Header.Get(resultstream.StreamHeader) == "1" || r.Header.Get(resultstream.StreamHeader) == "pull-v1") && r.Method == http.MethodPost {
 		w, r = s.withTransactionRowStream(w, r, dbName)
 	}
 	switch {
@@ -916,6 +917,13 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 // readJSON) through decodeTransactionRequest. Every transaction endpoint
 // reads its statements through here.
 func (s *Server) readTransactionRequest(r *http.Request, req *TransactionRequest) error {
+	if stream, _ := r.Context().Value(transactionRowStreamKey{}).(*transactionRowStream); stream != nil && stream.pull {
+		if stream.err != nil {
+			return stream.err
+		}
+		stream.demand = json.NewDecoder(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize))
+		return stream.demand.Decode(req)
+	}
 	return decodeTransactionRequest(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize), req)
 }
 

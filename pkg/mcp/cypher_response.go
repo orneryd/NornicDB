@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 type cypherEnvelope struct {
@@ -116,7 +117,22 @@ func (b *cypherResultBudget) finish(ctx context.Context, native *cypher.ExecuteR
 	if truncated, _ := native.Metadata["result_truncated"].(bool); truncated {
 		b.reason("database_max_results")
 	}
-	for {
+	if output := resultstream.BudgetFromContext(ctx); output != nil {
+		encoded, err := output.EncodeFinal(cypherMaxBytes, func() ([]byte, error) {
+			b.result.Rows = output.Rows
+			for _, reason := range output.Reasons {
+				b.reason(reason)
+			}
+			b.result.Truncation.ReturnedRows = len(output.Rows)
+			return b.envelope.encode(b.result, "")
+		})
+		if err != nil {
+			return nil, err
+		}
+		b.result.wire = encoded
+		return b.result, nil
+	}
+	{
 		b.result.Truncation.ReturnedRows = len(b.result.Rows)
 		encoded, err := b.envelope.encode(b.result, "")
 		if err != nil {
@@ -126,11 +142,7 @@ func (b *cypherResultBudget) finish(ctx context.Context, native *cypher.ExecuteR
 			b.result.wire = encoded
 			return b.result, nil
 		}
-		if len(b.result.Rows) == 0 {
-			return nil, fmt.Errorf("Cypher metadata and envelope exceed response byte limit")
-		}
-		b.result.Rows = b.result.Rows[:len(b.result.Rows)-1]
-		b.reason("max_bytes")
+		return nil, fmt.Errorf("Cypher result and envelope exceed response byte limit")
 	}
 }
 

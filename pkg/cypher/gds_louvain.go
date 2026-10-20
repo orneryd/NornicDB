@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ var louvainConfigKeys = []string{
 // the largest seed + its numeric original ID (string IDs use 1 + their
 // projection position). This can collide with a seed, as in GDS.
 // consecutiveIds numbers them 0, 1, … by first node.
-func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsLouvainStream(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -199,10 +200,26 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	for _, community := range final {
 		sizes[community]++
 	}
-	rows := make([][]interface{}, 0, size)
-	for i, id := range graph.nodes {
+	// Consecutive visible community IDs are algorithm output state, while
+	// formatting its tabular rows can remain lazy.
+	var visible []int
+	if consecutive && minSize > 1 {
+		for i := range graph.nodes {
+			if int64(sizes[final[i]]) >= minSize {
+				visible = append(visible, final[i])
+			}
+		}
+		louvain.Renumber(visible)
+	}
+	visibleIndex := 0
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	output, err := indexedOutput(ctx, []string{"nodeId", "communityId", "intermediateCommunityIds"}, len(graph.nodes), func(i int) []any {
+		id := graph.nodes[i]
 		if int64(sizes[final[i]]) < minSize {
-			continue
+			return nil
 		}
 		var levels interface{}
 		if intermediate {
@@ -212,21 +229,17 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			}
 			levels = list
 		}
-		rows = append(rows, []interface{}{id, communityID(last, final[i]), levels})
-	}
-	if consecutive && minSize > 1 {
-		// Number only surviving rows, through the same owner that numbers
-		// the solver's communities. The unfiltered stream needs no remap.
-		visible := make([]int, len(rows))
-		for i, row := range rows {
-			visible[i] = int(row[1].(int64))
+		community := communityID(last, final[i])
+		if visible != nil {
+			community = int64(visible[visibleIndex])
+			visibleIndex++
 		}
-		louvain.Renumber(visible)
-		for i, community := range visible {
-			rows[i][1] = int64(community)
-		}
+		return []any{id, community, levels}
+	})
+	if output != nil {
+		output.gdsProjection = projection
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows, gdsProjection: projection}, nil
+	return output, err
 }
 
 // javaPlainDouble is a Double as GDS's range messages print it: its

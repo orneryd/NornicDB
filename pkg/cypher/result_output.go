@@ -133,7 +133,7 @@ func resultRowsSource(ctx context.Context, result *ExecuteResult) pipelineRowSou
 }
 
 func (e *StorageExecutor) executeSourceTail(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
-	clauses, ok := canExecuteAsPipeline(tail)
+	clauses, ok := pipelineClausesFor(tail)
 	if !ok {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "unsupported procedure result tail")
 	}

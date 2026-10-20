@@ -20,6 +20,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"sort"
 	"strings"
 	"time"
@@ -144,6 +145,9 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	plan.TotalTime = totalTime
 	if result != nil {
 		plan.TotalRows = int64(len(result.Rows))
+		if budget := resultstream.BudgetFromContext(ctx); budget != nil {
+			plan.TotalRows = budget.Produced
+		}
 		e.updatePlanWithStats(plan.Root, result)
 	}
 

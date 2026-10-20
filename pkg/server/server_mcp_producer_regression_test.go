@@ -63,6 +63,8 @@ type review1601CountingWriter struct {
 	remoteBytes *atomic.Int64
 }
 
+func (w review1601CountingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w review1601CountingWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)
 	w.remoteBytes.Add(int64(n))

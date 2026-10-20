@@ -220,7 +220,7 @@ func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
 				s.recordBatch([][]interface{}{row})
 			}
 		}
-		return s.consumeErr == nil && (!s.full || s.drain) && (s.drain || s.outputBudget == nil || len(s.outputBudget.Reasons) == 0)
+		return s.consumeErr == nil && (!s.full || s.drain) && (s.drain || s.outputBudget == nil || !s.outputBudget.Exhausted())
 	}
 	if !s.started {
 		s.buffered = append(s.buffered, row)

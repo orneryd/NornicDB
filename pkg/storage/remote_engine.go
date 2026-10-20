@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -434,6 +435,7 @@ type httpTransport struct {
 	user      string
 	password  string
 	client    *http.Client
+	pull      atomic.Bool
 }
 
 type httpCypherTx struct {
@@ -620,6 +622,7 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 	if err != nil {
 		return nil, err
 	}
+	h.pull.Store(resp.Header.Get(resultstream.StreamHeader) == "pull-v1")
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

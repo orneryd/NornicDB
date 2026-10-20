@@ -38,12 +38,25 @@ func (h *httpTransport) consumeRequest(ctx context.Context, method, target strin
 	}
 	upstream, cancel := context.WithCancel(ctx)
 	defer cancel()
-	request, err := http.NewRequestWithContext(upstream, method, target, bytes.NewReader(encoded))
+	var input io.Reader = bytes.NewReader(encoded)
+	var credits *io.PipeWriter
+	if h.pull.Load() {
+		reader, writer := io.Pipe()
+		input, credits = reader, writer
+		defer reader.Close()
+		defer writer.Close()
+		go func() { _, _ = writer.Write(append(encoded, []byte("\n1\n")...)) }()
+		go func() { <-upstream.Done(); _ = writer.CloseWithError(upstream.Err()) }()
+	}
+	request, err := http.NewRequestWithContext(upstream, method, target, input)
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(resultstream.StreamHeader, "1")
+	if credits != nil {
+		request.Header.Set(resultstream.StreamHeader, "pull-v1")
+	}
 	if h.user != "" || h.password != "" {
 		request.SetBasicAuth(h.user, h.password)
 	} else if h.authToken != "" {
@@ -111,6 +124,9 @@ func (h *httpTransport) consumeRequest(ctx context.Context, method, target strin
 									cancel()
 									return &remoteTxResponse{Results: []remoteResult{{Columns: current.Columns}}}, nil
 								}
+							}
+							if credits != nil {
+								_, _ = credits.Write([]byte("\n1\n"))
 							}
 						}
 						if _, err := decoder.Token(); err != nil {

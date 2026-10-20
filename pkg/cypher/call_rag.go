@@ -438,21 +438,18 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		return e.relationshipSearchResult(response), nil
 	}
 
-	result := &ExecuteResult{
-		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
-		Rows:    make([][]interface{}, 0, len(response.Results)),
-	}
 	// Of a query split into chunks, how many were searched; 0 and 0 for a
 	// query searched whole. Reported whatever the fallback reason (#907).
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 
-	for _, r := range response.Results {
+	return indexedOutput(ctx, []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}, len(response.Results), func(i int) []any {
+		r := response.Results[i]
 		node := &storage.Node{
 			ID:         storage.NodeID(r.ID),
 			Labels:     r.Labels,
 			Properties: r.Properties,
 		}
-		result.Rows = append(result.Rows, []interface{}{
+		return []interface{}{
 			node,
 			r.Score,
 			r.RRFScore,
@@ -464,10 +461,8 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			chunksSearched,
 			chunksTotal,
 			search.SearchMatchValues(r.Matches),
-		})
-	}
-
-	return result, nil
+		}
+	})
 }
 
 func executeSearchContinuationPage(page *search.SearchContinuationPage) *ExecuteResult {

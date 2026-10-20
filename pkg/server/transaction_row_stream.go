@@ -22,10 +22,16 @@ type transactionRowStream struct {
 	statement      StatementRequest
 	started, first bool
 	err            error
+	pull           bool
+	demand         *json.Decoder
 }
 
 func (s *Server) withTransactionRowStream(w http.ResponseWriter, r *http.Request, database string) (http.ResponseWriter, *http.Request) {
 	stream := &transactionRowStream{ResponseWriter: w, server: s, database: database, first: true}
+	stream.pull = r.Header.Get(resultstream.StreamHeader) == "pull-v1"
+	if stream.pull && r.ProtoMajor == 1 {
+		stream.err = http.NewResponseController(w).EnableFullDuplex()
+	}
 	ctx := context.WithValue(r.Context(), transactionRowStreamKey{}, stream)
 	ctx = cypher.WithStatementMemoryLimit(ctx, 16<<20)
 	ctx = resultstream.WithConsumer(ctx, stream.consume)
@@ -41,6 +47,15 @@ func (s *transactionRowStream) write(data []byte) error {
 }
 
 func (s *transactionRowStream) consume(columns []string, row []any) (bool, error) {
+	if s.pull {
+		var credit int
+		if err := s.demand.Decode(&credit); err != nil {
+			return false, err
+		}
+		if credit != 1 {
+			return false, fmt.Errorf("invalid row demand")
+		}
+	}
 	if !s.started {
 		s.started = true
 		s.Header().Set("Content-Type", "application/json")
@@ -70,8 +85,8 @@ func (s *transactionRowStream) consume(columns []string, row []any) (bool, error
 	}
 	// ResponseController unwraps middleware writers when they support Unwrap.
 	// A small write still reaches the socket when a wrapper exposes Flush.
-	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
+	if err := http.NewResponseController(s.ResponseWriter).Flush(); err != nil {
+		return false, err
 	}
 	return true, nil
 }
