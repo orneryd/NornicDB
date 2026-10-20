@@ -167,6 +167,10 @@ func runCypherMutationWithRetry(ctx context.Context, exec *cypher.StorageExecuto
 
 // ServerConfig holds MCP server configuration.
 type ServerConfig struct {
+	// NativeCypherEnabled enables the native tool in an authenticated host
+	// integration. It still requires a trusted principal, scope and resolver
+	// on every call. Standalone servers leave it disabled.
+	NativeCypherEnabled bool `yaml:"-"`
 	// Address to bind to (default: "localhost")
 	Address string `yaml:"address"`
 	// Port to listen on (default: 7474, same as NornicDB HTTP API)
