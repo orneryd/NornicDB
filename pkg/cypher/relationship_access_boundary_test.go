@@ -108,6 +108,7 @@ type relationshipBoundaryFunction struct {
 	name     string
 	position string
 	owner    bool
+	adapter  bool
 	directIO bool
 	calls    map[*types.Func]bool
 }
@@ -134,17 +135,38 @@ func relationshipBoundaryFunctionName(function *types.Func) string {
 	return relationshipBoundaryNamedType(signature.Recv().Type()) + "." + function.Name()
 }
 
-func relationshipStoragePrimitive(function *types.Func) bool {
-	if function == nil || function.Pkg() == nil || function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/storage" {
-		return false
-	}
-	switch function.Name() {
-	case "GetEdge", "AllEdges", "StreamEdgesByType", "GetAdjacentEdges", "GetOutgoingEdges", "GetIncomingEdges", "GetAllEdges", "GetEdgesByType", "SeekRelationships", "EdgeCount", "EdgeCountByType", "EdgeCountByStartLabel", "EdgeCountByEndLabel", "RelationshipCount":
-		return true
-	}
-	return strings.HasPrefix(function.Name(), "CountEdges")
+func relationshipBoundaryStorageAdapter(function *types.Func) bool {
+    signature := function.Type().(*types.Signature)
+    if signature.Recv() == nil || function.Pkg() == nil {
+        return false
+    }
+    for _, dependency := range function.Pkg().Imports() {
+        if dependency.Path() == "github.com/orneryd/nornicdb/pkg/storage" {
+            engine := dependency.Scope().Lookup("Engine").Type().Underlying().(*types.Interface)
+            return types.Implements(signature.Recv().Type(), engine)
+        }
+    }
+    return false
 }
 
+func relationshipStoragePrimitive(function *types.Func) bool {
+    if function == nil || function.Pkg() == nil {
+        return false
+    }
+    if function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/storage" && !relationshipBoundaryStorageAdapter(function) {
+        return false
+    }
+    name := function.Name()
+    if !strings.Contains(name, "Edge") && !strings.Contains(name, "Relationship") && !strings.Contains(name, "Degree") {
+        return false
+    }
+    for _, prefix := range []string{"Get", "All", "Stream", "Seek", "Count", "Has", "Find", "EdgeCount", "RelationshipCount"} {
+        if strings.HasPrefix(name, prefix) {
+            return true
+        }
+    }
+    return false
+}
 func relationshipBoundaryTarget(info *types.Info, expression ast.Expr) *types.Func {
 	switch target := expression.(type) {
 	case *ast.Ident:
@@ -180,184 +202,30 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 
 	functions, structuralViolations := relationshipBoundaryGraph(files, fset, info)
 
-	// Compute storage reachability upwards, treating owner methods as graph
-	// cuts. There is no result-type cutoff and no maintained reader/type list.
-	reads := map[*types.Func]bool{}
-	for object, function := range functions {
-		reads[object] = function.directIO
-	}
-	for changed := true; changed; {
-		changed = false
-		for object, function := range functions {
-			if function.owner || reads[object] {
-				continue
-			}
-			for callee := range function.calls {
-				if next := functions[callee]; next != nil && !next.owner && reads[callee] {
-					reads[object] = true
-					changed = true
-					break
-				}
-			}
-		}
-	}
-	// Collapse the compiler graph's strongly connected components, then grow
-	// the kernel only through components whose every production predecessor is
-	// already owned. Shared expression/procedure dispatch therefore forms a
-	// mechanical boundary, while an exclusive storage reader cannot acquire a
-	// new caller without failing this guard.
-	indexes, low := map[*types.Func]int{}, map[*types.Func]int{}
-	onStack := map[*types.Func]bool{}
-	var stack []*types.Func
-	var components [][]*types.Func
-	nextIndex := 1
-	var strongConnect func(*types.Func)
-	strongConnect = func(object *types.Func) {
-		indexes[object], low[object] = nextIndex, nextIndex
-		nextIndex++
-		stack = append(stack, object)
-		onStack[object] = true
-		for callee := range functions[object].calls {
-			if !reads[callee] || functions[callee].owner {
-				continue
-			}
-			if indexes[callee] == 0 {
-				strongConnect(callee)
-				if low[callee] < low[object] {
-					low[object] = low[callee]
-				}
-			} else if onStack[callee] && indexes[callee] < low[object] {
-				low[object] = indexes[callee]
-			}
-		}
-		if low[object] != indexes[object] {
-			return
-		}
-		var component []*types.Func
-		for {
-			last := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			onStack[last] = false
-			component = append(component, last)
-			if last == object {
-				break
-			}
-		}
-		components = append(components, component)
-	}
-	for object, function := range functions {
-		if reads[object] && !function.owner && indexes[object] == 0 {
-			strongConnect(object)
-		}
-	}
-	componentOf := map[*types.Func]int{}
-	for component, members := range components {
-		for _, member := range members {
-			componentOf[member] = component
-		}
-	}
-	predecessors := make([]map[int]bool, len(components))
-	ownerPredecessor := make([]bool, len(components))
-	for component := range components {
-		predecessors[component] = map[int]bool{}
-	}
-	for caller, function := range functions {
-		for callee := range function.calls {
-			component, present := componentOf[callee]
-			if !present {
-				continue
-			}
-			if function.owner {
-				ownerPredecessor[component] = true
-				continue
-			}
-			if predecessor, ok := componentOf[caller]; ok && predecessor != component {
-				predecessors[component][predecessor] = true
-			}
-		}
-	}
-	included := make([]bool, len(components))
-	for changed := true; changed; {
-		changed = false
-		for component := range components {
-			if included[component] {
-				continue
-			}
-			reached, ready := ownerPredecessor[component], true
-			for predecessor := range predecessors[component] {
-				if included[predecessor] {
-					reached = true
-				} else {
-					ready = false
-				}
-			}
-			if reached && ready {
-				included[component] = true
-				changed = true
-			}
-		}
-	}
-	kernel := map[*types.Func]bool{}
-	for component, members := range components {
-		if included[component] {
-			for _, member := range members {
-				kernel[member] = true
-			}
-		}
-	}
-	require.NotEmpty(t, kernel, "no relationship storage kernel is owned by the program")
-
-	var population []string
-	for object := range kernel {
-		population = append(population, functions[object].position+" "+functions[object].name)
-	}
-	sort.Strings(population)
-	t.Logf("program-owned storage-rooted relationship kernels (%d):\n%s", len(population), strings.Join(population, "\n"))
-
-	var directReaders []string
-	for _, function := range functions {
-		if function.directIO && !function.owner {
-			directReaders = append(directReaders, function.position+" "+function.name)
-		}
-	}
-	sort.Strings(directReaders)
-	t.Logf("non-owner direct storage readers (%d):\n%s", len(directReaders), strings.Join(directReaders, "\n"))
-
-	violations := structuralViolations
-	for component := range components {
-		if included[component] {
-			continue
-		}
-		reached := ownerPredecessor[component]
-		var outside []int
-		for predecessor := range predecessors[component] {
-			if included[predecessor] {
-				reached = true
-			} else {
-				outside = append(outside, predecessor)
-			}
-		}
-		if !reached || len(outside) == 0 {
-			continue
-		}
-		for _, predecessor := range outside {
-			for _, caller := range components[predecessor] {
-				for callee := range functions[caller].calls {
-					if target, present := componentOf[callee]; present && target == component {
-						violations = append(violations, fmt.Sprintf("%s: %s bypasses relationshipAccessExecution via %s", functions[caller].position, functions[caller].name, functions[callee].name))
-					}
-				}
-			}
-		}
-	}
-	sort.Strings(violations)
-	return violations
+    // Every relationship read is physically implemented by the capability. A
+    // storage.Engine implementation is the storage protocol itself, including
+    // transaction/snapshot adapters; it must not recursively enter query planning.
+    // No call-graph fan-in heuristic can exempt a query-side reader here.
+    violations := structuralViolations
+    var population []string
+    for _, function := range functions {
+        if !function.directIO {
+            continue
+        }
+        population = append(population, function.position+" "+function.name)
+        if !function.owner && !function.adapter {
+            violations = append(violations, fmt.Sprintf("%s: %s reads relationship storage outside relationshipAccessExecution", function.position, function.name))
+        }
+    }
+    sort.Strings(population)
+    t.Logf("compiler-resolved relationship storage readers (%d):\n%s", len(population), strings.Join(population, "\n"))
+    require.NotEmpty(t, population)
+    sort.Strings(violations)
+    return violations
 }
-
-// This guard starts at the compiler-resolved storage methods and walks their
-// transitive callers. It therefore covers duplicate method names, interface
-// dispatch, string-pattern routes and ExecuteResult producers without a list
-// of clauses or reader types.
+// Every compiler-resolved relationship storage read belongs to the execution
+// capability or to an implementation of the storage protocol. Result types,
+// caller counts, clauses and query-reader names cannot exempt a direct read.
 func TestRelationshipAccessProgramExecutionBoundary(t *testing.T) {
 	require.Empty(t, relationshipBoundaryViolations(t, ""))
 }
@@ -371,10 +239,42 @@ import (
 )
 
 func (e *StorageExecutor) relationshipBoundaryFixture(ctx context.Context, id storage.NodeID) {
-	_, _, _ = incidentEdgeListsContext(ctx, e.storage, id, "both")
+	read := e.storage.GetEdge
+	_, _ = read(storage.EdgeID(id))
 }
 `
 	violations := relationshipBoundaryViolations(t, fixture)
 	require.Len(t, violations, 1)
-	require.Contains(t, violations[0], "relationshipBoundaryFixture bypasses relationshipAccessExecution via incidentEdgeListsContext")
+	require.Contains(t, violations[0], "relationshipBoundaryFixture reads relationship storage outside relationshipAccessExecution")
+}
+
+func TestRelationshipAccessProgramExecutionBoundaryStorageSurface(t *testing.T) {
+	reads := []string{
+		"_, _ = e.storage.GetEdge(edge)",
+		"_, _ = e.storage.AllEdges()",
+		"_, _ = e.storage.GetEdgesByType(\"T\")",
+		"_, _ = e.storage.GetOutgoingEdges(node)",
+		"_, _ = e.storage.GetIncomingEdges(node)",
+		"_, _ = e.storage.GetEdgesBetween(node, node)",
+		"_ = e.storage.GetEdgeBetween(node, node, \"T\")",
+		"_ = e.storage.GetInDegree(node)",
+		"_ = e.storage.GetOutDegree(node)",
+		"_, _ = e.storage.EdgeCount()",
+		"_, _ = e.storage.EdgeCountByType(\"T\")",
+		"_, _ = e.storage.EdgeCountByStartLabel(\"L\", \"T\")",
+		"_, _ = e.storage.EdgeCountByEndLabel(\"L\", \"T\")",
+		"_, _, _ = e.storage.(storage.AdjacentEdgesEngine).GetAdjacentEdges(node)",
+		"_, _, _ = e.storage.(storage.RelationshipPropertySeeker).SeekRelationships(ctx, \"T\", []string{\"p\"}, []interface{}{1})",
+		"_ = storage.StreamEdgesByType(ctx, e.storage, \"T\", func(*storage.Edge) error { return nil })",
+	}
+	var fixture strings.Builder
+	fixture.WriteString("package cypher\nimport (\"context\"; \"github.com/orneryd/nornicdb/pkg/storage\")\n")
+	for index, read := range reads {
+		fmt.Fprintf(&fixture, "func(e *StorageExecutor) relationshipPrimitive%d(ctx context.Context, node storage.NodeID, edge storage.EdgeID) *ExecuteResult { %s; return nil }\n", index, read)
+	}
+	violations := relationshipBoundaryViolations(t, fixture.String())
+	require.Len(t, violations, len(reads), "every primitive and every independent caller must be checked")
+	for index := range reads {
+		require.Contains(t, strings.Join(violations, "\n"), fmt.Sprintf("relationshipPrimitive%d reads relationship storage", index))
+	}
 }

@@ -576,7 +576,7 @@ func buildRelationshipBatchReturnRow(row map[string]interface{}, returns []rowFi
 	return out
 }
 
-func lookupRelationshipBatchExistingEdge(
+func (run relationshipAccessExecution) lookupRelationshipBatchExistingEdge(
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -608,6 +608,19 @@ func lookupRelationshipBatchExistingEdge(
 	}
 	scannedPairs[pairKey] = struct{}{}
 	return existingByKey[edgeKey], nil
+}
+
+func lookupRelationshipBatchExistingEdge(
+	store storage.Engine,
+	startID storage.NodeID,
+	endID storage.NodeID,
+	merge relationshipMergeSpec,
+	row map[string]interface{},
+	edgeKey string,
+	existingByKey map[string]*storage.Edge,
+	scannedPairs map[string]struct{},
+) (*storage.Edge, error) {
+	return relationshipStorageExecution().lookupRelationshipBatchExistingEdge(store, startID, endID, merge, row, edgeKey, existingByKey, scannedPairs)
 }
 
 func relationshipBatchEdgeKeyFromRow(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, row map[string]interface{}) string {

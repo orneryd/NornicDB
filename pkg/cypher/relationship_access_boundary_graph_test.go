@@ -27,14 +27,15 @@ func relationshipBoundaryGraph(files []*ast.File, fset *token.FileSet, info *typ
 			}
 			signature := object.Type().(*types.Signature)
 			owner := signature.Recv() != nil && relationshipBoundaryNamedType(signature.Recv().Type()) == "relationshipAccessExecution"
-			functions[object] = &relationshipBoundaryFunction{object: object, name: relationshipBoundaryFunctionName(object), position: fset.Position(function.Pos()).String(), owner: owner, calls: map[*types.Func]bool{}}
+			adapter := relationshipBoundaryStorageAdapter(object)
+			functions[object] = &relationshipBoundaryFunction{object: object, name: relationshipBoundaryFunctionName(object), position: fset.Position(function.Pos()).String(), owner: owner, adapter: adapter, calls: map[*types.Func]bool{}}
 			bodies[object] = function.Body
 			ast.Inspect(function.Body, func(node ast.Node) bool {
 				if literal, ok := node.(*ast.FuncLit); ok {
 					name := fmt.Sprintf("%s.closure@%s", relationshipBoundaryFunctionName(object), fset.Position(literal.Pos()))
 					closure := types.NewFunc(literal.Pos(), object.Pkg(), name, info.TypeOf(literal).(*types.Signature))
 					literals[literal] = closure
-					functions[closure] = &relationshipBoundaryFunction{object: closure, name: name, position: fset.Position(literal.Pos()).String(), owner: owner, calls: map[*types.Func]bool{}}
+					functions[closure] = &relationshipBoundaryFunction{object: closure, name: name, position: fset.Position(literal.Pos()).String(), owner: owner, adapter: adapter, calls: map[*types.Func]bool{}}
 					bodies[closure] = literal.Body
 				}
 				return true

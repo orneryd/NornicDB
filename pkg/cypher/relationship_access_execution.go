@@ -32,6 +32,23 @@ type relationshipVectorProbe struct {
 	candidates, rows  int64
 }
 
+// relationshipStorageExecution gives explicit-entity APIs the same owner's
+// storage-only capability. There is no parsed access site to describe for a
+// metadata, hydration or write-validation read. Parsed kernels instead carry
+// the execution obtained for their registered statement template.
+func relationshipStorageExecution() relationshipAccessExecution {
+	var executor *StorageExecutor
+	return executor.relationshipExecutionFor(nil, "", "")
+}
+
+func (run relationshipAccessExecution) inDegree(node storage.NodeID) int {
+	return run.executor.storage.GetInDegree(node)
+}
+
+func (run relationshipAccessExecution) outDegree(node storage.NodeID) int {
+	return run.executor.storage.GetOutDegree(node)
+}
+
 func (e *StorageExecutor) relationshipExecutionFor(ctx context.Context, pattern, where string) relationshipAccessExecution {
 	if pattern == "" {
 		return relationshipAccessExecution{executor: e, access: &relationshipAccess{}}
