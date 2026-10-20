@@ -2303,14 +2303,15 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 		if !ok {
 			return nil, false
 		}
-		seen := map[interface{}]struct{}{}
+		seen := map[uint64]struct{}{}
 		keys := make([]interface{}, 0, len(rowMaps))
 		for _, rm := range rowMaps {
 			v := rm[keysProp]
-			if _, exists := seen[v]; exists {
+			key := hashRow([]interface{}{v})
+			if _, exists := seen[key]; exists {
 				continue
 			}
-			seen[v] = struct{}{}
+			seen[key] = struct{}{}
 			keys = append(keys, v)
 		}
 		return &ResultStream{
