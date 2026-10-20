@@ -2,7 +2,7 @@
 
 Mechanically enumerated by TestValueContractInventory with Go ASTs. IDs use file, enclosing function, callee and ordinal; formatting-only line shifts do not create consumers. The guard rejects added, removed or changed sites, implicit constructor names, missing arguments, uninitialized contract variables and constructor aliases. Every registered site includes its required contract and reason.
 
-Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocation probes are also registered in testdata/value_contract_calls.json.
+Inventory: 176 total sites, 113 production sites. Tests and allocation probes are also registered in testdata/value_contract_calls.json.
 
 | Call site | Required contract | Reason |
 |---|---|---|
@@ -31,6 +31,7 @@ Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocati
 | `apoc_native_functions.go:*StorageExecutor.nativeAPOCPath:cypherEqualityValue:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `case_evaluation.go:runCaseExpression:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `clauses.go:*StorageExecutor.executeUnionBranches:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `clauses.go:joinedValueKey:cypherValueKey:1` | `cypherEquivalenceContract` | Path grouping and DISTINCT use exact numeric equivalence while retaining the existing entity and temporal equivalence contract. |
 | `coll_functions.go:fnCollDistinct:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
 | `coll_functions.go:fnCollIndexOf:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `comparison.go:*StorageExecutor.compareEqual:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |

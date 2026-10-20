@@ -6,7 +6,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -571,7 +570,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				}
 			}
 
-			key := cypherValueKey(keyParts, cypherEquivalenceContract)
+			key := joinedValueKey(keyParts)
 			groups[key] = append(groups[key], path)
 			if _, exists := groupKeys[key]; !exists {
 				groupKeys[key] = keyParts

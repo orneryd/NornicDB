@@ -342,6 +342,15 @@
     "reason": "DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively."
   },
   {
+    "id": "clauses.go:joinedValueKey:cypherValueKey:1",
+    "file": "clauses.go",
+    "caller": "joinedValueKey",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Path grouping and DISTINCT use exact numeric equivalence while retaining the existing entity and temporal equivalence contract."
+  },
+  {
     "id": "coll_functions.go:fnCollDistinct:cypherValueKey:1",
     "file": "coll_functions.go",
     "caller": "fnCollDistinct",
