@@ -125,7 +125,7 @@ func compileRelationshipAccessSyntax(pattern, where string) relationshipAccessSy
 	if open, close := firstRelationshipBracket(pattern); open >= 0 {
 		props := relationshipDeclarationOf(pattern[open+1 : close]).properties
 		if strings.HasPrefix(props, "{") && strings.HasSuffix(props, "}") {
-			for _, pair := range reader.splitPropertyPairs(props[1 : len(props)-1]) {
+			for _, pair := range splitTopLevelComma(props[1 : len(props)-1]) {
 				if colon := findTopLevelMapKeyValueSeparator(pair); colon >= 0 {
 					property := normalizePropertyKey(pair[:colon])
 					expressions[property] = strings.TrimSpace(pair[colon+1:])
