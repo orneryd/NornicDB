@@ -1076,14 +1076,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// expression), kept from Cypher 3, are the list comprehensions
 	// [variable IN list WHERE predicate] and [variable IN list | expression],
 	// evaluated as one.
-	for _, function := range []string{"filter", "extract"} {
-		if matchFuncStartAndSuffix(expr, function) {
-			comprehension := "[" + extractFuncArgs(expr, function) + "]"
-			if list, ok := e.evaluateExpressionWithContextFull(ctx, comprehension, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).([]interface{}); ok {
-				return list
-			}
+	if function, arguments, call := parseFunctionCallWS(expr); call && (strings.EqualFold(function, "filter") || strings.EqualFold(function, "extract")) {
+		variable, list, predicate, projection, ok := parseListComprehension(arguments)
+		if !ok {
 			return []interface{}{}
 		}
+		return e.evaluateListComprehension(ctx, variable, list, predicate, projection, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// [x IN list WHERE predicate | projection], each part but the list

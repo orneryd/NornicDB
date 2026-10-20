@@ -27,6 +27,7 @@ type QueryInfo struct {
 	HasWith          bool
 	HasUnwind        bool
 	HasCall          bool
+	HasUse           bool
 	HasExplain       bool
 	HasProfile       bool
 	HasShow          bool
@@ -268,6 +269,7 @@ func analyzeQuery(cypher string) *QueryInfo {
 
 	// Other clauses
 	info.HasCall = containsKeyword(upper, "CALL")
+	info.HasUse = containsKeyword(upper, "USE")
 	info.HasUnion = containsKeyword(upper, "UNION")
 	info.HasForeach = containsKeyword(upper, "FOREACH")
 	info.HasLoadCSV = containsKeyword(upper, "LOAD CSV")

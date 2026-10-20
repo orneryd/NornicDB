@@ -13,7 +13,7 @@ func TestMergeSemanticValidationCachesAcceptedStatement(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	query := "MERGE (n:Cached) RETURN n"
 	require.NoError(t, exec.validateMergeSemanticScopes(query, false))
-	require.True(t, exec.mergeSemanticValidationCache.contains(query))
+	require.True(t, exec.semanticValidationCache.contains(query))
 	require.NoError(t, exec.validateMergeSemanticScopes(query, false))
 }
 
@@ -27,6 +27,6 @@ func TestMergeSemanticValidationCachesLiteralStatements(t *testing.T) {
 	require.NoError(t, exec.validateMergeSemanticScopes(query, false))
 	canonical, changed := normalizeLiteralText(query)
 	require.True(t, changed)
-	require.True(t, exec.mergeSemanticValidationCache.contains(canonical))
+	require.True(t, exec.semanticValidationCache.contains(canonical))
 	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (n:Cached {id: 2}) RETURN n", false))
 }

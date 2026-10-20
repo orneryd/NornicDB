@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/pkg/fabric"
+	"strings"
+)
 
 func validateExpressionOperandCompleteness(expression string) error {
 	expression = strings.TrimSpace(expression)
@@ -43,7 +46,12 @@ func validateExpressionLexicalTokens(text string) error {
 // containsNotInOperator reports whether the text contains the two-keyword
 // sequence `NOT IN` (only whitespace between them) outside quotes and
 // comments. `x NOT IN list` is not Cypher; the negation is `NOT x IN list`.
-func containsNotInOperator(cypher string) bool {
+func containsNotInOperator(cypher string, inputs ...*semanticStatementInput) bool {
+	input := matchingSemanticInput(cypher, inputs...)
+	var scopes []fabric.ExpressionScope
+	if syntax := input.syntax(); syntax != nil && syntax.Err == nil {
+		scopes = syntax.Input.Scopes()
+	}
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
 		if isCypherQuoteByte(c) {
@@ -54,14 +62,18 @@ func containsNotInOperator(cypher string) bool {
 			i = queryCommentEnd(cypher, i) - 1
 			continue
 		}
-		// NOT is a valid local iterator name, read by the same declaration
-		// owner as the list/quantifier evaluators, rather than an infix NOT.
-		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
-			if name, at, _, declared := bindingDeclaration(cypher, i+1); declared && strings.EqualFold(name, "NOT") {
-				_, end, _ := scanIdentifierToken(cypher, at)
-				i = end - 1
-				continue
+		// A declaration named NOT is grammar-owned, including its quoted span.
+		declarationEnd := 0
+		for _, scope := range scopes {
+			for _, declaration := range scope.Declarations {
+				if declaration.At == i && strings.EqualFold(declaration.Name, "NOT") {
+					declarationEnd = declaration.End
+				}
 			}
+		}
+		if declarationEnd > i {
+			i = declarationEnd - 1
+			continue
 		}
 		if !matchKeywordAt(cypher, i, "NOT") {
 			continue

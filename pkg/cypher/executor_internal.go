@@ -53,7 +53,14 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 	return e.executeInternal(ctx, statement, params)
 }
 
-func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	return e.executeInternalWithAdmission(ctx, cypher, params, nil)
+}
+
+// executeInternalWithAdmission receives an explicit completed logical input
+// only from the physical adapter. A procedure's new user statement calls the
+// ordinary entrance, even if its context happens to retain a parent frame.
+func (e *StorageExecutor) executeInternalWithAdmission(ctx context.Context, cypher string, params map[string]interface{}, admitted *fabric.LogicalFrame) (result *ExecuteResult, retErr error) {
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}
@@ -123,17 +130,27 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
-	// Local fragments own their lowering and restore generated names before
-	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	// A selected local fragment consumes the same backend lowering owner.
+	lowered, localRewrites, _, err := e.lowerLocalStatement(ctx, cypher, params)
 	if err != nil {
 		return nil, err
 	}
-	if labelRewrite != nil {
-		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+	cypher = lowered
+	if len(localRewrites) > 0 {
+		defer func() { result, retErr = restoreLocalStatement(result, retErr, localRewrites) }()
 	}
-
+	if canonical, names := canonicalizeQuotedVariablesWithBindings(cypher, e.fabricRecordBindings); names != nil {
+		cypher = canonical
+		params = names.parameterValues(params)
+		ctx = withQuotedVariableNames(ctx, names)
+		ctx = withPipelineImports(ctx, names.bindingValues(pipelineImports(ctx)))
+		if e.fabricRecordBindings != nil {
+			previousBindings := e.fabricRecordBindings
+			e.fabricRecordBindings = names.bindingValues(previousBindings)
+			defer func() { e.fabricRecordBindings = previousBindings }()
+		}
+		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
+	}
 	// Basic syntax validation to preserve existing error behavior.
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
@@ -148,7 +165,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	params = mergeInheritedQueryParams(ctx, params)
 	params = normalizeQueryParameters(params)
 	ctx = withQueryParams(ctx, params)
-	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
+	if err := e.validateBoundParameterExpressions(ctx, cypher, params, admitted); err != nil {
 		return nil, err
 	}
 	upper := e.cachedUpperQuery(cypher)
@@ -171,15 +188,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	return result, retErr
 }
 
-func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
-		return err
-	}
-	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
-		return err
-	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
-		return err
+func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}, admitted ...*fabric.LogicalFrame) error {
+	if len(admitted) == 0 || admitted[0] == nil {
+		if err := e.validateInvocationParameterTypes(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+			return err
+		}
 	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
 		return err

@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 // =============================================================================
@@ -302,12 +304,17 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 			http.TimeoutHandler(next, searchTimeout, "request timeout: search busy").ServeHTTP(w, r)
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
-			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				s.activeTxReqs.Add(1)
-				defer s.activeTxReqs.Add(-1)
-				next.ServeHTTP(w, r)
-			})
-			http.TimeoutHandler(txWrapped, txTimeout, "request timeout: transaction busy").ServeHTTP(w, r)
+			// The request handler owns its response through both phases. Only
+			// statement execution has a request deadline; the shared terminal
+			// owner admits COMMIT and then waits for its real outcome.
+			ctx, cancel := txphase.WithExecutionDeadline(r.Context(), txTimeout)
+			defer cancel()
+			if s.requestsCtx != nil {
+				ctx = fabric.WithTransactionLifetime(ctx, s.requestsCtx)
+			}
+			s.activeTxReqs.Add(1)
+			defer s.activeTxReqs.Add(-1)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		default:
 			next.ServeHTTP(w, r)

@@ -266,50 +266,16 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 }
 
 func isReturnNameCountShape(query string, startVar string, endVar string) bool {
-	returnIdx := findKeywordIndex(query, "RETURN")
-	if returnIdx < 0 {
+	projection := statementPhysicalReturnProjection(query)
+	if projection == nil || projection.Star || len(projection.Items) != 2 {
 		return false
 	}
-
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return false
-	}
-
-	parts := splitOutsideParens(returnPart, ',')
-	if len(parts) != 2 {
-		return false
-	}
-
-	left := strings.TrimSpace(parts[0])
-	right := strings.TrimSpace(parts[1])
-
-	// Handle "AS" aliases.
-	if asIdx := strings.Index(upperASCII(left), " AS "); asIdx > 0 {
-		left = strings.TrimSpace(left[:asIdx])
-	}
-	if asIdx := strings.Index(upperASCII(right), " AS "); asIdx > 0 {
-		right = strings.TrimSpace(right[:asIdx])
-	}
-
-	// Require "startVar.name" (the optimized executor currently uses the "name" property).
+	left, right := projection.Items[0].Expression, projection.Items[1].Expression
 	if !strings.EqualFold(left, startVar+".name") {
 		return false
 	}
-
-	// Require COUNT(endVar) or COUNT(*).
 	rightUpper := upperASCII(strings.ReplaceAll(right, " ", ""))
-	wantCountVar := "COUNT(" + upperASCII(endVar) + ")"
-	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
+	return rightUpper == "COUNT("+upperASCII(endVar)+")" || rightUpper == "COUNT(*)"
 }
 
 func parseDirectionalCountPattern(ctx context.Context, matchClause string, incoming bool) (string, string, string, string, bool) {
@@ -414,34 +380,12 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 }
 
 func isReturnEdgePropertyAggNameShape(query string, relVar string, propName string) bool {
-	returnIdx := findKeywordIndex(query, "RETURN")
-	if returnIdx < 0 {
+	projection := statementPhysicalReturnProjection(query)
+	if projection == nil || projection.Star || len(projection.Items) < 2 {
 		return false
 	}
-	returnPart := strings.TrimSpace(query[returnIdx+6:])
-
-	// Strip ORDER BY / SKIP / LIMIT.
-	end := len(returnPart)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	returnPart = strings.TrimSpace(returnPart[:end])
-	if returnPart == "" {
-		return false
-	}
-
-	items := splitOutsideParens(returnPart, ',')
-	if len(items) < 2 {
-		return false
-	}
-
-	first := strings.TrimSpace(items[0])
-	if asIdx := strings.Index(upperASCII(first), " AS "); asIdx > 0 {
-		first = strings.TrimSpace(first[:asIdx])
-	}
-	// Require "<var>.name" in first return position.
+	items := projection.Items
+	first := items[0].Expression
 	dot := strings.LastIndex(first, ".")
 	if dot < 0 || !strings.EqualFold(first[dot+1:], "name") {
 		return false
@@ -452,10 +396,7 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 
 	// Remaining items must be aggregations over relVar.prop (optionally plus count(r)).
 	for i := 1; i < len(items); i++ {
-		item := strings.TrimSpace(items[i])
-		if asIdx := strings.Index(upperASCII(item), " AS "); asIdx > 0 {
-			item = strings.TrimSpace(item[:asIdx])
-		}
+		item := items[i].Expression
 
 		u := upperASCII(strings.ReplaceAll(item, " ", ""))
 		switch {

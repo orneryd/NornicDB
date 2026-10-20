@@ -15,23 +15,27 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // caseWhenClause represents a single WHEN ... THEN clause in a CASE expression.
 type caseWhenClause struct {
-	condition string // WHEN condition (for searched CASE)
-	value     string // WHEN value (for simple CASE)
-	result    string // THEN result
+	condition                 string // WHEN condition (for searched CASE)
+	value                     string // WHEN value (for simple CASE)
+	result                    string // THEN result
+	conditionSpan, resultSpan fabric.ExpressionSpan
 }
 
 // caseExpression represents a parsed CASE expression.
 type caseExpression struct {
-	isSimple       bool             // true for simple CASE, false for searched CASE
-	testExpression string           // expression to test (simple CASE only)
-	whenClauses    []caseWhenClause // list of WHEN clauses
-	elseResult     string           // ELSE result (optional)
+	isSimple           bool             // true for simple CASE, false for searched CASE
+	testExpression     string           // expression to test (simple CASE only)
+	whenClauses        []caseWhenClause // list of WHEN clauses
+	elseResult         string           // ELSE result (optional)
+	source             string
+	testSpan, elseSpan fabric.ExpressionSpan
 }
 
 // isCaseExpression checks if an expression is a CASE expression.
@@ -105,6 +109,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 
 	ce := &caseExpression{
 		whenClauses: []caseWhenClause{},
+		source:      expr,
 	}
 
 	// Only keywords at the current CASE level delimit the outer expression.
@@ -120,6 +125,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		// Simple CASE: CASE expression WHEN value THEN result ...
 		ce.isSimple = true
 		ce.testExpression = beforeFirstWhen
+		ce.testSpan = trimmedCaseSpan(expr, contentStart, contentStart+firstWhenIdx)
 	}
 
 	for cursor := firstWhenIdx; cursor < len(content); {
@@ -144,7 +150,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		if condition == "" || result == "" {
 			return nil, localizedError(localization.CypherCoreCaseThenRequired(content[cursor:]), nil)
 		}
-		clause := caseWhenClause{result: result}
+		clause := caseWhenClause{result: result, conditionSpan: trimmedCaseSpan(expr, contentStart+conditionStart, contentStart+thenIndex), resultSpan: trimmedCaseSpan(expr, contentStart+resultStart, contentStart+resultEnd)}
 		if ce.isSimple {
 			clause.value = condition
 		} else {
@@ -157,6 +163,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		}
 		if next == nextElse {
 			ce.elseResult = strings.TrimSpace(content[nextElse+len("ELSE"):])
+			ce.elseSpan = trimmedCaseSpan(expr, contentStart+nextElse+len("ELSE"), contentStart+len(content))
 			break
 		}
 		cursor = nextWhen
@@ -167,6 +174,12 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	}
 
 	return ce, nil
+}
+
+func trimmedCaseSpan(source string, start, end int) fabric.ExpressionSpan {
+	start += len(source[start:end]) - len(strings.TrimLeftFunc(source[start:end], unicode.IsSpace))
+	end = start + len(strings.TrimSpace(source[start:end]))
+	return fabric.ExpressionSpan{Start: start, End: end}
 }
 
 // findCaseKeywordAtLevel finds a CASE grammar keyword while ignoring quoted
@@ -616,7 +629,20 @@ type caseBlockSpan struct {
 // evaluated with the scope, not for the row. It returns nil (no allocation)
 // when there are no such blocks. A keyword preceded by a dot is a property
 // access, not a CASE keyword.
-func caseBlockSpans(expr string) []caseBlockSpan {
+func caseBlockSpans(expr string, inputs ...fabric.ExpressionInput) []caseBlockSpan {
+	if indexASCIIFold(expr, "case") < 0 {
+		return nil
+	}
+	var nativeScopes []fabric.ExpressionScope
+	if len(inputs) > 0 && inputs[0].Valid() {
+		nativeScopes = inputs[0].Scopes()
+	} else {
+		nativeScopes = fabric.ExpressionScopes(expr)
+	}
+	opens := make(map[int]bool, len(nativeScopes))
+	for _, scope := range nativeScopes {
+		opens[scope.Open] = true
+	}
 	var spans []caseBlockSpan
 	stack := make([]int, 0, 2)
 	var delimiters []bool // open ( [ {: true when it opens a scope
@@ -629,7 +655,7 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 		ch := expr[i]
 		switch ch {
 		case '(', '[', '{':
-			scope := caseVariableScopeOpensAt(expr, i)
+			scope := opens[i]
 			delimiters = append(delimiters, scope)
 			if scope {
 				scopes++
@@ -669,33 +695,13 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 // [x IN …], [p = (a)-->(b) | …], reduce / allReduce / all / any / none /
 // single / filter), an unnamed pattern comprehension [(a)-->(b) | …], or
 // the { … } of an EXISTS, COUNT, COLLECT or CALL subquery.
-func caseVariableScopeOpensAt(expr string, open int) bool {
-	if expr[open] != '{' {
-		if _, ok := localBindingAt(expr, open); ok {
+func caseVariableScopeOpensAt(expr string, open int) nativeScopePredicate {
+	for _, scope := range fabric.ExpressionScopes(expr) {
+		if scope.Open == open {
 			return true
 		}
 	}
-	switch expr[open] {
-	case '[':
-		next := skipSpaces(expr, open+1)
-		return next < len(expr) && expr[next] == '('
-	case '(':
-		return false
-	default: // {
-		end := open
-		for end > 0 && isASCIISpace(expr[end-1]) {
-			end--
-		}
-		start := end
-		for start > 0 && isIdentByte(expr[start-1]) {
-			start--
-		}
-		if start == end || start > 0 && expr[start-1] == '.' {
-			return false
-		}
-		name := lowerASCII(expr[start:end])
-		return name == "exists" || name == "count" || name == "collect" || name == "call"
-	}
+	return false
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.

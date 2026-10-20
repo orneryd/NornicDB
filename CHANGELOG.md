@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve OPTIONAL and unit CALL rows, scoped imports and static type facts through
+  Fabric fragments. Validate logical scopes before cached or skipped execution and
+  use the native value-equivalence contract for Fabric UNION and DISTINCT.
+
 - `recall-bench ingest` enables embedding when an embedding provider is set and
   fails when no corpus vectors were stored. It previously left embedding
   disabled, so hybrid runs silently fell back to BM25. Add OpenAI-compatible

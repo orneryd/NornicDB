@@ -140,7 +140,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 	if expr == "" {
 		return nil, false, nil
 	}
-	if value, found := values[expr]; found {
+	if value, found := rowExpressionBinding(values, expr); found {
 		return runtimeRowResult(value, true, nil)
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {

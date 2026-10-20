@@ -133,6 +133,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
 )
 
@@ -349,7 +350,6 @@ type StorageExecutor struct {
 	planCache                    *QueryPlanCache // Parsed query plan cache
 	semanticValidationCache      *semanticValidationCache
 	matchSemanticValidationCache *semanticValidationCache
-	mergeSemanticValidationCache *semanticValidationCache
 	// fabricPlanCache caches planned Fabric fragment trees (query + sessionDB).
 	fabricPlanCache *fabric.PlanCache
 	analyzer        *QueryAnalyzer // Query analysis with AST caching
@@ -572,7 +572,6 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		planCache:                      e.planCache,
 		semanticValidationCache:        e.semanticValidationCache,
 		matchSemanticValidationCache:   e.matchSemanticValidationCache,
-		mergeSemanticValidationCache:   e.mergeSemanticValidationCache,
 		fabricPlanCache:                e.fabricPlanCache,
 		analyzer:                       e.analyzer,
 		nodeLookupCache:                lookupCache,
@@ -773,7 +772,6 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		planCache:                      NewQueryPlanCache(500), // Cache 500 parsed query plans
 		semanticValidationCache:        newSemanticValidationCache(500),
 		matchSemanticValidationCache:   newSemanticValidationCache(500),
-		mergeSemanticValidationCache:   newSemanticValidationCache(500),
 		fabricPlanCache:                fabric.NewPlanCache(500), // Cache 500 Fabric fragment plans
 		analyzer:                       NewQueryAnalyzer(1000),   // Cache 1000 parsed query ASTs
 		nodeLookupCache:                make(map[string]*storage.Node, 1000),
@@ -1824,7 +1822,16 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Commit successful transaction. The statement's context makes commit-time
 	// validation stop when the statement is terminated or its client goes away
 	// (#1115); the deferred handler in Execute reports Transaction.Terminated.
-	if err := e.commitStorageTransaction(ctx, tx); err != nil {
+	commitCtx, admissionErr := txphase.CommitContext(ctx)
+	if admissionErr != nil {
+		_ = tx.Rollback()
+		txExec.invalidateNodeLookupCache()
+		if wal != nil && walSeqStart > 0 {
+			_, _ = wal.AppendTxAbort(dbName, txID, admissionErr.Error())
+		}
+		return nil, admissionErr
+	}
+	if err := e.commitStorageTransaction(commitCtx, tx); err != nil {
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
@@ -1957,19 +1964,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 }
 
 func stripWithEmbeddingSuffix(cypher string) (string, bool) {
-	idx := findKeywordIndex(cypher, "WITH EMBEDDING")
-	if idx < 0 {
-		return cypher, false
-	}
-	before := strings.TrimSpace(cypher[:idx])
-	after := strings.TrimSpace(cypher[idx+len("WITH EMBEDDING"):])
-	if before == "" {
-		return cypher, false
-	}
-	if after == "" {
-		return before, true
-	}
-	return strings.TrimSpace(before + " " + after), true
+	return fabric.StripEmbeddingOption(cypher)
 }
 
 func maxInt(a, b int) int {

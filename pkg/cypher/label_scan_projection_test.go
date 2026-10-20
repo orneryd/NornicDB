@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -25,13 +26,20 @@ func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(scope, lab
 	return e.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
 }
 
+func projectionTailForTest(texts []string) []pipelineClause {
+	clauses, _ := pipelineClausesFor(strings.Join(texts, " "))
+	return clauses
+}
+
 func TestPipelineReadOnlyTail(t *testing.T) {
 	clauses := func(query string) []pipelineClause {
 		parsed, ok := pipelineClausesFor(query)
 		require.True(t, ok, query)
 		return parsed[1:]
 	}
-	require.Equal(t, []string{"WITH p.a AS a", "RETURN a"}, pipelineReadOnlyTail(clauses("MATCH (p:P) WITH p.a AS a RETURN a")))
+	tail := clauses("MATCH (p:P) WITH p.a AS a RETURN a")
+	require.Equal(t, tail, pipelineReadOnlyTail(tail))
+	require.Same(t, &tail[0], &pipelineReadOnlyTail(tail)[0])
 	require.Nil(t, pipelineReadOnlyTail(clauses("MATCH (p:P) SET p.a = 1 RETURN p.a")))
 	require.Nil(t, pipelineReadOnlyTail(clauses("MATCH (p:P) RETURN *")))
 	require.Nil(t, pipelineReadOnlyTail(clauses("MATCH (p:P) WITH DISTINCT * RETURN p.a")))
@@ -42,21 +50,21 @@ func TestPipelineReadOnlyTail(t *testing.T) {
 func TestPipelineLabelScanProjection(t *testing.T) {
 	ctx := context.Background()
 	pattern := nodePatternInfo{variable: "p", labels: []string{"P"}, properties: map[string]interface{}{"k": 1}}
-	properties, ok := pipelineLabelScanProjection(ctx, pattern, "p.w > 1", []string{"WITH p.b AS b", "RETURN b, p.a"})
+	properties, ok := pipelineLabelScanProjection(ctx, pattern, "p.w > 1", projectionTailForTest([]string{"WITH p.b AS b", "RETURN b, p.a"}))
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b", "k", "w"}, properties)
 
 	for _, tail := range [][]string{{"RETURN p"}, {"WITH p", "RETURN p.a"}, {"MATCH (p)-->(q)", "RETURN q.a"}} {
-		_, ok = pipelineLabelScanProjection(ctx, pattern, "", tail)
+		_, ok = pipelineLabelScanProjection(ctx, pattern, "", projectionTailForTest(tail))
 		require.False(t, ok, "%v", tail)
 	}
-	_, ok = pipelineLabelScanProjection(ctx, pattern, "p = $other", []string{"RETURN p.a"})
+	_, ok = pipelineLabelScanProjection(ctx, pattern, "p = $other", projectionTailForTest([]string{"RETURN p.a"}))
 	require.False(t, ok)
-	_, ok = pipelineLabelScanProjection(ctx, nodePatternInfo{variable: "p"}, "", []string{"RETURN p.a"})
+	_, ok = pipelineLabelScanProjection(ctx, nodePatternInfo{variable: "p"}, "", projectionTailForTest([]string{"RETURN p.a"}))
 	require.False(t, ok)
 	_, ok = pipelineLabelScanProjection(ctx, pattern, "", nil)
 	require.False(t, ok)
-	_, ok = pipelineLabelScanProjection(WithTemporalViewport(ctx, CurrentTemporalViewport()), pattern, "", []string{"RETURN p.a"})
+	_, ok = pipelineLabelScanProjection(WithTemporalViewport(ctx, CurrentTemporalViewport()), pattern, "", projectionTailForTest([]string{"RETURN p.a"}))
 	require.False(t, ok)
 }
 

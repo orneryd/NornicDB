@@ -318,19 +318,19 @@ func fastTraversalExprValue(expr string, row traversalOptRow) (interface{}, bool
 	if !isSimpleTraversalIdentifier(expr) {
 		return nil, false
 	}
-	if node, ok := row.nodes[expr]; ok {
+	if node, ok := rowExpressionBinding(row.nodes, expr); ok {
 		if node == nil {
 			return nil, true
 		}
 		return node, true
 	}
-	if rel, ok := row.rels[expr]; ok {
+	if rel, ok := rowExpressionBinding(row.rels, expr); ok {
 		if rel == nil {
 			return nil, true
 		}
 		return rel, true
 	}
-	if value, ok := row.values[expr]; ok {
+	if value, ok := rowExpressionBinding(row.values, expr); ok {
 		return value, true
 	}
 	return nil, false

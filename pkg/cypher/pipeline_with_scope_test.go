@@ -23,7 +23,7 @@ func TestPipelineWithProjectionDoesNotAllocatePredicateScope(t *testing.T) {
 		return true
 	}
 	allocations := testing.AllocsPerRun(100, func() {
-		if !executor.pipelineWithRowSource(ctx, input, plan)(yield) {
+		if !executor.pipelineWithRowSource(ctx, input, plan.withImports(ctx))(yield) {
 			t.Fatal("projection source did not complete")
 		}
 	})

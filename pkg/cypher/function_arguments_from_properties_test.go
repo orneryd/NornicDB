@@ -361,15 +361,27 @@ func TestFunctionArgumentsFromProperties(t *testing.T) {
 	require.Len(t, result.Rows, 1)
 }
 
+// Public scope/value contracts replace assertions about the removed private
+// parameter-name map. Aliases and rebinding are admitted by the main frame.
 func TestUnwindParameterBindings(t *testing.T) {
-	require.Equal(t, map[string]string{"x": "p"}, unwindParameterBindings("UNWIND [$p] AS x RETURN x"))
-	for _, cypher := range []string{
-		"UNWIND $p",                                 // no AS
-		"UNWIND $p AS x RETURN x",                   // not a list
-		"UNWIND [1] AS x RETURN x",                  // not a parameter
-		"UNWIND [$p, $q] AS x RETURN x",             // two parameters
-		"UNWIND [$p] AS x UNWIND [1] AS x RETURN x", // bound twice
+	ctx := context.Background()
+	for _, test := range []struct {
+		query string
+		rows  [][]interface{}
+	}{
+		{"UNWIND [$p] AS x RETURN x", [][]interface{}{{int64(3)}}},
+		{"UNWIND $p AS x RETURN x", [][]interface{}{{int64(3)}}},
+		{"UNWIND [1] AS x RETURN x", [][]interface{}{{int64(1)}}},
+		{"UNWIND [$p, $q] AS x RETURN x", [][]interface{}{{int64(3)}, {int64(4)}}},
+		{"UNWIND [$p] AS x UNWIND [1] AS x RETURN x", [][]interface{}{{int64(1)}}},
 	} {
-		require.Nil(t, unwindParameterBindings(cypher), cypher)
+		exec := NewStorageExecutor(newTestMemoryEngine(t))
+		result, err := exec.Execute(ctx, test.query, map[string]interface{}{"p": int64(3), "q": int64(4)})
+		require.NoError(t, err, test.query)
+		require.Equal(t, test.rows, result.Rows, test.query)
 	}
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	_, err := exec.Execute(ctx, "UNWIND $p", map[string]interface{}{"p": int64(3)})
+	require.Error(t, err)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 }

@@ -94,10 +94,10 @@ func TestStaticTypeChecksMatchNeo4j(t *testing.T) {
 // predicates, unary plus, slices, subscripts and map projections are
 // reported, and each receiver kind takes its own keys.
 func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
-	checker := staticOperatorChecker{scope: staticTypeScope{
+	checker := (staticTypeScope{
 		kinds:  matchSemanticScope{"n": matchBindingNode},
 		values: map[string]string{"s": "String", "l": "List<Integer>", "m": "Map", "z": "Null"},
-	}}
+	})
 	for _, tc := range []struct {
 		expr  string
 		want  string
@@ -139,7 +139,7 @@ func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
 		{expr: "m{.a, b: 1}", want: "Map"},
 		{expr: "zz", fails: false, want: ""},
 	} {
-		got, err := checker.check(tc.expr)
+		got, err := checker.checkOperand(tc.expr)
 		if tc.fails {
 			require.Error(t, err, tc.expr)
 			continue
@@ -148,10 +148,10 @@ func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
 		require.Equal(t, tc.want, got.kind, tc.expr)
 	}
 	complete := checker
-	complete.scope.complete = true
-	_, err := complete.check("zz + 1")
+	complete.complete = true
+	_, err := complete.checkOperand("zz + 1")
 	require.ErrorContains(t, err, "zz")
-	_, err = complete.check("null + 1")
+	_, err = complete.checkOperand("null + 1")
 	require.NoError(t, err)
 }
 

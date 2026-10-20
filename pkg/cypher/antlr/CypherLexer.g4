@@ -228,6 +228,17 @@ DIGIT : HexInteger | OctalInteger | [0-9];
 // token numbers stay as they were.
 ALLREDUCE: 'ALLREDUCE';
 
+// Fabric's routing grammar must also recognize clauses sent to a remote
+// constituent. Keep these at the end of the keyword vocabulary.
+GRAPH: 'GRAPH';
+LOAD: 'LOAD';
+CSV: 'CSV';
+HEADERS: 'HEADERS';
+FIELDTERMINATOR: 'FIELDTERMINATOR';
+INSERT: 'INSERT';
+NODETACH: 'NODETACH';
+OFFSET: 'OFFSET';
+
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 

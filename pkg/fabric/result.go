@@ -189,7 +189,7 @@ type concatRowIterator struct {
 
 type distinctRowIterator struct {
 	base RowIterator
-	seen map[uint64]struct{}
+	seen RowEquivalence
 	row  []interface{}
 	err  error
 }
@@ -355,13 +355,13 @@ func (it *concatRowIterator) Close() error {
 }
 
 // NewDistinctRowIterator filters duplicate rows while streaming.
-func NewDistinctRowIterator(base RowIterator) RowIterator {
+func NewDistinctRowIterator(base RowIterator, equivalence RowEquivalence) RowIterator {
 	if base == nil {
 		base = NewResultRowIterator(nil)
 	}
 	return &distinctRowIterator{
 		base: base,
-		seen: make(map[uint64]struct{}),
+		seen: equivalence,
 	}
 }
 
@@ -371,11 +371,9 @@ func (it *distinctRowIterator) Next() bool {
 	}
 	for it.base.Next() {
 		row := it.base.Row()
-		key := hashRow(row)
-		if _, exists := it.seen[key]; exists {
+		if it.seen.Duplicate(row) {
 			continue
 		}
-		it.seen[key] = struct{}{}
 		it.row = row
 		return true
 	}
@@ -478,4 +476,34 @@ func sameColumns(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// UnionColumnOrder is the shared column-name contract for local and Fabric UNION.
+func UnionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
+	if len(columns) != len(branch) {
+		return nil, false
+	}
+	inOrder := true
+	for index := range columns {
+		if columns[index] != branch[index] {
+			inOrder = false
+			break
+		}
+	}
+	if inOrder {
+		return nil, true
+	}
+	positions := make(map[string]int, len(branch))
+	for index, name := range branch {
+		positions[name] = index
+	}
+	order = make([]int, len(columns))
+	for index, name := range columns {
+		position, found := positions[name]
+		if !found {
+			return nil, false
+		}
+		order[index] = position
+	}
+	return order, true
 }

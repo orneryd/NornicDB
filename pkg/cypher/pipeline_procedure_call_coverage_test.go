@@ -113,9 +113,9 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	yield := parseYieldClause("CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1")
-	require.NotNil(t, yield)
-	err = exec.validateYieldModifiers(yield, true)
+	invalid := "CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1"
+	require.Nil(t, parseYieldClause(invalid)) // invalid syntax has no declaration facts
+	_, err = exec.Execute(ctx, invalid, nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 

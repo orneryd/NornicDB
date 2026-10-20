@@ -79,6 +79,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
 		return result, err
 	}
+	// The logical row frame constrains operator selection after the statement
+	// entry has installed its storage view. Fast paths without import retention
+	// cannot consume that frame, even when its current query looks independent.
+	if len(pipelineImports(ctx)) > 0 {
+		return e.executeRequiredPipeline(ctx, cypher)
+	}
 	if strings.Contains(upperQuery, "CALL") {
 		if firstTopLevelCallSubquery(cypher) >= 0 {
 			return e.executeRequiredPipeline(ctx, cypher)
@@ -388,7 +394,12 @@ func splitReturnExpressions(clause string) []string {
 // When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
 // cypher25 is the statement's language version (its scope checks differ).
-func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool, inputs ...*semanticStatementInput) error {
+	// Preprocessing can consume the statement's remaining budget. Validation
+	// is a new execution phase and must not start after cancellation.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A text the selected validator accepted passed every check below (it
 	// is marked valid only then), so a repeated query skips them all (#823):
 	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
@@ -416,22 +427,25 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		return err
 	}
 	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLR(ctx, cypher, cypher25)
+		return e.validateSyntaxANTLR(ctx, cypher, cypher25, inputs...)
 	}
-	return e.validateSyntaxNornic(cypher)
+	return e.validateSyntaxNornicInput(cypher, inputs...)
 }
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
-func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string, cypher25 bool, inputs ...*semanticStatementInput) error {
 	if isNornicExtensionStatement(cypher) {
-		if err := e.validateSyntaxNornic(cypher); err != nil {
+		if err := e.validateSyntaxNornicInput(cypher, inputs...); err != nil {
 			return err
 		}
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
 		return nil
 	}
 	parserError := antlr.ValidateContext(ctx, cypher)
+	if parserError == context.Canceled || parserError == context.DeadlineExceeded {
+		return parserError
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -439,7 +453,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 		return nil
 	}
-	if err := e.validateSyntaxNornic(cypher); err != nil {
+	if err := e.validateSyntaxNornicInput(cypher, inputs...); err != nil {
 		return err
 	}
 	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
@@ -482,6 +496,10 @@ func isDropRoleCommand(cypher string) bool {
 
 // validateSyntaxNornic performs fast inline syntax validation.
 func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
+	return e.validateSyntaxNornicInput(cypher)
+}
+
+func (e *StorageExecutor) validateSyntaxNornicInput(cypher string, inputs ...*semanticStatementInput) error {
 	if e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
 		return nil
 	}
@@ -489,11 +507,11 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	// projections. Comments cannot introduce operands, quotes or delimiters;
 	// keep the original statement as the validation-cache key.
 	original := cypher
-	cypher = lexicalExpressionText(cypher)
-	if containsNotInOperator(cypher) {
+	if containsNotInOperator(original, inputs...) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
 	}
+	cypher = lexicalExpressionText(cypher)
 	if containsTrailingListComma(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input ']': expected an expression")

@@ -116,6 +116,12 @@ func TestTxlogProcedureErrors(t *testing.T) {
 	} {
 		t.Run(test.query, func(t *testing.T) {
 			_, err := exec.Execute(ctx, test.query, test.params)
+			if test.message == localization.MessageCypherSpecializedCallsTxlogArgumentType {
+				// The admitted invocation frame rejects known parameter types
+				// before the procedure's evaluated-argument domain checks.
+				requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+				return
+			}
 			var localized *localization.LocalizedError
 			require.ErrorAs(t, err, &localized)
 			require.Equal(t, test.message, localized.Message.ID)

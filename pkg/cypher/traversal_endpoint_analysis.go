@@ -34,12 +34,14 @@ func (e *StorageExecutor) traversalUnusedPropertyVariables(match *TraversalMatch
 // so the real property reads live in the read-only clauses after it
 // (readTail) and the MATCH's own pushed-down WHERE. A nil readTail means the
 // tail is not read-only, so every variable is conservatively treated as read.
-func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *TraversalMatch, whereClause string, readTail []string) map[string]bool {
+func (e *StorageExecutor) traversalUnusedPropertyVariablesForTail(match *TraversalMatch, whereClause string, readTail []pipelineClause) map[string]bool {
 	if readTail == nil {
 		return nil
 	}
 	expressions := make([]string, 0, len(readTail)+1)
-	expressions = append(expressions, readTail...)
+	for _, clause := range readTail {
+		expressions = append(expressions, clause.text)
+	}
 	if whereClause != "" {
 		expressions = append(expressions, whereClause)
 	}

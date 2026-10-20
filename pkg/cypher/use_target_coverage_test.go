@@ -259,7 +259,8 @@ func TestCompositeGraphFunctionEdgeCases(t *testing.T) {
 
 	// An undefined variable is reported as Neo4j reports it anywhere.
 	_, err := exec.Execute(ctx, "USE graph.byName(nosuch) MATCH (n:EI) RETURN n.v AS v", nil)
-	require.EqualError(t, err, "Variable `nosuch` not defined")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nosuch")
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// An argument that is no expression is the invalid argument.

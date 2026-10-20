@@ -1,8 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strings"
 )
 
 // isLiteralKeyword reports whether name is one of Cypher's literal words:
@@ -11,32 +11,43 @@ import (
 // declared (WITH 1 AS null, MATCH (NaN)), as in Neo4j 5.26: such a variable
 // can be declared but never read (#907).
 func isLiteralKeyword(name string) bool {
-	_, ok := literalKeywordValue(name)
-	return ok
+	return literalKeywordKind(name) != literalKeywordNone
 }
+
+// rowExpressionBinding is the shared binding lookup for expressions. Literal
+// words keep their native syntax role even when a CALL frame retains an import
+// with the same name. Quoted references keep their distinct expression text.
+func rowExpressionBinding[T any](values map[string]T, expression string) (T, bool) {
+	value, bound := values[expression]
+	return value, bound && literalKeywordKind(expression) == literalKeywordNone
+}
+
+type literalKeyword = cyphertext.LiteralKeyword
+
+const (
+	literalKeywordNone     = cyphertext.LiteralKeywordNone
+	literalKeywordNaN      = cyphertext.LiteralKeywordNaN
+	literalKeywordTrue     = cyphertext.LiteralKeywordTrue
+	literalKeywordNull     = cyphertext.LiteralKeywordNull
+	literalKeywordFalse    = cyphertext.LiteralKeywordFalse
+	literalKeywordInfinity = cyphertext.LiteralKeywordInfinity
+)
+
+func literalKeywordKind(name string) literalKeyword { return cyphertext.LiteralKeywordKind(name) }
 
 // literalKeywordValue is the value of a literal word (isLiteralKeyword).
 func literalKeywordValue(name string) (interface{}, bool) {
-	switch len(name) {
-	case 3:
-		if strings.EqualFold(name, "NaN") {
-			return math.NaN(), true
-		}
-	case 4:
-		if strings.EqualFold(name, "true") {
-			return true, true
-		}
-		if strings.EqualFold(name, "null") {
-			return nil, true
-		}
-	case 5:
-		if strings.EqualFold(name, "false") {
-			return false, true
-		}
-	case 8:
-		if strings.EqualFold(name, "Infinity") {
-			return math.Inf(1), true
-		}
+	switch literalKeywordKind(name) {
+	case literalKeywordNaN:
+		return math.NaN(), true
+	case literalKeywordTrue:
+		return true, true
+	case literalKeywordNull:
+		return nil, true
+	case literalKeywordFalse:
+		return false, true
+	case literalKeywordInfinity:
+		return math.Inf(1), true
 	}
 	return nil, false
 }

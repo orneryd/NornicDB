@@ -15,6 +15,13 @@ type pipelineRowWith struct {
 	projections   []pipelineRowProjection
 }
 
+// A row operator consumes an invocation, never a cached plan without its scope.
+// Keep binding outside the source factory so its closures can inline.
+type pipelineRowWithInvocation struct {
+	pipelineRowWith
+	imports pipelineRow
+}
+
 type pipelineRowWithParse struct {
 	plan      pipelineRowWith
 	supported bool
@@ -72,7 +79,7 @@ func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
 	return plan, true
 }
 
-func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipelineRow, plan pipelineRowWith, projected, scope pipelineRow) (pipelineRow, bool, bool) {
+func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipelineRow, plan pipelineRowWithInvocation, projected, scope pipelineRow) (pipelineRow, bool, bool) {
 	if projected == nil {
 		projected = pipelineRow{}
 	} else {
@@ -84,7 +91,7 @@ func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipeli
 		}
 	}
 	for _, projection := range plan.projections {
-		value, found := row[projection.expression]
+		value, found := rowExpressionBinding(row, projection.expression)
 		if !found {
 			value, found = e.evaluateRowExpressionWithContext(ctx, projection.expression, row)
 		}
@@ -94,6 +101,7 @@ func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipeli
 		}
 		projected[projection.alias] = value
 	}
+	carryPipelineRowImports(projected, row, plan.imports)
 	if plan.where == "" && scope == nil {
 		return projected, true, true
 	}
@@ -221,7 +229,7 @@ func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []
 	return e.pipelineNodeMatchSource(ctx, pipelineRowsSource(rows), clause, nil)
 }
 
-func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []string) (pipelineRowSource, bool, error) {
+func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []pipelineClause) (pipelineRowSource, bool, error) {
 	return e.pipelineNodeMatchSourceWithHint(ctx, inputSource, clause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
 }
 
@@ -265,7 +273,7 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipeline
 	}
 	for _, template := range templates {
 		for _, property := range template.properties {
-			for _, reference := range semanticExpressionReferences(property.expr) {
+			for _, reference := range physicalReadReferences(property.expr) {
 				variable := strings.SplitN(reference, ".", 2)[0]
 				if _, dependent := variables[variable]; dependent {
 					return plan
@@ -483,7 +491,11 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 	}
 }
 
-func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
+func (plan pipelineRowWith) withImports(ctx context.Context) pipelineRowWithInvocation {
+	return pipelineRowWithInvocation{pipelineRowWith: plan, imports: pipelineImports(ctx)}
+}
+
+func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWithInvocation) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
 		projected := pipelineRow{}
 		var scope pipelineRow
@@ -542,7 +554,7 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 			return nil, false
 		}
 	}
-	projected := e.pipelineWithRowSource(ctx, input, plan)
+	projected := e.pipelineWithRowSource(ctx, input, plan.withImports(ctx))
 	return func(yield func(pipelineRow) bool) bool {
 		if limit == 0 {
 			return true
@@ -560,7 +572,7 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 }
 
 func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
-	expression, alias, ok := parsePipelineIteration(clauses[0].text)
+	expression, alias, ok := parsePipelineIteration(clauses[0].text, clauses[0])
 	if !ok {
 		return nil, 0, false
 	}
@@ -601,7 +613,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		return true
 	})
 	for _, plan := range plans {
-		source = e.pipelineWithRowSource(ctx, source, plan)
+		source = e.pipelineWithRowSource(ctx, source, plan.withImports(ctx))
 	}
 	return source, len(plans), true
 }

@@ -310,8 +310,9 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 		_ = handle.end(ctx, false)
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
-	commitFn := func(_ *SubTransaction) error { return handle.end(ctx, true) }
-	rollbackFn := func(_ *SubTransaction) error { return handle.end(ctx, false) }
+	terminalCtx := fabricTx.BindContext(ctx)
+	commitFn := func(_ *SubTransaction) error { return handle.end(terminalCtx, true) }
+	rollbackFn := func(_ *SubTransaction) error { return handle.end(terminalCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
 		_ = handle.end(ctx, false)
 		return nil, err

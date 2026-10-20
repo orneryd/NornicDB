@@ -2,11 +2,10 @@ package cypher
 
 import (
 	"context"
-	"maps"
-	"strings"
-
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"maps"
+	"strings"
 )
 
 type topLevelUnwindPlan struct {
@@ -19,30 +18,26 @@ type topLevelUnwindPlan struct {
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
 // for both optimized physical operators and the general row pipeline.
 func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, error) {
-	unwindIdx := findKeywordIndex(cypher, "UNWIND")
-	if unwindIdx == -1 {
+	clauses, err := statementPhysicalClauses(cypher)
+	if err != nil {
+		return topLevelUnwindPlan{}, err
+	}
+	var clause *pipelineClause
+	for index := range clauses {
+		if clauses[index].kind == pipelineClauseUnwind {
+			clause = &clauses[index]
+			break
+		}
+	}
+	if clause == nil {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	afterUnwind := cypher[unwindIdx+len("UNWIND"):]
-	asRelativeIdx := findKeywordNotInBrackets(afterUnwind, " AS ")
-	if asRelativeIdx == -1 {
-		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
+	listExpr := clause.iterationExpression
+	_, end := statementClauseRange(cypher, clause, 0)
+	if end < 0 {
+		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	asIdx := unwindIdx + len("UNWIND") + asRelativeIdx
-	listExpr := strings.TrimSpace(cypher[unwindIdx+len("UNWIND") : asIdx])
-	remainderStart := asIdx + len("AS")
-	for remainderStart < len(cypher) && isASCIISpace(cypher[remainderStart]) {
-		remainderStart++
-	}
-	remainder := strings.TrimSpace(cypher[remainderStart:])
-	spaceIdx := strings.IndexAny(remainder, " \t\r\n")
-	plan := topLevelUnwindPlan{}
-	if spaceIdx > 0 {
-		plan.variable = strings.TrimSpace(remainder[:spaceIdx])
-		plan.remainder = strings.TrimSpace(remainder[spaceIdx:])
-	} else {
-		plan.variable = strings.TrimSpace(remainder)
-	}
+	plan := topLevelUnwindPlan{variable: clause.iterationAlias, remainder: strings.TrimSpace(cypher[end:])}
 
 	params := getParamsFromContext(ctx)
 	var list interface{}
