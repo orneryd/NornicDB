@@ -58,7 +58,11 @@ func compileRowPredicateProgram(expression string) *rowPredicateProgram {
 }
 func (p *rowPredicateProgram) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	if p.statementContext {
-		values = rowValuesBindingStatementContext(ctx, values)
+		var contextBound bool
+		values, contextBound = rowValuesBindingStatementContext(ctx, values)
+		if contextBound {
+			defer delete(values, rowStatementContextKey)
+		}
 	}
 	return p.root.holds(e, ctx, values)
 }
