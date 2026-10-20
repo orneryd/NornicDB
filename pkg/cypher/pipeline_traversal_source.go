@@ -117,10 +117,12 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					variable string
 					id       storage.NodeID
 				}{{match.StartNode.variable, startID}, {match.EndNode.variable, endID}} {
-                    if bound, ok := pipelineBoundNode(row, endpoint.variable); ok {
-                        id, selected := nativeNodeLookupID(store, bound)
-                        if !selected || id != endpoint.id { return nil }
-                    }
+					if bound, ok := pipelineBoundNode(row, endpoint.variable); ok {
+						id, selected := nativeNodeLookupID(store, bound)
+						if !selected || id != endpoint.id {
+							return nil
+						}
+					}
 				}
 				start, err := load(startID, startProperties)
 				if err != nil || start == nil || !e.matchesEndPattern(start, &match.StartNode) {

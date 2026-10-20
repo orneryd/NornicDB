@@ -81,8 +81,10 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	orderSeen := make(map[storage.NodeID]struct{}, 1024)
 	orderIDs := make([]storage.NodeID, 0, 1024)
 	for _, edge := range edgeList {
-	    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
-	    if !selected { continue }
+		startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		if !selected {
+			continue
+		}
 		productID := endID
 		if _, ok := productSeen[productID]; !ok {
 			productSeen[productID] = struct{}{}
@@ -110,8 +112,10 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 
 	revenueByProduct := make(map[storage.NodeID]float64, len(productIDs))
 	for _, edge := range edgeList {
-	    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
-	    if !selected { continue }
+		startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		if !selected {
+			continue
+		}
 		productID := endID
 		pNode := products[productID]
 		if pNode == nil || !mergeNodeHasLabels(pNode, requiredProductLabels) {

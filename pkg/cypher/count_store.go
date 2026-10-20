@@ -186,10 +186,12 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 		if edge == nil {
 			continue
 		}
-        startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
-        if !selected { continue }
-        count++
-        if startID != endID {
+		startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+		if !selected {
+			continue
+		}
+		count++
+		if startID != endID {
 			count++
 		}
 	}
