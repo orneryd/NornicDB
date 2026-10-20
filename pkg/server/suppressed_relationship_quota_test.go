@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -11,11 +12,13 @@ import (
 )
 
 // A MERGE cannot see a suppressed relationship. Repeating its exact stored
-// identity is nevertheless an idempotent storage CREATE: it succeeds without
-// becoming visible, consuming quota, publishing CREATE/SET stats, or running
-// either ON CREATE or ON MATCH actions. Timestamps and derived visibility
-// bookkeeping are not identity because each retry produces fresh timestamps
-// and suppression belongs to the stored record, not the caller's graph image.
+// identity is nevertheless an idempotent storage CREATE when the final image,
+// including ON CREATE SET, matches the stored body. It succeeds without
+// becoming visible, consuming quota or publishing CREATE/SET stats. A final
+// image with different properties is a permanent client error. Timestamps and
+// derived visibility bookkeeping are not identity because each retry produces
+// fresh timestamps and suppression belongs to the stored record, not the
+// caller's graph image.
 func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 	previousParser := config.GetParserType()
 	t.Cleanup(func() { config.SetParserType(previousParser) })
@@ -66,8 +69,9 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						}
 
 						run("CREATE (:Source {id: 'a'}), (:Target {id: 'b'})")
-						const merge = "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[r:INGEST {id: 'same', payload: 'stable'}]->(b)"
-						created := run(merge)
+						const merge = "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[r:INGEST {id: 'same'}]->(b)"
+						const identical = merge + " ON CREATE SET r.payload = 'stable'"
+						created := run(identical)
 						require.Equal(t, 1, created.relationshipsCreated)
 						flush()
 						run("MATCH ()-[r:INGEST]->() CALL kp.suppress(r)")
@@ -85,9 +89,9 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						}
 						require.NoError(t, h.server.dbManager.SetDatabaseLimits("nornic", limits))
 
-						noOp := run(merge + " ON CREATE SET r.action = 'create' ON MATCH SET r.action = 'match'")
+						noOp := run(identical)
 						require.Zero(t, noOp.relationshipsCreated)
-						require.Zero(t, noOp.propertiesSet, "a storage no-op runs neither MERGE action")
+						require.Zero(t, noOp.propertiesSet, "an identical final image publishes no SET work")
 						flush()
 						require.Equal(t, beforeBody, storedEdge(), "the authoritative stored body and suppression survive")
 						total, nodes, edges := h.server.dbManager.GetStorageSize("nornic")
@@ -97,6 +101,11 @@ func TestSuppressedRelationshipIdenticalReMergeIsNoOpAtQuota(t *testing.T) {
 						require.Equal(t, [][]interface{}{{int64(0)}}, run("MATCH ()-[r:INGEST]->() RETURN count(r)").rows)
 						require.Equal(t, [][]interface{}{{"same", "stable"}}, run("MATCH ()-[r:INGEST]->() WHERE reveal(r) IS NOT NULL RETURN r.id, r.payload").rows,
 							"type/property/search-facing reads retain the original indexed image")
+
+						different := h.run(t, merge+" ON CREATE SET r.payload = 'different'")
+						require.True(t, strings.HasPrefix(different.code, "Neo.ClientError."), "a different final image is one permanent client error: %#v", different)
+						flush()
+						require.Equal(t, beforeBody, storedEdge(), "the rejected final image publishes nothing")
 
 						fresh := h.run(t, "MATCH (a:Source {id: 'a'}), (b:Target {id: 'b'}) MERGE (a)-[:INGEST {id: 'fresh'}]->(b)")
 						require.NotEmpty(t, fresh.code, "a distinct relationship still consumes quota")

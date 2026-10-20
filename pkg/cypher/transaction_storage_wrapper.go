@@ -283,9 +283,9 @@ func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
 	return w.tx.CreateEdge(namespaced)
 }
 
-// EdgeCreateWasNoOp exposes the transaction's read-only CREATE disposition
-// in user-ID space. It does not unwrap or route a mutation around any engine
-// layer; the Badger transaction remains the sole classifier and commit owner.
+// EdgeCreateWasNoOp exposes the transaction's read-only hidden-ID candidate
+// disposition in user-ID space. It does not unwrap or route a mutation around
+// any engine layer; the Badger commit remains the sole identity owner.
 func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
 	if w == nil || w.tx == nil {
 		return false
