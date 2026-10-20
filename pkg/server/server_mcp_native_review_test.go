@@ -219,9 +219,28 @@ func TestMCPNativeReviewCredentialForwarding(t *testing.T) {
 	}
 	for name, authenticate := range credentials {
 		t.Run(name, func(t *testing.T) {
-			for _, path := range []string{"/mcp", "/mcp/tools/call"} {
-				_, result := nativeReviewCall(t, host, path, map[string]interface{}{"database": "native_cmp", "query": "USE native_cmp.remote RETURN 1 AS value"}, authenticate)
-				require.False(t, result.IsError, result.Content)
+			for _, path := range []string{"/mcp", "/mcp/tools/call", "/db/native_cmp/tx/commit"} {
+				mu.Lock()
+				seen = ""
+				mu.Unlock()
+				if strings.HasPrefix(path, "/db/") {
+					request, err := http.NewRequest(http.MethodPost, host.URL+path, strings.NewReader(`{"statements":[{"statement":"USE native_cmp.remote RETURN 1 AS value"}]}`))
+					require.NoError(t, err)
+					request.Header.Set("Content-Type", "application/json")
+					authenticate(request)
+					response, err := host.Client().Do(request)
+					require.NoError(t, err)
+					raw, err := io.ReadAll(response.Body)
+					require.NoError(t, response.Body.Close())
+					require.NoError(t, err)
+					require.Equal(t, http.StatusOK, response.StatusCode, string(raw))
+					var result TransactionResponse
+					require.NoError(t, json.Unmarshal(raw, &result))
+					require.Empty(t, result.Errors)
+				} else {
+					_, result := nativeReviewCall(t, host, path, map[string]interface{}{"database": "native_cmp", "query": "USE native_cmp.remote RETURN 1 AS value"}, authenticate)
+					require.False(t, result.IsError, result.Content)
+				}
 				mu.Lock()
 				actual := seen
 				mu.Unlock()

@@ -734,7 +734,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 	sort.Slice(constituents, func(i, j int) bool {
 		return strings.ToLower(constituents[i].Alias) < strings.ToLower(constituents[j].Alias)
 	})
-	authToken := strings.TrimSpace(r.Header.Get("Authorization"))
+	authToken := strings.TrimSpace(cypher.GetAuthTokenFromContext(r.Context()))
 	stats := make([]map[string]interface{}, 0, len(constituents))
 	partial := false
 	for _, c := range constituents {
@@ -1094,7 +1094,7 @@ func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Reques
 		// statement rolls back the ones before it.
 		s.runOneShotTransaction(r, claims, dbName, req.Statements, localize, &response)
 	} else {
-		s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, req.Statements, s.autoCommitStatementRunner(r.Header.Get("Authorization")), localize, &response)
+		s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), cypher.GetAuthTokenFromContext(r.Context()), claims, dbName, req.Statements, s.autoCommitStatementRunner(cypher.GetAuthTokenFromContext(r.Context())), localize, &response)
 	}
 
 	// Determine appropriate HTTP status code
@@ -1768,14 +1768,14 @@ func (s *Server) runOneShotTransaction(
 				return nil, executor, rollbackErr
 			}
 			session = nil
-			return s.autoCommitStatementRunner(r.Header.Get("Authorization"))(ctx, target, query, params)
+			return s.autoCommitStatementRunner(cypher.GetAuthTokenFromContext(r.Context()))(ctx, target, query, params)
 		}
 		if err == nil && queryStatsFromResult(result).ContainsUpdates {
 			wrote = true
 		}
 		return result, executor, err
 	}
-	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), r.Header.Get("Authorization"), claims, dbName, statements, run, localize, response) {
+	if s.runRequestStatements(s.withRequestIdentity(r.Context(), r, claims), cypher.GetAuthTokenFromContext(r.Context()), claims, dbName, statements, run, localize, response) {
 		if session != nil {
 			s.rollbackFailedTransaction(r.Context(), session, response)
 		}
@@ -1792,7 +1792,7 @@ func (s *Server) runOneShotTransaction(
 func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Session, *QueryError) {
 	var session *txsession.Session
 	var err error
-	authToken := r.Header.Get("Authorization")
+	authToken := cypher.GetAuthTokenFromContext(r.Context())
 	ownerKey := transactionOwnerKey(r, claims)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
 		executor, execErr := s.getExecutorForDatabaseWithAuth(dbName, authToken)
@@ -1904,7 +1904,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	}
 
 	if len(req.Statements) > 0 {
-		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
+		if s.executeTxStatements(r.Context(), cypher.GetAuthTokenFromContext(r.Context()), claims, dbName, txSession, req.Statements, &response) {
 			s.rollbackFailedTransaction(r.Context(), txSession, &response)
 		}
 		response.Transaction.Expires = transactionExpires(txSession.Expires)
@@ -1944,7 +1944,7 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 		},
 	}
 
-	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
+	if s.executeTxStatements(r.Context(), cypher.GetAuthTokenFromContext(r.Context()), claims, dbName, tx, req.Statements, &response) {
 		s.rollbackFailedTransaction(r.Context(), tx, &response)
 	}
 	response.Transaction.Expires = transactionExpires(tx.Expires)
@@ -1982,7 +1982,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Execute optional final statements in transaction context first.
-	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
+	if s.executeTxStatements(r.Context(), cypher.GetAuthTokenFromContext(r.Context()), claims, dbName, tx, req.Statements, &response) {
 		s.rollbackFailedTransaction(r.Context(), tx, &response)
 		s.applyMVCCPressureWarnings(w, dbName, &response)
 		s.writeJSON(w, http.StatusOK, response)
