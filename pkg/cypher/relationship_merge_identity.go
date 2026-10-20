@@ -167,6 +167,11 @@ func createRelationshipForMerge(
 
 			continue
 		}
+		if reporter, ok := store.(interface {
+			EdgeCreateWasNoOp(storage.EdgeID) bool
+		}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+			return edge, false, nil
+		}
 		return edge, true, nil
 	}
 }

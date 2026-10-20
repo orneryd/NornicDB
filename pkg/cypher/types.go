@@ -13,6 +13,10 @@ type ExecuteResult struct {
 	// gdsProjection is the projection a GDS stream read its rows from, for
 	// gdsStreamHandler to render their node ids with; nil otherwise.
 	gdsProjection *GraphProjection
+	// relationshipMergeNoOp distinguishes a stored hidden relationship's
+	// idempotent CREATE from both a create and a visible match. The pipeline
+	// therefore runs neither ON CREATE nor ON MATCH actions for the no-op.
+	relationshipMergeNoOp bool
 }
 
 // QueryStats holds query execution statistics.

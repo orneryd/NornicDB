@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -124,9 +125,14 @@ type BadgerTransaction struct {
 	// validation pass: bulk edge commits repeat endpoints per edge and the
 	// engine read is a Badger point read each time. Nil until the first
 	// cached lookup; discarded with the transaction.
-	nodeHeadCache       map[NodeID]MVCCHead
-	pendingIndex        *pendingNodeIndex
-	pendingEdges        map[EdgeID]*Edge
+	nodeHeadCache map[NodeID]MVCCHead
+	pendingIndex  *pendingNodeIndex
+	pendingEdges  map[EdgeID]*Edge
+	// edgeCreateNoOps records identical CREATEs over stored hidden
+	// relationships. They stage no body, index, count, callback or WAL work;
+	// commit rechecks the latest stored image and suppression state at the one
+	// conflict owner before acknowledging the no-op.
+	edgeCreateNoOps     map[EdgeID]*Edge
 	deferredEdgeWrites  map[EdgeID]struct{}
 	cancelledEdgeWrites map[EdgeID]struct{}
 	deletedNodes        map[NodeID]struct{}
@@ -201,7 +207,9 @@ type BadgerTransaction struct {
 	pendingEdgeTypeLabelCountDeltas map[edgeTypeLabelDelta]int64
 	// When true, skip per-operation constraint checks and validate at commit only.
 	deferConstraintValidation bool
-	// When true, skip read-before-write existence checks for CREATE operations.
+	// Legacy name: stored-inclusive existence reads are now mandatory. When
+	// true, UUID-shaped fresh creates may still skip the commit-time MVCC head
+	// reload after that read proved the physical ID absent.
 	skipCreateExistenceCheck bool
 	// implicit marks transactions that were auto-opened by the executor for a
 	// single Cypher statement outside an explicit BEGIN/COMMIT. The Bolt
@@ -301,6 +309,7 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		engine:                  b,
 		pendingNodes:            make(map[NodeID]*Node),
 		pendingEdges:            make(map[EdgeID]*Edge),
+		edgeCreateNoOps:         make(map[EdgeID]*Edge),
 		deletedNodes:            make(map[NodeID]struct{}),
 		deletedEdges:            make(map[EdgeID]struct{}),
 		operations:              make([]Operation, 0),
@@ -574,8 +583,9 @@ func (tx *BadgerTransaction) SetDeferredConstraintValidation(deferValidation boo
 	return nil
 }
 
-// SetSkipCreateExistenceCheck controls read-before-write checks for CREATE.
-// When enabled, CREATE skips the storage existence read for UUID IDs.
+// SetSkipCreateExistenceCheck retains its public name for compatibility. A
+// stored-inclusive existence read is always required for correctness; when
+// enabled, UUID-shaped creates skip only the later commit-time head reload.
 func (tx *BadgerTransaction) SetSkipCreateExistenceCheck(skip bool) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
@@ -729,19 +739,16 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 		return "", ErrAlreadyExists
 	}
 
-	// Check if exists in storage (read from Badger). Through the visibility
-	// layer, as before: whether creating an entity over a hidden one with
-	// its ID fails or replaces it is open (validateNewEdgeLocked).
-	skipExistenceCheck := tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID))
-	if !skipExistenceCheck {
-		if _, deleted := tx.deletedNodes[node.ID]; !deleted {
-			_, err := tx.getCommittedNodeReadLocked(node.ID, true, visibleRead)
-			if err == nil {
-				return "", ErrAlreadyExists
-			}
-			if err != ErrNotFound {
-				return "", fmt.Errorf("checking node existence: %w", err)
-			}
+	// CREATE identity is physical, not visibility-based. A suppressed node
+	// still occupies its ID and must reject every CREATE route, including the
+	// write-behind bulk/implicit paths.
+	if _, deleted := tx.deletedNodes[node.ID]; !deleted {
+		_, err := tx.getCommittedNodeLocked(node.ID)
+		if err == nil {
+			return "", ErrAlreadyExists
+		}
+		if err != ErrNotFound {
+			return "", fmt.Errorf("checking node existence: %w", err)
 		}
 	}
 
@@ -793,9 +800,12 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 		Node:      nodeCopy,
 		// FreshID propagates the "caller asserts this ID is new and cannot
 		// collide with a tombstoned MVCC head" contract into the commit
-		// loop so it can skip the head-load round-trip. Gated on the same
-		// UUID-shape heuristic that lets us skip the existence-read above.
-		FreshID: skipExistenceCheck,
+		// loop so it can skip the head-load round-trip. Gated on the legacy
+		// UUID-shape heuristic.
+		// The stored-inclusive point read above is mandatory even for UUIDs so
+		// a stable imported ID cannot bypass a hidden predecessor. Once that
+		// read proves absence, retain the existing generated-ID commit fast path.
+		FreshID: tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(node.ID)),
 	})
 
 	return node.ID, nil
@@ -1475,11 +1485,29 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
-	startLabels, endLabels, err := tx.validateNewEdgeLocked(edge, tx.visibleNodeLabelsLocked, nil)
+	startLabels, endLabels, noOp, err := tx.validateNewEdgeLocked(edge, tx.visibleNodeLabelsLocked, nil)
 	if err != nil {
 		return err
 	}
+	if noOp {
+		return nil
+	}
 	return tx.bufferNewEdgeLocked(edge, startLabels, endLabels)
+}
+
+// EdgeCreateWasNoOp reports whether CreateEdge classified id as an identical
+// CREATE over a stored hidden relationship in this transaction. It is
+// disposition metadata only: callers use it to avoid reporting CREATE stats
+// or running MERGE actions for a storage no-op. Mutations still have exactly
+// one owner in validateNewEdgeLocked and commit revalidation below.
+func (tx *BadgerTransaction) EdgeCreateWasNoOp(id EdgeID) bool {
+	if tx == nil {
+		return false
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	_, ok := tx.edgeCreateNoOps[id]
+	return ok
 }
 
 // BulkCreateEdges buffers many edges in one pass, amortizing the lock, the
@@ -1520,15 +1548,20 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 	}
 	batch := make(map[EdgeID]struct{}, len(edges))
 	labels := make([][2][]string, len(edges))
+	noOps := make([]bool, len(edges))
 	for i, edge := range edges {
-		startLabels, endLabels, err := tx.validateNewEdgeLocked(edge, resolve, batch)
+		startLabels, endLabels, noOp, err := tx.validateNewEdgeLocked(edge, resolve, batch)
 		if err != nil {
 			return err
 		}
 		labels[i] = [2][]string{startLabels, endLabels}
+		noOps[i] = noOp
 		batch[edge.ID] = struct{}{}
 	}
 	for i, edge := range edges {
+		if noOps[i] {
+			continue
+		}
 		if err := tx.bufferNewEdgeLocked(edge, labels[i][0], labels[i][1]); err != nil {
 			return err
 		}
@@ -1537,52 +1570,84 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 }
 
 // validateNewEdgeLocked checks that edge can be created in the transaction
-// and returns its endpoints' labels: it is not nil and has an ID, its
+// and returns its endpoints' labels and whether it is an identical hidden
+// relationship no-op: it is not nil and has an ID, its
 // namespace pins, both endpoints are visible (endpoint; ErrNotFound
 // otherwise), and no pending edge, edge earlier in the same batch or
-// committed edge has its ID (ErrAlreadyExists). The committed check is
-// skipped for generated IDs exactly as CreateNode skips it.
-func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(NodeID) ([]string, bool), batch map[EdgeID]struct{}) (startLabels, endLabels []string, err error) {
+// committed edge has its ID (ErrAlreadyExists). Physical existence is never
+// skipped: stable imports may use UUID-shaped IDs too.
+func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(NodeID) ([]string, bool), batch map[EdgeID]struct{}) (startLabels, endLabels []string, noOp bool, err error) {
 	// A nil edge is invalid data and an empty ID an invalid ID, as in the
 	// engines' CreateEdge.
 	if edge == nil {
-		return nil, nil, ErrInvalidData
+		return nil, nil, false, ErrInvalidData
 	}
 	if edge.ID == "" {
-		return nil, nil, ErrInvalidID
+		return nil, nil, false, ErrInvalidID
 	}
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
+	}
+	if _, exists := tx.pendingEdges[edge.ID]; exists {
+		return nil, nil, false, ErrAlreadyExists
+	}
+	if _, exists := batch[edge.ID]; exists {
+		return nil, nil, false, ErrAlreadyExists
+	}
+	if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+		startLabels, visible := endpoint(edge.StartNode)
+		if !visible {
+			return nil, nil, false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
+		}
+		endLabels, visible := endpoint(edge.EndNode)
+		if !visible {
+			return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
+		}
+		return startLabels, endLabels, false, nil
+	}
+	existing, err := tx.getCommittedEdgeLocked(edge.ID)
+	if err == nil {
+		if !tx.engine.hidesEdge(visibleRead, existing, DecayScoringTime()) ||
+			!sameEdgeCreateIdentity(existing, edge) {
+			return nil, nil, false, ErrAlreadyExists
+		}
+		// The ID is already stored but hidden and the caller supplied the same
+		// semantic relationship image. Record only a commit-time assertion:
+		// no physical CREATE and therefore no entity-WAL, count, index,
+		// adjacency, cache or search-publication side effect.
+		tx.edgeCreateNoOps[edge.ID] = copyEdge(edge)
+		return nil, nil, true, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, nil, false, fmt.Errorf("checking edge existence: %w", err)
 	}
 	startLabels, visible := endpoint(edge.StartNode)
 	if !visible {
-		return nil, nil, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
+		return nil, nil, false, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
 	}
 	endLabels, visible = endpoint(edge.EndNode)
 	if !visible {
-		return nil, nil, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
+		return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
 	}
-	if _, exists := tx.pendingEdges[edge.ID]; exists {
-		return nil, nil, ErrAlreadyExists
+	return startLabels, endLabels, false, nil
+}
+
+// sameEdgeCreateIdentity is the product identity of an idempotent hidden-edge
+// CREATE. ID equality is established by the conflict lookup. Type, endpoints
+// and user properties are semantic. CreatedAt/UpdatedAt are write bookkeeping;
+// Confidence, AutoGenerated and VisibilitySuppressed are derived/internal
+// bookkeeping and are deliberately excluded so retry-generated metadata
+// cannot turn an otherwise identical import into a replacement.
+func sameEdgeCreateIdentity(stored, candidate *Edge) bool {
+	if stored == nil || candidate == nil ||
+		stored.Type != candidate.Type ||
+		stored.StartNode != candidate.StartNode ||
+		stored.EndNode != candidate.EndNode {
+		return false
 	}
-	if _, exists := batch[edge.ID]; exists {
-		return nil, nil, ErrAlreadyExists
-	}
-	if _, deleted := tx.deletedEdges[edge.ID]; deleted || (tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID))) {
-		return startLabels, endLabels, nil
-	}
-	// Through the visibility layer, as before. A MERGEd relationship's ID
-	// derives from its endpoints and properties, so MERGE meets a hidden
-	// relationship with its ID here: whether that fails or replaces it is
-	// a knowledge-policy decision still open.
-	_, err = tx.getCommittedEdgeReadLocked(edge.ID, visibleRead)
-	if err == nil {
-		return nil, nil, ErrAlreadyExists
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return nil, nil, fmt.Errorf("checking edge existence: %w", err)
-	}
-	return startLabels, endLabels, nil
+	// nil and an allocated empty map are the same empty Neo4j property set.
+	return (len(stored.Properties) == 0 && len(candidate.Properties) == 0) ||
+		reflect.DeepEqual(stored.Properties, candidate.Properties)
 }
 
 // bufferNewEdgeLocked buffers a validated new edge: its record, its
@@ -1616,7 +1681,9 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 		Timestamp: time.Now(),
 		EdgeID:    edge.ID,
 		Edge:      edgeCopy,
-		FreshID:   hasUUIDShape(string(edge.ID)),
+		// As for nodes, the stored-inclusive read above has already ruled out a
+		// hidden predecessor before this generated-ID commit optimization.
+		FreshID: tx.skipCreateExistenceCheck && shouldSkipCreateExistenceCheck(string(edge.ID)),
 	})
 	return nil
 }
@@ -3592,13 +3659,21 @@ func (tx *BadgerTransaction) visibleNodeLabelsLocked(nodeID NodeID) ([]string, b
 }
 
 func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
+	// Idempotent hidden-edge CREATEs stage no writes. Re-read them at the
+	// commit owner so an explicit transaction cannot acknowledge a no-op
+	// against a predecessor another writer changed, revealed or deleted after
+	// statement-time classification.
+	for edgeID, candidate := range tx.edgeCreateNoOps {
+		stored, err := tx.engine.GetStoredEdge(edgeID)
+		if err != nil ||
+			!tx.engine.hidesEdge(visibleRead, stored, DecayScoringTime()) ||
+			!sameEdgeCreateIdentity(stored, candidate) {
+			return ErrAlreadyExists
+		}
+	}
 	for _, op := range tx.operations {
 		switch op.Type {
 		case OpCreateNode:
-			// FreshID: this transaction generated the ID (UUID-shaped) and
-			// already skipped the existence read on the same premise. No
-			// peer can hold an MVCC head for it, so the per-node head-load
-			// round-trip (a Badger view per created node) is skipped.
 			if !op.FreshID {
 				if err := tx.checkNodeCreateConflict(op.NodeID); err != nil {
 					return err
@@ -3620,9 +3695,6 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {
 				continue
 			}
-			// FreshID (UUID-shaped, generated by this transaction): no peer
-			// can hold a head for it — skip the per-edge head-load, as for
-			// created nodes above.
 			if !op.FreshID {
 				if err := tx.checkEdgeCreateConflict(op.EdgeID); err != nil {
 					return err
@@ -3912,9 +3984,8 @@ func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
 	})
 }
 
-// shouldSkipCreateExistenceCheck avoids a read-before-write for UUID-based
-// node and edge IDs. UUID collisions are negligible for generated IDs, so we
-// skip the read to save I/O.
+// shouldSkipCreateExistenceCheck is the legacy name of the UUID predicate now
+// used only for the commit-time MVCC head reload optimization.
 func shouldSkipCreateExistenceCheck(id string) bool {
 	return hasUUIDShape(id)
 }
@@ -3922,9 +3993,8 @@ func shouldSkipCreateExistenceCheck(id string) bool {
 // hasUUIDShape reports whether an id is a namespace-prefixed UUID. Because
 // UUIDv4 collisions are astronomically unlikely, a freshly minted UUID cannot
 // refer to a previously deleted entity — so callers that mint IDs this way can
-// safely skip both the create existence read AND the MVCC head load-before-write
-// during commit without risking incorrect snapshot semantics for a
-// tombstoned-then-recreated ID.
+// safely skip the MVCC head load-before-write during commit after the
+// stored-inclusive create check already proved the physical ID absent.
 func hasUUIDShape(id string) bool {
 	_, rawID, ok := ParseDatabasePrefix(id)
 	if !ok {

@@ -707,14 +707,20 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			identities.reset()
 		}
 		patternCreated := false
+		patternNoOp := false
 		if merged != nil && merged.Stats != nil {
 			addQueryStats(stats, merged.Stats)
 			patternCreated = merged.Stats.NodesCreated > 0 || merged.Stats.RelationshipsCreated > 0
+			patternNoOp = merged.relationshipMergeNoOp
 		}
 		// The MERGE created its pattern (ON CREATE) or found it (ON MATCH).
 		actions := onMatchSet
 		if patternCreated {
 			actions = onCreateSet
+		} else if patternNoOp {
+			// A hidden identical relationship was neither created nor matched:
+			// its contract is a complete no-op, including MERGE actions.
+			actions = ""
 		}
 		var produced []pipelineRow
 		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext)))

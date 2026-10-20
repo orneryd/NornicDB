@@ -13,7 +13,7 @@ import (
 
 // Quotas describe stored data even when ordinary reads hide it. Exercise the
 // real raw-transaction commit owner at capacity, then compare its cached byte
-// components with a fresh stored-data calculation after replacement/deletion.
+// components with a fresh stored-data calculation after update/deletion.
 func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 	for _, hidden := range []string{"manual", "decayed"} {
 		for _, entity := range []string{"node", "edge"} {
@@ -93,7 +93,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 							err = tx.UpdateEdge(prior)
 						}
 						require.NoError(t, err)
-						require.NoError(t, tracker.CommitTransaction(context.Background(), tx), "replacement or deletion does not insert the hidden entity")
+						require.NoError(t, tracker.CommitTransaction(context.Background(), tx), "update or deletion does not insert the hidden entity")
 						wantNodes, wantEdges, err := tracker.checker.calculateCurrentStorageSize(tracker.Engine)
 						require.NoError(t, err)
 						got, gotNodes, gotEdges := manager.GetStorageSize(db)
