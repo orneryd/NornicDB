@@ -485,10 +485,10 @@ func (e *LocalGGUFEmbedder) Close() error    { return e.model.Close() }
 **Update `NewEmbedder()` in `pkg/embed/embed.go`:**
 
 ```go
-func NewEmbedder(ctx context.Context, config *Config) (Embedder, error) {
+func NewEmbedder(config *Config) (Embedder, error) {
     switch config.Provider {
     case "local":
-        return NewLocalGGUF(ctx, config)
+        return NewLocalGGUF(config)
     case "ollama":
         return NewOllama(config), nil
     case "openai":
