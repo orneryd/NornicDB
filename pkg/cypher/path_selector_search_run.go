@@ -97,6 +97,7 @@ type pathSearchEdgeKey struct {
 // pathSearch is the search of one selected pattern for one row.
 type pathSearch struct {
 	e          *StorageExecutor
+	access     *relationshipAccessExecution
 	ctx        context.Context
 	a          *pathSearchAutomaton
 	row        pipelineRow
@@ -131,8 +132,8 @@ type pathSearch struct {
 // newPathSearch starts a search over automaton a for row. Its state is
 // made when the search begins (begin), so the walk search of a uniform
 // pattern (uniformPair) doesn't pay for it.
-func (e *StorageExecutor) newPathSearch(ctx context.Context, a *pathSearchAutomaton, row pipelineRow, maxLength int, from *storage.Node) *pathSearch {
-	return &pathSearch{e: e, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx)}
+func (run relationshipAccessExecution) newPathSearch(ctx context.Context, a *pathSearchAutomaton, row pipelineRow, maxLength int, from *storage.Node) *pathSearch {
+	return &pathSearch{e: run.executor, access: &run, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx)}
 }
 
 // slotHolds reports whether node may take slot: the node a row binds to

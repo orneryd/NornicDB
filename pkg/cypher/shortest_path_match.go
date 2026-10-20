@@ -110,6 +110,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		endVariable:   traversal.EndNode.variable,
 		pathVariable:  pathVariable,
 		traversal:     traversal,
+		pattern:       inner,
 	}
 	if m.startVariable == "" {
 		m.startVariable = generatedVariablePrefix + "sp_start"
@@ -397,7 +398,8 @@ func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestP
 	if !ok {
 		return nil, getExpressionFailure(ctx)
 	}
-	rows := e.searchSelectedPaths(ctx, m.plan, m.plan.forward, false, row, maxLength, start, end, nil, 1, m.findAll)
+	execution := e.relationshipExecutionFor(ctx, m.pattern, "")
+	rows := execution.selectedPaths(ctx, m.plan, m.plan.forward, false, row, maxLength, start, end, nil, 1, m.findAll)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

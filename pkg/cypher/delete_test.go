@@ -204,7 +204,7 @@ func TestDetachDeleteAnonymousChainedPath(t *testing.T) {
 	parsed := executor.parseTraversalPattern(ctx, `(:Start)-->()-->()-->()`)
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.Segments, 3)
-	require.Len(t, executor.traverseGraph(ctx, parsed), 1)
+	require.Len(t, executor.relationshipExecutionFor(nil, "", "").traverseGraph(ctx, parsed), 1)
 	matched, matchErr := executor.Execute(ctx, `MATCH path = (:Start)-->()-->()-->() RETURN path`, nil)
 	require.NoError(t, matchErr)
 	require.Len(t, matched.Rows, 1)

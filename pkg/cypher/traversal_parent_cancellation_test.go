@@ -78,7 +78,7 @@ func TestTraversalParentRelayHasBoundedWork(t *testing.T) {
 			defer statement.cancel(context.Canceled)
 			e := NewStorageExecutor(engine)
 			state := e.newTraversalContext(statement, root, &RelationshipPattern{Direction: "outgoing", MinHops: 1, MaxHops: 3})
-			paths := e.findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
+			paths := e.relationshipExecutionFor(nil, "", "").findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
 			require.ErrorIs(t, parent.Err(), want)
 			require.LessOrEqual(t, engine.reads, 3, "canceled parent must bound work before its relay callback")
 			require.LessOrEqual(t, len(paths), 1)

@@ -1848,7 +1848,8 @@ func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge,
 	return e.readRelationshipEndpoint(id, properties)
 }
 
-func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool) (storage.NodeID, bool) {
+func (run relationshipAccessExecution) relationshipEndpointID(edge *storage.Edge, end bool) (storage.NodeID, bool) {
+	e := run.executor
 	if edge == nil {
 		return "", false
 	}
@@ -1862,6 +1863,10 @@ func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool) (
 	return id, true
 }
 
+func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool) (storage.NodeID, bool) {
+	return e.relationshipExecutionFor(nil, "", "").relationshipEndpointID(edge, end)
+}
+
 func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties []string) interface{} {
 	node, err := e.newRelationshipEndpointReader(e.storage).read(id, properties)
 	if err != nil {
@@ -1869,6 +1874,7 @@ func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties
 	}
 	return node
 }
+
 
 // isRelationshipPatternOperand reports whether expression is one whole
 // relationship pattern ((a)-[:R]->(b), (a)<--()), read by

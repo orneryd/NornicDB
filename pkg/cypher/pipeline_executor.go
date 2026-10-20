@@ -1260,7 +1260,8 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if len(items) != 1 {
 		return nil, false, nil
 	}
-	count, ok, err := e.relationshipCountFromStore(ctx, matches, items[0])
+	execution := e.relationshipExecutionFor(ctx, matchBody, "")
+	count, ok, err := execution.count(ctx, matches, items[0])
 	if err != nil {
 		return nil, true, err
 	}
@@ -2130,7 +2131,8 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 				}
 			}
 		}
-		joinedNodes, joinedRelationships := e.executeChainedMatch(ctx, pattern, []binding{nodes}, []relationshipBinding{relationships})
+		accessCtx := withRelationshipSeekPredicate(withValueBindings(ctx, row), pattern, whereClause)
+		joinedNodes, joinedRelationships := e.executeChainedMatch(accessCtx, pattern, []binding{nodes}, []relationshipBinding{relationships})
 		for index, nodeBindings := range joinedNodes {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeBindings)))
 			for name, value := range row {

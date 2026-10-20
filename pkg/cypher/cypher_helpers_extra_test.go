@@ -728,7 +728,7 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NotNil(t, match)
 	startNodes, err := eng.GetNodesByLabel("A")
 	require.NoError(t, err)
-	paths := exec.traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
+	paths := exec.relationshipExecutionFor(nil, "", "").traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
 		Enabled:      true,
 		MaxWorkers:   2,
 		MinBatchSize: 1,
@@ -1592,7 +1592,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
 
 	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
+	edges, prefix, err := exec.relationshipExecutionFor(nil, "", "").getEdgesByTypeFast("REL")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_fast_cov:", prefix)
 	for _, e := range edges {
@@ -1617,7 +1617,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
+	_, _, err = failExec.relationshipExecutionFor(nil, "", "").getEdgesByTypeFast("REL")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "edges fail")
 }
@@ -2795,7 +2795,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 	}
 	for _, tc := range rejectCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
+			res, ok, err := exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
 			require.NoError(t, err)
 			assert.False(t, ok)
 			assert.Nil(t, res)
@@ -2823,7 +2823,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 			MaxHops:   1,
 		},
 	}
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2886,7 +2886,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 		},
 	}
 
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2908,7 +2908,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	}
 
 	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
+	res, ok, err = exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",

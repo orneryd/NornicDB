@@ -452,7 +452,8 @@ func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ..
 
 // buildGraphProjection reads the projected nodes and relationships from
 // storage, streaming both.
-func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+func (run relationshipAccessExecution) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+	e := run.executor
 	projection := &GraphProjection{
 		Name:                     name,
 		NodeLabels:               make(map[string][]string),
@@ -732,6 +733,10 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	}
 	projection.schema = gdsGraphSchema(nodeSpecs, relSpecs, schemaTypes)
 	return projection, nil
+}
+
+func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+	return e.relationshipExecutionFor(nil, "", "").buildGraphProjection(name, nodeSpecs, relSpecs, validateRelationships)
 }
 
 // mergeParallelProperties folds a parallel relationship's properties into

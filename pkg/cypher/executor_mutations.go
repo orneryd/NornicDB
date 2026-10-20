@@ -41,7 +41,8 @@ func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string)
 //	[RETURN ...]
 //
 // with a streamlined path that avoids generic WITH parsing in delete execution.
-func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
+func (run relationshipAccessExecution) tryExecuteDeleteWithWithLimitHotPath(ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
+	e := run.executor
 	if !detach || matchIdx < 0 || deleteIdx <= matchIdx {
 		return nil, false, nil
 	}
@@ -134,6 +135,10 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	}
 	e.applyDeleteReturnProjection(result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
 	return result, true, getExpressionFailure(ctx)
+}
+
+func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
+	return e.relationshipExecutionFor(nil, "", "").tryExecuteDeleteWithWithLimitHotPath(ctx, cypher, matchIdx, deleteIdx, deleteVars, detach, needEdgeStats)
 }
 
 func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
@@ -322,7 +327,8 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	return deleteTargetValue{}
 }
 
-func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+func (run relationshipAccessExecution) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+	e := run.executor
 	if result == nil {
 		return
 	}
@@ -392,6 +398,10 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	result.Rows = projected.Rows
 }
 
+func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+	e.relationshipExecutionFor(nil, "", "").applyDeleteReturnProjection(result, cypher, deleteVars, info)
+}
+
 func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {
 	if !detach {
 		return false
@@ -451,7 +461,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 	}
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (run relationshipAccessExecution) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
 	if matchResult == nil {
 		return
 	}
@@ -477,6 +487,10 @@ func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResul
 			row[colIdx] = edge
 		}
 	}
+}
+
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+	e.relationshipExecutionFor(nil, "", "").normalizeSetMatchRowsToEdges(matchResult, store)
 }
 
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
@@ -828,7 +842,8 @@ func (e *StorageExecutor) idCounter() int64 {
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+func (run relationshipAccessExecution) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+	e := run.executor
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
 		return false
 	}
@@ -882,6 +897,10 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		return len(incoming) > 0 || len(outgoing) > 0
 	}
 	return false
+}
+
+func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+	return e.relationshipExecutionFor(nil, "", "").evaluateRelationshipPatternInWhere(node, variable, pattern)
 }
 
 // checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
@@ -994,7 +1013,8 @@ func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []rela
 }
 
 // traverseChain recursively checks if a chain of relationships exists
-func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+func (run relationshipAccessExecution) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+	e := run.executor
 	if hopIndex >= len(hops) {
 		return true // All hops matched
 	}
@@ -1032,6 +1052,10 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 	}
 
 	return false
+}
+
+func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+	return e.relationshipExecutionFor(nil, "", "").traverseChain(node, hops, hopIndex)
 }
 
 // extractVariableNameFromReturnItem extracts the variable name from a return item expression.
@@ -1206,7 +1230,7 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 // change. It validates all adjacent edges (outgoing and incoming) against the current
 // policy constraints to ensure no DISALLOWED pair is formed and any ALLOWED whitelist
 // is still satisfied.
-func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+func (run relationshipAccessExecution) validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
 	schema := store.GetSchema()
 	if schema == nil {
 		return nil
@@ -1249,6 +1273,10 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	return nil
+}
+
+func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+	return relationshipStorageExecution().validatePolicyOnLabelChange(store, node, oldLabels)
 }
 
 // checkPolicyForEdge validates a single edge against all policy constraints for its type.

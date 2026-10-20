@@ -97,7 +97,7 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 		return nil, true, nil
 	}
 	row := pipelineRow{startVariable: start, endVariable: end}
-	rows, err := e.shortestPathsBetween(ctx, &shortestPathMatch{findAll: findAll, traversal: match, plan: plan}, start, end, row)
+	rows, err := e.shortestPathsBetween(ctx, &shortestPathMatch{findAll: findAll, traversal: match, pattern: pattern, plan: plan}, start, end, row)
 	if err != nil {
 		return nil, true, err
 	}

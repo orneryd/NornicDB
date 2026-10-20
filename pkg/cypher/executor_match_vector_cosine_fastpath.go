@@ -497,15 +497,17 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 	return out, true
 }
 
-// tryFastPathMatchRelationshipVectorCosine handles relationship direct-return shape:
+// tryRawMatchRelationshipVectorCosine handles relationship direct-return shape
+// below relationshipAccessExecution:
 //
 //	MATCH ()-[e:TYPE]->()
 //	RETURN ..., vector.similarity.cosine(e.<prop>, <query>) AS <scoreAlias>, ...
 //	ORDER BY <scoreAlias> DESC|ASC
 //	LIMIT <k>
-func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+func (run relationshipAccessExecution) tryRawMatchRelationshipVectorCosine(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+	e := run.executor
 	trimmed := strings.TrimSpace(cypher)
-	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
+	if !startsWithKeywordFold(trimmed, "MATCH") {
 		return nil, false
 	}
 	for _, kw := range []string{
@@ -566,20 +568,32 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	for i, item := range returnItems {
 		columns[i] = item.column()
 	}
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	if !hasIndex {
+		return nil, false
+	}
+	if probe, _ := ctx.Value(relationshipVectorProbeKey{}).(*relationshipVectorProbe); probe != nil {
+		probe.access = &relationshipVectorAccess{index: indexName, relType: pattern.relType, property: vectorProp, estimatedRows: 10}
+		if probe.planOnly {
+			if vector, valid := e.resolveCosineQueryVector(ctx, queryExpr); limit > 0 && (!valid || len(vector) == 0) {
+				probe.access = nil
+				return nil, false
+			}
+			return nil, true
+		}
+	}
 	if limit == 0 {
 		e.markCosineVectorIndexFastPathUsed()
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
-	if !hasIndex {
-		return nil, false
-	}
-
 	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "")
-	edgeScores, ok := e.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
+	edgeScores, ok := run.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
 	if !ok {
 		return nil, false
+	}
+	if probe, _ := ctx.Value(relationshipVectorProbeKey{}).(*relationshipVectorProbe); probe != nil {
+		probe.candidates = int64(len(edgeScores))
 	}
 
 	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
@@ -619,7 +633,8 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	return &ExecuteResult{Columns: columns, Rows: rows, Stats: &QueryStats{}}, true
 }
 
-// tryFastPathMatchWithRelationshipVectorCosineProjection handles Graphiti relationship shape:
+// tryRawMatchWithRelationshipVectorCosineProjection handles Graphiti relationship shape
+// below relationshipAccessExecution:
 //
 //	MATCH (n)-[e:TYPE]->(m) [WHERE ...]
 //	WITH [DISTINCT] e[, n, m], vector.similarity.cosine(e.<prop>, <query>) AS <scoreAlias>
@@ -627,9 +642,10 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 //	RETURN ...
 //	ORDER BY <scoreAlias> DESC|ASC
 //	LIMIT <k>
-func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+func (run relationshipAccessExecution) tryRawMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+	e := run.executor
 	trimmed := strings.TrimSpace(cypher)
-	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
+	if !startsWithKeywordFold(trimmed, "MATCH") {
 		return nil, false
 	}
 	for _, kw := range []string{
@@ -719,20 +735,32 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	for i, item := range returnItems {
 		columns[i] = item.column()
 	}
+	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	if !hasIndex {
+		return nil, false
+	}
+	if probe, _ := ctx.Value(relationshipVectorProbeKey{}).(*relationshipVectorProbe); probe != nil {
+		probe.access = &relationshipVectorAccess{index: indexName, relType: pattern.relType, property: vectorProp, estimatedRows: 10}
+		if probe.planOnly {
+			if vector, valid := e.resolveCosineQueryVector(ctx, queryExpr); limit > 0 && (!valid || len(vector) == 0) {
+				probe.access = nil
+				return nil, false
+			}
+			return nil, true
+		}
+	}
 	if limit == 0 {
 		e.markCosineVectorIndexFastPathUsed()
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
-	if !hasIndex {
-		return nil, false
-	}
-
 	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "" || scorePredicateRejectsLeadingResults(orderDesc, scoreOp))
-	edgeScores, ok := e.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
+	edgeScores, ok := run.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
 	if !ok {
 		return nil, false
+	}
+	if probe, _ := ctx.Value(relationshipVectorProbeKey{}).(*relationshipVectorProbe); probe != nil {
+		probe.candidates = int64(len(edgeScores))
 	}
 
 	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
@@ -831,11 +859,10 @@ func (e *StorageExecutor) tryFastPathAnyMatchVectorCosine(ctx context.Context, c
 	if result, handled := e.tryFastPathMatchWithVectorCosineProjection(ctx, cypher, upperQuery); handled {
 		return result, true
 	}
-	if result, handled := e.tryFastPathMatchRelationshipVectorCosine(ctx, cypher, upperQuery); handled {
-		return result, true
-	}
-	if result, handled := e.tryFastPathMatchWithRelationshipVectorCosineProjection(ctx, cypher, upperQuery); handled {
-		return result, true
+	if execution, ok := e.relationshipExecutionForQuery(ctx, cypher); ok {
+		if result, handled := execution.vector(ctx, cypher); handled {
+			return result, true
+		}
 	}
 	return nil, false
 }
@@ -1190,7 +1217,8 @@ func scoreVectorForFastPath(queryVector []float32, embedding []float32, similari
 	}
 }
 
-func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
+func (run relationshipAccessExecution) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
+	e := run.executor
 	vec, ok := e.resolveCosineQueryVector(ctx, queryExpr)
 	if !ok || len(vec) == 0 {
 		return nil, false

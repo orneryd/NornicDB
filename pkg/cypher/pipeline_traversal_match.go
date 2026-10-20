@@ -68,7 +68,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx := withValueBindings(ctx, row)
+		rowCtx := withRelationshipSeekPredicate(withValueBindings(ctx, row), pattern, whereClause)
 		materializedPattern := pattern
 		materializedWhere := whereClause
 		physicalWhere := pipelineTraversalPushdownPredicate(materializedWhere, row, variables)
@@ -98,16 +98,6 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
 				rowHint.earlyLimit = hint.earlyLimit
 				rowHint.readTail = hint.readTail
-			}
-			if startSeedNodes == nil && endSeedNodes == nil {
-				// A relationship pinned by id / elementId starts from its
-				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
-					if none {
-						continue
-					}
-					startSeedNodes = seeds
-				}
 			}
 			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {

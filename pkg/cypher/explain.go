@@ -106,6 +106,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
 	plan.Mode = ModeExplain
+	e.annotateRelationshipSeekPlan(ctx, query, plan)
 	result := &ExecuteResult{
 		Columns: e.inferExplainColumns(query),
 		Rows:    [][]interface{}{},
@@ -128,6 +129,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	// the cache would otherwise be mutated by attachPlanMetadata below,
 	// leaking plan metadata into ordinary cached reads of the same query.
 	ctx = context.WithValue(ctx, profileExecutionKey{}, true)
+	ctx = withRelationshipSeekProfile(ctx)
 
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
@@ -149,6 +151,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 
 	// Calculate total DB hits (estimate based on operations)
 	plan.TotalDBHits = e.estimateDBHits(plan.Root)
+	e.annotateRelationshipSeekPlan(ctx, query, plan)
 
 	// TRC-16: emit per-operator spans with estimated/actual rows.
 	emitOperatorSpans(ctx, plan.Root)

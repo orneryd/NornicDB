@@ -175,7 +175,7 @@ func createRelationshipForMerge(
 // whose original pattern properties were later changed by SET. The point read
 // is required before transactional CreateEdge because a transaction can buffer
 // a snapshot-visible committed ID without returning ErrAlreadyExists.
-func selectRelationshipMergeCreateID(
+func (run relationshipAccessExecution) selectRelationshipMergeCreateID(
 	store storage.Engine,
 	edge *storage.Edge,
 	matchProps map[string]interface{},
@@ -223,6 +223,14 @@ func selectRelationshipMergeCreateID(
 		}
 	}
 	return nil, localizedError(localization.CypherMergeRelationshipIdentityExhausted(), nil)
+}
+
+func selectRelationshipMergeCreateID(
+	store storage.Engine,
+	edge *storage.Edge,
+	matchProps map[string]interface{},
+) (*storage.Edge, error) {
+	return relationshipStorageExecution().selectRelationshipMergeCreateID(store, edge, matchProps)
 }
 
 func relationshipMatchesMergePattern(

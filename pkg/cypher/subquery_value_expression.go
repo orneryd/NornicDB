@@ -480,56 +480,9 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if seed == nil {
 		return 0, false
 	}
-	var paths []PathResult
-	if matches.IsChained && len(matches.Segments) > 1 {
-		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
-	} else {
-		paths = e.traverseFromNode(ctx, seed, matches)
-	}
-	var count int64
-	for _, path := range paths {
-		inner := e.buildPathContext(path, matches)
-		correlated := true
-		for name, node := range inner.nodes {
-			if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || bound.ID != node.ID) {
-				correlated = false
-				break
-			}
-		}
-		for name, relationship := range inner.rels {
-			if !correlated {
-				break
-			}
-			if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || bound.ID != relationship.ID) {
-				correlated = false
-				break
-			}
-		}
-		if !correlated {
-			continue
-		}
-		if where != "" {
-			// The WHERE sees the row's values with the path's bindings.
-			row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
-			for name, value := range values {
-				row[name] = value
-			}
-			for name, node := range inner.nodes {
-				row[name] = node
-			}
-			for name, relationship := range inner.rels {
-				row[name] = relationship
-			}
-			if !e.evaluateRowPredicate(ctx, where, row) {
-				continue
-			}
-		}
-		count++
-		if first {
-			return count, true
-		}
-	}
-	return count, true
+	ctx = withRelationshipSeekPredicate(withValueBindings(ctx, values), pattern, where)
+	execution := e.relationshipExecutionFor(ctx, pattern, "")
+	return execution.anchoredCount(ctx, matches, seed, values, first)
 }
 
 // patternMapsAreConstant reports whether every property map in a node or
@@ -849,11 +802,14 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 			return 0, false
 		}
 	}
-	return e.nodeDegreeCount(ctx, node, shape), true
+	split := relationshipAccessMatchWhere(body)
+	execution := e.relationshipExecutionFor(ctx, split.pattern, split.where)
+	return execution.degree(ctx, node, shape), true
 }
 
 // nodeDegreeCount is the degree of node along shape's direction and types.
-func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+func (run relationshipAccessExecution) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+	e := run.executor
 	store := e.getStorage(ctx)
 	var edges []*storage.Edge
 	if shape.outgoing {

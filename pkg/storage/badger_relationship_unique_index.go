@@ -3,19 +3,24 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
-// Relationship constraint indexes are derived equality indexes, maintained
-// by the same committed-edge hooks as the query caches. They reuse the node
+// Relationship property and constraint indexes share this derived equality owner,
+// maintained by the same committed-edge hooks as the query caches. They reuse the node
 // equality index's canonical values; NodeID below is an internal index slot,
 // not an entity conversion. Only matching edge IDs are read back and checked.
 // The bounded entry count prevents historical schema names retaining indexes.
 const relationshipUniqueIndexLimit = 16
 
-type relationshipUniqueIndexKey struct{ namespace, relType, properties string }
+type relationshipUniqueIndexKey struct {
+	namespace, relType, properties string
+}
 type relationshipUniqueIndex struct {
 	key        relationshipUniqueIndexKey
 	properties []string
@@ -26,6 +31,7 @@ type relationshipUniqueIndexSet struct {
 	active  atomic.Bool
 	mu      sync.Mutex
 	entries map[relationshipUniqueIndexKey]*relationshipUniqueIndex
+	dirty   map[EdgeID]struct{}
 }
 
 func relationshipConstraintValues(properties []string, values map[string]interface{}) ([]interface{}, bool) {
@@ -75,7 +81,7 @@ func (idx *relationshipUniqueIndex) put(edge *Edge) {
 	if edge.Type != idx.key.relType || !strings.HasPrefix(string(edge.ID), idx.key.namespace+":") {
 		return
 	}
-	values, ok := relationshipConstraintValues(idx.properties, edge.Properties)
+	values, ok := relationshipConstraintValueKeys(idx.properties, edge.Properties, true)
 	if !ok {
 		return
 	}
@@ -97,24 +103,63 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 	if _, ok := relationshipConstraintValues(c.Properties, edge.Properties); !ok {
 		return nil, false, nil
 	}
-	key := relationshipUniqueIndexKey{namespace, edge.Type, relationshipPropertyKey(c.Properties)}
-	set := &b.relationshipUniqueIndexes
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	idx := set.entries[key]
-	if idx == nil {
-		set.active.Store(true) // Mutations must join publication before the build reads storage.
+	key := relationshipUniqueIndexKey{namespace: namespace, relType: edge.Type, properties: relationshipPropertyKey(c.Properties)}
+	values, _ := relationshipConstraintValues(c.Properties, edge.Properties)
+	ids, err := b.relationshipEqualityCandidates(context.Background(), key, c.Properties, values, func(visit func(*Edge) error) error {
 		if hook := getUniqueConstraintScanHook(); hook != nil {
 			hook()
 		}
-		edges, err := b.GetEdgesByType(edge.Type)
-		if err != nil {
-			set.active.Store(len(set.entries) > 0)
-			return nil, false, err
+		return b.StreamEdgesByTypeInScope(context.Background(), namespace+":", edge.Type, visit)
+	})
+	return ids, true, err
+}
+
+// Both constraint validation and query seeks use this owner. Snapshot entries
+// are immutable; live entries are reconciled from committed records after a
+// write notification. Reading the record, rather than a notification's payload,
+// keeps overlapping writers' publication order from restoring an older value.
+func (b *BadgerEngine) relationshipEqualityCandidates(ctx context.Context, key relationshipUniqueIndexKey, properties []string, values []interface{}, populate func(func(*Edge) error) error) ([]NodeID, error) {
+	return b.relationshipEqualityCandidatesInSet(ctx, &b.relationshipUniqueIndexes, key, properties, values, populate)
+}
+
+// The read-view owner supplies its index set: maintained engine state for live
+// access, or immutable state owned and released by one pinned transaction.
+func (b *BadgerEngine) relationshipEqualityCandidatesInSet(ctx context.Context, set *relationshipUniqueIndexSet, key relationshipUniqueIndexKey, properties []string, values []interface{}, populate func(func(*Edge) error) error) ([]NodeID, error) {
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(set.dirty) > 0 {
+		if err := b.withView(func(txn *badger.Txn) error {
+			for id := range set.dirty {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				edge, err := b.readEdgeInTxn(txn, id)
+				if err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				for _, idx := range set.entries {
+					idx.remove(id)
+					if edge != nil {
+						idx.put(edge)
+					}
+				}
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), c.Properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), c.Properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
-		for _, existing := range edges {
-			idx.put(existing)
+		set.dirty = nil
+	}
+	idx := set.entries[key]
+	if idx == nil {
+		set.active.Store(true) // Mutations must join publication before the build reads storage.
+		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
+		if err := populate(func(edge *Edge) error { idx.put(edge); return nil }); err != nil {
+			set.active.Store(len(set.entries) > 0)
+			return nil, err
 		}
 		if set.entries == nil {
 			set.entries = make(map[relationshipUniqueIndexKey]*relationshipUniqueIndex)
@@ -127,8 +172,7 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 		}
 		set.entries[key] = idx
 	}
-	values, _ := relationshipConstraintValues(c.Properties, edge.Properties)
-	return idx.index.LookupFull(values...), true, nil
+	return idx.index.LookupFull(values...), nil
 }
 func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
 	set := &b.relationshipUniqueIndexes
@@ -138,7 +182,15 @@ func (b *BadgerEngine) updateRelationshipUniqueIndexes(edge *Edge) {
 	set.mu.Lock()
 	defer set.mu.Unlock()
 	for _, idx := range set.entries {
-		idx.put(edge)
+		_, previous := idx.keys[edge.ID]
+		if !previous && (edge.Type != idx.key.relType || !strings.HasPrefix(string(edge.ID), idx.key.namespace+":")) {
+			continue
+		}
+		if set.dirty == nil {
+			set.dirty = make(map[EdgeID]struct{})
+		}
+		set.dirty[edge.ID] = struct{}{}
+		break
 	}
 }
 func (b *BadgerEngine) deleteRelationshipUniqueIndexes(ids ...EdgeID) {
@@ -148,9 +200,15 @@ func (b *BadgerEngine) deleteRelationshipUniqueIndexes(ids ...EdgeID) {
 	}
 	set.mu.Lock()
 	defer set.mu.Unlock()
-	for _, idx := range set.entries {
-		for _, id := range ids {
-			idx.remove(id)
+	for _, id := range ids {
+		for _, idx := range set.entries {
+			if _, present := idx.keys[id]; present {
+				if set.dirty == nil {
+					set.dirty = make(map[EdgeID]struct{})
+				}
+				set.dirty[id] = struct{}{}
+				break
+			}
 		}
 	}
 }
@@ -158,6 +216,7 @@ func (b *BadgerEngine) resetRelationshipUniqueIndexes() {
 	set := &b.relationshipUniqueIndexes
 	set.mu.Lock()
 	set.entries = nil
+	set.dirty = nil
 	set.active.Store(false)
 	set.mu.Unlock()
 }

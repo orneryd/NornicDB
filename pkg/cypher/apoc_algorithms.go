@@ -42,13 +42,18 @@ func (pq *priorityQueue) Pop() interface{} {
 }
 
 // getNodeEdges returns all edges for a node.
-func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
+func (run relationshipAccessExecution) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
+	e := run.executor
 	var result []*storage.Edge
 	outgoing, _ := e.storage.GetOutgoingEdges(nodeID)
 	incoming, _ := e.storage.GetIncomingEdges(nodeID)
 	result = append(result, outgoing...)
 	result = append(result, incoming...)
 	return result
+}
+
+func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
+	return e.relationshipExecutionFor(nil, "", "").getNodeEdges(nodeID)
 }
 
 // callApocAlgoDijkstra implements Dijkstra's shortest path.
@@ -296,7 +301,8 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 // computePageRank ranks the given nodes over the relationships between
 // them: a relationship to a node outside the set carries no score, and no
 // outside node is ranked (#1164).
-func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
+func (run relationshipAccessExecution) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
+	e := run.executor
 	if len(nodes) == 0 {
 		return map[storage.NodeID]float64{}
 	}
@@ -337,6 +343,10 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 	return scores
 }
 
+func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
+	return e.relationshipExecutionFor(nil, "", "").computePageRank(nodes, damping, iterations)
+}
+
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.betweenness", args)
@@ -348,7 +358,8 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []in
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
+func (run relationshipAccessExecution) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
+	e := run.executor
 	scores := make(map[storage.NodeID]float64)
 	for _, node := range nodes {
 		scores[node.ID] = 0
@@ -406,6 +417,10 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 		}
 	}
 	return scores
+}
+
+func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
+	return e.relationshipExecutionFor(nil, "", "").computeBetweenness(nodes)
 }
 
 // callApocAlgoCloseness computes closeness centrality.
@@ -483,7 +498,8 @@ func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []int
 	return &ExecuteResult{Columns: []string{"node"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
+func (run relationshipAccessExecution) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
+	e := run.executor
 	if relType == "" || maxHops < 1 {
 		return nil, nil
 	}
@@ -543,6 +559,10 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 		current = next
 	}
 	return result, nil
+}
+
+func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
+	return e.relationshipExecutionFor(nil, "", "").getNeighborsByhop(ctx, startID, relType, maxHops)
 }
 
 // callApocNeighborsByhop gets neighbors grouped by hop.

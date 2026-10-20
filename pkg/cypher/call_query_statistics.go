@@ -245,7 +245,8 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	return result, nil
 }
 
-func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
+	e := run.executor
 	store := e.getStorage(ctx)
 	nodes, err := store.AllNodes()
 	if err != nil {
@@ -319,4 +320,8 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 		result.Rows = append(result.Rows, queries.Rows...)
 	}
 	return result, nil
+}
+
+func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").retrieveGraphStatistics(ctx, section)
 }

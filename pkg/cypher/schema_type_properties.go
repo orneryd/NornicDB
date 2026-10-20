@@ -77,7 +77,8 @@ func (category *schemaTypeCategory) add(properties map[string]interface{}, cyphe
 
 // callDbSchemaTypeProperties is db.schema.nodeTypeProperties() (nodes) or
 // db.schema.relTypeProperties().
-func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes bool) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callDbSchemaTypeProperties(ctx context.Context, nodes bool) (*ExecuteResult, error) {
+	e := run.executor
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	categories := make(map[string]*schemaTypeCategory)
 	category := func(key string, labels []string) *schemaTypeCategory {
@@ -139,6 +140,10 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		}
 	}
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes bool) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbSchemaTypeProperties(ctx, nodes)
 }
 
 // schemaTypeKey is a category's name: each label or type backtick-quoted

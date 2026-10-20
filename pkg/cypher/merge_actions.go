@@ -276,6 +276,9 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// returned bindings remain raw for writes and the outer query projects them.
 	identity := e.cloneWithStorage(e.storage)
 	identity.storedPropertyIdentity = true
+	// The identity probe is a rewritten MATCH statement. Its actual source
+	// goes through the same compiler, including resolved dynamic tokens.
+	ctx = context.WithValue(ctx, relationshipAccessProgramKey{}, relationshipProgramFor(match))
 	matched, err := identity.pipelineMatchRows(ctx, row, match)
 	if err != nil {
 		return nil, nil, false, err

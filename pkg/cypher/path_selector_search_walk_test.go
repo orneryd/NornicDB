@@ -75,23 +75,23 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	}
 	plus, _, ok := compileSelectedPathPlan("(a)(()-[:T]->())+(b)", "p", "", nil)
 	require.True(t, ok)
-	rows, ok := exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, plus))
+	rows, ok := exec.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, plus))
 	require.True(t, ok)
 	require.Len(t, rows, 1)
 	// A walk the pattern doesn't take or bind, a node that doesn't load and
 	// a failed batch read leave the pair to the general search.
-	_, ok = exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false,
+	_, ok = exec.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false,
 		func(pathSearchPath) (pipelineRow, bool) { return nil, false })
 	require.False(t, ok)
 	three, _, ok := compileSelectedPathPlan("(a)(()-[:T]->()){3}(b)", "p", "", nil)
 	require.True(t, ok)
-	_, ok = exec.newPathSearch(ctx, three.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, three))
+	_, ok = exec.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, three.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, three))
 	require.False(t, ok)
 	dangling := [][]*storage.Edge{{{ID: "dangling", Type: "T", StartNode: s1.ID, EndNode: "missing"}, {ID: "back", Type: "T", StartNode: "missing", EndNode: s4.ID}}}
-	_, ok = exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, dangling, false, bindFor(exec, plus))
+	_, ok = exec.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, dangling, false, bindFor(exec, plus))
 	require.False(t, ok)
 	failing := NewStorageExecutor(&failingBatchEngine{Engine: exec.storage})
-	_, ok = failing.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(failing, plus))
+	_, ok = failing.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(failing, plus))
 	require.False(t, ok)
 	result, err := failing.Execute(ctx, "MATCH (a:S {id: 1}), (b:S {id: 4}) MATCH p = shortestPath((a)-[:T*]->(b)) RETURN length(p) AS l", nil)
 	require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	// A cancelled search ends within the level it is extending.
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	search := exec.newPathSearch(cancelled, plus.forward, pipelineRow{}, -1, s1)
+	search := exec.relationshipExecutionFor(nil, "", "").newPathSearch(cancelled, plus.forward, pipelineRow{}, -1, s1)
 	side := search.newWalkSide(s1.ID, "outgoing", true)
 	for len(side.frontier) < 300 {
 		side.frontier = append(side.frontier, s1.ID)
