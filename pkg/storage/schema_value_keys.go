@@ -7,18 +7,17 @@ import (
 	"strings"
 )
 
-// indexValueKey is the key a property index and the generic pending view
-// (pendingNodeIndex) file a value under. UNIQUE caches preserve precision
-// with uniqueConstraintValueKey when this legacy numeric key is lossy:
-// numbers in one numeric form, so 1 and 1.0 match, lists and maps under their
-// compositeIndexKey, and other comparable values as they are. It reports false
-// for null and for values it can't key (byte arrays, lists holding values
-// without a key), which no index holds. An index lookup is complete only
-// because every keyed value is filed: a list that was not filed made an
-// indexed equality on it return no rows (#844).
+// indexValueKey is the one key every in-memory index, UNIQUE cache, key lock
+// and pending view files a value under: numbers by exact value (numericIndexKey),
+// so 1 and 1.0 match but adjacent integers above 2^53 do not, lists and maps
+// under their compositeIndexKey, and other comparable values as they are. It
+// reports false for null and for values it can't key (byte arrays, lists
+// holding values without a key), which no index holds. An index lookup is
+// complete only because every keyed value is filed: a list that was not filed
+// made an indexed equality on it return no rows (#844).
 func indexValueKey(value interface{}) (interface{}, bool) {
-	if numeric, ok := numericConstraintValue(value); ok {
-		return numeric, true
+	if key, ok := numericIndexKey(value); ok {
+		return key, true
 	}
 	if value == nil {
 		return nil, false
@@ -30,6 +29,45 @@ func indexValueKey(value interface{}) (interface{}, bool) {
 		return key, true
 	}
 	return nil, false
+}
+
+// numericIndexKey keys a number by its exact value: as float64 when a float64
+// holds it exactly (every float, and every integer within ±2^53 or otherwise
+// representable), else as the integer itself, uint64 when non-negative and
+// int64 when negative. Equal keys are exactly the numbers compareValues
+// equates, and compareSchemaIndexValues orders all three forms exactly.
+func numericIndexKey(value interface{}) (interface{}, bool) {
+	switch n := value.(type) {
+	case float64:
+		return n, true
+	case int64:
+		return exactIntegerIndexKey(n), true
+	case int:
+		return exactIntegerIndexKey(int64(n)), true
+	case uint64:
+		return exactUnsignedIndexKey(n), true
+	case uint:
+		return exactUnsignedIndexKey(uint64(n)), true
+	}
+	// The narrower integer types and float32 always fit a float64 exactly.
+	return numericConstraintValue(value)
+}
+
+func exactIntegerIndexKey(n int64) interface{} {
+	if f := float64(n); constraintIntegerFloatEqual(n, f) {
+		return f
+	}
+	if n < 0 {
+		return n
+	}
+	return uint64(n)
+}
+
+func exactUnsignedIndexKey(n uint64) interface{} {
+	if f := float64(n); constraintUnsignedFloatEqual(n, f) {
+		return f
+	}
+	return n
 }
 
 // compositeIndexKey is the index key of a list or map value: a canonical text
