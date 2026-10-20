@@ -72,6 +72,9 @@ var rowValuePrograms = newBoundedCache[string, *rowValueProgram](8192, boundedCa
 // rowValueProgram is a compiled expression.
 type rowValueProgram struct {
 	root rowValueNode
+	// Planning and evaluation retain the same immutable compiler result.
+	// Declaration/read consumers must not rebuild an operand to ask for facts.
+	info rowValueInfo
 }
 
 // rowValueProgramFor returns expr's program, or nil when expr is to be
@@ -88,9 +91,24 @@ func rowValueProgramFor(expr string) *rowValueProgram {
 	if program != rowValueSeen {
 		return program
 	}
+	return compileRowValueProgram(expr)
+}
+
+// rowValueProgramForFacts supplies immutable operand facts to planning. A
+// planner needs these facts on its first visit, independently of whether the
+// row evaluator has reached the expression yet. Both consumers use the same
+// program owner; runtime bindings and invocation frames are never retained.
+func rowValueProgramForFacts(expr string) *rowValueProgram {
+	if program, cached := rowValuePrograms.get(expr); cached && program != rowValueSeen {
+		return program
+	}
+	return compileRowValueProgram(expr)
+}
+
+func compileRowValueProgram(expr string) *rowValueProgram {
 	compiler := rowValueCompiler{}
-	root, _ := compiler.compile(expr)
-	program = &rowValueProgram{root: root}
+	root, info := compiler.compile(expr)
+	program := &rowValueProgram{root: root, info: info}
 	rowValuePrograms.put(expr, program)
 	return program
 }
@@ -113,19 +131,25 @@ type rowValueInfo struct {
 	pure    bool
 	trivial bool
 	refs    []string
+	// footprint is the physical read set of these same compiled operands.
+	// nil uses refs (whole values); property operands supply qualified reads.
+	footprint []string
 }
 
 func impureRowValue() rowValueInfo { return rowValueInfo{} }
 
 // combineRowValueInfo is the info of a part made of parts.
 func combineRowValueInfo(parts ...rowValueInfo) rowValueInfo {
-	info := rowValueInfo{pure: true}
+	info := rowValueInfo{pure: true, footprint: []string{}}
 	for _, part := range parts {
 		if !part.pure {
 			return impureRowValue()
 		}
 		for _, name := range part.refs {
 			info.refs = appendUniqueString(info.refs, name)
+		}
+		for _, reference := range part.readFootprint() {
+			info.footprint = appendUniqueString(info.footprint, reference)
 		}
 	}
 	return info
@@ -234,8 +258,11 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 		return rowTextValue(expr)
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
-		return &rowPropertyChainNode{text: expr, literal: isLiteralKeyword(expr), variable: variable, chain: chain},
-			rowValueInfo{pure: true, trivial: true, refs: []string{variable}}
+		info := rowValueInfo{pure: true, trivial: true, refs: []string{variable}, footprint: []string{}}
+		if !isLiteralKeyword(expr) && !isLiteralKeyword(variable) {
+			info.footprint = []string{variable + "." + chain}
+		}
+		return &rowPropertyChainNode{text: expr, literal: isLiteralKeyword(expr), variable: variable, chain: chain}, info
 	}
 	if normalizeProjectionColumnName(expr) != expr {
 		return rowTextValue(expr)
@@ -413,7 +440,13 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 	if isValidIdentifier(expr) || len(expr) > 1 && expr[0] == '$' && isValidIdentifier(expr[1:]) {
 		// A row variable or parameter: bound in the row, or read by the
 		// fallback as evaluateRowValueText reads it.
-		return bound(expr, &rowFallbackNode{text: expr}, rowValueInfo{pure: true, trivial: true, refs: []string{expr}})
+		info := rowValueInfo{pure: true, trivial: true, refs: []string{expr}}
+		// Parameters affect evaluation and loop memoization, but never name a
+		// physical row binding or make an invocation row-dependent.
+		if expr[0] == '$' {
+			info.footprint = []string{}
+		}
+		return bound(expr, &rowFallbackNode{text: expr}, info)
 	}
 	return bound(expr, &rowFallbackNode{text: expr}, impureRowValue())
 }
@@ -424,6 +457,12 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 // which evaluateRowValueText tries first.
 func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValueNode, rowValueInfo) {
 	switch name {
+	case "filter", "extract":
+		variable, list, predicate, projection, ok := parseListComprehension(argument)
+		if !ok {
+			return rowTextValue(expr)
+		}
+		return c.compileComprehension(expr, variable, list, predicate, projection)
 	case "startnode", "endnode":
 		variable := strings.TrimSpace(argument)
 		if !isValidIdentifier(variable) {
@@ -685,7 +724,7 @@ type rowBoundNode struct {
 }
 
 func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	if value, ok := values[n.text]; ok {
+	if value, ok := rowExpressionBinding(values, n.text); ok {
 		return value, true, nil
 	}
 	return n.inner.eval(e, values, frames)
@@ -1111,4 +1150,11 @@ func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interf
 	}
 	budget := rowExpressionBudget(scope)
 	return rowComprehensionLoop(&budget, coerceToUnwindItems(listValue), func(item interface{}) { scope[n.variable] = item }, holds, project)
+}
+
+func (info rowValueInfo) readFootprint() []string {
+	if info.footprint != nil {
+		return info.footprint
+	}
+	return info.refs
 }

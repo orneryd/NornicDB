@@ -23,6 +23,7 @@ import (
 // follows it can't start an expression (distinctFollowsAsName, #894).
 // Without the keyword, text is returned trimmed.
 func cutDistinct(text string) (string, bool) {
+
 	text = strings.TrimSpace(text)
 	const keyword = "DISTINCT"
 	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isIdentByte(text[len(keyword)]) {

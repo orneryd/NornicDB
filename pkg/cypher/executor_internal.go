@@ -59,10 +59,6 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if cypherVersionFromContext(ctx) == "25" {
 		cypher, _ = separateCypher25Parameters(cypher)
 	}
-	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
-	if err != nil {
-		return nil, err
-	}
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
@@ -117,8 +113,17 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
+	// A selected local fragment consumes the same backend lowering owner.
+	lowered, localRewrites, _, err := e.lowerLocalStatement(ctx, cypher, params)
+	if err != nil {
+		return nil, err
+	}
+	cypher = lowered
+	if len(localRewrites) > 0 {
+		defer func() { result, retErr = restoreLocalStatement(result, retErr, localRewrites) }()
+	}
 	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
 	}
 	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
@@ -146,13 +151,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
-		return err
-	}
-	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
-		return err
-	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateInvocationParameterTypes(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {

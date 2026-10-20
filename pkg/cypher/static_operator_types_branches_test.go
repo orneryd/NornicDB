@@ -41,7 +41,7 @@ func TestCheckOperatorBranches(t *testing.T) {
 // unary minus, parameters and the items of lists, maps and function calls. A
 // type error anywhere inside is reported.
 func TestStaticOperatorCheckerBranches(t *testing.T) {
-	checker := staticOperatorChecker{params: map[string]interface{}{"i": int64(1), "s": "a"}}
+	checker := (staticTypeScope{params: map[string]interface{}{"i": int64(1), "s": "a"}}).operatorChecker()
 	for _, tc := range []struct {
 		expr  string
 		want  string
@@ -77,7 +77,7 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 		require.NoError(t, err, tc.expr)
 		require.Equal(t, tc.want, got.kind, tc.expr)
 	}
-	noParams := staticOperatorChecker{}
+	noParams := (staticTypeScope{}).operatorChecker()
 	got, err := noParams.check("$i")
 	require.NoError(t, err)
 	require.False(t, got.known())

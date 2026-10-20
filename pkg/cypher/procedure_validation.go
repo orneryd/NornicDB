@@ -120,10 +120,6 @@ func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail boo
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
 			localization.CypherCoreStandaloneCallModifiers())
 	}
-	if yield.misplacedWhere {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-			localization.CypherCoreYieldWhereMisplaced())
-	}
 	if yield.skip != "" {
 		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
 			return err
@@ -155,7 +151,6 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 		if item.alias != "" {
 			binding = item.alias
 		}
-		binding = normalizeProjectionColumnName(binding)
 		if _, exists := bindings[binding]; exists {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
@@ -257,11 +252,15 @@ func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwo
 // projectUnwoundValues returns which of the variables a WITH clause binds
 // carry a type that came from UNWIND: an alias of such a variable, or the
 // variable itself under WITH *.
-func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string]struct{} {
+func projectUnwoundValues(unwound map[string]struct{}, text string) map[string]struct{} {
+	return projectClauseUnwoundValues(unwound, pipelineClause{kind: pipelineClauseWith, text: text})
+}
+
+func projectClauseUnwoundValues(unwound map[string]struct{}, clause pipelineClause) map[string]struct{} {
 	if len(unwound) == 0 {
 		return nil
 	}
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	projection := admittedProjection(clause)
 	var projected map[string]struct{}
 	keep := func(name string) {
 		if projected == nil {
@@ -269,22 +268,16 @@ func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string
 		}
 		projected[name] = struct{}{}
 	}
-	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if expression == "*" {
-			for name := range unwound {
-				keep(name)
-			}
-			continue
+	if projection.Star {
+		for name := range unwound {
+			keep(name)
 		}
-		variable := simpleSemanticIdentifier(expression)
-		if _, fromUnwind := unwound[variable]; !fromUnwind || variable == "" {
-			continue
+	}
+	for _, item := range projection.Items {
+		name := simpleSemanticIdentifier(item.Expression)
+		if _, exists := unwound[name]; exists && name != "" {
+			keep(item.Column)
 		}
-		if alias == "" {
-			alias = variable
-		}
-		keep(alias)
 	}
 	return projected
 }

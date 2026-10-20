@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +26,9 @@ func TestForeachRejectsMalformedBodyBeforeRows(t *testing.T) {
 					require.NoError(t, err)
 				}
 				_, err := exec.Execute(context.Background(), "MATCH (t:T) FOREACH (i IN [1,2] | "+body+") RETURN t.id", nil)
-				require.ErrorContains(t, err, "SyntaxError")
+				require.Error(t, err)
+				code, _ := nornicerrors.Neo4jStatus(err)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 				result, err := exec.Execute(context.Background(), "MATCH (n:W) RETURN count(n)", nil)
 				require.NoError(t, err)
 				require.Equal(t, int64(0), result.Rows[0][0])

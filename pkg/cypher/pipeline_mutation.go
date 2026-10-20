@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"reflect"
 	"strings"
 
@@ -837,11 +838,11 @@ func containsRemoveClauseAnywhere(cypher string) bool {
 	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
 }
 
-func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipelineRow, clause string) (*QueryStats, error) {
+func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipelineRow, clause string, syntax ...*fabric.QueryClause) (*QueryStats, error) {
 	invalid := func() error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
 	}
-	variable, listExpr, updates, err := parsePipelineForeach(clause)
+	variable, listExpr, updates, err := parsePipelineForeach(clause, syntax...)
 	if err != nil {
 		return nil, err
 	}

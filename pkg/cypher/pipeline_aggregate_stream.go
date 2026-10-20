@@ -35,14 +35,7 @@ func pipelineClauseAggregates(clause pipelineClause) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
-	body := pipelineClauseBody(clause.text, "RETURN")
-	if clause.kind == pipelineClauseWith {
-		body = pipelineClauseBody(clause.text, "WITH")
-	}
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-		body = body[:where]
-	}
-	return returnProjectionPlanFor("RETURN " + body).hasAggregate
+	return returnProjectionPlanFor(clause.text, clause).hasAggregate
 }
 
 func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
@@ -540,8 +533,8 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		state.percentileRows = append(state.percentileRows, stored)
 		return true
 	}
-	value, ok := row[state.expression]
-	if !ok || isLiteralKeyword(state.expression) {
+	value, ok := rowExpressionBinding(row, state.expression)
+	if !ok {
 		value, ok = scope.evaluate(ctx, executor, state.expression)
 	}
 	if !ok {

@@ -120,7 +120,7 @@ func TestMergeSemanticCanonicalLiteralCache(t *testing.T) {
 	require.NoError(t, err)
 	canonical, changed := normalizeLiteralText("MERGE (n:Cached {id: 1}) RETURN n")
 	require.True(t, changed)
-	require.True(t, exec.mergeSemanticValidationCache.contains(canonical))
+	require.True(t, exec.semanticValidationCache.contains(canonical))
 
 	_, err = exec.Execute(ctx, "MERGE (n:Cached {id: 2}) RETURN n", nil)
 	require.NoError(t, err)

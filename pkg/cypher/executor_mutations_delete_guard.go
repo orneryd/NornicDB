@@ -315,13 +315,8 @@ func eachPipelineProjectionName(clause string, visit func(alias string, star boo
 }
 
 func pipelineUnwindAlias(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
-		return normalizeProjectionColumnName(alias)
-	}
-	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
-		return strings.TrimSpace(clause[index+len("AS"):])
-	}
-	return ""
+	_, alias, _ := parsePipelineIteration(clause)
+	return alias
 }
 
 // validateNoResidualRelationships enforces openCypher/Neo4j DELETE
@@ -429,7 +424,7 @@ func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	// Undefined targets retain the existing DELETE scope error owner.
 	scope.complete = false
-	checker := staticOperatorChecker{scope: scope}
+	checker := scope.operatorChecker()
 	for _, target := range targets {
 		operand, err := checker.check(strings.TrimSpace(target))
 		if err != nil {

@@ -4,32 +4,27 @@ import (
 	"fmt"
 	"math/bits"
 	"reflect"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// validateSetSemanticScopes validates SET expressions against the clause
-// horizon before execution. This is deliberately independent of row count:
-// an undefined variable is a compile-time error even when MATCH yields no rows.
-func (e *StorageExecutor) validateSetSemanticScopes(cypher string, imports ...string) error {
-	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
-		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
-		return nil
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-	return e.validateMutationClauseScopes(clauses, newSemanticBindingScope(), imports...)
-}
-
-func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope, imports ...string) error {
+// Mutation rules consume the enclosing admission walk's live bindings. The
+// only nested sequence here is a FOREACH update block, whose grammar cannot
+// contain WITH, MATCH, UNWIND or CALL scope transitions.
+func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope, cypher25 bool) error {
 	for _, clause := range clauses {
 		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
+		case pipelineClauseMerge, pipelineClauseCreate:
+			if clause.kind == pipelineClauseCreate {
+				if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
+					return err
+				}
+			} else if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
+				return err
+			}
 			for _, name := range extractNodeVariables(clause.text) {
 				scope.bind(name)
 			}
@@ -40,25 +35,12 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 			for _, name := range e.pipelinePatternBindingNames(clause.text, pipelineClauseKeyword(clause.kind)) {
 				scope.bind(name)
 			}
-		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
-			for _, name := range imports {
-				scope.bind(name)
-			}
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
 		case pipelineClauseSet:
 			if err := e.validateSetClauseScope(scope, clause.text); err != nil {
 				return err
 			}
 		case pipelineClauseForeach:
-			variable, _, updates, err := parsePipelineForeach(clause.text)
+			variable, _, updates, err := parsePipelineForeach(clause.text, clause.syntax)
 			if err != nil {
 				return err
 			}
@@ -67,7 +49,7 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 				child.bind(name)
 			}
 			child.bind(variable)
-			if err := e.validateMutationClauseScopes(updates, child); err != nil {
+			if err := e.validateMutationClauseScopes(updates, child, cypher25); err != nil {
 				return err
 			}
 		case pipelineClauseRemove:
@@ -92,6 +74,16 @@ func pipelineClauseKeyword(kind pipelineClauseKind) string {
 		return "MERGE"
 	case pipelineClauseCreate:
 		return "CREATE"
+	case pipelineClauseSet:
+		return "SET"
+	case pipelineClauseRemove:
+		return "REMOVE"
+	case pipelineClauseDelete:
+		return "DELETE"
+	case pipelineClauseForeach:
+		return "FOREACH"
+	case pipelineClauseReturn:
+		return "RETURN"
 	default:
 		return "MATCH"
 	}
@@ -302,247 +294,45 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 	return ""
 }
 
-// expressionFreeVariables returns the variables an expression reads, in order
-// of appearance: identifiers outside string literals that are not parameters,
-// property or map keys, function names, keywords, type names after :: or TYPED,
-// or names the expression binds itself (list comprehension iterators, reduce /
-// all / any / none / single).
-// It is the one reference scanner for the static SET and CREATE checks.
-func expressionFreeVariables(expression string) []string {
-	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
-	// Both maskers blank in place: offsets are the expression's.
-	locals := newLocalReader(expression)
+// expressionFreeVariables consumes native variable roles and local scopes. Labels,
+// type operands, keys, parameters and function names never become input bindings.
+func expressionFreeVariables(expression string, inputs ...fabric.ExpressionInput) []string {
 	var names []string
-	delimiters := make([]byte, 0, 8)
-	for index := 0; index < len(expression); {
-		if end := queryGapEnd(expression, index); end > index {
-			index = end
-			continue
-		}
-		character := expression[index]
-		if character == '[' {
-			if closing := findMatchingBracket(expression, index); closing >= 0 {
-				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
-					bindings := make(matchSemanticScope)
-					addMatchPatternBindingKinds(bindings, pattern)
-					if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
-						projection += ", " + pattern[where+len("WHERE"):]
-					}
-					for _, reference := range expressionFreeVariables(projection) {
-						if _, bound := bindings[reference]; bound {
-							continue
-						}
-						if !locals.shadows(reference, index) {
-							names = append(names, reference)
-						}
-					}
-					index = closing + 1
-					continue
-				}
-			}
-		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote := character
-			index++
-			for index < len(expression) {
-				if expression[index] == quote {
-					if quote == '`' && index+1 < len(expression) && expression[index+1] == '`' {
-						index += 2
-						continue
-					}
-					index++
-					break
-				}
-				if expression[index] == '\\' && quote != '`' && index+1 < len(expression) {
-					index += 2
-					continue
-				}
-				index++
-			}
-			continue
-		}
-		if character == '(' {
-			// A pattern predicate ((n)-[:R]->(m:L)) reads the variables its
-			// nodes and relationships name, never its labels, types or
-			// property keys; it can't introduce one (Neo4j: "PatternExpressions
-			// are not allowed to introduce new variables").
-			if chainEnd, chain := relationshipChainEnd(expression, index, len(expression)); chain {
-				bindings := make(matchSemanticScope)
-				addMatchPatternBindingKinds(bindings, expression[index:chainEnd])
-				references := make([]string, 0, len(bindings))
-				for reference := range bindings {
-					references = append(references, reference)
-				}
-				sort.Strings(references)
-				for _, reference := range references {
-					if !locals.shadows(reference, index) {
-						names = append(names, reference)
-					}
-				}
-				index = chainEnd
-				continue
-			}
-		}
-		switch character {
-		case '(', '[', '{':
-			delimiters = append(delimiters, character)
-		case ')', ']', '}':
-			if len(delimiters) > 0 {
-				delimiters = delimiters[:len(delimiters)-1]
-			}
-		}
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		if index > 0 && expression[index-1] >= '0' && expression[index-1] <= '9' {
-			index = next
-			continue
-		}
-		previous := previousSetExpressionByte(expression, index)
-		following := nextSetExpressionByte(expression, next)
-		upper := upperASCII(name)
-		if following == '(' && (upper == "TRIM" || upper == "NORMALIZE") {
-			open := skipSpaces(expression, next)
-			if closing := findMatchingParen(expression, open); closing >= 0 {
-				inner := expression[open+1 : closing]
-				parameters, grammar := trimFromArguments(inner)
-				if upper == "NORMALIZE" {
-					parameters = splitTopLevelComma(inner)
-					grammar = false
-					if len(parameters) == 2 {
-						parameters, grammar = parameters[:1], true
-					}
-				}
-				if grammar {
-					for _, parameter := range parameters {
-						for _, reference := range expressionFreeVariables(parameter) {
-							if !locals.shadows(reference, open) {
-								names = append(names, reference)
-							}
-						}
-					}
-					index = closing + 1
-					continue
-				}
-			}
-		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
-			delimiters = append(delimiters, '(')
-			index = functionEnd + 1
-			continue
-		}
-		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
-		// variables and sees the outer ones; its body isn't an expression.
-		if _, open, subquery := subqueryExpressionKeywordAt(expression, index); subquery {
-			if closing := findMatchingDelimiter(expression, open, '{', '}'); closing > next {
-				index = closing + 1
-				continue
-			}
-		}
-		mapKey := following == ':' && len(delimiters) > 0 && delimiters[len(delimiters)-1] == '{' && (previous == '{' || previous == ',')
-		// x IS NFC NORMALIZED: the normal form names a form, not a variable.
-		normalForm := false
-		switch upper {
-		case "NFC", "NFD", "NFKC", "NFKD":
-			form, _, word := scanIdentifierToken(expression, skipSpaces(expression, next))
-			normalForm = word && strings.EqualFold(form, "NORMALIZED")
-		}
-		keyword := setExpressionKeyword(upper)
-		// END is also a legal variable, notably the operand in NOT end +
-		// another CASE. Preserve the full expression when asking the CASE
-		// grammar owner, before evaluation splits it into atomic operands.
-		if upper == "END" && !caseKeywordAt(expression, index, "END") {
-			keyword = false
-		}
-		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !keyword {
-			if !locals.shadows(name, index) {
-				names = append(names, name)
-			}
-		}
-		index = next
-		if following == ':' && !mapKey {
-			// The labels of n:A:B and of a label expression n:A|B&!C or
-			// n:%: names of labels, not variables.
-			labelStart := skipSpaces(expression, next)
-			for labelStart < len(expression) && strings.IndexByte(":|&", expression[labelStart]) >= 0 {
-				labelName := skipSpaces(expression, labelStart+1)
-				for labelName < len(expression) && expression[labelName] == '!' {
-					labelName = skipSpaces(expression, labelName+1)
-				}
-				labelEnd := labelName + 1
-				if labelName >= len(expression) || expression[labelName] != '%' {
-					var valid bool
-					if _, labelEnd, valid = scanIdentifierToken(expression, labelName); !valid {
-						break
-					}
-				}
-				labelStart = skipSpaces(expression, labelEnd)
-				index = labelStart
-			}
+	var references []fabric.ExpressionReference
+	if len(inputs) > 0 && inputs[0].Valid() {
+		references = inputs[0].References()
+	} else {
+		references = fabric.ExpressionReferences(expression)
+	}
+	for _, reference := range references {
+		if !reference.Local {
+			names = append(names, reference.Name)
 		}
 	}
 	return names
 }
 
-// expressionLocalBindings returns the variables an expression binds itself,
-// at any depth: every declaration localBindingAt reads (list and named
-// pattern comprehensions, reduce / all / any / none / single / filter). It
-// is the names-only view of the one declaration reader, for the caches and
-// pre-filters in front of localVariableShadowsAt.
-func expressionLocalBindings(expression string) map[string]struct{} {
+type expressionLocalNameSet = map[string]struct{}
+
+// expressionLocalBindings selects native expression-local declarations. A pattern
+// node may refer to an existing outer binding and is typed by the pattern owner.
+func expressionLocalBindings(expression string) expressionLocalNameSet {
+	return expressionLocalBindingNames(expression, false)
+}
+
+func expressionLocalBindingNames(expression string, queryLevel bool) expressionLocalNameSet {
 	locals := make(map[string]struct{})
-	for index := 0; index < len(expression); index++ {
-		switch c := expression[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(expression, index, c) - 1
-		case '/':
-			if end := queryCommentEnd(expression, index); end >= 0 {
-				index = end - 1
-			}
-		case '[', '(':
-			if binding, ok := localBindingAt(expression, index); ok {
-				for declared := 0; declared < binding.count; declared++ {
-					locals[binding.names[declared]] = struct{}{}
-				}
+	for _, scope := range fabric.ExpressionScopes(expression) {
+		if queryLevel && scope.QueryDepth != 0 {
+			continue
+		}
+		for _, declaration := range scope.Declarations {
+			if !declaration.Pattern && !declaration.Query {
+				locals[declaration.Name] = struct{}{}
 			}
 		}
 	}
 	return locals
-}
-
-func previousSetExpressionByte(text string, index int) byte {
-	for index--; index >= 0; index-- {
-		if !isWhitespace(text[index]) {
-			return text[index]
-		}
-	}
-	return 0
-}
-
-func nextSetExpressionByte(text string, index int) byte {
-	for index < len(text) {
-		if !isWhitespace(text[index]) {
-			return text[index]
-		}
-		index++
-	}
-	return 0
-}
-
-func setExpressionKeyword(token string) bool {
-	if isLiteralKeyword(token) {
-		return true
-	}
-	switch token {
-	case "CASE", "WHEN", "THEN", "ELSE", "END",
-		"IN", "WHERE", "AND", "OR", "XOR", "NOT", "IS", "STARTS", "ENDS",
-		"WITH", "CONTAINS", "DISTINCT", "AS", "NORMALIZED":
-		return true
-	default:
-		return false
-	}
 }
 
 // storablePropertyValue is the value a property write stores, or the
