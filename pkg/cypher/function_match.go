@@ -59,7 +59,7 @@ func matchFuncStart(expr, funcName string) bool {
 
 func hasFuncStart(expr, funcName string) bool {
 	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
-	return ok && strings.EqualFold(call.name, strings.TrimSpace(funcName))
+	return ok && call.asciiNameSpacing() && strings.EqualFold(call.name, strings.TrimSpace(funcName))
 }
 
 // matchFuncStartAndSuffix checks if expr starts with funcName( and ends with ).
@@ -96,7 +96,7 @@ func extractFuncArgs(expr, funcName string) string {
 // If not matched, returns ("", -1)
 func extractFuncArgsLen(expr, funcName string) (string, int) {
 	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
-	if !ok || !strings.EqualFold(call.name, strings.TrimSpace(funcName)) {
+	if !ok || !call.asciiNameSpacing() || !strings.EqualFold(call.name, strings.TrimSpace(funcName)) {
 		return "", -1
 	}
 	close := call.close(expr)
@@ -116,8 +116,8 @@ func extractFuncArgsLen(expr, funcName string) (string, int) {
 //   - isFunctionCallWS("count (n) + 1", "count")      → false (not standalone)
 //   - isFunctionCallWS("toLower(count (n))", "count") → false (nested)
 func isFunctionCallWS(expr, funcName string) bool {
-	name, _, ok := parseFunctionCallWS(expr)
-	return ok && strings.EqualFold(name, strings.TrimSpace(funcName))
+	call, ok := standaloneFunctionCall(expr)
+	return ok && call.asciiNameSpacing() && strings.EqualFold(call.name, strings.TrimSpace(funcName))
 }
 
 // extractFuncArgsWithSuffix extracts function arguments and any suffix after the function call.
@@ -134,7 +134,7 @@ func isFunctionCallWS(expr, funcName string) bool {
 //   - extractFuncArgsWithSuffix("sum(n.val) + 1", "sum")       → ("n.val", " + 1", true)
 func extractFuncArgsWithSuffix(expr, funcName string) (args string, suffix string, ok bool) {
 	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
-	if !ok || !strings.EqualFold(call.name, strings.TrimSpace(funcName)) {
+	if !ok || !call.asciiNameSpacing() || !strings.EqualFold(call.name, strings.TrimSpace(funcName)) {
 		return "", "", false
 	}
 	close := call.close(expr)
