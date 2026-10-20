@@ -11,4 +11,3 @@ func PhysicalLocationKey(uri, database string, remote bool) string {
 	}
 	return "remote:" + strings.TrimSpace(uri) + "|" + strings.TrimSpace(database)
 }
-

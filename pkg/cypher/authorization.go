@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
-	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/fabric"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
 // PermissionRequirements describes the entitlements required to execute a query.
