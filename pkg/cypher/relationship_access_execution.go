@@ -15,6 +15,10 @@ type relationshipAccessExecution struct {
 	access                        *relationshipAccess
 }
 
+// Storage-only entity reads have no access choices. Reuse their immutable empty
+// descriptor so hydration and degree APIs do not allocate a plan for each read.
+var relationshipStorageAccess = &relationshipAccess{}
+
 type relationshipVectorAccess struct {
 	index, relType, property string
 	estimatedRows            int64
@@ -51,7 +55,7 @@ func (run relationshipAccessExecution) outDegree(node storage.NodeID) int {
 
 func (e *StorageExecutor) relationshipExecutionFor(ctx context.Context, pattern, where string) relationshipAccessExecution {
 	if pattern == "" {
-		return relationshipAccessExecution{executor: e, access: &relationshipAccess{}}
+		return relationshipAccessExecution{executor: e, access: relationshipStorageAccess}
 	}
 	physicalWhere := where
 	if original, ok := ctx.Value(relationshipSeekPredicateKey{}).(relationshipSeekPredicate); ok && original.pattern == pattern {
