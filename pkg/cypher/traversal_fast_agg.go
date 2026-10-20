@@ -48,7 +48,10 @@ func (exprMatcher) key(expr string) string {
 }
 
 func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
-	// Only handle typed 1-hop patterns with no properties/filters.
+    // Keep IDs in the same reader domain used by batchGetNodesFast. Native
+    // values remain intact; a composite source is never erased by a local ID.
+    identityReader, _ := e.storageFast()
+    // Only handle typed 1-hop patterns with no properties/filters.
 	if len(matches.Relationship.Types) != 1 {
 		return nil, false, nil
 	}
@@ -201,14 +204,18 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	groupSeenForLabel := make(map[storage.NodeID]struct{}, 64)
 
 	for _, edge := range edgeList {
+
+	    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+
+	    if !selected { continue }
 		var groupID, otherID storage.NodeID
 		switch matches.Relationship.Direction {
 		case "incoming":
-			groupID = edge.EndNode
-			otherID = edge.StartNode
+			groupID = endID
+			otherID = startID
 		case "outgoing":
-			groupID = edge.StartNode
-			otherID = edge.EndNode
+			groupID = startID
+			otherID = endID
 		}
 
 		if len(requiredGroupLabels) > 0 {
@@ -277,14 +284,16 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 
 	// Aggregate in a single pass, using pre-fetched nodes for label/prop filtering.
 	for _, edge := range edgeList {
+	    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+	    if !selected { continue }
 		var groupID, otherID storage.NodeID
 		switch matches.Relationship.Direction {
 		case "incoming":
-			groupID = edge.EndNode
-			otherID = edge.StartNode
+			groupID = endID
+			otherID = startID
 		case "outgoing":
-			groupID = edge.StartNode
-			otherID = edge.EndNode
+			groupID = startID
+			otherID = endID
 		}
 
 		if !groupLabelOK(groupID) {
@@ -543,6 +552,7 @@ func appendUniqueNodeID(ids []storage.NodeID, seen map[storage.NodeID]struct{}, 
 }
 
 func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+	identityReader, _ := e.storageFast()
 	plan, ok := buildChainedAggregationPlan(matches, returnItems)
 	if !ok {
 		return nil, false, nil
@@ -584,9 +594,11 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		rightIDs := make([]storage.NodeID, 0, len(edges1))
 		rightSeen := make(map[storage.NodeID]struct{}, len(edges1))
 		for _, edge := range edges1 {
-			countNodeToRight[edge.StartNode] = append(countNodeToRight[edge.StartNode], edge.EndNode)
-			countIDs = appendUniqueNodeID(countIDs, countSeen, edge.StartNode)
-			rightIDs = appendUniqueNodeID(rightIDs, rightSeen, edge.EndNode)
+		    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		    if !selected { continue }
+			countNodeToRight[startID] = append(countNodeToRight[startID], endID)
+			countIDs = appendUniqueNodeID(countIDs, countSeen, startID)
+			rightIDs = appendUniqueNodeID(rightIDs, rightSeen, endID)
 		}
 		countNodes, _, err := e.batchGetNodesFast(countIDs)
 		if err != nil {
@@ -600,15 +612,17 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		leftIDs := make([]storage.NodeID, 0, len(edges0))
 		leftSeen := make(map[storage.NodeID]struct{}, len(edges0))
 		for _, edge := range edges0 {
-			leftIDs = appendUniqueNodeID(leftIDs, leftSeen, edge.StartNode)
-			if !chainedNodeHasLabels(countNodes[edge.EndNode], requiredCountLabels) {
+		    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		    if !selected { continue }
+			leftIDs = appendUniqueNodeID(leftIDs, leftSeen, startID)
+			if !chainedNodeHasLabels(countNodes[endID], requiredCountLabels) {
 				continue
 			}
-			for _, rightID := range countNodeToRight[edge.EndNode] {
+			for _, rightID := range countNodeToRight[endID] {
 				if !chainedNodeHasLabels(rightNodes[rightID], requiredJoinLabels) {
 					continue
 				}
-				leftToRightCounts[pairKey{left: edge.StartNode, right: rightID}]++
+				leftToRightCounts[pairKey{left: startID, right: rightID}]++
 			}
 		}
 	case "three-hop-linear-distinct", "three-hop-converging-distinct":
@@ -632,8 +646,10 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		countIDs := make([]storage.NodeID, 0, len(edges0))
 		countSeen := make(map[storage.NodeID]struct{}, len(edges0))
 		for _, edge := range edges0 {
-			countNodeToLeft[edge.EndNode] = edge.StartNode
-			countIDs = appendUniqueNodeID(countIDs, countSeen, edge.EndNode)
+		    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		    if !selected { continue }
+			countNodeToLeft[endID] = startID
+			countIDs = appendUniqueNodeID(countIDs, countSeen, endID)
 		}
 
 		joinNodeToRight := make(map[storage.NodeID][]storage.NodeID, len(edges2))
@@ -642,11 +658,13 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		rightIDs := make([]storage.NodeID, 0, len(edges2))
 		rightSeen := make(map[storage.NodeID]struct{}, len(edges2))
 		for _, edge := range edges2 {
-			joinID := edge.StartNode
-			rightID := edge.EndNode
+		    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		    if !selected { continue }
+			joinID := startID
+			rightID := endID
 			if plan.kind == "three-hop-converging-distinct" {
-				joinID = edge.EndNode
-				rightID = edge.StartNode
+				joinID = endID
+				rightID = startID
 			}
 			joinNodeToRight[joinID] = append(joinNodeToRight[joinID], rightID)
 			joinIDs = appendUniqueNodeID(joinIDs, joinSeen, joinID)
@@ -668,8 +686,10 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 
 		seen := make(map[tripKey]struct{}, 4096)
 		for _, edge := range edges1 {
-			countID := edge.StartNode
-			joinID := edge.EndNode
+		    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+		    if !selected { continue }
+			countID := startID
+			joinID := endID
 			leftID, found := countNodeToLeft[countID]
 			if !found {
 				continue

@@ -144,12 +144,12 @@ func findParsedMergeRelationships(
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode
 	}
-    startID, startOK := nativeNodeLookupID(store, lookupStart)
-    endID, endOK := nativeNodeLookupID(store, lookupEnd)
-    if !startOK || !endOK {
-        return nil, localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil)
-    }
-    matches, err := cache.relationships(store, startID, endID, pattern.relType, pattern.properties)
+	startID, startOK := nativeNodeLookupID(store, lookupStart)
+	endID, endOK := nativeNodeLookupID(store, lookupEnd)
+	if !startOK || !endOK {
+		return nil, localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil)
+	}
+	matches, err := cache.relationships(store, startID, endID, pattern.relType, pattern.properties)
 	if err != nil || pattern.direction != mergeRelationshipUndirected {
 		return matches, err
 	}

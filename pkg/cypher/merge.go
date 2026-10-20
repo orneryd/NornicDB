@@ -106,12 +106,12 @@ func (e *StorageExecutor) findMergeNodeInCache(store storage.Engine, labels []st
 		return cachedNode
 	}
 
-    cachedID, selected := nativeNodeLookupID(store, cachedNode)
-    if !selected {
-        e.evictMergeNodeCacheEntries(labels, props, "")
-        return nil
-    }
-    liveNode, err := e.getQueryNode(store, cachedID)
+	cachedID, selected := nativeNodeLookupID(store, cachedNode)
+	if !selected {
+		e.evictMergeNodeCacheEntries(labels, props, "")
+		return nil
+	}
+	liveNode, err := e.getQueryNode(store, cachedID)
 	if err == nil && mergeNodeMatches(liveNode, labels, props) {
 		return liveNode
 	}

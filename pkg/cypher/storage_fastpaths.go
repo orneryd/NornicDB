@@ -39,7 +39,7 @@ func (e *StorageExecutor) getEdgesByTypeFast(edgeType string) ([]*storage.Edge, 
 		if edge == nil {
 			continue
 		}
-		if strings.HasPrefix(string(edge.ID), idPrefix) {
+		if nativeStoredIDHasPrefix(edge, idPrefix) {
 			filtered = append(filtered, edge)
 		}
 	}

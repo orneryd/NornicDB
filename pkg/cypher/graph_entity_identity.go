@@ -786,38 +786,68 @@ func gdsNodeID(value interface{}) (storage.NodeID, bool) {
 	return "", false
 }
 
-
 // Native mutation adapters retain the selected source until the actual storage
 // boundary. The existing callbacks, cache, retry and completion owners stay in
 // their callers; no private graph key is used as a storage ID or client ID.
 func nativeEdgeLookupID(engine storage.Engine, edge *storage.Edge) (storage.EdgeID, bool) {
-    id, ok := nativeEntityStorageID(engine, edge)
-    return storage.EdgeID(id), ok
+	id, ok := nativeEntityStorageID(engine, edge)
+	return storage.EdgeID(id), ok
 }
 
-func setNativeCreatedNodeID(node *storage.Node, id storage.NodeID) { node.ID = id }
+func setNativeCreatedNodeID(node *storage.Node, id storage.NodeID)           { node.ID = id }
 func setNativeRelationshipCandidateID(edge *storage.Edge, id storage.EdgeID) { edge.ID = id }
 
 func nativeRelationshipEndpointsEqual(engine storage.Engine, left, right *storage.Edge) bool {
-    leftStart, leftEnd, leftOK := nativeEdgeStorageEndpoints(engine, left)
-    rightStart, rightEnd, rightOK := nativeEdgeStorageEndpoints(engine, right)
-    return leftOK && rightOK && leftStart == rightStart && leftEnd == rightEnd
+	leftStart, leftEnd, leftOK := nativeEdgeStorageEndpoints(engine, left)
+	rightStart, rightEnd, rightOK := nativeEdgeStorageEndpoints(engine, right)
+	return leftOK && rightOK && leftStart == rightStart && leftEnd == rightEnd
 }
 
 func (e *StorageExecutor) notifyNativeEntityMutated(engine storage.Engine, value interface{}) {
-    id, selected := nativeEntityStorageID(engine, value)
-    if !selected { return }
-    switch value.(type) {
-    case *storage.Node:
-        e.notifyNodeMutated(id)
-    case *storage.Edge:
-        e.notifyEdgeMutated(id)
-    }
+	id, selected := nativeEntityStorageID(engine, value)
+	if !selected {
+		return
+	}
+	switch value.(type) {
+	case *storage.Node:
+		e.notifyNodeMutated(id)
+	case *storage.Edge:
+		e.notifyEdgeMutated(id)
+	}
 }
 
 func (e *StorageExecutor) notifyNativeRelationshipEndpoints(engine storage.Engine, edge *storage.Edge) {
-    start, end, selected := nativeEdgeStorageEndpoints(engine, edge)
-    if !selected { return }
-    e.notifyNodeMutated(string(start))
-    if start != end { e.notifyNodeMutated(string(end)) }
+	start, end, selected := nativeEdgeStorageEndpoints(engine, edge)
+	if !selected {
+		return
+	}
+	e.notifyNodeMutated(string(start))
+	if start != end {
+		e.notifyNodeMutated(string(end))
+	}
+}
+
+// Native prefix checks apply only at an existing physical namespace boundary;
+// they do not interpret an opaque local ID or turn it into a graph key.
+func nativeStoredIDHasPrefix(value interface{}, prefix string) bool {
+    identity, present := nativeEntityIdentity(value)
+    return present && strings.HasPrefix(identity.LocalID, prefix)
+}
+
+
+// Identity ordering compares the source-qualified value directly. It does not
+// serialize private keys on every sort comparison, and retains local-ID order
+// within one source. No source string becomes part of an output value.
+func nativeEntityOrder(left, right interface{}) int {
+    a, aOK := nativeEntityIdentity(left)
+    b, bOK := nativeEntityIdentity(right)
+    if !aOK || !bOK {
+        if aOK { return 1 }
+        if bOK { return -1 }
+        return 0
+    }
+    if a.Source != "" || b.Source != "" {
+        if order := strings.Compare(a.Source, b.Source); order != 0 { return order }
+    } else if order := strings.Compare(a.Database, b.Database); order != 0 { return order }
+    return strings.Compare(a.LocalID, b.LocalID)
 }

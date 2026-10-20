@@ -856,16 +856,18 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		}
 		return true
 	}
-    nodeID, selected := nativeNodeLookupID(e.storage, node)
-    if !selected { return false }
-    var checkIncoming, checkOutgoing bool
+	nodeID, selected := nativeNodeLookupID(e.storage, node)
+	if !selected {
+		return false
+	}
+	var checkIncoming, checkOutgoing bool
 	var relTypes []string
 	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 	if checkIncoming {
 		edges, _ := e.storage.GetIncomingEdges(nodeID)
 		for _, edge := range edges {
-            startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-            if selected && (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(startID) {
+			startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+			if selected && (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(startID) {
 				return true
 			}
 		}
@@ -873,8 +875,8 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	if checkOutgoing {
 		edges, _ := e.storage.GetOutgoingEdges(nodeID)
 		for _, edge := range edges {
-            _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-            if selected && (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(endID) {
+			_, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+			if selected && (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(endID) {
 				return true
 			}
 		}
@@ -1002,18 +1004,22 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 		return true // All hops matched
 	}
 
-    nodeID, selected := nativeNodeLookupID(e.storage, node)
-    if !selected { return false }
-    hop := hops[hopIndex]
+	nodeID, selected := nativeNodeLookupID(e.storage, node)
+	if !selected {
+		return false
+	}
+	hop := hops[hopIndex]
 
 	if hop.outgoing {
 		edges, _ := e.storage.GetOutgoingEdges(nodeID)
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the target node and recurse
-                _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-                if !selected { continue }
-                nextNode, err := e.getQueryNode(e.storage, endID)
+				_, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+				if !selected {
+					continue
+				}
+				nextNode, err := e.getQueryNode(e.storage, endID)
 				if err != nil {
 					continue
 				}
@@ -1027,9 +1033,11 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the source node and recurse
-                startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-                if !selected { continue }
-                nextNode, err := e.getQueryNode(e.storage, startID)
+				startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+				if !selected {
+					continue
+				}
+				nextNode, err := e.getQueryNode(e.storage, startID)
 				if err != nil {
 					continue
 				}
@@ -1233,14 +1241,18 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 		return nil
 	}
 
-    nodeID, selected := nativeNodeLookupID(store, node)
-    if !selected { return storage.ErrNotFound }
-    // Check outgoing edges (node is the source).
+	nodeID, selected := nativeNodeLookupID(store, node)
+	if !selected {
+		return storage.ErrNotFound
+	}
+	// Check outgoing edges (node is the source).
 	outgoing, _ := store.GetOutgoingEdges(nodeID)
 	for _, edge := range outgoing {
-        _, endID, selected := nativeEdgeStorageEndpoints(store, edge)
-        if !selected { continue }
-        targetNode, err := store.GetNode(endID)
+		_, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+		if !selected {
+			continue
+		}
+		targetNode, err := store.GetNode(endID)
 		if err != nil || targetNode == nil {
 			continue
 		}
@@ -1252,9 +1264,11 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	// Check incoming edges (node is the target).
 	incoming, _ := store.GetIncomingEdges(nodeID)
 	for _, edge := range incoming {
-        startID, _, selected := nativeEdgeStorageEndpoints(store, edge)
-        if !selected { continue }
-        sourceNode, err := store.GetNode(startID)
+		startID, _, selected := nativeEdgeStorageEndpoints(store, edge)
+		if !selected {
+			continue
+		}
+		sourceNode, err := store.GetNode(startID)
 		if err != nil || sourceNode == nil {
 			continue
 		}

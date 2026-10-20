@@ -83,34 +83,40 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 	}
 
 	// Build edge set for O(1) reverse lookup
-	edgeSet := make(map[string]bool, len(edgeList))
+	edgeSet := make(map[[2]storage.NodeID]bool, len(edgeList))
 	for _, edge := range edgeList {
-		key := string(edge.StartNode) + ":" + string(edge.EndNode)
+	    startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+	    if !selected { continue }
+		key := [2]storage.NodeID{startID, endID}
 		edgeSet[key] = true
 	}
 
 	// Find mutual pairs: for each edge A→B, check if B→A exists
-	seenPairs := make(map[string]bool) // Avoid duplicates
+	seenPairs := make(map[[2]storage.NodeID]bool) // Avoid duplicates
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 
 	for _, edge := range edgeList {
-		reverseKey := string(edge.EndNode) + ":" + string(edge.StartNode)
+
+	    startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+
+	    if !selected { continue }
+		reverseKey := [2]storage.NodeID{endID, startID}
 		if edgeSet[reverseKey] {
 			// Found mutual relationship!
 			// Use ordered pair to avoid duplicates (smaller ID first)
-			var pairKey string
-			if edge.StartNode < edge.EndNode {
-				pairKey = string(edge.StartNode) + ":" + string(edge.EndNode)
+			var pairKey [2]storage.NodeID
+			if startID < endID {
+				pairKey = [2]storage.NodeID{startID, endID}
 			} else {
-				pairKey = string(edge.EndNode) + ":" + string(edge.StartNode)
+				pairKey = [2]storage.NodeID{endID, startID}
 			}
 
 			if !seenPairs[pairKey] {
 				seenPairs[pairKey] = true
 
 				// Get node properties
-				startNode := e.getNodeCached(edge.StartNode, nodeCache)
-				endNode := e.getNodeCached(edge.EndNode, nodeCache)
+				startNode := e.getNodeCached(startID, nodeCache)
+				endNode := e.getNodeCached(endID, nodeCache)
 
 				if startNode != nil && endNode != nil {
 					startName := e.getPropertyString(startNode, "name")
@@ -157,8 +163,12 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 	relType := info.RelType
 
 	for _, edge := range allEdges {
+
+	    _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+
+	    if !selected { continue }
 		if relType == "" || edge.Type == relType {
-			incomingCount[edge.EndNode]++
+			incomingCount[endID]++
 		}
 	}
 
@@ -225,8 +235,12 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 	relType := info.RelType
 
 	for _, edge := range allEdges {
+
+	    startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+
+	    if !selected { continue }
 		if relType == "" || edge.Type == relType {
-			outgoingCount[edge.StartNode]++
+			outgoingCount[startID]++
 		}
 	}
 
@@ -300,6 +314,10 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	aggMap := make(map[storage.NodeID]*edgeAggStats)
 
 	for _, edge := range allEdges {
+
+	    _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+
+	    if !selected { continue }
 		// Get property value
 		propVal, exists := edge.Properties[info.AggProperty]
 		if !exists {
@@ -320,10 +338,10 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 		}
 
 		// Get or create stats
-		stats, exists := aggMap[edge.EndNode]
+		stats, exists := aggMap[endID]
 		if !exists {
 			stats = &edgeAggStats{min: numVal, max: numVal}
-			aggMap[edge.EndNode] = stats
+			aggMap[endID] = stats
 		}
 
 		// Update stats
