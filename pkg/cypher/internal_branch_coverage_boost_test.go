@@ -301,11 +301,13 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 	require.Equal(t, aNode, exec.resolveReturnExprFromVarMap(ctx, "s", varMap, "t", "r", nil, nil))
 	require.EqualValues(t, 7, exec.resolveReturnExprFromVarMap(ctx, "7", varMap, "t", "r", nil, nil))
 
-	require.Equal(t, "node:a", joinedValueKey(aNode))
+	require.Equal(t, joinedValueKey(aNode), joinedValueKey(storage.CopyNode(aNode)))
+	require.NotEqual(t, joinedValueKey(aNode), joinedValueKey(aNode.WithIdentity(storage.EntityIdentity{Database: "other", LocalID: "a"})))
 	require.Equal(t, "node:nil", joinedValueKey((*storage.Node)(nil)))
-	require.Equal(t, "edge:ab", joinedValueKey(abEdge))
+	require.Equal(t, joinedValueKey(abEdge), joinedValueKey(storage.CopyEdge(abEdge)))
+	require.NotEqual(t, joinedValueKey(abEdge), joinedValueKey(abEdge.WithIdentity(storage.EntityIdentity{Database: "other", LocalID: "ab"})))
 	require.Equal(t, "edge:nil", joinedValueKey((*storage.Edge)(nil)))
-	require.Contains(t, joinedValueKey(map[string]interface{}{"k": "v"}), "map")
+	require.NotEqual(t, joinedValueKey(map[string]interface{}{"k": "v"}), joinedValueKey("map[k:v]"))
 
 	replaced := replaceIdentifierOutsideQuotes(`row + row.name + "row" + 'row' + `+"`row`"+` + {row: 1}`, "row", "$row")
 	require.Equal(t, `$row + $row.name + "row" + 'row' + `+"`row`"+` + {row: 1}`, replaced)

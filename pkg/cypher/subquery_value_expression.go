@@ -414,8 +414,8 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	carried := make([]string, 0, len(names))
 	for index, name := range names {
 		param := fmt.Sprintf("__subquery_row_%d", index)
-        params[param] = values[name]
-        carried = append(carried, "$"+param+" AS "+name)
+		params[param] = values[name]
+		carried = append(carried, "$"+param+" AS "+name)
 	}
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
@@ -691,12 +691,16 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	// With both ends bound, expand from the end with fewer relationships in
 	// the direction it sees them: the same relationships either way.
 	seedID, seedSelected := nativeNodeLookupID(e.storage, seed)
-    if !seedSelected { return 0, true }
-    from, fromID, target := seed, seedID, storage.NodeID("")
+	if !seedSelected {
+		return 0, true
+	}
+	from, fromID, target := seed, seedID, storage.NodeID("")
 	if end != nil {
 		endID, selected := nativeNodeLookupID(e.storage, end)
-        if !selected { return 0, true }
-        target = endID
+		if !selected {
+			return 0, true
+		}
+		target = endID
 		reversed := reverseRelationshipDirection(rel.Direction)
 		if !nativeEntitiesEqual(end, seed) && e.relationshipDegree(endID, reversed) < e.relationshipDegree(seedID, rel.Direction) {
 			from, fromID, target, rel.Direction = end, endID, seedID, reversed
@@ -743,9 +747,13 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 			continue
 		}
 		start, finish, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-        if !selected { continue }
-        far := otherEndpoint(start, finish, fromID)
-        if rel.Direction == "outgoing" { far = finish }
+		if !selected {
+			continue
+		}
+		far := otherEndpoint(start, finish, fromID)
+		if rel.Direction == "outgoing" {
+			far = finish
+		}
 		endNode := end
 		if target != "" {
 			if far != target {
@@ -1178,7 +1186,9 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
 	store := e.getStorage(ctx)
 	id, selected := nativeNodeLookupID(store, node)
-	if !selected { return 0 }
+	if !selected {
+		return 0
+	}
 	var edges []*storage.Edge
 	if shape.outgoing {
 		edges, _ = store.GetOutgoingEdges(id)

@@ -44,7 +44,9 @@ func (e *StorageExecutor) relationshipSearchResult(response *search.SearchRespon
 	for _, r := range response.Results {
 		relationship := r.Relationship
 		start, end, selected := nativeEdgeStorageEndpoints(e.storage, relationship)
-		if !selected { continue }
+		if !selected {
+			continue
+		}
 		result.Rows = append(result.Rows, []interface{}{
 			relationship,
 			endpoint(start),

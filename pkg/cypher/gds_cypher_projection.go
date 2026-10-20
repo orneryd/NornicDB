@@ -295,7 +295,9 @@ func gdsProjectionNode(value interface{}, databases ...string) (id string, integ
 	}
 	if node, ok := value.(*storage.Node); ok && node != nil {
 		database := ""
-		if len(databases) > 0 { database = databases[0] }
+		if len(databases) > 0 {
+			database = databases[0]
+		}
 		return nativeProjectionNodeID(node, database), false, nil
 	}
 	typeName := gdsJavaType(value)

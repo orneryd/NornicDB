@@ -52,8 +52,10 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 		return nil
 	}
 	startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, result.Relationship)
-    if !selected { return "relationship", nil, result.Relationship, nil, nil }
-    return "relationship", nil, result.Relationship, endpoint(startID), endpoint(endID)
+	if !selected {
+		return "relationship", nil, result.Relationship, nil, nil
+	}
+	return "relationship", nil, result.Relationship, endpoint(startID), endpoint(endID)
 }
 
 // graphSearchResult is a graph search's rows (db.retrieveGraph's columns),
