@@ -144,21 +144,27 @@ func findParsedMergeRelationships(
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode
 	}
-	matches, err := cache.relationships(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
+    startID, startOK := nativeNodeLookupID(store, lookupStart)
+    endID, endOK := nativeNodeLookupID(store, lookupEnd)
+    if !startOK || !endOK {
+        return nil, localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil)
+    }
+    matches, err := cache.relationships(store, startID, endID, pattern.relType, pattern.properties)
 	if err != nil || pattern.direction != mergeRelationshipUndirected {
 		return matches, err
 	}
-	reverse, err := cache.relationships(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
+	reverse, err := cache.relationships(store, endID, startID, pattern.relType, pattern.properties)
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[storage.EdgeID]struct{}, len(matches)+len(reverse))
+	seen := make(map[graphEntityKey]struct{}, len(matches)+len(reverse))
 	combined := make([]*storage.Edge, 0, len(matches)+len(reverse))
 	for _, edge := range append(matches, reverse...) {
-		if _, exists := seen[edge.ID]; exists {
+		key := nativeGraphEntityKey(edge)
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[edge.ID] = struct{}{}
+		seen[key] = struct{}{}
 		combined = append(combined, edge)
 	}
 	return combined, nil

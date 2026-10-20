@@ -330,8 +330,8 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			}
 			node = recoveredNode
 		} else {
-			node.ID = actualID
-			e.notifyNodeMutated(string(node.ID))
+			setNativeCreatedNodeID(node, actualID)
+			e.notifyNativeEntityMutated(store, node)
 			result.Stats.NodesCreated = 1
 			countCreatedEntity(result.Stats, node.Labels, node.Properties)
 		}
@@ -487,11 +487,8 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		if created {
 			result.Stats.RelationshipsCreated = 1
 			countCreatedEntity(result.Stats, nil, edge.Properties)
-			e.notifyEdgeMutated(string(edge.ID))
-			e.notifyNodeMutated(string(edge.StartNode))
-			if edge.EndNode != edge.StartNode {
-				e.notifyNodeMutated(string(edge.EndNode))
-			}
+            e.notifyNativeEntityMutated(store, edge)
+            e.notifyNativeRelationshipEndpoints(store, edge)
 		}
 	}
 

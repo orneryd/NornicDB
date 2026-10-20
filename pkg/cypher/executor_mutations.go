@@ -856,28 +856,32 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		}
 		return true
 	}
-	var checkIncoming, checkOutgoing bool
+    nodeID, selected := nativeNodeLookupID(e.storage, node)
+    if !selected { return false }
+    var checkIncoming, checkOutgoing bool
 	var relTypes []string
 	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 	if checkIncoming {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		edges, _ := e.storage.GetIncomingEdges(nodeID)
 		for _, edge := range edges {
-			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.StartNode) {
+            startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+            if selected && (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(startID) {
 				return true
 			}
 		}
 	}
 	if checkOutgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		edges, _ := e.storage.GetOutgoingEdges(nodeID)
 		for _, edge := range edges {
-			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.EndNode) {
+            _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+            if selected && (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(endID) {
 				return true
 			}
 		}
 	}
 	if !checkIncoming && !checkOutgoing {
-		incoming, _ := e.storage.GetIncomingEdges(node.ID)
-		outgoing, _ := e.storage.GetOutgoingEdges(node.ID)
+		incoming, _ := e.storage.GetIncomingEdges(nodeID)
+		outgoing, _ := e.storage.GetOutgoingEdges(nodeID)
 		return len(incoming) > 0 || len(outgoing) > 0
 	}
 	return false
@@ -998,14 +1002,18 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 		return true // All hops matched
 	}
 
-	hop := hops[hopIndex]
+    nodeID, selected := nativeNodeLookupID(e.storage, node)
+    if !selected { return false }
+    hop := hops[hopIndex]
 
 	if hop.outgoing {
-		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		edges, _ := e.storage.GetOutgoingEdges(nodeID)
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the target node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.EndNode)
+                _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+                if !selected { continue }
+                nextNode, err := e.getQueryNode(e.storage, endID)
 				if err != nil {
 					continue
 				}
@@ -1015,11 +1023,13 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 			}
 		}
 	} else {
-		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		edges, _ := e.storage.GetIncomingEdges(nodeID)
 		for _, edge := range edges {
 			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
 				// Get the source node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.StartNode)
+                startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+                if !selected { continue }
+                nextNode, err := e.getQueryNode(e.storage, startID)
 				if err != nil {
 					continue
 				}
@@ -1223,10 +1233,14 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 		return nil
 	}
 
-	// Check outgoing edges (node is the source).
-	outgoing, _ := store.GetOutgoingEdges(node.ID)
+    nodeID, selected := nativeNodeLookupID(store, node)
+    if !selected { return storage.ErrNotFound }
+    // Check outgoing edges (node is the source).
+	outgoing, _ := store.GetOutgoingEdges(nodeID)
 	for _, edge := range outgoing {
-		targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
+        _, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+        if !selected { continue }
+        targetNode, err := store.GetNode(endID)
 		if err != nil || targetNode == nil {
 			continue
 		}
@@ -1236,9 +1250,11 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	// Check incoming edges (node is the target).
-	incoming, _ := store.GetIncomingEdges(node.ID)
+	incoming, _ := store.GetIncomingEdges(nodeID)
 	for _, edge := range incoming {
-		sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
+        startID, _, selected := nativeEdgeStorageEndpoints(store, edge)
+        if !selected { continue }
+        sourceNode, err := store.GetNode(startID)
 		if err != nil || sourceNode == nil {
 			continue
 		}

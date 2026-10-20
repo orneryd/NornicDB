@@ -785,3 +785,39 @@ func gdsNodeID(value interface{}) (storage.NodeID, bool) {
 	}
 	return "", false
 }
+
+
+// Native mutation adapters retain the selected source until the actual storage
+// boundary. The existing callbacks, cache, retry and completion owners stay in
+// their callers; no private graph key is used as a storage ID or client ID.
+func nativeEdgeLookupID(engine storage.Engine, edge *storage.Edge) (storage.EdgeID, bool) {
+    id, ok := nativeEntityStorageID(engine, edge)
+    return storage.EdgeID(id), ok
+}
+
+func setNativeCreatedNodeID(node *storage.Node, id storage.NodeID) { node.ID = id }
+func setNativeRelationshipCandidateID(edge *storage.Edge, id storage.EdgeID) { edge.ID = id }
+
+func nativeRelationshipEndpointsEqual(engine storage.Engine, left, right *storage.Edge) bool {
+    leftStart, leftEnd, leftOK := nativeEdgeStorageEndpoints(engine, left)
+    rightStart, rightEnd, rightOK := nativeEdgeStorageEndpoints(engine, right)
+    return leftOK && rightOK && leftStart == rightStart && leftEnd == rightEnd
+}
+
+func (e *StorageExecutor) notifyNativeEntityMutated(engine storage.Engine, value interface{}) {
+    id, selected := nativeEntityStorageID(engine, value)
+    if !selected { return }
+    switch value.(type) {
+    case *storage.Node:
+        e.notifyNodeMutated(id)
+    case *storage.Edge:
+        e.notifyEdgeMutated(id)
+    }
+}
+
+func (e *StorageExecutor) notifyNativeRelationshipEndpoints(engine storage.Engine, edge *storage.Edge) {
+    start, end, selected := nativeEdgeStorageEndpoints(engine, edge)
+    if !selected { return }
+    e.notifyNodeMutated(string(start))
+    if start != end { e.notifyNodeMutated(string(end)) }
+}

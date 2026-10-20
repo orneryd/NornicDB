@@ -124,7 +124,9 @@ func createRelationshipForMerge(
 	if err := validatePropertyValues(edge.Properties); err != nil {
 		return nil, false, err
 	}
-	const maxBareCreateAttempts = 3
+    startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+    if !selected { return nil, false, storage.ErrNotFound }
+    const maxBareCreateAttempts = 3
 	bareAttempts := 0
 
 	for {
@@ -144,8 +146,8 @@ func createRelationshipForMerge(
 			}
 			existing, lookupErr := findRelationshipForMerge(
 				store,
-				edge.StartNode,
-				edge.EndNode,
+				startID,
+				endID,
 				edge.Type,
 				matchProps,
 			)
@@ -161,7 +163,7 @@ func createRelationshipForMerge(
 				if bareAttempts >= maxBareCreateAttempts {
 					return nil, false, localizedError(localization.CypherMergeRelationshipCreateCollisions(maxBareCreateAttempts), nil)
 				}
-				edge.ID = storage.EdgeID(e.generateID())
+				setNativeRelationshipCandidateID(edge, storage.EdgeID(e.generateID()))
 				continue
 			}
 
@@ -184,10 +186,12 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	candidate, err := store.GetEdge(edge.ID)
+    edgeID, selected := nativeEdgeLookupID(store, edge)
+    startID, endID, endpoints := nativeEdgeStorageEndpoints(store, edge)
+    if !selected || !endpoints { return nil, storage.ErrNotFound }
+    candidate, err := store.GetEdge(edgeID)
 	if err == nil {
-		if candidate.StartNode == edge.StartNode &&
-			candidate.EndNode == edge.EndNode &&
+		if nativeRelationshipEndpointsEqual(store, candidate, edge) &&
 			relationshipMatchesMergePattern(candidate, edge.Type, matchProps) {
 			return candidate, nil
 		}
@@ -197,27 +201,24 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-	edges, err := store.GetEdgesBetween(edge.StartNode, edge.EndNode)
+	edges, err := store.GetEdgesBetween(startID, endID)
 	if err != nil {
 		return nil, err
 	}
 	firstOrdinal := len(edges)
 	for offset := 0; offset <= len(edges); offset++ {
-		edge.ID = deterministicRelationshipMergeEdgeID(
-			edge.StartNode,
-			edge.EndNode,
-			edge.Type,
-			matchProps,
-			firstOrdinal+offset,
-		)
-		candidate, err = store.GetEdge(edge.ID)
+        setNativeRelationshipCandidateID(edge, deterministicRelationshipMergeEdgeID(
+            startID, endID, edge.Type, matchProps, firstOrdinal+offset,
+        ))
+        edgeID, selected = nativeEdgeLookupID(store, edge)
+        if !selected { return nil, storage.ErrNotFound }
+        candidate, err = store.GetEdge(edgeID)
 		switch {
 		case err == storage.ErrNotFound:
 			return nil, nil
 		case err != nil:
 			return nil, err
-		case candidate.StartNode == edge.StartNode &&
-			candidate.EndNode == edge.EndNode &&
+		case nativeRelationshipEndpointsEqual(store, candidate, edge) &&
 			relationshipMatchesMergePattern(candidate, edge.Type, matchProps):
 			return candidate, nil
 		}

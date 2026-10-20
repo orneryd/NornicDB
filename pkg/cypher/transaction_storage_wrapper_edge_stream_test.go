@@ -34,20 +34,20 @@ func TestTransactionStorageWrapper_StreamEdgesByType(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "a:e2", StartNode: "a:y", EndNode: "a:x", Type: "REL", Properties: map[string]any{"k": "dup"}}))
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: storage.NewNamespacedEngine(base, "a"), namespace: "a", separator: ":", mutatedNodeIDs: map[string]struct{}{}}
 
-    var got []string
-    var streamed []*storage.Edge
-    require.NoError(t, storage.StreamEdgesByType(context.Background(), wrapper, "REL", func(edge *storage.Edge) error {
-        streamed = append(streamed, storage.CopyEdge(edge))
-        got = append(got, string(edge.ID)+":"+string(edge.StartNode)+"->"+string(edge.EndNode))
-        return nil
-    }))
-    for _, edge := range streamed {
-        point, err := wrapper.GetEdge(edge.ID)
-        require.NoError(t, err)
-        require.Equal(t, point.Identity(), edge.Identity(), "stream and point reads select the same physical relationship")
-        require.Equal(t, point.StartIdentity(), edge.StartIdentity())
-        require.Equal(t, point.EndIdentity(), edge.EndIdentity())
-    }
+	var got []string
+	var streamed []*storage.Edge
+	require.NoError(t, storage.StreamEdgesByType(context.Background(), wrapper, "REL", func(edge *storage.Edge) error {
+		streamed = append(streamed, storage.CopyEdge(edge))
+		got = append(got, string(edge.ID)+":"+string(edge.StartNode)+"->"+string(edge.EndNode))
+		return nil
+	}))
+	for _, edge := range streamed {
+		point, err := wrapper.GetEdge(edge.ID)
+		require.NoError(t, err)
+		require.Equal(t, point.Identity(), edge.Identity(), "stream and point reads select the same physical relationship")
+		require.Equal(t, point.StartIdentity(), edge.StartIdentity())
+		require.Equal(t, point.EndIdentity(), edge.EndIdentity())
+	}
 	sort.Strings(got)
 	require.Equal(t, []string{"e1:x->y", "e2:y->x"}, got)
 

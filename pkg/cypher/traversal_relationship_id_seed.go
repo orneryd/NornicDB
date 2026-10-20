@@ -39,9 +39,11 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	if len(relationship.Types) > 0 && !slices.Contains(relationship.Types, edge.Type) {
 		return nil, true, true
 	}
-    startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
-    if !selected { return nil, true, true }
-    endpoints := []storage.NodeID{startID}
+	startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+	if !selected {
+		return nil, true, true
+	}
+	endpoints := []storage.NodeID{startID}
 	switch relationship.Direction {
 	case "incoming":
 		endpoints = []storage.NodeID{endID}

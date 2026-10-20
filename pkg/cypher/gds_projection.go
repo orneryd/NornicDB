@@ -1324,7 +1324,6 @@ func gdsPropertyTypeKey(label, key string) string {
 	return label + "\x00" + key
 }
 
-
 // gdsInteger is a value of any Go integer type as an int64 (the shared
 // converters skip the narrow and unsigned ones).
 func gdsInteger(value interface{}) int64 {
