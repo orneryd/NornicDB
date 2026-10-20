@@ -175,12 +175,12 @@ func testRowFunctionGraphCatalog(t *testing.T) {
 	require.NoError(t, manager.CreateCompositeDatabase("row_context_catalog", []multidb.ConstituentRef{
 		{Alias: "data", DatabaseName: "row_context_graph", Type: "local", AccessMode: "read_write"},
 	}))
-	store, err := manager.GetStorage(manager.DefaultDatabaseName())
+	store, err := manager.GetStorage("row_context_catalog")
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	for _, expression := range []string{"graph.names()", "graph.propertiesByName('row_context_catalog.data')"} {
-		result, err := exec.Execute(context.Background(), "USE row_context_catalog WITH 1 AS seed RETURN "+expression+" AS direct, ["+expression+"] AS nested, {value:"+expression+"} AS mapped", nil)
+		result, err := exec.Execute(context.Background(), "WITH 1 AS seed RETURN "+expression+" AS direct, ["+expression+"] AS nested, {value:"+expression+"} AS mapped", nil)
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 1)
 		row := result.Rows[0]
