@@ -430,10 +430,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		defer func() { result, retErr = orderRewrite.restore(result, retErr) }()
 	}
 
-	ctx = withRelationshipAccessProgram(ctx, cypher)
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {
+		ctx = withRelationshipAccessProgram(ctx, cypher)
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}
@@ -555,6 +555,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		cypher = desugared
 		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
 	}
+	// The local program describes the same rewritten statement its execution
+	// consumes. Fabric retains source-language access sites at its boundary above.
+	ctx = withRelationshipAccessProgram(ctx, cypher)
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}

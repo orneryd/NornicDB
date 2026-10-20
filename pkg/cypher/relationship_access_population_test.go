@@ -89,6 +89,7 @@ func relationshipAccessGeneratedRows(name string) [][]interface{} {
 
 type relationshipAccessStorageCase struct {
 	name, query, operator, index string
+	referenceErrorCode           string
 	estimate                     int64
 	params                       map[string]interface{}
 	rows                         [][]interface{}
@@ -154,6 +155,14 @@ func relationshipAccessGeneratedStorageCases(id interface{}) []relationshipAcces
 		cases = append(cases, relationshipAccessStorageCase{
 			name:     "generated_shortest_expression" + length,
 			query:    "MATCH (a:RouteNode {id:'a'}), (c:RouteNode {id:'c'}) RETURN length(shortestPath((a)-[r:ROUTE" + length + "]->(c)))",
+			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
+			// NornicDB permits this unused relationship binding in an expression;
+			// Neo4j rejects it. Keep the existing accepted extension.
+			referenceErrorCode: "Neo.ClientError.Statement.SyntaxError",
+		})
+		cases = append(cases, relationshipAccessStorageCase{
+			name:     "generated_shortest_expression_anonymous" + length,
+			query:    "MATCH (a:RouteNode {id:'a'}), (c:RouteNode {id:'c'}) RETURN length(shortestPath((a)-[:ROUTE" + length + "]->(c)))",
 			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
 		})
 	}
