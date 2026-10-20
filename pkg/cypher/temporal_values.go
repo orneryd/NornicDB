@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
@@ -884,29 +885,15 @@ func temporalOptionalInt(fields map[string]interface{}, name string) (int64, boo
 }
 
 func temporalInt(value interface{}) (int64, bool) {
-	switch number := value.(type) {
-	case int64:
-		return number, true
-	case int:
-		return int64(number), true
-	case float64:
-		return int64(number), number == math.Trunc(number)
-	default:
-		return 0, false
-	}
+	return valueconvert.Int64(value, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat)
 }
 
 func temporalFloat(fields map[string]interface{}, name string) float64 {
-	switch number := fields[name].(type) {
-	case int64:
-		return float64(number)
-	case int:
-		return float64(number)
-	case float64:
-		return number
-	default:
+	floating, ok := valueconvert.NumericFloat64(fields[name])
+	if !ok {
 		return 0
 	}
+	return floating
 }
 
 func buildDurationFromFields(fields map[string]interface{}) *CypherDuration {
