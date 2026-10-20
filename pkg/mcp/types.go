@@ -102,7 +102,7 @@ type Suggestion struct {
 // RecallParams - Input for recall tool
 type RecallParams struct {
 	ID       string    `json:"id,omitempty"`       // Optional, if provided ignores other filters
-	Type     []string  `json:"type,omitempty"`     // Optional, filter by types
+	Type     []string  `json:"type,omitempty"`     // Optional, match any listed exact label
 	Tags     []string  `json:"tags,omitempty"`     // Optional, filter by tags
 	Since    time.Time `json:"since,omitempty"`    // Optional, filter by creation time
 	Limit    int       `json:"limit,omitempty"`    // Optional, default: 10
@@ -122,7 +122,7 @@ type DiscoverParams struct {
 	Type          []string `json:"type,omitempty"`           // Optional, filter by types
 	Limit         int      `json:"limit,omitempty"`          // Optional, default: 10
 	MinSimilarity float64  `json:"min_similarity,omitempty"` // Optional, normalized relevance threshold (default: 0)
-	Depth         int      `json:"depth,omitempty"`          // Optional, default: 1, range: 1-3
+	Depth         int      `json:"depth,omitempty"`          // Optional: 1=matches only (default), 2=1 hop, 3=2 hops
 	Database      string   `json:"database,omitempty"`       // Optional, default: configured default database
 }
 

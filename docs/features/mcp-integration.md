@@ -74,7 +74,7 @@ metadata: {key: "value"}
 ```yaml
 id: "node-123" (fetch specific node)
 OR
-type: ["decision", "task"]
+type: ["decision", "task"] (match any listed exact label)
 tags: ["urgent"]
 since: "2024-11-01"
 limit: 10
@@ -86,7 +86,7 @@ query: "natural language search" ✅ REQUIRED
 type: ["file", "decision", "task"] (filter)
 limit: 10
 min_similarity: 0.70 (0.0-1.0, lower=more results)
-depth: 1 (1-3, higher=more related context)
+depth: 1 (default; 1=matches only, 2=1 hop, 3=2 hops)
 ```
 
 ### link

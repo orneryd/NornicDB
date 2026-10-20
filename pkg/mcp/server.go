@@ -1013,7 +1013,14 @@ func (s *Server) handleRecall(ctx context.Context, args map[string]interface{}) 
 				continue
 			}
 			props := toInterfaceMap(snode.Properties)
-			if len(nodeTypes) > 0 && !containsLabel(snode.Labels, nodeTypes[0]) {
+			matchesType := len(nodeTypes) == 0
+			for _, nodeType := range nodeTypes {
+				if containsLabel(snode.Labels, nodeType) {
+					matchesType = true
+					break
+				}
+			}
+			if !matchesType {
 				continue
 			}
 			if len(tags) > 0 {
@@ -2125,7 +2132,7 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 	return nil
 }
 
-// getRelatedNodes fetches related nodes up to the specified depth using graph traversal.
+// getRelatedNodes fetches related nodes up to depth-1 hops (depth 1 = matches only).
 // Returns a slice of RelatedNode with relationship information.
 func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) []RelatedNode {
 	if depth <= 1 {
