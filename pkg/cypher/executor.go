@@ -1218,13 +1218,18 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // notifyEdgeMutated updates live search metadata after a relationship create or
 // mutation so relationship vector queries can use client-supplied vectors before
 // a full search warmup/build has run.
-func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
+func (run relationshipAccessExecution) notifyEdgeMutated(edgeID string) {
+	e := run.executor
 	if e.searchService == nil || edgeID == "" {
 		return
 	}
 	if edge, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err == nil && edge != nil {
 		e.indexMutatedEdge(edge)
 	}
+}
+
+func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
+	e.relationshipExecutionFor(nil, "", "").notifyEdgeMutated(edgeID)
 }
 
 func (e *StorageExecutor) indexMutatedEdge(edge *storage.Edge) {

@@ -1609,7 +1609,8 @@ func sortedStringSet(set map[string]bool) []string {
 	return members
 }
 
-func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callDbRelationshipTypes() (*ExecuteResult, error) {
+	e := run.executor
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return nil, err
@@ -1628,6 +1629,10 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbRelationshipTypes()
 }
 
 func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
@@ -1771,7 +1776,8 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callNornicDbStats() (*ExecuteResult, error) {
+	e := run.executor
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
@@ -1781,6 +1787,10 @@ func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
 			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
 		},
 	}, nil
+}
+
+func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callNornicDbStats()
 }
 
 func (e *StorageExecutor) countLabels() int {
@@ -1797,7 +1807,8 @@ func (e *StorageExecutor) countLabels() int {
 	return len(labelSet)
 }
 
-func (e *StorageExecutor) countRelTypes() int {
+func (run relationshipAccessExecution) countRelTypes() int {
+	e := run.executor
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return 0
@@ -1807,6 +1818,10 @@ func (e *StorageExecutor) countRelTypes() int {
 		typeSet[edge.Type] = true
 	}
 	return len(typeSet)
+}
+
+func (e *StorageExecutor) countRelTypes() int {
+	return e.relationshipExecutionFor(nil, "", "").countRelTypes()
 }
 
 func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
@@ -1895,7 +1910,8 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callDbSchemaRelProperties() (*ExecuteResult, error) {
+	e := run.executor
 	edges, _ := e.storage.AllEdges()
 
 	// Collect properties per relationship type
@@ -1923,7 +1939,12 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbSchemaRelProperties()
+}
+
+func (run relationshipAccessExecution) callDbPropertyKeys() (*ExecuteResult, error) {
+	e := run.executor
 	nodes, _ := e.storage.AllNodes()
 	edges, _ := e.storage.AllEdges()
 
@@ -1948,6 +1969,10 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbPropertyKeys()
 }
 
 func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {

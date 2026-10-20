@@ -1935,7 +1935,8 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 // endpoint read by its id, null when it is gone. The one implementation, for
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
-func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) interface{} {
+func (run relationshipAccessExecution) relationshipEndpoint(edge *storage.Edge, end bool) interface{} {
+	e := run.executor
 	if edge == nil {
 		return nil
 	}
@@ -1956,6 +1957,10 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 		return nil
 	}
 	return node
+}
+
+func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) interface{} {
+	return e.relationshipExecutionFor(nil, "", "").relationshipEndpoint(edge, end)
 }
 
 // isRelationshipPatternOperand reports whether expression is one whole

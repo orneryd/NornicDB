@@ -1150,7 +1150,8 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 }
 
 // nodeDegreeCount is the degree of node along shape's direction and types.
-func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+func (run relationshipAccessExecution) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+	e := run.executor
 	store := e.getStorage(ctx)
 	var edges []*storage.Edge
 	if shape.outgoing {

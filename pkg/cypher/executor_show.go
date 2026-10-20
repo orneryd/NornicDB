@@ -970,7 +970,8 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 }
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
-func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	e := run.executor
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
@@ -1001,6 +1002,10 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 			RelationshipsCreated: int(edgeCount),
 		},
 	}, showDatabasesDefaultColumns), nil
+}
+
+func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").executeShowDatabase(ctx, cypher)
 }
 
 // executeShowDatabases handles SHOW DATABASES command (plural - lists all databases).

@@ -726,7 +726,7 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NotNil(t, match)
 	startNodes, err := eng.GetNodesByLabel("A")
 	require.NoError(t, err)
-	paths := exec.traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
+	paths := exec.relationshipExecutionFor(nil, "", "").traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
 		Enabled:      true,
 		MaxWorkers:   2,
 		MinBatchSize: 1,
@@ -1586,7 +1586,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
 
 	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
+	edges, prefix, err := exec.relationshipExecutionFor(nil, "", "").getEdgesByTypeFast("REL")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_fast_cov:", prefix)
 	for _, e := range edges {
@@ -1611,7 +1611,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
+	_, _, err = failExec.relationshipExecutionFor(nil, "", "").getEdgesByTypeFast("REL")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "edges fail")
 }

@@ -73,8 +73,8 @@ func (e *StorageExecutor) relationshipExecutionForQuery(ctx context.Context, que
 func (run relationshipAccessExecution) vectorPlan(ctx context.Context, query string) *relationshipVectorAccess {
 	probe := &relationshipVectorProbe{planOnly: true}
 	ctx = context.WithValue(ctx, relationshipVectorProbeKey{}, probe)
-	if _, handled := run.executor.tryRawMatchRelationshipVectorCosine(ctx, query); !handled {
-		_, _ = run.executor.tryRawMatchWithRelationshipVectorCosineProjection(ctx, query)
+	if _, handled := run.tryRawMatchRelationshipVectorCosine(ctx, query); !handled {
+		_, _ = run.tryRawMatchWithRelationshipVectorCosineProjection(ctx, query)
 	}
 	return probe.access
 }
@@ -82,9 +82,9 @@ func (run relationshipAccessExecution) vectorPlan(ctx context.Context, query str
 func (run relationshipAccessExecution) vector(ctx context.Context, query string) (*ExecuteResult, bool) {
 	probe := &relationshipVectorProbe{}
 	ctx = context.WithValue(ctx, relationshipVectorProbeKey{}, probe)
-	result, handled := run.executor.tryRawMatchRelationshipVectorCosine(ctx, query)
+	result, handled := run.tryRawMatchRelationshipVectorCosine(ctx, query)
 	if !handled {
-		result, handled = run.executor.tryRawMatchWithRelationshipVectorCosineProjection(ctx, query)
+		result, handled = run.tryRawMatchWithRelationshipVectorCosineProjection(ctx, query)
 	}
 	if handled && probe.access != nil {
 		if result != nil {
@@ -99,7 +99,7 @@ func (run relationshipAccessExecution) count(ctx context.Context, match *Travers
 	if len(run.access.alternatives) != 0 {
 		return 0, false, nil
 	}
-	n, ok, err := run.executor.relationshipCountFromStore(ctx, match, item)
+	n, ok, err := run.relationshipCountFromStore(ctx, match, item)
 	if ok {
 		recordRelationshipSeekFallback(ctx, run.pattern, run.where, match.Relationship.Variable)
 	}
@@ -110,7 +110,7 @@ func (run relationshipAccessExecution) aggregate(ctx context.Context, match *Tra
 	if len(run.access.alternatives) != 0 {
 		return nil, false, nil
 	}
-	rows, ok, err := run.executor.tryFastRelationshipAggregations(match, items)
+	rows, ok, err := run.tryFastRelationshipAggregations(match, items)
 	if ok {
 		recordRelationshipSeekFallback(ctx, run.pattern, run.where, match.Relationship.Variable)
 	}
@@ -119,11 +119,11 @@ func (run relationshipAccessExecution) aggregate(ctx context.Context, match *Tra
 
 func (run relationshipAccessExecution) degree(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
 	recordRelationshipSeekFallback(ctx, run.pattern, run.where, shape.relationship)
-	return run.executor.nodeDegreeCount(ctx, node, shape)
+	return run.nodeDegreeCount(ctx, node, shape)
 }
 
 func (run relationshipAccessExecution) idSeedNodes(ctx context.Context) (nodes []*storage.Node, none, ok bool) {
-	return run.executor.scanRelationshipIDSeedNodes(ctx, run.pattern, run.physicalWhere)
+	return run.scanRelationshipIDSeedNodes(ctx, run.pattern, run.physicalWhere)
 }
 
 func (run relationshipAccessExecution) selectedPaths(ctx context.Context, plan *selectedPathPlan, automaton *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
@@ -169,7 +169,7 @@ func (run relationshipAccessExecution) selectedPaths(ctx context.Context, plan *
 }
 
 func (run relationshipAccessExecution) incidentEdgeLists(ctx context.Context, store storage.Engine, node storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
-	return incidentEdgeListsContext(ctx, store, node, direction)
+	return run.incidentEdgeListsContext(ctx, store, node, direction)
 }
 
 func (run relationshipAccessExecution) undirectedIncidentEdges(ctx context.Context, store storage.Engine, node storage.NodeID) ([]*storage.Edge, error) {
@@ -192,14 +192,13 @@ func (run relationshipAccessExecution) anchoredCount(ctx context.Context, match 
 	if sought {
 		return run.executor.countRelationshipPaths(ctx, paths, match, run.where, values, first), true
 	}
-	return run.executor.scanRelationshipCount(ctx, match, seed, run.where, values, first), true
+	return run.scanRelationshipCount(ctx, match, seed, run.where, values, first), true
 }
 
 // paths keeps the existing seed/streaming/temporal kernels below the one access
 // decision. optimizedStart is a node-index pruning result; start/end are actual
 // bound endpoints and therefore also constrain a relationship-index result.
 func (run relationshipAccessExecution) paths(ctx context.Context, match *TraversalMatch, start, end, optimizedStart []*storage.Node) ([]PathResult, error) {
-	e := run.executor
 	if paths, sought, err := run.tryID(ctx, match, start, end); sought || err != nil {
 		return paths, err
 	}
@@ -209,36 +208,37 @@ func (run relationshipAccessExecution) paths(ctx context.Context, match *Travers
 	if optimizedStart == nil {
 		optimizedStart = start
 	}
-	return e.scanRelationshipPaths(ctx, match, optimizedStart, end, run.physicalWhere)
+	return run.scanRelationshipPaths(ctx, match, optimizedStart, end, run.physicalWhere)
 }
 
-func (e *StorageExecutor) scanRelationshipPaths(ctx context.Context, match *TraversalMatch, start, end []*storage.Node, where string) ([]PathResult, error) {
+func (run relationshipAccessExecution) scanRelationshipPaths(ctx context.Context, match *TraversalMatch, start, end []*storage.Node, where string) ([]PathResult, error) {
+	e := run.executor
 	var paths []PathResult
-	if seeded, ok := e.traverseFromEndSeeds(ctx, match, start, end, where); ok {
+	if seeded, ok := run.traverseFromEndSeeds(ctx, match, start, end, where); ok {
 		return seeded, nil
 	}
 	if len(start) > 0 {
 		if match.IsChained && len(match.Segments) > 1 {
-			paths = e.traverseChainedGraph(ctx, match, start)
+			paths = run.traverseChainedGraph(ctx, match, start)
 		} else {
 			viewport, _ := TemporalViewportFromContext(ctx)
 			checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-			paths = e.traverseGraphSequential(ctx, match, start, viewport, checker)
+			paths = run.traverseGraphSequential(ctx, match, start, viewport, checker)
 		}
 	} else if match.TraversalLimit > 0 && !match.IsChained && len(match.StartNode.properties) == 0 {
 		viewport, _ := TemporalViewportFromContext(ctx)
 		checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
 		var streamed bool
 		var err error
-		paths, streamed, err = e.traverseGraphWithStreamingStartNodes(ctx, match, viewport, checker)
+		paths, streamed, err = run.traverseGraphWithStreamingStartNodes(ctx, match, viewport, checker)
 		if err != nil {
 			return nil, err
 		}
 		if !streamed {
-			paths = e.traverseGraph(ctx, match)
+			paths = run.traverseGraph(ctx, match)
 		}
 	} else {
-		paths = e.traverseGraph(ctx, match)
+		paths = run.traverseGraph(ctx, match)
 	}
 	if where != "" {
 		paths = e.filterPathsByWhere(ctx, paths, match, where, nil)

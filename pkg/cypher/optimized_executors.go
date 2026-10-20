@@ -64,7 +64,8 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 // Algorithm: Single pass - build edge set, then find reverse pairs
 // =============================================================================
 
-func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	e := run.executor
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(query)
 	columns := e.buildColumnsFromReturnItems(returnItems)
@@ -129,13 +130,18 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 	return result, nil
 }
 
+func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").executeMutualRelationshipOptimized(ctx, query, info)
+}
+
 // =============================================================================
 // Incoming Count Aggregation Optimization
 // Pattern: MATCH (x)<-[:TYPE]-(y) RETURN x.prop, count(y)
 // Algorithm: Single pass through all edges, build count map
 // =============================================================================
 
-func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) executeIncomingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	e := run.executor
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(query)
 	columns := e.buildColumnsFromReturnItems(returnItems)
@@ -197,13 +203,18 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 	return result, nil
 }
 
+func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").executeIncomingCountOptimized(ctx, query, info)
+}
+
 // =============================================================================
 // Outgoing Count Aggregation Optimization
 // Pattern: MATCH (x)-[:TYPE]->(y) RETURN x.prop, count(y)
 // Algorithm: Single pass through all edges, build count map
 // =============================================================================
 
-func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) executeOutgoingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	e := run.executor
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(query)
 	columns := e.buildColumnsFromReturnItems(returnItems)
@@ -265,6 +276,10 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 	return result, nil
 }
 
+func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").executeOutgoingCountOptimized(ctx, query, info)
+}
+
 // =============================================================================
 // Edge Property Aggregation Optimization
 // Pattern: MATCH ()-[r:TYPE]->() RETURN avg(r.prop), count(r)
@@ -279,7 +294,8 @@ type edgeAggStats struct {
 	hasValue bool
 }
 
-func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	e := run.executor
 	// This optimization handles queries like:
 	// MATCH (c)-[r:REVIEWED]->(p) RETURN p.name, avg(r.rating), count(r)
 	// GROUP BY p (the end node)
@@ -395,6 +411,10 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").executeEdgePropertyAggOptimized(ctx, query, info)
 }
 
 // =============================================================================

@@ -294,7 +294,7 @@ func TestTraverseChainedGraph(t *testing.T) {
 		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(ctx, match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseGraph(ctx, match)
 
 		// Should find 3 paths: Person1->POC1->Area1, Person2->POC2->Area1, Person3->POC3->Area2
 		assert.Len(t, paths, 3)
@@ -313,7 +313,7 @@ func TestTraverseChainedGraph(t *testing.T) {
 		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(ctx, match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseGraph(ctx, match)
 
 		// Should find 2 paths: Person1->POC1->Area1, Person2->POC2->Area1
 		assert.Len(t, paths, 2)
@@ -326,7 +326,7 @@ func TestTraverseChainedGraph(t *testing.T) {
 		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(ctx, match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseGraph(ctx, match)
 		assert.Len(t, paths, 0)
 	})
 }
@@ -342,7 +342,7 @@ func TestBuildPathContextChained(t *testing.T) {
 		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
 		// Build context for first path
@@ -370,7 +370,7 @@ func TestBuildPathContextChained(t *testing.T) {
 		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
 		pathCtx := exec.buildPathContext(paths[0], match)
@@ -421,7 +421,7 @@ func TestTraverseFromNode(t *testing.T) {
 			},
 		}
 
-		paths := exec.traverseFromNode(context.Background(), poc1, match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseFromNode(context.Background(), poc1, match)
 
 		// POC1 should connect to Area1
 		assert.Len(t, paths, 1)
@@ -453,7 +453,7 @@ func TestTraverseFromNode(t *testing.T) {
 			},
 		}
 
-		paths := exec.traverseFromNode(context.Background(), persons[0], match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseFromNode(context.Background(), persons[0], match)
 		assert.Nil(t, paths)
 	})
 
@@ -493,7 +493,7 @@ func TestTraverseFromNode(t *testing.T) {
 			},
 		}
 
-		paths := exec.traverseFromNode(context.Background(), start, match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseFromNode(context.Background(), start, match)
 		require.Len(t, paths, 1)
 		require.Len(t, paths[0].Nodes, 2)
 		assert.Equal(t, storage.NodeID("area-live"), paths[0].Nodes[1].ID)
@@ -599,7 +599,7 @@ func TestChainedPatternEdgeCases(t *testing.T) {
 		match := exec.parseTraversalPattern(ctx, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		paths := exec.relationshipExecutionFor(nil, "", "").traverseGraph(context.Background(), match)
 		assert.Len(t, paths, 0)
 	})
 
@@ -710,7 +710,7 @@ func BenchmarkChainedTraversal(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.traverseGraph(context.Background(), match)
+		_ = exec.relationshipExecutionFor(nil, "", "").traverseGraph(context.Background(), match)
 	}
 }
 

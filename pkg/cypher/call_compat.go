@@ -18,7 +18,8 @@ import (
 // ===== Additional Neo4j Compatibility Procedures =====
 
 // callDbInfo returns database information - Neo4j db.info()
-func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+	e := run.executor
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 	name := e.currentDatabaseName()
@@ -42,6 +43,10 @@ func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error
 			{id, name, creationDate, nodeCount, edgeCount},
 		},
 	}, nil
+}
+
+func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbInfo(ctx)
 }
 
 // callDbPing checks database connectivity - Neo4j db.ping()
@@ -201,7 +206,8 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+	e := run.executor
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -354,6 +360,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 	return result, nil
 }
 
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbIndexFulltextQueryRelationships(args)
+}
+
 // buildEdgeFulltextDoc mirrors buildNodeFulltextDoc for relationships.
 func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
 	if edge == nil {
@@ -498,7 +508,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 	return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
 }
 
-func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	e := run.executor
 	// Resolve the query vector (same logic as queryNodes)
 	var queryVector []float32
 
@@ -710,6 +721,10 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
 }
 
 // vectorIndexProcedure names a vector index creation procedure and its
@@ -977,7 +992,8 @@ func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.
 	return e.callSetVectorProperty(ctx, arguments, true)
 }
 
-func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+func (run relationshipAccessExecution) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+	e := run.executor
 	if len(arguments) != 3 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "vector property setter requires three arguments")
 	}
@@ -1035,6 +1051,10 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		entity.UpdatedAt = node.UpdatedAt
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+	return e.relationshipExecutionFor(nil, "", "").callSetVectorProperty(ctx, arguments, relationship)
 }
 
 // callTxSetMetadata sets transaction metadata - Neo4j tx.setMetaData()

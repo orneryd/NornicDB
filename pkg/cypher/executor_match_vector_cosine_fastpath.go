@@ -482,7 +482,8 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 //	RETURN ..., vector.similarity.cosine(e.<prop>, <query>) AS <scoreAlias>, ...
 //	ORDER BY <scoreAlias> DESC|ASC
 //	LIMIT <k>
-func (e *StorageExecutor) tryRawMatchRelationshipVectorCosine(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+func (run relationshipAccessExecution) tryRawMatchRelationshipVectorCosine(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+	e := run.executor
 	trimmed := strings.TrimSpace(cypher)
 	if !startsWithKeywordFold(trimmed, "MATCH") {
 		return nil, false
@@ -565,7 +566,7 @@ func (e *StorageExecutor) tryRawMatchRelationshipVectorCosine(ctx context.Contex
 	}
 
 	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "")
-	edgeScores, ok := e.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
+	edgeScores, ok := run.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
 	if !ok {
 		return nil, false
 	}
@@ -619,7 +620,8 @@ func (e *StorageExecutor) tryRawMatchRelationshipVectorCosine(ctx context.Contex
 //	RETURN ...
 //	ORDER BY <scoreAlias> DESC|ASC
 //	LIMIT <k>
-func (e *StorageExecutor) tryRawMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+func (run relationshipAccessExecution) tryRawMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string) (*ExecuteResult, bool) {
+	e := run.executor
 	trimmed := strings.TrimSpace(cypher)
 	if !startsWithKeywordFold(trimmed, "MATCH") {
 		return nil, false
@@ -731,7 +733,7 @@ func (e *StorageExecutor) tryRawMatchWithRelationshipVectorCosineProjection(ctx 
 	}
 
 	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "" || scorePredicateRejectsLeadingResults(orderDesc, scoreOp))
-	edgeScores, ok := e.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
+	edgeScores, ok := run.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
 	if !ok {
 		return nil, false
 	}
@@ -1194,7 +1196,8 @@ func scoreVectorForFastPath(queryVector []float32, embedding []float32, similari
 	}
 }
 
-func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
+func (run relationshipAccessExecution) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
+	e := run.executor
 	vec, ok := e.resolveCosineQueryVector(ctx, queryExpr)
 	if !ok || len(vec) == 0 {
 		return nil, false

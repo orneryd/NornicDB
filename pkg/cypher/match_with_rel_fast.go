@@ -70,7 +70,7 @@ func (run relationshipAccessExecution) tryFastRevenueByProduct(matches *Traversa
 		return nil, false, nil
 	}
 
-	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types[0])
+	edgeList, _, err := run.getEdgesByTypeFast(matches.Relationship.Types[0])
 	if err != nil {
 		return nil, false, err
 	}

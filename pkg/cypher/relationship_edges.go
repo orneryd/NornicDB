@@ -49,7 +49,7 @@ func incidentEdgeLists(store storage.Engine, nodeID storage.NodeID) ([]*storage.
 // incidentEdgeListsContext is the single storage reader for selected paths.
 // Directed reads avoid loading the other direction; both directions use one
 // adjacency call when supported. Cancellation and read errors reach the caller.
-func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+func (run relationshipAccessExecution) incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -86,4 +86,8 @@ func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID 
 		return nil, nil, err
 	}
 	return outgoing, incoming, ctx.Err()
+}
+
+func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+	return relationshipStorageExecution().incidentEdgeListsContext(ctx, store, nodeID, direction)
 }

@@ -191,7 +191,7 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 	return filtered, nil
 }
 
-func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+func (run relationshipAccessExecution) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	var edges []*storage.Edge
 	switch direction {
 	case "outgoing":
@@ -219,6 +219,10 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 		edges = append(edges, incoming...)
 	}
 	return edges, nil
+}
+
+func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+	return e.relationshipExecutionFor(nil, "", "").boundRelationshipDeleteCandidateEdges(store, nodeID, direction)
 }
 
 func parseBoundRelationshipDeleteWithLimitSegment(matchSegment, deleteVar string) (string, int, bool) {
