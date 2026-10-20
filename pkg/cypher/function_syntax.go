@@ -85,6 +85,19 @@ func (call functionCallSpan) expressionCall() bool {
 	return !call.procedure && (!isNonFunctionSemanticKeyword(call.normalized) || call.normalized == "filter")
 }
 
+// The legacy matcher API permits ASCII spacing between a name and its open.
+// Its compatibility policy reads the owned gap, with comments already rendered;
+// general call parsing continues to accept the query lexer's Unicode trivia.
+func (call functionCallSpan) asciiNameSpacing() bool {
+	gap := call.syntax.source(syntaxSpan{call.nameEnd, call.open})
+	for index := range len(gap) {
+		if !isSpaceByte(gap[index]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (call functionCallSpan) close(text string) int {
 	if call.syntax == nil || call.group < 0 {
 		return -1
@@ -186,7 +199,10 @@ func (view *functionSyntaxView) facts() *functionSyntax {
 
 func (view *functionSyntaxView) callAt(at int) (functionCallSpan, bool) {
 	if syntax := view.facts(); syntax != nil {
-		return syntax.callAt(at)
+		call, ok := syntax.callAt(at)
+		// An operator such as NOT (n) must leave its grouping to the
+		// expression/pattern owner, rather than skip it as function arguments.
+		return call, ok && call.expressionCall()
 	}
 	return functionCallSpan{}, false
 }

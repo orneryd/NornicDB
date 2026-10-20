@@ -137,3 +137,49 @@ func TestFunctionSyntaxSparseNestingOverflow(t *testing.T) {
 		require.Equal(t, body, lexicalExpressionText(text))
 	}
 }
+
+func TestFunctionSyntaxExpressionViewGrouping(t *testing.T) {
+	for _, text := range []string{"NOT (n)-[:R]->()", "NOT /* a function-like note() */ (n)-[:R]->()"} {
+		view := functionSyntaxView{text: text}
+		_, call := view.callAt(0)
+		require.False(t, call, "NOT owns an operator operand, not function arguments")
+		require.Equal(t, []string{"n"}, expressionFreeVariables(text))
+	}
+}
+
+func TestFunctionSyntaxLegacyNameSpacing(t *testing.T) {
+	for _, sample := range []struct {
+		text string
+		want bool
+	}{
+		{"count (n)", true},
+		{"count\t\r\n(n)", true},
+		{"count\u00a0(n)", false},
+		{"count /* \u00a0 don't split range('bad'), ( */ (n)", true},
+		{"count // \u00a0 range('bad'), (\n(n)", true},
+	} {
+		require.Equal(t, sample.want, matchFuncStart(sample.text, "count"), sample.text)
+		require.Equal(t, sample.want, matchFuncStartAndSuffix(sample.text, "count"), sample.text)
+		arguments, open := extractFuncArgsLen(sample.text, "count")
+		_, _, suffix := extractFuncArgsWithSuffix(sample.text, "count")
+		require.Equal(t, sample.want, open >= 0, sample.text)
+		require.Equal(t, sample.want, suffix, sample.text)
+		if sample.want {
+			require.Equal(t, "n", arguments)
+		}
+		// The general reader keeps Unicode query trivia. Only the legacy
+		// matcher's ASCII name-gap compatibility policy is restricted.
+		name, inner, parsed := parseFunctionCallWS(sample.text)
+		require.True(t, parsed, sample.text)
+		require.Equal(t, "count", name)
+		require.Equal(t, "n", strings.TrimSpace(inner))
+	}
+}
+
+func TestFunctionSyntaxUnicodeCallRoutes(t *testing.T) {
+	runFunctionSyntaxRoutes(t, []functionsyntaxmatrix.Case{
+		{"unicode-upper", "RETURN toUpper\u00a0('ok') AS v", `[["OK"]]`},
+		{"unicode-count", "UNWIND [1,2] AS n RETURN count\u00a0(n) AS v", `[[2]]`},
+		{"unicode-coalesce", "RETURN coalesce\u00a0(null,7) AS v", `[[7]]`},
+	})
+}
