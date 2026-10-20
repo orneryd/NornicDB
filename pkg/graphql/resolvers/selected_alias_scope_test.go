@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,7 +14,7 @@ import (
 
 func TestSelectedAliasScopeDirectReads(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	require.NoError(t, manager.CreateAlias("selected_alias", "nornic"))
 	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "alias-seed", Labels: []string{"Seed"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
@@ -60,7 +61,7 @@ func TestSelectedAliasScopeDirectReads(t *testing.T) {
 
 func TestSelectedAliasSubscriptionsObserveRevocation(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	require.NoError(t, manager.CreateAlias("selected_alias", "nornic"))
 	resolver := NewResolver(db, manager)
 	subscriptions := resolver.Subscription()

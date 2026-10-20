@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/stretchr/testify/require"
@@ -119,7 +120,7 @@ func rule73Call(ctx context.Context, bound reflect.Value) (err error) {
 
 func TestRule73SelfAttackEveryGraphQLDataResolver(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	require.NoError(t, manager.CreateDatabase("rule73_named"))
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)
