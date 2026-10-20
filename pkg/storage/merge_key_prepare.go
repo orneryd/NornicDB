@@ -75,7 +75,8 @@ func (tx *BadgerTransaction) mergeAdmissionHolder(schema *SchemaManager, namespa
 	if idx == nil {
 		return "", false, false
 	}
-	for _, id := range idx.lookupFullHash(key.indexHash) {
+	hash, _ := key.lock.value.(string)
+	for _, id := range idx.lookupFullHash(hash) {
 		if tx.engine.committedKeyHolder(id, namespace, label, properties, props) != nil {
 			return id, true, true
 		}

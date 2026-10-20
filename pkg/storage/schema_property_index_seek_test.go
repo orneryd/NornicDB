@@ -37,7 +37,7 @@ func TestPropertyIndexKeyRangeNarrowsOnlyOneKind(t *testing.T) {
 		{"integers", index(int64(1), int64(5), int64(9)), lower(int64(4), true), []interface{}{int64(5), int64(9)}, true},
 		{"integers and floats", index(int64(1), 2.5, int64(3)), lower(2.0, false), []interface{}{2.5, int64(3)}, true},
 		{"large integers, integer bound", index(int64(math.MaxInt64-2), int64(math.MaxInt64-1)), lower(int64(math.MaxInt64-2), false), []interface{}{int64(math.MaxInt64 - 1)}, true},
-		{"large integers, float bound", index(int64(1<<60), int64(1<<60+1)), lower(float64(1<<60), false), []interface{}{int64(1 << 60), int64(1<<60 + 1)}, false},
+		{"large integers, float bound", index(int64(1<<60), int64(1<<60+1)), lower(float64(1<<60), false), []interface{}{int64(1<<60 + 1)}, true},
 		{"mixed strings and numbers", index("a", int64(1)), lower("a", true), nil, false},
 		{"NaN", index(1.0, math.NaN()), lower(0.5, true), nil, false},
 		{"booleans", index(true, false), lower(int64(0), true), nil, false},

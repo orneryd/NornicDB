@@ -26,8 +26,11 @@ func TestSchemaOrderExactIntegers(t *testing.T) {
 		{"signed below unsigned range", int64(9223372036854775807), ^uint64(0), -1},
 		{"negative unsigned", int64(-1), uint64(0), -1},
 		{"unsigned negative", uint64(0), int64(-1), 1},
-		{"mixed float widening", larger, float64(smaller), 0},
-		{"mixed float widening reverse", float64(smaller), larger, 0},
+		// An integer orders against a float exactly, as Cypher compares stored
+		// numbers (compareCypherNumbersExactly, #893), never widened to float64.
+		{"mixed float exact", larger, float64(smaller), 1},
+		{"mixed float exact reverse", float64(smaller), larger, -1},
+		{"mixed float equal", smaller, float64(smaller), 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.Equal(t, test.want, compareSchemaIndexValues(test.left, test.right))

@@ -48,13 +48,13 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 		got, found, _ := schema.LookupUniqueConstraintValue("N", "v", value)
 		require.True(t, found)
 		require.Equal(t, want, got)
-		key, ok := uniqueConstraintValueKey(value)
+		key, ok := indexValueKey(value)
 		require.True(t, ok)
-		require.Equal(t, []NodeID{want}, view.uniqueValueMatches(nil, "N", "v", value, key))
+		require.Equal(t, []NodeID{want}, view.valueMatches(nil, "N", "v", key))
 	}
 	// A user string matching the printed exceptional-key tag is still an
 	// ordinary string key, not the private comparable integer-key type.
-	numericKey, ok := uniqueConstraintValueKey(values[1])
+	numericKey, ok := indexValueKey(values[1])
 	require.True(t, ok)
 	lookalike := fmt.Sprint(numericKey)
 	schema.RegisterUniqueValue("N", "v", lookalike, "string-lookalike")
@@ -64,14 +64,12 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 	numericHolder, numericFound, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
 	require.True(t, numericFound)
 	require.Equal(t, NodeID("odd"), numericHolder)
-	// The old rounded property-index key remains byte-for-byte/type compatible;
-	// only the UNIQUE cache distinguishes the otherwise colliding exact integers.
+	// One key for every index: a float64 holds 2^53 exactly, so its key is
+	// unchanged; 2^53+1 keeps its exact integer instead of colliding with it.
 	a, _ := indexValueKey(values[0])
 	b, _ := indexValueKey(values[1])
-	require.Equal(t, a, b)
-	a, _ = uniqueConstraintValueKey(values[0])
-	b, _ = uniqueConstraintValueKey(values[1])
-	require.NotEqual(t, a, b)
+	require.Equal(t, float64(9007199254740992), a)
+	require.Equal(t, uint64(9007199254740993), b)
 	schema.UnregisterUniqueValue("N", "v", values[1])
 	_, found, _ := schema.LookupUniqueConstraintValue("N", "v", values[1])
 	require.False(t, found)
@@ -106,7 +104,7 @@ func BenchmarkUniqueCachePrecision(b *testing.B) {
 	}
 }
 
-// A namespace view filters the buffer's shared rounded property-index bucket,
+// A namespace view filters the buffer's shared property-index bucket,
 // while unattached schemas and ordinary keys keep their existing behavior.
 func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 	buffer := newCommitBuffer()
@@ -141,17 +139,17 @@ func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 		{float64(42), "tenant:small"},
 		{"ordinary", "tenant:text"},
 	} {
-		key, ok := uniqueConstraintValueKey(tc.value)
+		key, ok := indexValueKey(tc.value)
 		require.True(t, ok)
-		require.Equal(t, []NodeID{tc.want}, view.uniqueValueMatches(nil, "N", "v", tc.value, key))
+		require.Equal(t, []NodeID{tc.want}, view.valueMatches(nil, "N", "v", key))
 		// The same real value on a schema with no write-behind attachment must
 		// neither fabricate a pending holder nor allocate an index dependency.
-		require.Empty(t, (pendingWriteView{}).uniqueValueMatches(nil, "N", "v", tc.value, key))
+		require.Empty(t, (pendingWriteView{}).valueMatches(nil, "N", "v", key))
 	}
 	// The platform int path must preserve equality with an integral float.
-	integerKey, ok := uniqueConstraintValueKey(int(42))
+	integerKey, ok := indexValueKey(int(42))
 	require.True(t, ok)
-	floatKey, ok := uniqueConstraintValueKey(float64(42))
+	floatKey, ok := indexValueKey(float64(42))
 	require.True(t, ok)
 	require.Equal(t, integerKey, floatKey)
 }
