@@ -771,7 +771,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				if created != nil && relationshipPattern.relVariable != "" {
 					matches = []*storage.Edge{created}
 					if onCreateSet == "" {
-						identities.created(created)
+						identities.created(e.getStorage(ctx), created)
 					} else {
 						identities.reset()
 					}

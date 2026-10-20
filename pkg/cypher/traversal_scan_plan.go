@@ -62,8 +62,10 @@ func planPipelineTraversalScan(match *TraversalMatch, where string, row pipeline
 func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
 	store := e.getStorage(ctx)
 	oriented := func(edge *storage.Edge) error {
-        start, end, selected := nativeEdgeStorageEndpoints(store, edge)
-        if !selected { return nil }
+		start, end, selected := nativeEdgeStorageEndpoints(store, edge)
+		if !selected {
+			return nil
+		}
 		if match.Relationship.Direction == "incoming" {
 			return visit(edge, end, start)
 		}
@@ -93,8 +95,10 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 				return nil
 			}
-            nodeID, selected := nativeNodeLookupID(store, node)
-            if !selected { return nil }
+			nodeID, selected := nativeNodeLookupID(store, node)
+			if !selected {
+				return nil
+			}
 			traversal := &TraversalContext{relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match), cancelCtx: ctx}
 			var edges []*storage.Edge
 			var err error
@@ -116,8 +120,10 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-                start, end, selected := nativeEdgeStorageEndpoints(store, edge)
-                if !selected { continue }
+				start, end, selected := nativeEdgeStorageEndpoints(store, edge)
+				if !selected {
+					continue
+				}
 				if match.Relationship.Direction == "incoming" || (match.Relationship.Direction == "both" && start != nodeID) {
 					start, end = end, start
 				}

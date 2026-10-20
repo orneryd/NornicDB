@@ -69,12 +69,14 @@ func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, sta
 
 // created records a relationship the MERGE created (and nothing else
 // changed) in its pair's entries.
-func (c *relationshipMergeIdentityCache) created(edge *storage.Edge) {
+func (c *relationshipMergeIdentityCache) created(store storage.Engine, edge *storage.Edge) {
 	if c == nil || edge == nil {
 		return
 	}
-	for entryKey, entry := range c.entries {
-		if entryKey == relationshipMergeIdentityEntryKey(edge.StartNode, edge.EndNode, edge.Type, entry.keys) {
+    startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+    if !selected { return }
+    for entryKey, entry := range c.entries {
+		if entryKey == relationshipMergeIdentityEntryKey(startID, endID, edge.Type, entry.keys) {
 			entry.add(edge)
 		}
 	}

@@ -73,7 +73,8 @@ func (e *StorageExecutor) evictMergeNodeCacheEntries(labels []string, props map[
 		if !ok || cached == nil {
 			continue
 		}
-		if nodeID == "" || cached.ID == nodeID {
+		cachedID, selected := nativeNodeLookupID(e.storage, cached)
+		if nodeID == "" || !selected || cachedID == nodeID {
 			delete(e.nodeLookupCache, key)
 		}
 	}
@@ -105,12 +106,17 @@ func (e *StorageExecutor) findMergeNodeInCache(store storage.Engine, labels []st
 		return cachedNode
 	}
 
-	liveNode, err := e.getQueryNode(store, cachedNode.ID)
+    cachedID, selected := nativeNodeLookupID(store, cachedNode)
+    if !selected {
+        e.evictMergeNodeCacheEntries(labels, props, "")
+        return nil
+    }
+    liveNode, err := e.getQueryNode(store, cachedID)
 	if err == nil && mergeNodeMatches(liveNode, labels, props) {
 		return liveNode
 	}
 
-	e.evictMergeNodeCacheEntries(labels, props, cachedNode.ID)
+	e.evictMergeNodeCacheEntries(labels, props, cachedID)
 	return nil
 }
 
