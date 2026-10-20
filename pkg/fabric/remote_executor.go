@@ -15,9 +15,10 @@ import (
 type RemoteFragmentExecutor struct {
 	// engineCache caches RemoteEngine instances by URI+database key to avoid
 	// reconnecting on every fragment execution.
-	engineCache map[string]*storage.RemoteEngine
-	txHandles   map[string]*remoteParticipant
-	mu          sync.RWMutex
+	engineCache      map[string]*storage.RemoteEngine
+	txHandles        map[string]*remoteParticipant
+	logicalDatabases map[*storage.RemoteEngine]string
+	mu               sync.RWMutex
 }
 
 // remoteParticipant is a remote sub-transaction, which ends once: after
@@ -302,6 +303,12 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	}
 	tx, err := engine.BeginCypherTx(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.validateLogicalParticipant(ctx, engine, tx); err != nil {
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storage.RemoteRequestTimeout)
+		_ = tx.Rollback(rollbackCtx)
+		cancel()
 		return nil, err
 	}
 	handle := &remoteParticipant{tx: tx}

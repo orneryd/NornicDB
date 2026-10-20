@@ -288,6 +288,11 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	require.NoError(t, engine.FlushWriteBehind())
 	require.Equal(t, int64(2), mustEdgeCount(t, engine))
 
+	// These assertions inspect both deletes before replay. The seed flush can
+	// shorten the adaptive interval and leave a worker wakeup queued, so stop
+	// only the background flusher; the explicit flush below still replays them.
+	engine.writeBehind.Close()
+
 	// Wipe batch 1: delete a, which detaches a->b.
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)

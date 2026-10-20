@@ -81,6 +81,9 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 	case prefixTemporalIndex, prefixTemporalHead:
 		return wholeNamespace && bytes.HasPrefix(key[1:], append([]byte(namespace), 0))
 	case prefixMVCCMeta:
+		if len(key) > 3 && key[1] == prefixMVCCMetaManualSuppression {
+			return bytes.HasPrefix(key[3:], prefix)
+		}
 		if bytes.HasPrefix(key, accessMetaKey("")) {
 			entityID := key[len(accessMetaKey("")):]
 			if bytes.HasPrefix(entityID, []byte(policyIndexMetaIDPrefix)) {

@@ -202,6 +202,24 @@ type BadgerEngine struct {
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
 	writeBarrier sync.RWMutex
+	// Immutable publication fences exist only while prefix deletion is active.
+	// Updates use prefixDeleteMu; ordinary commits perform one atomic load.
+	prefixDeleteMu               sync.Mutex
+	deletingPrefixes             atomic.Pointer[[]string]
+	namespaceLifetimes           atomic.Pointer[namespaceLifetimes]
+	namespaceRetirementHooks     sync.Map
+	namespaceRetirementHookID    atomic.Uint64
+	namespaceTaskGates           sync.Map
+	catalogObserversMu           sync.Mutex
+	catalogObservers             atomic.Pointer[namespaceCatalogObservers]
+	catalogObserverID            uint64
+	catalogRevision              atomic.Uint64
+	catalogRecordGates           sync.Map
+	namespaceJournalMu           sync.Mutex
+	namespaceJournalStates       map[string]*namespaceJournalState
+	namespaceJournalGlobal       namespaceJournalState
+	namespaceJournalPreparations map[string]*NamespaceDrop
+	namespaceWALOwner            *WALEngine
 	// Sidecar publication is the only writer that does not change a body.
 	// Versions are recorded only for live sidecar ranges; the scalar is read
 	// under writeBarrier and avoids any registry walk on ordinary commits.
@@ -546,6 +564,7 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 
 // notifyNodeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeCreated(node *Node) {
+	b.publishNamespaceCatalog(node)
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 	b.dispatchNodeCreated(node)
 }
@@ -563,6 +582,7 @@ func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 
 // notifyNodeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
+	b.publishNamespaceCatalog(node)
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 	b.dispatchNodeUpdated(node)
 }
@@ -1055,6 +1075,10 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load manual suppressions: %w", err)
 	}
+	if err := engine.loadNamespaceLifetimes(db, false); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request
@@ -1297,6 +1321,17 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
 func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
+	if err := b.checkNamespaceOperation(namespace); err != nil {
+		return MVCCVersion{}, err
+	}
+	if err := b.checkNamespacePublication(namespace); err != nil {
+		return MVCCVersion{}, err
+	}
+	return b.reserveMVCCVersion(txn, namespace, commitTime)
+}
+
+// reserveMVCCVersion also serves replay of already acknowledged commits.
+func (b *BadgerEngine) reserveMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
 	_ = txn // intentionally unused — see doc above
 	state, err := b.namespaceMVCC(namespace)
 	if err != nil {

@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 
@@ -102,6 +103,12 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 		// index and the read retries once, as the pre-delta path repaired it
 		// (PR #1043 item #2).
 		b.edgeTypeCountWriteMu.RUnlock()
+		releaseRepair, admissionErr := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+		if admissionErr != nil {
+			b.edgeTypeCountWriteMu.RLock()
+			return 0, admissionErr
+		}
+		defer releaseRepair()
 		b.edgeTypeCountWriteMu.Lock()
 		repairErr := b.repairEdgeTypeCountLocked(namespace, edgeType)
 		b.edgeTypeCountWriteMu.Unlock()
@@ -569,6 +576,11 @@ func (b *BadgerEngine) foldAllEdgeTypeCountDeltas() error {
 // writes through the raw database handle because the engine is already
 // marked closed.
 func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
+	release, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationShutdown)
+	if err != nil {
+		return
+	}
+	defer release()
 	if db == nil {
 		return
 	}

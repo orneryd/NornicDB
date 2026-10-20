@@ -65,7 +65,7 @@ func (m *mockDatabaseManager) CreateDatabase(name string) error {
 
 func (m *mockDatabaseManager) DropDatabase(name string) error {
 	if _, exists := m.databases[name]; !exists {
-		return fmt.Errorf("database '%s' does not exist", name)
+		return fmt.Errorf("database '%s': %w", name, multidb.ErrDatabaseNotFound)
 	}
 	delete(m.databases, name)
 	return nil

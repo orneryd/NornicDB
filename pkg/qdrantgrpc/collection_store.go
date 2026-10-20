@@ -67,6 +67,9 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, vecIndex *ve
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validateCollectionName(name, s.reserved); err != nil {
 		return err
 	}
@@ -74,13 +77,13 @@ func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims 
 		return fmt.Errorf("invalid dimensions: %d", dims)
 	}
 
-	if err := s.dbManager.CreateDatabase(name); err != nil {
+	if err := s.dbManager.CreateDatabaseContext(ctx, name); err != nil {
 		return err
 	}
 
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
-		_ = s.dbManager.DropDatabase(name)
+		_ = s.dbManager.DropDatabaseContext(context.WithoutCancel(ctx), name)
 		return err
 	}
 
@@ -97,7 +100,7 @@ func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims 
 		CreatedAt: now,
 	})
 	if err != nil {
-		_ = s.dbManager.DropDatabase(name)
+		_ = s.dbManager.DropDatabaseContext(context.WithoutCancel(ctx), name)
 		return err
 	}
 
@@ -154,6 +157,9 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 }
 
 func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_ = ctx
 	if name == "" {
 		return ErrCollectionNotFound
@@ -167,7 +173,7 @@ func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
 		return ErrCollectionNotFound
 	}
 
-	if err := s.dbManager.DropDatabase(name); err != nil {
+	if err := s.dbManager.DropDatabaseContext(ctx, name); err != nil {
 		return err
 	}
 	if s.vecIndex != nil {

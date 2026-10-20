@@ -18,7 +18,16 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	if !b.decayEnabled {
 		return false, nil
 	}
+	var suppressed bool
+	err := b.withNamespaceSideStateWrite(entityID, func() error {
+		var err error
+		suppressed, err = b.enqueueDeindexIfSuppressed(entityID, isEdge)
+		return err
+	})
+	return suppressed, err
+}
 
+func (b *BadgerEngine) enqueueDeindexIfSuppressed(entityID string, isEdge bool) (bool, error) {
 	becameSuppressed := false
 	nodeChanged := false
 	var edgeChanged *Edge

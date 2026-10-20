@@ -33,8 +33,8 @@ func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
 
 // beginNotifyingWrite gives nodes and edges the same lifetime transfer. The
 // returned finish must be deferred before taking any other publication locks.
-func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error) {
-	release, err := b.beginWrite()
+func (b *BadgerEngine) beginNotifyingWrite(namespaces ...string) (*commitNotification, func(), error) {
+	release, err := b.beginWrite(namespaces...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,6 +52,7 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 	if n == nil {
 		return false
 	}
+	b.publishNamespaceCatalogOperations(n.ops)
 	// Mutation bookkeeping belongs to publication, even if a busy listener
 	// delays delivery. Keep event payloads independent of subsequent caller edits.
 	for i := range n.ops {

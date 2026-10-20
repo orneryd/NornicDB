@@ -1025,20 +1025,24 @@ func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error 
 	if node == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		if err := b.writeNodeMVCCVersionInTxn(txn, node, version); err != nil {
-			return err
-		}
-		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
+	return b.withNamespaceMutation(context.Background(), namespaceOfNode(node), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			if err := b.writeNodeMVCCVersionInTxn(txn, node, version); err != nil {
+				return err
+			}
+			return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
+		})
 	})
 }
 
 func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
-			return err
-		}
-		return b.writeNodeMVCCHeadInTxn(txn, id, version, true)
+	return b.withNamespaceMutation(context.Background(), namespaceForNodeID(id), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
+				return err
+			}
+			return b.writeNodeMVCCHeadInTxn(txn, id, version, true)
+		})
 	})
 }
 
@@ -1046,32 +1050,40 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 	if edge == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
-			return err
-		}
-		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
+	return b.withNamespaceMutation(context.Background(), namespaceOfEdge(edge), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
+				return err
+			}
+			return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
+		})
 	})
 }
 
 func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
-			return err
-		}
-		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
+	return b.withNamespaceMutation(context.Background(), namespaceForEdgeID(id), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
+				return err
+			}
+			return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
+		})
 	})
 }
 
 func (b *BadgerEngine) UpdateNodeCurrentHead(id NodeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
+	return b.withNamespaceMutation(context.Background(), namespaceForNodeID(id), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
+		})
 	})
 }
 
 func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
+	return b.withNamespaceMutation(context.Background(), namespaceForEdgeID(id), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
+		})
 	})
 }
 
@@ -1500,6 +1512,15 @@ func nextScanStart(key []byte) []byte {
 }
 
 func (b *BadgerEngine) RebuildMVCCHeads(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	releaseAdmission, err := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
+	if err != nil {
+		return err
+	}
+	defer releaseAdmission()
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2018,6 +2039,15 @@ func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentStateInTxn(txn *badger.Txn) e
 }
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	releaseAdmission, err := b.beginNamespaceMutation(ctx, nil, nil, false, namespacePublicationFresh)
+	if err != nil {
+		return 0, err
+	}
+	defer releaseAdmission()
+
 	if ctx == nil {
 		ctx = context.Background()
 	}

@@ -22,6 +22,9 @@ import (
 // by NewWALEngine before the engine serves traffic.
 func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 	b.bufferedCommitWAL = w
+	if w != nil {
+		w.reconcileNamespaceObligations(b)
+	}
 }
 
 // bufferedFlushKey is the Badger key that marks one write-behind commit as
@@ -306,7 +309,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		v := c.version
 		if v.IsZero() {
 			var err error
-			v, err = b.allocateMVCCVersion(txn, c.namespace, time.Now())
+			v, err = b.reserveMVCCVersion(txn, c.namespace, time.Now())
 			if err != nil {
 				return abort(err)
 			}

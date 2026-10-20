@@ -1171,6 +1171,9 @@ RETURN sourceId
 func TestExecute_FabricResultCache_SkipsRemoteConstituentTargets(t *testing.T) {
 	var remote *httptest.Server
 	remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if respondRemoteNamespaceFixture(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/tx") && r.Method == http.MethodPost {
 			body, _ := io.ReadAll(r.Body)

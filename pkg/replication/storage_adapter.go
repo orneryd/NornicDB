@@ -3,6 +3,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -19,8 +20,11 @@ import (
 // StorageAdapter bridges the replication.Storage interface to storage.Engine.
 // It translates replication commands into storage operations and maintains WAL state.
 type StorageAdapter struct {
-	engine   storage.Engine
-	executor *cypher.StorageExecutor // Cypher executor for executing replicated Cypher queries
+	commandPublication   sync.RWMutex
+	namespacePublication sync.Map
+	walAdmissionMu       sync.Mutex
+	engine               storage.Engine
+	executor             *cypher.StorageExecutor // Cypher executor for executing replicated Cypher queries
 
 	// Persistent WAL for replication commands
 	wal         *storage.WAL
@@ -130,40 +134,100 @@ func (a *StorageAdapter) SetExecutor(executor *cypher.StorageExecutor) {
 // ApplyCommand applies a replicated command to storage.
 // WAL writes are now asynchronous for better performance.
 func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
+	return a.ApplyCommandContext(context.Background(), cmd)
+}
+
+// ApplyCommandContext lets DROP preparation cancel before physical deletion.
+// The physical namespace owner admits DROP to the journal at its commit point,
+// before deletion. Cancelled preparation never reaches that point.
+func (a *StorageAdapter) ApplyCommandContext(ctx context.Context, cmd *Command) error {
 	if cmd == nil {
 		return localizedError(localization.ReplicationStorageCommandRequired(), nil)
 	}
-
-	// Record in persistent WAL (write-ahead logging)
-	record := replicationWALRecord{
-		Timestamp: cmd.Timestamp.UnixNano(),
-		Command:   cmd,
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	// Queue async WAL write (non-blocking)
-	req := &walWriteRequest{
-		record:  record,
-		posCh:   make(chan uint64, 1),
-		errCh:   make(chan error, 1),
-		waiting: false, // Don't wait for WAL write to complete
+	op := cmd.namespaceDrop
+	if fromCtx := storage.NamespaceDropFromContext(ctx); fromCtx != nil {
+		op = fromCtx
 	}
-
-	// Try to queue async write
-	select {
-	case a.walQueue <- req:
-		// Successfully queued, continue
-	default:
-		// Channel full - fall back to synchronous write to avoid blocking
-		// This should be rare with a 1000-item buffer
-		a.walMu.Lock()
-		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
-			a.walMu.Unlock()
-			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+	release := func() {}
+	var payload commandPublicationPayload
+	var err error
+	if isNamespaceLifecycle(cmd) {
+		if op == nil {
+			op = storage.NewNamespaceDrop(nil)
 		}
-		pos := a.wal.Sequence()
-		a.walPosition.Store(pos)
-		a.walMu.Unlock()
-		a.appendToMemWAL(pos, record, cmd)
+		if cmd.namespaceDrop == nil {
+			cmd.namespaceDrop = op
+		}
+		request, err := configureNamespaceOperation(cmd, op)
+		if err != nil {
+			return err
+		}
+		if err := storage.PrepareNamespaceJournal(ctx, a.engine, request.Prefix, op); err != nil {
+			op.Abort()
+			return err
+		}
+	}
+	if op == nil || !op.HasPublicationLease() {
+		release, err = a.admitCommand(ctx, cmd, isNamespaceLifecycle(cmd), &payload)
+	}
+	if err != nil {
+		if op != nil {
+			op.Abort()
+		}
+		return err
+	}
+	defer release()
+	if isNamespaceLifecycle(cmd) {
+		if op == nil {
+			op = storage.NewNamespaceDrop(nil)
+		}
+		if !op.HasPublicationLease() {
+			op.SetPublicationRelease(release)
+		}
+		request, err := configureNamespaceOperation(cmd, op)
+		if err != nil {
+			return err
+		}
+		committed := ctx.Value(committedCommandKey{}) == true
+		if committed {
+			op.MarkCommittedEntry()
+			ctx = context.WithoutCancel(ctx)
+		}
+		op.SetJournal(func() (bool, error) {
+			if err := stampNamespaceDrop(cmd, op); err != nil {
+				return committed, err
+			}
+			req, _, err := a.queueCommandWAL(cmd)
+			if err != nil {
+				return committed, err
+			}
+			flushErr := a.FlushWAL()
+			select {
+			case err := <-req.errCh:
+				return committed, errors.Join(err, flushErr)
+			case position := <-req.posCh:
+				op.SetJournalPosition(position)
+				return true, flushErr
+			default:
+				return committed, errors.Join(ErrClosed, flushErr)
+			}
+		})
+		ctx = storage.WithNamespaceDrop(ctx, op)
+		if cmd.Type == CmdNamespaceCatalog {
+			if request.Catalog == nil {
+				return storage.ErrInvalidData
+			}
+			return storage.PublishNamespaceCatalogContext(ctx, a.engine, *request.Catalog)
+		}
+		return a.applyDeleteByPrefixContext(ctx, cmd.Data)
+	}
+
+	req, record, err := a.queueCommandWAL(cmd)
+	if err != nil {
+		return err
 	}
 
 	// Execute the command immediately (don't wait for WAL write)
@@ -171,25 +235,25 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	var execErr error
 	switch cmd.Type {
 	case CmdCreateNode:
-		execErr = a.applyCreateNode(cmd.Data)
+		_, execErr = a.engine.CreateNode(payload.node)
 	case CmdUpdateNode:
-		execErr = a.applyUpdateNode(cmd.Data)
+		execErr = a.engine.UpdateNode(payload.node)
 	case CmdDeleteNode:
 		execErr = a.applyDeleteNode(cmd.Data)
 	case CmdCreateEdge:
-		execErr = a.applyCreateEdge(cmd.Data)
+		execErr = a.engine.CreateEdge(payload.edge)
 	case CmdUpdateEdge:
-		execErr = a.applyUpdateEdge(cmd.Data)
+		execErr = a.engine.UpdateEdge(payload.edge)
 	case CmdDeleteEdge:
 		execErr = a.applyDeleteEdge(cmd.Data)
+	case CmdDeleteByPrefix:
+		execErr = a.applyDeleteByPrefixContext(ctx, cmd.Data)
 	case CmdSetProperty:
 		execErr = a.applySetProperty(cmd.Data)
 	case CmdBatchWrite:
 		execErr = a.applyBatchWrite(cmd.Data)
 	case CmdCypher:
 		execErr = a.applyCypher(cmd.Data)
-	case CmdDeleteByPrefix:
-		execErr = a.applyDeleteByPrefix(cmd.Data)
 	case CmdBulkCreateNodes:
 		execErr = a.applyBulkCreateNodes(cmd.Data)
 	case CmdBulkCreateEdges:
@@ -222,8 +286,48 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 	return execErr
 }
 
+// queueCommandWAL retains the existing async journal path and synchronous
+// overflow fallback. Non-DROP command ordering is unchanged.
+func (a *StorageAdapter) queueCommandWAL(cmd *Command) (*walWriteRequest, replicationWALRecord, error) {
+	a.walAdmissionMu.Lock()
+	defer a.walAdmissionMu.Unlock()
+	record := replicationWALRecord{Timestamp: cmd.Timestamp.UnixNano(), Command: cmd}
+	req := &walWriteRequest{
+		record: record,
+		posCh:  make(chan uint64, 1),
+		errCh:  make(chan error, 1),
+	}
+	select {
+	case a.walQueue <- req:
+	default:
+		// Preserve FIFO when the bounded queue fills. A direct append must
+		// not overtake older acknowledged commands still in the writer queue.
+		if err := a.FlushWAL(); err != nil {
+			return nil, record, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+		}
+		a.walMu.Lock()
+		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
+			a.walMu.Unlock()
+			return nil, record, localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+		}
+		pos := a.wal.Sequence()
+		a.walPosition.Store(pos)
+		a.walMu.Unlock()
+		a.appendToMemWAL(pos, record, cmd)
+		if isNamespaceLifecycle(cmd) {
+			req.posCh <- pos
+		}
+	}
+	return req, record, nil
+}
+
 // appendToMemWAL appends an entry to the in-memory WAL for fast streaming.
 func (a *StorageAdapter) appendToMemWAL(pos uint64, record replicationWALRecord, cmd *Command) {
+	if cmd.namespaceDrop != nil {
+		copy := *cmd
+		copy.namespaceDrop = nil
+		cmd = &copy
+	}
 	a.memWALMu.Lock()
 	a.memWAL = append(a.memWAL, &WALEntry{
 		Position:  pos,
@@ -448,6 +552,10 @@ func (a *StorageAdapter) applyBatchWrite(data []byte) error {
 }
 
 func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
+	return a.applyDeleteByPrefixContext(context.Background(), data)
+}
+
+func (a *StorageAdapter) applyDeleteByPrefixContext(ctx context.Context, data []byte) error {
 	var req struct {
 		Prefix string
 	}
@@ -457,7 +565,7 @@ func (a *StorageAdapter) applyDeleteByPrefix(data []byte) error {
 	if req.Prefix == "" {
 		return localizedError(localization.ReplicationStoragePrefixRequired(), nil)
 	}
-	_, _, err := a.engine.DeleteByPrefix(req.Prefix)
+	_, _, err := storage.DeletePrefixContext(ctx, a.engine, req.Prefix)
 	return err
 }
 
@@ -756,6 +864,11 @@ func (a *StorageAdapter) PruneWALEntries(uptoPosition uint64) {
 
 // WriteSnapshot writes a full snapshot to the given writer.
 func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
+	release, err := storage.AdmitRecoverySnapshot(context.Background(), a.engine)
+	if err != nil {
+		return err
+	}
+	defer release()
 	// Get all nodes and edges
 	nodes, err := a.engine.AllNodes()
 	if err != nil {
@@ -768,13 +881,15 @@ func (a *StorageAdapter) WriteSnapshot(w SnapshotWriter) error {
 	}
 
 	snapshot := struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
+		WALPosition        uint64
+		NamespaceLifetimes storage.NamespaceCatalogState
+		Nodes              []*storage.Node
+		Edges              []*storage.Edge
 	}{
-		WALPosition: a.walPosition.Load(),
-		Nodes:       nodes,
-		Edges:       edges,
+		WALPosition:        a.walPosition.Load(),
+		NamespaceLifetimes: storage.CaptureNamespaceCatalogState(a.engine),
+		Nodes:              nodes,
+		Edges:              edges,
 	}
 
 	data, err := encodeGob(snapshot)
@@ -794,13 +909,17 @@ func (a *StorageAdapter) RestoreSnapshot(r SnapshotReader) error {
 	}
 
 	var snapshot struct {
-		WALPosition uint64
-		Nodes       []*storage.Node
-		Edges       []*storage.Edge
+		WALPosition        uint64
+		NamespaceLifetimes storage.NamespaceCatalogState
+		Nodes              []*storage.Node
+		Edges              []*storage.Edge
 	}
 
 	if err := decodeGob(data, &snapshot); err != nil {
 		return localizedError(localization.ReplicationStorageDecodeSnapshotFailed(err), err)
+	}
+	if err := storage.RestoreNamespaceCatalogState(a.engine, snapshot.NamespaceLifetimes); err != nil {
+		return err
 	}
 
 	// Restore nodes

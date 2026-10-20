@@ -1,6 +1,7 @@
 package resolvers
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -14,11 +15,18 @@ type graphqlDatabaseManagerAdapter struct {
 	manager *multidb.DatabaseManager
 }
 
+func (a *graphqlDatabaseManagerAdapter) CreateDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.CreateDatabaseContext(ctx, name)
+}
+
 func (a *graphqlDatabaseManagerAdapter) CreateDatabase(name string) error {
-	return a.manager.CreateDatabase(name)
+	return a.manager.CreateDatabaseContext(context.Background(), name)
 }
 func (a *graphqlDatabaseManagerAdapter) DropDatabase(name string) error {
-	return a.manager.DropDatabase(name)
+	return a.manager.DropDatabaseContext(context.Background(), name)
+}
+func (a *graphqlDatabaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropDatabaseContext(ctx, name)
 }
 func (a *graphqlDatabaseManagerAdapter) Exists(name string) bool { return a.manager.Exists(name) }
 func (a *graphqlDatabaseManagerAdapter) CreateAlias(alias, databaseName string) error {
@@ -44,6 +52,10 @@ func (a *graphqlDatabaseManagerAdapter) GetDatabaseLimits(databaseName string) (
 	return a.manager.GetDatabaseLimits(databaseName)
 }
 func (a *graphqlDatabaseManagerAdapter) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	return a.CreateCompositeDatabaseContext(context.Background(), name, constituents)
+}
+
+func (a *graphqlDatabaseManagerAdapter) CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []interface{}) error {
 	refs := make([]multidb.ConstituentRef, len(constituents))
 	for i, c := range constituents {
 		ref, ok := c.(multidb.ConstituentRef)
@@ -66,10 +78,14 @@ func (a *graphqlDatabaseManagerAdapter) CreateCompositeDatabase(name string, con
 		}
 		refs[i] = ref
 	}
-	return a.manager.CreateCompositeDatabase(name, refs)
+	return a.manager.CreateCompositeDatabaseContext(ctx, name, refs)
 }
 func (a *graphqlDatabaseManagerAdapter) DropCompositeDatabase(name string) error {
-	return a.manager.DropCompositeDatabase(name)
+	return a.DropCompositeDatabaseContext(context.Background(), name)
+}
+
+func (a *graphqlDatabaseManagerAdapter) DropCompositeDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropCompositeDatabaseContext(ctx, name)
 }
 func (a *graphqlDatabaseManagerAdapter) AddConstituent(compositeName string, constituent interface{}) error {
 	if m, ok := constituent.(map[string]interface{}); ok {

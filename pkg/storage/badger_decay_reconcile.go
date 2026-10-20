@@ -10,7 +10,17 @@ type SuppressionStateChange struct {
 
 // ReconcileDecaySuppression re-evaluates current suppression state for all
 // entities in a namespace after knowledge-policy changes.
-func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
+func (b *BadgerEngine) ReconcileDecaySuppression(namespace string, lifetime ...any) error {
+	token := b.CaptureNamespaceTask()
+	if len(lifetime) != 0 {
+		token = lifetime[0]
+	}
+	return b.RunNamespaceTask(token, namespace+":", func() error {
+		return b.reconcileDecaySuppression(namespace)
+	})
+}
+
+func (b *BadgerEngine) reconcileDecaySuppression(namespace string) error {
 	if !b.decayEnabled || namespace == "" {
 		return nil
 	}
@@ -40,7 +50,21 @@ func (b *BadgerEngine) ReconcileDecaySuppression(namespace string) error {
 
 // ReconcileDecaySuppressionWithChanges re-evaluates suppression state and returns
 // the entities whose visibility-suppressed state changed.
-func (b *BadgerEngine) ReconcileDecaySuppressionWithChanges(namespace string) ([]SuppressionStateChange, error) {
+func (b *BadgerEngine) ReconcileDecaySuppressionWithChanges(namespace string, lifetime ...any) ([]SuppressionStateChange, error) {
+	var changes []SuppressionStateChange
+	token := b.CaptureNamespaceTask()
+	if len(lifetime) != 0 {
+		token = lifetime[0]
+	}
+	err := b.RunNamespaceTask(token, namespace+":", func() error {
+		var err error
+		changes, err = b.reconcileDecaySuppressionWithChanges(namespace)
+		return err
+	})
+	return changes, err
+}
+
+func (b *BadgerEngine) reconcileDecaySuppressionWithChanges(namespace string) ([]SuppressionStateChange, error) {
 	if !b.decayEnabled || namespace == "" {
 		return nil, nil
 	}

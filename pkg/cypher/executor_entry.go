@@ -441,7 +441,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		ctx = context.WithValue(ctx, fabricPreparedExecKey{}, preparedFabric)
-		allowResultCache := !preparedFabric.hasRemote
+		allowResultCache := len(preparedFabric.remotes) == 0
 		fabricResultCacheKey := ""
 
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
@@ -564,7 +564,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	} else if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
 		return result, err
 	}
-	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
+	if result, err := e.parseTransactionStatement(cypher, ctx); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {

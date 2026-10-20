@@ -16,20 +16,28 @@ var embeddingKeyScanHook atomic.Pointer[func(NodeID)]
 // not change a node body. Body writes already hold writeBarrier shared, so
 // their current-range cleanup needs no new lock or sentinel point read.
 // The exclusive barrier is released before the caller fires listeners.
-func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notification *commitNotification, write func(*commitWriter) error) error {
+func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notification *commitNotification, revision uint64, write func(*commitWriter) error) error {
 	for {
 		// Replay dispatches callbacks. Drain outside the barrier, then check
 		// under it that another ACK did not slip in before source validation.
 		if err := b.FlushWriteBehind(); err != nil {
 			return err
 		}
-		release, err := b.beginSchemaWrite()
+		release, err := b.beginSchemaWrite(namespaceForNodeID(id))
 		if err != nil {
 			return err
 		}
 		if b.writeBehind != nil && b.writeBehind.PendingOps() != 0 {
 			release()
 			continue
+		}
+		if err := b.checkNamespaceOperation(namespaceForNodeID(id)); err != nil {
+			release()
+			return err
+		}
+		if state := b.namespaceLifetimes.Load(); state != nil && state.retired[namespaceForNodeID(id)] > revision {
+			release()
+			return ErrConflict
 		}
 		err = b.commitEngineWrite(write, notification)
 		if err == nil {

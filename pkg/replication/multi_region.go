@@ -239,6 +239,14 @@ func (r *MultiRegionReplicator) streamWALToRemoteRegions(ctx context.Context) {
 
 // Apply applies a command through the local Raft cluster.
 func (r *MultiRegionReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext retains cancellation through the local consensus owner.
+func (r *MultiRegionReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.closed.Load() {
 		return ErrClosed
 	}
@@ -247,7 +255,7 @@ func (r *MultiRegionReplicator) Apply(cmd *Command, timeout time.Duration) error
 	}
 
 	// Apply through local Raft
-	return r.localRaft.Apply(cmd, timeout)
+	return r.localRaft.ApplyContext(ctx, cmd, timeout)
 }
 
 // ApplyBatch applies multiple commands.

@@ -232,6 +232,10 @@ func transformRecoveryEntities(value any, node func(*Node) *Node, edge func(*Edg
 			operation.Edge = edge(operation.Edge)
 			operation.OldEdge = edge(operation.OldEdge)
 		}
+	case *namespaceWALRecord:
+		if value.Mutation != nil {
+			value.Mutation.Record = node(value.Mutation.Record)
+		}
 	case *Snapshot:
 		value.Nodes = mapRecoveryEntities(value.Nodes, node)
 		value.Edges = mapRecoveryEntities(value.Edges, edge)

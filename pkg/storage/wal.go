@@ -30,6 +30,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -358,7 +359,9 @@ func DefaultWALConfig() *WALConfig {
 // WAL provides write-ahead logging for durability.
 // Thread-safe for concurrent writes.
 type WAL struct {
-	mu sync.Mutex
+	lifecycleMu      sync.Mutex
+	lifecyclePending map[uint64]string
+	mu               sync.Mutex
 	// syncMu serializes fsync syscalls without blocking Append. w.mu
 	// only guards Go-side state (bufio writer, encoder, segment
 	// bookkeeping) — the kernel-level fsync on w.file is independent
@@ -526,6 +529,11 @@ func (w *WAL) loadLastSequence() (uint64, error) {
 	if len(entries) == 0 {
 		return 0, nil
 	}
+	for _, entry := range entries {
+		if entry.Operation == OpNamespaceLifecycle {
+			w.setNamespaceObligation(entry.Sequence, entry.Database, false)
+		}
+	}
 	return entries[len(entries)-1].Sequence, nil
 }
 
@@ -635,6 +643,9 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
 
+	if op == OpNamespaceLifecycle {
+		w.setNamespaceObligation(seq, database, false)
+	}
 	w.entries.Add(1)
 	w.bytes.Add(alignedRecordLen)
 	w.totalWrites.Add(1)
@@ -751,7 +762,7 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	if w.closed.Load() {
 		return 0, ErrWALClosed
 	}
-	if op != OpBufferedCommit {
+	if op != OpBufferedCommit && op != OpNamespaceLifecycle {
 		return w.AppendWithDatabaseReturningSeq(op, data, database)
 	}
 
@@ -767,7 +778,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	// The buffered-commit payload is the dominant WAL cost (it carries every
 	// write for kill -9 recovery); losslessly compress it so the WAL stays
 	// proportional to the data instead of several times larger.
-	dataBytes = compressWALBufferedCommitPayload(dataBytes)
+	if op == OpBufferedCommit {
+		dataBytes = compressWALBufferedCommitPayload(dataBytes)
+	}
 
 	seq := w.sequence.Add(1)
 	entry := WALEntry{
@@ -790,6 +803,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
+	if op == OpNamespaceLifecycle {
+		w.setNamespaceObligation(seq, database, false)
+	}
 	w.entries.Add(1)
 	w.bytes.Add(alignedRecordLen)
 	w.totalWrites.Add(1)
@@ -810,6 +826,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 
 	if rotateErr := w.maybeRotateLocked(seq); rotateErr != nil {
 		w.mu.Unlock()
+		if op == OpNamespaceLifecycle {
+			return seq, rotateErr
+		}
 		return 0, rotateErr
 	}
 	w.mu.Unlock()
@@ -1292,6 +1311,14 @@ type Snapshot struct {
 
 // CreateSnapshot creates a point-in-time snapshot from the engine.
 func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
+	release, err := AdmitRecoverySnapshot(context.Background(), engine)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := w.checkNamespaceSnapshot(w.sequence.Load()); err != nil {
+		return nil, err
+	}
 	if w.closed.Load() {
 		return nil, ErrWALClosed
 	}
@@ -1499,6 +1526,9 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if err := w.checkNamespaceSnapshot(snapshotSeq); err != nil {
+		return err
+	}
 
 	if w.retainsSegments() {
 		if err := w.rotateSegmentLocked(w.sequence.Load()); err != nil {
@@ -1674,6 +1704,9 @@ func (w *WAL) ApplyRetention(snapshotSeq uint64) error {
 }
 
 func (w *WAL) applyRetentionLocked(snapshotSeq uint64) error {
+	if err := w.checkNamespaceSnapshot(snapshotSeq); err != nil {
+		return err
+	}
 	if snapshotSeq == 0 {
 		return nil
 	}
@@ -2248,6 +2281,8 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
 
 	switch entry.Operation {
+	case OpNamespaceLifecycle:
+		return replayNamespaceLifecycle(baseEngine, entry)
 	case OpCreateNode:
 		var data WALNodeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
@@ -2510,6 +2545,8 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 		}
 		return namespacedEngine.BulkCreateEdges(data.OldEdges)
 
+	case OpNamespaceLifecycle:
+		return ErrNoUndoData
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
 		return nil

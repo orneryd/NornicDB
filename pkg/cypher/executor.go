@@ -321,8 +321,9 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
-	parser  *Parser
-	storage storage.Engine
+	inheritedNamespaceLifetime storage.NamespaceLifetimeSnapshot
+	parser                     *Parser
+	storage                    storage.Engine
 	// The storage decorator chain is immutable for an executor. Discover the
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
@@ -634,8 +635,8 @@ type hotPathTraceState struct {
 // This allows the executor to call database management operations without directly
 // depending on the multidb package.
 type DatabaseManagerInterface interface {
-	CreateDatabase(name string) error
-	DropDatabase(name string) error
+	CreateDatabaseContext(ctx context.Context, name string) error
+	DropDatabaseContext(ctx context.Context, name string) error
 	ListDatabases() []DatabaseInfoInterface
 	Exists(name string) bool
 	CreateAlias(alias, databaseName string) error
@@ -645,8 +646,8 @@ type DatabaseManagerInterface interface {
 	SetDatabaseLimits(databaseName string, limits interface{}) error
 	GetDatabaseLimits(databaseName string) (interface{}, error)
 	// Composite database methods
-	CreateCompositeDatabase(name string, constituents []interface{}) error
-	DropCompositeDatabase(name string) error
+	CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []interface{}) error
+	DropCompositeDatabaseContext(ctx context.Context, name string) error
 	AddConstituent(compositeName string, constituent interface{}) error
 	RemoveConstituent(compositeName string, alias string) error
 	GetCompositeConstituents(compositeName string) ([]interface{}, error)
@@ -1684,6 +1685,10 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 }
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	logicalLifetime := storage.LogicalNamespaceBegin(ctx)
+	if logicalLifetime == nil {
+		logicalLifetime = storage.CaptureNamespaceLifetimes(e.storage)
+	}
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -1721,6 +1726,10 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	tx, err := beginTransactionSnapshot(txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
+	}
+	if err := tx.BindLogicalBegin(logicalLifetime); err != nil {
+		_ = tx.Rollback()
+		return nil, err
 	}
 	if engines.namespace != "" {
 		if err := tx.SetNamespace(engines.namespace); err != nil {

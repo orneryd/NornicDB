@@ -1,0 +1,222 @@
+package replication
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+type namespaceDropCommand struct {
+	Prefix           string
+	Retirement       uint64
+	RevisionAssigned bool
+	Catalog          *storage.NamespaceCatalogMutation
+}
+
+func isNamespaceLifecycle(cmd *Command) bool {
+	if cmd.Type == CmdNamespaceCatalog {
+		return true
+	}
+	if cmd.Type != CmdDeleteByPrefix {
+		return false
+	}
+	var request namespaceDropCommand
+	if err := decodeGob(cmd.Data, &request); err != nil {
+		return false
+	}
+	namespace, suffix, found := strings.Cut(request.Prefix, ":")
+	return found && namespace != "" && suffix == ""
+}
+
+func configureNamespaceOperation(cmd *Command, op *storage.NamespaceDrop) (namespaceDropCommand, error) {
+	var request namespaceDropCommand
+	if err := decodeGob(cmd.Data, &request); err != nil {
+		return request, err
+	}
+	if request.Catalog != nil {
+		op.SetCatalogMutation(*request.Catalog)
+	}
+	if request.RevisionAssigned || request.Retirement != 0 {
+		op.SetCatalogRevision(request.Retirement)
+	}
+	return request, nil
+}
+
+func stampNamespaceDrop(cmd *Command, op *storage.NamespaceDrop) error {
+	var request namespaceDropCommand
+	if err := decodeGob(cmd.Data, &request); err != nil {
+		return err
+	}
+	// A consensus/WAL entry is immutable after admission. Application uses its
+	// assigned revision and catalog delta even while peers serialize the log.
+	if request.RevisionAssigned {
+		return nil
+	}
+	request.Retirement = op.CatalogRevision()
+	request.RevisionAssigned = true
+	request.Catalog = op.CatalogMutation()
+	data, err := encodeGob(request)
+	if err == nil {
+		cmd.Data = data
+	}
+	return err
+}
+
+type committedCommandKey struct{}
+
+// Consensus and streamed WAL entries already crossed their journal commit
+// point. A replica's secondary journal error cannot turn them into preparation
+// failures or undo their deterministic physical/catalog completion.
+func applyCommittedStorageCommand(target Storage, cmd *Command) error {
+	return applyStorageContext(context.WithValue(context.Background(), committedCommandKey{}, true), target, cmd)
+}
+
+func (r *RaftReplicator) applyCommittedCommand(cmd *Command) error {
+	if isNamespaceLifecycle(cmd) {
+		if cmd.namespaceDrop == nil {
+			cmd.namespaceDrop = storage.NewNamespaceDrop(nil)
+		}
+		cmd.namespaceDrop.DeferConsensusCompletion()
+	}
+	err := applyCommittedStorageCommand(r.storage, cmd)
+	if op := cmd.namespaceDrop; op != nil && op.Committed() {
+		// Catalog publication is intrinsic to the storage operation; it does
+		// not submit another consensus command. Complete retirement and release
+		// admission before any apply path advances to the next committed entry.
+		return op.Complete(err)
+	}
+	return err
+}
+
+func (r *RaftReplicator) awaitNamespacePreparationFrontier(ctx context.Context, cmd *Command, term uint64) error {
+	namespaces, err := commandNamespaces(cmd)
+	if err != nil {
+		return err
+	}
+	r.mu.RLock()
+	if r.state != StateLeader || r.currentTerm != term {
+		r.mu.RUnlock()
+		return ErrNotLeader
+	}
+	r.logMu.Lock()
+	if err := ctx.Err(); err != nil {
+		r.logMu.Unlock()
+		r.mu.RUnlock()
+		return err
+	}
+	var frontier uint64
+	for _, entry := range r.log {
+		if entry.Command == nil || entry.Index <= r.lastApplied {
+			continue
+		}
+		prior, err := commandNamespaces(entry.Command)
+		if err != nil {
+			r.logMu.Unlock()
+			r.mu.RUnlock()
+			return err
+		}
+		matches := len(prior) == 0 || len(namespaces) == 0
+		for _, name := range namespaces {
+			for _, other := range prior {
+				matches = matches || name == other
+			}
+		}
+		if matches {
+			frontier = entry.Index
+		}
+	}
+	applied := r.lastApplied
+	// An inherited prior-term frontier cannot commit itself. Admit one
+	// current-term no-op before waiting, without preparing/fencing DROP.
+	// Quorum commitment then applies earlier entries in their original order.
+	// Reuse any existing current-term entry, including a previous attempt's
+	// no-op; cancellation never turns this progress entry into a DROP.
+	ordering := applied < frontier && r.log[len(r.log)-1].Term != term
+	if ordering {
+		r.log = append(r.log, &RaftLogEntry{Index: r.log[len(r.log)-1].Index + 1, Term: term})
+	}
+	r.logMu.Unlock()
+	r.mu.RUnlock()
+	if applied >= frontier {
+		return ctx.Err()
+	}
+	if ordering {
+		if r.peerCount() == 0 {
+			r.advanceCommitIndex()
+		} else {
+			r.sendHeartbeatsToAllPeers(ctx, term)
+		}
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(r.config.Raft.CommitTimeout)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-r.stopCh:
+			return ErrClosed
+		case <-timeout.C:
+			return fmt.Errorf("namespace preparation waiting for prior consensus entries: deadline exceeded")
+		case <-ticker.C:
+			r.mu.RLock()
+			leader := r.state == StateLeader && r.currentTerm == term
+			r.mu.RUnlock()
+			if !leader {
+				return ErrNotLeader
+			}
+			r.logMu.RLock()
+			applied = r.lastApplied
+			r.logMu.RUnlock()
+			if applied >= frontier {
+				return nil
+			}
+		}
+	}
+}
+
+func commandWaitOutcome(cmd *Command, err error) error {
+	// A queued lifecycle command already owns its receipt. Do not decode its
+	// payload while proposal admission may be stamping the catalog revision.
+	if err == nil || (cmd.namespaceDrop == nil && !isNamespaceLifecycle(cmd)) {
+		return err
+	}
+	return &storage.NamespaceDropError{Committed: cmd.namespaceDrop != nil && cmd.namespaceDrop.Committed(), Cause: err}
+}
+
+// Consensus admission prepares the SAME operation later applied by the storage
+// adapter. No snapshot, frontier or lock wait is first discovered after append.
+func (a *StorageAdapter) PrepareCommandContext(ctx context.Context, cmd *Command) error {
+	op := cmd.namespaceDrop
+	if op == nil {
+		op = storage.NamespaceDropFromContext(ctx)
+	}
+	if op == nil {
+		op = storage.NewNamespaceDrop(nil)
+	}
+	cmd.namespaceDrop = op
+	req, err := configureNamespaceOperation(cmd, op)
+	if err != nil {
+		return err
+	}
+	if err := storage.PrepareNamespaceJournal(ctx, a.engine, req.Prefix, op); err != nil {
+		op.Abort()
+		return err
+	}
+	release, err := a.admitCommand(ctx, cmd, true)
+	if err != nil {
+		op.Abort()
+		return err
+	}
+	op.SetPublicationRelease(release)
+	if err := storage.PrepareNamespaceDrop(ctx, a.engine, req.Prefix, op); err != nil {
+		release()
+		op.Abort()
+		return err
+	}
+	return nil
+}
