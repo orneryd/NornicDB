@@ -4294,8 +4294,8 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 // committedKeyHolder returns candidate id's committed node when it belongs to
 // namespace, carries label and equals props exactly on every key property:
 // the check that turns a composite equality-index candidate into the key's
-// holder for commit validation and MERGE admission alike. Index buckets can be
-// coarser than equality (their numeric keys are float64).
+// holder for commit validation and MERGE admission alike. The index lists a
+// node under its last indexed values, so the committed values decide.
 func (b *BadgerEngine) committedKeyHolder(id NodeID, namespace, label string, properties []string, props map[string]interface{}) *Node {
 	if namespace != "" && !(len(id) > len(namespace) && strings.HasPrefix(string(id), namespace) && id[len(namespace)] == ':') {
 		return nil
