@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"sort"
 	"strconv"
@@ -781,7 +782,9 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 			default:
 				defaultText := "-9223372036854775808"
 				if property.defaultValue != nil {
-					defaultText = strconv.FormatInt(gdsInteger(property.defaultValue), 10)
+					if integer, fits := valueconvert.ToInt64(property.defaultValue); fits {
+						defaultText = strconv.FormatInt(integer, 10)
+					}
 				}
 				properties[property.key] = "Integer (DefaultValue(" + defaultText + "), PERSISTENT)"
 			}
@@ -1260,30 +1263,6 @@ func gdsJavaTypeTarget(kind string) string {
 // schema entries are per label; conversion builders are per projected key.
 func gdsPropertyTypeKey(label, key string) string {
 	return label + "\x00" + key
-}
-
-// gdsInteger is a value of any Go integer type as an int64 (the shared
-// converters skip the narrow and unsigned ones).
-func gdsInteger(value interface{}) int64 {
-	switch number := value.(type) {
-	case int8:
-		return int64(number)
-	case int16:
-		return int64(number)
-	case int32:
-		return int64(number)
-	case uint:
-		return int64(number)
-	case uint8:
-		return int64(number)
-	case uint16:
-		return int64(number)
-	case uint32:
-		return int64(number)
-	case uint64:
-		return int64(number)
-	}
-	return toInt64(value)
 }
 
 // gdsTypeProjected reports whether a relationship projection takes the type.
