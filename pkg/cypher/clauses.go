@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -1794,12 +1795,12 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(ctx, cypher, unionAll, func(query string) (*ExecuteResult, error) {
-		return e.executeInternal(ctx, query, nil)
+	return e.executeUnionBranches(ctx, cypher, unionAll, func(branchCtx context.Context, query string) (*ExecuteResult, error) {
+		return e.executeInternal(branchCtx, query, nil)
 	})
 }
 
-func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
@@ -1826,9 +1827,28 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 	// Execute all queries and combine results
 	var combinedResult *ExecuteResult
 	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
+	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+	producing := unionAll && stream.bounded() && stream.statement == cypher
 
 	for i, query := range queries {
-		result, err := runBranch(query)
+		branchCtx := ctx
+		if producing {
+			branchCtx = resultstream.WithConsumer(ctx, func(columns []string, row []any) (bool, error) {
+				if combinedResult == nil {
+					combinedResult = &ExecuteResult{Columns: columns, Stats: &QueryStats{}}
+					stream.begin(columns)
+				}
+				order, same := unionColumnOrder(combinedResult.Columns, columns)
+				if !same {
+					return false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "DifferentColumnsInUnion", "UNION queries must return the same columns")
+				}
+				if order != nil {
+					row = reorderUnionRows([][]any{row}, order)[0]
+				}
+				return stream.emit(ctx, row), stream.consumeErr
+			})
+		}
+		result, err := runBranch(branchCtx, query)
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
@@ -1874,6 +1894,12 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 		}
 
 		addQueryStats(combinedResult.Stats, result.Stats)
+		if producing {
+			if stream.full && !stream.drain {
+				break
+			}
+			continue
+		}
 		// Add rows from this query
 		if unionAll {
 			// UNION ALL - include all rows

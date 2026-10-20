@@ -687,6 +687,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		generations.next(rows)
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			!(clause.kind == pipelineClauseCall && !clause.optional && hasOutputStream(ctx)) &&
+			!(clause.kind == pipelineClauseCallSubquery && hasOutputStream(ctx) && !e.callSubqueryParseFor(ctx, clause.text).inTransactions) &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
 			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesFor(ctx, clause) || streamsReturn(ctx, clauses, idx))) {
@@ -967,6 +968,22 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				wrote = true
 			}
 		case pipelineClauseCallSubquery:
+			if hasOutputStream(ctx) && !e.callSubqueryParseFor(ctx, clause.text).inTransactions {
+				input := source
+				if input == nil {
+					input = pipelineRowsSource(rows)
+				}
+				transformed, columns, err := e.pipelineCallSource(ctx, input, clause.text, scope, clause.optional, result.Stats)
+				if err != nil {
+					return nil, true, err
+				}
+				source, rows = transformed, nil
+				terminalCallColumns = columns
+				for _, name := range columns {
+					scope[name] = struct{}{}
+				}
+				continue
+			}
 			callMetadata := &pipelineCallMetadata{scope: scope}
 			var newRows []pipelineRow
 			var stats *QueryStats
@@ -1066,6 +1083,21 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	}
 	// A statement ending with a write has no columns and no rows, as in
 	// Neo4j (#676).
+	if source != nil && hasOutputStream(ctx) && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
+		stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+		if stream.bounded() {
+			stream.begin(terminalCallColumns)
+			source(func(row pipelineRow) bool {
+				values := make([]any, len(terminalCallColumns))
+				for i, column := range terminalCallColumns {
+					values[i] = row[column]
+				}
+				return stream.emit(ctx, values)
+			})
+			result.Columns = terminalCallColumns
+			return result, true, stream.consumeErr
+		}
+	}
 	if output != nil {
 		output.rows = rows
 		output.scope = scope

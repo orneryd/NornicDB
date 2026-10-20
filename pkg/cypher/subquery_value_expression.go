@@ -382,8 +382,8 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranchesFor(ctx, query); union {
-		return e.executeUnionBranches(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
-			return e.runCorrelatedSubquery(ctx, branch, values)
+		return e.executeUnionBranches(ctx, query, unionAll, func(branchCtx context.Context, branch string) (*ExecuteResult, error) {
+			return e.runCorrelatedSubquery(branchCtx, branch, values)
 		})
 	}
 	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 func (e *StorageExecutor) pipelineApplyCallSubquery(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, bool, error) {
@@ -14,8 +15,10 @@ func (e *StorageExecutor) pipelineApplyCallSubquery(ctx context.Context, rows []
 }
 
 type pipelineCallMetadata struct {
-	scope   map[string]struct{}
-	columns []string
+	scope           map[string]struct{}
+	columns         []string
+	consume         func(pipelineRow) bool
+	independentRead bool
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
@@ -106,6 +109,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	write := callSubqueryQueryIsWriteFor(ctx, body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
+	if metadata != nil {
+		metadata.independentRead = independentRead
+	}
 	unionBranches, unionAll, _, isUnion := parseTopLevelUnionBranchesFor(ctx, body)
 
 	// A branch of an unscoped body that declares an outer variable's name
@@ -161,7 +167,8 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					input[name] = value
 				}
 			}
-			runBranch := func(query string) (*ExecuteResult, error) {
+			more := true
+			runBranch := func(branchCtx context.Context, query string) (*ExecuteResult, error) {
 				branchClauses := clauses
 				if isUnion {
 					var planned bool
@@ -189,7 +196,19 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 						carried[name] = branchInput[name]
 					}
 				}
-				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
+				branchCtx = withPipelineImports(withValueBindings(branchCtx, branchInput), carried)
+				if metadata != nil && metadata.consume != nil && hasReturn {
+					consumer := resultstream.ConsumerFromContext(branchCtx)
+					if consumer == nil {
+						consumer = func(columns []string, values []any) (bool, error) {
+							joined := appendCallReturnRows(nil, outer, columns, [][]any{values})[0]
+							more = metadata.consume(joined)
+							return more, getExpressionFailure(runCtx)
+						}
+					}
+					branchCtx = prepareOutputStream(branchCtx, NewBoundedResultStream(consumer), query, 0)
+					bindResultStream(branchCtx, query, branchClauses)
+				}
 
 				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
@@ -202,12 +221,25 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 			var inner *ExecuteResult
 			var execErr error
-			if isUnion {
-				inner, execErr = runExec.executeUnionBranches(runCtx, body, unionAll, runBranch)
-			} else {
-				inner, execErr = runBranch(body)
+			bodyCtx := runCtx
+			if isUnion && metadata != nil && metadata.consume != nil {
+				bodyCtx = prepareOutputStream(bodyCtx, NewBoundedResultStream(func(columns []string, values []any) (bool, error) {
+					more = metadata.consume(appendCallReturnRows(nil, outer, columns, [][]any{values})[0])
+					return more, getExpressionFailure(runCtx)
+				}), body, 0)
 			}
-			memory.releaseSince(rowMark)
+			if isUnion {
+				inner, execErr = runExec.executeUnionBranches(bodyCtx, body, unionAll, runBranch)
+			} else {
+				inner, execErr = runBranch(bodyCtx, body)
+			}
+			// A composed source invokes downstream operators while producing.
+			// Their retained rows belong to the caller, so a whole-scope mark
+			// must not release them. Streaming operators release their own
+			// temporary accounts; materialized calls keep the original handoff.
+			if metadata == nil || metadata.consume == nil {
+				memory.releaseSince(rowMark)
+			}
 			// The rows kept from the run count before they are built: the
 			// outer row's values once, each returned row's in full (#1343).
 			if retention.tracking() && execErr == nil {
@@ -238,6 +270,15 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				}
 				return out, stats, true, execErr
 			}
+			if metadata != nil && metadata.consume != nil {
+				if !hasReturn {
+					more = metadata.consume(outer)
+				}
+				if !more && !resultstream.Drain(runCtx) {
+					break
+				}
+				continue
+			}
 			if hasReturn {
 				if inner != nil {
 					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
@@ -256,7 +297,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 
 	if !inTransactions {
-		if independentRead {
+		if independentRead && (metadata == nil || metadata.consume == nil) {
 			innerRows, stats, ok, err := run(targetExec, ctx, []pipelineRow{{}})
 			if err != nil || !ok {
 				return innerRows, stats, ok, err
