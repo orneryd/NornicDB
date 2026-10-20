@@ -1298,7 +1298,8 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 
 // iterateNodesVisibleAtInScopeInTxn is iterateNodesVisibleAtInTxn over one
 // database's nodes, with candidates bounded to its dictionary namespace.
-func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error) error {
+func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
+	opts := nodeScanOptions(readOptions)
 	// Post-refactor: we walk the head keyspace (the definitive list of
 	// live node IDs) and resolve each ID to a body. If the request is at
 	// or after the current head version and the entity is live, the body
@@ -1346,7 +1347,13 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 			} else if getErr != nil {
 				return getErr
 			} else {
-				if err := item.Value(func(val []byte) error {
+				if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+					var readErr error
+					body, readErr = b.readQueryNodeItemInTxn(txn, item, nodeID)
+					if readErr != nil {
+						return readErr
+					}
+				} else if err := item.Value(func(val []byte) error {
 					decoded, decodeErr := b.decodeNodeWithEmbeddings(txn, val, nodeID)
 					if decodeErr != nil {
 						return decodeErr
@@ -1369,12 +1376,16 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 			if record.Tombstoned || record.Node == nil {
 				continue
 			}
-			body = copyNode(record.Node)
+			if opts.QueryNodes && !opts.WithEmbeddings {
+				body = copyNodeForCaller(record.Node)
+			} else {
+				body = copyNode(record.Node)
+			}
 		}
 		if body == nil {
 			continue
 		}
-		if b.filterNodeByDecay(body, nowNanos) {
+		if opts.ApplyDecayFilter && b.filterNodeByDecay(body, nowNanos) {
 			continue
 		}
 		if err := yield(body); err != nil {

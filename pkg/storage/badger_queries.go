@@ -265,6 +265,11 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 // labelScanPointLookups switch to one pass over the node records when the
 // label is on at least half of the scope's nodes.
 func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+	return b.streamNodesByLabelProjectedInScope(scope, label, properties, visit, StreamNodesOptions{ApplyDecayFilter: true})
+}
+
+func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error, opts StreamNodesOptions) error {
+	queryNodes := opts.QueryNodes
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -292,6 +297,9 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 	coversDecided := false
 	err := b.withView(func(txn *badger.Txn) error {
 		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
+			if queryNodes {
+				return b.decodeNodeEmbeddingState(txn, value, nodeID, false)
+			}
 			if properties == nil {
 				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
 			}
@@ -304,10 +312,10 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			if !ok {
 				return nil, false
 			}
-			return projectCachedNodeForRead(cached, properties), true
+			return projectCachedNodeForRead(cached, properties, queryNodes), true
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.filterNodeByDecay(node, nowNanos) {
+			if node == nil || (opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos)) {
 				return nil
 			}
 			if len(touched) > 0 && touched[node.ID] {
@@ -347,7 +355,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
 			nodeID := it.NodeID()
-			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
+			if opts.ApplyDecayFilter && b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -420,13 +428,10 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		return err
 	}
 	for _, n := range overlay {
-		if !nodeIDInScope(n.ID, scope) || b.filterNodeByDecay(n, nowNanos) {
+		if !nodeIDInScope(n.ID, scope) || (opts.ApplyDecayFilter && b.filterNodeByDecay(n, nowNanos)) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(n, properties)); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
+		if err := visit(projectCachedNodeForRead(n, properties, queryNodes)); err != nil {
 			return err
 		}
 	}
@@ -458,11 +463,14 @@ func (b *BadgerEngine) mergeWriteBehindNodes(nodes []*Node, label, scope string,
 	return out
 }
 
-func projectCachedNodeForRead(node *Node, properties []string) *Node {
+func projectCachedNodeForRead(node *Node, properties []string, queryRead ...bool) *Node {
 	if node == nil {
 		return nil
 	}
 	if properties == nil {
+		if len(queryRead) > 0 && queryRead[0] {
+			return copyNodeForCaller(node)
+		}
 		return copyNode(node)
 	}
 	projected := *node

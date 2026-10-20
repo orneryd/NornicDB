@@ -533,6 +533,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 			separator:      separator,
 			mutatedNodeIDs: make(map[string]struct{}),
 		}
+		txWrapper.initNamespacePrefix()
 		e.txContext.storageWrapper = txWrapper
 	}
 

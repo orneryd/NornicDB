@@ -1782,6 +1782,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator:      separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+	txWrapper.initNamespacePrefix()
 
 	// Execute with transaction wrapper via context
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)

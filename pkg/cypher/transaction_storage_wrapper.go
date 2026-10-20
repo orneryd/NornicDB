@@ -91,6 +91,8 @@ type transactionStorageWrapper struct {
 	schemaCommitActions []func()
 	namespace           string
 	separator           string
+	namespacePrefix     string
+	namespacePrefixOnce sync.Once
 	mutatedNodeIDs      map[string]struct{}
 	mutatedNodeIDsMu    sync.Mutex
 
@@ -124,6 +126,14 @@ func (w *transactionStorageWrapper) Namespace() string {
 		return ""
 	}
 	return w.namespace
+}
+
+func (w *transactionStorageWrapper) initNamespacePrefix() {
+	w.namespacePrefixOnce.Do(func() {
+		if w.namespace != "" {
+			w.namespacePrefix = w.namespace + w.separator
+		}
+	})
 }
 
 // ensureNodeLookupCacheLocked lazily initializes the wrapper's MERGE/MATCH
@@ -400,7 +410,11 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 	if w.tx != nil {
 		physical := opts
 		if w.namespace != "" {
-			physical.Prefix = w.namespace + w.separator + opts.Prefix
+			w.initNamespacePrefix()
+			physical.Prefix = w.namespacePrefix
+			if opts.Prefix != "" {
+				physical.Prefix += opts.Prefix
+			}
 		}
 		return w.tx.StreamNodesWithOptions(ctx, physical, func(node *storage.Node) error {
 			if w.namespace == "" {

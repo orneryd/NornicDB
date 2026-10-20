@@ -33,6 +33,10 @@ func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, 
 // its embedding metadata is settled, but no separately stored chunk vector
 // is read (loadNodeEmbeddingState).
 func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors bool) (*Node, error) {
+	return b.getNodeAtInTxn(txn, id, version, vectors, true)
+}
+
+func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors, applyDecayFilter bool) (*Node, error) {
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -50,7 +54,7 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 				if loadErr != nil {
 					return nil, loadErr
 				}
-				if b.filterNodeByDecay(cached, DecayScoringTime()) {
+				if applyDecayFilter && b.filterNodeByDecay(cached, DecayScoringTime()) {
 					return nil, ErrNotFound
 				}
 				return cached, nil
@@ -71,7 +75,7 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 			}); err != nil {
 				return nil, err
 			}
-			if b.filterNodeByDecay(node, DecayScoringTime()) {
+			if applyDecayFilter && b.filterNodeByDecay(node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -104,8 +108,13 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := copyNode(record.Node)
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	var node *Node
+	if vectors {
+		node = copyNode(record.Node)
+	} else {
+		node = copyNodeForCaller(record.Node)
+	}
+	if applyDecayFilter && b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
@@ -273,7 +282,10 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	view func(func(*badger.Txn) error) error,
 	properties []string,
 	visit func(*Node) error,
+	readOptions ...StreamNodesOptions,
 ) error {
+	opts := nodeScanOptions(readOptions)
+	queryNodes := opts.QueryNodes
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -288,7 +300,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 		defer it.Close()
 		for it.Next() {
 			nodeID := it.NodeID()
-			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version, true)
+			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, !queryNodes, opts.ApplyDecayFilter)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -303,7 +315,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties)); err != nil {
+				if err := visit(projectCachedNodeForRead(node, properties, queryNodes)); err != nil {
 					return err
 				}
 			}
@@ -325,7 +337,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	properties []string,
 	afterNodeID NodeID,
 	visit func(*Node) error,
+	readOptions ...StreamNodesOptions,
 ) error {
+	opts := nodeScanOptions(readOptions)
+	queryNodes := opts.QueryNodes
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -343,6 +358,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+			if queryNodes {
+				return b.readQueryNodeItemInTxn(txn, item, nodeID)
+			}
 			itemVersion := item.Version()
 			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
 				if properties == nil {
@@ -368,7 +386,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			return node, err
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.filterNodeByDecay(node, nowNanos) || !hasLabel(node.Labels, label) {
+			if node == nil || (opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos)) || !hasLabel(node.Labels, label) {
 				return nil
 			}
 			return visit(node)
@@ -395,7 +413,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 		for it.Next() {
 			indexKey := it.Item().Key()
 			nodeID := it.NodeID()
-			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
+			if opts.ApplyDecayFilter && b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {
