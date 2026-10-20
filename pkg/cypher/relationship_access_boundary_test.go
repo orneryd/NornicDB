@@ -178,42 +178,7 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 	_, _ = config.Check(listed.ImportPath, fset, files, info)
 	require.Empty(t, append(typeErrors, imp.errors...), "the boundary graph requires a complete compiler call graph")
 
-	functions := map[*types.Func]*relationshipBoundaryFunction{}
-	declarations := map[*types.Func]*ast.FuncDecl{}
-	var structuralViolations []string
-	for _, file := range files {
-		for _, declaration := range file.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil {
-				continue
-			}
-			object, _ := info.Defs[function.Name].(*types.Func)
-			require.NotNil(t, object)
-			signature := object.Type().(*types.Signature)
-			owner := signature.Recv() != nil && relationshipBoundaryNamedType(signature.Recv().Type()) == "relationshipAccessExecution"
-			functions[object] = &relationshipBoundaryFunction{object: object, name: relationshipBoundaryFunctionName(object), position: fset.Position(function.Pos()).String(), owner: owner, calls: map[*types.Func]bool{}}
-			declarations[object] = function
-		}
-	}
-	for object, function := range functions {
-		ast.Inspect(declarations[object].Body, func(node ast.Node) bool {
-			if literal, ok := node.(*ast.CompositeLit); ok && relationshipBoundaryNamedType(info.TypeOf(literal)) == "relationshipAccessExecution" && function.name != "StorageExecutor.relationshipExecutionFor" {
-				structuralViolations = append(structuralViolations, fmt.Sprintf("%s: %s constructs relationshipAccessExecution outside the program", fset.Position(literal.Pos()), function.name))
-			}
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			target := relationshipBoundaryTarget(info, call.Fun)
-			if relationshipStoragePrimitive(target) {
-				function.directIO = true
-			}
-			if functions[target] != nil {
-				function.calls[target] = true
-			}
-			return true
-		})
-	}
+	functions, structuralViolations := relationshipBoundaryGraph(files, fset, info)
 
 	// Compute storage reachability upwards, treating owner methods as graph
 	// cuts. There is no result-type cutoff and no maintained reader/type list.
@@ -348,6 +313,15 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 	}
 	sort.Strings(population)
 	t.Logf("program-owned storage-rooted relationship kernels (%d):\n%s", len(population), strings.Join(population, "\n"))
+
+	var directReaders []string
+	for _, function := range functions {
+		if function.directIO && !function.owner {
+			directReaders = append(directReaders, function.position+" "+function.name)
+		}
+	}
+	sort.Strings(directReaders)
+	t.Logf("non-owner direct storage readers (%d):\n%s", len(directReaders), strings.Join(directReaders, "\n"))
 
 	violations := structuralViolations
 	for component := range components {
