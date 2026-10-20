@@ -44,8 +44,8 @@ type CollectionStore interface {
 type databaseCollectionStore struct {
 	dbManager *multidb.DatabaseManager
 	// dropDatabase drops a collection's database and the state derived from
-	// it (Config.DropDatabase); it defaults to dbManager.DropDatabase.
-	dropDatabase func(name string) error
+	// it (Config.DropDatabaseContext); it defaults to dbManager.DropDatabaseContext.
+	dropDatabase func(ctx context.Context, name string) error
 	defaultDrop  bool
 
 	// reserved database names that must not be used for Qdrant collections.
@@ -54,8 +54,8 @@ type databaseCollectionStore struct {
 
 // NewDatabaseCollectionStore creates a CollectionStore backed by DatabaseManager
 // namespaces. dropDatabase drops a collection's database together with its
-// derived state (Config.DropDatabase); nil uses dbManager.DropDatabase.
-func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase func(name string) error) (CollectionStore, error) {
+// derived state (Config.DropDatabaseContext); nil uses dbManager.DropDatabaseContext.
+func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase func(ctx context.Context, name string) error) (CollectionStore, error) {
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
@@ -68,7 +68,7 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase
 
 	defaultDrop := dropDatabase == nil
 	if defaultDrop {
-		dropDatabase = dbManager.DropDatabase
+		dropDatabase = dbManager.DropDatabaseContext
 	}
 
 	return &databaseCollectionStore{
@@ -80,6 +80,9 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase
 }
 
 func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims int, distance qpb.Distance) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return s.CreateWithQuantization(ctx, name, dims, distance, nil)
 }
 
@@ -103,13 +106,13 @@ func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, na
 		return fmt.Errorf("invalid dimensions: %d", dims)
 	}
 
-	if err := s.dbManager.CreateDatabase(name); err != nil {
+	if err := s.dbManager.CreateDatabaseContext(ctx, name); err != nil {
 		return err
 	}
 
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
-		_ = s.dropDatabase(name)
+		_ = s.dropDatabase(context.WithoutCancel(ctx), name)
 		return err
 	}
 
@@ -125,7 +128,7 @@ func (s *databaseCollectionStore) CreateWithQuantization(ctx context.Context, na
 		CreatedAt:  now,
 	})
 	if err != nil {
-		_ = s.dropDatabase(name)
+		_ = s.dropDatabase(context.WithoutCancel(ctx), name)
 		return err
 	}
 
@@ -177,6 +180,9 @@ func (s *databaseCollectionStore) List(ctx context.Context) ([]string, error) {
 }
 
 func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_ = ctx
 	if name == "" {
 		return ErrCollectionNotFound
@@ -190,7 +196,7 @@ func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
 		return ErrCollectionNotFound
 	}
 
-	return s.dropDatabase(name)
+	return s.dropDatabase(ctx, name)
 }
 
 func (s *databaseCollectionStore) Exists(name string) bool {

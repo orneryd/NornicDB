@@ -52,6 +52,8 @@ var firstUseGraphPattern = regexp.MustCompile(`(?is)\bUSE\s+([A-Za-z_][A-Za-z0-9
 
 // TransactionContext holds the active transaction for a Cypher session.
 type TransactionContext struct {
+	logicalLifetime storage.NamespaceLifetimeSnapshot
+	logicalDatabase string
 	tx              interface{}    // *storage.BadgerTransaction (MemoryEngine now wraps BadgerEngine)
 	engine          storage.Engine // Engine owning this transaction's commit.
 	storageWrapper  *transactionStorageWrapper
@@ -168,7 +170,7 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 
 	switch {
 	case upper == "BEGIN" || upper == "BEGIN TRANSACTION":
-		return e.handleBegin()
+		return e.handleBegin(ctx)
 	case upper == "COMMIT" || upper == "COMMIT TRANSACTION":
 		return e.handleCommit(ctx)
 	case upper == "ROLLBACK" || upper == "ROLLBACK TRANSACTION":
@@ -179,9 +181,17 @@ func (e *StorageExecutor) parseTransactionStatement(ctx context.Context, cypher 
 }
 
 // handleBegin starts a new explicit transaction.
-func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
+func (e *StorageExecutor) handleBegin(contexts ...context.Context) (*ExecuteResult, error) {
+	ctx := context.Background()
+	if len(contexts) != 0 {
+		ctx = contexts[0]
+	}
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherTransactionsAlreadyActive(), nil)
+	}
+	logicalLifetime := e.inheritedNamespaceLifetime
+	if logicalLifetime == nil {
+		logicalLifetime = storage.CaptureNamespaceLifetimes(e.storage)
 	}
 
 	// Establish the acknowledged-write visibility boundary before opening the
@@ -217,10 +227,25 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		if err := openSnapshot(); err != nil {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
+		remote := fabric.NewRemoteFragmentExecutor()
+		if e.dbManager != nil {
+			locations, err := e.logicalRemoteLocations()
+			if err == nil {
+				err = remote.CaptureLogicalBegin(ctx, locations, GetAuthTokenFromContext(ctx))
+			}
+			if err != nil {
+				_ = remote.Close()
+				_ = fabricTx.Rollback(nil)
+				return nil, err
+			}
+		}
 		e.txContext = &TransactionContext{
-			tx:     fabricTx,
-			engine: engine,
-			active: true,
+			fabricRemoteExe: remote,
+			logicalLifetime: logicalLifetime,
+			logicalDatabase: e.currentDatabaseName(),
+			tx:              fabricTx,
+			engine:          engine,
+			active:          true,
 		}
 		return &ExecuteResult{
 			Columns: []string{"status"},
@@ -253,6 +278,10 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	if err != nil {
 		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 	}
+	if err := tx.BindLogicalBegin(logicalLifetime); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
 	if namespaceHint != "" {
 		if err := tx.SetNamespace(namespaceHint); err != nil {
 			_ = tx.Rollback()
@@ -269,10 +298,12 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 		return nil, localizedError(localization.CypherTransactionsConfigureFailed(err), err)
 	}
 	txCtx := &TransactionContext{
-		tx:     tx,
-		engine: e.storage,
-		active: true,
-		txID:   tx.ID,
+		logicalLifetime: logicalLifetime,
+		logicalDatabase: e.currentDatabaseName(),
+		tx:              tx,
+		engine:          e.storage,
+		active:          true,
+		txID:            tx.ID,
 	}
 	if wal, dbName := e.resolveWALAndDatabase(); wal != nil {
 		walSeq, walErr := wal.AppendTxBegin(dbName, tx.ID, nil)
@@ -322,7 +353,12 @@ func (e *StorageExecutor) handleCommit(ctx context.Context) (*ExecuteResult, err
 		opCount = tx.OperationCount()
 		err = e.commitStorageTransaction(ctx, tx)
 	case *fabric.FabricTransaction:
-		err = tx.Commit(nil, nil)
+		err = e.txContext.logicalLifetime.Validate(e.txContext.logicalDatabase)
+		if err == nil {
+			err = tx.Commit(nil, nil)
+		} else {
+			_ = tx.Rollback(nil)
+		}
 		if err == nil {
 			publishStatementCommit(ctx)
 		}

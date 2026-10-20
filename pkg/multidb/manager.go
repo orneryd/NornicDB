@@ -7,6 +7,8 @@ package multidb
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // DatabaseManager manages multiple logical databases within a single storage engine.
@@ -44,7 +47,15 @@ import (
 //	// Use storage (isolated to tenant_a)
 //	tenantStorage.CreateNode(&storage.Node{ID: "123"})
 type DatabaseManager struct {
-	mu sync.RWMutex
+	mu                            sync.RWMutex
+	committedCatalog              map[string]json.RawMessage
+	catalogPreparations           map[string]*catalogPreparation
+	catalogRefreshMu              sync.Mutex
+	unregisterCatalogObserver     func()
+	pendingCatalogRetirements     map[string]bool
+	namespaceLifecycles           sync.Map
+	unregisterNamespaceRetirement func()
+	namespaceRetirements          map[string][]chan struct{}
 
 	// Shared underlying storage
 	inner storage.Engine
@@ -77,18 +88,19 @@ type DatabaseManager struct {
 
 // DatabaseInfo holds metadata about a database.
 type DatabaseInfo struct {
-	ID           string           `json:"id"`
-	Name         string           `json:"name"`
-	CreatedAt    time.Time        `json:"created_at"`
-	CreatedBy    string           `json:"created_by,omitempty"`
-	Status       string           `json:"status"` // "online", "offline"
-	Type         string           `json:"type"`   // "standard", "system"
-	IsDefault    bool             `json:"is_default"`
-	NodeCount    int64            `json:"node_count,omitempty"` // Cached, may be stale
-	UpdatedAt    time.Time        `json:"updated_at"`
-	Aliases      []string         `json:"aliases,omitempty"`      // Database aliases (Neo4j-compatible)
-	Limits       *Limits          `json:"limits,omitempty"`       // Resource limits
-	Constituents []ConstituentRef `json:"constituents,omitempty"` // Constituent databases (for composite type)
+	namespaceLifetime uint64
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	CreatedAt         time.Time        `json:"created_at"`
+	CreatedBy         string           `json:"created_by,omitempty"`
+	Status            string           `json:"status"` // "online", "offline"
+	Type              string           `json:"type"`   // "standard", "system"
+	IsDefault         bool             `json:"is_default"`
+	NodeCount         int64            `json:"node_count,omitempty"` // Cached, may be stale
+	UpdatedAt         time.Time        `json:"updated_at"`
+	Aliases           []string         `json:"aliases,omitempty"`      // Database aliases (Neo4j-compatible)
+	Limits            *Limits          `json:"limits,omitempty"`       // Resource limits
+	Constituents      []ConstituentRef `json:"constituents,omitempty"` // Constituent databases (for composite type)
 	// Options are the database's options (CREATE DATABASE … OPTIONS, ALTER
 	// DATABASE … SET OPTION), by Neo4j's option name.
 	Options map[string]string `json:"options,omitempty"`
@@ -184,13 +196,24 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		m.remoteCredentialCipher = cipher
 	}
 
-	// Load existing databases from system namespace
+	m.unregisterNamespaceRetirement = storage.RegisterNamespaceRetirement(m.inner, m.completeDatabaseRetirement, m.retireDatabaseCatalog)
+	m.unregisterCatalogObserver = storage.RegisterNamespaceCatalogObserver(m.inner, storage.NodeID(m.config.SystemDatabase+":"+metadataNodeID), m.loadMetadata)
+	initialized := false
+	defer func() {
+		if !initialized {
+			m.unregisterNamespaceRetirement()
+			m.unregisterCatalogObserver()
+		}
+	}()
+	// Subscribe before loading, including when a standby is catching up.
 	if err := m.loadMetadata(); err != nil {
 		return nil, fmt.Errorf("failed to load database metadata: %w", err)
 	}
+	m.mu.Lock()
 	for name, info := range m.databases {
 		m.applyChangeCapture(name, info.Options)
 	}
+	m.mu.Unlock()
 
 	// If the underlying engine is read-only (e.g. HA standby), do not attempt
 	// to create/migrate metadata. Standby nodes should start quickly and serve
@@ -202,27 +225,32 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 
 	// Ensure system and default databases exist (in-memory always; persisted only if writable).
 	if readOnly {
+		m.mu.Lock()
 		if _, exists := m.databases[m.config.SystemDatabase]; !exists {
 			m.databases[m.config.SystemDatabase] = &DatabaseInfo{
-				Name:      m.config.SystemDatabase,
-				CreatedAt: time.Now(),
-				Status:    "online",
-				Type:      "system",
-				IsDefault: false,
-				UpdatedAt: time.Now(),
+				namespaceLifetime: storage.NamespaceLifetimeRevision(m.inner),
+				Name:              m.config.SystemDatabase,
+				CreatedAt:         time.Now(),
+				Status:            "online",
+				Type:              "system",
+				IsDefault:         false,
+				UpdatedAt:         time.Now(),
 			}
 		}
 		if _, exists := m.databases[m.config.DefaultDatabase]; !exists {
 			m.databases[m.config.DefaultDatabase] = &DatabaseInfo{
-				Name:      m.config.DefaultDatabase,
-				CreatedAt: time.Now(),
-				Status:    "online",
-				Type:      "standard",
-				IsDefault: true,
-				UpdatedAt: time.Now(),
+				namespaceLifetime: storage.NamespaceLifetimeRevision(m.inner),
+				Name:              m.config.DefaultDatabase,
+				CreatedAt:         time.Now(),
+				Status:            "online",
+				Type:              "standard",
+				IsDefault:         true,
+				UpdatedAt:         time.Now(),
 			}
 		}
 		log.Printf("ℹ️  multidb: storage is read-only; skipping metadata writes and migrations")
+		m.mu.Unlock()
+		initialized = true
 		return m, nil
 	}
 
@@ -241,6 +269,7 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	// namespace as "defaultDb:system:<...>". Remove those leaked nodes so normal
 	// queries against the default database don't show system internals.
 	m.cleanupLeakedSystemNodes()
+	initialized = true
 
 	return m, nil
 }
@@ -321,31 +350,35 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 
 // ensureSystemDatabases creates system and default databases if they don't exist.
 func (m *DatabaseManager) ensureSystemDatabases() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	// System database
 	if _, exists := m.databases[m.config.SystemDatabase]; !exists {
 		m.databases[m.config.SystemDatabase] = &DatabaseInfo{
-			Name:      m.config.SystemDatabase,
-			CreatedAt: time.Now(),
-			Status:    "online",
-			Type:      "system",
-			IsDefault: false,
-			UpdatedAt: time.Now(),
+			namespaceLifetime: storage.NamespaceLifetimeRevision(m.inner),
+			Name:              m.config.SystemDatabase,
+			CreatedAt:         time.Now(),
+			Status:            "online",
+			Type:              "system",
+			IsDefault:         false,
+			UpdatedAt:         time.Now(),
 		}
 	}
 
 	// Default database
 	if _, exists := m.databases[m.config.DefaultDatabase]; !exists {
 		m.databases[m.config.DefaultDatabase] = &DatabaseInfo{
-			Name:      m.config.DefaultDatabase,
-			CreatedAt: time.Now(),
-			Status:    "online",
-			Type:      "standard",
-			IsDefault: true,
-			UpdatedAt: time.Now(),
+			namespaceLifetime: storage.NamespaceLifetimeRevision(m.inner),
+			Name:              m.config.DefaultDatabase,
+			CreatedAt:         time.Now(),
+			Status:            "online",
+			Type:              "standard",
+			IsDefault:         true,
+			UpdatedAt:         time.Now(),
 		}
 	}
 
-	return m.persistMetadata()
+	return m.persistMetadataContext(context.Background(), true)
 }
 
 // CreateDatabase creates a new database.
@@ -356,8 +389,20 @@ func (m *DatabaseManager) ensureSystemDatabases() error {
 // Returns ErrDatabaseExists if database already exists.
 // Returns ErrMaxDatabasesReached if limit exceeded.
 func (m *DatabaseManager) CreateDatabase(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return m.CreateDatabaseContext(context.Background(), name)
+}
+
+func (m *DatabaseManager) CreateDatabaseContext(ctx context.Context, name string) error {
+	finish, err := m.admitDatabaseLifecycle(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	unlock, err := util.LockContext(ctx, m.mu.Lock, m.mu.Unlock)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	// Validate name
 	if name == "" {
@@ -370,21 +415,25 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 	}
 
 	// Check limit
-	if m.config.MaxDatabases > 0 && len(m.databases) >= m.config.MaxDatabases {
+	if m.config.MaxDatabases > 0 && len(m.databases)+m.pendingDatabaseCreatesLocked() >= m.config.MaxDatabases {
 		return ErrMaxDatabasesReached
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	// Create metadata
 	m.databases[name] = &DatabaseInfo{
-		Name:      name,
-		CreatedAt: time.Now(),
-		Status:    "online",
-		Type:      "standard",
-		IsDefault: false,
-		UpdatedAt: time.Now(),
+		namespaceLifetime: storage.NamespaceLifetimeRevision(m.inner),
+		Name:              name,
+		CreatedAt:         time.Now(),
+		Status:            "online",
+		Type:              "standard",
+		IsDefault:         false,
+		UpdatedAt:         time.Now(),
 	}
 
-	return m.persistMetadata()
+	return m.persistMetadataContext(ctx, false)
 }
 
 // DropDatabase removes a database and all its data.
@@ -395,53 +444,84 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 // Returns ErrDatabaseNotFound if database doesn't exist.
 // Returns ErrCannotDropSystemDB for system/default databases.
 func (m *DatabaseManager) DropDatabase(name string) error {
-	m.mu.Lock()
-	changed := false
-	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
+	return m.DropDatabaseContext(context.Background(), name)
+}
+
+// DropDatabaseContext respects cancellation while waiting for metadata and
+// retiring acknowledged writes before deleting a database.
+func (m *DatabaseManager) DropDatabaseContext(ctx context.Context, name string) error {
+	return m.dropDatabaseContext(ctx, name, "")
+}
+
+func (m *DatabaseManager) dropDatabaseContext(ctx context.Context, name, requiredType string) error {
+	finish, err := m.admitDatabaseLifecycle(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	release, err := util.LockContext(ctx, m.mu.Lock, m.mu.Unlock)
+	if err != nil {
+		finish()
+		return err
+	}
 
 	// Check if exists
 	info, exists := m.databases[name]
 	if !exists {
+		release()
+		finish()
 		return ErrDatabaseNotFound
+	}
+	if requiredType != "" && info.Type != requiredType {
+		release()
+		return localizedError(localization.MultidbCompositeDatabaseNotComposite(name), nil)
 	}
 
 	// Prevent dropping system database
 	if info.Type == "system" {
+		release()
+		finish()
 		return ErrCannotDropSystemDB
 	}
 
 	// Prevent dropping default (unless allowed)
 	if info.IsDefault && !m.config.AllowDropDefault {
+		release()
+		finish()
 		return ErrCannotDropDefaultDB
 	}
 
-	// Delete all data with this namespace prefix
-	prefix := name + ":"
-	nodesDeleted, edgesDeleted, err := m.inner.DeleteByPrefix(prefix)
-	if err != nil {
-		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
+	retired := make(chan struct{})
+	if m.namespaceRetirements == nil {
+		m.namespaceRetirements = make(map[string][]chan struct{})
 	}
-
-	// Update metadata with deletion info (for logging/debugging)
-	_ = nodesDeleted
-	_ = edgesDeleted
-
-	// Remove from metadata
-	delete(m.databases, name)
-	m.applyChangeCapture(name, nil)
-	delete(m.engines, name) // Clear cached engine
-
-	if err := m.persistMetadata(); err != nil {
-		// If persistence fails, restore the database to maintain consistency
-		// This prevents the database from being dropped in memory but still existing in storage
-		m.databases[name] = info
-		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
+	m.namespaceRetirements[name] = append(m.namespaceRetirements[name], retired)
+	mutation := storage.NamespaceCatalogMutation{Namespace: name, Record: m.catalogRecord(), Expected: m.committedCatalog[name]}
+	release()
+	defer m.removeNamespaceRetirementWaiter(name, retired)
+	op := storage.NewNamespaceDrop(nil)
+	op.SetCatalogMutation(mutation)
+	_, _, err = storage.DeletePrefixContext(storage.WithNamespaceDrop(ctx, op), m.inner, name+":")
+	if !storage.SupportsNamespaceRetirement(m.inner) && (err == nil || op.Committed()) {
+		return m.completeLegacyNamespaceDrop(ctx, name, mutation, op, err)
 	}
-	delete(m.limitCheckers, name)
-	m.dropDatabaseStatementCachesLocked(name)
-	changed = true
-
-	return nil
+	if err != nil && !op.Committed() {
+		var pending *storage.NamespaceDropError
+		if !errors.As(err, &pending) || pending.Aborted {
+			op.Abort()
+			finish()
+		}
+	}
+	if err == nil && !op.Committed() {
+		// A forwarded leader command can finish before this replica applies
+		// it. Wait for the local retirement, never while owning the catalog.
+		select {
+		case <-retired:
+		case <-ctx.Done():
+			return &storage.NamespaceDropError{Committed: true, Cause: ctx.Err()}
+		}
+	}
+	return op.Result(err)
 }
 
 // GetStorage returns a namespaced storage engine for the specified database.
@@ -548,6 +628,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		// Create composite engine with intelligent default routing
 		// Routing will be auto-configured based on constituent aliases and access modes
 		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
+		compositeEngine.SetNamespaceLifetimeSource(m.inner)
 		compositeEngine.SetCompositeName(name)
 		// Note: We don't cache composite engines the same way as they're lightweight wrappers
 		return compositeEngine, nil
@@ -728,6 +809,11 @@ func (m *DatabaseManager) DefaultDatabaseName() string {
 
 // SetDatabaseStatus sets a database online/offline.
 func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), name)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -753,14 +839,20 @@ func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
 
 // Close releases resources.
 func (m *DatabaseManager) Close() error {
+	if m.unregisterNamespaceRetirement != nil {
+		m.unregisterNamespaceRetirement()
+	}
+	if m.unregisterCatalogObserver != nil {
+		m.unregisterCatalogObserver()
+	}
 	m.mu.Lock()
-	defer m.unlockStatementCacheIndexes(true, true)
 
 	// Clear all cached engines
 	m.engines = make(map[string]storage.Engine)
 	m.limitCheckers = make(map[string]*databaseLimitChecker)
 	m.statementCachesClosed = true
 	m.disposeStatementCachesLocked()
+	m.unlockStatementCacheIndexes(true, true)
 
 	// Close the underlying storage
 	return m.inner.Close()
@@ -819,6 +911,11 @@ func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string,
 
 // CreateAlias creates an alias for a database (Neo4j-compatible).
 func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), databaseName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -834,6 +931,7 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 	if m.databases[alias] != nil {
 		return ErrAliasConflict
 	}
+	if pending:=m.catalogPreparations[alias];pending!=nil && pending.mutation.Create{return ErrAliasConflict}
 
 	// Validate alias name
 	if err := m.validateAliasName(alias); err != nil {
@@ -841,6 +939,7 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 	}
 
 	// Check if alias is already used by another database
+	if m.catalogAliasReservedLocked(alias){return ErrAliasExists}
 	for _, dbInfo := range m.databases {
 		for _, existingAlias := range dbInfo.Aliases {
 			if existingAlias == alias {
@@ -861,12 +960,21 @@ func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
 
 // DropAlias removes an alias (Neo4j-compatible).
 func (m *DatabaseManager) DropAlias(alias string) error {
+	name, err := m.ResolveDatabase(alias)
+	if err != nil {
+		return ErrAliasNotFound
+	}
+	finish, err := m.admitDatabaseLifecycle(context.Background(), name)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	changed := false
 	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
 
 	// Find database with this alias
-	for _, info := range m.databases {
+	if info := m.databases[name]; info!=nil {
 		for i, existingAlias := range info.Aliases {
 			if existingAlias == alias {
 				// Remove alias
@@ -913,6 +1021,11 @@ func (m *DatabaseManager) ListAliases(databaseName string) map[string]string {
 
 // SetDatabaseLimits sets resource limits for a database.
 func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), databaseName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -922,12 +1035,10 @@ func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits)
 	}
 
 	limits = cloneLimits(limits)
-	previousLimits := info.Limits
 	info.Limits = limits
 	info.UpdatedAt = time.Now()
 
 	if err := m.persistMetadata(); err != nil {
-		info.Limits = previousLimits
 		return err
 	}
 	if checker := m.limitCheckers[databaseName]; checker != nil {

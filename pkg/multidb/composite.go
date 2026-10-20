@@ -5,12 +5,14 @@
 package multidb
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // RemoteEngineFactory creates storage engines for remote composite constituents.
@@ -109,8 +111,20 @@ func (c *ConstituentRef) Validate() error {
 // Returns ErrInvalidDatabaseName if the name is invalid.
 // Returns an error if any constituent database doesn't exist.
 func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []ConstituentRef) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return m.CreateCompositeDatabaseContext(context.Background(), name, constituents)
+}
+
+func (m *DatabaseManager) CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []ConstituentRef) error {
+	finish, err := m.admitDatabaseLifecycle(ctx, name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	unlock, err := util.LockContext(ctx, m.mu.Lock, m.mu.Unlock)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	// Validate name
 	if name == "" {
@@ -166,18 +180,22 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Create composite database info
 	m.databases[name] = &DatabaseInfo{
-		Name:         name,
-		CreatedAt:    time.Now(),
-		Status:       "online",
-		Type:         "composite",
-		IsDefault:    false,
-		UpdatedAt:    time.Now(),
-		Constituents: encrypted,
+		namespaceLifetime: storage.NamespaceLifetimeRevision(m.inner),
+		Name:              name,
+		CreatedAt:         time.Now(),
+		Status:            "online",
+		Type:              "composite",
+		IsDefault:         false,
+		UpdatedAt:         time.Now(),
+		Constituents:      encrypted,
 	}
 
-	return m.persistMetadata()
+	return m.persistMetadataContext(ctx, false)
 }
 
 // DropCompositeDatabase removes a composite database.
@@ -185,37 +203,22 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 // This only removes the composite database metadata. The constituent databases
 // remain unchanged.
 func (m *DatabaseManager) DropCompositeDatabase(name string) error {
-	m.mu.Lock()
-	changed := false
-	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
+	return m.DropCompositeDatabaseContext(context.Background(), name)
+}
 
-	info, exists := m.databases[name]
-	if !exists {
-		return ErrDatabaseNotFound
-	}
-
-	if info.Type != "composite" {
-		return localizedError(localization.MultidbCompositeDatabaseNotComposite(name), nil)
-	}
-
-	// Remove from metadata
-	delete(m.databases, name)
-	delete(m.engines, name) // Clear cached engine
-
-	if err := m.persistMetadata(); err != nil {
-		// If persistence fails, restore the database to maintain consistency
-		// This prevents the database from being dropped in memory but still existing in storage
-		m.databases[name] = info
-		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
-	}
-
-	m.dropDatabaseStatementCachesLocked(name)
-	changed = true
-	return nil
+func (m *DatabaseManager) DropCompositeDatabaseContext(ctx context.Context, name string) error {
+	// Only the composite's own namespace/lifetime is retired. Constituents
+	// have different prefixes and remain untouched.
+	return m.dropDatabaseContext(ctx, name, "composite")
 }
 
 // AddConstituent adds a constituent to an existing composite database.
 func (m *DatabaseManager) AddConstituent(compositeName string, constituent ConstituentRef) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), compositeName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -266,6 +269,11 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 
 // RemoveConstituent removes a constituent from a composite database.
 func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) error {
+	finish, err := m.admitDatabaseLifecycle(context.Background(), compositeName)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	changed := false
 	defer func() { m.unlockStatementCacheIndexes(changed, false) }()

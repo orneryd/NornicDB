@@ -22,6 +22,9 @@ type heldPointDeletion struct {
 	resume  chan struct{}
 }
 
+// Preserve optional storage capabilities while retaining the public deletion probe.
+func (e *heldPointDeletion) GetInnerEngine() storage.Engine { return e.Engine }
+
 func (e *heldPointDeletion) DeleteNode(id storage.NodeID) error {
 	if strings.HasSuffix(string(id), e.suffix) {
 		close(e.entered)
@@ -36,6 +39,8 @@ type heldPointPopulation struct {
 	captured chan struct{}
 	resume   chan struct{}
 }
+
+func (e *heldPointPopulation) GetInnerEngine() storage.Engine { return e.Engine }
 
 func (e *heldPointPopulation) IterateNodes(fn func(*storage.Node) bool) error {
 	nodes, err := e.Engine.AllNodes()

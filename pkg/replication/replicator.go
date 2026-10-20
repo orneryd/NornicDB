@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Replicator is the unified interface for all replication modes.
@@ -87,6 +88,8 @@ type Command struct {
 
 	// RequestID for idempotency/deduplication.
 	RequestID string
+	// Process-local lifecycle state is deliberately absent from the wire/WAL.
+	namespaceDrop *storage.NamespaceDrop
 }
 
 // CommandType identifies the type of write operation.
@@ -149,6 +152,9 @@ const (
 
 	// CmdBulkDeleteEdges deletes multiple edges.
 	CmdBulkDeleteEdges
+
+	// CmdNamespaceCatalog publishes one database's CREATE/ALTER catalog delta.
+	CmdNamespaceCatalog
 )
 
 // HealthStatus represents the health state of the replicator.
@@ -344,6 +350,14 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext preserves cancellation through local storage preparation.
+func (r *StandaloneReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.RLock()
 	if r.closed {
 		r.mu.RUnlock()
@@ -355,7 +369,7 @@ func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error 
 	}
 	r.mu.RUnlock()
 
-	return r.storage.ApplyCommand(cmd)
+	return applyStorageContext(ctx, r.storage, cmd)
 }
 
 // ApplyBatch applies multiple commands directly to storage.

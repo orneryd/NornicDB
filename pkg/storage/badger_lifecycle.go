@@ -222,21 +222,33 @@ func (b *BadgerEngine) IterateMVCCVersions(ctx context.Context, logicalKey []byt
 
 // DeleteMVCCVersion deletes a single MVCC version for a logical key.
 func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte, version MVCCVersion) error {
-	_ = ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	fullKey, err := mvccVersionKeyForLogicalKey(logicalKey, version)
 	if err != nil {
 		return err
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(fullKey)
+	return b.withNamespaceIndexWriteContext(ctx, [][]byte{logicalKey}, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(fullKey) })
 	})
 }
 
 // WriteMVCCHead writes an updated MVCC head for a logical key.
 func (b *BadgerEngine) WriteMVCCHead(ctx context.Context, logicalKey []byte, head MVCCHead) error {
-	_ = ctx
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return b.writeMVCCHeadForLogicalKeyInTxn(txn, logicalKey, head.Version, head.Tombstoned, head.FloorVersion)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return b.withNamespaceIndexWriteContext(ctx, [][]byte{logicalKey}, func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			return b.writeMVCCHeadForLogicalKeyInTxn(txn, logicalKey, head.Version, head.Tombstoned, head.FloorVersion)
+		})
 	})
 }
 

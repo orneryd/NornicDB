@@ -39,7 +39,8 @@ func (w *WALEngine) logger() *slog.Logger {
 //   - Auto-compaction: optional periodic snapshots + WAL truncation to prevent
 //     unbounded WAL growth.
 type WALEngine struct {
-	engine Engine
+	engine           Engine
+	journalNamespace string
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
 	wal         *WAL
@@ -284,14 +285,18 @@ func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 // NewWALEngine creates a WAL-backed storage engine.
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
 	w := &WALEngine{
-		engine: engine,
-		wal:    wal,
+		engine:           engine,
+		wal:              wal,
+		journalNamespace: namespaceForEngine(engine),
 	}
 	w.keyRegistry, _ = engine.(PropertyKeyRegistry)
 	// Give write-behind enabled engines the WAL so buffered commits can be
 	// logged durably before their ACK (OpBufferedCommit replay on crash).
 	if wal != nil {
-		if setter, ok := engine.(interface{ SetBufferedCommitWAL(*WAL) }); ok {
+		if owner := namespaceLifecycleOwner(engine); owner != nil && w.journalNamespace == "" {
+			owner.namespaceWALOwner = w
+			owner.SetBufferedCommitWAL(wal)
+		} else if setter, ok := engine.(interface{ SetBufferedCommitWAL(*WAL) }); ok {
 			setter.SetBufferedCommitWAL(wal)
 		}
 	}
@@ -437,6 +442,12 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 		return err
 	}
 	snapshotSequence := w.wal.sequence.Load()
+	if err := checkNamespaceSnapshot(w.engine); err != nil {
+		return err
+	}
+	if err := w.wal.checkNamespaceSnapshot(snapshotSequence); err != nil {
+		return err
+	}
 	if w.hasCompacted.Load() && snapshotSequence == w.compactedSequence.Load() {
 		return nil
 	}
@@ -585,6 +596,11 @@ func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
 
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalNodeIDs([]*Node{node})...)
+	if err != nil {
+		return "", err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -603,6 +619,11 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 
 // UpdateNode logs then executes node update.
 func (w *WALEngine) UpdateNode(node *Node) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalNodeIDs([]*Node{node})...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -626,6 +647,11 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 // EmbeddingSidecarUpdater (compile-time asserted); anything else is an
 // invariant violation, reported as an error rather than silently degraded.
 func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalNodeIDs([]*Node{node})...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -653,6 +679,11 @@ func (w *WALEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit fun
 
 // DeleteNode logs then executes node deletion.
 func (w *WALEngine) DeleteNode(id NodeID) error {
+	releaseJournal, err := w.admitJournalIDs(string(id))
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -670,6 +701,11 @@ func (w *WALEngine) DeleteNode(id NodeID) error {
 
 // CreateEdge logs then executes edge creation.
 func (w *WALEngine) CreateEdge(edge *Edge) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalEdgeIDs([]*Edge{edge})...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -691,6 +727,11 @@ func (w *WALEngine) CreateEdge(edge *Edge) error {
 
 // UpdateEdge logs then executes edge update.
 func (w *WALEngine) UpdateEdge(edge *Edge) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalEdgeIDs([]*Edge{edge})...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -708,6 +749,11 @@ func (w *WALEngine) UpdateEdge(edge *Edge) error {
 
 // DeleteEdge logs then executes edge deletion.
 func (w *WALEngine) DeleteEdge(id EdgeID) error {
+	releaseJournal, err := w.admitJournalIDs(string(id))
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -725,6 +771,11 @@ func (w *WALEngine) DeleteEdge(id EdgeID) error {
 
 // BulkCreateNodes logs then executes bulk node creation.
 func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalNodeIDs(nodes)...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -760,6 +811,11 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 
 // BulkCreateEdges logs then executes bulk edge creation.
 func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalEdgeIDs(edges)...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -797,6 +853,11 @@ func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
 
 // BulkDeleteNodes logs then executes bulk node deletion.
 func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalIDs(ids)...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -825,6 +886,11 @@ func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
 
 // BulkDeleteEdges logs then executes bulk edge deletion.
 func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
+	releaseJournal, err := w.admitJournalIDs(namespaceJournalIDs(ids)...)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -1328,10 +1394,7 @@ func (w *WALEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func
 
 // DeleteByPrefix delegates to the underlying engine.
 func (w *WALEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
-	w.mutationMu.RLock()
-	defer w.mutationMu.RUnlock()
-
-	return w.engine.DeleteByPrefix(prefix)
+	return w.DeleteByPrefixContext(context.Background(), prefix)
 }
 
 // Verify WALEngine implements Engine interface

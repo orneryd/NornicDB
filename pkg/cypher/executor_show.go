@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -1254,7 +1255,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Create database
-	err = e.dbManager.CreateDatabase(dbName)
+	err = e.dbManager.CreateDatabaseContext(ctx, dbName)
 	if err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
@@ -1304,11 +1305,11 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 	}
 
 	if e.dbManager.Exists(dbName) {
-		if err := e.dbManager.DropDatabase(dbName); err != nil {
+		if err := e.dbManager.DropDatabaseContext(ctx, dbName); err != nil {
 			return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 		}
 	}
-	if err := e.dbManager.CreateDatabase(dbName); err != nil {
+	if err := e.dbManager.CreateDatabaseContext(ctx, dbName); err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
@@ -1408,20 +1409,18 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
-	// Check if exists
-	if !e.dbManager.Exists(dbName) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The manager checks existence under its cancellable metadata lease.
+	// A separate Exists call could wait without context and race the drop.
+	err = e.dbManager.DropDatabaseContext(ctx, dbName)
+	if errors.Is(err, multidb.ErrDatabaseNotFound) {
 		if ifExistsIdx >= 0 {
-			// IF EXISTS - return success with no error
-			return &ExecuteResult{
-				Columns: []string{"name"},
-				Rows:    [][]interface{}{},
-			}, nil
+			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{}}, nil
 		}
 		return nil, localizedError(localization.CypherAdminDatabaseDoesNotExist(dbName), nil)
 	}
-
-	// Drop database
-	err = e.dbManager.DropDatabase(dbName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 	}

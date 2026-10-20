@@ -60,6 +60,7 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 }
 
 func (e *StorageExecutor) executeViaFabric(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	ctx = storage.WithLogicalNamespaceBegin(ctx, storage.CaptureNamespaceLifetimes(e.storage))
 	tx := fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
 	return e.executeViaFabricWithTx(ctx, cypher, params, tx, true)
 }
@@ -83,6 +84,11 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
 	catalog := prepared.catalog
+	if e.txContext != nil && e.txContext.active {
+		ctx = storage.WithLogicalNamespaceBegin(ctx, e.txContext.logicalLifetime)
+	} else if storage.LogicalNamespaceBegin(ctx) == nil {
+		ctx = storage.WithLogicalNamespaceBegin(ctx, storage.CaptureNamespaceLifetimes(e.storage))
+	}
 
 	authToken := GetAuthTokenFromContext(ctx)
 	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
@@ -116,6 +122,11 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	} else {
 		remoteExec = fabric.NewRemoteFragmentExecutor()
 		defer func() { _ = remoteExec.Close() }()
+		if len(prepared.remotes) != 0 {
+			if err := remoteExec.CaptureLogicalBegin(ctx, prepared.remotes, authToken); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	statsAcc := &queryStatsAccumulator{}
@@ -169,7 +180,7 @@ type fabricPreparedExec struct {
 	catalog   *fabric.Catalog
 	sessionDB string
 	fragment  fabric.Fragment
-	hasRemote bool
+	remotes   []*fabric.LocationRemote
 }
 
 // fabricResultCacheKey binds each local target's identity, catalog generation
@@ -291,11 +302,12 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	if err != nil {
 		return nil, fabricGraphReferenceError(err)
 	}
+	remotes := fabricFragmentRemoteTargets(catalog, fragment)
 	return &fabricPreparedExec{
 		catalog:   catalog,
 		sessionDB: sessionDB,
 		fragment:  fragment,
-		hasRemote: fabricFragmentHasRemoteTarget(catalog, fragment),
+		remotes:   remotes,
 	}, nil
 }
 
@@ -315,27 +327,34 @@ func (e *StorageExecutor) preparedFabricFromContext(ctx context.Context) (*fabri
 }
 
 func fabricFragmentHasRemoteTarget(catalog *fabric.Catalog, f fabric.Fragment) bool {
+	return len(fabricFragmentRemoteTargets(catalog, f)) != 0
+}
+
+// Auto-commit captures only this plan's remote participants. Explicit BEGIN
+// retains its transaction-wide capture because later statements are unknown.
+func fabricFragmentRemoteTargets(catalog *fabric.Catalog, f fabric.Fragment) []*fabric.LocationRemote {
 	if catalog == nil || f == nil {
-		return false
+		return nil
 	}
 	switch frag := f.(type) {
 	case *fabric.FragmentExec:
+		locations := fabricFragmentRemoteTargets(catalog, frag.Input)
 		loc, err := catalog.Resolve(frag.GraphName)
 		if err != nil {
-			return false
+			return locations
 		}
-		_, isRemote := loc.(*fabric.LocationRemote)
-		return isRemote
+		if remote, ok := loc.(*fabric.LocationRemote); ok {
+			locations = append(locations, remote)
+		}
+		return locations
 	case *fabric.FragmentApply:
-		return fabricFragmentHasRemoteTarget(catalog, frag.Input) || fabricFragmentHasRemoteTarget(catalog, frag.Inner)
+		return append(fabricFragmentRemoteTargets(catalog, frag.Input), fabricFragmentRemoteTargets(catalog, frag.Inner)...)
 	case *fabric.FragmentUnion:
-		return fabricFragmentHasRemoteTarget(catalog, frag.LHS) || fabricFragmentHasRemoteTarget(catalog, frag.RHS)
+		return append(fabricFragmentRemoteTargets(catalog, frag.LHS), fabricFragmentRemoteTargets(catalog, frag.RHS)...)
 	case *fabric.FragmentLeaf:
-		return fabricFragmentHasRemoteTarget(catalog, frag.Input)
-	case *fabric.FragmentInit:
-		return false
+		return fabricFragmentRemoteTargets(catalog, frag.Input)
 	default:
-		return false
+		return nil
 	}
 }
 
@@ -754,6 +773,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 
 	txExec := NewStorageExecutor(engine)
 	txExec.ShareStatementCachesFrom(c.base)
+	txExec.inheritedNamespaceLifetime = storage.LogicalNamespaceBegin(ctx)
 	txExec.deferFlush = c.base.deferFlush
 	txExec.ShareEmbedderFrom(c.base)
 	txExec.searchService = c.base.searchService
@@ -843,4 +863,22 @@ func fabricGraphReferenceError(err error) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
 	}
 	return err
+}
+
+func (e *StorageExecutor) logicalRemoteLocations() ([]*fabric.LocationRemote, error) {
+	if e.dbManager == nil || !e.sessionIsComposite() {
+		return nil, nil
+	}
+	refs, err := e.dbManager.GetCompositeConstituents(e.currentDatabaseName())
+	if err != nil {
+		return nil, err
+	}
+	var locations []*fabric.LocationRemote
+	for _, raw := range refs {
+		ref, ok := toConstituentRef(raw)
+		if ok && strings.EqualFold(ref.Type, "remote") {
+			locations = append(locations, &fabric.LocationRemote{DBName: ref.DatabaseName, URI: ref.URI, AuthMode: ref.AuthMode, User: ref.User, Password: ref.Password})
+		}
+	}
+	return locations, nil
 }

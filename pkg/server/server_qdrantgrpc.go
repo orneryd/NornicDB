@@ -130,7 +130,7 @@ func (s *Server) startQdrantGRPC() error {
 
 	// A dropped collection's database loses its search index too, as with
 	// Cypher's DROP DATABASE.
-	cfg.DropDatabase = s.databaseManager().DropDatabase
+	cfg.DropDatabaseContext = s.databaseManager().DropDatabaseContext
 
 	grpcServer, err := qdrantgrpc.NewServerWithDatabaseManager(cfg, s.dbManager, baseStorage, searchProvider, s.auth)
 	if err != nil {

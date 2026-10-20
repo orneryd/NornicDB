@@ -22,6 +22,9 @@ import (
 // by NewWALEngine before the engine serves traffic.
 func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
 	b.bufferedCommitWAL = w
+	if w != nil {
+		w.reconcileNamespaceObligations(b)
+	}
 }
 
 // bufferedFlushKey is the Badger key that marks one write-behind commit as
@@ -175,11 +178,7 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
-		return err
-	}
-	buf.markApplied()
-	return nil
+	return b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, buf.markApplied)
 }
 
 // applyBufferedCommits replays buffered commits into Badger: a single Badger
@@ -195,10 +194,24 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 
 // publishCounts retires the generation count overlay under the same locks that
 // publish persisted counters. Entity/cache callbacks run afterward without locks.
-func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), beforeNotifications ...func()) error {
 	if len(commits) == 0 {
 		return nil
 	}
+	// Both the generation flusher and exported WAL replay reach this owner.
+	// Previously acknowledged work may drain a prepared namespace fence,
+	// while its physical publication must still exclude DROP and Close.
+	release, err := b.beginPublication(true)
+	if err != nil {
+		return err
+	}
+	var notifications []*commitNotification
+	defer func() {
+		release()
+		for _, notification := range notifications {
+			b.completeCommitNotification(notification)
+		}
+	}()
 
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
 	cw := b.newCommitWriter(b.db, txn)
@@ -238,7 +251,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		v := c.version
 		if v.IsZero() {
 			var err error
-			v, err = b.allocateMVCCVersion(txn, c.namespace, time.Now())
+			v, err = b.reserveMVCCVersion(txn, c.namespace, time.Now())
 			if err != nil {
 				return abort(err)
 			}
@@ -417,34 +430,30 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			schema = b.GetSchemaForNamespace(c.namespace)
 			schemas[c.namespace] = schema
 		}
-		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
+		b.publishCommitOperations(c.namespace, schema, c.ops)
+		// Reuse synchronous publication's preparation and notification owner.
+		// Buffered ACK already advanced the revision; recovery has no ACK here.
+		notification := b.reserveCommitOperations(c.ops)
+		b.prepareCommitOperations(c.ops, notification != nil, c.recovered)
+		if notification != nil {
+			notifications = append(notifications, notification)
+		}
+	}
+	for _, publish := range beforeNotifications {
+		publish()
 	}
 	return nil
 }
 
 // publishCommitOperations mirrors the commit tail's callback and unique-value
 // cache updates for one buffered statement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
-	// Normal buffered writes already advanced their logical revision at ACK.
-	// Replaying durability must not invalidate stable query results once per row.
-	// Recovery has no prior ACK in this process and still publishes its revision.
-	notifyNodeCreated, notifyNodeUpdated := b.publishNodeCreated, b.publishNodeUpdated
-	notifyNodeDeleted := b.publishNodeDeleted
-	notifyEdgeCreated, notifyEdgeUpdated := b.publishEdgeCreated, b.publishEdgeUpdated
-	notifyEdgeDeleted := b.publishEdgeDeleted
-	if publishRevision {
-		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
-		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
-	}
-
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
 			b.cacheOnNodeCreatedWithCounts(op.Node, false)
-			notifyNodeCreated(op.Node)
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-			notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
@@ -456,27 +465,20 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 			} else {
 				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
 			}
-			for _, edgeID := range op.DeletedEdgeIDs {
-				notifyEdgeDeleted(edgeID)
-			}
-			notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
 			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
-			notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeUpdated(oldType, op.Edge)
-			notifyEdgeUpdated(op.Edge)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
-			notifyEdgeDeleted(op.EdgeID)
 		}
 	}
 

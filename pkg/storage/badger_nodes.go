@@ -31,7 +31,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	release, barrierErr := b.beginWrite(namespaceOfNode(node))
 	if barrierErr != nil {
 		return "", barrierErr
 	}
@@ -367,7 +367,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	release, barrierErr := b.beginWrite(namespaceOfNode(node))
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -684,7 +684,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	release, barrierErr := b.beginWrite(namespaceForNodeID(id))
 	if barrierErr != nil {
 		return barrierErr
 	}

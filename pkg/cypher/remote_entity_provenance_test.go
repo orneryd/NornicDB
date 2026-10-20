@@ -19,6 +19,9 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 	require.NoError(t, err)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if respondRemoteNamespaceFixture(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		body, _ := io.ReadAll(r.Body)
 		if strings.HasSuffix(r.URL.Path, "/tx") && strings.Contains(string(body), `"statements":[]`) {

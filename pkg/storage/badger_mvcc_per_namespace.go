@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -84,18 +85,41 @@ type namespaceMVCCState struct {
 // in any namespace can ever sit at or below a sequence previously emitted
 // under the global counter, so MVCC head records persisted by older
 // binaries remain strictly older than anything we mint going forward.
+// namespaceMVCC publishes a derived state only from an admitted mutation.
+// Read snapshots use readNamespaceMVCC and never repopulate a retired cache.
 func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, error) {
-	if namespace == "" {
-		return nil, fmt.Errorf("namespaceMVCC: empty namespace")
-	}
-
 	b.mvccByNamespaceMu.RLock()
 	state, ok := b.mvccByNamespace[namespace]
 	b.mvccByNamespaceMu.RUnlock()
 	if ok {
 		return state, nil
 	}
+	state, err := b.readNamespaceMVCC(namespace)
+	if err != nil {
+		return nil, err
+	}
+	b.mvccByNamespaceMu.Lock()
+	defer b.mvccByNamespaceMu.Unlock()
+	if previous := b.mvccByNamespace[namespace]; previous != nil {
+		return previous, nil
+	}
+	if b.mvccByNamespace == nil {
+		b.mvccByNamespace = make(map[string]*namespaceMVCCState)
+	}
+	b.mvccByNamespace[namespace] = state
+	return state, nil
+}
 
+func (b *BadgerEngine) readNamespaceMVCC(namespace string) (*namespaceMVCCState, error) {
+	if namespace == "" {
+		return nil, fmt.Errorf("namespaceMVCC: empty namespace")
+	}
+	b.mvccByNamespaceMu.RLock()
+	state, ok := b.mvccByNamespace[namespace]
+	b.mvccByNamespaceMu.RUnlock()
+	if ok {
+		return state, nil
+	}
 	persisted, err := b.loadPersistedNamespaceSequence(namespace)
 	if err != nil {
 		return nil, err
@@ -104,29 +128,9 @@ func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, err
 	if err != nil {
 		return nil, err
 	}
-
-	// A concurrent caller may have published the namespace's state since the
-	// read check; only the first one is kept and persisted.
-	b.mvccByNamespaceMu.Lock()
-	state, ok = b.mvccByNamespace[namespace]
-	if !ok {
-		if b.mvccByNamespace == nil {
-			b.mvccByNamespace = make(map[string]*namespaceMVCCState)
-		}
-		starting := max(persisted, b.mvccLegacyGlobalSeed, recoveredSeq)
-		state = &namespaceMVCCState{
-			persistKey: mvccNamespaceSequenceKey(namespace),
-		}
-		state.seq.Store(starting)
-		if recoveredHighWater > 0 {
-			state.highWaterNanos.Store(recoveredHighWater)
-		}
-		b.mvccByNamespace[namespace] = state
-	}
-	b.mvccByNamespaceMu.Unlock()
-	if !ok && recoveredSeq > persisted {
-		b.persistMVCCSequence(namespace)
-	}
+	state = &namespaceMVCCState{persistKey: mvccNamespaceSequenceKey(namespace)}
+	state.seq.Store(max(persisted, b.mvccLegacyGlobalSeed, recoveredSeq))
+	state.highWaterNanos.Store(recoveredHighWater)
 	return state, nil
 }
 
@@ -134,6 +138,18 @@ func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, err
 // subsequent BeginTransaction snapshots the namespace's current sequence
 // instead of treating it like a post-begin namespace.
 func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
+	// Already-loaded read state has no publication to admit.
+	b.mvccByNamespaceMu.RLock()
+	cached := b.mvccByNamespace[namespace]
+	b.mvccByNamespaceMu.RUnlock()
+	if cached != nil && cached.seq.Load() > 0 && cached.highWaterNanos.Load() > 0 {
+		return nil
+	}
+	release, admissionErr := b.beginNamespaceMutation(context.Background(), []string{namespace}, nil, false, namespacePublicationFresh)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer release()
 	if namespace == "" {
 		return nil
 	}
@@ -141,14 +157,9 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 	if err != nil {
 		return err
 	}
-	// Hot path: once a live engine has already advanced this namespace's
-	// sequence and high-water mark, re-scanning all heads on every implicit
-	// write transaction is pure overhead. The expensive recovery path is only
-	// needed for cold/stale states (e.g. reopen after migration where the
-	// namespace was initialized at seq=0 before recovery ran).
-	if state.seq.Load() > 0 && state.highWaterNanos.Load() > 0 {
-		return nil
-	}
+	// A newly published state may already contain a recovered floor, but that
+	// floor is still read-derived. Complete its durable initialization under
+	// this admission before treating it as the already-loaded fast path above.
 	persisted, err := b.loadPersistedNamespaceSequence(namespace)
 	if err != nil {
 		return err

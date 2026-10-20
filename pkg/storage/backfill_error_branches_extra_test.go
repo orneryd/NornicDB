@@ -45,14 +45,14 @@ func TestEdgeBetweenBackfill_AdditionalBranches(t *testing.T) {
 		require.Contains(t, err.Error(), "decode edge for edge-between index")
 	})
 
-	t.Run("rebuild with closed db hits drop-prefix error", func(t *testing.T) {
+	t.Run("rebuild rejects a closed engine before clearing the index", func(t *testing.T) {
 		engine, err := NewBadgerEngineInMemory()
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 
 		_, err = engine.rebuildEdgeBetweenIndex(context.Background())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "clear edge-between set index before rebuild")
+		require.ErrorIs(t, err, ErrStorageClosed)
 	})
 }
 
@@ -93,13 +93,13 @@ func TestLabelBackfill_AdditionalBranches(t *testing.T) {
 		require.Contains(t, err.Error(), "decode node")
 	})
 
-	t.Run("rebuild with closed db hits drop-prefix error", func(t *testing.T) {
+	t.Run("rebuild rejects a closed engine before clearing the index", func(t *testing.T) {
 		engine, err := NewBadgerEngineInMemory()
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 
 		_, err = engine.rebuildLabelIndex(context.Background())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "clear label index before rebuild")
+		require.ErrorIs(t, err, ErrStorageClosed)
 	})
 }

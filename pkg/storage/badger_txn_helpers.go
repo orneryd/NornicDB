@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,22 +25,21 @@ func (b *BadgerEngine) ensureOpen() error {
 // not touch Badger in that case). The closed check runs under the barrier so
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
-func (b *BadgerEngine) beginWrite() (func(), error) {
-	b.writeBarrier.RLock()
-	if err := b.ensureOpen(); err != nil {
-		b.writeBarrier.RUnlock()
-		return nil, err
-	}
-	return b.writeBarrier.RUnlock, nil
+func (b *BadgerEngine) beginWrite(namespaces ...string) (func(), error) {
+	return b.beginNamespaceMutation(context.Background(), namespaces, nil, false, namespacePublicationFresh)
 }
 
-func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
-	b.writeBarrier.Lock()
-	if err := b.ensureOpen(); err != nil {
-		b.writeBarrier.Unlock()
-		return nil, err
+// Replay already owns an acknowledged lifetime and may retire a sealed frontier.
+func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
+	mode := namespacePublicationFresh
+	if replay {
+		mode = namespacePublicationReplay
 	}
-	return b.writeBarrier.Unlock, nil
+	return b.beginNamespaceMutation(context.Background(), nil, nil, false, mode)
+}
+
+func (b *BadgerEngine) beginSchemaWrite(namespaces ...string) (func(), error) {
+	return b.beginNamespaceMutation(context.Background(), namespaces, nil, true, namespacePublicationFresh)
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
