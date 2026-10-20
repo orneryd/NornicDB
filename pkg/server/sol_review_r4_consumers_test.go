@@ -65,7 +65,7 @@ func TestSolR4ConsumerShutdown(t *testing.T) {
 					queried <- nil
 				} else {
 					router := newHeimdallDBRouter(server.db, server.dbManager, nil)
-					_, err := router.Query(context.Background(), dbName, "CALL db.index.vector.embed('needle') YIELD embedding RETURN embedding", nil)
+					_, err := router.Query(heimdallAuthDisabled(), dbName, "CALL db.index.vector.embed('needle') YIELD embedding RETURN embedding", nil)
 					if err == nil {
 						queried <- errors.New("Heimdall query reported success after Close cancelled its provider")
 						return
