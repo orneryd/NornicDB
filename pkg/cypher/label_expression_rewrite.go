@@ -49,6 +49,8 @@ type labelExpressionRewriter struct {
 	query     string
 	edits     []labelRewriteEdit
 	generated int
+	// The property phase reuses this element walk without label rewriting.
+	visitElement func(open, close int, relationship bool) error
 	// params are the statement's parameters: a dynamic label or type whose
 	// value is a literal or a parameter is resolved to names here
 	// (resolveConstant).
@@ -649,7 +651,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				if err := r.patternElements(i+1, stop, mode, predicates); err != nil {
 					return err
 				}
-			} else if err := r.element(i, close, false, false, mode, predicates); err != nil {
+			} else if err := r.visitOrRewriteElement(i, close, false, false, mode, predicates); err != nil {
 				return err
 			}
 			i = close
@@ -660,11 +662,11 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				return nil
 			}
 			quantifier, at, quantified := quantifierAfterArrow(q, close, end)
-			if err := r.element(open, close, true, quantified, mode, predicates); err != nil {
+			if err := r.visitOrRewriteElement(open, close, true, quantified, mode, predicates); err != nil {
 				return err
 			}
 			i = close
-			if quantified {
+			if quantified && r.visitElement == nil {
 				if err := r.quantifiedRelationship(open, close, at, quantifier, mode); err != nil {
 					return err
 				}
@@ -673,7 +675,7 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 		case '-', '<':
 			// An abbreviated relationship (--, -->, <--) may be quantified.
 			arrowEnd := arrowRunEnd(q, i, end)
-			if next := skipASCIISpaces(q, arrowEnd, end); next < end && q[next] != '[' {
+			if next := skipASCIISpaces(q, arrowEnd, end); r.visitElement == nil && next < end && q[next] != '[' {
 				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok {
 					if err := r.quantifiedArrow(i, arrowEnd, next, quantifier, mode); err != nil {
 						return err
@@ -686,6 +688,13 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 		}
 	}
 	return nil
+}
+
+func (r *labelExpressionRewriter) visitOrRewriteElement(open, close int, relationship, quantified bool, mode labelPatternMode, predicates *[]string) error {
+	if r.visitElement != nil {
+		return r.visitElement(open, close, relationship)
+	}
+	return r.element(open, close, relationship, quantified, mode, predicates)
 }
 
 // element rewrites the node (or relationship) pattern query[open:close+1]:

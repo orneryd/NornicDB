@@ -148,12 +148,42 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		patternPart = strings.TrimSpace(baseMatch[matchIdx+5 : whereIdx])
 		wherePart = strings.TrimSpace(baseMatch[whereIdx+5:])
 	}
-	nodePat, parseErr := e.parseNodePattern(ctx, patternPart)
+	if !patternMapsAreConstant(patternPart) || !patternMapsAreConstant(wherePart) {
+		return nil, false, nil
+	}
+	nodePat, parseErr := readNodePattern(ctx, patternPart, patternPropertyKeys)
 	if parseErr != nil {
 		return nil, true, parseErr
 	}
 	if strings.TrimSpace(nodePat.variable) != deleteVar {
 		return nil, false, nil
+	}
+	// Admit the WHERE shape and parameter type before reading property values.
+	if wherePart != "" {
+		equality := deleteWherePropertyEquals.FindStringSubmatch(wherePart)
+		membership := deleteWherePropertyInParameter.FindStringSubmatch(wherePart)
+		if len(equality) == 4 && strings.EqualFold(equality[1], deleteVar) {
+			// The equality path accepts literal and parameter values.
+		} else if len(membership) == 4 && strings.EqualFold(membership[1], deleteVar) {
+			if raw, exists := params[membership[3]]; exists {
+				switch raw.(type) {
+				case []interface{}, []string:
+				default:
+					return nil, false, nil
+				}
+			}
+		} else {
+			return nil, false, nil
+		}
+	}
+	rowCtx, prepared, prepareErr := e.preparePatternRow(ctx, patternPart, nil)
+	if prepareErr != nil {
+		return nil, true, prepareErr
+	}
+	ctx = rowCtx
+	nodePat, parseErr = e.parseNodePattern(ctx, prepared)
+	if parseErr != nil {
+		return nil, true, parseErr
 	}
 
 	var nodes []*storage.Node

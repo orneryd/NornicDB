@@ -142,13 +142,6 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
 	// traversal; only a lone node pattern is matched as a node.
 	isRelationshipPattern := containsRelationshipPattern(pattern)
-	var matches *TraversalMatch
-	if isRelationshipPattern {
-		matches = e.parseTraversalPattern(ctx, pattern)
-		if matches == nil {
-			return newBindings, newRelBindings
-		}
-	}
 
 	for idx, existing := range existingBindings {
 		var existingRels relationshipBinding
@@ -156,6 +149,25 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			existingRels = existingRelBindings[idx]
 		}
 
+		rowScope := valueBindingsLayer(ctx, len(existing)+len(existingRels))
+		for name, node := range existing {
+			rowScope[name] = node
+		}
+		for name, relationship := range existingRels {
+			rowScope[name] = relationship
+		}
+		rowCtx, rowPattern, prepareErr := e.preparePatternRow(ctx, pattern, rowScope)
+		if prepareErr != nil {
+			recordExpressionFailure(ctx, prepareErr)
+			return nil, nil
+		}
+		var matches *TraversalMatch
+		if isRelationshipPattern {
+			matches = e.parseTraversalPattern(rowCtx, rowPattern)
+			if matches == nil {
+				return newBindings, newRelBindings
+			}
+		}
 		// Check for relationship pattern
 		if isRelationshipPattern {
 			// Check if any bound variables are referenced
@@ -164,13 +176,16 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
+				if !e.pipelineNodeMatchesPattern(boundStartNode, matches.StartNode) {
+					continue
+				}
 				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
+					paths = e.traverseChainedGraph(rowCtx, matches, []*storage.Node{boundStartNode})
 				} else {
-					paths = e.traverseFromNode(ctx, boundStartNode, matches)
+					paths = e.traverseFromNode(rowCtx, boundStartNode, matches)
 				}
 			} else {
-				paths = e.traverseGraph(ctx, matches)
+				paths = e.traverseGraph(rowCtx, matches)
 			}
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
@@ -204,7 +219,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			}
 		} else {
 			// Simple node pattern
-			nodePattern, parseErr := e.parseNodePattern(ctx, pattern)
+			nodePattern, parseErr := e.parseNodePattern(rowCtx, rowPattern)
 			if parseErr != nil {
 				recordExpressionFailure(ctx, parseErr)
 				return nil, nil
@@ -212,13 +227,15 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				// Variable is bound, just propagate
+				if !e.pipelineNodeMatchesPattern(boundNode, nodePattern) {
+					continue
+				}
 				newBindings = append(newBindings, existing)
 				newRelBindings = append(newRelBindings, existingRels)
 				continue
 			}
 
-			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
+			nodes, _ := e.loadPatternNodes(rowCtx, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
 				b := make(binding)
@@ -1404,11 +1421,27 @@ func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClau
 // MATCH clause. The second return value distinguishes a valid pattern that did
 // not match from an expression that is not a relationship pattern.
 func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, clause string, nodes map[string]*storage.Node) (bool, bool) {
-	match, recognized := e.parseBoundRelationshipPattern(ctx, clause)
+	return e.evaluateRowRelationshipPattern(ctx, clause, entityRow(ctx, nodes, nil))
+}
+
+// Every predicate adapter passes its complete row here, including scalar,
+// relationship and node bindings. Parsing consumes the same prepared values
+// as MATCH, instead of evaluating a node-only view during recognition.
+func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, clause string, values map[string]interface{}) (bool, bool) {
+	if !isRelationshipPatternOperand(strings.TrimSpace(clause)) {
+		return false, false
+	}
+	rowCtx, pattern, err := e.preparePatternRow(ctx, strings.TrimSpace(clause), values)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false, true
+	}
+	match, recognized := e.parseBoundRelationshipPattern(rowCtx, pattern)
 	if !recognized {
 		return false, false
 	}
-	return e.evaluateParsedBoundRelationshipPattern(ctx, match, nodes), true
+	nodes, _ := withWhereValueContext(values)
+	return e.evaluateParsedBoundRelationshipPattern(rowCtx, match, nodes), true
 }
 
 // parseBoundRelationshipPattern parses clause as a relationship pattern
@@ -1417,12 +1450,20 @@ func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, 
 // whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
 // not one.
 func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
+	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPattern)
+}
+
+func (e *StorageExecutor) parseBoundRelationshipPatternStructure(ctx context.Context, clause string) (*TraversalMatch, bool) {
+	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPatternStructure)
+}
+
+func readBoundRelationshipPattern(ctx context.Context, clause string, read func(context.Context, string) *TraversalMatch) (*TraversalMatch, bool) {
 	pattern := strings.TrimSpace(clause)
 	if !isRelationshipPatternOperand(pattern) {
 		return nil, false
 	}
 
-	match := e.parseTraversalPattern(ctx, pattern)
+	match := read(ctx, pattern)
 	if match == nil || len(match.Segments) == 0 && match.Relationship.MinHops == 0 && !match.Relationship.VariableLength {
 		return nil, false
 	}
