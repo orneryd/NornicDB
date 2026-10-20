@@ -2068,12 +2068,12 @@ func joinedValueKey(val interface{}) string {
 		if v == nil {
 			return "node:nil"
 		}
-		return "node:" + string(v.ID)
+		return "node:" + string(nativeGraphEntityKey(v))
 	case *storage.Edge:
 		if v == nil {
 			return "edge:nil"
 		}
-		return "edge:" + string(v.ID)
+		return "edge:" + string(nativeGraphEntityKey(v))
 	default:
 		return fmt.Sprintf("%#v", val)
 	}

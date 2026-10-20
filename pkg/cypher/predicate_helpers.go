@@ -37,7 +37,7 @@ func getBindingNodeValue(node *storage.Node, propName string) (any, bool) {
 		if val, ok := node.Properties["id"]; ok {
 			return val, true
 		}
-		return string(node.ID), true
+		return nativeEntityOutputID(node), true
 	}
 	return getNodePropertyValue(node, propName)
 }

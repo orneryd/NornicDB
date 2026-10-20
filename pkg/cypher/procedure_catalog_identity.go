@@ -17,7 +17,7 @@ import (
 // a leftover legacy copy; create-before-delete keeps failures retryable.
 func (e *StorageExecutor) migrateProcedureCatalogIdentity(store storage.Engine, node *storage.Node, record persistedProcedureRecord) (bool, error) {
 	canonical := procedureCatalogNodeID(record.Name)
-	if node.ID == canonical || node.ID != storage.NodeID(procedureCatalogPrefix+lowerASCII(strings.TrimSpace(record.Name))) {
+	if storage.NodeID(nativeEntityOutputID(node)) == canonical || storage.NodeID(nativeEntityOutputID(node)) != storage.NodeID(procedureCatalogPrefix+lowerASCII(strings.TrimSpace(record.Name))) {
 		return false, nil
 	}
 	existing, err := store.GetNode(canonical)
@@ -31,20 +31,19 @@ func (e *StorageExecutor) migrateProcedureCatalogIdentity(store storage.Engine, 
 			return false, err
 		}
 		if destination.Name != record.Name || !slices.Contains(existing.Labels, procedureCatalogLabel) {
-			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(nativeEntityOutputID(existing)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
 		if _, _, _, err := e.compilePersistedProcedure(destination); err != nil {
-			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(nativeEntityOutputID(existing)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
 	}
 	if !superseded {
-		migrated := *node
-		migrated.ID = canonical
-		if _, err := store.CreateNode(&migrated); err != nil {
+		migrated := nativeNodeWithID(node, canonical)
+		if _, err := store.CreateNode(migrated); err != nil {
 			return false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 		}
 	}
-	if err := store.DeleteNode(node.ID); err != nil {
+	if err := deleteNativeCatalogNode(store, node); err != nil {
 		return false, localizedError(localization.CypherProceduresDropFailed(record.Name, err), err)
 	}
 	return superseded, nil
@@ -55,7 +54,7 @@ func (e *StorageExecutor) migrateProcedureCatalogIdentity(store storage.Engine, 
 func decodeProcedureCatalogRecord(node *storage.Node) (persistedProcedureRecord, error) {
 	var record persistedProcedureRecord
 	invalid := func() (persistedProcedureRecord, error) {
-		return record, localizedError(localization.CypherProceduresCatalogRecordDecodeFailed(string(node.ID)), nerrors.ErrProcedureCatalogRecordDecodeFailed)
+		return record, localizedError(localization.CypherProceduresCatalogRecordDecodeFailed(nativeEntityOutputID(node)), nerrors.ErrProcedureCatalogRecordDecodeFailed)
 	}
 	var payload []byte
 	switch raw := node.Properties["record"].(type) {
@@ -102,7 +101,7 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(store storage.Engine, 
 			return nil, err
 		}
 		if _, _, _, err := e.compilePersistedProcedure(record); err != nil {
-			return nil, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+			return nil, localizedError(localization.CypherProceduresCatalogRecordInvalid(nativeEntityOutputID(node)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
 		if _, err := e.migrateProcedureCatalogIdentity(store, node, record); err != nil {
 			return nil, err
@@ -123,7 +122,7 @@ func (e *StorageExecutor) resolveProcedureCatalogIdentity(store storage.Engine, 
 		return nil, err
 	}
 	if record.Name != name {
-		return nil, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+		return nil, localizedError(localization.CypherProceduresCatalogRecordInvalid(nativeEntityOutputID(node)), nerrors.ErrProcedureCatalogRecordInvalid)
 	}
 	return node, nil
 }

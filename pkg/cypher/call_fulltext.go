@@ -225,7 +225,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 
 	sort.Slice(scoredNodes, func(i, j int) bool {
 		if scoredNodes[i].score == scoredNodes[j].score {
-			return scoredNodes[i].node.ID < scoredNodes[j].node.ID
+			return nativeEntityOrder(scoredNodes[i].node, scoredNodes[j].node) < 0
 		}
 		return scoredNodes[i].score > scoredNodes[j].score
 	})

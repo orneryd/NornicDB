@@ -882,7 +882,7 @@ func (e *StorageExecutor) invalidateNodeLookupCacheForEntityID(entityID storage.
 	cacheMu := e.nodeLookupCacheLock()
 	cacheMu.Lock()
 	for key, node := range e.nodeLookupCache {
-		if node != nil && node.ID == entityID {
+		if node != nil && nativeLookupCacheIDMatches(e.storage, node, entityID) {
 			delete(e.nodeLookupCache, key)
 		}
 	}

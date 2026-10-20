@@ -285,7 +285,11 @@ func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...gr
 // input is not a node. It never interprets a stored local ID as an element ID.
 func nativeEntityIdentity(value interface{}) (storage.EntityIdentity, bool) {
 	switch entity := value.(type) {
-	case *storage.Node:
+	case storage.Node:
+        return entity.Identity(), true
+    case storage.Edge:
+        return entity.Identity(), true
+    case *storage.Node:
 		if entity != nil {
 			return entity.Identity(), true
 		}
@@ -392,36 +396,12 @@ func nativeEntityMetadataID(engine storage.Engine, identity storage.EntityIdenti
 // through their transaction/admission wrapper and never use this escape.
 func (e *StorageExecutor) nativeEntityMetadataTarget(ctx context.Context, identity storage.EntityIdentity) (storage.Engine, string) {
 	selected := e.getStorage(ctx)
-	source := func(engine storage.Engine) storage.Engine {
-		if identity.Database == "" || storage.DatabaseOf(engine) == identity.Database {
-			return engine
-		}
-		for depth := 0; engine != nil && depth < 16; depth++ {
-			if sources, ok := engine.(interface {
-				EntitySource(storage.EntityIdentity) (storage.Engine, error)
-			}); ok {
-				if selected, err := sources.EntitySource(identity); err == nil {
-					return selected
-				}
-				return nil
-			}
-			wrapper, ok := engine.(storage.EngineUnwrapper)
-			if !ok {
-				break
-			}
-			next := wrapper.GetInnerEngine()
-			if next == engine {
-				break
-			}
-			engine = next
-		}
-		return nil
-	}
-	if engine := source(selected); engine != nil {
+
+	if engine, ok := identity.SourceEngine(selected); ok {
 		return engine, storage.QualifiedEntityID(engine, identity.LocalID)
 	}
 	if scoped, err := e.graphFunctionStorage("", selected); err == nil {
-		if engine := source(scoped); engine != nil {
+		if engine, ok := identity.SourceEngine(scoped); ok {
 			return engine, storage.QualifiedEntityID(engine, identity.LocalID)
 		}
 	}
@@ -857,4 +837,125 @@ func nativeEntityOrder(left, right interface{}) int {
 		return order
 	}
 	return strings.Compare(a.LocalID, b.LocalID)
+}
+
+// Public local-ID contracts and storage lookup contracts are intentionally
+// different adapters. Output IDs preserve their existing bytes; they are never
+// graph keys and must not be used to choose a storage participant.
+func nativeEntityOutputID(value interface{}) string {
+    identity, ok := nativeEntityIdentity(value)
+    if !ok { return "" }
+    return identity.LocalID
+}
+
+func nativeRelationshipOutputEndpoints(edge *storage.Edge) (string, string) {
+    if edge == nil { return "", "" }
+    return string(edge.StartNode), string(edge.EndNode)
+}
+
+func nativeEdgeStartsAt(edge *storage.Edge, node *storage.Node) bool {
+    return edge != nil && node != nil && edge.StartIdentity().Equal(node.Identity())
+}
+
+func nativeNodeScoringSnapshot(source *storage.Node) *storage.Node {
+    snapshot := *source
+    snapshot.EmbedMeta, snapshot.NamedEmbeddings, snapshot.ChunkEmbeddings = nil, nil, nil
+    return storage.CopyNode(&snapshot)
+}
+
+func nativeEdgeScoringSnapshot(source *storage.Edge) *storage.Edge {
+    return storage.CopyEdge(source)
+}
+
+func nativeIdentityBytes(value interface{}) int64 {
+    switch value := value.(type) {
+    case *storage.Node:
+        if value != nil { return int64(len(value.ID)) }
+    case *storage.Edge:
+        if value != nil { return int64(len(value.ID)+len(value.StartNode)+len(value.EndNode)) }
+    }
+    return 0
+}
+
+func nativeNodeWithID(source *storage.Node, id storage.NodeID) *storage.Node {
+    copy := *source
+    copy.ID = id
+    return &copy
+}
+
+func setNativeRelationshipEndpoints(edge *storage.Edge, start, end storage.NodeID) {
+    edge.StartNode, edge.EndNode = start, end
+}
+
+func nativeRelationshipEndpointValue(e *StorageExecutor, edge *storage.Edge, end bool, store storage.Engine) interface{} {
+    if edge == nil { return nil }
+    id, selected := nativeEdgeLookupID(store, edge)
+    start, target, endpoints := nativeEdgeStorageEndpoints(store, edge)
+    if !selected || !endpoints { return nil }
+    if _, err := store.GetEdge(id); err != nil { return nil }
+    if end { start = target }
+    node, err := e.getQueryNode(store, start)
+    if err != nil { return nil }
+    return node
+}
+
+func nativeNodeDegree(store storage.Engine, node *storage.Node, direction string) int64 {
+    id, selected := nativeNodeLookupID(store, node)
+    if !selected { return 0 }
+    switch direction {
+    case "incoming": return int64(store.GetInDegree(id))
+    case "outgoing": return int64(store.GetOutDegree(id))
+    }
+    return int64(store.GetInDegree(id)+store.GetOutDegree(id))
+}
+
+func nativeRelationshipStartOutputID(edge *storage.Edge) string { start, _ := nativeRelationshipOutputEndpoints(edge); return start }
+func nativeRelationshipEndOutputID(edge *storage.Edge) string { _, end := nativeRelationshipOutputEndpoints(edge); return end }
+
+func deleteNativeCatalogNode(store storage.Engine, node *storage.Node) error {
+    id, selected := nativeNodeLookupID(store, node)
+    if !selected { return storage.ErrNotFound }
+    return store.DeleteNode(id)
+}
+
+func nativeEntityNotFound(value interface{}) error {
+    if edge, ok := value.(*storage.Edge); ok && edge != nil {
+        return localizedStatusError("Neo.ClientError.Statement.EntityNotFound", "EntityNotFound", localization.CypherProceduresRelationshipNotFound(edge.ElementID("")))
+    }
+    id := nativeEntityOutputID(value)
+    if node, ok := value.(*storage.Node); ok && node != nil { id = node.ElementID("") }
+    return localizedStatusError("Neo.ClientError.Statement.EntityNotFound", "EntityNotFound", localization.CypherProceduresNodeNotFound(id))
+}
+
+func nativeSchemaRelationship(database string, id storage.EdgeID, start, end *storage.Node, kind string) *storage.Edge {
+    return &storage.Edge{ID: id, Database: database, StartNode: start.ID, EndNode: end.ID, Type: kind, Properties: map[string]interface{}{"name": kind}}
+}
+
+func nativeSchemaIndexID(store storage.Engine, node *storage.Node) (storage.NodeID, bool) {
+    id, ok := nativeNodeLookupID(store, node)
+    return storage.EnsureNodeIDDatabasePrefixForEngine(store, id), ok
+}
+
+func nativeLookupCacheIDMatches(store storage.Engine, node *storage.Node, id storage.NodeID) bool {
+    selected, ok := nativeNodeLookupID(store, node)
+    return ok && selected == id
+}
+
+func nativeEndpointCacheKey(store storage.Engine, id storage.NodeID) graphEntityKey {
+    reference := storage.EntityIdentity{LocalID: string(id)}
+    reference = algorithmIdentity(store, reference)
+    return graphEntityKey(reference.Key())
+}
+
+func nativeProjectionNodeID(node *storage.Node, database string) string { return node.Identity().InDatabase(database) }
+
+type nativeMaterializedAccessRecorder struct { executor *StorageExecutor }
+func (r nativeMaterializedAccessRecorder) RecordMaterializedAccess(id string) {
+    if recorder, ok := r.executor.storage.(materializedAccessRecorder); ok { recorder.RecordMaterializedAccess(id) }
+}
+func (r nativeMaterializedAccessRecorder) RecordNativeEntityAccess(value interface{}) {
+    identity, present := nativeEntityIdentity(value)
+    if !present { return }
+    engine, id := r.executor.nativeEntityMetadataTarget(context.Background(), identity)
+    if recorder, ok := engine.(materializedAccessRecorder); ok { recorder.RecordMaterializedAccess(id) }
 }

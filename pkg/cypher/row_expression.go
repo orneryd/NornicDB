@@ -1911,7 +1911,7 @@ func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, val
 	if edge == nil {
 		return nil, true, nil
 	}
-	entry := rowEndpointMemoEntry{id: edge.ID, end: end}
+	entry := rowEndpointMemoEntry{id: nativeGraphEntityKey(edge), end: end}
 	if result, read := memo[entry]; read {
 		return result, true, nil
 	}
@@ -1930,7 +1930,7 @@ const rowEndpointMemoKey = "\x00endpoint_memo"
 // rowEndpointMemoEntry is one relationship's start (end false) or end node
 // in a rowEndpointMemoKey memo.
 type rowEndpointMemoEntry struct {
-	id  storage.EdgeID
+	id  graphEntityKey
 	end bool
 }
 
@@ -1951,30 +1951,9 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
 func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
-	store := e.storage
-	if len(stores) > 0 {
-		store = stores[0]
-	}
-	if edge == nil {
-		return nil
-	}
-	id := edge.StartNode
-	if end {
-		id = edge.EndNode
-	}
-	edgeID, edgeSelected := edge.Identity().LookupID(store, "5")
-	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(store)
-	if !edgeSelected || !nodeSelected {
-		return nil
-	}
-	if current, err := store.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
-		return nil
-	}
-	node, err := e.getQueryNode(store, nodeID)
-	if err != nil {
-		return nil
-	}
-	return node
+    store := e.storage
+    if len(stores) > 0 { store = stores[0] }
+    return nativeRelationshipEndpointValue(e, edge, end, store)
 }
 
 // isRelationshipPatternOperand reports whether expression is one whole

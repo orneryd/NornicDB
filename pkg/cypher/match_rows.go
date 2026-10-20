@@ -529,7 +529,7 @@ func extractOrderByPropertyValue(value interface{}, propPath []string) interface
 		case *storage.Node:
 			switch {
 			case strings.EqualFold(part, "id"):
-				current = string(v.ID)
+				current = nativeEntityOutputID(v)
 			case strings.EqualFold(part, "createdAt"):
 				// Cypher property access should prefer explicit node properties.
 				// Fall back to metadata field for nodes without a createdAt property.

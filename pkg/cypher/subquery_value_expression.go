@@ -396,9 +396,8 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 
 // executeCorrelatedSubqueryBody runs a subquery body through the full
 // executor with the row's values it uses bound the way MATCH … CALL binds a
-// correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
-// relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
-// WITH $p AS v. Row parameters stay available.
+// correlated subquery's imports: native entities and scalar values remain
+// typed values bound by WITH $p AS v. Row parameters stay available.
 func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
 	params := make(map[string]interface{}, len(values))
 	for name, value := range getParamsFromContext(ctx) {
@@ -415,29 +414,8 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	carried := make([]string, 0, len(names))
 	for index, name := range names {
 		param := fmt.Sprintf("__subquery_row_%d", index)
-		switch value := values[name].(type) {
-		case *storage.Node:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH (%s) WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		case *storage.Edge:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		default:
-			params[param] = value
-			carried = append(carried, "$"+param+" AS "+name)
-		}
+        params[param] = values[name]
+        carried = append(carried, "$"+param+" AS "+name)
 	}
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
@@ -518,17 +496,17 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 		return 0, true
 	}
 	hideSystemNodes := shouldHideSystemNodes(e.storage)
-	seen := make(map[storage.NodeID]struct{}, len(nodes))
+	seen := make(map[graphEntityKey]struct{}, len(nodes))
 	var row map[string]interface{}
 	var count int64
 	for _, node := range nodes {
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			continue
 		}
-		if _, duplicate := seen[node.ID]; duplicate {
+		if _, duplicate := seen[nativeGraphEntityKey(node)]; duplicate {
 			continue
 		}
-		seen[node.ID] = struct{}{}
+		seen[nativeGraphEntityKey(node)] = struct{}{}
 		if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties) {
 			continue
 		}
@@ -712,24 +690,28 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	}
 	// With both ends bound, expand from the end with fewer relationships in
 	// the direction it sees them: the same relationships either way.
-	from, target := seed, storage.NodeID("")
+	seedID, seedSelected := nativeNodeLookupID(e.storage, seed)
+    if !seedSelected { return 0, true }
+    from, fromID, target := seed, seedID, storage.NodeID("")
 	if end != nil {
-		target = end.ID
+		endID, selected := nativeNodeLookupID(e.storage, end)
+        if !selected { return 0, true }
+        target = endID
 		reversed := reverseRelationshipDirection(rel.Direction)
-		if end.ID != seed.ID && e.relationshipDegree(end.ID, reversed) < e.relationshipDegree(seed.ID, rel.Direction) {
-			from, target, rel.Direction = end, seed.ID, reversed
+		if !nativeEntitiesEqual(end, seed) && e.relationshipDegree(endID, reversed) < e.relationshipDegree(seedID, rel.Direction) {
+			from, fromID, target, rel.Direction = end, endID, seedID, reversed
 		}
 	}
 	traversal := e.newMatchTraversalContext(ctx, from, matches, &rel)
 	var edges []*storage.Edge
 	switch rel.Direction {
 	case "outgoing":
-		edges = e.traversalEdges(traversal, from.ID, true)
+		edges = e.traversalEdges(traversal, fromID, true)
 	case "incoming":
-		edges = e.traversalEdges(traversal, from.ID, false)
+		edges = e.traversalEdges(traversal, fromID, false)
 	default:
 		var err error
-		if edges, err = undirectedIncidentEdges(e.storage, from.ID); err != nil {
+		if edges, err = undirectedIncidentEdges(e.storage, fromID); err != nil {
 			recordExpressionFailure(ctx, err)
 			return 0, true
 		}
@@ -754,16 +736,16 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 				continue
 			}
 		}
-		if boundRel != nil && boundRel.ID != edge.ID {
+		if boundRel != nil && !nativeEntitiesEqual(boundRel, edge) {
 			continue
 		}
 		if len(rel.Properties) > 0 && !e.edgeMatchesProps(edge, rel.Properties) {
 			continue
 		}
-		far := edge.StartNode
-		if rel.Direction == "outgoing" || (rel.Direction == "both" && edge.StartNode == from.ID) {
-			far = edge.EndNode
-		}
+		start, finish, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+        if !selected { continue }
+        far := otherEndpoint(start, finish, fromID)
+        if rel.Direction == "outgoing" { far = finish }
 		endNode := end
 		if target != "" {
 			if far != target {
@@ -1195,11 +1177,13 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 // nodeDegreeCount is the degree of node along shape's direction and types.
 func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
 	store := e.getStorage(ctx)
+	id, selected := nativeNodeLookupID(store, node)
+	if !selected { return 0 }
 	var edges []*storage.Edge
 	if shape.outgoing {
-		edges, _ = store.GetOutgoingEdges(node.ID)
+		edges, _ = store.GetOutgoingEdges(id)
 	} else {
-		edges, _ = store.GetIncomingEdges(node.ID)
+		edges, _ = store.GetIncomingEdges(id)
 	}
 	if len(shape.types) == 0 {
 		return int64(len(edges))

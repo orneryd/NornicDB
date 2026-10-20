@@ -182,7 +182,7 @@ func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name strin
 	if existing == nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, storage.ErrNotFound), storage.ErrNotFound)
 	}
-	if err := store.DeleteNode(existing.ID); err != nil {
+	if err := deleteNativeCatalogNode(store, existing); err != nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, err), err)
 	}
 	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.
@@ -324,7 +324,7 @@ func (e *StorageExecutor) loadPersistedProcedures() error {
 		}
 		spec, handler, _, err := e.compilePersistedProcedure(record)
 		if err != nil {
-			return localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+			return localizedError(localization.CypherProceduresCatalogRecordInvalid(nativeEntityOutputID(node)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
 		if superseded, err := e.migrateProcedureCatalogIdentity(e.storage, node, record); err != nil {
 			return err

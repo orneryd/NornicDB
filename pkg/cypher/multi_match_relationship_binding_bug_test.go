@@ -431,30 +431,31 @@ func TestMergeRelBindingsChecked(t *testing.T) {
 // TestBindingWithRelView directly unit-tests the WHERE-evaluation adapter,
 // including the defensive nil-edge skip that no current caller triggers
 // (buildPathContext never inserts a nil edge into its rels map) but that
-// bindingWithRelView guards against per the "account for invalid input"
-// mandate.
+// The actual typed row scope preserves relationships alongside node bindings.
 func TestBindingWithRelView(t *testing.T) {
 	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}}
 	edge := &storage.Edge{ID: "e1", Properties: map[string]interface{}{"kind": "reducer"}}
 
 	t.Run("no rels returns the binding unchanged", func(t *testing.T) {
 		b := binding{"n": node}
-		view := bindingWithRelView(b, nil)
+		view := (compiledRowScope{nodes: b}).materialize()
 		require.Same(t, node, view["n"])
 	})
 	t.Run("nil edge in rels is skipped", func(t *testing.T) {
 		b := binding{"n": node}
-		view := bindingWithRelView(b, map[string]*storage.Edge{"rel": nil})
+		view := (compiledRowScope{nodes: b, rels: relationshipBindingFromEdges(map[string]*storage.Edge{"rel": nil})}).materialize()
 		require.Same(t, node, view["n"])
 		require.Nil(t, view["rel"], "a nil edge must not produce a synthetic pseudo-node")
 	})
-	t.Run("bound edge becomes a property-only pseudo-node", func(t *testing.T) {
+	t.Run("bound edge retains relationship kind and identity", func(t *testing.T) {
 		b := binding{"n": node}
-		view := bindingWithRelView(b, map[string]*storage.Edge{"rel": edge})
+		view := (compiledRowScope{nodes: b, rels: relationshipBindingFromEdges(map[string]*storage.Edge{"rel": edge})}).materialize()
 		require.Same(t, node, view["n"], "existing node bindings must be preserved")
-		pseudo := view["rel"]
+		pseudo, ok := view["rel"].(*storage.Edge)
+		require.True(t, ok)
 		require.NotNil(t, pseudo)
-		require.Equal(t, storage.NodeID(edge.ID), pseudo.ID)
+		require.Same(t, edge, pseudo)
+		require.Equal(t, edge.Identity(), pseudo.Identity())
 		require.Equal(t, "reducer", pseudo.Properties["kind"])
 	})
 }

@@ -127,11 +127,11 @@ func neo4jValueRepr(value interface{}) string {
 		return fmt.Sprintf("Boolean('%t')", v)
 	case *storage.Node:
 		if v != nil {
-			return "(" + string(v.ID) + ")"
+			return "(" + nativeEntityOutputID(v) + ")"
 		}
 	case *storage.Edge:
 		if v != nil {
-			return "-[" + string(v.ID) + "]-"
+			return "-[" + nativeEntityOutputID(v) + "]-"
 		}
 	}
 	if value == nil {

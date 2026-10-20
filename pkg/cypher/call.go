@@ -675,62 +675,16 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 	return combined, nil
 }
 
-func (e *StorageExecutor) executeCallTailSingleRow(
-	ctx context.Context,
-	seedCols []string,
-	row []interface{},
-	tail string,
-	usedCols []int,
-	expectedCols []string,
-) (*ExecuteResult, error) {
-	params := map[string]interface{}{}
-	prefix := make([]string, 0, len(usedCols)+2)
-	withBindings := make([]string, 0, len(usedCols))
-	predicates := make([]string, 0, len(usedCols))
-	tailIsMatch := tailStartsWithMatchClause(tail)
-
-	for _, i := range usedCols {
-		if i >= len(row) {
-			continue
-		}
-		col := seedCols[i]
-		val := row[i]
-		if node, ok := val.(*storage.Node); ok {
-			pname := "seed_id_" + col
-			if node != nil {
-				params[pname] = string(node.ID)
-			} else {
-				params[pname] = nil
-			}
-			if tailIsMatch {
-				predicates = append(predicates, fmt.Sprintf("id(%s) = $%s", col, pname))
-			} else {
-				prefix = append(prefix, fmt.Sprintf("MATCH (%s) WHERE id(%s) = $%s", col, col, pname))
-				withBindings = append(withBindings, col)
-			}
-			continue
-		}
-		pname := "seed_" + col
-		params[pname] = val
-		withBindings = append(withBindings, fmt.Sprintf("$%s AS %s", pname, col))
-	}
-
-	query := buildCallTailPredicateInjection(tail, predicates)
-	if len(withBindings) > 0 {
-		prefix = append(prefix, "WITH "+strings.Join(withBindings, ", "))
-	}
-	if len(prefix) > 0 {
-		query = strings.Join(prefix, " ") + " " + query
-	}
-
-	inner, err := e.executeInternal(ctx, query, params)
-	if err != nil {
-		return nil, err
-	}
-	if len(expectedCols) > 0 && len(expectedCols) == len(inner.Columns) {
-		inner.Columns = append([]string{}, expectedCols...)
-	}
-	return inner, nil
+func (e *StorageExecutor) executeCallTailSingleRow(ctx context.Context, seedCols []string, row []interface{}, tail string, usedCols []int, expectedCols []string) (*ExecuteResult, error) {
+    values := make(map[string]interface{}, len(usedCols))
+    for _, index := range usedCols {
+        if index >= 0 && index < len(row) && index < len(seedCols) { values[seedCols[index]] = row[index] }
+    }
+    correlated := e.correlatedSubqueryExecutor(ctx, values)
+    inner, err := correlated.executeInternal(ctx, tail, getParamsFromContext(ctx))
+    if err != nil { return nil, err }
+    if len(expectedCols) > 0 && len(expectedCols) == len(inner.Columns) { inner.Columns = append([]string{}, expectedCols...) }
+    return inner, nil
 }
 
 func isPotentialWriteTail(tail string) bool {
@@ -863,11 +817,12 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 	}
 	rows := make([]pipelineRow, 0, len(seed.Rows))
 	nodes := make(map[storage.NodeID]*storage.Node)
+	store := e.getStorage(ctx)
 	getNode := func(id storage.NodeID) (*storage.Node, error) {
 		if node := nodes[id]; node != nil {
 			return node, nil
 		}
-		node, err := e.getQueryNode(e.storage, id)
+		node, err := e.getQueryNode(store, id)
 		if err == nil && node != nil {
 			nodes[id] = node
 		}
@@ -886,11 +841,13 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if expected == nil || !e.compareEqual(relationship.Properties[plan.propertyKey], expected) {
 			continue
 		}
-		startNode, err := getNode(relationship.StartNode)
+		start, end, selected := nativeEdgeStorageEndpoints(store, relationship)
+        if !selected { continue }
+        startNode, err := getNode(start)
 		if err != nil || startNode == nil {
 			continue
 		}
-		endNode, err := getNode(relationship.EndNode)
+		endNode, err := getNode(end)
 		if err != nil || endNode == nil {
 			continue
 		}

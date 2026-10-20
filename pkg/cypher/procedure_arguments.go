@@ -80,7 +80,8 @@ func requiredProcedureNodeID(procedure string, args []interface{}, index int, ar
 	case nil:
 		return "", procedureArgumentNullError(procedure, argument)
 	case *storage.Node:
-		return value.ID, nil
+		id, _ := graphEntityDisplayID(value)
+		return id, nil
 	case string:
 		return storage.NodeID(value), nil
 	default:

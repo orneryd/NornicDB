@@ -599,14 +599,14 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 	switch {
 	case node != nil:
 		if strings.EqualFold(function, "id") {
-			return string(node.ID), true
+			return nativeEntityOutputID(node), true
 		}
-		return node.ElementID(e.entityIdentityDatabase(ctx, node.ID)), true
+		return node.ElementID(e.entityIdentityDatabase(ctx, storage.NodeID(nativeEntityOutputID(node)))), true
 	case edge != nil:
 		if strings.EqualFold(function, "id") {
-			return string(edge.ID), true
+			return nativeEntityOutputID(edge), true
 		}
-		return edge.ElementID(e.entityIdentityDatabase(ctx, storage.NodeID(edge.StartNode))), true
+		return edge.ElementID(e.entityIdentityDatabase(ctx, storage.NodeID(nativeRelationshipStartOutputID(edge)))), true
 	}
 	return nil, false
 }
