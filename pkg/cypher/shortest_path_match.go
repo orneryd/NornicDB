@@ -90,7 +90,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	startHead, _ := splitNodePatternProperties(startPattern)
 	endHead, _ := splitNodePatternProperties(endPattern)
 	relationship := inner[len(startPattern) : len(inner)-len(endPattern)]
-	traversal := e.parseTraversalPattern(ctx, "("+startHead+")"+relationship+"("+endHead+")")
+	traversal := e.parseTraversalPatternStructure(ctx, "("+startHead+")"+relationship+"("+endHead+")")
 	if err := getExpressionFailure(ctx); err != nil {
 		return nil, true, err
 	}

@@ -552,14 +552,33 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
 	}
+	// Templates contain syntax only; row values stay in each prepared context.
+	// Reuse the statement template until preparation changes that syntax.
+	preparedTemplate, templatePattern := template, clausePattern
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
 		ctx := withValueBindings(ctx, row)
+		preparedPattern := clausePattern
+		rowTemplate := template
+		if isMerge && (!containsRelationshipPattern(clausePattern) || template.usable && pipelineBoundMergeEndpoints(template, row)) {
+			var prepareErr error
+			ctx, preparedPattern, prepareErr = e.preparePatternRow(ctx, clausePattern, row)
+			if prepareErr != nil {
+				return nil, nil, prepareErr
+			}
+			if template.usable {
+				if preparedPattern != templatePattern {
+					preparedTemplate = e.pipelineMergeTemplateFor("MERGE " + preparedPattern)
+					templatePattern = preparedPattern
+				}
+				rowTemplate = preparedTemplate
+			}
+		}
 		// The clause parsed once: a row whose relationship already exists
 		// is its matches, without rendering and parsing the row's text.
-		pattern, startNode, endNode, templated, templateErr := template.pattern(ctx, e, row)
+		pattern, startNode, endNode, templated, templateErr := rowTemplate.pattern(ctx, e, row)
 		if templateErr != nil {
 			return nil, nil, templateErr
 		}
@@ -588,7 +607,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		var nodePathBinding string
 		mergePattern := clauseBody
 		if isMerge {
-			mergePattern = clausePattern
+			mergePattern = preparedPattern
 			// A whole-path MERGE: the pattern's matches with the row's
 			// bindings, every one a row, or the whole pattern created,
 			// reusing the bound nodes, as in Neo4j. Every relationship
@@ -638,6 +657,10 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					continue
 				}
 				var parseErr error
+				ctx, mergePattern, parseErr = e.preparePatternRow(ctx, mergePattern, row)
+				if parseErr != nil {
+					return nil, nil, parseErr
+				}
 				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
 				if parseErr != nil {
 					return nil, nil, parseErr
