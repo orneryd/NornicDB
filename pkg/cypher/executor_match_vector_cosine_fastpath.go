@@ -68,16 +68,24 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	if !e.isSingleNodePattern(matchPart) {
 		return nil, false
 	}
+	if !patternMapsAreConstant(matchPart) {
+		return nil, false
+	}
 	var varName string
 	var label string
 	var matchProps map[string]interface{}
 	if strings.Contains(matchPart, "{") {
-		nodePattern := nodePatternStructure(matchPart)
+		nodePattern, shapeErr := readNodePattern(ctx, matchPart, patternPropertyKeys)
+		if shapeErr != nil {
+			recordExpressionFailure(ctx, shapeErr)
+			return nil, true
+		}
 		varName = strings.TrimSpace(nodePattern.variable)
 		if varName == "" || len(nodePattern.labels) != 1 {
 			return nil, false
 		}
 		label = nodePattern.labels[0]
+		matchProps = nodePattern.properties
 	} else {
 		parsedVar, labels, ok := parseSimpleMatchSingleNodePattern(matchPart)
 		if !ok || len(labels) != 1 {
@@ -129,15 +137,6 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return nil, false
 	}
 
-	if strings.Contains(matchPart, "{") {
-		nodePattern, err := e.parseNodePattern(ctx, matchPart)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
-			return nil, true
-		}
-		matchProps = nodePattern.properties
-	}
-
 	scoreExprIsAlias := make([]bool, len(returnItems))
 	scoreExprIsAlias[cosineIdx] = true
 	projectedProps, projectionOK := nodeProjectionPropertiesForVectorFastPath(varName, vectorProp, returnItems, scoreExprIsAlias, preWhereClause, preWhereNotNullProp, matchProps)
@@ -156,6 +155,14 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return nil, false
 	}
 
+	if len(matchProps) > 0 {
+		var propertyErr error
+		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(ctx, matchPart)
+		if propertyErr != nil {
+			recordExpressionFailure(ctx, propertyErr)
+			return nil, true
+		}
+	}
 	columns := make([]string, len(returnItems))
 	for i, item := range returnItems {
 		columns[i] = item.column()
@@ -251,16 +258,24 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if !e.isSingleNodePattern(preWithSegment) {
 		return nil, false
 	}
+	if !patternMapsAreConstant(preWithSegment) {
+		return nil, false
+	}
 	var varName string
 	var label string
 	var matchProps map[string]interface{}
 	if strings.Contains(preWithSegment, "{") {
-		nodePattern := nodePatternStructure(preWithSegment)
+		nodePattern, shapeErr := readNodePattern(ctx, preWithSegment, patternPropertyKeys)
+		if shapeErr != nil {
+			recordExpressionFailure(ctx, shapeErr)
+			return nil, true
+		}
 		varName = strings.TrimSpace(nodePattern.variable)
 		if varName == "" || len(nodePattern.labels) != 1 {
 			return nil, false
 		}
 		label = nodePattern.labels[0]
+		matchProps = nodePattern.properties
 	} else {
 		parsedVar, labels, ok := parseSimpleMatchSingleNodePattern(preWithSegment)
 		if !ok || len(labels) != 1 {
@@ -353,15 +368,6 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	if strings.Contains(preWithSegment, "{") {
-		nodePattern, err := e.parseNodePattern(ctx, preWithSegment)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
-			return nil, true
-		}
-		matchProps = nodePattern.properties
-	}
-
 	svc := e.search()
 	needsExactCandidates := (svc == nil || svc.IsReady()) &&
 		(len(matchProps) > 0 ||
@@ -402,6 +408,14 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return nil, false
 	}
 
+	if len(matchProps) > 0 {
+		var propertyErr error
+		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(ctx, preWithSegment)
+		if propertyErr != nil {
+			recordExpressionFailure(ctx, propertyErr)
+			return nil, true
+		}
+	}
 	rows := make([][]interface{}, 0, util.SafePreallocCap(len(nodeScores)))
 	nodeCtx := map[string]*storage.Node{varName: nil}
 	var preWhereFilter func(*storage.Node) bool

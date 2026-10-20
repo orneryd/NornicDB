@@ -36,18 +36,10 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if viewport, _ := TemporalViewportFromContext(ctx); viewport.Enabled() {
 		return nil, false, nil
 	}
-	// Only inspect syntax before consuming input. Inline properties may refer
-	// to a preceding UNWIND row and must be evaluated with that row's scope.
-	structural := normalizeAnonymousTraversalRelationships(pattern)
-	if hasQuantifiedGroup(pattern) || e.isChainedPattern(structural) {
-		return nil, false, nil
-	}
-	open, close := firstRelationshipBracket(structural)
-	if open < 0 || close < 0 {
-		return nil, false, nil
-	}
-	declaration := relationshipDeclarationHead(structural[open+1 : close])
-	if declaration.hasLength && declaration.length != "1" && declaration.length != "1..1" {
+	// Admission has no input row. Inspect syntax through the shared reader;
+	// the scan planner retains the existing property-seeded access paths.
+	shape := e.parseTraversalPatternStructure(ctx, pattern)
+	if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
 	// Selected paths have their own dispatcher, even when their text contains
@@ -56,14 +48,8 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if strings.Contains(where, pathSelectorFunction) || strings.Contains(where, repeatableElementsFunction) {
 		return nil, false, nil
 	}
-	if !strings.Contains(pattern, "{") {
-		shape := e.parseTraversalPattern(ctx, pattern)
-		if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
-			return nil, false, nil
-		}
-		if planPipelineTraversalScan(shape, where, nil).access == traversalSeededAccess {
-			return nil, false, nil
-		}
+	if planPipelineTraversalScan(shape, where, nil).access == traversalSeededAccess {
+		return nil, false, nil
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
 	predicate := prepareRowPredicate(where)
@@ -81,13 +67,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				valid = false
 				return false
 			}
-			rowCtx := withValueBindings(ctx, row)
-			match := e.parseTraversalPattern(rowCtx, pattern)
-			if match == nil {
-				valid = false
-				return false
-			}
-			plan := planPipelineTraversalScan(match, where, row)
+			plan := planPipelineTraversalScan(shape, where, row)
 			if plan.access == traversalSeededAccess {
 				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
 				if err != nil {
@@ -101,6 +81,12 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					}
 				}
 				return true
+			}
+			rowCtx := withValueBindings(ctx, row)
+			match := e.parseTraversalPattern(rowCtx, pattern)
+			if match == nil {
+				valid = false
+				return false
 			}
 			match.PathVariable = pathVariable
 			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, where, hint.readTail)

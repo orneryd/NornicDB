@@ -242,8 +242,18 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// predicates/assignments. Materialize independent identity maps now; the
 	// dependent assignments use the checked SET owner after the path binds.
 	identityPattern := strings.TrimSpace(match[len("MATCH"):])
+	identityTail := ""
 	if where := topLevelKeywordIndex(identityPattern, "WHERE"); where >= 0 {
+		identityTail = identityPattern[where:]
 		identityPattern = strings.TrimSpace(identityPattern[:where])
+	}
+	ctx, identityPattern, err = e.preparePatternRow(ctx, identityPattern, row)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	match = "MATCH " + identityPattern
+	if identityTail != "" {
+		match += " " + identityTail
 	}
 	for index, segment := range mergePathSegments(identityPattern) {
 		shape, shapeErr := e.parseMergeRelationshipShape(segment)
@@ -293,7 +303,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// (the match's WHERE, the only predicates a MERGE pattern can have) is
 	// set once its elements exist, as Neo4j's MERGE evaluates it; CREATE
 	// itself can't read an element it creates.
-	createPattern, assignments := pattern, ""
+	createPattern, assignments := identityPattern, ""
 	if where := topLevelKeywordIndex(match, "WHERE"); where >= 0 {
 		createPattern = strings.TrimSpace(match[len("MATCH"):where])
 		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
