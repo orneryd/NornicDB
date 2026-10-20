@@ -1875,7 +1875,6 @@ func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties
 	return node
 }
 
-
 // isRelationshipPatternOperand reports whether expression is one whole
 // relationship pattern ((a)-[:R]->(b), (a)<--()), read by
 // relationshipChainEnd. A parenthesised expression whose operands are

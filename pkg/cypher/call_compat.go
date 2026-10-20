@@ -935,7 +935,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 	})
 }
 
-
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
 func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {

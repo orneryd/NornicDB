@@ -175,14 +175,21 @@ func relationshipAccessGeneratedStorageCases(id interface{}) []relationshipAcces
 	for _, direction := range []string{"outgoing", "incoming", "both"} {
 		for _, labelled := range []bool{false, true} {
 			start := "()"
-			if labelled { start = "(:RouteNode)" }
-			pattern := start+"-[r:ROUTE]->()"
-			rows := [][]interface{}{{"x"},{"x"}}
-			if direction == "incoming" { pattern = start+"<-[r:ROUTE]-()" }
-			if direction == "both" { pattern = start+"-[r:ROUTE]-()"; rows = append(rows, rows...) }
+			if labelled {
+				start = "(:RouteNode)"
+			}
+			pattern := start + "-[r:ROUTE]->()"
+			rows := [][]interface{}{{"x"}, {"x"}}
+			if direction == "incoming" {
+				pattern = start + "<-[r:ROUTE]-()"
+			}
+			if direction == "both" {
+				pattern = start + "-[r:ROUTE]-()"
+				rows = append(rows, rows...)
+			}
 			cases = append(cases, relationshipAccessStorageCase{
-				name:fmt.Sprintf("generated_scan_%s_labelled_%t",direction,labelled),
-				query:"MATCH "+pattern+" RETURN r.p", operator:"Expand", estimate:100, rows:rows,
+				name:  fmt.Sprintf("generated_scan_%s_labelled_%t", direction, labelled),
+				query: "MATCH " + pattern + " RETURN r.p", operator: "Expand", estimate: 100, rows: rows,
 			})
 		}
 	}
