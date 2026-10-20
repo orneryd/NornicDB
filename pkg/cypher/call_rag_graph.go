@@ -57,23 +57,18 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 // graphSearchResult is a graph search's rows (db.retrieveGraph's columns),
 // each hit with its matches and, as db.retrieve's rows, how many chunks of a
 // query split into chunks were searched (0 and 0 for a query searched whole).
-func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *ExecuteResult {
-	result := &ExecuteResult{
-		Columns: []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
-		Rows:    make([][]interface{}, 0, len(response.Results)),
-	}
+func (e *StorageExecutor) graphSearchResult(ctx context.Context, response *search.SearchResponse) (*ExecuteResult, error) {
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
-	for index := range response.Results {
+	return indexedOutput(ctx, []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}, len(response.Results), func(index int) []any {
 		r := &response.Results[index]
 		kind, node, relationship, start, end := e.graphSearchEntity(r)
-		result.Rows = append(result.Rows, []interface{}{
+		return []interface{}{
 			kind, node, relationship, start, end,
 			r.Score, r.RRFScore, r.VectorRank, r.BM25Rank,
 			response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason),
 			chunksSearched, chunksTotal, search.SearchMatchValues(r.Matches),
-		})
-	}
-	return result
+		}
+	})
 }
 
 // graphSearchPage is a graph search as one terminal page, the form

@@ -64,12 +64,9 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 		return nil, err
 	}
 
-	result := &ExecuteResult{
-		Columns: []string{"id", "content", "original_rank", "new_rank", "bi_score", "cross_score", "final_score"},
-		Rows:    make([][]interface{}, 0, len(reranked)),
-	}
-	for _, r := range reranked {
-		result.Rows = append(result.Rows, []interface{}{
+	return indexedOutput(ctx, []string{"id", "content", "original_rank", "new_rank", "bi_score", "cross_score", "final_score"}, len(reranked), func(i int) []any {
+		r := reranked[i]
+		return []interface{}{
 			r.ID,
 			r.Content,
 			r.OriginalRank,
@@ -77,9 +74,8 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 			r.BiScore,
 			r.CrossScore,
 			r.FinalScore,
-		})
-	}
-	return result, nil
+		}
+	})
 }
 
 func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
@@ -432,10 +428,10 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if graphPage {
 			return e.graphSearchPage(response), nil
 		}
-		return e.graphSearchResult(response), nil
+		return e.graphSearchResult(ctx, response)
 	}
 	if opts.Relationships {
-		return e.relationshipSearchResult(response), nil
+		return e.relationshipSearchResult(ctx, response)
 	}
 
 	// Of a query split into chunks, how many were searched; 0 and 0 for a

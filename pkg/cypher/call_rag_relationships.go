@@ -30,20 +30,17 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 // relationshipSearchResult is a relationship search's rows: each matching
 // relationship with its start and end nodes (null when not visible), then
 // the same scores and search metadata as node results (#1065).
-func (e *StorageExecutor) relationshipSearchResult(response *search.SearchResponse) *ExecuteResult {
-	result := &ExecuteResult{
-		Columns: []string{"relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"},
-		Rows:    make([][]interface{}, 0, len(response.Results)),
-	}
+func (e *StorageExecutor) relationshipSearchResult(ctx context.Context, response *search.SearchResponse) (*ExecuteResult, error) {
 	endpoint := func(id storage.NodeID) interface{} {
 		if node, err := e.storage.GetNode(id); err == nil && node != nil {
 			return node
 		}
 		return nil
 	}
-	for _, r := range response.Results {
+	return indexedOutput(ctx, []string{"relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"}, len(response.Results), func(index int) []any {
+		r := response.Results[index]
 		relationship := r.Relationship
-		result.Rows = append(result.Rows, []interface{}{
+		return []interface{}{
 			relationship,
 			endpoint(relationship.StartNode),
 			endpoint(relationship.EndNode),
@@ -54,7 +51,6 @@ func (e *StorageExecutor) relationshipSearchResult(response *search.SearchRespon
 			response.SearchMethod,
 			response.FallbackTriggered,
 			string(response.FallbackReason),
-		})
-	}
-	return result
+		}
+	})
 }

@@ -70,10 +70,12 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 		{"transaction", "nornic", "BEGIN UNWIND range(1,200000) AS x", "x"},
 		{"apoc_literal", "nornic", "CALL apoc.cypher.run('UNWIND range(1,200000) AS x RETURN x',{}) YIELD value", "value.x"},
 		{"apoc_bound", "nornic", "CALL apoc.cypher.run($statement,{}) YIELD value", "value.x"},
+		{"apoc_many", "nornic", "CALL apoc.cypher.runMany('UNWIND range(1,2000) AS x RETURN x',{}, {statistics:false}) YIELD row, result", "row"},
 		{"retrieval", "nornic", "CALL db.retrieve($request) YIELD node, score", "score"},
 		{"gds_louvain", "nornic", "CALL gds.louvain.stream('mcp-producer-matrix') YIELD nodeId, communityId", "communityId"},
 		{"gds_fastrp", "nornic", "CALL gds.fastRP.stream('mcp-producer-matrix',{embeddingDimension:4,randomSeed:42}) YIELD nodeId, embedding", "embedding"},
 		{"gds_similarity", "nornic", "CALL gds.nodeSimilarity.stream('mcp-producer-matrix',{topK:10,similarityCutoff:0}) YIELD node1, node2, similarity", "similarity"},
+		{"gds_prediction", "nornic", "CALL gds.linkPrediction.commonNeighbors.stream('mcp-producer-matrix',{sourceNode:'matrix-0',topK:10}) YIELD node1, node2, score", "score"},
 		{"fabric_local", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x }", "x"},
 		{"remote", "matrix_cmp", "USE matrix_cmp.remote UNWIND range(1,200000) AS x", "x"},
 		{"fabric_remote", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},
@@ -121,6 +123,9 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 					if kind == "rows" {
 						require.Len(t, result.Rows, 1)
 						require.Contains(t, result.Truncation.Reasons, "max_rows")
+						if producer.name == "fabric_filtered" {
+							require.EqualValues(t, 21, result.Rows[0][0], "coordinator filtering must precede final output admission")
+						}
 					} else {
 						require.Empty(t, result.Rows)
 						require.Contains(t, result.Truncation.Reasons, "max_bytes")
@@ -159,4 +164,34 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 			require.Zero(t, database)
 		}
 	}
+}
+
+func TestMCPNativeProducerCompletionAndReplay(t *testing.T) {
+	s, authenticator := setupTestServer(t)
+	host := httptest.NewServer(s.buildRouter())
+	t.Cleanup(host.Close)
+	token := getAuthToken(t, authenticator, "admin")
+	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	for _, path := range []string{"/mcp", "/mcp/tools/call"} {
+		_, replayed := nativeReviewCall(t, host, path, map[string]interface{}{
+			"query": "UNWIND [1,2,3] AS x CALL apoc.cypher.run('RETURN rand() AS v',{}) YIELD value RETURN value.v AS v", "max_rows": 10,
+		}, authenticate)
+		require.False(t, replayed.IsError, replayed.Content)
+		var result struct {
+			Rows [][]interface{} `json:"rows"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(replayed.Content[0].Text), &result))
+		require.Len(t, result.Rows, 3)
+		require.Equal(t, result.Rows[0], result.Rows[1])
+		require.Equal(t, result.Rows[0], result.Rows[2])
+		_, written := nativeReviewCall(t, host, path, map[string]interface{}{
+			"query":    "UNWIND range(1,40) AS x CALL apoc.cypher.run('RETURN 1 AS y',{}) YIELD value CALL apoc.cypher.run($statement,{x:x}) YIELD value AS written RETURN written",
+			"max_rows": 1, "parameters": map[string]interface{}{"statement": "CREATE (:PipelineCompletion {x:$x}) RETURN $x AS x"},
+		}, authenticate)
+		require.False(t, written.IsError, written.Content)
+		require.Contains(t, written.Content[0].Text, "max_rows")
+	}
+	_, counted := nativeReviewCall(t, host, "/mcp", map[string]interface{}{"query": "MATCH (n:PipelineCompletion) RETURN count(n) AS count"}, authenticate)
+	require.False(t, counted.IsError, counted.Content)
+	require.Contains(t, counted.Content[0].Text, `"rows":[[80]]`)
 }

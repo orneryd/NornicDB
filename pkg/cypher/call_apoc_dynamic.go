@@ -82,13 +82,13 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 
 // runManyStatistics is apoc.cypher.runMany's statistics row for one
 // statement, with APOC's keys.
-func runManyStatistics(result *ExecuteResult, elapsed time.Duration) map[string]interface{} {
+func runManyStatistics(result *ExecuteResult, rows int64, elapsed time.Duration) map[string]interface{} {
 	stats := result.Stats
 	if stats == nil {
 		stats = &QueryStats{}
 	}
 	return map[string]interface{}{
-		"rows":                 int64(len(result.Rows)),
+		"rows":                 rows,
 		"time":                 elapsed.Milliseconds(),
 		"nodesCreated":         int64(stats.NodesCreated),
 		"nodesDeleted":         int64(stats.NodesDeleted),
@@ -130,50 +130,66 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 
 	result := &ExecuteResult{
 		Columns: []string{"row", "result"},
-		Rows:    make([][]interface{}, 0),
 		Stats:   &QueryStats{},
 	}
 
 	// As in APOC, each statement gives its rows, numbered from 0, then a
 	// row -1 with its statistics unless config says statistics: false
 	// (#1164).
-	for _, query := range queries {
-		query = strings.TrimSpace(query)
-		if query == "" {
-			continue
-		}
+	result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
+		more := true
+		for _, query := range queries {
+			query = strings.TrimSpace(query)
+			if query == "" {
+				continue
+			}
 
-		started := time.Now()
-		innerResult, err := e.executeUserStatement(ctx, query, params)
-		if err != nil {
-			// A failed statement fails the call, as in apoc.cypher.run, and
-			// with it the caller's transaction: nothing the earlier
-			// statements wrote is kept.
-			return nil, err
-		}
-
-		// Add each row from the inner result
-		for i, row := range innerResult.Rows {
-			valueMap := make(map[string]interface{})
-			for j, col := range innerResult.Columns {
-				if j < len(row) {
-					valueMap[col] = row[j]
+			started := time.Now()
+			var rows int64
+			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(columns []string, row []any) (bool, error) {
+				index := rows
+				rows++
+				if !more {
+					return resultstream.Drain(ctx), nil
+				}
+				value := make(map[string]any, len(columns))
+				for i, column := range columns {
+					if i < len(row) {
+						value[column] = row[i]
+					}
+				}
+				var err error
+				more, err = consume(result.Columns, []any{index, value})
+				return more || resultstream.Drain(ctx), err
+			}))
+			innerResult, err := e.executeUserStatement(innerCtx, query, params)
+			if err != nil {
+				// A failed statement fails the call, as in apoc.cypher.run, and
+				// with it the caller's transaction: nothing the earlier
+				// statements wrote is kept.
+				return err
+			}
+			if statistics && more {
+				more, err = consume(result.Columns, []any{int64(-1), runManyStatistics(innerResult, rows, time.Since(started))})
+				if err != nil {
+					return err
 				}
 			}
-			result.Rows = append(result.Rows, []interface{}{
-				int64(i),
-				valueMap,
-			})
-		}
-		if statistics {
-			result.Rows = append(result.Rows, []interface{}{int64(-1), runManyStatistics(innerResult, time.Since(started))})
-		}
 
-		// Accumulate stats
-		if innerResult.Stats != nil {
-			addQueryStats(result.Stats, innerResult.Stats)
+			// Accumulate stats
+			if innerResult.Stats != nil {
+				addQueryStats(result.Stats, innerResult.Stats)
+			}
+			if !more && !resultstream.Drain(ctx) {
+				break
+			}
+		}
+		return nil
+	}
+	if !hasOutputStream(ctx) {
+		if err := materializeResultSource(ctx, result); err != nil {
+			return nil, err
 		}
 	}
-
 	return result, nil
 }
