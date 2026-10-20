@@ -393,9 +393,6 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 			bind(name, value)
 		}
 	}
-	if shape.statementContext || (shape.buildsValues && transactionMemoryTracking()) {
-		bind(rowStatementContextKey, ctx)
-	}
 	if extended != nil {
 		values = extended
 	}
@@ -405,6 +402,13 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 		// match it.
 		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 			return value, true
+		}
+	}
+	if shape.statementContext || (shape.buildsValues && transactionMemoryTracking()) {
+		var contextBound bool
+		values, contextBound = rowValuesBindingStatementContext(ctx, values)
+		if contextBound {
+			defer delete(values, rowStatementContextKey)
 		}
 	}
 	if shape.isSubquery {
