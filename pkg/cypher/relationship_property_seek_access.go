@@ -16,7 +16,7 @@ import (
 type relationshipAccess struct {
 	variable     string
 	alternatives []relationshipSeek
-	expressions  [][]string
+	expressions  map[string]string
 	inline       map[string]bool
 	vector       *relationshipVectorAccess
 	id           *relationshipIDAccess
@@ -36,6 +36,11 @@ func withRelationshipAccessPlans(ctx context.Context, query string) context.Cont
 	if ctx.Value(relationshipAccessPlansKey{}) != nil || !strings.Contains(query, "-[") {
 		return ctx
 	}
+	// EXPLAIN visits each immutable template once. Only execution needs to
+	// retain schema choices while the same template is consumed by many rows.
+	if mode, _ := parseExecutionMode(query); mode == ModeExplain {
+		return ctx
+	}
 	return context.WithValue(ctx, relationshipAccessPlansKey{}, &relationshipAccessPlans{plans: make(map[relationshipAccessKey]*relationshipAccess)})
 }
 
@@ -51,6 +56,12 @@ func (e *StorageExecutor) relationshipAccessFor(ctx context.Context, pattern, wh
 		recordUnregisteredRelationshipAccess(ctx, pattern, where)
 		return &relationshipAccess{}
 	}
+	return e.relationshipTemplateAccess(ctx, template)
+}
+
+// A consumer that already has the program's template need not normalize and
+// look up its identity again. Availability and schema choices have one owner.
+func (e *StorageExecutor) relationshipTemplateAccess(ctx context.Context, template *relationshipAccessTemplate) *relationshipAccess {
 	if template.scanOnly {
 		return &relationshipAccess{variable: template.syntax.variable}
 	}
@@ -159,23 +170,20 @@ func compileRelationshipAccessSyntax(pattern, where string) relationshipAccessSy
 
 func (e *StorageExecutor) planRelationshipAccess(ctx context.Context, template *relationshipAccessTemplate) *relationshipAccess {
 	syntax := &template.syntax
-	access := &relationshipAccess{variable: syntax.variable, inline: syntax.inline, id: syntax.id}
+	access := &relationshipAccess{variable: syntax.variable, inline: syntax.inline, id: syntax.id, expressions: syntax.expressions}
 	if len(syntax.expressions) == 0 {
 		return access
 	}
 	for _, index := range e.getStorage(ctx).GetSchema().RelationshipEqualityIndexes(syntax.relType) {
-		keys := make([]string, len(index.Properties))
 		complete := true
-		for i, property := range index.Properties {
-			keys[i] = syntax.expressions[property]
-			if keys[i] == "" {
+		for _, property := range index.Properties {
+			if syntax.expressions[property] == "" {
 				complete = false
 				break
 			}
 		}
 		if complete {
 			access.alternatives = append(access.alternatives, relationshipSeek{name: index.Name, relType: syntax.relType, properties: index.Properties, estimatedRows: 10})
-			access.expressions = append(access.expressions, keys)
 		}
 	}
 	return access
@@ -220,18 +228,18 @@ func relationshipSeekEquality(variable, predicate string) (string, string, bool)
 }
 
 func (access *relationshipAccess) resolve(ctx context.Context, e *StorageExecutor, properties map[string]interface{}) (relationshipSeek, bool) {
-	for i, alternative := range access.alternatives {
-		values := make([]interface{}, len(access.expressions[i]))
+	for _, alternative := range access.alternatives {
+		values := make([]interface{}, len(alternative.properties))
 		complete := true
-		for j, expr := range access.expressions[i] {
+		for j, property := range alternative.properties {
 			var ok bool
-			if access.inline[alternative.properties[j]] {
+			if access.inline[property] {
 				// Pattern parsing already evaluated this expression for the row.
 				// Reuse its value: evaluating it again could repeat a graph
 				// expression or change a non-deterministic key.
-				values[j], ok = properties[alternative.properties[j]]
+				values[j], ok = properties[property]
 			} else {
-				values[j], ok = e.indexSeekConstant(ctx, expr)
+				values[j], ok = e.indexSeekConstant(ctx, access.expressions[property])
 			}
 			if !ok {
 				complete = false

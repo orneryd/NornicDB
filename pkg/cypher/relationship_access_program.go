@@ -58,6 +58,13 @@ func withRelationshipAccessProgram(ctx context.Context, query string) context.Co
 	return context.WithValue(ctx, relationshipAccessProgramKey{}, relationshipProgramFor(query))
 }
 
+func relationshipProgramContext(ctx context.Context, program *relationshipAccessProgram) context.Context {
+	if current, _ := ctx.Value(relationshipAccessProgramKey{}).(*relationshipAccessProgram); current == program {
+		return ctx
+	}
+	return context.WithValue(ctx, relationshipAccessProgramKey{}, program)
+}
+
 func relationshipProgramShortestPattern(pattern string) (string, bool) {
 	candidate := strings.TrimSpace(pattern)
 	if variable := extractPathAssignmentVariable(candidate); variable != "" {
