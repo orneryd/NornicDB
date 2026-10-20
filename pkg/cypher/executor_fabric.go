@@ -697,10 +697,6 @@ func startsWithKeywordAtLocal(s string, i int, kw string) bool {
 	return fabric.ClauseKeywordAt(s, i, kw)
 }
 
-func splitCommaTopLevelLocal(s string) []string {
-	return splitTopLevelComma(s)
-}
-
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

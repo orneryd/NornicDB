@@ -151,6 +151,10 @@ func (record *scopeRecording) resolve(query string, inputs []string, owner strin
 					}
 				}
 				if matched {
+					if columns == nil {
+						columns = typeScopeColumns(current)
+						output = maps.Clone(current)
+					}
 					globalNames := typeScopeColumns(logical.globals)
 					for _, name := range globalNames {
 						if !slices.Contains(columns, name) {

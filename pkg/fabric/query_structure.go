@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	antlr4 "github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	grammar "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -302,6 +303,7 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 			startsStatement = false
 		}
 		c := QueryClause{Start: r.start(clause.GetStart()), End: r.end(clause.GetStop()), statement: q.statements}
+		var continuation grammar.IRegularQueryContext
 		if option := clause.EmbeddingSt(); option != nil {
 			c.embeddingStart, c.embeddingEnd = r.start(option.GetStart()), r.end(option.GetStop())
 		}
@@ -422,34 +424,7 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 			c.tree = t
 			c.Optional = t.OPTIONAL() != nil
 			if t.YIELD() != nil {
-				y := &QueryYield{Star: t.MULT() != nil}
-				if items := t.YieldItems(); items != nil {
-					for _, item := range items.AllYieldItem() {
-						symbols := item.AllSymbol()
-						v := QueryYieldItem{Name: unquoteSyntaxName(r.source(symbols[0]))}
-						if len(symbols) > 1 {
-							v.Alias = unquoteSyntaxName(r.source(symbols[1]))
-						}
-						y.Items = append(y.Items, v)
-					}
-					if items.Where() != nil {
-						y.Where = r.source(items.Where().Expression())
-					}
-				}
-				if order := t.OrderSt(); order != nil {
-					var items []string
-					for _, item := range order.AllOrderItem() {
-						items = append(items, r.source(item))
-					}
-					y.OrderBy = strings.Join(items, ", ")
-				}
-				if t.SkipSt() != nil {
-					y.Skip = r.source(t.SkipSt().Expression())
-				}
-				if t.LimitSt() != nil {
-					y.Limit = r.source(t.LimitSt().Expression())
-				}
-				c.Yield = y
+				c.Yield = r.yield(t)
 			}
 		case clause.FabricLoadCsv() != nil:
 			c.Kind = "LOAD CSV"
@@ -465,10 +440,18 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 			c.Kind = "SHOW"
 			c.tree = clause.ShowCommand()
 			show := clause.ShowCommand()
+			if tail := show.ShowTail(); tail != nil && tail.YIELD() != nil {
+				c.Yield = r.yield(tail)
+				continuation = tail.RegularQuery()
+			}
 			c.administration = show.DATABASE() != nil || show.DATABASES() != nil || show.ALIASES() != nil || show.USERS() != nil || show.CURRENT() != nil || show.ROLES() != nil || show.PRIVILEGES() != nil || show.SERVERS() != nil
 		case clause.TerminateCommand() != nil:
 			c.Kind = "TERMINATE"
 			c.tree = clause.TerminateCommand()
+			if command := clause.TerminateCommand(); command.YIELD() != nil {
+				c.Yield = r.yield(command)
+				continuation = command.RegularQuery()
+			}
 		case clause.OrderSt() != nil:
 			c.Kind = "ORDER BY"
 			c.tree = clause.OrderSt()
@@ -493,6 +476,11 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 		case clause.CypherGroup() != nil:
 			c.Kind = "CYPHER"
 			c.tree = clause.CypherGroup()
+		}
+		if continuation != nil && continuation.GetStart() != nil && continuation.GetStop() != nil && continuation.GetStop().GetStop() >= continuation.GetStart().GetStart() {
+			c.End = r.start(continuation.GetStart())
+		} else {
+			continuation = nil
 		}
 		if c.End < c.Start {
 			continue
@@ -531,6 +519,29 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 			}
 		}
 		q.Clauses = append(q.Clauses, c)
+		if continuation != nil {
+			// The command grammar embeds a regular query after YIELD. Project
+			// that native span through the same clause owner as an ordinary
+			// query, so CALL descriptors and scope transitions remain visible.
+			// Keeping the source prefix preserves every absolute token/span.
+			reader := newStructureReader(r.text[:r.end(continuation.GetStop())])
+			reader.stream.Fill()
+			reader.stream.Seek(continuation.GetStart().GetTokenIndex())
+			tree := reader.parseScript()
+			if reader.errors.err != nil {
+				q.Err = reader.errors.err
+				continue
+			}
+			continued := reader.body(tree.FabricBody(), inCall)
+			if continued.Err != nil && q.Err == nil {
+				q.Err = continued.Err
+			}
+			for _, next := range continued.Clauses {
+				next.statement = q.statements
+				next.Remaining = strings.TrimSpace(r.text[next.End:])
+				q.Clauses = append(q.Clauses, next)
+			}
+		}
 	}
 	for i := range q.Clauses {
 		if q.Clauses[i].EmbeddingCandidate != "" && (i+1 >= len(q.Clauses) || q.Clauses[i+1].Kind != "RETURN") {
@@ -544,11 +555,51 @@ func (r *structureReader) body(body grammar.IFabricBodyContext, inCall bool) *Qu
 	return q
 }
 
-func unquoteSyntaxName(s string) string {
-	if len(s) > 1 && s[0] == '`' {
-		return strings.ReplaceAll(s[1:len(s)-1], "``", "`")
+type syntaxYield interface {
+	YieldItems() grammar.IYieldItemsContext
+	MULT() antlr4.TerminalNode
+	OrderSt() grammar.IOrderStContext
+	SkipSt() grammar.ISkipStContext
+	LimitSt() grammar.ILimitStContext
+}
+
+// Procedures and commands share one projection of the grammar's YIELD scope.
+func (r *structureReader) yield(syntax syntaxYield) *QueryYield {
+	y := &QueryYield{Star: syntax.MULT() != nil}
+	if items := syntax.YieldItems(); items != nil {
+		for _, item := range items.AllYieldItem() {
+			symbols := item.AllSymbol()
+			v := QueryYieldItem{Name: unquoteSyntaxName(r.source(symbols[0]))}
+			if len(symbols) > 1 {
+				v.Alias = unquoteSyntaxName(r.source(symbols[1]))
+			}
+			y.Items = append(y.Items, v)
+		}
+		if items.Where() != nil {
+			y.Where = r.source(items.Where().Expression())
+		}
 	}
-	return s
+	if where, ok := syntax.(interface{ Where() grammar.IWhereContext }); ok && where.Where() != nil {
+		y.Where = r.source(where.Where().Expression())
+	}
+	if order := syntax.OrderSt(); order != nil {
+		var items []string
+		for _, item := range order.AllOrderItem() {
+			items = append(items, r.source(item))
+		}
+		y.OrderBy = strings.Join(items, ", ")
+	}
+	if syntax.SkipSt() != nil {
+		y.Skip = r.source(syntax.SkipSt().Expression())
+	}
+	if syntax.LimitSt() != nil {
+		y.Limit = r.source(syntax.LimitSt().Expression())
+	}
+	return y
+}
+
+func unquoteSyntaxName(s string) string {
+	return cyphertext.SymbolicNameValue(s)
 }
 
 func (r *structureReader) projection(body grammar.IProjectionBodyContext) *QueryProjection {

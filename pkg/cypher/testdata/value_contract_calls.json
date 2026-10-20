@@ -1728,6 +1728,24 @@
     "reason": "Regression or allocation probe exercises this explicitly selected contract."
   },
   {
+    "id": "value_equivalence_tuple_contract_test.go:TestCypherValueIndexTupleContracts:addTupleByContract:1",
+    "file": "value_equivalence_tuple_contract_test.go",
+    "caller": "TestCypherValueIndexTupleContracts",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Tuple-index regression checks empty, null, list and equivalent numeric classes under the selected contract."
+  },
+  {
+    "id": "value_equivalence_tuple_contract_test.go:TestCypherValueIndexTupleContracts:addTupleByContract:2",
+    "file": "value_equivalence_tuple_contract_test.go",
+    "caller": "TestCypherValueIndexTupleContracts",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Tuple-index replay checks stable positions for the same equivalence classes."
+  },
+  {
     "id": "value_ordering.go:compareCypherComparableValues:cypherEquality:1",
     "file": "value_ordering.go",
     "caller": "compareCypherComparableValues",
