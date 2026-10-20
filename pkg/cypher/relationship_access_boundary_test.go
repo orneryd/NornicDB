@@ -363,13 +363,15 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 				outside = append(outside, predecessor)
 			}
 		}
-		if !reached || len(outside) != 1 {
+		if !reached || len(outside) == 0 {
 			continue
 		}
-		for _, caller := range components[outside[0]] {
-			for callee := range functions[caller].calls {
-				if componentOf[callee] == component {
-					violations = append(violations, fmt.Sprintf("%s: %s bypasses relationshipAccessExecution via %s", functions[caller].position, functions[caller].name, functions[callee].name))
+		for _, predecessor := range outside {
+			for _, caller := range components[predecessor] {
+				for callee := range functions[caller].calls {
+					if target, present := componentOf[callee]; present && target == component {
+						violations = append(violations, fmt.Sprintf("%s: %s bypasses relationshipAccessExecution via %s", functions[caller].position, functions[caller].name, functions[callee].name))
+					}
 				}
 			}
 		}

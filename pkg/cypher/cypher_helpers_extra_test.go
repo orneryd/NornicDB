@@ -2787,7 +2787,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 	}
 	for _, tc := range rejectCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
+			res, ok, err := exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
 			require.NoError(t, err)
 			assert.False(t, ok)
 			assert.Nil(t, res)
@@ -2815,7 +2815,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 			MaxHops:   1,
 		},
 	}
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2878,7 +2878,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 		},
 	}
 
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2900,7 +2900,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	}
 
 	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
+	res, ok, err = exec.relationshipExecutionFor(context.Background(), "", "").tryFastRevenueByProduct(
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
