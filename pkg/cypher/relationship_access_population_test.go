@@ -128,19 +128,38 @@ func relationshipAccessGeneratedStorageCases(id interface{}) []relationshipAcces
 		}
 		for _, source := range []string{"$id", fmt.Sprintf("'%v'", id)} {
 			for _, consumer := range []string{"MATCH", "EXISTS", "COUNT"} {
-				query := "MATCH ()-[r:ROUTE]->() WHERE " + function + "(r)=" + source + " RETURN r.p"
-				rows := [][]interface{}{{"x"}}
-				if consumer != "MATCH" {
-					query = "MATCH (a:RouteNode {id:'a'}) RETURN " + consumer + " { MATCH (a)-[r:ROUTE]->() WHERE " + function + "(r)=" + source + " }"
-					rows = [][]interface{}{{int64(1)}}
-					if consumer == "EXISTS" {
-						rows = [][]interface{}{{true}}
+				for _, relType := range []string{":ROUTE", ""} {
+					for _, direction := range []string{"outgoing", "incoming", "both"} {
+						relationship := "-[r" + relType + "]->"
+						anchor := "a"
+						if direction == "incoming" {
+							relationship = "<-[r" + relType + "]-"
+							anchor = "b"
+						} else if direction == "both" {
+							relationship = "-[r" + relType + "]-"
+						}
+						query := "MATCH ()" + relationship + "() WHERE " + function + "(r)=" + source + " RETURN r.p"
+						rows := [][]interface{}{{"x"}}
+						if direction == "both" {
+							rows = append(rows, rows...)
+						}
+						if consumer != "MATCH" {
+							query = "MATCH (a:RouteNode {id:'" + anchor + "'}) RETURN " + consumer + " { MATCH (a)" + relationship + "() WHERE " + function + "(r)=" + source + " }"
+							rows = [][]interface{}{{int64(1)}}
+							if consumer == "EXISTS" {
+								rows = [][]interface{}{{true}}
+							}
+						}
+						name := fmt.Sprintf("generated_%s_%s_%s", function, source, consumer)
+						if relType == "" || direction != "outgoing" {
+							name += fmt.Sprintf("_%s_typed_%t", direction, relType != "")
+						}
+						cases = append(cases, relationshipAccessStorageCase{
+							name: name, query: query,
+							operator: operator, estimate: 1, params: map[string]interface{}{"id": id}, rows: rows,
+						})
 					}
 				}
-				cases = append(cases, relationshipAccessStorageCase{
-					name: fmt.Sprintf("generated_%s_%s_%s", function, source, consumer), query: query,
-					operator: operator, estimate: 1, params: map[string]interface{}{"id": id}, rows: rows,
-				})
 			}
 		}
 	}

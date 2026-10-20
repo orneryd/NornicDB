@@ -43,7 +43,7 @@ func (run relationshipAccessExecution) tryID(ctx context.Context, match *Travers
 		recordRelationshipIDAccess(ctx, run.pattern, run.where, match.Relationship.Variable, access, 1, 0, 0)
 		return nil, true, nil
 	}
-	if !e.edgeTypeMatches(edge.Type, match.Relationship.Types) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
+	if !matchesRelationshipTypes(edge, match.Relationship.Types) || !e.edgeMatchesProps(edge, match.Relationship.Properties) {
 		recordRelationshipIDAccess(ctx, run.pattern, run.where, match.Relationship.Variable, access, 1, 1, 0)
 		return nil, true, nil
 	}
