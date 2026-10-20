@@ -730,7 +730,7 @@ func (run relationshipAccessExecution) buildGraphProjection(name string, nodeSpe
 	return projection, nil
 }
 
-func (run relationshipAccessExecution) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	return e.relationshipExecutionFor(nil, "", "").buildGraphProjection(name, nodeSpecs, relSpecs, validateRelationships)
 }
 

@@ -89,9 +89,9 @@ func relationshipAccessGeneratedRows(name string) [][]interface{} {
 
 type relationshipAccessStorageCase struct {
 	name, query, operator, index string
-	estimate int64
-	params map[string]interface{}
-	rows [][]interface{}
+	estimate                     int64
+	params                       map[string]interface{}
+	rows                         [][]interface{}
 }
 
 // Cross public access families with predicate/projection forms, independently
@@ -100,18 +100,18 @@ func relationshipAccessGeneratedVectorCases() []relationshipAccessStorageCase {
 	var cases []relationshipAccessStorageCase
 	for _, source := range []string{"'r1'", "$id"} {
 		for _, projection := range []bool{false, true} {
-			query := "MATCH ()-[e:RELATES_TO]->() WHERE e.uuid="+source+" "
+			query := "MATCH ()-[e:RELATES_TO]->() WHERE e.uuid=" + source + " "
 			if projection {
 				query += "WITH e, vector.similarity.cosine(e.fact_embedding,$q) AS score RETURN e.uuid, score"
 			} else {
 				query += "RETURN e.uuid, vector.similarity.cosine(e.fact_embedding,$q) AS score"
 			}
 			cases = append(cases, relationshipAccessStorageCase{
-				name: fmt.Sprintf("generated_vector_%s_projection_%t", source, projection),
-				query: query+" ORDER BY score DESC LIMIT 5",
+				name:     fmt.Sprintf("generated_vector_%s_projection_%t", source, projection),
+				query:    query + " ORDER BY score DESC LIMIT 5",
 				operator: "RelationshipVectorIndexSeek", index: "relationship_vector_owner", estimate: 10,
-				params: map[string]interface{}{"id":"r1", "q":[]float64{1,0,0}},
-				rows: [][]interface{}{{"r1",1.0}},
+				params: map[string]interface{}{"id": "r1", "q": []float64{1, 0, 0}},
+				rows:   [][]interface{}{{"r1", 1.0}},
 			})
 		}
 	}
@@ -122,46 +122,53 @@ func relationshipAccessGeneratedStorageCases(id interface{}) []relationshipAcces
 	var cases []relationshipAccessStorageCase
 	for _, function := range []string{"elementId", "id"} {
 		operator := "RelationshipByIdSeek"
-		if function == "elementId" { operator = "RelationshipByElementIdSeek" }
+		if function == "elementId" {
+			operator = "RelationshipByElementIdSeek"
+		}
 		for _, source := range []string{"$id", fmt.Sprintf("'%v'", id)} {
 			for _, consumer := range []string{"MATCH", "EXISTS", "COUNT"} {
-				query := "MATCH ()-[r:ROUTE]->() WHERE "+function+"(r)="+source+" RETURN r.p"
+				query := "MATCH ()-[r:ROUTE]->() WHERE " + function + "(r)=" + source + " RETURN r.p"
 				rows := [][]interface{}{{"x"}}
 				if consumer != "MATCH" {
-					query = "MATCH (a:RouteNode {id:'a'}) RETURN "+consumer+" { MATCH (a)-[r:ROUTE]->() WHERE "+function+"(r)="+source+" }"
+					query = "MATCH (a:RouteNode {id:'a'}) RETURN " + consumer + " { MATCH (a)-[r:ROUTE]->() WHERE " + function + "(r)=" + source + " }"
 					rows = [][]interface{}{{int64(1)}}
-					if consumer == "EXISTS" { rows = [][]interface{}{{true}} }
+					if consumer == "EXISTS" {
+						rows = [][]interface{}{{true}}
+					}
 				}
 				cases = append(cases, relationshipAccessStorageCase{
-					name: fmt.Sprintf("generated_%s_%s_%s",function,source,consumer), query: query,
-					operator: operator, estimate:1, params:map[string]interface{}{"id":id}, rows:rows,
+					name: fmt.Sprintf("generated_%s_%s_%s", function, source, consumer), query: query,
+					operator: operator, estimate: 1, params: map[string]interface{}{"id": id}, rows: rows,
 				})
 			}
 		}
 	}
 	for _, length := range []string{"*", "*1..2"} {
-		pattern := "(a:RouteNode {id:'a'})-[r:ROUTE"+length+"]->(c:RouteNode {id:'c'})"
+		pattern := "(a:RouteNode {id:'a'})-[r:ROUTE" + length + "]->(c:RouteNode {id:'c'})"
 		for _, function := range []string{"shortestPath", "allShortestPaths"} {
 			cases = append(cases, relationshipAccessStorageCase{
-				name: "generated_"+function+length, query:"MATCH p="+function+"("+pattern+") RETURN length(p)",
-				operator:"Expand", estimate:100, rows:[][]interface{}{{int64(2)}},
+				name: "generated_" + function + length, query: "MATCH p=" + function + "(" + pattern + ") RETURN length(p)",
+				operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
 			})
 		}
 		cases = append(cases, relationshipAccessStorageCase{
-			name:"generated_shortest_expression"+length,
-			query:"MATCH (a:RouteNode {id:'a'}), (c:RouteNode {id:'c'}) RETURN length(shortestPath((a)-[r:ROUTE"+length+"]->(c)))",
-			operator:"Expand", estimate:100, rows:[][]interface{}{{int64(2)}},
+			name:     "generated_shortest_expression" + length,
+			query:    "MATCH (a:RouteNode {id:'a'}), (c:RouteNode {id:'c'}) RETURN length(shortestPath((a)-[r:ROUTE" + length + "]->(c)))",
+			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
 		})
 	}
 	for _, selector := range []string{"ANY SHORTEST", "SHORTEST 1 GROUP", "ANY 1"} {
-		for _, fixed := range []bool{false,true} {
+		for _, fixed := range []bool{false, true} {
 			pattern := "(a:RouteNode {id:'a'})-[r:ROUTE*1..2]->(c:RouteNode {id:'c'})"
 			length := int64(2)
-			if fixed { pattern = "(a:RouteNode {id:'a'})-[r:ROUTE {p:'x'}]->(b:RouteNode {id:'b'})"; length = 1 }
+			if fixed {
+				pattern = "(a:RouteNode {id:'a'})-[r:ROUTE {p:'x'}]->(b:RouteNode {id:'b'})"
+				length = 1
+			}
 			cases = append(cases, relationshipAccessStorageCase{
-				name:fmt.Sprintf("generated_selected_%s_fixed_%t",selector,fixed),
-				query:"MATCH p = "+selector+" "+pattern+" RETURN length(p)",
-				operator:"Expand", estimate:100, rows:[][]interface{}{{length}},
+				name:     fmt.Sprintf("generated_selected_%s_fixed_%t", selector, fixed),
+				query:    "MATCH p = " + selector + " " + pattern + " RETURN length(p)",
+				operator: "Expand", estimate: 100, rows: [][]interface{}{{length}},
 			})
 		}
 	}

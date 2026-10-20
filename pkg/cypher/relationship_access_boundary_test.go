@@ -136,36 +136,36 @@ func relationshipBoundaryFunctionName(function *types.Func) string {
 }
 
 func relationshipBoundaryStorageAdapter(function *types.Func) bool {
-    signature := function.Type().(*types.Signature)
-    if signature.Recv() == nil || function.Pkg() == nil {
-        return false
-    }
-    for _, dependency := range function.Pkg().Imports() {
-        if dependency.Path() == "github.com/orneryd/nornicdb/pkg/storage" {
-            engine := dependency.Scope().Lookup("Engine").Type().Underlying().(*types.Interface)
-            return types.Implements(signature.Recv().Type(), engine)
-        }
-    }
-    return false
+	signature := function.Type().(*types.Signature)
+	if signature.Recv() == nil || function.Pkg() == nil {
+		return false
+	}
+	for _, dependency := range function.Pkg().Imports() {
+		if dependency.Path() == "github.com/orneryd/nornicdb/pkg/storage" {
+			engine := dependency.Scope().Lookup("Engine").Type().Underlying().(*types.Interface)
+			return types.Implements(signature.Recv().Type(), engine)
+		}
+	}
+	return false
 }
 
 func relationshipStoragePrimitive(function *types.Func) bool {
-    if function == nil || function.Pkg() == nil {
-        return false
-    }
-    if function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/storage" && function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/search" && !relationshipBoundaryStorageAdapter(function) {
-        return false
-    }
-    name := function.Name()
-    if !strings.Contains(name, "Edge") && !strings.Contains(name, "Relationship") && !strings.Contains(name, "Degree") {
-        return false
-    }
-    for _, prefix := range []string{"Get", "All", "Stream", "Seek", "Count", "Has", "Find", "Outgoing", "Incoming", "VectorQuery", "EdgeCount", "RelationshipCount"} {
-        if strings.HasPrefix(name, prefix) {
-            return true
-        }
-    }
-    return false
+	if function == nil || function.Pkg() == nil {
+		return false
+	}
+	if function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/storage" && function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/search" && !relationshipBoundaryStorageAdapter(function) {
+		return false
+	}
+	name := function.Name()
+	if !strings.Contains(name, "Edge") && !strings.Contains(name, "Relationship") && !strings.Contains(name, "Degree") {
+		return false
+	}
+	for _, prefix := range []string{"Get", "All", "Stream", "Seek", "Count", "Has", "Find", "Outgoing", "Incoming", "VectorQuery", "EdgeCount", "RelationshipCount"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 func relationshipBoundaryTarget(info *types.Info, expression ast.Expr) *types.Func {
 	switch target := expression.(type) {
@@ -202,27 +202,28 @@ func relationshipBoundaryViolations(t *testing.T, fixture string) []string {
 
 	functions, structuralViolations := relationshipBoundaryGraph(files, fset, info)
 
-    // Every relationship read is physically implemented by the capability. A
-    // storage.Engine implementation is the storage protocol itself, including
-    // transaction/snapshot adapters; it must not recursively enter query planning.
-    // No call-graph fan-in heuristic can exempt a query-side reader here.
-    violations := structuralViolations
-    var population []string
-    for _, function := range functions {
-        if !function.directIO {
-            continue
-        }
-        population = append(population, function.position+" "+function.name)
-        if !function.owner && !function.adapter {
-            violations = append(violations, fmt.Sprintf("%s: %s reads relationship storage outside relationshipAccessExecution", function.position, function.name))
-        }
-    }
-    sort.Strings(population)
-    t.Logf("compiler-resolved relationship storage readers (%d):\n%s", len(population), strings.Join(population, "\n"))
-    require.NotEmpty(t, population)
-    sort.Strings(violations)
-    return violations
+	// Every relationship read is physically implemented by the capability. A
+	// storage.Engine implementation is the storage protocol itself, including
+	// transaction/snapshot adapters; it must not recursively enter query planning.
+	// No call-graph fan-in heuristic can exempt a query-side reader here.
+	violations := structuralViolations
+	var population []string
+	for _, function := range functions {
+		if !function.directIO {
+			continue
+		}
+		population = append(population, function.position+" "+function.name)
+		if !function.owner && !function.adapter {
+			violations = append(violations, fmt.Sprintf("%s: %s reads relationship storage outside relationshipAccessExecution", function.position, function.name))
+		}
+	}
+	sort.Strings(population)
+	t.Logf("compiler-resolved relationship storage readers (%d):\n%s", len(population), strings.Join(population, "\n"))
+	require.NotEmpty(t, population)
+	sort.Strings(violations)
+	return violations
 }
+
 // Every compiler-resolved relationship storage read belongs to the execution
 // capability or to an implementation of the storage protocol. Result types,
 // caller counts, clauses and query-reader names cannot exempt a direct read.

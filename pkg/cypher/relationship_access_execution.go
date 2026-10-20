@@ -22,14 +22,14 @@ type relationshipVectorAccess struct {
 
 type relationshipIDAccess struct {
 	kind, expression string
-	estimatedRows     int64
+	estimatedRows    int64
 }
 
 type relationshipVectorProbeKey struct{}
 type relationshipVectorProbe struct {
-	planOnly          bool
-	access            *relationshipVectorAccess
-	candidates, rows  int64
+	planOnly         bool
+	access           *relationshipVectorAccess
+	candidates, rows int64
 }
 
 // relationshipStorageExecution gives explicit-entity APIs the same owner's

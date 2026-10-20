@@ -26,7 +26,9 @@ func assertRelationshipAccessStorageCase(t *testing.T, e *StorageExecutor, tc re
 			require.True(t, e.LastHotPathTrace().CosineVectorIndexFastPath)
 		case access.id != nil:
 			operator, estimate = "RelationshipByIdSeek", access.id.estimatedRows
-			if access.id.kind == "elementId" { operator = "RelationshipByElementIdSeek" }
+			if access.id.kind == "elementId" {
+				operator = "RelationshipByElementIdSeek"
+			}
 		case len(access.alternatives) != 0:
 			require.Len(t, access.alternatives, 1)
 			operator, index, estimate = "RelationshipIndexSeek", access.alternatives[0].name, access.alternatives[0].estimatedRows
@@ -44,7 +46,11 @@ func assertRelationshipAccessStorageCase(t *testing.T, e *StorageExecutor, tc re
 			plannedIndex, _ := op.Arguments["index"].(string)
 			require.Equal(t, index, plannedIndex, "%s index", mode)
 			require.Equal(t, estimate, op.EstimatedRows, "%s estimate", mode)
-			if mode == "PROFILE" { require.Equal(t, actual.Rows, result.Rows) } else { require.Empty(t, result.Rows) }
+			if mode == "PROFILE" {
+				require.Equal(t, actual.Rows, result.Rows)
+			} else {
+				require.Empty(t, result.Rows)
+			}
 		}
 	}
 }
