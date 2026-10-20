@@ -144,15 +144,23 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 		return runtimeRowResult(value, true, nil)
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
-		if receiver, bound := values[variable]; bound {
-			visible := e.queryVisibleValue(receiver)
-			value, supported := evaluateRowPropertyChain(visible, chain)
-			var err error
-			if !supported {
-				err = rowPropertyChainTypeError(visible, chain)
-			}
-			return runtimeRowResult(value, supported, err)
+		receiver, bound := values[variable]
+		if !bound {
+			receiver, bound = e.boundValue(ctx, variable)
 		}
+		// A partial row is valid during inspection and streaming preflight.
+		// Keep an absent receiver unresolved; the checked materializer owns
+		// rejection when execution actually requires this property's value.
+		if !bound {
+			return nil, false, nil
+		}
+		visible := e.queryVisibleValue(receiver)
+		value, supported := evaluateRowPropertyChain(visible, chain)
+		var err error
+		if !supported {
+			err = rowPropertyChainTypeError(visible, chain)
+		}
+		return runtimeRowResult(value, supported, err)
 	}
 	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
