@@ -335,7 +335,14 @@ func expectedReturnColumnsFromTail(tail string) []string {
 	return append([]string(nil), plan.columns...)
 }
 
-func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (result *ExecuteResult, err error) {
+	// Every tail route consumes the same seed once, including projections,
+	// empty row sets and write tails. Pass-through results already own its stats.
+	defer func() {
+		if err == nil && result != nil && seed != nil && result != seed && result.Stats != seed.Stats {
+			result.Stats = mergeQueryStats(result.Stats, seed.Stats)
+		}
+	}()
 	if seed == nil {
 		return nil, localizedError(localization.CypherCommandRoutingCallTailSeedRequired(), nil)
 	}
@@ -483,6 +490,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 		if err != nil {
 			return nil, true, err
 		}
+		combined.Stats = mergeQueryStats(combined.Stats, procedureResult.Stats)
 		if len(combined.Columns) == len(prefixColumns) {
 			combined.Columns = append(combined.Columns, procedureResult.Columns...)
 		}
@@ -658,6 +666,7 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
 			}
 		}
+		combined.Stats = mergeQueryStats(combined.Stats, result.res.Stats)
 		combined.Rows = append(combined.Rows, result.res.Rows...)
 	}
 	if combined == nil {
@@ -1567,7 +1576,12 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 		}
 		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
-		result, err := proc.Handler(procedureCtx, procedureExec, callCypher, args)
+		if proc.Spec.OwnsTransactions {
+			if err := procedureExec.checkPeriodicTransactionScope(procedureCtx, procName); err != nil {
+				return nil, err
+			}
+		}
+		result, err := procedureExec.executeProcedureHandler(procedureCtx, proc, callCypher, args)
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)
 		}
@@ -1582,7 +1596,11 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				// A void procedure leaves the row it was called for as it
 				// is: the clauses after it run once, as after any other
 				// leading clause.
-				result = &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+				seed := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+				if result != nil {
+					seed.Stats = result.Stats
+				}
+				result = seed
 			}
 			return e.executeCallTail(ctx, result, tailCypher)
 		}

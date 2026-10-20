@@ -1645,9 +1645,27 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 // rolled back on error, preventing partial data corruption from failed queries.
 // For strict ACID guarantees with durability, use explicit BEGIN/COMMIT transactions.
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	// A public procedure callback may re-enter Execute with the statement's
+	// transaction in its executor, context, or both. Reuse that owner rather
+	// than committing a nested implicit transaction independently.
+	if statementStorage, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+		statementExec := e
+		if e.storage != statementStorage {
+			statementExec = e.cloneWithStorage(statementStorage)
+		}
+		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(cypher)
-	needsTransaction := info.IsWriteQuery || (matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
+	needsTransaction, err := statementNeedsTransaction(cypher)
+	if err != nil {
+		return nil, err
+	}
+	// Fabric owns this statement's lifetime. Actual writes have already passed
+	// the resolved execution gate; conditional reads must not open a second tx.
+	if _, fabricOwned := ctx.Value(dynamicWriteAdmissionKey{}).(dynamicWriteAdmission); fabricOwned {
+		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
@@ -1669,6 +1687,13 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 }
 
+// statementNeedsTransaction keeps write clauses and registered WRITE procedures
+// under the same statement rollback owner. tx.setMetaData also needs a transaction.
+func statementNeedsTransaction(cypher string) (bool, error) {
+	contract, err := readStatementExecutionContract(cypher)
+	return contract.transaction, err
+}
+
 // executeWithImplicitTransaction wraps a write query in a single implicit
 // transaction. Commit-time conflicts are returned to the caller; retry-aware
 // clients own any replay decision because NornicDB does not know whether a
@@ -1684,7 +1709,7 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	})
 }
 
-func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -1783,6 +1808,19 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator:      separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+
+	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
+	defer func() {
+		if retErr == nil {
+			var batchStats *QueryStats
+			if result != nil {
+				batchStats = result.Stats
+			}
+			statsScope.commit(batchStats)
+		} else {
+			statsScope.discard()
+		}
+	}()
 
 	// Execute with transaction wrapper via context
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)

@@ -17,41 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
-type fabricStatsAccumulatorKey struct{}
 type fabricPreparedExecKey struct{}
-
-type fabricStatsAccumulator struct {
-	mu    sync.Mutex
-	stats QueryStats
-}
-
-func (a *fabricStatsAccumulator) add(in *QueryStats) {
-	if a == nil || in == nil {
-		return
-	}
-	a.mu.Lock()
-	addQueryStats(&a.stats, in)
-	a.mu.Unlock()
-}
-
-func (a *fabricStatsAccumulator) snapshot() QueryStats {
-	if a == nil {
-		return QueryStats{}
-	}
-	a.mu.Lock()
-	out := a.stats
-	a.mu.Unlock()
-	return out
-}
-
-func fabricStatsAccumulatorFromContext(ctx context.Context) *fabricStatsAccumulator {
-	v := ctx.Value(fabricStatsAccumulatorKey{})
-	if v == nil {
-		return nil
-	}
-	acc, _ := v.(*fabricStatsAccumulator)
-	return acc
-}
 
 func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 	if e.dbManager == nil {
@@ -106,6 +72,14 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	if prepared == nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
+	contract, err := readStatementExecutionContract(cypher)
+	if err != nil {
+		return nil, err
+	}
+	fragment, err := fabricProcedureWritePlan(prepared.fragment)
+	if err != nil {
+		return nil, err
+	}
 	catalog := prepared.catalog
 
 	authToken := GetAuthTokenFromContext(ctx)
@@ -143,15 +117,21 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		defer func() { _ = remoteExec.Close() }()
 	}
 
-	statsAcc := &fabricStatsAccumulator{}
-	ctx = context.WithValue(ctx, fabricStatsAccumulatorKey{}, statsAcc)
+	statsAcc := &queryStatsAccumulator{}
+	ctx = context.WithValue(ctx, queryStatsAccumulatorKey{}, statsAcc)
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec, newFabricRowEquivalence)
-	fabricExecutor.SetConcurrentExecution(autoCommit)
+	// Conditional statements may promote while running. Serialize their
+	// dispatch without voting WRITE before their actual body executes.
+	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
-	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
-	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
+ fabricExecutor.SetRemoteModeUncertainty(func(query string) bool {
+  contract,err:=readStatementExecutionContract(query)
+  return err!=nil || contract.calls
+ })
+ fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
+	stream, err := fabricExecutor.Execute(ctx, tx, fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
 		// for client-issued COMMIT/ROLLBACK. In autocommit mode, rollback immediately.
@@ -180,11 +160,11 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	}
 	e.normalizeFabricRowWrapper(cypher, stream)
 	s := statsAcc.snapshot()
-	return &ExecuteResult{
+	return resolvedStatementModeResult(&ExecuteResult{
 		Columns: stream.Columns,
 		Rows:    stream.Rows,
 		Stats:   &s,
-	}, nil
+	}, tx.WriteShard() != ""), nil
 }
 
 type fabricPreparedExec struct {
@@ -383,6 +363,74 @@ func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.C
 		e.fabricPlanCache.Put(planCacheKey, sessionDB, fragment)
 	}
 	return fragment, nil
+}
+
+// fabricProcedureWritePlan resolves the registered CALL contract at statement
+// admission, just as the native transaction route does. Cached structural plans
+// stay immutable and do not retain an obsolete procedure mode after registration.
+// The existing Fabric participant owner then handles writes and their rollback.
+func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error) {
+	switch current := fragment.(type) {
+	case *fabric.FragmentExec:
+		input, err := fabricProcedureWritePlan(current.Input)
+		if err != nil {
+			return nil, err
+		}
+		contract, err := readStatementExecutionContract(current.Query)
+		if err != nil {
+			return nil, err
+		}
+		write := contract.writes
+		if input == current.Input && write == current.IsWrite {
+			return current, nil
+		}
+		copy := *current
+		copy.Input, copy.IsWrite = input, write
+		return &copy, nil
+	case *fabric.FragmentApply:
+		input, err := fabricProcedureWritePlan(current.Input)
+		if err != nil {
+			return nil, err
+		}
+		inner, err := fabricProcedureWritePlan(current.Inner)
+		if err != nil {
+			return nil, err
+		}
+		if input == current.Input && inner == current.Inner {
+			return current, nil
+		}
+		copy := *current
+		copy.Input, copy.Inner = input, inner
+		return &copy, nil
+	case *fabric.FragmentUnion:
+		left, err := fabricProcedureWritePlan(current.LHS)
+		if err != nil {
+			return nil, err
+		}
+		right, err := fabricProcedureWritePlan(current.RHS)
+		if err != nil {
+			return nil, err
+		}
+		if left == current.LHS && right == current.RHS {
+			return current, nil
+		}
+		copy := *current
+		copy.LHS, copy.RHS = left, right
+		return &copy, nil
+	case *fabric.FragmentLeaf:
+		input, err := fabricProcedureWritePlan(current.Input)
+		if err != nil {
+			return nil, err
+		}
+		if input == current.Input {
+			return current, nil
+		}
+		copy := *current
+		copy.Input = input
+		return &copy, nil
+	default:
+		return fragment, nil
+	}
 }
 
 func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) {
@@ -621,7 +669,9 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
-
+	ctx = context.WithValue(ctx, dynamicWriteAdmissionKey{}, dynamicWriteAdmission(func(callCtx context.Context, caller *StorageExecutor, statement string) error {
+		return c.promoteResolvedStatement(callCtx, caller, dbName, engine, statement)
+	}))
 	var exec *StorageExecutor
 	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
 		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
@@ -685,7 +735,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	if result == nil {
 		return []string{}, [][]interface{}{}, nil
 	}
-	if acc := fabricStatsAccumulatorFromContext(ctx); acc != nil {
+	if acc := queryStatsAccumulatorFromContext(ctx); acc != nil {
 		acc.add(result.Stats)
 	}
 	return result.Columns, result.Rows, nil
@@ -809,6 +859,12 @@ func fabricGraphReferenceError(err error) error {
 	var reference *fabric.GraphReferenceError
 	if errors.As(err, &reference) {
 		return localizedStatusError(reference.Code, "GraphReference", reference.Message)
+	}
+	var querySyntax *fabric.QuerySyntaxError
+	if errors.As(err, &querySyntax) {
+		// Native embedded callers retain a status-bearing Error string as well
+		// as the localized/typed protocol error below it.
+		return fmt.Errorf("%s: %w", querySyntax.BoltErrorCode(), localizedStatusError(querySyntax.BoltErrorCode(), "UnexpectedSyntax", querySyntax.Message))
 	}
 	var syntax *fabric.UseSyntaxError
 	if errors.As(err, &syntax) {

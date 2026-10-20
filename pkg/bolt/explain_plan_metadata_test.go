@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newStatementFramingSession(t *testing.T) neo4jdriver.SessionWithContext {
+func newStatementFramingSession(t *testing.T, modes ...neo4jdriver.AccessMode) neo4jdriver.SessionWithContext {
 	t.Helper()
 	base := storage.NewMemoryEngine()
 	t.Cleanup(func() {
@@ -47,8 +47,12 @@ func newStatementFramingSession(t *testing.T) neo4jdriver.SessionWithContext {
 	})
 	require.NoError(t, driver.VerifyConnectivity(ctx))
 
+	mode := neo4jdriver.AccessModeWrite
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
+		AccessMode:   mode,
 		DatabaseName: "nornic",
 	})
 	t.Cleanup(func() {

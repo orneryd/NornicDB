@@ -6,6 +6,25 @@ import (
 	"strings"
 )
 
+// These conservative hints can over-invalidate caches. Execution admission and
+// resolved statement modes use readStatementExecutionContract instead.
+func (e *StorageExecutor) invalidateResultCacheForQuery(info *QueryInfo) {
+	if info.IsWriteQuery && e.cache != nil {
+		if len(info.Labels) > 0 {
+			e.cache.InvalidateLabels(info.Labels)
+		} else {
+			e.cache.Invalidate()
+		}
+	}
+}
+
+func (e *StorageExecutor) invalidateCachesForQuery(info *QueryInfo, query string) {
+	if info.IsWriteQuery && info.HasDelete && queryDeletesNodes(query) {
+		e.invalidateNodeLookupCache()
+	}
+	e.invalidateResultCacheForQuery(info)
+}
+
 // canUseResultCache applies the same transaction boundary to local and Fabric
 // reads. Committed revisions cannot represent a transaction's pending writes,
 // including an implicit transaction carried by context or a storage-scoped view.

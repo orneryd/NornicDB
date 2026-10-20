@@ -40,7 +40,9 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 	}
 
 	// Execute the iterate query to get data to process
-	iterateResult, err := e.executeUserStatement(ctx, iterateQuery, nil)
+	iterateResult, err := e.executePeriodicBatch(ctx, procedure, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
+		return batch.executeUserStatement(batchCtx, iterateQuery, nil)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("iterate query failed: %w", err)
 	}
@@ -52,6 +54,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 	stats := &QueryStats{}
 	errorCount := int64(0)
 	successCount := int64(0)
+	failedBatches := int64(0)
 
 	for batchNum := 0; batchNum < batches; batchNum++ {
 		startIdx := batchNum * batchSize
@@ -60,31 +63,33 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 			endIdx = totalRows
 		}
 
-		// Process each row in the batch
-		for i := startIdx; i < endIdx; i++ {
-			row := iterateResult.Rows[i]
-
-			// Build params map from row
-			params := make(map[string]interface{})
-			for j, col := range iterateResult.Columns {
-				if j < len(row) {
-					params[col] = row[j]
+		batchStats := &QueryStats{}
+		_, batchErr := e.executePeriodicBatch(ctx, procedure, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
+			for i := startIdx; i < endIdx; i++ {
+				row := iterateResult.Rows[i]
+				params := make(map[string]interface{})
+				for j, col := range iterateResult.Columns {
+					if j < len(row) {
+						params[col] = row[j]
+					}
+				}
+				actionResult, err := batch.executeUserStatement(batchCtx, actionQuery, params)
+				if err != nil {
+					return nil, err
+				}
+				if actionResult.Stats != nil {
+					addQueryStats(batchStats, actionResult.Stats)
 				}
 			}
-
-			// Execute action query with row data as parameters
-			actionResult, err := e.executeUserStatement(ctx, actionQuery, params)
-			if err != nil {
-				errorCount++
-				continue
-			}
-			successCount++
-
-			// Accumulate stats
-			if actionResult.Stats != nil {
-				addQueryStats(stats, actionResult.Stats)
-			}
+			return &ExecuteResult{Stats: batchStats}, nil
+		})
+		if batchErr != nil {
+			errorCount += int64(endIdx - startIdx)
+			failedBatches++
+			continue
 		}
+		successCount += int64(endIdx - startIdx)
+		addQueryStats(stats, batchStats)
 	}
 
 	return &ExecuteResult{
@@ -96,13 +101,13 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 				int64(0),                 // timeTaken (ms) - not measured
 				successCount,             // committedOperations
 				errorCount,               // failedOperations
-				int64(0),                 // failedBatches
+				failedBatches,            // failedBatches
 				int64(0),                 // retries
 				map[string]interface{}{}, // errorMessages
 				map[string]interface{}{ // batch
 					"total":     int64(batches),
-					"committed": int64(batches),
-					"failed":    int64(0),
+					"committed": int64(batches) - failedBatches,
+					"failed":    failedBatches,
 					"errors":    map[string]interface{}{},
 				},
 				map[string]interface{}{ // operations
@@ -164,7 +169,9 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 			statement = statement + fmt.Sprintf(" LIMIT %d", limit)
 		}
 
-		result, err := e.executeUserStatement(ctx, statement, params)
+		result, err := e.executePeriodicBatch(ctx, procedure, func(batchCtx context.Context, batch *StorageExecutor) (*ExecuteResult, error) {
+			return batch.executeUserStatement(batchCtx, statement, params)
+		})
 		if err != nil {
 			break
 		}

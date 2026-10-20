@@ -25,7 +25,16 @@ import (
 // statement, so an administration command there is refused as after any
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
-func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
+	if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
+		// Every nested procedure installs its own invocation collector. Its
+		// completed summary enters this collector only through this result.
+		defer func() {
+			if err == nil && result != nil {
+				totals.record(result.Stats)
+			}
+		}()
+	}
 	if err := internalFunctionCallError(statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
@@ -135,6 +144,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	upper := e.cachedUpperQuery(cypher)
+	// This is executable, normalized statement text with its actual parameter
+	// values installed. Nested dynamic handlers return through this same gate;
+	// no admission parser attempts to reconstruct their arguments.
+	if err := e.admitResolvedStatementWrite(ctx, cypher); err != nil {
+		return nil, err
+	}
 
 	// If we're in an explicit transaction, execute within it.
 	if e.txContext != nil && e.txContext.active {

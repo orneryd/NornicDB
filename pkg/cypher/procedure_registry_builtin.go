@@ -460,7 +460,7 @@ func ensureBuiltInProceduresRegistered() {
 					return e.callApocCustomList(ctx)
 				})
 		}
-		registerBuiltInProcedureLiteral("apoc.cypher.run", "apoc.cypher.run(statement :: STRING, params :: MAP) :: (value :: MAP)", "Runs dynamic Cypher", ProcedureModeRead, 1, 2, false,
+		registerStatementProcedureLiteral("apoc.cypher.run", "apoc.cypher.run(statement :: STRING, params :: MAP) :: (value :: MAP)", "Runs dynamic Cypher", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.run", args)
 			})
@@ -468,7 +468,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.doIt", args)
 			})
-		registerBuiltInProcedureLiteral("apoc.cypher.doitall", "apoc.cypher.doitall(statement :: STRING, params :: MAP) :: (value :: MAP)", "Alias of apoc.cypher.run", ProcedureModeRead, 1, 2, false,
+		registerStatementProcedureLiteral("apoc.cypher.doitall", "apoc.cypher.doitall(statement :: STRING, params :: MAP) :: (value :: MAP)", "Alias of apoc.cypher.run", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.doitall", args)
 			})
@@ -476,15 +476,15 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRunMany(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.periodic.iterate", "apoc.periodic.iterate(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Runs batch iterate/action jobs", ProcedureModeWrite, 2, 3, false,
+		registerBatchProcedureLiteral("apoc.periodic.iterate", "apoc.periodic.iterate(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Runs batch iterate/action jobs", ProcedureModeWrite, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.iterate", args)
 			})
-		registerBuiltInProcedureLiteral("apoc.periodic.commit", "apoc.periodic.commit(statement :: STRING, params :: MAP) :: (updates :: INTEGER, executions :: INTEGER, runtime :: INTEGER)", "Runs periodic commits", ProcedureModeWrite, 1, 2, false,
+		registerBatchProcedureLiteral("apoc.periodic.commit", "apoc.periodic.commit(statement :: STRING, params :: MAP) :: (updates :: INTEGER, executions :: INTEGER, runtime :: INTEGER)", "Runs periodic commits", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicCommit(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.periodic.rock_n_roll", "apoc.periodic.rock_n_roll(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Alias of apoc.periodic.iterate", ProcedureModeWrite, 2, 3, false,
+		registerBatchProcedureLiteral("apoc.periodic.rock_n_roll", "apoc.periodic.rock_n_roll(iterate :: STRING, action :: STRING, config :: MAP) :: (batches :: INTEGER, total :: INTEGER, errorMessages :: LIST<STRING>)", "Alias of apoc.periodic.iterate", ProcedureModeWrite, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.rock_n_roll", args)
 			})
@@ -624,7 +624,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportJsonAll(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.export.json.query", "apoc.export.json.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to JSON", ProcedureModeRead, 2, 3, false,
+		registerStatementProcedureLiteral("apoc.export.json.query", "apoc.export.json.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to JSON", ProcedureModeRead, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportJsonQuery(ctx, args)
 			})
@@ -632,7 +632,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportCsvAll(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.export.csv.query", "apoc.export.csv.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to CSV", ProcedureModeRead, 2, 3, false,
+		registerStatementProcedureLiteral("apoc.export.csv.query", "apoc.export.csv.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to CSV", ProcedureModeRead, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocExportCsvQuery(ctx, args)
 			})
@@ -956,6 +956,16 @@ func registerBuiltInProcedureLiteral(name, signature, description string, mode P
 	}, handler)
 }
 
+// registerStatementProcedureLiteral records a READ procedure's executable
+// argument in the same registry that declares ordinary WRITE procedures.
+func registerStatementProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+	registerProcedure(ProcedureSpec{
+		Name: name, Signature: signature, Description: description, Mode: mode,
+		WorksOnSystem: worksOnSystem, MinArgs: minArgs, MaxArgs: maxArgs,
+		ExecutesStatements: true,
+	}, handler)
+}
+
 // registerAdminBuiltInProcedureLiteral is registerBuiltInProcedureLiteral
 // for a procedure only an administrator runs (ProcedureSpec.Admin).
 func registerAdminBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
@@ -996,4 +1006,11 @@ func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
 		}
 	}
 	_ = globalProcedureRegistry.RegisterBuiltIn(spec, handler)
+}
+
+func registerBatchProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+	registerProcedure(ProcedureSpec{
+		Name: name, Signature: signature, Description: description, Mode: mode,
+		WorksOnSystem: worksOnSystem, MinArgs: minArgs, MaxArgs: maxArgs, OwnsTransactions: true,
+	}, handler)
 }

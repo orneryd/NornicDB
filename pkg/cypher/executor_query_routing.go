@@ -14,7 +14,7 @@ import (
 // (CREATE/DROP DATABASE, SHOW DATABASES, etc.) and must not use the async engine or
 // implicit transactions. These are routed to executeWithoutTransaction directly.
 func isSystemCommandNoGraph(cypher string) bool {
-	return startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
+	system := startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
 		isCreateOrReplaceDatabaseQuery(cypher) ||
 		startsWithKeywords(cypher, "CREATE", "DATABASE") ||
 		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
@@ -24,6 +24,11 @@ func isSystemCommandNoGraph(cypher string) bool {
 		startsWithKeywords(cypher, "SHOW", "DATABASES") ||
 		startsWithKeywords(cypher, "ALTER", "DATABASE") ||
 		isPrivilegeAdministrationCommand(cypher)
+	if !system {
+		return false
+	}
+	_, native := readNativeStatementCommand(cypher)
+	return native
 }
 
 func isShowConstraintContractsCommand(cypher string) bool {
@@ -55,6 +60,16 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if scoped := e.withStatementPropertyViews(cypher); scoped != nil {
 		return scoped.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
+	if mayContainSubqueryExpression(cypher) && len(findSubqueryExpressions(cypher)) > 0 {
+		scope := &expressionStatsContext{Context: ctx}
+		ctx = scope
+		defer func() {
+			if err == nil && result != nil {
+				stats := scope.snapshot()
+				result.Stats = mergeQueryStats(result.Stats, &stats)
+			}
+		}()
+	}
 	defer func() { e.projectQueryResultProperties(result) }()
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && err == nil {
@@ -66,8 +81,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if unionAll, union := topLevelUnion(cypher, upperQuery); union {
 		return e.executeUnion(ctx, cypher, unionAll)
 	}
-	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
-		return result, err
+	command, nativeCommand := readNativeStatementCommand(cypher)
+	if nativeCommand && command.priority {
+		return command.execute(e, ctx, cypher)
 	}
 	// The logical row frame constrains operator selection after the statement
 	// entry has installed its storage view. Fast paths without import retention
@@ -155,10 +171,6 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	if startsWithKeywords(cypher, "ALTER", "DATABASE") {
-		return e.executeAlterDatabase(ctx, cypher)
-	}
-
 	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet &&
 		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
@@ -184,103 +196,19 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return nil, unsupportedOptionalMatchShapeError(cypher)
 	}
 
-	switch {
-	case isProcedurePrivilegeCommand(cypher):
-		return e.executeProcedurePrivilegeCommand(ctx, cypher)
-	case startsWithKeywordFold(strings.TrimSpace(cypher), "GRANT"), startsWithKeywordFold(strings.TrimSpace(cypher), "REVOKE"),
-		startsWithKeywordFold(strings.TrimSpace(cypher), "DENY"):
-		// Only procedure execution privileges are supported.
-		return nil, unsupportedAdministrationCommandError(cypher)
-	case isCreateProcedureCommand(cypher):
-		return e.executeCreateProcedure(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"),
-		startsWithKeywords(cypher, "OPTIONAL", "CALL"):
-		return e.executeRequiredPipeline(ctx, cypher)
-	case startsWithMatch:
-		return e.executeRequiredPipeline(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX"),
-		findKeywordIndex(cypher, "CREATE INDEX") == 0:
-		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
-		return e.executeCreateCompositeDatabase(ctx, cypher)
-	case isCreateOrReplaceDatabaseQuery(cypher):
-		return e.executeCreateOrReplaceDatabase(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
-		return e.executeCreateDatabase(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
-		return e.executeCreateAlias(ctx, cypher)
-	case startsWithCreate:
-		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "CALL") == 0:
-		return e.executeCall(ctx, cypher)
-	case findKeywordIndex(cypher, "RETURN") == 0:
-		return e.executeReturn(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE"):
-		return e.executeDropCompositeDatabase(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "DATABASE"):
-		return e.executeDropDatabase(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "ALIAS"):
-		return e.executeDropAlias(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "CONSTRAINT"):
-		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "DROP", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "DROP", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case isDropProcedureCommand(cypher):
-		return e.executeDropProcedure(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "INDEX"):
-		return e.executeSchemaCommand(ctx, cypher)
-	case isDropRoleCommand(cypher):
-		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
-			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
-	case findKeywordIndex(cypher, "DROP") == 0:
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
-	case findKeywordIndex(cypher, "WITH") == 0:
-		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "UNWIND") == 0:
-		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "FOREACH") == 0:
-		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "LOAD CSV") == 0:
-		return e.executeLoadCSV(ctx, cypher)
-	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
-		return e.executeAlterCompositeDatabase(ctx, cypher)
-	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	default:
-		// Terminal chokepoint of the converged router: a statement that passed
-		// syntax validation but matches no handler is rejected here — never a
-		// silent success, alternate text executor, or re-dispatch. Neo4j
-		// reports unrecognized statements as syntax errors, so the localized
-		// message keeps its text while Bolt carries the proper status code.
-		firstWord := strings.Split(upperQuery, " ")[0]
-		err := localizedError(localization.CypherTransactionsQueryTypeUnsupported(firstWord), nil)
-		return nil, &classifiedCypherError{
-			cause:  err,
-			code:   "Neo.ClientError.Statement.SyntaxError",
-			detail: "UnexpectedSyntax",
-		}
+	// Preserve graph-plan precedence for keyword-named path variables. The
+	// selected fixed handler is invoked only where the original router did.
+	if nativeCommand {
+		return command.execute(e, ctx, cypher)
 	}
+	return readNativeGraphCommand(cypher).execute(e, ctx, cypher)
 }
 
 func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
 		return outcome.result, outcome.err
 	}
-	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "query could not be planned as a clause pipeline")
+	return nil, unplannedNativePipelineError()
 }
 
 // executeReturn runs a statement that is only a RETURN (RETURN 1, RETURN
