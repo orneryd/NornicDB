@@ -946,34 +946,21 @@ func isLengthPathExpr(expr string) bool {
 
 func (e *StorageExecutor) aggregatePathSum(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
 	var sumInt int64
-	sumFloat := 0.0
+	var sumFloat float64
 	hasFloat := false
-	hasValue := false
-
 	for _, path := range paths {
-		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
-		if val == nil {
+		bindings := e.buildPathContext(path, matches)
+		value := e.evaluateExpressionWithPathContext(ctx, inner, bindings)
+		floating, integer, isInteger, numeric := pipelineAggregateNumber(value)
+		if !numeric {
 			continue
 		}
-		hasValue = true
-		switch v := val.(type) {
-		case int64:
-			sumInt += v
-			sumFloat += float64(v)
-		case int:
-			sumInt += int64(v)
-			sumFloat += float64(v)
-		default:
-			if f, ok := toFloat64(v); ok {
-				hasFloat = true
-				sumFloat += f
-			}
+		sumFloat += floating
+		if isInteger {
+			sumInt += integer
+		} else {
+			hasFloat = true
 		}
-	}
-
-	if !hasValue {
-		return int64(0)
 	}
 	if hasFloat {
 		return sumFloat

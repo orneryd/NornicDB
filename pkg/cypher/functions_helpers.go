@@ -136,13 +136,13 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 		}
 	case func([]interface{}) interface{}:
 		if len(args) == 1 {
-			if list, ok := args[0].([]interface{}); ok {
+			if list, ok := cypherListValue(args[0]); ok {
 				return fn(list), nil
 			}
 		}
 	case func([]interface{}) float64:
 		if len(args) == 1 {
-			if list, ok := args[0].([]interface{}); ok {
+			if list, ok := cypherListValue(args[0]); ok {
 				return fn(list), nil
 			}
 		}
@@ -172,14 +172,14 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 		}
 	case func([]interface{}, interface{}) bool:
 		if len(args) == 2 {
-			if list, ok := args[0].([]interface{}); ok {
+			if list, ok := cypherListValue(args[0]); ok {
 				return fn(list, args[1]), nil
 			}
 		}
 	case func([]interface{}, []interface{}) []interface{}:
 		if len(args) == 2 {
-			list1, ok1 := args[0].([]interface{})
-			list2, ok2 := args[1].([]interface{})
+			list1, ok1 := cypherListValue(args[0])
+			list2, ok2 := cypherListValue(args[1])
 			if ok1 && ok2 {
 				return fn(list1, list2), nil
 			}

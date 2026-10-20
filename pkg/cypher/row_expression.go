@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strings"
@@ -565,67 +566,10 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return rowStringPredicateValue(leftValue, rightValue, predicate.match), true, nil
 	}
 
-	// The subscript is the bracket group that closes expr (rowSubscriptStart):
-	// its key may hold brackets of its own (m[r[k]], m[l[0].id]).
 	if open := rowSubscriptStart(expr); open > 0 {
-		base, ok, err := e.evaluateRowValue(expr[:open], values)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		subscript := strings.TrimSpace(expr[open+1 : len(expr)-1])
-		if from, to, slice := staticSliceBounds(subscript); slice {
-			return e.evaluateRowListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), values)
-		}
-		indexValue, ok, err := e.evaluateRowValue(subscript, values)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		if base == nil || indexValue == nil {
-			return nil, true, nil
-		}
-		_, isNode := base.(*storage.Node)
-		_, isRelationship := base.(*storage.Edge)
-		_, isRemote := base.(storage.RemoteEntityValue)
-		if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship || isRemote {
-			// A dynamic property access: n[key] is n.key.
-			key, isString := indexValue.(string)
-			if !isString {
-				return nil, false, nil
-			}
-			value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
-			return value, ok, nil
-		}
-		if key, isKey := indexValue.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
-			// d['year'] reads the field d.year does.
-			value, _, supported := evaluateTemporalProperty(base, key)
-			if !supported {
-				return nil, false, temporalNoSuchFieldError(key)
-			}
-			return value, true, nil
-		}
-		index, ok := rowSubscriptIndex(indexValue)
-		if !ok {
-			return nil, false, nil
-		}
-		// Only a list is indexed by an integer: n.big[0] on a number is a
-		// TypeError wherever it is read, a WHERE included (#907).
-		items, isList := cypherListValue(base)
-		if !isList {
-			return nil, false, subscriptReceiverError(base, indexValue)
-		}
-		if index < 0 {
-			index += len(items)
-		}
-		if index < 0 || index >= len(items) {
-			return nil, true, nil
-		}
-		return items[index], true, nil
+		return e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+			return e.evaluateRowValue(part, values)
+		})
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "+-"); ok {
@@ -1000,25 +944,6 @@ func cypherComparisonResult(comparison int, operator string) interface{} {
 func compareCypherPredicateValues(left, right interface{}, operator string) bool {
 	matched, known := compareCypherPredicateValue(left, right, operator).(bool)
 	return known && matched
-}
-
-func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression, upperExpression string, values map[string]interface{}) (interface{}, bool, error) {
-	bound := func(expression string) (interface{}, bool, error) {
-		if expression == "" {
-			return nil, true, nil
-		}
-		return e.evaluateRowValue(expression, values)
-	}
-	lower, ok, err := bound(lowerExpression)
-	if err != nil || !ok {
-		return nil, false, err
-	}
-	upper, ok, err := bound(upperExpression)
-	if err != nil || !ok {
-		return nil, false, err
-	}
-	value, ok := cypherListSlice(base, lower, upper, lowerExpression != "", upperExpression != "")
-	return value, ok, nil
 }
 
 // cypherListSlice is base[lower..upper], the one list slice of every
@@ -1460,17 +1385,9 @@ func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
 }
 
 func rowSubscriptIndex(value interface{}) (int, bool) {
-	switch number := value.(type) {
-	case int:
-		return number, true
-	case int64:
-		return int(number), true
-	case float64:
-		integer := int(number)
-		return integer, float64(integer) == number
-	default:
-		return 0, false
-	}
+	// Out-of-bounds integer magnitudes clamp before a native-int conversion;
+	// the list owner then returns null or clips a slice, never a wrapped index.
+	return valueconvert.ToInt(value, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat|valueconvert.IntegerClampBounds)
 }
 
 // evaluateRowPredicate evaluates a WHERE predicate against a row.

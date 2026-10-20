@@ -4,10 +4,10 @@ package cypher
 
 import (
 	"context"
-	"reflect"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -125,61 +125,8 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 }
 
 func toAnySlice(v interface{}) []interface{} {
-	switch s := v.(type) {
-	case []interface{}:
-		return s
-	case []map[string]interface{}:
-		out := make([]interface{}, len(s))
-		for i, m := range s {
-			out[i] = m
-		}
-		return out
-	case []string:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	case []int:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = int64(s[i])
-		}
-		return out
-	case []int64:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	case []float64:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	case []float32:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = float64(s[i])
-		}
-		return out
-	case []bool:
-		out := make([]interface{}, len(s))
-		for i := range s {
-			out[i] = s[i]
-		}
-		return out
-	}
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
-		return nil
-	}
-	out := make([]interface{}, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		out[i] = rv.Index(i).Interface()
-	}
-	return out
+	items, _ := convert.ListValue(v)
+	return items
 }
 
 func parseLiteralMapForPipeline(s string) map[string]interface{} {

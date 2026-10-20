@@ -6,6 +6,8 @@ package agg
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"math"
 	"sort"
 )
 
@@ -132,7 +134,10 @@ func Percentile(values []interface{}, percentile float64) float64 {
 	sort.Float64s(nums)
 
 	index := percentile * float64(len(nums)-1)
-	lower := int(index)
+	lower, fits := valueconvert.ToInt(index, valueconvert.IntegerFloat)
+	if !fits || lower < 0 || lower >= len(nums) {
+		return 0
+	}
 	upper := lower + 1
 
 	if upper >= len(nums) {
@@ -381,16 +386,20 @@ func Histogram(values []interface{}, bucketSize float64) []map[string]interface{
 		return []map[string]interface{}{}
 	}
 
-	buckets := make(map[int]int)
+	buckets := make(map[float64]int)
 	for _, num := range nums {
-		bucket := int(num / bucketSize)
-		buckets[bucket]++
+		// Buckets are floating coordinates. A native integer key would impose an
+		// unrelated signed bound and corrupt large positive numeric values.
+		bucket := math.Trunc(num / bucketSize)
+		if !math.IsNaN(bucket) && !math.IsInf(bucket, 0) {
+			buckets[bucket]++
+		}
 	}
 
 	result := make([]map[string]interface{}, 0)
 	for bucket, count := range buckets {
 		result = append(result, map[string]interface{}{
-			"bucket": float64(bucket) * bucketSize,
+			"bucket": bucket * bucketSize,
 			"count":  count,
 		})
 	}
@@ -432,19 +441,7 @@ func Frequencies(values []interface{}) []map[string]interface{} {
 // Helper functions
 
 func toFloat64(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case float64:
-		return val, true
-	case float32:
-		return float64(val), true
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case int32:
-		return float64(val), true
-	}
-	return 0, false
+	return valueconvert.NumericFloat64(v)
 }
 
 func sqrt(x float64) float64 {

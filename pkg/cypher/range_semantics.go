@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"iter"
 	"strings"
 )
@@ -67,36 +67,7 @@ func (sequence cypherRange) values() iter.Seq[int64] {
 }
 
 func cypherIntegerValue(value interface{}) (int64, bool) {
-	switch number := value.(type) {
-	case int:
-		return int64(number), true
-	case int8:
-		return int64(number), true
-	case int16:
-		return int64(number), true
-	case int32:
-		return int64(number), true
-	case int64:
-		return number, true
-	case uint:
-		if uint64(number) > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(number), true
-	case uint8:
-		return int64(number), true
-	case uint16:
-		return int64(number), true
-	case uint32:
-		return int64(number), true
-	case uint64:
-		if number > math.MaxInt64 {
-			return 0, false
-		}
-		return int64(number), true
-	default:
-		return 0, false
-	}
+	return valueconvert.IntegerValue(value)
 }
 
 // rangeBound is a range() start, end or step: an integer, or a float
@@ -104,14 +75,7 @@ func cypherIntegerValue(value interface{}) (int64, bool) {
 // -1), as Neo4j reads a float from a property; a float literal is the
 // static check's SyntaxError first. Anything else isn't a bound.
 func rangeBound(value interface{}) (int64, bool) {
-	if integer, ok := cypherIntegerValue(value); ok {
-		return integer, true
-	}
-	number, isFloat := cypherFloatValue(value)
-	if !isFloat || number != number || number >= 9.223372036854775807e18 || number <= -9.223372036854775808e18 {
-		return 0, false
-	}
-	return int64(number), true
+	return valueconvert.Int64(value, valueconvert.IntegerFloat)
 }
 
 func invalidRangeArgumentType(message string, value interface{}) error {

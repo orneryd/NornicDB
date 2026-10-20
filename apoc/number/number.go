@@ -33,30 +33,36 @@ func Format(number float64, pattern string) string {
 
 // formatWithCommas formats a number with thousand separators.
 func formatWithCommas(number float64, pattern string) string {
-	// Split into integer and decimal parts
-	intPart := int64(math.Abs(number))
-	decPart := math.Abs(number) - float64(intPart)
-
-	// Format integer part with commas
-	intStr := strconv.FormatInt(intPart, 10)
+	// Format the floating integer part directly; a temporary signed integer
+	// cannot represent every valid float and used to corrupt the sign.
+	if math.IsNaN(number) || math.IsInf(number, 0) {
+		return strconv.FormatFloat(number, 'f', -1, 64)
+	}
+	absolute := math.Abs(number)
+	whole := math.Trunc(absolute)
+	fraction := absolute - whole
+	digits := strconv.FormatFloat(whole, 'f', 0, 64)
 	var result strings.Builder
-
-	for i, digit := range intStr {
-		if i > 0 && (len(intStr)-i)%3 == 0 {
-			result.WriteRune(',')
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			result.WriteByte(',')
 		}
 		result.WriteRune(digit)
 	}
-
-	// Add decimal part if needed
-	if decPart > 0 || strings.Contains(pattern, ".") {
-		decimalPlaces := 2
-		if idx := strings.Index(pattern, "."); idx >= 0 {
-			decimalPlaces = len(pattern) - idx - 1
+	if fraction > 0 || strings.Contains(pattern, ".") {
+		precision := 2
+		if dot := strings.Index(pattern, "."); dot >= 0 {
+			precision = len(pattern) - dot - 1
 		}
-		result.WriteString(fmt.Sprintf(".%0*d", decimalPlaces, int(decPart*math.Pow(10, float64(decimalPlaces)))))
+		// Retain this formatter's existing truncation policy without narrowing the
+		// scaled fraction through a native integer.
+		decimals := strconv.FormatFloat(math.Trunc(fraction*math.Pow(10, float64(precision))), 'f', 0, 64)
+		result.WriteByte('.')
+		if len(decimals) < precision {
+			result.WriteString(strings.Repeat("0", precision-len(decimals)))
+		}
+		result.WriteString(decimals)
 	}
-
 	if number < 0 {
 		return "-" + result.String()
 	}

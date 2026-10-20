@@ -1114,33 +1114,15 @@ func resolveOptionalIntLiteralOrParam(ctx context.Context, raw string) (int, boo
 
 func resolveIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, false
-	}
 	if strings.HasPrefix(raw, "$") {
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return 0, false
-		}
-		value, ok := params[strings.TrimPrefix(raw, "$")]
+		value, ok := getParamsFromContext(ctx)[strings.TrimPrefix(raw, "$")]
 		if !ok {
 			return 0, false
 		}
-		switch typed := value.(type) {
-		case int:
-			return typed, true
-		case int64:
-			return int(typed), true
-		case float64:
-			return int(typed), true
-		}
-		return 0, false
+		return convert.ToInt(value, convert.IntegerFloat)
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
+	integer, err := strconv.Atoi(raw)
+	return integer, err == nil
 }
 
 // callTailPlanClauseKeywords start the clauses that can follow a CALL's (or

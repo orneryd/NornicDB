@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"fmt"
-	"reflect"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -141,8 +141,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		}
 		return nil
 	}
-	baseType := reflect.TypeOf(base)
-	if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
+	if _, list := valueconvert.ReadList(base); !list {
 		return subscriptReceiverError(base, index)
 	}
 	if !isCypherInteger(index) {
@@ -306,12 +305,7 @@ func isRowReceiverIdentifierByte(value byte) bool {
 }
 
 func isCypherInteger(value interface{}) bool {
-	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return true
-	default:
-		return false
-	}
+	return valueconvert.IsInteger(value)
 }
 
 func invalidSubscriptTypeError(message string, value interface{}) error {

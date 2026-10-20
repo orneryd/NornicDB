@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -93,16 +94,11 @@ func impliedBounds(variable, property, expression string, params map[string]inte
 // seekableBoundValue reports whether value can bound an index range: a
 // string or a number other than NaN.
 func seekableBoundValue(value interface{}) bool {
-	switch typed := value.(type) {
-	case string:
+	if _, text := value.(string); text {
 		return true
-	case bool:
-		return false
-	case float64:
-		return !math.IsNaN(typed)
 	}
-	_, isNumber := toFloat64(value)
-	return isNumber
+	number, numeric := valueconvert.NumericFloat64(value)
+	return numeric && !math.IsNaN(number)
 }
 
 // compareBoundValues orders two bound values; comparable is false for a
