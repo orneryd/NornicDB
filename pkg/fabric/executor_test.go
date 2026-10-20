@@ -1156,9 +1156,9 @@ func TestApplyLookupKeyString_Semantics(t *testing.T) {
 	if applyLookupKeyString(int64(99)) == applyLookupKeyString(int64(100)) {
 		t.Fatalf("expected numeric keys to remain distinct")
 	}
-	// Floats should remain distinct from integer representations.
-	if applyLookupKeyString(float64(42)) == applyLookupKeyString(int64(42)) {
-		t.Fatalf("expected float64/int64 lookup keys to remain type-distinct")
+	// Equal numeric representations belong to the same correlation group.
+	if applyLookupKeyString(float64(42)) != applyLookupKeyString(int64(42)) {
+		t.Fatalf("expected equal float64/int64 lookup keys to match")
 	}
 }
 
@@ -1387,7 +1387,7 @@ func TestCompareSimpleOrderValues_AllBranches(t *testing.T) {
 	if compareSimpleOrderValues("x", "x") != 0 {
 		t.Fatal("x == x should be 0")
 	}
-	// int comparisons via asComparableFloat.
+	// Integer comparisons use the shared exact owner.
 	if compareSimpleOrderValues(1, 2) != -1 {
 		t.Fatal("int 1 < 2 should be -1")
 	}
@@ -1396,7 +1396,7 @@ func TestCompareSimpleOrderValues_AllBranches(t *testing.T) {
 	}
 }
 
-func TestAsComparableFloat_AllTypes(t *testing.T) {
+func TestFabricNumericOwner_AllTypes(t *testing.T) {
 	tests := []struct {
 		name string
 		val  interface{}
@@ -1420,7 +1420,7 @@ func TestAsComparableFloat_AllTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := asComparableFloat(tt.val)
+			got, ok := storage.NumericValueKey(tt.val)
 			if ok != tt.ok {
 				t.Fatalf("expected ok=%v, got ok=%v", tt.ok, ok)
 			}

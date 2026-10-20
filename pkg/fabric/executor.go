@@ -11,6 +11,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -1207,6 +1208,9 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 }
 
 func applyLookupKeyString(v interface{}) string {
+	if key, numeric := storage.NumericValueKey(v); numeric {
+		return fmt.Sprintf("n:%T:%v", key, key)
+	}
 	switch x := v.(type) {
 	case nil:
 		return "<nil>"
@@ -1214,18 +1218,15 @@ func applyLookupKeyString(v interface{}) string {
 		return "s:" + normalizeLookupString(x)
 	case []byte:
 		return "s:" + normalizeLookupString(string(x))
-	case int:
-		return fmt.Sprintf("i:%d", x)
-	case int64:
-		return fmt.Sprintf("i64:%d", x)
-	case float64:
-		return fmt.Sprintf("f:%g", x)
 	case bool:
 		if x {
 			return "b:1"
 		}
 		return "b:0"
 	default:
+		if key, ok := storage.PropertyValueKey(v); ok {
+			return fmt.Sprintf("v:%T:%v", key, key)
+		}
 		return fmt.Sprintf("%T:%v", v, v)
 	}
 }
@@ -2584,17 +2585,8 @@ func compareSimpleOrderValues(left interface{}, right interface{}) int {
 	if right == nil {
 		return 1
 	}
-	if lf, ok := asComparableFloat(left); ok {
-		if rf, ok := asComparableFloat(right); ok {
-			switch {
-			case lf < rf:
-				return -1
-			case lf > rf:
-				return 1
-			default:
-				return 0
-			}
-		}
+	if order, numeric, _ := storage.CompareNumericValues(left, right); numeric {
+		return order
 	}
 	if lb, ok := left.(bool); ok {
 		if rb, ok := right.(bool); ok {
@@ -2617,37 +2609,6 @@ func compareSimpleOrderValues(left interface{}, right interface{}) int {
 		return 1
 	default:
 		return 0
-	}
-}
-
-func asComparableFloat(v interface{}) (float64, bool) {
-	switch x := v.(type) {
-	case int:
-		return float64(x), true
-	case int8:
-		return float64(x), true
-	case int16:
-		return float64(x), true
-	case int32:
-		return float64(x), true
-	case int64:
-		return float64(x), true
-	case uint:
-		return float64(x), true
-	case uint8:
-		return float64(x), true
-	case uint16:
-		return float64(x), true
-	case uint32:
-		return float64(x), true
-	case uint64:
-		return float64(x), true
-	case float32:
-		return float64(x), true
-	case float64:
-		return x, true
-	default:
-		return 0, false
 	}
 }
 
@@ -2699,10 +2660,10 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 	}
 
 	// Build grouped lookup from k -> texts.
-	grouped := make(map[interface{}]interface{}, len(input.Rows))
+	grouped := make(map[string]interface{}, len(input.Rows))
 	for _, row := range input.Rows {
 		if keyIdx < len(row) && textsIdx < len(row) {
-			grouped[row[keyIdx]] = row[textsIdx]
+			grouped[applyLookupKeyString(row[keyIdx])] = row[textsIdx]
 		}
 	}
 
@@ -2734,7 +2695,7 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 			continue
 		}
 		hash := rm["textKey128"]
-		texts, ok := grouped[hash]
+		texts, ok := grouped[applyLookupKeyString(hash)]
 		if !ok || texts == nil {
 			texts = []interface{}{}
 		}
@@ -3723,6 +3684,11 @@ func hashRow(row []interface{}) uint64 {
 }
 
 func writeAnyHash(h *fnv64a, v interface{}) {
+	// The owner also normalizes nested numeric property values. The cases below
+	// only serialize its keys; numeric conversion and equality live in storage.
+	if key, ok := storage.PropertyValueKey(v); ok {
+		v = key
+	}
 	switch t := v.(type) {
 	case nil:
 		h.writeByte('n')
@@ -3736,30 +3702,12 @@ func writeAnyHash(h *fnv64a, v interface{}) {
 		} else {
 			h.writeByte(0)
 		}
-	case int:
-		writeUint64Hash(h, uint64(t), 'i')
-	case int8:
-		writeUint64Hash(h, uint64(t), 'j')
-	case int16:
-		writeUint64Hash(h, uint64(t), 'k')
-	case int32:
-		writeUint64Hash(h, uint64(t), 'l')
-	case int64:
-		writeUint64Hash(h, uint64(t), 'I')
-	case uint:
-		writeUint64Hash(h, uint64(t), 'u')
-	case uint8:
-		writeUint64Hash(h, uint64(t), 'v')
-	case uint16:
-		writeUint64Hash(h, uint64(t), 'w')
-	case uint32:
-		writeUint64Hash(h, uint64(t), 'x')
-	case uint64:
-		writeUint64Hash(h, t, 'U')
-	case float32:
-		writeUint64Hash(h, uint64(math.Float32bits(t)), 'F')
 	case float64:
 		writeUint64Hash(h, math.Float64bits(t), 'f')
+	case int64:
+		writeUint64Hash(h, uint64(t), 'I')
+	case uint64:
+		writeUint64Hash(h, t, 'U')
 	case []interface{}:
 		h.writeByte('a')
 		for _, item := range t {
