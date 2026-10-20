@@ -1528,8 +1528,10 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 	for k := range edgeCtx {
 		delete(edgeCtx, k)
 	}
-    startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-    if !selected { return false }
+	startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+	if !selected {
+		return false
+	}
 
 	startNode, err := e.getQueryNode(e.storage, startID)
 	if err != nil || startNode == nil {

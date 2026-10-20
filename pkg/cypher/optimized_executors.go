@@ -85,8 +85,10 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 	// Build edge set for O(1) reverse lookup
 	edgeSet := make(map[[2]storage.NodeID]bool, len(edgeList))
 	for _, edge := range edgeList {
-	    startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
-	    if !selected { continue }
+		startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+		if !selected {
+			continue
+		}
 		key := [2]storage.NodeID{startID, endID}
 		edgeSet[key] = true
 	}
@@ -97,9 +99,11 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 
 	for _, edge := range edgeList {
 
-	    startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+		startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
 
-	    if !selected { continue }
+		if !selected {
+			continue
+		}
 		reverseKey := [2]storage.NodeID{endID, startID}
 		if edgeSet[reverseKey] {
 			// Found mutual relationship!
@@ -164,9 +168,11 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 
 	for _, edge := range allEdges {
 
-	    _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+		_, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
 
-	    if !selected { continue }
+		if !selected {
+			continue
+		}
 		if relType == "" || edge.Type == relType {
 			incomingCount[endID]++
 		}
@@ -236,9 +242,11 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 
 	for _, edge := range allEdges {
 
-	    startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+		startID, _, selected := nativeEdgeStorageEndpoints(e.storage, edge)
 
-	    if !selected { continue }
+		if !selected {
+			continue
+		}
 		if relType == "" || edge.Type == relType {
 			outgoingCount[startID]++
 		}
@@ -315,9 +323,11 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 
 	for _, edge := range allEdges {
 
-	    _, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+		_, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
 
-	    if !selected { continue }
+		if !selected {
+			continue
+		}
 		// Get property value
 		propVal, exists := edge.Properties[info.AggProperty]
 		if !exists {

@@ -830,24 +830,31 @@ func (e *StorageExecutor) notifyNativeRelationshipEndpoints(engine storage.Engin
 // Native prefix checks apply only at an existing physical namespace boundary;
 // they do not interpret an opaque local ID or turn it into a graph key.
 func nativeStoredIDHasPrefix(value interface{}, prefix string) bool {
-    identity, present := nativeEntityIdentity(value)
-    return present && strings.HasPrefix(identity.LocalID, prefix)
+	identity, present := nativeEntityIdentity(value)
+	return present && strings.HasPrefix(identity.LocalID, prefix)
 }
-
 
 // Identity ordering compares the source-qualified value directly. It does not
 // serialize private keys on every sort comparison, and retains local-ID order
 // within one source. No source string becomes part of an output value.
 func nativeEntityOrder(left, right interface{}) int {
-    a, aOK := nativeEntityIdentity(left)
-    b, bOK := nativeEntityIdentity(right)
-    if !aOK || !bOK {
-        if aOK { return 1 }
-        if bOK { return -1 }
-        return 0
-    }
-    if a.Source != "" || b.Source != "" {
-        if order := strings.Compare(a.Source, b.Source); order != 0 { return order }
-    } else if order := strings.Compare(a.Database, b.Database); order != 0 { return order }
-    return strings.Compare(a.LocalID, b.LocalID)
+	a, aOK := nativeEntityIdentity(left)
+	b, bOK := nativeEntityIdentity(right)
+	if !aOK || !bOK {
+		if aOK {
+			return 1
+		}
+		if bOK {
+			return -1
+		}
+		return 0
+	}
+	if a.Source != "" || b.Source != "" {
+		if order := strings.Compare(a.Source, b.Source); order != 0 {
+			return order
+		}
+	} else if order := strings.Compare(a.Database, b.Database); order != 0 {
+		return order
+	}
+	return strings.Compare(a.LocalID, b.LocalID)
 }
