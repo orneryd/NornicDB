@@ -3,6 +3,8 @@ package cypher
 import (
 	"reflect"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // propertyAccessExpectedTypes is what Neo4j names as the types a property
@@ -141,7 +143,7 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 			if err := checkExpressionPropertyAccesses(expression, types, params); err != nil {
 				return err
 			}
-			variable := normalizeProjectionColumnName(alias)
+			variable := alias
 			element := ""
 			listType := propertyAccessExpressionType(expression, types, params)
 			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {
@@ -185,6 +187,9 @@ func projectionSemanticBody(clause, keyword string) string {
 // that follow. The clause is scanned with its keyword, which tells a
 // keyword-named first item from a clause (WITH where WHERE where = 3, #894).
 func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
+	if body, tail, ok := fabric.ProjectionBodyAndTail(clause, keyword); ok {
+		return body, tail
+	}
 	end := len(clause)
 	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(clause, suffix); index >= len(keyword) && index < end {

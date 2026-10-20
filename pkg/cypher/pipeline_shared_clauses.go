@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 func cypherGrammarVersion(query string) string {
@@ -61,43 +63,28 @@ func usesSharedGrammarClauses(query string) bool {
 }
 
 func parsePipelineIteration(clause string) (expression, alias string, ok bool) {
-	if !startsWithKeywordFold(strings.TrimSpace(clause), "FOR") {
-		return splitUnwindBody(pipelineClauseBody(clause, "UNWIND"))
+	q := fabric.ReadQueryStructure(clause)
+	if q.Starts("UNWIND") || q.Starts("FOR") {
+		c := q.Clauses[0]
+		return c.Expression, c.Name, c.Expression != "" && c.Name != ""
 	}
-	body := pipelineClauseBody(clause, "FOR")
-	name, end, found := scanSymbolicName(body, 0)
-	if !found {
-		return "", "", false
-	}
-	rest := strings.TrimSpace(body[end:])
-	if !startsWithKeywordFold(rest, "IN") {
-		return "", "", false
-	}
-	expression = strings.TrimSpace(rest[len("IN"):])
-	return expression, name, expression != ""
+	return "", "", false
 }
 
 func parsePipelineLet(clause string) ([]pipelineRowProjection, error) {
-	body := pipelineClauseBody(clause, "LET")
+	q := fabric.ReadQueryStructure(clause)
+	if q.Err != nil {
+		return nil, q.Err
+	}
+	if !q.Starts("LET") || q.Clauses[0].Projection == nil {
+		return nil, sharedClauseSyntaxError("LET requires a variable = expression binding")
+	}
 	var projections []pipelineRowProjection
-	for _, item := range splitTopLevelComma(body) {
-		item = strings.TrimSpace(item)
-		name, end, found := scanSymbolicName(item, 0)
-		if !found {
-			return nil, sharedClauseSyntaxError("LET requires a variable = expression binding")
-		}
-		rest := strings.TrimSpace(item[end:])
-		if len(rest) < 2 || rest[0] != '=' {
-			return nil, sharedClauseSyntaxError("LET requires a variable = expression binding")
-		}
-		expression := strings.TrimSpace(rest[1:])
-		if expression == "" || pipelineExpressionContainsAggregate(expression) {
+	for _, item := range q.Clauses[0].Projection.Items {
+		if pipelineExpressionContainsAggregate(item.Expression) {
 			return nil, sharedClauseSyntaxError("LET requires a non-aggregate expression")
 		}
-		projections = append(projections, pipelineRowProjection{expression: expression, alias: normalizeProjectionColumnName(name)})
-	}
-	if len(projections) == 0 {
-		return nil, sharedClauseSyntaxError("LET requires at least one binding")
+		projections = append(projections, pipelineRowProjection{expression: item.Expression, alias: item.Column})
 	}
 	return projections, nil
 }
@@ -187,5 +174,5 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 		return nil, err
 	}
 	plan := pipelineRowWith{star: true, projections: projections}
-	return e.pipelineWithRowSource(ctx, input, plan), nil
+	return e.pipelineWithRowSource(ctx, input, plan.withImports(ctx)), nil
 }

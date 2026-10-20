@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -96,20 +97,19 @@ func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 }
 
 func projectedBindingScope(input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	output := newSemanticBindingScope()
-	for _, raw := range splitTopLevelComma(body) {
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if expr == "*" {
-			for name := range input.names {
-				output.bind(name)
-			}
-			continue
-		}
-		if alias != "" {
-			output.bind(alias)
-		} else if name, next, ok := scanIdentifierToken(expr, 0); ok && strings.TrimSpace(expr[next:]) == "" {
+	with := fabric.ReadQueryStructure(clause).First("WITH")
+	if with == nil || with.Projection == nil {
+		return output
+	}
+	if with.Projection.Star {
+		for name := range input.names {
 			output.bind(name)
+		}
+	}
+	for _, item := range with.Projection.Items {
+		if item.HasAlias || item.Name != "" {
+			output.bind(item.Column)
 		}
 	}
 	return output
@@ -119,30 +119,20 @@ func projectedBindingScope(input *semanticBindingScope, clause string) *semantic
 // variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
 // and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
 func validateUnwindAlias(clause string) error {
-	_, alias, ok := parsePipelineIteration(clause)
-	if !ok {
+	q := fabric.ReadQueryStructure(clause)
+	if q.Err != nil {
+		return q.Err
+	}
+	if !q.Starts("UNWIND") && !q.Starts("FOR") {
 		return sharedClauseSyntaxError("iteration requires a variable and an expression")
-	}
-	_, next, identifier := scanIdentifierToken(alias, 0)
-	if !identifier {
-		return nil
-	}
-	if rest := strings.TrimSpace(alias[next:]); rest != "" {
-		token := strings.Fields(rest)[0]
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInput(token))
 	}
 	return nil
 }
 
 // unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
 func unwindBindingName(clause string) string {
-	if _, alias, ok := parsePipelineIteration(clause); ok {
-		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
-			return normalizeProjectionColumnName(name)
-		}
-	}
-	return ""
+	_, alias, _ := parsePipelineIteration(clause)
+	return alias
 }
 
 func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {

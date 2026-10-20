@@ -120,10 +120,6 @@ func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail boo
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
 			localization.CypherCoreStandaloneCallModifiers())
 	}
-	if yield.misplacedWhere {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-			localization.CypherCoreYieldWhereMisplaced())
-	}
 	if yield.skip != "" {
 		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
 			return err
@@ -155,7 +151,6 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 		if item.alias != "" {
 			binding = item.alias
 		}
-		binding = normalizeProjectionColumnName(binding)
 		if _, exists := bindings[binding]; exists {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",

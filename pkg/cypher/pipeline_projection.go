@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -34,10 +35,10 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	retention := newMemoryRetention(ctx)
 	defer retention.close()
 	if plan, ok := parsePipelineRowWith(clause); ok {
-		plan.imports = pipelineImports(ctx)
+		invocation := plan.withImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
+			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, invocation, nil, nil)
 			if !resolved {
 				return nil, false
 			}
@@ -144,7 +145,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		}
 		projection := withProjection{expr: expr, alias: alias}
 		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
-			if !strings.Contains(upperASCII(item), " AS ") {
+			if projectionAliasIndex(item) < 0 {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -153,7 +154,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			projection.distinct = distinct
 			hasAggregate = true
 		} else if pipelineExpressionContainsAggregate(expr) {
-			if !strings.Contains(upperASCII(item), " AS ") {
+			if projectionAliasIndex(item) < 0 {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -264,16 +265,17 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if needsOrderScopes {
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
-	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
+	rowPlan := pipelineRowWith{where: postWithWhere}
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
+	invocation := rowPlan.withImports(ctx)
 	for _, row := range rows {
 		var scope pipelineRow
 		if postWithWhere != "" || needsOrderScopes {
 			scope = make(pipelineRow, len(row)+len(projections))
 		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
+		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, invocation, nil, scope)
 		if !ok {
 			return nil, false
 		}
@@ -871,31 +873,26 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	// The clause is scanned with its keyword, which tells a keyword-named
-	// first item from a clause (RETURN by ORDER BY by, #894).
-	body := strings.TrimSpace(clause)
-	modifierStart := len(body)
-	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
-		modifierStart = cut
-	}
-	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
-	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
-	items := splitTopLevelComma(body)
-	if len(items) > 0 && strings.TrimSpace(items[0]) == "*" {
-		plan.valid, plan.star = true, true
-		for _, item := range items[1:] {
-			plan.starItems = append(plan.starItems, strings.TrimSpace(item))
+	if q := fabric.ReadQueryStructure(clause); q.Starts("RETURN") && len(q.Clauses) == 1 && q.Clauses[0].Projection != nil {
+		p := q.Clauses[0].Projection
+		plan := &returnProjectionPlan{modifiers: p.Modifiers, distinct: p.Distinct, star: p.Star}
+		for _, item := range p.Items {
+			alias := item.Column
+
+			if p.Star {
+				text := item.Expression
+				if item.HasAlias {
+					text += " AS `" + strings.ReplaceAll(item.Alias, "`", "``") + "`"
+				}
+				plan.starItems = append(plan.starItems, text)
+			} else {
+				plan.addProjection(lexicalExpressionText(item.Expression), alias)
+			}
 		}
+		plan.valid = p.Star || len(plan.projections) > 0
 		return plan
 	}
-	for _, rawItem := range items {
-		// Semantic validation rejects an empty item (RETURN 1,,2).
-		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
-		plan.addProjection(expr, alias)
-	}
-	plan.valid = len(plan.projections) > 0
-	return plan
+	return &returnProjectionPlan{}
 }
 
 // withStarExpanded is the plan of RETURN *, items with the * written out
@@ -959,7 +956,7 @@ func starProjectionItems(columns, items []string) []string {
 // projectionVariableText is a variable as an expression: backtick-quoted when
 // it isn't a plain identifier.
 func projectionVariableText(name string) string {
-	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
+	if isPlainVariableName(name) {
 		return name
 	}
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
@@ -1374,7 +1371,7 @@ func pipelineScopeColumns(scope map[string]struct{}) []string {
 // binding row. Returns (value, true) on success, (nil, false) otherwise.
 func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
-	if val, ok := row[expr]; ok {
+	if val, ok := rowExpressionBinding(row, expr); ok {
 		return val, true
 	}
 	upperExpr := upperASCII(expr)

@@ -58,7 +58,7 @@ func aggregatingProjectionScopeError(clause, keyword string) error {
 			return nil
 		}
 		aggregates = aggregates || containsAggregateFunc(expression)
-		aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+		aliases[alias] = struct{}{}
 		expressions = append(expressions, strings.Join(strings.Fields(expression), " "))
 	}
 	if !aggregates && !distinct {

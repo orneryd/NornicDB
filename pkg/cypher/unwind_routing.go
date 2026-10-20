@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -19,30 +20,16 @@ type topLevelUnwindPlan struct {
 // prepareTopLevelUnwind parses and evaluates the leading UNWIND exactly once
 // for both optimized physical operators and the general row pipeline.
 func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher string) (topLevelUnwindPlan, error) {
-	unwindIdx := findKeywordIndex(cypher, "UNWIND")
-	if unwindIdx == -1 {
+	q := fabric.ReadQueryStructure(cypher)
+	if q.Err != nil {
+		return topLevelUnwindPlan{}, q.Err
+	}
+	clause := q.First("UNWIND")
+	if clause == nil {
 		return topLevelUnwindPlan{}, localizedError(localization.CypherResidualUnwindClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
-	afterUnwind := cypher[unwindIdx+len("UNWIND"):]
-	asRelativeIdx := findKeywordNotInBrackets(afterUnwind, " AS ")
-	if asRelativeIdx == -1 {
-		return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindASRequired(), nil)
-	}
-	asIdx := unwindIdx + len("UNWIND") + asRelativeIdx
-	listExpr := strings.TrimSpace(cypher[unwindIdx+len("UNWIND") : asIdx])
-	remainderStart := asIdx + len("AS")
-	for remainderStart < len(cypher) && isASCIISpace(cypher[remainderStart]) {
-		remainderStart++
-	}
-	remainder := strings.TrimSpace(cypher[remainderStart:])
-	spaceIdx := strings.IndexAny(remainder, " \t\r\n")
-	plan := topLevelUnwindPlan{}
-	if spaceIdx > 0 {
-		plan.variable = strings.TrimSpace(remainder[:spaceIdx])
-		plan.remainder = strings.TrimSpace(remainder[spaceIdx:])
-	} else {
-		plan.variable = strings.TrimSpace(remainder)
-	}
+	listExpr := clause.Expression
+	plan := topLevelUnwindPlan{variable: clause.Name, remainder: clause.Remaining}
 
 	params := getParamsFromContext(ctx)
 	var list interface{}

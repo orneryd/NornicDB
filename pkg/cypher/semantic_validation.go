@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // validateSemanticScopes is the shared compile-time semantic chokepoint used
@@ -12,7 +14,11 @@ import (
 // under the text the client wrote: statements that differ only in quoting
 // canonicalize alike but can validate differently (their column names
 // differ).
-func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
+func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string, recordings ...*scopeRecording) error {
+	scopeText := cypher
+	if record := firstScopeRecording(recordings); record != nil && record.source != "" {
+		scopeText = record.source
+	}
 	names := quotedVariableNamesFor(ctx, cypher)
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher
@@ -35,6 +41,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		cached = normalized && e.semanticValidationCache.contains(canonical)
 	}
 	if cached && names == nil && !normalized {
+		if firstScopeRecording(recordings) != nil {
+			return e.validateMatchSemanticScopes(scopeText, cypher25, recordings...)
+		}
 		return nil
 	}
 	if err := validateExpressionLexicalTokens(cypher); err != nil {
@@ -46,10 +55,22 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		// value-dependent: LIMIT 2-3 and LIMIT 5-1 share one canonical form,
 		// yet only the latter is a non-negative integer. Re-evaluate them on
 		// this text before returning (monster retest part 3).
-		return e.validateStaticPaginationExpressions(cypher)
+		if err := e.validateStaticPaginationExpressions(cypher); err != nil {
+			return err
+		}
+		if firstScopeRecording(recordings) != nil {
+			return e.validateMatchSemanticScopes(scopeText, cypher25, recordings...)
+		}
+		return nil
 	}
-	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
-		return err
+	// Declaration adapters project facts only; an invalid native parse has
+	// no declarations to project. Admit its syntax here, once, before a
+	// missing descriptor could be mistaken for a valid empty scope. The
+	// existing extension boundary is shared with the ANTLR syntax validator.
+	if !isNornicExtensionStatement(cypher) {
+		if syntax := fabric.ReadQueryStructure(cypher); syntax.Err != nil {
+			return syntax.Err
+		}
 	}
 	if err := validateListComprehensionVariables(cypher); err != nil {
 		return err
@@ -140,11 +161,8 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
 						return err
 					}
-					if aliasIndex := projectionAliasIndex(item); aliasIndex >= 0 {
-						alias := strings.TrimSpace(item[aliasIndex+len("AS"):])
-						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
-							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
-						}
+					if err := projectionAliasError(item); err != nil {
+						return err
 					}
 				}
 			}
@@ -156,7 +174,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateMergeSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
+	if err := e.validateMatchSemanticScopes(scopeText, cypher25, recordings...); err != nil {
 		return err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
@@ -218,130 +236,6 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names
 			"ColumnNameConflict",
 			"Multiple RETURN items project the same column name: "+duplicate,
 		)
-	}
-	return nil
-}
-
-// validateCallSubqueryScopes applies the update-clause scope check
-// (validateSetSemanticScopes: SET, REMOVE, DELETE) to the body of every
-// top-level CALL { … } and CALL (vars) { … } subquery, recursively for nested
-// subqueries. A body sees only what it imports, as in Neo4j: an importing WITH
-// at its start, or the variables of CALL (vars), which are checked as a
-// leading WITH vars. An undefined variable in a subquery update clause is
-// therefore rejected before any route runs the subquery. CALL (*) and a body
-// starting with WITH * import the whole outer scope and are not checked here.
-func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
-	if !containsFold(cypher, "CALL") {
-		return nil
-	}
-	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		scope := readCallSubqueryScope(cypher[position:])
-		if scope.invalid {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-				"CALL imports must contain only variable names")
-		}
-		index := position + scope.bodyOffset
-		imports, scoped := scope.text, scope.scoped
-		if index >= len(cypher) || cypher[index] != '{' {
-			continue // a procedure call
-		}
-		closeBrace := e.findMatchingBrace(cypher, index)
-		if closeBrace < 0 {
-			continue
-		}
-		body := strings.TrimSpace(cypher[index+1 : closeBrace])
-		if stripped, finishes := stripUnionBranchFinishes(body); finishes {
-			body = stripped
-		}
-		// A RETURN inside the body projects its columns too: two items of
-		// one name are as malformed there as at the top level.
-		if err := e.validateDuplicateReturnColumnName(body, nil); err != nil {
-			return err
-		}
-		// An unscoped body's branches (the body, or each UNION branch)
-		// import with their own leading WITH (#907). A branch that imports
-		// nothing still sees the outer variables it reads, a NornicDB
-		// extension over Neo4j 5.26 (which rejects them): only a leading
-		// WITH that reads no outer variable at all is checked here.
-		if !scoped {
-			outer := func(variable string) bool { return isIdentifierReferenced(cypher[:position], variable) }
-			branches := []string{body}
-			if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
-				branches = unionBranches
-			}
-			for index, branch := range branches {
-				// A malformed import is reported where the CALL runs.
-				if _, importing, _ := branchLeadingWithImport(branch, outer, false); !importing {
-					// A leading WITH that imports nothing is the branch's first
-					// clause: any variable it reads is undefined there.
-					if err := leadingWithUndefinedVariable(branch); err != nil {
-						return err
-					}
-					continue
-				}
-				// The import form is checked on the first branch only, as
-				// before: a later branch's importing WITH may carry WHERE or an
-				// alias (WITH x WHERE x IS NOT NULL), which NornicDB runs as a
-				// projection over its implicit imports (an extension; Neo4j
-				// 5.26 rejects it).
-				if index > 0 {
-					continue
-				}
-				if clauses, ok := splitPipelineClauses(branch); ok && len(clauses) > 0 {
-					projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
-					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0 {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-							"Importing WITH must contain only simple references to outside variables")
-					}
-				}
-			}
-		}
-		if scoped && scope.names == nil || startsWithKeywordFold(body, "WITH *") {
-			continue
-		}
-		var retained []string
-		if scoped && len(scope.names) > 0 {
-			retained = scope.names
-			body = "WITH " + imports + " " + body
-		}
-		if body == "" {
-			continue
-		}
-		// A body that imports nothing (CALL () { … }) sees no outer
-		// variable: it is checked as a statement of its own.
-		if scoped && len(scope.names) == 0 {
-			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
-				return err
-			}
-		}
-		if err := e.validateSetSemanticScopes(body, retained...); err != nil {
-			return err
-		}
-		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// leadingWithUndefinedVariable is "Variable `x` not defined" for a subquery
-// branch whose leading WITH imports nothing but reads a variable
-// (MATCH (:P) CALL { WITH seed RETURN seed }): as its first clause, nothing
-// before it in the branch defines one (#907).
-func leadingWithUndefinedVariable(branch string) error {
-	branch = strings.TrimSpace(branch)
-	if !startsWithKeywordFold(branch, "WITH") {
-		return nil
-	}
-	clause, _ := leadingWithClause(branch)
-	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	for _, item := range splitTopLevelComma(projection) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-		for _, variable := range expressionFreeVariables(expression) {
-			if !isSemanticLiteralWord(variable) {
-				return createUndefinedVariableError(variable)
-			}
-		}
 	}
 	return nil
 }
@@ -419,7 +313,7 @@ func validateWithProjectionSemantics(cypher string) error {
 					"expressions in WITH must be explicitly aliased",
 				)
 			}
-			name := normalizeProjectionColumnName(alias)
+			name := alias
 			if name == "*" {
 				continue
 			}

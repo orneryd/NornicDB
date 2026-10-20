@@ -17,14 +17,21 @@ type semanticValidationCache struct {
 
 type semanticValidationCacheShard struct {
 	mu      sync.RWMutex
-	entries map[string]struct{}
+	entries map[string]semanticValidationEntry
+}
+
+// Admission and its immutable lowering facts have the same bounded owner. A
+// recording alone does not imply that every semantic check has admitted a query.
+type semanticValidationEntry struct {
+	valid     bool
+	recording *scopeRecording
 }
 
 func newSemanticValidationCache(max int) *semanticValidationCache {
 	c := &semanticValidationCache{max: max}
 	shardLimit := max / boundedCacheShardCount
 	for i := range c.shards {
-		c.shards[i].entries = make(map[string]struct{}, shardLimit/4+1)
+		c.shards[i].entries = make(map[string]semanticValidationEntry, shardLimit/4+1)
 	}
 	return c
 }
@@ -35,9 +42,9 @@ func (cache *semanticValidationCache) contains(query string) bool {
 	}
 	sh := &cache.shards[boundedCacheStringShardIndex(query)]
 	sh.mu.RLock()
-	_, exists := sh.entries[query]
+	entry := sh.entries[query]
 	sh.mu.RUnlock()
-	return exists
+	return entry.valid
 }
 
 func (cache *semanticValidationCache) add(query string) {
@@ -49,7 +56,35 @@ func (cache *semanticValidationCache) add(query string) {
 	if len(sh.entries) >= cache.max/boundedCacheShardCount {
 		clear(sh.entries)
 	}
-	sh.entries[query] = struct{}{}
+	entry := sh.entries[query]
+	entry.valid = true
+	sh.entries[query] = entry
+	sh.mu.Unlock()
+}
+
+func (cache *semanticValidationCache) recording(query string) *scopeRecording {
+	if cache == nil {
+		return nil
+	}
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.RLock()
+	record := sh.entries[query].recording
+	sh.mu.RUnlock()
+	return record
+}
+
+func (cache *semanticValidationCache) addRecording(query string, record *scopeRecording) {
+	if cache == nil || cache.max <= 0 {
+		return
+	}
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.Lock()
+	if len(sh.entries) >= cache.max/boundedCacheShardCount {
+		clear(sh.entries)
+	}
+	entry := sh.entries[query]
+	entry.recording = record
+	sh.entries[query] = entry
 	sh.mu.Unlock()
 }
 

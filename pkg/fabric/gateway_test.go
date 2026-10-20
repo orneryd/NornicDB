@@ -20,7 +20,7 @@ func TestQueryGatewayExecute(t *testing.T) {
 
 	gateway := NewQueryGateway(
 		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+		newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 
 	res, err := gateway.Execute(context.Background(), NewFabricTransaction("tx-1"), "MATCH (n) RETURN 1 AS ok", "db1", nil, "")

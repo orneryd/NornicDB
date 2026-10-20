@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -379,6 +380,9 @@ func rowCountValue(kind string, rows int64) interface{} {
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	// The current expression row owns this invocation. Enclosing value maps
+	// must not overwrite a local binding while the child pipeline is seeded.
+	ctx = withValueBindings(ctx, values)
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranchesFor(ctx, query); union {
@@ -403,9 +407,10 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	for name, value := range getParamsFromContext(ctx) {
 		params[name] = value
 	}
+	used := fabric.BranchBindings(query)
 	names := make([]string, 0, len(values))
 	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
+		if !strings.HasPrefix(name, "$") && used[name] {
 			names = append(names, name)
 		}
 	}

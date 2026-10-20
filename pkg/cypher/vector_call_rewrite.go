@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	grammar "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -18,18 +19,13 @@ import (
 // function takes, a string in its place, and a literal dimension outside 1
 // to 4096 are SyntaxErrors.
 
-// vectorCallMetrics are the metrics each function takes, in Neo4j's order.
-var vectorCallMetrics = map[string][]string{
-	"vector_distance": {"EUCLIDEAN", "EUCLIDEAN_SQUARED", "MANHATTAN", "COSINE", "DOT", "HAMMING"},
-	"vector_norm":     {"EUCLIDEAN", "MANHATTAN"},
-}
-
 // vectorCall rewrites the call whose function name is query[wordStart:wordEnd]
 // when it is vector, vector_distance or vector_norm.
 func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error {
 	q := r.query
 	word := strings.ToLower(q[wordStart:wordEnd])
-	if word != "vector" && word != "vector_distance" && word != "vector_norm" {
+	argument, named := grammar.FunctionSymbolArgument(word)
+	if !named || !argument.Vector {
 		return nil
 	}
 	open := skipASCIISpaces(q, wordEnd, end)
@@ -41,7 +37,7 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 		return nil
 	}
 	args := topLevelArgumentSpans(q, open+1, close)
-	nameArg := map[string]int{"vector": 2, "vector_distance": 2, "vector_norm": 1}[word]
+	nameArg := argument.Position
 	if len(args) != nameArg+1 {
 		return nil // the function reports its argument count
 	}
@@ -59,7 +55,7 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 			return labelExpressionSyntaxError(localization.CypherCoreVectorDimensionRange(dimension))
 		}
 	} else {
-		metrics := vectorCallMetrics[word]
+		metrics := argument.Names
 		for _, metric := range metrics {
 			if isBareName(name) && strings.EqualFold(name, metric) {
 				canonical = metric

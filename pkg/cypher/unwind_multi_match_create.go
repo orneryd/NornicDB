@@ -28,6 +28,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"strings"
 )
 
@@ -180,29 +181,12 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 }
 
 func isSimpleWithPassthroughClause(clause string) bool {
-	trimmed := strings.TrimSpace(clause)
-	if trimmed == "" || strings.HasPrefix(trimmed, ",") || strings.HasSuffix(trimmed, ",") {
+	p := fabric.ProjectionSyntax(clause)
+	if p == nil || p.Star || len(p.Items) == 0 {
 		return false
 	}
-	parts := splitTopLevelComma(clause)
-	if len(parts) == 0 {
-		return false
-	}
-	for _, raw := range parts {
-		token := strings.TrimSpace(raw)
-		if token == "" {
-			return false
-		}
-		asIdx := findKeywordIndexInContext(token, "AS")
-		if asIdx >= 0 {
-			lhs := strings.TrimSpace(token[:asIdx])
-			rhs := strings.TrimSpace(token[asIdx+2:])
-			if !isSimpleIdentifier(lhs) || !isSimpleIdentifier(rhs) {
-				return false
-			}
-			continue
-		}
-		if !isSimpleIdentifier(token) {
+	for _, item := range p.Items {
+		if item.Name == "" {
 			return false
 		}
 	}

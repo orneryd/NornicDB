@@ -27,9 +27,10 @@ func graphResolutionCatalog() *Catalog {
 
 // literalGraphArguments evaluates graph reference arguments the way the
 // Cypher executor would for these tests: 'text' is a string literal, $p a
-// parameter, and any other expression a row variable held in params (the
+// parameter, and any other expression a row variable held in the frame (the
 // executor checks that each is a STRING; these tests pass strings).
-func literalGraphArguments(_ context.Context, expressions []string, params map[string]interface{}) ([]string, error) {
+func literalGraphArguments(ctx context.Context, expressions []string, params map[string]interface{}) ([]string, error) {
+	bindings, _ := RecordBindingsFromContext(ctx)
 	values := make([]string, len(expressions))
 	for i, expression := range expressions {
 		switch {
@@ -38,7 +39,7 @@ func literalGraphArguments(_ context.Context, expressions []string, params map[s
 		case strings.HasPrefix(expression, "$"):
 			values[i], _ = params[expression[1:]].(string)
 		default:
-			values[i], _ = params[expression].(string)
+			values[i], _ = bindings[expression].(string)
 		}
 	}
 	return values, nil
@@ -60,7 +61,7 @@ func dynamicExec(function string, args []string, scope string) *FragmentExec {
 // "5:…" id), and the argument may be a literal, a parameter or a row
 // variable.
 func TestResolveExecGraph_Dynamic(t *testing.T) {
-	exec := NewFabricExecutor(graphResolutionCatalog(), nil, nil)
+	exec := newTestFabricExecutor(graphResolutionCatalog(), nil, nil)
 	exec.SetGraphArgumentEvaluator(literalGraphArguments)
 
 	tests := []struct {
@@ -68,12 +69,13 @@ func TestResolveExecGraph_Dynamic(t *testing.T) {
 		function string
 		arg      string
 		params   map[string]interface{}
+		bindings map[string]interface{}
 		wantName string
 		wantDB   string
 	}{
 		{name: "byName literal", function: "graph.byName", arg: "'cmp.a'", wantName: "cmp.a", wantDB: "dba"},
 		{name: "byName parameter", function: "graph.byName", arg: "$g", params: map[string]interface{}{"g": "cmp.b"}, wantName: "cmp.b", wantDB: "dbb"},
-		{name: "byName row variable", function: "graph.byName", arg: "g", params: map[string]interface{}{"g": "cmp.a"}, wantName: "cmp.a", wantDB: "dba"},
+		{name: "byName row variable", function: "graph.byName", arg: "g", bindings: map[string]interface{}{"g": "cmp.a"}, wantName: "cmp.a", wantDB: "dba"},
 		{name: "byName other case", function: "graph.byName", arg: "'CMP.A'", wantName: "CMP.A", wantDB: "dba"},
 		{name: "function name is case-insensitive", function: "GRAPH.BYNAME", arg: "'cmp.b'", wantName: "cmp.b", wantDB: "dbb"},
 		{name: "byElementId of a node", function: "graph.byElementId", arg: "'4:dbb:17'", wantName: "cmp.b", wantDB: "dbb"},
@@ -82,7 +84,7 @@ func TestResolveExecGraph_Dynamic(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			name, loc, err := exec.resolveExecGraph(context.Background(), dynamicExec(tt.function, []string{tt.arg}, "cmp"), tt.params)
+			name, loc, err := exec.resolveExecGraph(WithRecordBindings(context.Background(), tt.bindings), dynamicExec(tt.function, []string{tt.arg}, "cmp"), tt.params)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantName, name)
 			require.Equal(t, tt.wantDB, loc.DatabaseName())
@@ -97,7 +99,7 @@ func TestResolveExecGraph_Dynamic(t *testing.T) {
 // or element id that selects no constituent of the composite
 // (DatabaseNotFound "Graph not found: …").
 func TestResolveExecGraph_DynamicErrors(t *testing.T) {
-	exec := NewFabricExecutor(graphResolutionCatalog(), nil, nil)
+	exec := newTestFabricExecutor(graphResolutionCatalog(), nil, nil)
 	exec.SetGraphArgumentEvaluator(literalGraphArguments)
 
 	referenceErrors := []struct {
@@ -180,7 +182,7 @@ func TestResolveExecGraph_DynamicErrors(t *testing.T) {
 // composites both have a constituent on the database an element id names,
 // graph.byElementId returns the constituent of the statement's composite.
 func TestResolveExecGraph_ElementIDPicksConstituentOfScope(t *testing.T) {
-	exec := NewFabricExecutor(graphResolutionCatalog(), nil, nil)
+	exec := newTestFabricExecutor(graphResolutionCatalog(), nil, nil)
 	exec.SetGraphArgumentEvaluator(literalGraphArguments)
 
 	name, _, err := exec.resolveExecGraph(context.Background(), dynamicExec("graph.byElementId", []string{"'4:dbb:1'"}, "other"), nil)
@@ -196,7 +198,7 @@ func TestResolveExecGraph_ElementIDPicksConstituentOfScope(t *testing.T) {
 // run without an argument evaluator, and that an evaluator's error is
 // returned unchanged.
 func TestResolveExecGraph_EvaluatorFailures(t *testing.T) {
-	exec := NewFabricExecutor(graphResolutionCatalog(), nil, nil)
+	exec := newTestFabricExecutor(graphResolutionCatalog(), nil, nil)
 	_, _, err := exec.resolveExecGraph(context.Background(), dynamicExec("graph.byName", []string{"'cmp.a'"}, "cmp"), nil)
 	require.EqualError(t, err, `dynamic graph reference graph.byName("cmp.a") can't be evaluated`)
 
@@ -219,7 +221,7 @@ func TestResolveExecGraph_EvaluatorFailures(t *testing.T) {
 // dynamic reference runs on its GraphName, and an unknown GraphName is a
 // routing error that wraps the catalog's error.
 func TestResolveExecGraph_Static(t *testing.T) {
-	exec := NewFabricExecutor(graphResolutionCatalog(), nil, nil)
+	exec := newTestFabricExecutor(graphResolutionCatalog(), nil, nil)
 
 	name, loc, err := exec.resolveExecGraph(context.Background(), &FragmentExec{GraphName: "cmp.a"}, nil)
 	require.NoError(t, err)
@@ -257,7 +259,7 @@ func TestFabricExecutor_DynamicUseRunsOnResolvedConstituent(t *testing.T) {
 
 	recorder := &recordingCypherExecutor{}
 	local := NewLocalFragmentExecutor(recorder, func(string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, local, nil)
+	exec := newTestFabricExecutor(catalog, local, nil)
 	exec.SetGraphArgumentEvaluator(literalGraphArguments)
 
 	for _, tc := range []struct{ graph, db string }{{"cmp.a", "dba"}, {"cmp.b", "dbb"}} {

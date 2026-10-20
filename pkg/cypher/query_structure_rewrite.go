@@ -50,7 +50,11 @@ func desugarQueryStructure(query string, columns statementColumner) (string, *qu
 		return query, nil, nil
 	}
 	r := &structureRewriter{query: query, columns: columns}
-	if err := r.region(0, len(query), false); err != nil {
+	start := 0
+	if mode, body := parseExecutionMode(query); mode != ModeNormal {
+		start = len(query) - len(body)
+	}
+	if err := r.region(start, len(query), false); err != nil {
 		return query, nil, err
 	}
 	if len(r.edits) == 0 {

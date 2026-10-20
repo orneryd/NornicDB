@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -662,33 +663,13 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 // [x IN …], [p = (a)-->(b) | …], reduce / allReduce / all / any / none /
 // single / filter), an unnamed pattern comprehension [(a)-->(b) | …], or
 // the { … } of an EXISTS, COUNT, COLLECT or CALL subquery.
-func caseVariableScopeOpensAt(expr string, open int) bool {
-	if expr[open] != '{' {
-		if _, ok := localBindingAt(expr, open); ok {
+func caseVariableScopeOpensAt(expr string, open int) nativeScopePredicate {
+	for _, scope := range fabric.ExpressionScopes(expr) {
+		if scope.Open == open {
 			return true
 		}
 	}
-	switch expr[open] {
-	case '[':
-		next := skipSpaces(expr, open+1)
-		return next < len(expr) && expr[next] == '('
-	case '(':
-		return false
-	default: // {
-		end := open
-		for end > 0 && isASCIISpace(expr[end-1]) {
-			end--
-		}
-		start := end
-		for start > 0 && isIdentByte(expr[start-1]) {
-			start--
-		}
-		if start == end || start > 0 && expr[start-1] == '.' {
-			return false
-		}
-		name := lowerASCII(expr[start:end])
-		return name == "exists" || name == "count" || name == "collect" || name == "call"
-	}
+	return false
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.

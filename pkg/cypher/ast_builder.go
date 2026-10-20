@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // ASTBuilder builds Abstract Syntax Trees from Cypher queries.
@@ -665,68 +667,40 @@ func (b *ASTBuilder) parseRemove(text string) *ASTRemove {
 	return rem
 }
 
+// projectionItems adapts native declarations; raw source is retained only
+// for expression evaluation and diagnostics, never to reconstruct an alias.
+func (b *ASTBuilder) projectionItems(p *fabric.QueryProjection) []ASTReturnItem {
+	if p == nil {
+		return nil
+	}
+	var result []ASTReturnItem
+	if p.Star {
+		result = append(result, ASTReturnItem{RawText: "*", Expression: b.parseExpression("*")})
+	}
+	for _, item := range p.Items {
+		result = append(result, ASTReturnItem{RawText: item.Text, Alias: item.Alias, Expression: b.parseExpression(item.Expression)})
+	}
+	return result
+}
+
 // parseReturn parses a RETURN clause.
 func (b *ASTBuilder) parseReturn(text string) *ASTReturn {
-	ret := &ASTReturn{}
-
-	itemsText := strings.TrimSpace(text[len("RETURN"):])
-
-	// Check for DISTINCT
-	itemsText, ret.Distinct = cutDistinct(itemsText)
-
-	// Parse items
-	parts := splitOutsideBrackets(itemsText, ',')
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		item := ASTReturnItem{RawText: part}
-
-		// Check for AS alias
-		if asIdx := projectionAliasIndex(part); asIdx > 0 {
-			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
-			part = strings.TrimSpace(part[:asIdx])
-		}
-
-		item.Expression = b.parseExpression(part)
-		ret.Items = append(ret.Items, item)
+	result := &ASTReturn{}
+	if q := fabric.ReadQueryStructure(text); q.Starts("RETURN") && q.Clauses[0].Projection != nil {
+		p := q.Clauses[0].Projection
+		result.Distinct, result.Items = p.Distinct, b.projectionItems(p)
 	}
-
-	return ret
+	return result
 }
 
 // parseWith parses a WITH clause.
 func (b *ASTBuilder) parseWith(text string) *ASTWith {
-	with := &ASTWith{}
-
-	itemsText := strings.TrimSpace(text[len("WITH"):])
-
-	// Check for DISTINCT
-	itemsText, with.Distinct = cutDistinct(itemsText)
-
-	// Parse items (same as RETURN)
-	parts := splitOutsideBrackets(itemsText, ',')
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		item := ASTReturnItem{RawText: part}
-
-		// Check for AS alias
-		if asIdx := projectionAliasIndex(part); asIdx > 0 {
-			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
-			part = strings.TrimSpace(part[:asIdx])
-		}
-
-		item.Expression = b.parseExpression(part)
-		with.Items = append(with.Items, item)
+	result := &ASTWith{}
+	if q := fabric.ReadQueryStructure(text); q.Starts("WITH") && q.Clauses[0].Projection != nil {
+		p := q.Clauses[0].Projection
+		result.Distinct, result.Items = p.Distinct, b.projectionItems(p)
 	}
-
-	return with
+	return result
 }
 
 // parseWhere parses a WHERE clause.
@@ -740,18 +714,13 @@ func (b *ASTBuilder) parseWhere(text string) *ASTWhere {
 
 // parseUnwind parses an UNWIND clause.
 func (b *ASTBuilder) parseUnwind(text string) *ASTUnwind {
-	unwind := &ASTUnwind{}
-	content := strings.TrimSpace(text[len("UNWIND"):])
-
-	// Find AS
-	upper := upperASCII(content)
-	if asIdx := strings.Index(upper, " AS "); asIdx > 0 {
-		unwind.RawExpr = strings.TrimSpace(content[:asIdx])
-		unwind.Variable = strings.TrimSpace(content[asIdx+4:])
-		unwind.Expression = b.parseExpression(unwind.RawExpr)
+	result := &ASTUnwind{}
+	if q := fabric.ReadQueryStructure(text); q.Starts("UNWIND") {
+		c := q.Clauses[0]
+		result.RawExpr, result.Variable = c.Expression, c.Name
+		result.Expression = b.parseExpression(c.Expression)
 	}
-
-	return unwind
+	return result
 }
 
 // parseOrderBy parses an ORDER BY clause.
@@ -805,34 +774,23 @@ func (b *ASTBuilder) parseSkip(text string) *int64 {
 // parseCall parses a CALL clause.
 func (b *ASTBuilder) parseCall(text string) *ASTCall {
 	call := &ASTCall{}
-	content := strings.TrimSpace(text[len("CALL"):])
-
-	// Find procedure name and arguments
-	if parenIdx := strings.Index(content, "("); parenIdx > 0 {
-		call.Procedure = strings.TrimSpace(content[:parenIdx])
-
-		// Find closing paren
-		closeIdx := strings.LastIndex(content, ")")
-		if closeIdx > parenIdx {
-			call.RawArgs = content[parenIdx+1 : closeIdx]
-
-			// Parse YIELD if present
-			rest := strings.TrimSpace(content[closeIdx+1:])
-			if strings.HasPrefix(upperASCII(rest), "YIELD") {
-				yieldContent := strings.TrimSpace(rest[5:])
-				yields := strings.Split(yieldContent, ",")
-				for _, y := range yields {
-					y = strings.TrimSpace(y)
-					if y != "" {
-						call.Yield = append(call.Yield, y)
+	q := fabric.ReadQueryStructure(text)
+	if c := q.First("CALL"); c != nil {
+		call.Procedure, call.RawArgs = c.Name, c.Expression
+		if y := c.Yield; y != nil {
+			if y.Star {
+				call.Yield = []string{"*"}
+			} else {
+				for _, item := range y.Items {
+					name := item.Name
+					if item.Alias != "" {
+						name = item.Alias
 					}
+					call.Yield = append(call.Yield, name)
 				}
 			}
 		}
-	} else {
-		call.Procedure = content
 	}
-
 	return call
 }
 

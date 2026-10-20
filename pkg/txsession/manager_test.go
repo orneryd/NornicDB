@@ -116,9 +116,9 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 		t.Fatalf("unexpected execute result in session: %#v", result.Rows)
 	}
 
-	mgr.nowFunc = func() time.Time { return baseTime.Add(5 * time.Second) }
+	mgr.nowFunc = func() time.Time { return baseTime.Add(500 * time.Millisecond) }
 	mgr.Touch(session)
-	if !session.Expires.Equal(baseTime.Add(6 * time.Second)) {
+	if !session.Expires.Equal(baseTime.Add(1500 * time.Millisecond)) {
 		t.Fatalf("touch should refresh expiration, got %v", session.Expires)
 	}
 
@@ -130,6 +130,27 @@ func TestManagerLifecycle_ExecuteCommitAndDelete(t *testing.T) {
 	}
 
 	mgr.Delete("42") // no-op path
+}
+
+func TestManagerTouchDoesNotReviveExpiredSession(t *testing.T) {
+	mgr := NewManager(time.Second, newExecutorFactory(t))
+	base := time.Unix(1700000000, 0)
+	mgr.nowFunc = func() time.Time { return base }
+	session, err := mgr.Open(context.Background(), "neo4j")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.nowFunc = func() time.Time { return base.Add(2 * time.Second) }
+	mgr.Touch(session)
+	if _, ok := mgr.Get(session.ID); ok {
+		t.Fatal("expired session was revived")
+	}
+	if session.Executor != nil {
+		t.Fatal("expired executor retained")
+	}
+	if _, err := mgr.ExecuteInSession(context.Background(), session, "RETURN 1", nil); err == nil {
+		t.Fatal("expired session admitted a statement")
+	}
 }
 
 func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {
@@ -280,5 +301,31 @@ func TestManagerExecuteInSession_ReplaysTerminalLifecycleError(t *testing.T) {
 	}
 	if rollbackErr := mgr.RollbackAndDelete(context.Background(), session); rollbackErr != nil {
 		t.Fatalf("rollback after terminal error should succeed, got %v", rollbackErr)
+	}
+}
+
+func TestManagerCommitCompletionOutlivesRequest(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = store.Close() })
+	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "nornic"))
+	mgr := NewManager(time.Minute, func(string) (*cypher.StorageExecutor, error) { return executor, nil })
+	session, err := mgr.Open(context.Background(), "nornic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ExecuteInSession(context.Background(), session, "CREATE (:CommitRequestOwner {k:7})", nil); err != nil {
+		t.Fatal(err)
+	}
+	request, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := mgr.CommitAndDelete(request, session); err != nil {
+		t.Fatalf("COMMIT completion inherited request cancellation: %v", err)
+	}
+	result, err := executor.Execute(context.Background(), "MATCH (n:CommitRequestOwner) RETURN count(n)", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+		t.Fatalf("committed outcome missing: %v", result.Rows)
 	}
 }

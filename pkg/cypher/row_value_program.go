@@ -424,6 +424,12 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 // which evaluateRowValueText tries first.
 func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValueNode, rowValueInfo) {
 	switch name {
+	case "filter", "extract":
+		variable, list, predicate, projection, ok := parseListComprehension(argument)
+		if !ok {
+			return rowTextValue(expr)
+		}
+		return c.compileComprehension(expr, variable, list, predicate, projection)
 	case "startnode", "endnode":
 		variable := strings.TrimSpace(argument)
 		if !isValidIdentifier(variable) {
@@ -685,7 +691,7 @@ type rowBoundNode struct {
 }
 
 func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	if value, ok := values[n.text]; ok {
+	if value, ok := rowExpressionBinding(values, n.text); ok {
 		return value, true, nil
 	}
 	return n.inner.eval(e, values, frames)

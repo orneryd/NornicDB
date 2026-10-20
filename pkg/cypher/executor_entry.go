@@ -195,6 +195,48 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the
 	// statement runs as sent.
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
+	// Establish Fabric's grammar roles before shared normalization, framing
+	// and extension rewrites can mistake a keyword-spelled name for a clause.
+	fabricQuery := e.shouldUseFabricPlanner(cypher)
+	if fabricQuery {
+		syntax := fabric.ReadQueryStructure(cypher)
+		if syntax.Err != nil {
+			fabricQuery = false
+		} else {
+			if err := syntax.ValidateUnions(); err != nil {
+				return nil, err
+			}
+			if len(syntax.LocalEdits) > 0 {
+				columns := syntax.ResultColumns()
+				if syntax.First("EXPLAIN") != nil || syntax.First("PROFILE") != nil {
+					columns = nil
+				}
+				edits := make([]labelRewriteEdit, 0, len(syntax.LocalEdits))
+				for _, edit := range syntax.LocalEdits {
+					edits = append(edits, labelRewriteEdit{start: edit.Start, end: edit.End, text: edit.Text})
+				}
+				lowered, sourceRewrite := applyLabelRewriteEdits(cypher, edits, true)
+				cypher = lowered
+				defer func() {
+					result, retErr = sourceRewrite.restore(result, retErr)
+					if result != nil && columns != nil && len(columns) == len(result.Columns) {
+						changed := false
+						for i, column := range columns {
+							if result.Columns[i] != column {
+								changed = true
+								break
+							}
+						}
+						if changed {
+							copyResult := *result
+							copyResult.Columns = columns
+							result = &copyResult
+						}
+					}
+				}()
+			}
+		}
+	}
 	if config.IsCypherQueryNormalizationEnabled() {
 		canonical, rewrite = canonicalizeQueryText(cypher)
 	}
@@ -246,8 +288,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			defer func() { result, retErr = separateRewrite.restore(result, retErr) }()
 		}
 	}
-	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
-		expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypher25)
+	if !rewriteFree(rewriteFreePublicProjectionSyntax, cypher25, cypher) {
+		expanded, expressionRewrites, err := rewriteCypher25Expressions(cypher, cypher25, expressionPublicSyntax)
 		if err != nil {
 			return nil, err
 		}
@@ -261,7 +303,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				}
 			}()
 		} else {
-			markRewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher)
+			markRewriteFree(rewriteFreePublicProjectionSyntax, cypher25, cypher)
 		}
 	}
 	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
@@ -379,7 +421,8 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	rowsRewritten := false
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
-	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
+	fabricQuery = fabricQuery || e.shouldUseFabricPlanner(cypher)
+	if canonical, names := canonicalizeLocalQuotedVariables(cypher, fabricQuery); names != nil {
 		cypher = canonical
 		params = names.parameterValues(params)
 		ctx = withQuotedVariableNames(ctx, names)
@@ -387,18 +430,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
 	}
 
-	// Label expressions in patterns become the label forms and WHERE
-	// predicates every route reads, once, here; the result's columns and
-	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
-	if err != nil {
-		return nil, err
-	}
-	if labelRewrite != nil {
-		rowsRewritten = true
-		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
-	}
 	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
 	// WITH * they stand for, once, here; errors are mapped back (#907).
 	if desugared, orderRewrite := desugarStandaloneOrderClauses(cypher); orderRewrite != nil {
@@ -408,7 +439,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
-	if e.shouldUseFabricPlanner(cypher) {
+	if fabricQuery || e.shouldUseFabricPlanner(cypher) {
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}
@@ -416,14 +447,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
-			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
+			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+			_, recording, err := e.compileLogicalScopes(ctx, modeQuery)
+			if err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
-				return e.executeExplain(ctx, modeQuery)
+				return e.executeExplain(ctx, modeQuery, recording)
 			}
 			return e.executeProfile(ctx, modeQuery)
 		}
@@ -517,6 +549,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
 	}
+	// Execution lowering belongs to the selected local backend.
+	lowered, localRewrites, labelsRewritten, err := e.lowerLocalStatement(ctx, cypher, params)
+	if err != nil {
+		return nil, err
+	}
+	cypher = lowered
+	rowsRewritten = rowsRewritten || labelsRewritten
+	if len(localRewrites) > 0 {
+		defer func() { result, retErr = restoreLocalStatement(result, retErr, localRewrites) }()
+	}
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
@@ -566,6 +608,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
+			if tx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
+				tx.BindContext(ctx)
+			}
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
@@ -637,7 +682,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -682,7 +727,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it.
 	scopeText, _ := stripWithEmbeddingSuffix(cypher)
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
+	var explainRecording *scopeRecording
+	if mode, body := parseExecutionMode(scopeText); mode == ModeExplain {
+		_, explainRecording, err = e.compileLogicalScopes(ctx, body)
+		if err != nil {
+			return nil, err
+		}
+	} else if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
@@ -804,7 +855,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Check for EXPLAIN/PROFILE execution modes (using cached analysis)
 	if info.HasExplain {
 		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeExplain(ctx, innerQuery)
+		return e.executeExplain(ctx, innerQuery, explainRecording)
 	}
 	if info.HasProfile {
 		_, innerQuery := parseExecutionMode(cypher)

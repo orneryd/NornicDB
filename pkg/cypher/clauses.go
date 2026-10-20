@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -741,95 +742,45 @@ func parseUnwindMergeRelationshipClause(clause string) (unwindMergeChainRelation
 }
 
 func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar string) ([]string, bool) {
-	trimmed := strings.TrimSpace(restQuery)
-	if trimmed == "" || unwindParamName == "" || unwindVar == "" {
+	if unwindParamName == "" || unwindVar == "" {
 		return nil, false
 	}
-	skipSpace := func(pos int) int {
-		for pos < len(trimmed) && isASCIISpace(trimmed[pos]) {
-			pos++
-		}
-		return pos
+	q := fabric.ReadQueryStructure(restQuery)
+	if q.Err != nil {
+		return nil, false
 	}
-
-	stages := make([]string, 0, 4)
+	var stages []string
 	start := 0
-	searchFrom := 0
-	for {
-		withIdx := keywordIndexFrom(trimmed, "WITH", searchFrom, defaultKeywordScanOpts())
-		if withIdx < 0 {
-			break
-		}
-
-		pos := skipSpace(withIdx + len("WITH"))
-		if pos >= len(trimmed) || trimmed[pos] != '$' {
-			searchFrom = withIdx + len("WITH")
+	for index := 0; index+1 < len(q.Clauses); index++ {
+		clause, next := q.Clauses[index], q.Clauses[index+1]
+		p := clause.Projection
+		if clause.Kind != "WITH" || p == nil || p.Star || p.Distinct || p.Modifiers != "" || len(p.Items) != 1 || next.Kind != "UNWIND" {
 			continue
 		}
-		paramName, trailing, ok := parseIdentifierToken(trimmed[pos+1:])
-		if !ok || !strings.EqualFold(paramName, unwindParamName) {
-			searchFrom = withIdx + len("WITH")
+		item := p.Items[0]
+		if item.Expression != "$"+unwindParamName || !item.HasAlias || next.Name != unwindVar {
 			continue
 		}
-		nextPos := pos + 1 + len(paramName)
-		_ = trailing
-
-		pos = skipSpace(nextPos)
-		if !startsWithKeywordFold(trimmed[pos:], "AS") {
-			searchFrom = withIdx + len("WITH")
+		input := fabric.ProjectionSyntax(next.Expression)
+		if input == nil || len(input.Items) != 1 || input.Items[0].Name != item.Alias {
 			continue
 		}
-		pos = skipSpace(pos + len("AS"))
-		aliasOne, _, ok := parseIdentifierToken(trimmed[pos:])
-		if !ok {
-			searchFrom = withIdx + len("WITH")
-			continue
-		}
-		nextPos = pos + len(aliasOne)
-
-		pos = skipSpace(nextPos)
-		if !startsWithKeywordFold(trimmed[pos:], "UNWIND") {
-			searchFrom = withIdx + len("WITH")
-			continue
-		}
-		pos = skipSpace(pos + len("UNWIND"))
-		aliasTwo, _, ok := parseIdentifierToken(trimmed[pos:])
-		if !ok || !strings.EqualFold(aliasOne, aliasTwo) {
-			searchFrom = withIdx + len("WITH")
-			continue
-		}
-		nextPos = pos + len(aliasTwo)
-
-		pos = skipSpace(nextPos)
-		if !startsWithKeywordFold(trimmed[pos:], "AS") {
-			searchFrom = withIdx + len("WITH")
-			continue
-		}
-		pos = skipSpace(pos + len("AS"))
-		stageVar, _, ok := parseIdentifierToken(trimmed[pos:])
-		if !ok || !strings.EqualFold(stageVar, unwindVar) {
-			searchFrom = withIdx + len("WITH")
-			continue
-		}
-		nextPos = pos + len(stageVar)
-
-		stage := strings.TrimSpace(trimmed[start:withIdx])
+		stage := strings.TrimSpace(restQuery[start:clause.Start])
 		if stage == "" {
 			return nil, false
 		}
 		stages = append(stages, stage)
-		start = nextPos
-		searchFrom = nextPos
+		start = next.End
+		index++
 	}
 	if len(stages) == 0 {
 		return nil, false
 	}
-	last := strings.TrimSpace(trimmed[start:])
+	last := strings.TrimSpace(restQuery[start:])
 	if last == "" {
 		return nil, false
 	}
-	stages = append(stages, last)
-	return stages, len(stages) > 1
+	return append(stages, last), true
 }
 
 func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
@@ -1905,33 +1856,8 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 // names as the first branch (columns), in any order, and when the order
 // differs, for each of columns the index of that column in branch. Neo4j
 // 5.26 matches UNION columns by name (#907).
-func unionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
-	if len(columns) != len(branch) {
-		return nil, false
-	}
-	inOrder := true
-	for index := range columns {
-		if columns[index] != branch[index] {
-			inOrder = false
-			break
-		}
-	}
-	if inOrder {
-		return nil, true
-	}
-	positions := make(map[string]int, len(branch))
-	for index, name := range branch {
-		positions[name] = index
-	}
-	order = make([]int, len(columns))
-	for index, name := range columns {
-		position, found := positions[name]
-		if !found {
-			return nil, false
-		}
-		order[index] = position
-	}
-	return order, true
+func unionColumnOrder(columns, branch []string) ([]int, bool) {
+	return fabric.UnionColumnOrder(columns, branch)
 }
 
 // reorderUnionRows rewrites rows into the column order unionColumnOrder gave.

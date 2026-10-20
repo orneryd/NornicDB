@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -174,8 +175,12 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 	if keysText != "()" {
 		for _, key := range splitTopLevelComma(keysText) {
 			// A key that names a projected item is that item's expression.
+			name := ""
+			if p := fabric.ProjectionSyntax(key); p != nil && len(p.Items) == 1 {
+				name = p.Items[0].Name
+			}
 			for _, item := range items {
-				if !item.aggregates && item.alias == key {
+				if !item.aggregates && item.alias == name {
 					key = item.expression
 					break
 				}
@@ -240,21 +245,7 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 // projectionItemAlias splits a projected item into its expression and
 // column name: the alias after its last top-level AS, or the expression.
 func projectionItemAlias(item string) (string, string) {
-	item = strings.TrimSpace(item)
-	as := -1
-	for _, word := range projectionWords(item) {
-		if word.depth == 0 && word.upper == "AS" {
-			as = word.start
-		}
-	}
-	if as < 0 {
-		return item, item
-	}
-	alias := strings.TrimSpace(item[as+len("AS"):])
-	if name, end, ok := scanIdentifierToken(alias, 0); ok && end == len(alias) {
-		alias = name
-	}
-	return strings.TrimSpace(item[:as]), alias
+	return parseProjectionExprAlias(item)
 }
 
 // replaceGroupingKeys writes each grouping key in expression as its

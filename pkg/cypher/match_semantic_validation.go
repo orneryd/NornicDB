@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -30,17 +31,26 @@ type matchSemanticScope map[string]matchBindingKind
 // unless a Fabric APPLY binds variables for it: then the result depends on
 // the bound record. cypher25 holds a Cypher 25 statement to Neo4j 2026.09's
 // compile-time type rules (staticTypeScope.cypher25).
-func (e *StorageExecutor) validateMatchSemanticScopes(cypher string, cypher25 bool) error {
-	cacheable := len(e.fabricRecordBindings) == 0
+func (e *StorageExecutor) validateMatchSemanticScopes(cypher string, cypher25 bool, recordings ...*scopeRecording) error {
+	record := firstScopeRecording(recordings)
+	if record != nil && record.sealed && record.source == cypher {
+		return nil
+	}
+	cacheable := len(e.fabricRecordBindings) == 0 && firstScopeRecording(recordings) == nil
 	key := semanticCacheKey(cypher, cypher25)
 	if cacheable && e.matchSemanticValidationCache.contains(key) {
 		return nil
 	}
-	if err := e.validateMatchSemanticScopesUncached(cypher, cypher25); err != nil {
+	if err := e.validateMatchSemanticScopesUncached(cypher, cypher25, recordings...); err != nil {
 		return err
 	}
 	if cacheable {
 		e.matchSemanticValidationCache.add(key)
+	}
+	if len(e.fabricRecordBindings) == 0 && record != nil && record.source == cypher && record.lookupSource != "" {
+		// UNION branch and CALL-child walks must finish before publication.
+		record.sealed = true
+		e.matchSemanticValidationCache.addRecording(semanticCacheKey(record.lookupSource, cypher25), record)
 	}
 	return nil
 }
@@ -54,20 +64,20 @@ func semanticCacheKey(cypher string, cypher25 bool) string {
 	return cypher
 }
 
-func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cypher25 bool, recordings ...*scopeRecording) error {
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		for _, branch := range branches {
-			if err := e.validateMatchSemanticScopes(branch, cypher25); err != nil {
+			if err := e.validateMatchSemanticScopes(branch, cypher25, recordings...); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	if isSchemaCommandStatement(cypher) {
+	if isSchemaCommandStatement(cypher) && firstScopeRecording(recordings) == nil {
 		return nil
 	}
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher)
+	clauses, ok := semanticScopeClauses(cypher)
 	if !ok {
 		return nil
 	}
@@ -77,7 +87,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 	for name := range e.fabricRecordBindings {
 		types[name] = staticOperand{}
 	}
-	_, _, err := e.semanticScopeWalk(clauses, types, cypher25, subqueryScope{})
+	_, _, err := e.semanticScopeWalk(clauses, types, cypher25, subqueryScope{}, recordings...)
 	return err
 }
 
@@ -120,7 +130,9 @@ func (enclosing subqueryScope) redeclarationError(name string) error {
 // walking its body the same way.
 // enclosing, for a subquery body, is what it sees of the query around it
 // (subqueryScope).
-func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope) (typeScope, bool, error) {
+func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope, recordings ...*scopeRecording) (typeScope, bool, error) {
+	recording := firstScopeRecording(recordings)
+	compiledScope := recording.begin(enclosing.visible)
 	var scope matchSemanticScope
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
@@ -136,7 +148,41 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	// view is the static view of types; stale after a clause changes them.
 	var view staticTypeScope
 	stale := true
-	for _, clause := range clauses {
+	for clauseIndex, clause := range clauses {
+		var before typeScope
+		if compiledScope != nil {
+			before = maps.Clone(types)
+		}
+		// Command syntax owns its local names. Record its admitted transition
+		// so decomposition retains a frame without interpreting it as row syntax.
+		if clause.kind == pipelineClauseCommand {
+			if yield := clause.syntax.Yield; yield != nil {
+				if yield.Star {
+					compiledScope.add(clause, before, types)
+					return types, false, nil
+				}
+				for _, item := range yield.Items {
+					name := item.Name
+					if item.Alias != "" {
+						name = item.Alias
+					}
+					types[name] = staticOperand{}
+				}
+				stale = true
+			}
+			compiledScope.add(clause, before, types)
+			continue
+		}
+		// An unresolved option candidate is validated as a normal projection
+		// whenever the engine's existing typed scope binds it. Otherwise defer
+		// the extension decision to the real execution frame, retaining input
+		// bindings for its permitted transparent-option interpretation.
+		if clause.embeddingCandidate != "" {
+			if _, bound := types[clause.embeddingCandidate]; !bound {
+				compiledScope.add(clause, before, types)
+				continue
+			}
+		}
 		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil {
 			return types, false, err
 		}
@@ -155,6 +201,18 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			view = types.static(cypher25)
 		}
 		scope, valueTypes, valueMembers = view.kinds, view.values, view.members
+		// Mutation checks consume this walk's live scope, including CALL imports;
+		// a separate scan of the preceding statement cannot reconstruct it.
+		switch clause.kind {
+		case pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
+			mutationScope := newSemanticBindingScope()
+			for name := range types {
+				mutationScope.bind(name)
+			}
+			if err := e.validateMutationClauseScopes([]pipelineClause{clause}, mutationScope); err != nil {
+				return types, false, err
+			}
+		}
 		// Every clause but RETURN and DELETE may change types.
 		stale = true
 		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch {
@@ -188,6 +246,23 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 		}
 		switch clause.kind {
+		case pipelineClauseLoadCSV:
+			if err := undefinedExpressionVariable(scope, clause.syntax.Expression); err != nil {
+				return types, false, err
+			}
+			types[clause.syntax.Name] = staticOperand{}
+		case pipelineClauseUse:
+			stale = false
+			if clause.selection != nil {
+				for _, expression := range clause.selection.Args {
+					if err := undefinedExpressionVariable(scope, expression); err != nil {
+						return types, false, err
+					}
+					if err := validateStaticFunctionVariables(expression, view); err != nil {
+						return types, false, err
+					}
+				}
+			}
 		case pipelineClauseLet, pipelineClauseFilter:
 			if err := e.validateSharedClause(scope, valueTypes, clause, cypher25); err != nil {
 				return types, false, err
@@ -216,18 +291,21 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			// The body is a query of its own, walked from the variables it
 			// imports; its subqueries see its scope.
-			returned, err := e.callSubqueryReturnTypes(clause.text, branches, types, cypher25)
+			returned, err := e.callSubqueryReturnTypes(clause.text, branches, types, cypher25, recording.child(clause.text))
 			if err != nil {
 				return types, false, err
 			}
 			if returnIndex := topLevelKeywordIndex(branches[0], "RETURN"); returnIndex >= 0 {
 				columns := pipelineReturnSourceColumns(branches[0][returnIndex:])
 				if columns == nil || slices.Contains(columns, "*") {
-					// RETURN * returns every variable of the body, which
-					// names nothing statically: as after YIELD *, the rest
-					// of the statement isn't checked (#907; checking it
-					// rejected CALL { UNWIND [2] AS b RETURN * } RETURN b).
-					return types, false, nil
+					if returned == nil {
+						return types, false, nil
+					}
+					columns = make([]string, 0, len(returned))
+					for name := range returned {
+						columns = append(columns, name)
+					}
+					slices.Sort(columns)
 				}
 				for _, name := range columns {
 					// A returned column is a new variable of the enclosing
@@ -251,12 +329,18 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			yield := parseYieldClause(clause.text)
+			if err := validateProcedureYieldBindings(yield, clauseIndex+1 < len(clauses)); err != nil {
+				return types, false, err
+			}
 			if yield == nil || yield.yieldAll {
 				if mayContainSubqueryExpression(clause.text) || containsRelationshipPattern(clause.text) {
 					if err := e.validateClauseSubqueries(clause, types, view, nil, cypher25); err != nil {
 						return types, false, err
 					}
 				}
+				// The procedure operator owns its runtime output schema. Retain
+				// the admitted input frame even when no output names are static.
+				compiledScope.add(clause, before, types)
 				return types, false, nil
 			}
 			outputTypes := procedureOutputTypes(clause.text)
@@ -428,6 +512,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 		}
+		compiledScope.add(clause, before, types)
 	}
 	return types, true, nil
 }
@@ -923,7 +1008,7 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 	}
 	for _, subquery := range findSubqueryExpressions(text) {
 		local := withPatternComprehensionBindings(withLocalTypes(scope, text, subquery.start), text, subquery.start)
-		for name := range expressionLocalBindings(maskNestedScopeBodies(subquery.body)) {
+		for name := range expressionLocalBindingNames(subquery.body, true) {
 			if local.bound(name) {
 				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 					localization.CypherCoreVariableDeclaredInOuterScope(name))
@@ -1255,28 +1340,7 @@ func projectionItemTermError(expression string) error {
 // alias, as written, is not one name (WITH n AS return n: the n after the
 // alias is "Invalid input"). A backtick-quoted alias is one name.
 func projectionAliasError(item string) error {
-	// The alias follows the item's own AS (projectionAliasIndex), so an alias
-	// named as is a name (WITH n AS as, #894).
-	as := projectionAliasIndex(item)
-	if as < 0 {
-		return nil
-	}
-	alias := strings.TrimSpace(item[as+len("AS"):])
-	if alias == "" {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInput(""))
-	}
-	_, next, ok := scanSymbolicName(alias, 0)
-	if !ok || next == len(alias) {
-		return nil
-	}
-	rest := strings.TrimSpace(alias[next:])
-	token, _, _ := scanIdentifierToken(rest, 0)
-	if token == "" {
-		token = rest[:1]
-	}
-	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-		localization.CypherCoreInvalidInputExpectedExpression(token))
+	return fabric.ReadQueryStructure("RETURN " + item).Err
 }
 
 // isExpressionContinuationWord reports whether word, after an operand,
@@ -1413,21 +1477,21 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 	}
 	// The pattern binds what its structure names: (l) in a WHERE is no node.
 	pattern = matchPatternStructure(pattern)
-	for _, variable := range extractNodeVariables(pattern) {
-		if _, found := scope[variable]; !found {
-			scope[variable] = matchBindingNode
+	bind := func(written string, kind matchBindingKind) {
+		name := normalizeProjectionColumnName(written)
+		if _, found := scope[name]; !found {
+			scope[name] = kind
 		}
 	}
+	for _, variable := range extractNodeVariables(pattern) {
+		bind(variable, matchBindingNode)
+	}
 	for _, variable := range extractRelationshipVariables(pattern) {
-		if _, found := scope[variable]; !found {
-			scope[variable] = matchBindingRelationship
-		}
+		bind(variable, matchBindingRelationship)
 	}
 	for _, patternPart := range splitTopLevelComma(pattern) {
 		if variable := extractPathAssignmentVariable(strings.TrimSpace(patternPart)); variable != "" {
-			if _, found := scope[variable]; !found {
-				scope[variable] = matchBindingPath
-			}
+			bind(variable, matchBindingPath)
 		}
 	}
 }
@@ -1491,7 +1555,7 @@ func callSubqueryReturnsOuterUnchanged(branches []string, name string) bool {
 				items, _ = cutDistinct(strings.TrimSpace(items))
 				for _, raw := range splitTopLevelComma(items) {
 					expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-					if normalizeProjectionColumnName(alias) == name && normalizeProjectionColumnName(expression) != name {
+					if alias == name && normalizeProjectionColumnName(expression) != name {
 						return false
 					}
 				}
@@ -1531,23 +1595,11 @@ func callSubqueryReturnsOuterUnchanged(branches []string, name string) bool {
 // scope binds is the outer variable the pattern reads.
 func withPatternComprehensionBindings(scope staticTypeScope, text string, at int) staticTypeScope {
 	var added matchSemanticScope
-	for open := 0; open < at; open++ {
-		switch c := text[open]; c {
-		case '\'', '"', '`':
-			open = skipCypherQuotedText(text, open, c) - 1
-			continue
-		case '[':
-		default:
+	for _, syntax := range fabric.ExpressionScopes(text) {
+		if syntax.Kind != fabric.ExpressionPatternScope || syntax.Open >= at || syntax.Close < at {
 			continue
 		}
-		close := findMatchingDelimiter(text, open, '[', ']')
-		if close < at {
-			continue
-		}
-		pattern, _, comprehension := splitPatternComprehension(text[open : close+1])
-		if !comprehension {
-			continue
-		}
+		pattern := text[syntax.Pattern.Start:syntax.Pattern.End]
 		bindings := make(matchSemanticScope)
 		addMatchPatternBindingKinds(bindings, pattern)
 		for name, kind := range bindings {

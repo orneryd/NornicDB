@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -95,19 +96,25 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 }
 
 // executeExplain returns the execution plan without executing the query
-func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
-	if indexASCIIFold(query, "shortestpath") >= 0 {
-		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
-			return nil, err
-		}
-	}
+func (e *StorageExecutor) executeExplain(ctx context.Context, query string, recording *scopeRecording) (*ExecuteResult, error) {
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
 	plan.Mode = ModeExplain
+	columns := []string(nil)
+	resolved := false
+	if record := recording; record != nil {
+		columns, resolved, err = record.resultColumns()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !resolved {
+		columns = e.inferExplainColumns(query)
+	}
 	result := &ExecuteResult{
-		Columns: e.inferExplainColumns(query),
+		Columns: columns,
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
@@ -837,56 +844,15 @@ func (e *StorageExecutor) StatementColumns(query string) []string {
 	return e.inferExplainColumns(query)
 }
 
+// inferExplainColumns reads declarations only. Its callers include relative
+// rewrite bodies without their enclosing imports, so it must not admit them as
+// complete statements. Public EXPLAIN consumes its admission recording instead.
 func (e *StorageExecutor) inferExplainColumns(query string) []string {
-	// Neo4j EXPLAIN returns the same columns as the underlying query but no rows.
-	if y := parseYieldClause(query); y != nil {
-		// The statement's own RETURN, without its ORDER BY / SKIP / LIMIT.
-		returnExpr := ""
-		if returnIdx := topLevelKeywordIndex(query, "RETURN"); returnIdx >= 0 {
-			returnExpr = strings.TrimSpace(query[returnIdx+len("RETURN"):])
-			for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
-				if index := topLevelKeywordIndex(returnExpr, keyword); index >= 0 {
-					returnExpr = strings.TrimSpace(returnExpr[:index])
-				}
-			}
-		}
-		if returnExpr != "" {
-			items := e.parseReturnItems(returnExpr)
-			// For RETURN * after explicit YIELD items, project yielded aliases/names.
-			if len(items) == 1 && strings.TrimSpace(items[0].expr) == "*" && len(y.items) > 0 {
-				cols := make([]string, 0, len(y.items))
-				for _, item := range y.items {
-					if item.alias != "" {
-						cols = append(cols, item.alias)
-					} else {
-						cols = append(cols, item.name)
-					}
-				}
-				return cols
-			}
-			cols := make([]string, 0, len(items))
-			for _, item := range items {
-				cols = append(cols, item.column())
-			}
-			return cols
-		}
-		if !y.yieldAll {
-			cols := make([]string, 0, len(y.items))
-			for _, item := range y.items {
-				if item.alias != "" {
-					cols = append(cols, item.alias)
-				} else {
-					cols = append(cols, item.name)
-				}
-			}
-			return cols
-		}
+	columns := fabric.ReadQueryStructure(query).DeclaredColumns()
+	if columns == nil {
+		return []string{}
 	}
-
-	if cols := e.inferTopLevelReturnColumns(query); cols != nil {
-		return cols
-	}
-	return []string{}
+	return columns
 }
 
 // formatPlan formats the execution plan as a string (tree visualization)

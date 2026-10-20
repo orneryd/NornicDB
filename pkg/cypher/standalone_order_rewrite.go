@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/fabric"
+	"sort"
 	"strings"
 )
 
@@ -20,7 +22,14 @@ func desugarStandaloneOrderClauses(query string) (string, *queryRewrite) {
 		return query, nil
 	}
 	var edits []labelRewriteEdit
-	scanStandaloneOrderClauses(query, 0, len(query), &edits)
+	if syntax, ok := fabric.StandaloneOrderEdits(query); ok {
+		for _, edit := range syntax {
+			edits = append(edits, labelRewriteEdit{start: edit.Start, end: edit.End, text: edit.Text})
+		}
+		sort.Slice(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	} else {
+		scanStandaloneOrderClauses(query, 0, len(query), &edits)
+	}
 	if len(edits) == 0 {
 		return query, nil
 	}

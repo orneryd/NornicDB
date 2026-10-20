@@ -510,9 +510,7 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 			if expr == "" {
 				continue
 			}
-			if asIdx := findKeywordIndex(expr, "AS"); asIdx > 0 {
-				expr = strings.TrimSpace(expr[:asIdx])
-			}
+			expr, _ = parseProjectionExprAlias(expr)
 			add(extractVariableNameFromReturnItem(expr))
 		}
 	}

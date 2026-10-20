@@ -3,6 +3,7 @@ package cypher
 import (
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -652,21 +653,24 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 // binds that name nowhere else (no second AS x), so a later binding can't be
 // taken for it.
 func unwindParameterBindings(cypher string) map[string]string {
-	var bindings map[string]string
-	for start := 0; ; {
-		index := findKeywordIndexInContext(cypher[start:], "UNWIND")
-		if index < 0 {
-			return bindings
+	q := fabric.ReadQueryStructure(cypher)
+	names, known := fabric.NameOccurrences(cypher)
+	if q.Err != nil || !known {
+		return nil
+	}
+	declarations := make(map[string]int)
+	for _, name := range names {
+		if name.Binding {
+			declarations[name.Name]++
 		}
-		body := cypher[start+index+len("UNWIND"):]
-		start += index + len("UNWIND")
-		as := findKeywordIndexInContext(body, "AS")
-		if as < 0 {
+	}
+	var bindings map[string]string
+	for _, clause := range q.Clauses {
+		if clause.Kind != "UNWIND" || declarations[clause.Name] != 1 {
 			continue
 		}
-		source := strings.TrimSpace(body[:as])
-		alias, _, ok := scanIdentifierToken(strings.TrimSpace(body[as+len("AS"):]), 0)
-		if !ok || len(source) < 4 || !isListLiteral(source) {
+		source := clause.Expression
+		if len(source) < 4 || !isListLiteral(source) {
 			continue
 		}
 		parameter := strings.TrimSpace(source[1 : len(source)-1])
@@ -674,14 +678,12 @@ func unwindParameterBindings(cypher string) map[string]string {
 		if !isParameter || parameter[0] != '$' || next != len(parameter) {
 			continue
 		}
-		if strings.Count(cypher, "AS "+alias) != 1 {
-			continue
-		}
 		if bindings == nil {
 			bindings = make(map[string]string)
 		}
-		bindings[alias] = name
+		bindings[clause.Name] = name
 	}
+	return bindings
 }
 
 // parameterMayBeFunctionArgument is validateStaticFunctionParameters' quick
@@ -886,7 +888,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			// A node's or relationship's property is a property value,
 			// never an entity or a map (labels(n.x), id(n.x), point(n.x)
 			// are Neo4j's compile-time SyntaxError); another base's member
-			// has the type the scope knows for it (a Cypher 25 map's), or
+			// has the type the scope knows for it (a map extension's), or
 			// none.
 			if kind := scope.typeOf(base); kind == "Node" || kind == "Relationship" {
 				typeName = staticPropertyValueType
@@ -920,11 +922,11 @@ func entityPropertyRead(expression string) (string, bool) {
 // unwindStaticValueType is the element type of an UNWIND over a list literal
 // (UNWIND [1, 2] AS x binds an Integer), or "".
 func unwindStaticValueType(clause string) string {
-	body := strings.TrimSpace(clause[len("UNWIND"):])
-	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
-		body = strings.TrimSpace(body[:asIndex])
+	expression, _, ok := parsePipelineIteration(clause)
+	if !ok {
+		return ""
 	}
-	return staticListElementType(body)
+	return staticListElementType(expression)
 }
 
 // staticListElementType is the element type of a list expression whose

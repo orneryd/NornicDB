@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -24,7 +25,7 @@ import (
 func validateListOperands(cypher string, params map[string]interface{}) error {
 	return forEachListOperand(cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
-		if foreachDeclaration(cypher, in) || forIterationDeclaration(cypher, in) {
+		if nonListIterationDeclaration(cypher, in) {
 			return nil
 		}
 		end, typeName, parameter := staticListOperand(cypher, start, params)
@@ -105,7 +106,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
-		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
+		if nonListIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -123,54 +124,15 @@ func mayBeListType(typeName string) bool {
 	return false
 }
 
-// foreachDeclaration reports whether the IN at offset in is FOREACH's own
-// (`FOREACH (x IN …`).
-func foreachDeclaration(text string, in int) bool {
-	if !containsFold(text[:in], "FOREACH") {
-		return false
-	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	for from := 0; from < in; {
-		start := keywordIndexFrom(text, "FOREACH", from, opts)
-		if start < 0 || start >= in {
-			return false
-		}
-		open := queryGapEnd(text, start+len("FOREACH"))
-		if open < len(text) && text[open] == '(' {
-			_, end, ok := scanIdentifierToken(text, queryGapEnd(text, open+1))
-			if ok && queryGapEnd(text, end) == in {
-				return true
-			}
-		}
-		from = start + len("FOREACH")
-	}
-	return false
-}
+type nativeScopePredicate = bool
 
-// forIterationDeclaration reports whether the IN at offset in is a FOR
-// iteration clause's own (`FOR x IN …`). FOR iterates like UNWIND, coercing a
-// non-list operand to a single item, so its operand is not a list type error.
-func forIterationDeclaration(text string, in int) bool {
-	if !containsFold(text[:in], "FOR") {
-		return false
-	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	for from := 0; from < in; {
-		start := keywordIndexFrom(text, "FOR", from, opts)
-		if start < 0 || start >= in {
-			return false
+// nonListIterationDeclaration selects grammar-owned FOREACH/FOR and map iteration
+// positions. IN belongs to the declaration here, rather than a list predicate.
+func nonListIterationDeclaration(text string, in int) nativeScopePredicate {
+	for _, scope := range fabric.ExpressionScopes(text) {
+		if scope.Iteration == in && (scope.Kind == fabric.ExpressionIterationScope || scope.Kind == fabric.ExpressionMapScope) {
+			return true
 		}
-		nameStart := queryGapEnd(text, start+len("FOR"))
-		if nameStart < in {
-			if _, nameEnd, ok := scanIdentifierToken(text, nameStart); ok && queryGapEnd(text, nameEnd) == in {
-				return true
-			}
-		}
-		from = start + len("FOR")
 	}
 	return false
 }
@@ -189,9 +151,10 @@ type localBinding struct {
 	// source is the text span that types each name: the list an element
 	// iterates (element), reduce's initial value for its accumulator; a
 	// named path (path) is a Path.
-	source  [2][2]int
-	element [2]bool
-	path    [2]bool
+	source           [2][2]int
+	element          [2]bool
+	path             [2]bool
+	mapKey, mapValue [2]bool
 }
 
 func (binding *localBinding) declare(name string, at, sourceStart, sourceEnd int, element, path bool) {
@@ -201,222 +164,68 @@ func (binding *localBinding) declare(name string, at, sourceStart, sourceEnd int
 	binding.count++
 }
 
-// localBindingAt reads the local binding that opens at text[open] ('[' or
-// the '(' of a binding function), if one does. It is the one reader of
-// these declarations: the names an expression binds (expressionLocalBindings)
-// and where each is in scope (localVariableShadowsAt) both come from it, so
-// x IN[…], x /* … */ IN … and p = (…) read alike everywhere.
-func localBindingAt(text string, open int) (localBinding, bool) {
-	var binding localBinding
-	list := text[open] == '[' // else the '(' of a call: callers pass only these
-	function := ""
-	if !list {
-		if function = bindingFunctionBeforeParen(text, open); function == "" {
-			return binding, false
-		}
-	}
-	closing := func() int {
-		closeBy := ')'
-		if list {
-			closeBy = ']'
-		}
-		if close := findMatchingDelimiter(text, open, rune(text[open]), closeBy); close >= 0 {
-			return close
-		}
-		return len(text)
-	}
-	if isReduceFormFunction(function) {
-		binding.close = closing()
-		if binding.close == len(text) {
-			return binding, false
-		}
-		form, ok := parseReduceForm(function, text[open+1:binding.close])
-		if !ok {
-			return binding, false
-		}
-		comma := open + 1 + findTopLevelByte(text[open+1:binding.close], ',')
-		binding.scope = localScopeStart(text, comma+1, binding.close, true, false)
-		accumulator := queryGapEnd(text, open+1)
-		equals := open + 1 + strings.IndexByte(text[open+1:comma], '=')
-		binding.declare(form.accumulator, accumulator, equals+1, comma, false, false)
-		_, element, list, _ := bindingDeclaration(text, comma+1)
-		binding.declare(form.variable, element, list, binding.scope, true, false)
-		return binding, true
-	}
-	if name, declaration, listStart, declared := bindingDeclaration(text, open+1); declared {
-		binding.close = closing()
-		binding.scope = localScopeStart(text, listStart, binding.close, list, true)
-		binding.declare(name, declaration, listStart, binding.scope, true, false)
-		return binding, true
-	}
-	if !list {
-		return binding, false
-	}
-	// [p = (a)-->(b) …]: a named pattern comprehension.
-	if name, declaration, pattern, named := namedPathDeclaration(text, open+1); named {
-		binding.close = closing()
-		binding.declare(name, declaration, 0, 0, false, true)
-		binding.scope = pattern
-		return binding, true
-	}
-	return binding, false
-}
-
-// namedPathDeclaration reads a path variable declared at text[from] before
-// its pattern: p = (a)-->(b), `p p` = (a)-->(b). It returns the name,
-// where it is written and where the pattern starts. It is the one reader of
-// a named pattern comprehension's head, for localBindingAt,
-// patternComprehensionHead and the quoted-variable classifier.
-func namedPathDeclaration(text string, from int) (name string, at, pattern int, ok bool) {
-	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierToken(text, at)
-	if !ok {
-		return "", 0, 0, false
-	}
-	next := queryGapEnd(text, end)
-	if next+1 >= len(text) || text[next] != '=' || text[next+1] == '~' {
-		return "", 0, 0, false
-	}
-	pattern = queryGapEnd(text, next+1)
-	if pattern >= len(text) || text[pattern] != '(' {
-		return "", 0, 0, false
-	}
-	return name, at, pattern, true
-}
-
-// bindingDeclaration reads the declaration that opens a binding's arguments
-// at text[from]: a name, then IN (x IN l, x IN[1], x /* … */ IN l). It
-// returns the name, where it is written and where the list after IN starts.
-// It is the one reader of that declaration, for the scope reader
-// (localBindingAt) and the evaluators (parseListComprehension,
-// parseQuantifierArguments).
-func bindingDeclaration(text string, from int) (name string, at, list int, ok bool) {
-	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierToken(text, at)
-	if !ok {
-		return "", 0, 0, false
-	}
-	next := queryGapEnd(text, end)
-	if next+2 > len(text) || !strings.EqualFold(text[next:next+2], "IN") || next+2 < len(text) && isIdentByte(text[next+2]) {
-		return "", 0, 0, false
-	}
-	return name, at, next + 2, true
-}
-
-// localScopeStart is where a binding's names come into scope in
-// text[from:close]: its first top-level | (pipe) or WHERE (where), or close
-// when it has neither ([v IN l] binds v nowhere).
-func localScopeStart(text string, from, close int, pipe, where bool) int {
-	depth := 0
-	for index := from; index < close; index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(text, index, c) - 1
+// localBindingFromNative is a type-consumer view of the shared native descriptor.
+// Pattern nodes retain their enclosing query binding when one already exists;
+// withPatternComprehensionBindings handles those through the pattern type owner.
+func localBindingFromNative(scope fabric.ExpressionScope) localBinding {
+	binding := localBinding{close: scope.Close, scope: scope.Visible}
+	for _, declaration := range scope.Declarations {
+		if declaration.Pattern || declaration.Query {
 			continue
-		case '/':
-			if end := queryCommentEnd(text, index); end >= 0 {
-				index = end - 1
-				continue
-			}
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case '|':
-			if pipe && depth == 0 {
-				return index
-			}
 		}
-		if where && depth == 0 && index+5 <= close && strings.EqualFold(text[index:index+5], "WHERE") &&
-			!isIdentByte(text[index-1]) && (index+5 == len(text) || !isIdentByte(text[index+5])) {
-			return index
+		index := binding.count
+		binding.declare(declaration.Name, declaration.At, declaration.Source.Start, declaration.Source.End, declaration.Element, declaration.Path)
+		binding.mapKey[index], binding.mapValue[index] = declaration.MapKey, declaration.MapValue
+	}
+	return binding
+}
+
+func localBindingAt(text string, open int) (localBinding, bool) {
+	for _, scope := range fabric.ExpressionScopes(text) {
+		if scope.Open == open {
+			binding := localBindingFromNative(scope)
+			return binding, binding.count > 0
 		}
 	}
-	return close
+	return localBinding{}, false
 }
 
-// localVariableShadowsAt reports whether name, read at offset operand of
-// text, is a variable an enclosing expression binds itself rather than the
-// clause's (localBindingAt): a list comprehension's element in its WHERE and
-// projection ([n IN l WHERE 1 IN n | n[0]]), a named pattern comprehension's
-// path ([p = (a)-->(b) | length(p)]), the element of all / any / none /
-// single in its predicate (all(n IN l WHERE n[0])), and reduce's
-// accumulator and element in its step (reduce(acc = [], n IN l | acc + n)).
-// The list a binding iterates and reduce's initial value are read outside
-// it: in 1 IN n, [n IN [1] | n] the first n is the clause's. A binding's own
-// declaration (the n of n IN, the acc of acc =) is the local too. It is the
-// one reader of these scopes for the code that reads raw text: the static
-// checks (list operands, subscripts, dynamic labels, function arguments,
-// property accesses, subquery patterns; withoutLocalVariables), the
-// reference scanners and the writing of a row's values into an expression
-// (localOccurrences).
-func localVariableShadowsAt(text string, operand int, name string) bool {
-	_, _, ok := localBindingOf(text, operand, name)
-	return ok
+// bindingDeclaration is the native argument-body entry used by the evaluators
+// and malformed-declaration diagnostics. It never infers a name from IN text.
+func bindingDeclaration(text string, from int) (name string, at, list int, ok bool) {
+	for _, scope := range fabric.ExpressionScopes(text) {
+		if scope.Open == from-1 && len(scope.Declarations) > 0 {
+			declaration := scope.Declarations[0]
+			return declaration.Name, declaration.At, scope.Input.Start, true
+		}
+	}
+	scope, parsed := fabric.ComprehensionSyntax(text[from:])
+	if !parsed || len(scope.Declarations) == 0 {
+		return "", 0, 0, false
+	}
+	declaration := scope.Declarations[0]
+	return declaration.Name, declaration.At + from, scope.Input.Start + from, true
+}
+func localVariableShadowsAt(text string, operand int, name string) nativeScopePredicate {
+	_, _, found := localBindingOf(text, operand, name)
+	return found
 }
 
-// localBindingOf is the innermost local binding that binds name where it is
-// read at offset operand of text (localVariableShadowsAt), and the index of
-// name among its declarations. A '[' or '(' whose first declared name isn't
-// name (and isn't a reduce, which declares two) is passed over without
-// being read whole.
 func localBindingOf(text string, operand int, name string) (localBinding, int, bool) {
 	var found localBinding
-	foundIndex, ok := 0, false
-	for open := 0; open < operand; {
-		if !localBindingStepReads(text[open]) {
-			open++
+	foundIndex, foundOpen, present := 0, -1, false
+	for _, scope := range fabric.ExpressionScopes(text) {
+		if scope.Open >= operand || scope.Open < foundOpen {
 			continue
 		}
-		next, binding, bound := localBindingStep(text, open, name)
-		open = next
-		for index := 0; bound && index < binding.count; index++ {
+		binding := localBindingFromNative(scope)
+		for index := 0; index < binding.count; index++ {
 			if binding.names[index] == name && (binding.declared[index] == operand || binding.scope <= operand && operand < binding.close) {
-				// A binding opening later inside this one is inner.
-				found, foundIndex, ok = binding, index, true
+				found, foundIndex, foundOpen, present = binding, index, scope.Open, true
 			}
 		}
 	}
-	return found, foundIndex, ok
-}
-
-// localBindingStepReads reports whether localBindingStep reads more of text
-// than the byte c at its offset; the walks step over any other byte
-// themselves.
-func localBindingStepReads(c byte) bool {
-	switch c {
-	case '\'', '"', '`', '/', '[', '(':
-		return true
-	}
-	return false
-}
-
-// localBindingStep is one step of the walk that finds the bindings of name
-// (localBindingOf, localOccurrences.keeps): the binding that opens at
-// text[open] when it may declare name, and the offset the walk goes on
-// from (past a quoted name, string or comment). A '[' or '(' whose first
-// declared name isn't name (and isn't a reduce, which declares two) is
-// passed over without being read whole. It is called only at a byte
-// localBindingStepReads reads.
-func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
-	switch text[open] {
-	case '\'', '"', '`':
-		return skipCypherQuotedText(text, open, text[open]), localBinding{}, false
-	case '/':
-		if end := queryCommentEnd(text, open); end >= 0 {
-			return end, localBinding{}, false
-		}
-		return open + 1, localBinding{}, false
-	}
-	// text[open] is '[' or '(': the walks step over the bytes
-	// localBindingStepReads doesn't read themselves.
-	if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
-		if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
-			return open + 1, localBinding{}, false
-		}
-	}
-	binding, bound := localBindingAt(text, open)
-	return open + 1, binding, bound
+	return found, foundIndex, present
 }
 
 // localBindingOperand is the static type of the local name read at offset
@@ -442,6 +251,22 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 	source := strings.TrimSpace(text[span[0]:span[1]])
 	inner := withLocalTypes(scope, text, span[0])
 	types := typeScopeOf(inner)
+	if binding.mapKey[index] {
+		return knownOperand("String")
+	}
+	if binding.mapValue[index] {
+		sourceType := projectedOperand(types, inner, source)
+		var common staticOperand
+		first := true
+		for _, member := range sourceType.members {
+			if first {
+				common, first = member, false
+			} else {
+				common = commonStaticOperand(common, member)
+			}
+		}
+		return common
+	}
 	if binding.element[index] {
 		return listElementOperand(types, inner, source)
 	}
@@ -477,140 +302,42 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 	return local
 }
 
-// bindingFunctionBeforeParen is the name of the function whose arguments
-// open at text[open] when it binds variables of its own (all / any / none /
-// single / filter, reduce / allReduce), as written; "" for any other.
-func bindingFunctionBeforeParen(text string, open int) string {
-	end := open
-	for end > 0 && isWhitespace(text[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	if start == end || start > 0 && isIdentByte(text[start-1]) {
-		return ""
-	}
-	switch strings.ToLower(text[start:end]) {
-	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
-		return text[start:end]
-	default:
-		return ""
-	}
-}
-
-// localBindingNames caches the names a text binds itself
-// (expressionLocalBindings), by text, for localOccurrences.
-var localBindingNames = newBoundedCache[string, map[string]struct{}](1024, boundedCacheStringShardIndex)
-
-// localOccurrences reads, for writing a row's values into text, which
-// occurrences of a name read a variable an enclosing expression binds itself
-// (localVariableShadowsAt) and keep their text. It is a value the caller
-// keeps on its stack: the names text binds are read once per text
-// (localBindingNames), when first asked, and the occurrences of a name in
-// one input are read in one walk (keeps), so a row predicate costs one cache
-// lookup and no allocation. (Not every binding form has an IN: a named
-// pattern comprehension [p = (a)-->(b) | p] declares with =.)
+// localOccurrences retains local declarations during value substitution. It
+// shares the immutable native scopes; no row walk reconstructs scope from text.
 type localOccurrences struct {
-	// text is read, never changed: the names it binds are cached by text
-	// (localBindingNames), shared and never written to.
-	text   string
-	read   bool
-	locals map[string]struct{}
-
-	// The walk of input for name (keeps): it has read the bindings that
-	// open before walked, and holds those of name a later occurrence can
-	// still read (scopes, then more once scopes is full).
-	input, name string
-	bound       bool
-	walked      int
-	scopes      [8]localOccurrenceScope
-	open        int
-	more        []localOccurrenceScope
+	text, input string
+	scopes      []fabric.ExpressionScope
 }
 
-// localOccurrenceScope is where one binding's local is read: at its
-// declaration, and from scope up to close (localBindingOf).
-type localOccurrenceScope struct{ declared, scope, close int }
+func (occurrences *localOccurrences) binds(name string) bool {
+	if occurrences == nil {
+		return false
+	}
+	for _, scope := range fabric.ExpressionScopes(occurrences.text) {
+		for _, declaration := range scope.Declarations {
+			if !declaration.Pattern && !declaration.Query && declaration.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
 
-// keeps reports whether the occurrence of name at offset at of input reads a
-// local variable of that name (localVariableShadowsAt), so its text is
-// kept. The replacers ask it for each occurrence of input in order: the
-// bindings opening before at are read once for them all (localBindingStep),
-// and an occurrence before the last one asked, another input or another
-// name starts the walk again. A nil localOccurrences keeps nothing.
 func (occurrences *localOccurrences) keeps(input, name string, at int) bool {
 	if occurrences == nil {
 		return false
 	}
-	if input != occurrences.input || name != occurrences.name || at < occurrences.walked {
-		occurrences.input, occurrences.name, occurrences.walked = input, name, 0
-		occurrences.open, occurrences.more = 0, occurrences.more[:0]
-		occurrences.bound = occurrences.binds(name)
+	if input != occurrences.input {
+		occurrences.input, occurrences.scopes = input, fabric.ExpressionScopes(input)
 	}
-	if !occurrences.bound {
-		return false
-	}
-	for occurrences.walked < at {
-		if !localBindingStepReads(input[occurrences.walked]) {
-			occurrences.walked++
-			continue
-		}
-		next, binding, bound := localBindingStep(input, occurrences.walked, name)
-		occurrences.walked = next
-		for index := 0; bound && index < binding.count; index++ {
-			if binding.names[index] == name {
-				occurrences.hold(localOccurrenceScope{declared: binding.declared[index], scope: binding.scope, close: binding.close})
+	for _, scope := range occurrences.scopes {
+		for _, declaration := range scope.Declarations {
+			if !declaration.Pattern && !declaration.Query && declaration.Name == name && (declaration.At == at || scope.Visible <= at && at < scope.Close) {
+				return true
 			}
 		}
 	}
-	// A binding that closes by at closes before every later occurrence
-	// too: it is let go.
-	kept, held := false, 0
-	for _, scope := range occurrences.scopes[:occurrences.open] {
-		if scope.close > at {
-			kept = kept || scope.declared == at || scope.scope <= at
-			occurrences.scopes[held] = scope
-			held++
-		}
-	}
-	occurrences.open, held = held, 0
-	for _, scope := range occurrences.more {
-		if scope.close > at {
-			kept = kept || scope.declared == at || scope.scope <= at
-			occurrences.more[held] = scope
-			held++
-		}
-	}
-	occurrences.more = occurrences.more[:held]
-	return kept
-}
-
-func (occurrences *localOccurrences) hold(scope localOccurrenceScope) {
-	if occurrences.open < len(occurrences.scopes) {
-		occurrences.scopes[occurrences.open] = scope
-		occurrences.open++
-		return
-	}
-	occurrences.more = append(occurrences.more, scope)
-}
-
-// binds reports whether text binds a local named name.
-func (occurrences *localOccurrences) binds(name string) bool {
-	if !occurrences.read {
-		occurrences.read = true
-		// A clause's text is the same for every row: its names are read
-		// once.
-		locals, cached := localBindingNames.get(occurrences.text)
-		if !cached {
-			locals = expressionLocalBindings(occurrences.text)
-			localBindingNames.put(occurrences.text, locals)
-		}
-		occurrences.locals = locals
-	}
-	_, bound := occurrences.locals[name]
-	return bound
+	return false
 }
 
 // localReader answers localVariableShadowsAt for one text, reading the

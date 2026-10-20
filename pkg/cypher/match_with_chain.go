@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -101,22 +102,16 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 }
 
 func parseProjectionExprAlias(item string) (string, string) {
-	trimmed := strings.TrimSpace(item)
-	if trimmed == "" {
-		return "", ""
-	}
-	asIdx := projectionAliasIndex(trimmed)
-	if asIdx < 0 {
-		// A projected variable is named by the variable itself: `x` is the
-		// column x, as in Neo4j. Other expressions are named by their text.
-		if name := simpleSemanticIdentifier(trimmed); name != "" {
-			return trimmed, name
+	if p := fabric.ProjectionSyntax(item); p != nil {
+		if p.Star && len(p.Items) == 0 {
+			return "*", "*"
 		}
-		return trimmed, trimmed
+		if !p.Star && len(p.Items) == 1 {
+			v := p.Items[0]
+			return lexicalExpressionText(v.Expression), v.Column
+		}
 	}
-	expr := strings.TrimSpace(trimmed[:asIdx])
-	alias := normalizeProjectionColumnName(trimmed[asIdx+len("AS"):])
-	return expr, alias
+	return "", ""
 }
 
 // projectionAliasIndex is the index of the AS that introduces item's alias:
@@ -125,18 +120,9 @@ func parseProjectionExprAlias(item string) (string, string) {
 // (COLLECT { UNWIND l AS y RETURN y }, 'a AS b', CASE WHEN true THEN as END,
 // where as is a variable; #1162) is not the alias; -1 when there is none.
 func projectionAliasIndex(item string) int {
-	opts := defaultKeywordScanOpts()
-	opts.SkipBraces = true
-	for from := 0; from < len(item); {
-		index := keywordIndexFrom(item, "AS", from, opts)
-		if index < 0 {
-			return -1
-		}
-		end := index + len("AS")
-		if index > 0 && isWhitespace(item[index-1]) && end < len(item) && isWhitespace(item[end]) && !insideCaseBlock(item, index) {
-			return index
-		}
-		from = end
+	if p := fabric.ProjectionSyntax(item); p != nil && !p.Star && len(p.Items) == 1 && p.Items[0].HasAlias {
+		// ProjectionSyntax's grammar entry adds the RETURN prefix.
+		return p.Items[0].AliasStart - len("RETURN ")
 	}
 	return -1
 }
