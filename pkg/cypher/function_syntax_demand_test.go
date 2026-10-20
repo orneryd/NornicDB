@@ -89,17 +89,51 @@ func TestFunctionSyntaxSparseRetention(t *testing.T) {
 		require.Empty(t, syntax.quoted)
 		require.Empty(t, syntax.rootPunctuation)
 		require.Empty(t, syntax.comments)
-		require.Len(t, syntax.groups, 1, "closed transient groups must be released")
+		require.Empty(t, syntax.groups, "transient nesting must not escape into retained facts")
 		if kind == "block" {
 			require.Len(t, request.arguments, 4000)
 		} else {
 			require.False(t, request.found)
 		}
 	}
-	text := "count(1) + " + strings.Repeat("coalesce(null,1) + ", 4000)
+	text := "count(1) + COUNT { RETURN " + strings.Repeat("coalesce(null,1) + ", 4000)
 	syntax := functionSyntax{text: text}
 	request := functionSyntaxRequest{aggregate: true, activeOpen: -1}
 	scanFunctionSyntax(&syntax, false, &request)
 	require.True(t, request.found)
-	require.Less(t, syntax.groups[len(syntax.groups)-1].close, len("count(1) + "), "the boolean request stops at its first closed aggregate")
+	require.False(t, request.unclosedScalar, "the boolean request stops before the unclosed trailing body")
+	require.Empty(t, syntax.groups)
+}
+
+// These inputs exceed the retention bound. The boolean/absent-name requests
+// need no owned results: bounded transient syntax must allocate nothing.
+func TestFunctionSyntaxSparseStateDoesNotAllocate(t *testing.T) {
+	text := functionFactConsumerInput(2000, "subqueries")
+	require.Greater(t, len(text), 16384)
+	require.False(t, containsAggregateFunc(text))
+	require.Zero(t, testing.AllocsPerRun(10, func() {
+		if containsAggregateFunc(text) {
+			t.Fatal("inner aggregate escaped")
+		}
+	}))
+	text = functionFactConsumerInput(2000, "block")
+	require.Zero(t, testing.AllocsPerRun(10, func() {
+		if len(namedFunctionArguments(text, "missing")) != 0 {
+			t.Fatal("unrequested arguments retained")
+		}
+	}))
+}
+
+func TestFunctionSyntaxSparseNestingOverflow(t *testing.T) {
+	prefix := "/* " + strings.Repeat("padding ", 2200) + " */ "
+	for _, depth := range []int{16, 64, 128} {
+		body := strings.Repeat("coalesce([{x:", depth) + "sum(1)" + strings.Repeat("}],null)", depth)
+		text := prefix + body
+		require.Greater(t, len(text), 16384)
+		require.Equal(t, len(findAggregateSpans(text)) > 0, containsAggregateFunc(text))
+		arguments := namedFunctionArguments(text, "coalesce")
+		require.Len(t, arguments, 1)
+		require.Equal(t, body[len("coalesce("):len(body)-1], arguments[0])
+		require.Equal(t, body, lexicalExpressionText(text))
+	}
 }

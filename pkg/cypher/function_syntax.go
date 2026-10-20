@@ -391,6 +391,11 @@ func readFunctionSyntaxFacts(text string, argumentsOnly bool) *functionSyntax {
 	}
 	syntax := &functionSyntax{text: text, leading: lexicalLeadingTriviaEnd(text)}
 	scanFunctionSyntax(syntax, argumentsOnly, nil)
+	// Only retained inventories bind calls back to their owner. Keeping this
+	// self-reference out of the scanner lets sparse callers stay on the stack.
+	for index := range syntax.calls {
+		syntax.calls[index].syntax = syntax
+	}
 	if len(text) <= 16384 {
 		functionSyntaxCache.put(key, syntax)
 	}
@@ -420,13 +425,16 @@ func scanFunctionSyntax(syntax *functionSyntax, argumentsOnly bool, request *fun
 	if argumentsOnly && groups > 3 {
 		groups = 3
 	}
-	// Group zero represents the whole input, including argument-only inputs.
-	if request != nil {
-		syntax.groups = make([]syntaxGroup, 1, 16)
-	} else {
+	// Group zero represents the whole input. Retained groups and transient
+	// nesting have separate storage: a sparse stack never escapes into facts.
+	root := syntaxGroup{open: -1, close: len(text), parent: -1}
+	if request == nil {
 		syntax.groups = make([]syntaxGroup, 1, groups+1)
+		syntax.groups[0] = root
 	}
-	syntax.groups[0] = syntaxGroup{open: -1, close: len(text), parent: -1}
+	var sparseBuffer [16]syntaxGroup
+	sparseGroups := sparseBuffer[:1]
+	sparseGroups[0] = root
 	// Temporary nesting and comma chains never escape the lexical pass. Most
 	// expressions fit these buffers; larger inputs grow through append.
 	var stackBuffer [16]int
@@ -494,7 +502,7 @@ func scanFunctionSyntax(syntax *functionSyntax, argumentsOnly bool, request *fun
 					}
 					if strings.EqualFold(name, "CALL") && request == nil {
 						name := called + parts
-						call := functionCallSpan{name: name, normalized: lowerASCII(name), start: start, nameEnd: end, open: -1, next: cursor, procedure: true, syntax: syntax, group: -1}
+						call := functionCallSpan{name: name, normalized: lowerASCII(name), start: start, nameEnd: end, open: -1, next: cursor, procedure: true, group: -1}
 						if cursor < len(text) && text[cursor] == '(' {
 							call.open = cursor
 							call.next = cursor + 1
@@ -511,7 +519,10 @@ func scanFunctionSyntax(syntax *functionSyntax, argumentsOnly bool, request *fun
 			// A colon in a map value or list subscript introduces an expression.
 			// Pattern label/type colons do not. The forward group's context and
 			// previous live position survive comments and quoted map keys.
-			group := syntax.groups[stack[len(stack)-1]]
+			group := sparseGroups[len(sparseGroups)-1]
+			if request == nil {
+				group = syntax.groups[stack[len(stack)-1]]
+			}
 			var groupOpening byte
 			if group.open >= 0 {
 				groupOpening = text[group.open]
@@ -535,53 +546,69 @@ func scanFunctionSyntax(syntax *functionSyntax, argumentsOnly bool, request *fun
 			previous = next - 1
 			continue
 		}
+		// Rendering needs comments and quoted-data boundaries, not nesting.
+		if request != nil && request.renderOnly {
+			previous = index
+			index++
+			continue
+		}
 		switch text[index] {
 		case '(', '[', '{':
+			if request != nil {
+				sparseGroups = append(sparseGroups, syntaxGroup{open: index, close: -1})
+				if request.aggregate && index == hiddenOpen {
+					hiddenDepth, hiddenOpen = len(sparseGroups), -1
+				}
+				break
+			}
 			group := len(syntax.groups)
 			syntax.groups = append(syntax.groups, syntaxGroup{open: index, close: -1, parent: stack[len(stack)-1]})
 			stack = append(stack, group)
-			if request != nil && request.aggregate && index == hiddenOpen {
-				hiddenDepth, hiddenOpen = len(stack), -1
-			}
 			if hasPending && pending.open == index {
 				call := pending
-				call.syntax = syntax
 				call.group = group
 				syntax.calls = append(syntax.calls, call)
 				hasPending = false
 			}
 		case ')', ']', '}':
-			if len(stack) > 1 {
-				group := stack[len(stack)-1]
-				opening := text[syntax.groups[group].open]
-				if opening == '(' && text[index] == ')' || opening == '[' && text[index] == ']' || opening == '{' && text[index] == '}' {
-					syntax.groups[group].close = index
-					stack = stack[:len(stack)-1]
-					if request != nil {
-						open := syntax.groups[group].open
-						if len(candidates) > 0 && candidates[len(candidates)-1] == open {
-							request.found = true
-							return
-						}
-						if request.activeOpen == open {
-							request.arguments = append(request.arguments, syntax.source(syntaxSpan{open + 1, index}))
-							request.activeOpen = -1
-							syntax.comments = syntax.comments[:0]
-						}
-						if hiddenDepth == len(stack)+1 {
-							hiddenDepth = 0
-						}
-						syntax.groups = syntax.groups[:group]
-						break
-					}
-					if argumentsOnly {
-						syntax.groups = syntax.groups[:group]
-						break
-					}
-					if start, ok := subqueryOpen[syntax.groups[group].open]; ok {
-						subqueries = append(subqueries, syntaxSpan{start, index + 1})
-					}
+			group := sparseGroups[len(sparseGroups)-1]
+			if request == nil {
+				if len(stack) <= 1 {
+					break
 				}
+				group = syntax.groups[stack[len(stack)-1]]
+			} else if len(sparseGroups) <= 1 {
+				break
+			}
+			opening := text[group.open]
+			if !(opening == '(' && text[index] == ')' || opening == '[' && text[index] == ']' || opening == '{' && text[index] == '}') {
+				break
+			}
+			if request != nil {
+				sparseGroups = sparseGroups[:len(sparseGroups)-1]
+				if len(candidates) > 0 && candidates[len(candidates)-1] == group.open {
+					request.found = true
+					return
+				}
+				if request.activeOpen == group.open {
+					request.arguments = append(request.arguments, syntax.source(syntaxSpan{group.open + 1, index}))
+					request.activeOpen = -1
+					syntax.comments = syntax.comments[:0]
+				}
+				if hiddenDepth == len(sparseGroups)+1 {
+					hiddenDepth = 0
+				}
+				break
+			}
+			groupIndex := stack[len(stack)-1]
+			syntax.groups[groupIndex].close = index
+			stack = stack[:len(stack)-1]
+			if argumentsOnly {
+				syntax.groups = syntax.groups[:groupIndex]
+				break
+			}
+			if start, ok := subqueryOpen[group.open]; ok {
+				subqueries = append(subqueries, syntaxSpan{start, index + 1})
 			}
 		case ',':
 			group := stack[len(stack)-1]
