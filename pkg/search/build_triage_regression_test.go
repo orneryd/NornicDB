@@ -141,7 +141,8 @@ func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 			require.NotNil(t, vfs)
 			vfs.mu.Lock()
 			vfs.writeRecord = func(file *os.File, id string, vec []float32) error {
-				if strings.Contains(id, "bad") && (kind != "chunk" || strings.Contains(id, "chunk-1")) {
+				owner, ok := vectorEntryOwner(id)
+				if ok && owner == "nornic:bad" && (kind != "chunk" || id == nodeChunkVectorKey("nornic:bad", 1)) {
 					return injected
 				}
 				return writeVectorRecord(file, id, vec)
@@ -201,10 +202,10 @@ func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 			}
 			require.False(t, svc.ready.Load(), "failed replay must not publish readiness")
 			if kind == "edge" {
-				_, found := svc.getVectorLookup()("nornic:baseline-named-v")
+				_, found := svc.getVectorLookup()(nodeNamedVectorKey("nornic:baseline", "v"))
 				require.False(t, found, "one failed replay must not discard a later removal")
 			} else {
-				_, found := svc.getVectorLookup()("nornic:good-named-v")
+				_, found := svc.getVectorLookup()(nodeNamedVectorKey("nornic:good", "v"))
 				require.True(t, found, "one failed replay must not discard later acknowledged writes")
 			}
 			require.Zero(t, engine.active.Load())
@@ -241,7 +242,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 		called = true
 		svc.vectorFileStore.mu.Lock()
 		svc.vectorFileStore.writeRecord = func(file *os.File, id string, vec []float32) error {
-			if strings.Contains(id, "bad") {
+			if owner, ok := vectorEntryOwner(id); ok && owner == "nornic:bad" {
 				return injected
 			}
 			return writeVectorRecord(file, id, vec)
@@ -262,7 +263,7 @@ func testTriageLateReplayFailure(t *testing.T, message string, before func(*Serv
 	require.ErrorIs(t, err, injected)
 	require.Contains(t, err.Error(), "nornic:bad")
 	require.False(t, svc.ready.Load())
-	_, found := svc.getVectorLookup()("nornic:good-named-v")
+	_, found := svc.getVectorLookup()(nodeNamedVectorKey("nornic:good", "v"))
 	require.True(t, found, "failure discarded a later acknowledged write")
 	require.Zero(t, engine.active.Load())
 }

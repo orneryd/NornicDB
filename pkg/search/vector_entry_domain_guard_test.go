@@ -840,7 +840,9 @@ func TestVectorEntryDomainGuard(t *testing.T) {
 		t.Log("VECTOR_DOMAIN", edge)
 	}
 	require.NotEmpty(t, population)
-	for _, member := range []string{"Service.indexNodeLocked", "Service.removeNodeEntriesLocked", "Service.nodeVectorIDsLocked", "forEachNodeVectorEntry", "hnswOrderedVectorIndexPairs", "hnswVectorChunkIterator", "HNSWIndex.buildLexicalHintLocked", "EmbeddingIndex", "VectorIndex", "VectorFileStore"} {
+	// Both ordinary and build-queued writes delegate vector production to
+	// indexNodeAsLocked; indexNodeLocked only selects the write decision.
+	for _, member := range []string{"Service.indexNodeAsLocked", "Service.removeNodeEntriesLocked", "Service.nodeVectorIDsLocked", "forEachNodeVectorEntry", "hnswOrderedVectorIndexPairs", "hnswVectorChunkIterator", "HNSWIndex.buildLexicalHintLocked", "EmbeddingIndex", "VectorIndex", "VectorFileStore"} {
 		found := false
 		for _, edge := range population {
 			if strings.Contains(edge, member) {
