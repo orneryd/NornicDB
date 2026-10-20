@@ -64,6 +64,7 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 	producers := []struct{ name, database, body, projection string }{
 		{"local", "nornic", "UNWIND range(1,200000) AS x", "x"},
 		{"local_call", "nornic", "CALL { UNWIND range(1,200000) AS x RETURN x }", "x"},
+		{"local_correlated_call", "nornic", "UNWIND range(1,200000) AS y CALL { WITH y RETURN y AS x }", "x"},
 		{"local_call_union", "nornic", "CALL { UNWIND range(1,200000) AS x RETURN x UNION ALL RETURN 0 AS x }", "x"},
 		{"local_union", "nornic", "", "x"},
 		{"use", "nornic", "USE matrix_use UNWIND range(1,200000) AS x", "x"},
@@ -106,7 +107,7 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 						query = "USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN " + projection + " AS selected UNION ALL USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN " + projection + " AS selected"
 					}
 					if producer.name == "local_union" {
-						query = "UNWIND range(1,200000) AS x RETURN " + projection + " AS selected UNION ALL RETURN " + projection + " AS selected"
+						query = "UNWIND range(1,200000) AS x RETURN " + projection + " AS selected UNION ALL UNWIND [0] AS x RETURN " + projection + " AS selected"
 					}
 					if producer.name == "transaction" {
 						query += " COMMIT"
@@ -163,7 +164,11 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 			"UNWIND range(1,200000) AS x CALL { WITH x RETURN x AS y } RETURN y ORDER BY y",
 			"CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x } RETURN x ORDER BY x",
 		} {
-			_, failed := nativeReviewCall(t, host, path, map[string]interface{}{"database": "matrix_cmp", "query": query, "max_rows": 1}, authenticate)
+			database := "nornic"
+			if strings.Contains(query, "matrix_cmp.remote") {
+				database = "matrix_cmp"
+			}
+			_, failed := nativeReviewCall(t, host, path, map[string]interface{}{"database": database, "query": query, "max_rows": 1}, authenticate)
 			require.True(t, failed.IsError, failed.Content)
 			require.Contains(t, failed.Content[0].Text, "db.memory.transaction.max threshold reached")
 			global, database := cypher.TransactionMemoryPoolUsage("matrix_cmp")

@@ -10,7 +10,7 @@ import (
 // pipelineProcedureSource composes CALL/YIELD with its downstream consumer.
 // Argument validation, aliases and filtering still run through the ordinary
 // procedure owner; only retention changes.
-func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pipelineRowSource, clause string) (pipelineRowSource, []string, error) {
+func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pipelineRowSource, clause string, optional bool) (pipelineRowSource, []string, error) {
 	// Validate even when the input is empty, using the materialized operator's
 	// existing argument/YIELD contract without executing a procedure.
 	if _, _, _, err := e.pipelineApplyProcedureCall(ctx, nil, clause); err != nil {
@@ -34,7 +34,7 @@ func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pip
 		// once, then replay their yielded values for later inputs. This state
 		// belongs to the native operator and is charged to its memory limit.
 		retention := newMemoryRetention(ctx)
-		defer retention.close()
+		defer retention.release()
 		shared, initialized := false, false
 		var cached [][]any
 		var cachedNames []string
@@ -47,7 +47,7 @@ func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pip
 					shared = shared && !argumentUsesRowVariable(argument, row)
 				}
 			}
-			more := true
+			more, emitted := true, false
 			emit := func(names []string, values []any) (bool, error) {
 				next := make(pipelineRow, len(row)+len(names))
 				for k, v := range row {
@@ -63,6 +63,7 @@ func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pip
 						return true, getExpressionFailure(ctx)
 					}
 				}
+				emitted = true
 				more = yield(next)
 				return more, nil
 			}
@@ -96,7 +97,15 @@ func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pip
 				return false
 			}
 			if filter == nil && len(procedure.Spec.Returns) == 0 {
+				emitted = true
 				more = yield(row)
+			}
+			if optional && !emitted {
+				next := mergeCallPipelineRows(row, nil)
+				for _, column := range columns {
+					next[column] = nil
+				}
+				more = yield(next)
 			}
 			return more
 		})

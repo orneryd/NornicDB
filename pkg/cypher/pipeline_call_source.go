@@ -2,6 +2,20 @@ package cypher
 
 import "context"
 
+func (e *StorageExecutor) pipelineCallCanStream(ctx context.Context, clause pipelineClause) bool {
+	if !hasOutputStream(ctx) {
+		return false
+	}
+	switch clause.kind {
+	case pipelineClauseCall:
+		return true
+	case pipelineClauseCallSubquery:
+		return !e.callSubqueryParseFor(ctx, clause.text).inTransactions
+	default:
+		return false
+	}
+}
+
 // pipelineCallSource composes the native CALL operator with the row pipeline.
 // Scope/import validation and transaction semantics remain with that operator.
 func (e *StorageExecutor) pipelineCallSource(ctx context.Context, input pipelineRowSource, clause string, scope map[string]struct{}, optional bool, stats *QueryStats) (pipelineRowSource, []string, error) {
@@ -12,7 +26,7 @@ func (e *StorageExecutor) pipelineCallSource(ctx context.Context, input pipeline
 	columns := append([]string(nil), metadata.columns...)
 	return func(yield func(pipelineRow) bool) bool {
 		retention := newMemoryRetention(ctx)
-		defer retention.close()
+		defer retention.release()
 		var cached []pipelineRow
 		cachedRead, valid := false, true
 		completed := input(func(outer pipelineRow) bool {

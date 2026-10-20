@@ -686,8 +686,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		clause := clauses[idx]
 		generations.next(rows)
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
-			!(clause.kind == pipelineClauseCall && !clause.optional && hasOutputStream(ctx)) &&
-			!(clause.kind == pipelineClauseCallSubquery && hasOutputStream(ctx) && !e.callSubqueryParseFor(ctx, clause.text).inTransactions) &&
+			!e.pipelineCallCanStream(ctx, clause) &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
 			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesFor(ctx, clause) || streamsReturn(ctx, clauses, idx))) {
@@ -904,7 +903,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
 			}
 			idx += consumed
-			if idx+1 < len(clauses) && (pipelineClauseAggregatesFor(ctx, clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1) || clauses[idx+1].kind == pipelineClauseCall) {
+			if idx+1 < len(clauses) && (pipelineClauseAggregatesFor(ctx, clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1) || e.pipelineCallCanStream(ctx, clauses[idx+1])) {
 				source = unwound
 				rows = nil
 				continue
@@ -926,12 +925,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return remaining, handled, err
 			}
 		case pipelineClauseCall:
-			if !clause.optional && hasOutputStream(ctx) {
+			if e.pipelineCallCanStream(ctx, clause) {
 				input := source
 				if input == nil {
 					input = pipelineRowsSource(rows)
 				}
-				transformed, yielded, err := e.pipelineProcedureSource(ctx, input, clause.text)
+				transformed, yielded, err := e.pipelineProcedureSource(ctx, input, clause.text, clause.optional)
 				if err != nil {
 					return nil, true, err
 				}
@@ -968,7 +967,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				wrote = true
 			}
 		case pipelineClauseCallSubquery:
-			if hasOutputStream(ctx) && !e.callSubqueryParseFor(ctx, clause.text).inTransactions {
+			if e.pipelineCallCanStream(ctx, clause) {
 				input := source
 				if input == nil {
 					input = pipelineRowsSource(rows)
