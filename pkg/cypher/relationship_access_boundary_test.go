@@ -268,6 +268,7 @@ func TestRelationshipAccessProgramExecutionBoundaryStorageSurface(t *testing.T) 
 		"_, _, _ = e.storage.(storage.EdgeHeaderReader).IncomingEdgeHeaders(node)",
 		"_, _, _ = e.storage.(storage.RelationshipPropertySeeker).SeekRelationships(ctx, \"T\", []string{\"p\"}, []interface{}{1})",
 		"_ = storage.StreamEdgesByType(ctx, e.storage, \"T\", func(*storage.Edge) error { return nil })",
+		"_ = storage.StreamEdgesWithFallback(ctx, e.storage, 16, func(*storage.Edge) error { return nil })",
 	}
 	reads = append(reads, "_, _ = e.searchService.VectorQueryRelationships(ctx, []float32{1}, search.RelationshipVectorQuerySpec{})")
 	var fixture strings.Builder
