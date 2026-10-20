@@ -38,6 +38,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -56,15 +57,33 @@ import (
 // vectors (link prediction, vector scoring, search indexing) reads with
 // GetNode.
 func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
-	if wrapper, ok := store.(*transactionStorageWrapper); ok {
-		return wrapper.GetQueryNode(id)
-	}
-	if e != nil && e.readOnlyQueryNodes {
-		if reader, ok := store.(storage.QueryNodeReader); ok {
-			return reader.GetQueryNode(id)
-		}
+	if reader := e.queryNodeReader(store); reader != nil {
+		return reader.GetQueryNode(id)
 	}
 	return store.GetNode(id)
+}
+
+// queryNodeReader is the shared read decision for point reads and MATCH scans.
+func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNodeReader {
+	if wrapper, ok := store.(*transactionStorageWrapper); ok {
+		return wrapper
+	}
+	if e != nil && e.readOnlyQueryNodes {
+		reader, _ := store.(storage.QueryNodeReader)
+		return reader
+	}
+	return nil
+}
+
+// streamQueryNodes carries the query-node read contract to storage. Each
+// consumer keeps its own row admission and stopping state: a bounded
+// traversal already checks labels, visibility and its remaining limit.
+func streamQueryNodes(ctx context.Context, store storage.Engine, labels []string, visit func(*storage.Node) error) error {
+	opts := storage.StreamNodesOptions{QueryNodes: true, ApplyDecayFilter: true}
+	if len(labels) > 0 {
+		opts.Label = labels[0]
+	}
+	return store.StreamNodesWithOptions(ctx, opts, visit)
 }
 
 // readsQueryNodesWithoutVectors reports whether an auto-commit statement

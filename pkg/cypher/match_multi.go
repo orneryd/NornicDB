@@ -658,7 +658,18 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		return visitNodeList(nodes, visit)
 	}
-
+	// Whole query rows use the scan's metadata-only hydration decision. The
+	// label body and its sidecar state are read together, once, including in
+	// pinned transactions. Stores may ignore the label hint; collect retains
+	// every residual label and property check.
+	queryReader := e.queryNodeReader(store)
+	if projection == nil && queryReader != nil && len(labels) > 0 {
+		err := streamQueryNodes(ctx, store, labels, collect)
+		if err == storage.ErrIterationStopped {
+			return nil
+		}
+		return err
+	}
 	// A label-indexed stream is the primary physical scan for every labelled
 	// MATCH. It preserves the shared row pipeline while keeping work
 	// proportional to the matching label, applies residual predicates before
@@ -763,6 +774,17 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// avoid the storage APIs that first materialize the complete population.
 	// LIMIT additionally stops storage iteration as soon as enough qualifying
 	// nodes have been produced.
+	if queryReader != nil {
+		if projection == nil {
+			err = streamQueryNodes(ctx, store, labels, collect)
+		} else {
+			err = store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: projection, ApplyDecayFilter: true}, collect)
+		}
+		if err == storage.ErrIterationStopped {
+			return nil
+		}
+		return err
+	}
 	if streamer, ok := store.(storage.StreamingEngine); ok {
 		err = streamer.StreamNodes(ctx, collect)
 		if err == storage.ErrIterationStopped {
