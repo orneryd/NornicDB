@@ -538,6 +538,11 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 // those maps only. A map value that reads a variable ((n {id: r.prop}),
 // (n {id: i + 1})) goes to the kernel or the pipeline, which evaluate it.
 func patternMapsAreConstant(pattern string) bool {
+	// With no map delimiter there is no value phase to classify. Keep this
+	// common admission case out of the syntax-plan cache entirely.
+	if !strings.Contains(pattern, "{") {
+		return true
+	}
 	if constant, cached := patternMapsConstant.get(pattern); cached {
 		return constant
 	}

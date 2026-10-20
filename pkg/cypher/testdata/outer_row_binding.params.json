@@ -1,0 +1,46 @@
+{
+ "record": {
+  "id": "p",
+  "name": "Example",
+  "codes": [
+   "code0"
+  ],
+  "values": [
+   "value0"
+  ],
+  "issuers": [
+   ""
+  ],
+  "regions": [
+   ""
+  ],
+  "periods": [
+   ""
+  ],
+  "categories": [
+   "first"
+  ]
+ },
+ "alternate": {
+  "id": "p",
+  "name": "Example",
+  "codes": [
+   "code0"
+  ],
+  "values": [
+   "value0"
+  ],
+  "issuers": [
+   ""
+  ],
+  "regions": [
+   ""
+  ],
+  "periods": [
+   ""
+  ],
+  "categories": [
+   "second"
+  ]
+ }
+}

@@ -304,13 +304,22 @@ func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Contex
 		}
 		return notTruth(inner), true
 	}
-	match, ok := e.parseBoundRelationshipPattern(ctx, clause)
+	match, ok := e.parseBoundRelationshipPatternStructure(ctx, clause)
 	if !ok {
 		return nil, false
 	}
+	// Without property maps the structural match is already complete. Keep
+	// its parsed shape in this executor-local closure, just as before row
+	// property evaluation was deferred; no row value can enter this plan.
+	if !strings.Contains(clause, "{") {
+		return func(b binding, params map[string]interface{}) cypherTruth {
+			return truthOf(e.evaluateParsedBoundRelationshipPattern(withParams(ctx, params), match, b))
+		}, true
+	}
 	return func(b binding, params map[string]interface{}) cypherTruth {
-		_ = params
-		return truthOf(e.evaluateParsedBoundRelationshipPattern(ctx, match, map[string]*storage.Node(b)))
+		rowCtx := withParams(ctx, params)
+		matched, _ := e.evaluateRowRelationshipPattern(rowCtx, clause, entityRow(rowCtx, map[string]*storage.Node(b), nil))
+		return truthOf(matched)
 	}, true
 }
 

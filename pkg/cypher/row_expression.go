@@ -111,11 +111,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// Relationship arrows contain comparison and subtraction characters.
 	// Resolve the complete pattern before scalar operator parsing sees them.
 	if isRelationshipPatternOperand(expr) {
-		if nodes, _ := withWhereValueContext(values); len(nodes) > 0 {
-			ctx := rowStatementContextOrBackground(values)
-			if matched, recognized := e.evaluateBoundRelationshipPattern(ctx, expr, nodes); recognized {
-				return matched, true, nil
-			}
+		ctx := rowStatementContextOrBackground(values)
+		if matched, recognized := e.evaluateRowRelationshipPattern(ctx, expr, values); recognized {
+			return matched, true, getExpressionFailure(ctx)
 		}
 	}
 	// A plain property chain on a row variable (e.uuid, n.a.b) can't match
@@ -204,9 +202,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		switch lowerASCII(function) {
 		case "exists":
 			if isRelationshipPatternOperand(strings.TrimSpace(argument)) {
-				nodes, _ := withWhereValueContext(values)
-				matched, recognized := e.evaluateBoundRelationshipPattern(rowStatementContextOrBackground(values), argument, nodes)
-				return matched, recognized, nil
+				ctx := rowStatementContextOrBackground(values)
+				matched, recognized := e.evaluateRowRelationshipPattern(ctx, argument, values)
+				return matched, recognized, getExpressionFailure(ctx)
 			}
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
 			value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
@@ -222,7 +220,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if search == nil {
 				search = context.Background()
 			}
-			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
+			value, handled, err := e.evaluateShortestPathValue(withValueBindings(search, values), function, argument, nodes)
 			return value, handled, err
 		case "startnode", "endnode":
 			if value, handled, err := e.rowRelationshipEndpoint(function, argument, values); handled || err != nil {
@@ -1676,10 +1674,8 @@ func (e *StorageExecutor) rowPredicateValue(ctx context.Context, operand string,
 // the predicate doesn't hold.
 func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool) {
 	if isRelationshipPatternOperand(expr) {
-		if nodes, _ := withWhereValueContext(values); len(nodes) > 0 {
-			if matched, recognized := e.evaluateBoundRelationshipPattern(ctx, expr, nodes); recognized {
-				return matched, true
-			}
+		if matched, recognized := e.evaluateRowRelationshipPattern(ctx, expr, values); recognized {
+			return matched, getExpressionFailure(ctx) == nil
 		}
 	}
 	value, ok, err := e.evaluateRowValue(expr, values)
