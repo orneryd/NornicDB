@@ -274,7 +274,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
-			inner, err := p.planSingleQuery(subRest, sub, scope, true)
+			inner, err := p.planQuery(subRest, sub, scope, true)
 			if err != nil {
 				return nil, err
 			}
