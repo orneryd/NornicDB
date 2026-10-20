@@ -608,13 +608,18 @@ func (b *BadgerEngine) publishNodeUpdated(node *Node) {
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchNodeUpdated(node *Node) {
-	b.callbackMu.RLock()
-	callbacks := b.onNodeUpdated
-	b.callbackMu.RUnlock()
+	b.dispatchNodeUpdatedOutcome(node, false)
+}
 
-	for _, callback := range callbacks {
-		callback(node)
-	}
+func (b *BadgerEngine) dispatchNodeUpdatedOutcome(node *Node, outcome bool) {
+	b.publishNodeOutcome(node, outcome, func() {
+		b.callbackMu.RLock()
+		callbacks := b.onNodeUpdated
+		b.callbackMu.RUnlock()
+		for _, callback := range callbacks {
+			callback(node)
+		}
+	})
 }
 
 // notifyNodeDeleted calls the registered callbacks.

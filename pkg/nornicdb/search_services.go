@@ -964,6 +964,12 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 	if node == nil {
 		return
 	}
+	// Accepted embedding outcomes publish before storage delivers the worker
+	// completion callback. Body events and outcomes awaiting a build use the
+	// same deferred refresh owner below.
+	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(node) {
+		return
+	}
 	db.queueSearchRefreshEvent(node.ID)
 }
 

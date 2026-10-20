@@ -52,6 +52,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"io"
 	"net/http"
 	"strings"
@@ -125,6 +126,9 @@ type TypedEmbedder interface {
 // DocumentChunkResult is returned by embedders that can chunk and embed a full
 // document in one provider call.
 type DocumentChunkResult struct {
+	// Source records consumed properties and fallback-text use. Nil on a
+	// structured result means the complete map plus text (legacy contract).
+	Source         *embeddingsource.Source
 	Chunks         []string
 	Embeddings     [][]float32
 	Model          string

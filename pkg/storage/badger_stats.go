@@ -509,18 +509,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
 // Note: This requires a scan of the pending index, so use sparingly.
 func (b *BadgerEngine) PendingEmbeddingsCount() int {
-	count := 0
-	_ = b.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-	return count
+	return b.CountPendingEmbeddingIDs(nil)
 }
 
 // InvalidatePendingEmbeddingsIndex discards only the derived candidate catalog.

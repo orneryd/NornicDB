@@ -28,6 +28,7 @@ import (
 type commitWriter struct {
 	batchWriter
 	engine              *BadgerEngine
+	embeddingOutcome    *Node
 	db                  *managedBadgerDB
 	large               *largeCommit
 	pendingEmbeddingIDs map[NodeID]struct{}
@@ -110,7 +111,7 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		if err := cw.db.commit(cw.txn); err != nil {
+		if err := cw.commitOutcome(); err != nil {
 			return err
 		}
 		cw.publishPendingEmbeddingAdds()
@@ -146,3 +147,7 @@ func (cw *commitWriter) abort() error {
 // property-key tokens durable. Commit reports it as is, as before the
 // commit writer existed.
 var errPersistingTokens = errors.New("persisting property key dictionary")
+
+func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
+	return cw.db.commitShared(cw.txn)
+}

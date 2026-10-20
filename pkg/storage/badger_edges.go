@@ -670,15 +670,8 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 
 	// CRITICAL: Delete separately stored embeddings FIRST, before checking if node exists.
 	// This ensures embeddings are cleaned up even if the node record is missing or corrupted.
-	embPrefix := embeddingPrefix(id)
-	opts := badgerIteratorOptions()
-	opts.Prefix = embPrefix
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
-			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
-		}
+	if err := visitEmbeddingKeys(txn, id, txn.Delete); err != nil {
+		return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
 	}
 
 	// Get node for label cleanup
