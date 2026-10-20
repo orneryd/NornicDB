@@ -14,6 +14,11 @@ type ivfpqMetaSnapshot struct {
 	FormatVersion   int          `msgpack:"format_version"`
 	Profile         IVFPQProfile `msgpack:"profile"`
 	BuiltAtUnixNano int64        `msgpack:"built_at_unix_nano"`
+	// MaxResidual bounds PQ scores (IVFPQIndex.scoreBound); a bundle saved
+	// before it loads with no bound.
+	MaxResidual        float64   `msgpack:"max_residual,omitempty"`
+	ResidualKnown      bool      `msgpack:"residual_known,omitempty"`
+	MaxCoordinateError []float64 `msgpack:"max_coordinate_error,omitempty"`
 }
 
 type ivfpqCodebooksSnapshot struct {
@@ -52,7 +57,7 @@ func saveIVFPQBundleSnapshot(basePath string, idx *IVFPQIndex, mutations annMuta
 		return nil
 	}
 	return writeMsgpackSnapshotsAtomic(dir, map[string]any{
-		"meta":      ivfpqMetaSnapshot{FormatVersion: ivfpqBundleFormatVersion, Profile: idx.profile, BuiltAtUnixNano: idx.builtAtUnixNano},
+		"meta":      ivfpqMetaSnapshot{FormatVersion: ivfpqBundleFormatVersion, Profile: idx.profile, BuiltAtUnixNano: idx.builtAtUnixNano, MaxResidual: idx.maxResidual, ResidualKnown: idx.residualKnown, MaxCoordinateError: idx.maxCoordinateError},
 		"centroids": idx.centroids,
 		"codebooks": ivfpqCodebooksSnapshot{Codebooks: idx.codebooks},
 		"lists":     ivfpqListsSnapshot{Lists: idx.lists, Overflow: idx.overflow},
@@ -105,15 +110,19 @@ func loadIVFPQBundle(basePath string) (*IVFPQIndex, annMutationOverlaySnapshot, 
 		return nil, annMutationOverlaySnapshot{}, err
 	}
 	idx := &IVFPQIndex{
-		profile:         meta.Profile,
-		centroids:       centroids,
-		centroidNorm:    normalizeCentroids(centroids),
-		codebooks:       codebooks.Codebooks,
-		lists:           lists.Lists,
-		overflow:        lists.Overflow,
-		formatVersion:   meta.FormatVersion,
-		builtAtUnixNano: meta.BuiltAtUnixNano,
+		profile:            meta.Profile,
+		centroids:          centroids,
+		centroidNorm:       normalizeCentroids(centroids),
+		codebooks:          codebooks.Codebooks,
+		lists:              lists.Lists,
+		overflow:           lists.Overflow,
+		formatVersion:      meta.FormatVersion,
+		builtAtUnixNano:    meta.BuiltAtUnixNano,
+		maxResidual:        meta.MaxResidual,
+		residualKnown:      meta.ResidualKnown,
+		maxCoordinateError: meta.MaxCoordinateError,
 	}
+	idx.population() // deduplicate the immutable union before publication
 	idx.initScratchPool()
 	return idx, mutations, nil
 }

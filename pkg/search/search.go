@@ -853,6 +853,7 @@ type Service struct {
 	nodeNamedVector  map[string]map[string]string // nodeID -> vectorName -> vectorID
 	nodePropVector   map[string]map[string]string // nodeID -> propertyKey -> vectorID
 	nodeChunkVectors map[string][]string          // nodeID -> vectorIDs (main + chunks)
+	vectorMembers    vectorMemberIndex            // node membership published by index writes
 	edgeTypes        map[string]string            // edgeID -> relationship type
 	edgePropVector   map[string]map[string][]float32
 	// nodeChunkSpans is where each indexed node's chunks lie in its string
@@ -3135,6 +3136,7 @@ func (s *Service) admitVectorFileStore(storageEmpty bool) bool {
 				s.nodeLabels, s.nodeTypes = labels, types
 				s.nodeNamedVector, s.nodePropVector = named, properties
 				s.nodeChunkVectors = chunks
+				s.rebuildNodeMembersLocked()
 				clear(s.nodeChunkSpans) // Read on demand; not present in the snapshot.
 			}
 		} else if storageEmpty {
@@ -3280,6 +3282,9 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// short-circuit at this top level so we don't even iterate node
 	// properties looking for vector-shaped values.
 	indexVectorState := vectorOn && !skipVectorMutation
+	if indexVectorState {
+		defer s.publishNodeMembersLocked(nodeIDStr)
+	}
 
 	// Index all embeddings: NamedEmbeddings and ChunkEmbeddings
 	// Strategy:
@@ -3570,6 +3575,7 @@ func (s *Service) removeNodeLocked(nodeIDStr string) {
 // removeNodeEntriesLocked removes the node's search entries, keeping its
 // fulltext document when removeFulltext is false. Caller must hold s.indexMu.
 func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool) {
+	defer s.publishNodeMembersLocked(nodeIDStr)
 	if nodeIDStr == "" {
 		return
 	}
@@ -3877,6 +3883,7 @@ func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
 		if len(props) == 0 {
 			delete(s.nodePropVector, nodeID)
 		}
+		s.publishNodeMembersLocked(nodeID)
 		s.releaseNodeVectorCapacityLocked(nodeID, propID)
 	}
 }
@@ -5173,22 +5180,25 @@ func (s *Service) adaptiveVectorSearch(
 	}
 	config := resolveVectorAdaptiveOverfetch(opts, pipeline)
 	requestLimit := config.initialLimit
+	// The pipeline's exact stage scores every vector of each node it is
+	// given, from this Service's membership.
+	ctx = withVectorMemberIndex(ctx, &s.vectorMembers)
 	var stats vectorOverfetchStats
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, stats, err
 		}
-		scored, exhausted, err := pipeline.searchWithExhaustionFromEntries(ctx, embedding, requestLimit, opts.GetMinSimilarity(0.5), lexicalEntryIDs)
+		scored, evidence, err := pipeline.searchWithEvidence(ctx, embedding, requestLimit, opts.GetMinSimilarity(0.5), lexicalEntryIDs)
 		if err != nil {
 			return nil, stats, err
 		}
 		stats.rawCandidates = len(scored)
-		stats.exhausted = exhausted
+		stats.exhausted = evidence.exhausted
+		// One result per node, with its best vector as the match.
 		results := make([]indexResult, 0, len(scored))
 		for _, result := range scored {
-			results = append(results, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
+			results = append(results, indexResult{ID: normalizeVectorResultIDToNodeID(result.ID), MatchID: result.ID, Score: result.Score})
 		}
-		results = collapseIndexResultsByNodeID(results)
 		if postProcess != nil {
 			results = postProcess(results)
 		}
@@ -5196,17 +5206,29 @@ func (s *Service) adaptiveVectorSearch(
 			stats.exhausted = stats.exhausted && len(results) == config.target
 			return results[:config.target], stats, nil
 		}
-		if !config.adaptive || exhausted {
+		if !config.adaptive || evidence.exhausted {
 			return results, stats, nil
+		}
+		// A pass bound by its routing (the probed clusters returned whole)
+		// repeats itself with a wider limit: go straight to the request as
+		// wide as the population, the one that routes every cluster.
+		if evidence.routedComplete && requestLimit < config.maxLimit {
+			if reporter, ok := pipeline.candidateGen.(candidatePopulationReporter); ok {
+				if population := reporter.candidatePopulation(ctx); population > requestLimit {
+					requestLimit = min(population, config.maxLimit)
+					stats.retries++
+					continue
+				}
+			}
 		}
 		// A request as wide as the generator's whole population repeats
 		// the same search when widened: what it can't reach stays out of
 		// reach, so the budget ends there (#974).
-		if requestLimit >= config.maxLimit || requestCoversCandidatePopulation(pipeline, requestLimit) {
+		if requestLimit >= config.maxLimit || requestCoversCandidatePopulation(ctx, pipeline, requestLimit) {
 			if postProcess == nil || explicitCandidateCap(opts) {
 				return results, stats, nil
 			}
-			return s.completeVectorSearch(ctx, embedding, opts, config.target, postProcess, stats)
+			return s.completeVectorSearch(ctx, pipeline, embedding, opts, config.target, postProcess, stats)
 		}
 		requestLimit = nextCandidateLimit(requestLimit, config.growthFactor, config.maxLimit)
 		stats.retries++
@@ -5230,75 +5252,112 @@ func nextCandidateLimit(current int, factor float64, ceiling int) int {
 // requestCoversCandidatePopulation reports whether a request of limit
 // candidates already asks the pipeline's generator for every vector it holds
 // (candidatePopulationReporter), so that a wider one can't return more.
-func requestCoversCandidatePopulation(pipeline *VectorSearchPipeline, limit int) bool {
+func requestCoversCandidatePopulation(ctx context.Context, pipeline *VectorSearchPipeline, limit int) bool {
 	reporter, ok := pipeline.candidateGen.(candidatePopulationReporter)
-	return ok && limit >= reporter.candidatePopulation()
+	return ok && limit >= reporter.candidatePopulation(ctx)
 }
 
 // completeVectorSearch fills a vector page the approximate search's budget
-// left short while it had not covered every vector (#938): it scores
-// exactly the vectors of the nodes the request can return, only those of the
-// requested Types when there are Types (indexedTypeAdmitter), keeps each
-// node's best vector above the minimum similarity, and filters the ranking
+// left short while it had not covered every vector (#938): the pipeline's
+// exact stage scores the vectors of the nodes the request can return, only
+// those of the requested Types when there are Types (indexedTypeAdmitter),
+// keeps each node's best vector above the minimum similarity, and filters the ranking
 // with postProcess in batches of target until target results pass or it
 // ends. The approximate search may still have routed through other vectors;
 // this pass scores none of them.
 func (s *Service) completeVectorSearch(
 	ctx context.Context,
+	pipeline *VectorSearchPipeline,
 	embedding []float32,
 	opts *SearchOptions,
 	target int,
 	postProcess func([]indexResult) []indexResult,
 	stats vectorOverfetchStats,
 ) ([]indexResult, vectorOverfetchStats, error) {
-	admit := func(string) bool { return true }
+	work := newSearchBatch(ctx)
 	var candidates []Candidate
-	// Lock order indexMu -> mu, as index writes take them.
-	s.indexMu.RLock()
-	s.mu.RLock()
-	if len(opts.Types) > 0 {
-		admit = s.indexedTypeAdmitter(opts.Types)
+	var vectors *VectorIndex
+	var fileStore *VectorFileStore
+	// The same batch boundary used by scoring also covers pool construction.
+	// The scope releases service readers before propagating cancellation.
+	err := func() error {
+		s.indexMu.RLock()
+		defer s.indexMu.RUnlock()
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		admit := func(string) bool { return true }
+		if len(opts.Types) > 0 {
+			admit = s.indexedTypeAdmitter(opts.Types)
+		}
+		for nodeID := range s.nodeLabels {
+			if work.boundary() {
+				if err := work.check(); err != nil {
+					return err
+				}
+			}
+			if !admit(nodeID) {
+				continue
+			}
+			for _, vectorID := range s.nodeChunkVectors[nodeID] {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return err
+					}
+				}
+				candidates = append(candidates, Candidate{ID: vectorID})
+			}
+			for _, vectorID := range s.nodeNamedVector[nodeID] {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return err
+					}
+				}
+				candidates = append(candidates, Candidate{ID: vectorID})
+			}
+			for _, vectorID := range s.nodePropVector[nodeID] {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return err
+					}
+				}
+				candidates = append(candidates, Candidate{ID: vectorID})
+			}
+		}
+		vectors, fileStore = s.vectorIndex, s.vectorFileStore
+		return work.check()
+	}()
+	if err != nil {
+		return nil, stats, err
 	}
-	for nodeID := range s.nodeLabels {
-		if !admit(nodeID) {
-			continue
-		}
-		for _, vectorID := range s.nodeChunkVectors[nodeID] {
-			candidates = append(candidates, Candidate{ID: vectorID})
-		}
-		for _, vectorID := range s.nodeNamedVector[nodeID] {
-			candidates = append(candidates, Candidate{ID: vectorID})
-		}
-		for _, vectorID := range s.nodePropVector[nodeID] {
-			candidates = append(candidates, Candidate{ID: vectorID})
-		}
-	}
-	vectors, fileStore := s.vectorIndex, s.vectorFileStore
-	s.mu.RUnlock()
-	s.indexMu.RUnlock()
 
 	stats.retries++
 	stats.exhausted = true
 	if (vectors == nil && fileStore == nil) || len(candidates) == 0 {
 		return nil, stats, nil
 	}
-	scored, err := s.resolveVectorExactScorer(exactScorerPolicyCPU, vectors, fileStore).ScoreCandidates(ctx, embedding, candidates)
+	// The pipeline's exact stage scores them: the same scorer and node rule
+	// as every pass before this one. A pipeline whose scorer passes candidate
+	// scores through has none to pass here, so it scores exactly.
+	if _, passThrough := pipeline.exactScorer.(*IdentityExactScorer); passThrough {
+		pipeline = NewVectorSearchPipeline(pipeline.candidateGen, s.resolveVectorExactScorer(vectors, fileStore))
+	}
+	scored, err := pipeline.scoreAllNodes(ctx, embedding, candidates, opts.GetMinSimilarity(0.5))
 	if err != nil {
 		return nil, stats, err
 	}
 	stats.rawCandidates = len(scored)
-	minSimilarity := opts.GetMinSimilarity(0.5)
 	ranked := make([]indexResult, 0, len(scored))
 	for _, result := range scored {
-		if result.Score < minSimilarity {
-			break
+		if work.boundary() {
+			if err := work.check(); err != nil {
+				return nil, stats, err
+			}
 		}
-		ranked = append(ranked, indexResult{ID: result.ID, MatchID: result.ID, Score: result.Score})
+		ranked = append(ranked, indexResult{ID: normalizeVectorResultIDToNodeID(result.ID), MatchID: result.ID, Score: result.Score})
 	}
-	ranked = collapseIndexResultsByNodeID(ranked)
 	results := make([]indexResult, 0, target)
 	for start := 0; start < len(ranked) && len(results) < target; start += target {
-		if err := ctx.Err(); err != nil {
+		if err := work.check(); err != nil {
 			return nil, stats, err
 		}
 		end := min(start+target, len(ranked))
@@ -5306,6 +5365,9 @@ func (s *Service) completeVectorSearch(
 	}
 	if len(results) > target {
 		results = results[:target]
+	}
+	if err := work.check(); err != nil {
+		return nil, stats, err
 	}
 	return results, stats, nil
 }
@@ -5570,7 +5632,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 
 	s.logPrintf("🔍 Vector search strategy: %s (N=%d vectors)", strategy.name, vectorCount)
 
-	exactScorer := s.resolveVectorExactScorer(strategy.scorerPolicy, vi, vfs)
+	exactScorer := s.resolveVectorExactScorer(vi, vfs)
 
 	pipeline = NewVectorSearchPipeline(strategy.candidateGen, exactScorer)
 	if !strategy.pendingHNSW && s.vectorSnapshotCurrent(snapshot) {
@@ -5760,7 +5822,7 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 		switch target {
 		case strategyModeBruteGPU:
 			_, gpuIndex := s.gpuVectorState()
-			p = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), &IdentityExactScorer{})
+			p = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), s.resolveVectorExactScorer(vi, vfs))
 		case strategyModeBruteCPU:
 			if vfs != nil {
 				p = NewVectorSearchPipeline(NewFileStoreBruteForceCandidateGen(vfs), NewCPUExactScorer(vfs))
@@ -5786,7 +5848,7 @@ func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *
 	switch mode {
 	case strategyModeBruteGPU:
 		_, gpuIndex := s.gpuVectorState()
-		return NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), &IdentityExactScorer{})
+		return NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), s.resolveVectorExactScorer(vi, vfs))
 	case strategyModeBruteCPU:
 		if vfs != nil {
 			return NewVectorSearchPipeline(NewFileStoreBruteForceCandidateGen(vfs), NewCPUExactScorer(vfs))
@@ -5963,18 +6025,11 @@ func (m strategyMode) String() string {
 	}
 }
 
-type exactScorerPolicy string
-
-const (
-	exactScorerPolicyIdentity exactScorerPolicy = "identity"
-	exactScorerPolicyCPU      exactScorerPolicy = "cpu"
-)
-
 type vectorStrategyDescriptor struct {
 	name         string
 	candidateGen CandidateGenerator
-	scorerPolicy exactScorerPolicy
-	pendingHNSW  bool // Exact fallback is temporary, including during index reset.
+
+	pendingHNSW bool // Exact fallback is temporary, including during index reset.
 }
 
 func (s *Service) resolveVectorStrategy(ctx context.Context, sourceEpoch uint64, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
@@ -6016,7 +6071,6 @@ func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, sourceEpo
 	return &vectorStrategyDescriptor{
 		name:         fmt.Sprintf("IVFPQ compressed (lists=%d segments=%d bits=%d nprobe=%d)", profile.IVFLists, profile.PQSegments, profile.PQBits, profile.NProbe),
 		candidateGen: NewIVFPQCandidateGenWithOverlay(idx, profile.NProbe, s.ivfpqOverlay),
-		scorerPolicy: exactScorerPolicyCPU,
 	}, nil
 }
 
@@ -6051,7 +6105,6 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 		return &vectorStrategyDescriptor{
 			name:         "GPU brute-force",
 			candidateGen: NewGPUBruteForceCandidateGen(gpuIndex),
-			scorerPolicy: exactScorerPolicyIdentity,
 		}, nil
 	}
 	if cpuBruteMaxN := cpuBruteForceMaxN(); cpuBruteMaxN > 0 && vectorCount < cpuBruteMaxN {
@@ -6061,13 +6114,11 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 			return &vectorStrategyDescriptor{
 				name:         "CPU brute-force (file store scan)",
 				candidateGen: NewFileStoreBruteForceCandidateGen(vfs),
-				scorerPolicy: exactScorerPolicyCPU,
 			}, nil
 		}
 		return &vectorStrategyDescriptor{
 			name:         "CPU brute-force",
 			candidateGen: NewBruteForceCandidateGen(vi),
-			scorerPolicy: exactScorerPolicyCPU,
 		}, nil
 	}
 	// Read the cluster object once: generator and selector must route through
@@ -6082,14 +6133,13 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 	}
 	if hnswIndex == nil {
 		if vfs != nil {
-			return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building; file store scan)", pendingHNSW: true, candidateGen: NewFileStoreBruteForceCandidateGen(vfs), scorerPolicy: exactScorerPolicyCPU}, nil
+			return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building; file store scan)", pendingHNSW: true, candidateGen: NewFileStoreBruteForceCandidateGen(vfs)}, nil
 		}
-		return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building)", pendingHNSW: true, candidateGen: NewBruteForceCandidateGen(vi), scorerPolicy: exactScorerPolicyCPU}, nil
+		return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building)", pendingHNSW: true, candidateGen: NewBruteForceCandidateGen(vi)}, nil
 	}
 	return &vectorStrategyDescriptor{
 		name:         "HNSW",
 		candidateGen: NewHNSWCandidateGen(hnswIndex),
-		scorerPolicy: exactScorerPolicyCPU,
 	}, nil
 }
 
@@ -6107,7 +6157,6 @@ func (s *Service) resolveClusteredVectorStrategy(clusterIndex *gpu.ClusterIndex,
 			name: "GPU k-means (cluster routing)",
 			candidateGen: NewGPUKMeansCandidateGen(clusterIndex, numClustersToSearch).
 				SetClusterSelector(s.hybridClusterSelector(clusterIndex)),
-			scorerPolicy: exactScorerPolicyIdentity,
 		}, nil
 	}
 
@@ -6125,7 +6174,6 @@ func (s *Service) resolveClusteredVectorStrategy(clusterIndex *gpu.ClusterIndex,
 			return &vectorStrategyDescriptor{
 				name:         "IVF-HNSW (per-cluster HNSW)",
 				candidateGen: gen,
-				scorerPolicy: exactScorerPolicyCPU,
 			}, nil
 		}
 	}
@@ -6135,22 +6183,19 @@ func (s *Service) resolveClusteredVectorStrategy(clusterIndex *gpu.ClusterIndex,
 	return &vectorStrategyDescriptor{
 		name:         "CPU k-means (cluster routing)",
 		candidateGen: gen,
-		scorerPolicy: exactScorerPolicyCPU,
 	}, nil
 }
 
-func (s *Service) resolveVectorExactScorer(policy exactScorerPolicy, vi *VectorIndex, vfs *VectorFileStore) ExactScorer {
-	// Exact scoring defaults to SIMD CPU scoring.
-	switch policy {
-	case exactScorerPolicyIdentity:
-		return &IdentityExactScorer{}
-	default:
-		var getter VectorGetter = vi
-		if vfs != nil {
-			getter = vfs
-		}
-		return NewCPUExactScorer(getter)
+// resolveVectorExactScorer is every pipeline's final scorer, GPU strategies
+// included: CPU scoring of the stored vectors. The exact stage alone decides
+// final scores, so no backend's own arithmetic (GPU kernels, SIMD dot
+// products) can change a threshold decision.
+func (s *Service) resolveVectorExactScorer(vi *VectorIndex, vfs *VectorFileStore) ExactScorer {
+	var getter VectorGetter = vi
+	if vfs != nil {
+		getter = vfs
 	}
+	return NewCPUExactScorer(getter)
 }
 
 func envFloat(key string, fallback float64) float64 {
@@ -7566,4 +7611,20 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// vectorKeyMayHaveMember reports whether a key could contain a member suffix.
+// Every supported suffix contains two hyphens; main IDs with fewer need no
+// decoding. Stop as soon as the second separator is found.
+func vectorKeyMayHaveMember(id string) bool {
+	separators := 0
+	for i := 0; i < len(id); i++ {
+		if id[i] == '-' {
+			separators++
+			if separators == 2 {
+				return true
+			}
+		}
+	}
+	return false
 }

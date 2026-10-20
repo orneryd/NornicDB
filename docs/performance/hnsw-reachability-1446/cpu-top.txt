@@ -1,0 +1,35 @@
+File: nornic-1446-tuned-final.test
+Type: cpu
+Time: 2026-10-18 16:03:07 MST
+Duration: 6.76s, Total samples = 5.90s (87.25%)
+Active filters:
+   tagfocus=phase=measured-churn
+Showing nodes accounting for 2.81s, 47.63% of 5.90s total
+Dropped 22 nodes (cum <= 0.03s)
+Showing top 25 nodes out of 55
+      flat  flat%   sum%        cum   cum%
+     0.71s 12.03% 12.03%      1.32s 22.37%  runtime.cgocall
+     0.42s  7.12% 19.15%      2.23s 37.80%  github.com/orneryd/nornicdb/pkg/search.searchLayerHeapKernel[go.shape.struct {}]
+     0.26s  4.41% 23.56%      0.26s  4.41%  internal/runtime/atomic.(*Uint32).CompareAndSwap (inline)
+     0.23s  3.90% 27.46%      0.41s  6.95%  github.com/orneryd/nornicdb/pkg/search.(*distHeap).siftDown
+     0.21s  3.56% 31.02%      0.21s  3.56%  github.com/orneryd/nornicdb/pkg/search.(*distHeap).less (inline)
+     0.15s  2.54% 33.56%      0.26s  4.41%  runtime.reentersyscall
+     0.13s  2.20% 35.76%      0.13s  2.20%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).vectorAtLocked
+     0.10s  1.69% 37.46%      0.10s  1.69%  runtime.memmove
+     0.08s  1.36% 38.81%      0.19s  3.22%  github.com/orneryd/nornicdb/pkg/search.(*distHeap).Push
+     0.08s  1.36% 40.17%      0.11s  1.86%  github.com/orneryd/nornicdb/pkg/search.(*distHeap).siftUp (inline)
+     0.08s  1.36% 41.53%      0.27s  4.58%  runtime.exitsyscall
+     0.05s  0.85% 42.37%      0.05s  0.85%  internal/runtime/atomic.(*UnsafePointer).Load
+     0.04s  0.68% 43.05%      1.38s 23.39%  github.com/orneryd/nornicdb/pkg/simd.dotProduct
+     0.04s  0.68% 43.73%      0.04s  0.68%  internal/runtime/sys.DITEnabled
+     0.04s  0.68% 44.41%      0.04s  0.68%  runtime.getfp
+     0.03s  0.51% 44.92%      0.03s  0.51%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).buildLexicalHintLocked
+     0.03s  0.51% 45.42%      1.34s 22.71%  github.com/orneryd/nornicdb/pkg/simd._Cfunc_neon_dot_product
+     0.03s  0.51% 45.93%      0.03s  0.51%  runtime.madvise
+     0.02s  0.34% 46.27%      0.02s  0.34%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).neighborCapacity (inline)
+     0.02s  0.34% 46.61%      0.43s  7.29%  github.com/orneryd/nornicdb/pkg/search.(*distHeap).Pop
+     0.02s  0.34% 46.95%      0.02s  0.34%  runtime.traceEnabled (inline)
+     0.01s  0.17% 47.12%      0.02s  0.34%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).neighborsAtLevelLocked
+     0.01s  0.17% 47.29%      0.38s  6.44%  github.com/orneryd/nornicdb/pkg/search.(*HNSWIndex).selectNeighborsInto
+     0.01s  0.17% 47.46%      1.39s 23.56%  github.com/orneryd/nornicdb/pkg/simd.DotProduct (inline)
+     0.01s  0.17% 47.63%      0.02s  0.34%  runtime.mallocgcSmallScanNoHeader

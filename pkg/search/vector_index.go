@@ -355,8 +355,16 @@ func (v *VectorIndex) Remove(id string) {
 //
 //	Uses read lock during search, allowing concurrent searches.
 func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]indexResult, error) {
+	results, _, err := v.searchWithPopulation(ctx, query, limit, minSimilarity)
+	return results, err
+}
+
+// searchWithPopulation binds coverage evidence to the read-locked scan, rather
+// than a separate Count that can observe a different index generation. The
+// population counts vectors qualifying at minSimilarity, before the top-k cut.
+func (v *VectorIndex) searchWithPopulation(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]indexResult, int, error) {
 	if len(query) != v.dimensions {
-		return nil, ErrDimensionMismatch
+		return nil, 0, ErrDimensionMismatch
 	}
 
 	v.mu.RLock()
@@ -375,7 +383,7 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 	for id, vec := range v.vectors {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		default:
 		}
 
@@ -391,6 +399,8 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 		return results[i].score > results[j].score
 	})
 
+	// Retain the threshold-qualified population before cutting the window.
+	population := len(results)
 	// Limit results
 	if len(results) > limit {
 		results = results[:limit]
@@ -402,7 +412,7 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 		output[i] = indexResult{ID: r.id, Score: r.score}
 	}
 
-	return output, nil
+	return output, population, nil
 }
 
 // Count returns the number of vectors in the index.
@@ -448,8 +458,14 @@ func (v *VectorIndex) GetVector(id string) ([]float32, bool) {
 // vector, so a reference remains safe after the read lock is released.
 func (v *VectorIndex) getVectorRef(id string) ([]float32, bool) {
 	v.mu.RLock()
-	vec, exists := v.vectors[id]
+	vec, exists := v.getVectorRefLocked(id)
 	v.mu.RUnlock()
+	return vec, exists
+}
+
+// getVectorRefLocked borrows a vector while the caller holds v.mu for reading.
+func (v *VectorIndex) getVectorRefLocked(id string) ([]float32, bool) {
+	vec, exists := v.vectors[id]
 	return vec, exists && len(vec) > 0
 }
 

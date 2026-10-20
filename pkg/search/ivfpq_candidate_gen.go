@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"sort"
+	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -12,6 +13,11 @@ type IVFPQCandidateGen struct {
 	index   *IVFPQIndex
 	nprobe  int
 	overlay *annMutationOverlay
+	// The immutable base membership of IDs touched by the live overlay. Only
+	// candidatePopulation writes this cache; it stores O(mutations), not a
+	// second full ID index, and scans the base once per batch of new IDs.
+	populationMu   sync.Mutex
+	baseMembership map[string]bool
 }
 
 func NewIVFPQCandidateGen(index *IVFPQIndex, nprobe int) *IVFPQCandidateGen {
@@ -44,18 +50,118 @@ func (g *IVFPQCandidateGen) preferredCandidateDepth(target, maximum int) int {
 }
 
 func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := g.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+// candidatePopulation is every vector the index and its mutation overlay can
+// return.
+func (g *IVFPQCandidateGen) candidatePopulation(context.Context) int {
+	if g == nil || g.index == nil {
+		return 0
+	}
+	population := g.index.population()
+	if g.overlay == nil {
+		return population
+	}
+	g.overlay.mu.RLock()
+	defer g.overlay.mu.RUnlock()
+	if len(g.overlay.vectors)+len(g.overlay.tombstones) == 0 {
+		return population
+	}
+	g.populationMu.Lock()
+	defer g.populationMu.Unlock()
+	if g.baseMembership == nil {
+		g.baseMembership = make(map[string]bool)
+	}
+	var missing map[string]struct{}
+	request := func(id string) {
+		if _, known := g.baseMembership[id]; known {
+			return
+		}
+		if missing == nil {
+			missing = make(map[string]struct{})
+		}
+		missing[id] = struct{}{}
+		g.baseMembership[id] = false
+	}
+	for id := range g.overlay.vectors {
+		request(id)
+	}
+	for id := range g.overlay.tombstones {
+		request(id)
+	}
+	if len(missing) > 0 {
+		for _, list := range g.index.lists {
+			for _, id := range list.IDs {
+				if _, wanted := missing[id]; wanted {
+					g.baseMembership[id] = true
+				}
+			}
+		}
+		for _, entry := range g.index.overflow {
+			if _, wanted := missing[entry.ID]; wanted {
+				g.baseMembership[entry.ID] = true
+			}
+		}
+	}
+	for id := range g.overlay.vectors {
+		if !g.baseMembership[id] {
+			population++
+		}
+	}
+	for id := range g.overlay.tombstones {
+		if g.baseMembership[id] {
+			population--
+		}
+	}
+	return population
+}
+
+func (g *IVFPQCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	candidates, evidence, err := g.searchCandidatesWithEvidence(ctx, query, k, minSimilarity)
+	return candidates, evidence.exhausted, err
+}
+
+// searchCandidatesWithEvidence searches nprobe inverted lists, or all of them
+// when the request is as wide as the population. The pass is routing-bound
+// when the probed lists were returned whole (fewer than the limit), the
+// overlay returned all it holds above minSimilarity, and the limit cut none
+// of the merged candidates: a wider limit probes the same lists. It is
+// exhausted only when, besides, every list was probed.
+func (g *IVFPQCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if g == nil || g.index == nil {
-		return nil, localizedError(localization.SearchIVFPQIndexNotConfigured(), nil)
+		return nil, candidateEvidence{}, localizedError(localization.SearchIVFPQIndexNotConfigured(), nil)
+	}
+	limit := boundCandidateLimit(k)
+	nprobe := g.nprobe
+	population := g.candidatePopulation(ctx)
+	baseLimit := k
+	if limit >= population {
+		nprobe = g.index.listCount()
+		// A live-population cap can be smaller than the immutable base after
+		// removals. Retire tombstones before applying that cap to live IDs.
+		baseLimit = max(baseLimit, g.index.population())
 	}
 	// PQ scores are only an ordering signal and can underestimate exact cosine
 	// similarity. Apply the caller's threshold after exact rescoring in the
 	// shared pipeline instead of dropping viable candidates here.
-	base, err := g.index.SearchApprox(ctx, query, k, -1, g.nprobe)
-	if err != nil || g.overlay == nil {
-		return base, err
+	base, err := g.index.SearchApprox(ctx, query, baseLimit, -1, nprobe)
+	if err != nil {
+		return nil, candidateEvidence{}, err
+	}
+	probedAll := nprobe > 0 && nprobe >= g.index.listCount()
+	complete := probedAll && limit >= population
+	routed := complete || len(base) < limit
+	// List members' PQ scores are within the index's residual bound of the
+	// exact ones; overflow and overlay vectors are scored exactly.
+	bound := g.index.queryScoreBound(query)
+	mainKeysOnly := g.index.mainKeysOnly
+	if g.overlay == nil {
+		return base, candidateEvidence{exhausted: complete, routedComplete: routed, mainKeysOnly: mainKeysOnly}.withBound(bound), nil
 	}
 	merged := make(map[string]Candidate, len(base)+k)
 	for _, candidate := range base {
@@ -65,9 +171,11 @@ func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float3
 	}
 	overlayCandidates := g.overlay.Search(ctx, query, k, minSimilarity)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, candidateEvidence{}, err
 	}
+	routed = complete || (routed && len(overlayCandidates) < limit)
 	for _, candidate := range overlayCandidates {
+		mainKeysOnly = mainKeysOnly && normalizeVectorResultIDToNodeID(candidate.ID) == candidate.ID
 		merged[candidate.ID] = candidate
 	}
 	out := make([]Candidate, 0, len(merged))
@@ -82,6 +190,7 @@ func (g *IVFPQCandidateGen) SearchCandidates(ctx context.Context, query []float3
 	})
 	if len(out) > k {
 		out = out[:k]
+		routed = false
 	}
-	return out, nil
+	return out, candidateEvidence{exhausted: complete && routed, routedComplete: routed, mainKeysOnly: mainKeysOnly}.withBound(bound), nil
 }

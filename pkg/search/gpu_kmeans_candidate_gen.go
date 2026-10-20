@@ -41,35 +41,65 @@ func (g *GPUKMeansCandidateGen) SetClusterSelector(fn func(ctx context.Context, 
 }
 
 func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := g.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+// candidatePopulation is the number of vectors the clustered index holds.
+func (g *GPUKMeansCandidateGen) candidatePopulation(context.Context) int {
+	if g.clusterIndex == nil {
+		return 0
+	}
+	return g.clusterIndex.Count()
+}
+
+func (g *GPUKMeansCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	candidates, evidence, err := g.searchCandidatesWithEvidence(ctx, query, k, minSimilarity)
+	return candidates, evidence.exhausted, err
+}
+
+// searchCandidatesWithEvidence scores the routed clusters' members. A request
+// as wide as the population routes every populated cluster. The pass is
+// routing-bound when the limit cut none above minSimilarity: a wider limit on
+// the same clusters scores the same members. It is exhausted only when,
+// besides, every vector of the index was scored.
+func (g *GPUKMeansCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
 	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
-		return nil, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
+		return nil, candidateEvidence{}, localizedError(localization.SearchGPUKMeansClusteredIndexRequired(), nil)
 	}
 
+	limit := boundCandidateLimit(k)
+	population := g.clusterIndex.Count()
 	clusterIDs := []int(nil)
-	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+	if limit >= population {
+		clusterIDs = g.clusterIndex.PopulatedClusters()
+	} else {
+		if g.clusterSelector != nil {
+			clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+		}
+		if len(clusterIDs) == 0 {
+			clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
+		}
 	}
 	if len(clusterIDs) == 0 {
-		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
-	}
-	if len(clusterIDs) == 0 {
-		return []Candidate{}, nil
+		return []Candidate{}, candidateEvidence{exhausted: population == 0, routedComplete: true}, nil
 	}
 
 	ids := g.clusterIndex.GetClusterMemberIDs(clusterIDs)
+	scoredAll := len(ids) >= population
 	if len(ids) == 0 {
-		return []Candidate{}, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}.withBound(0), nil
 	}
 
 	results, err := g.clusterIndex.ScoreSubset(query, ids)
 	if err != nil {
-		return nil, err
+		return nil, candidateEvidence{}, err
 	}
 	if len(results) == 0 {
-		return []Candidate{}, nil
+		return []Candidate{}, candidateEvidence{exhausted: scoredAll, routedComplete: true}.withBound(0), nil
 	}
 
-	limit := boundCandidateLimit(k)
+	routed := len(results) <= limit
 	if limit > len(results) {
 		limit = len(results)
 	}
@@ -78,15 +108,16 @@ func (g *GPUKMeansCandidateGen) SearchCandidates(ctx context.Context, query []fl
 	for i := 0; i < limit; i++ {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, candidateEvidence{}, ctx.Err()
 		default:
 		}
 		score := float64(results[i].Score)
 		if score < minSimilarity {
+			routed = true // best first: the rest score lower
 			continue
 		}
 		out = append(out, Candidate{ID: results[i].ID, Score: score})
 	}
 
-	return out, nil
+	return out, candidateEvidence{exhausted: scoredAll && routed, routedComplete: routed}.withBound(0), nil
 }

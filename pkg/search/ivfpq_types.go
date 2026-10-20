@@ -1,8 +1,11 @@
 package search
 
 import (
+	"math"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 )
 
 const (
@@ -82,6 +85,51 @@ type IVFPQIndex struct {
 	formatVersion   int
 	builtAtUnixNano int64
 	scratchPool     sync.Pool
+	// Lists and overflow are immutable after publication. Cache their union
+	// count once so exact overflow copies do not inflate query routing depth.
+	populationOnce  sync.Once
+	populationCount int
+	// Immutable key provenance, established with the population before publication.
+	mainKeysOnly bool
+	// maxResidual is the largest error |r - PQ(r)| of an encoded residual,
+	// so an exact cosine exceeds a list member's PQ score by at most it
+	// (scoreBound); residualKnown is false for a bundle saved without it.
+	maxResidual   float64
+	residualKnown bool
+	// maxCoordinateError is the maximum absolute reconstruction error in
+	// each coordinate. Its projection bounds queries more tightly when the
+	// largest residual errors lie outside the query direction.
+	maxCoordinateError []float64
+}
+
+// scoreBound is how far a vector's exact cosine with a unit query can lie
+// above the score SearchApprox gives it: a list member's score is
+// q·(c + PQ(r)) for the stored unit vector c + r, so the difference is
+// q·(r - PQ(r)) ≤ |r - PQ(r)| ≤ maxResidual. Overflow vectors are scored
+// exactly. +Inf when the bundle didn't record it. Float32 rounding is the
+// caller's slack.
+func (i *IVFPQIndex) scoreBound() float64 {
+	if i == nil || !i.residualKnown {
+		return math.Inf(1)
+	}
+	return i.maxResidual
+}
+
+// queryScoreBound projects the reconstruction-error box onto the unit
+// query: |q·(r-PQ(r))| <= sum_d |q_d| max_x |error(x,d)|. It uses the
+// tighter of this and the L2 bound. Older bundles retain their L2 bound;
+// bundles predating both bounds remain unbounded.
+func (i *IVFPQIndex) queryScoreBound(query []float32) float64 {
+	bound := i.scoreBound()
+	if i == nil || !i.residualKnown || len(i.maxCoordinateError) == 0 {
+		return bound
+	}
+	q := vector.Normalize(query)
+	projected := 0.0
+	for d, coordinateError := range i.maxCoordinateError {
+		projected += math.Abs(float64(q[d])) * coordinateError
+	}
+	return min(bound, projected)
 }
 
 type ivfpqScratch struct {
@@ -119,4 +167,39 @@ func (i *IVFPQIndex) compatibleProfile(want IVFPQProfile) bool {
 		have.TrainingSampleMax == want.TrainingSampleMax &&
 		have.KMeansMaxIterations == want.KMeansMaxIterations &&
 		have.OverflowMax == want.OverflowMax
+}
+
+// listCount is the number of inverted lists; probing that many searches all.
+func (i *IVFPQIndex) listCount() int {
+	if i == nil {
+		return 0
+	}
+	return len(i.lists)
+}
+
+// population counts unique vectors SearchApprox can return. Build places each
+// vector in one list and keeps exact overflow copies of some of those IDs.
+// Overflow-only IDs from a loaded index still count once. Only the small
+// overflow set needs deduplication; the immutable union is cached per index.
+func (i *IVFPQIndex) population() int {
+	if i == nil {
+		return 0
+	}
+	i.populationOnce.Do(func() {
+		mainKeysOnly := true
+		overflowOnly := make(map[string]struct{}, len(i.overflow))
+		for _, entry := range i.overflow {
+			overflowOnly[entry.ID] = struct{}{}
+			mainKeysOnly = mainKeysOnly && normalizeVectorResultIDToNodeID(entry.ID) == entry.ID
+		}
+		for _, list := range i.lists {
+			for _, id := range list.IDs {
+				delete(overflowOnly, id)
+				mainKeysOnly = mainKeysOnly && normalizeVectorResultIDToNodeID(id) == id
+			}
+		}
+		i.populationCount = i.Count() + len(overflowOnly)
+		i.mainKeysOnly = mainKeysOnly
+	})
+	return i.populationCount
 }

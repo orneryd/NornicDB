@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -102,63 +101,10 @@ type searchContinuationState struct {
 	mu                sync.RWMutex
 	results           []SearchResult
 	seen              map[string]struct{}
-	plateau           continuationPlateauTracker
 	searchMethod      string
 	fallbackTriggered bool
 	fallbackReason    SearchFallbackReason
-	maxResultsReached bool
-}
-
-type continuationPlateauTracker struct {
-	lastCount  int
-	nonGrowing int
-}
-
-func newContinuationPlateauTracker(initialCount int) continuationPlateauTracker {
-	return continuationPlateauTracker{lastCount: initialCount}
-}
-
-func (t *continuationPlateauTracker) budgetReached(response *SearchResponse) bool {
-	if response == nil {
-		return false
-	}
-	resultCount := len(response.Results)
-	retrievalExhausted := response.RetrievalExhausted
-	candidateBudgetReached := response.CandidateBudgetReached
-	if retrievalExhausted || candidateBudgetReached {
-		t.lastCount = resultCount
-		t.nonGrowing = 0
-		return candidateBudgetReached
-	}
-	if !continuationCanInferCandidateBudget(response.SearchMethod) {
-		return false
-	}
-	if resultCount <= t.lastCount {
-		t.nonGrowing++
-	} else {
-		t.nonGrowing = 0
-	}
-	t.lastCount = resultCount
-	return t.nonGrowing >= continuationNonGrowingExpansionLimit
-}
-
-func continuationCanInferCandidateBudget(searchMethod string) bool {
-	method := strings.ToLower(searchMethod)
-	return strings.Contains(method, "rrf_hybrid") ||
-		strings.HasPrefix(method, "vector_hnsw") ||
-		strings.HasPrefix(method, "vector_clustered") ||
-		strings.HasPrefix(method, "vector_ivf_hnsw") ||
-		strings.HasPrefix(method, "vector_ivfpq")
-}
-
-func markContinuationCandidateBudget(response *SearchResponse) *SearchResponse {
-	if response == nil {
-		return nil
-	}
-	copy := *response
-	copy.CandidateBudgetReached = true
-	copy.RetrievalExhausted = false
-	return &copy
+	execution         *continuationExecution
 }
 
 // SearchTextContinuation starts or resumes a progressively deepened canonical
@@ -226,67 +172,7 @@ func (s *Service) SearchTextContinuation(
 		}
 		return searchPageFromResultStream(page)
 	}
-	if request.Mode == SearchContinuationRankedThenID {
-		if searchQuery == nil {
-			return nil, errors.New("ranked_then_id continuation requires a search function")
-		}
-		if opts == nil {
-			defaults := defaultSearchOptionsValue()
-			opts = &defaults
-		}
-		ownedOptions := cloneContinuationSearchOptions(opts)
-		ownedOptions.continuation = true
-		rankedLimit := request.RankedLimit
-		if ownedOptions.Limit <= 0 {
-			ownedOptions.Limit = 50
-		}
-		preparation := &cachedTextPreparation{embeds: make(map[string]cachedEmbedding)}
-		cachedChunks := preparation.chunker(chunkQuery)
-		cachedEmbeds := preparation.embedder(embedQuery)
-		rerankContext := withRerankMemo(ctx, newRerankMemo())
-		if rankedLimit > 0 {
-			ownedOptions.Limit = rankedLimit
-		}
-		ranked, err := SearchTextChunksWithErrorPolicy(rerankContext, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
-		plateau := newContinuationPlateauTracker(0)
-		if err == nil && ranked != nil {
-			plateau = newContinuationPlateauTracker(len(ranked.Results))
-		}
-		for err == nil && rankedLimit <= 0 && !ranked.RetrievalExhausted {
-			if ranked.CandidateBudgetReached {
-				break
-			}
-			depthLimit := ownedOptions.MaxCandidateLimit
-			if depthLimit > 0 && ownedOptions.Limit >= depthLimit {
-				return nil, fmt.Errorf("continuation retrieval depth limit reached: %w", resultstream.ErrCapacity)
-			}
-			nextLimit := ownedOptions.Limit * 2
-			if nextLimit <= ownedOptions.Limit {
-				return nil, fmt.Errorf("continuation retrieval depth overflow: %w", resultstream.ErrCapacity)
-			}
-			if depthLimit > 0 && nextLimit > depthLimit {
-				nextLimit = depthLimit
-			}
-			ownedOptions.Limit = nextLimit
-			ranked, err = SearchTextChunksWithErrorPolicy(rerankContext, query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
-			if err == nil && plateau.budgetReached(ranked) {
-				ranked = markContinuationCandidateBudget(ranked)
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-		stream, err := s.newCompleteContinuationStream(ctx, ownedOptions, request, ranked)
-		if err != nil {
-			return nil, err
-		}
-		page, err := registry.Start(ctx, scope, stream, request.N)
-		if err != nil {
-			return nil, err
-		}
-		return searchPageFromResultStream(page)
-	}
-	if request.Mode != SearchContinuationRanked {
+	if request.Mode != SearchContinuationRanked && request.Mode != SearchContinuationRankedThenID {
 		return nil, fmt.Errorf("unsupported continuation mode %q", request.Mode)
 	}
 	if searchQuery == nil {
@@ -301,77 +187,89 @@ func (s *Service) SearchTextContinuation(
 	if ownedOptions.Limit <= 0 {
 		ownedOptions.Limit = 50
 	}
-	if ownedOptions.Limit < request.N {
-		ownedOptions.Limit = request.N
+	if request.Mode == SearchContinuationRanked {
+		ownedOptions.Limit = max(ownedOptions.Limit, request.N)
 	}
+	if request.Mode == SearchContinuationRankedThenID && request.RankedLimit > 0 {
+		ownedOptions.Limit = request.RankedLimit
+	}
+	execution := newContinuationExecution(ownedOptions, request)
 	preparation := &cachedTextPreparation{embeds: make(map[string]cachedEmbedding)}
-	cachedChunks := preparation.chunker(chunkQuery)
-	cachedEmbeds := preparation.embedder(embedQuery)
+	cachedChunks, cachedEmbeds := preparation.chunker(chunkQuery), preparation.embedder(embedQuery)
 	rerankMemo := newRerankMemo()
-	initial, err := SearchTextChunksWithErrorPolicy(withRerankMemo(ctx, rerankMemo), query, &ownedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
+	// Every initial or expanded search reports its actual issued depth to the
+	// same owner. Public adapters only start/pull this service-owned stream.
+	searchStep := func(stepCtx context.Context, requested int) (*SearchResponse, continuationStep, error) {
+		step, err := execution.issue(stepCtx, requested, s.EmbeddingCount()+s.FulltextDocCount())
+		if err != nil {
+			return nil, continuationStep{}, err
+		}
+		stepOptions := cloneContinuationSearchOptions(&ownedOptions)
+		stepOptions.Limit = step.depth
+		response, err := SearchTextChunksWithErrorPolicy(withRerankMemo(stepCtx, rerankMemo), query, &stepOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
+		if err != nil {
+			err = execution.observe(stepCtx, step, nil, 0, err)
+		}
+		return response, step, err
+	}
+	initial, initialStep, err := searchStep(ctx, ownedOptions.Limit)
 	if err != nil {
 		return nil, err
 	}
-	maxResults := request.MaxResults
-	maxResultsReached := continuationMaxResultsReached(maxResults, len(initial.Results), initial.RetrievalExhausted, initial.CandidateBudgetReached)
-	if maxResultsReached {
-		if len(initial.Results) > maxResults {
-			initial.Results = initial.Results[:maxResults]
-		}
+	if err := execution.observe(ctx, initialStep, initial, len(initial.Results), nil); err != nil {
+		return nil, err
 	}
-	compactResults := make([]SearchResult, len(initial.Results))
-	for index := range initial.Results {
-		compactResults[index] = compactContinuationResult(initial.Results[index])
+	if request.Mode == SearchContinuationRankedThenID {
+		ranked := initial
+		for !execution.status.terminal {
+			var step continuationStep
+			ranked, step, err = searchStep(ctx, execution.completed.depth)
+			if err != nil {
+				return nil, err
+			}
+			if err = execution.observe(ctx, step, ranked, len(ranked.Results), nil); err != nil {
+				return nil, err
+			}
+		}
+		stream, err := s.newCompleteContinuationStream(ctx, ownedOptions, request, execution.response(ranked), execution)
+		if err != nil {
+			return nil, err
+		}
+		page, err := registry.Start(ctx, scope, stream, request.N)
+		if err != nil {
+			return nil, err
+		}
+		return searchPageFromResultStream(page)
+	}
+	initialResults := initial.Results[:execution.resultCount]
+	compactResults := make([]SearchResult, len(initialResults))
+	for index := range initialResults {
+		compactResults[index] = compactContinuationResult(initialResults[index])
 	}
 	state := &searchContinuationState{
-		response:          searchResponseMetadata(initial),
-		results:           compactResults,
-		seen:              make(map[string]struct{}, len(initial.Results)),
-		plateau:           newContinuationPlateauTracker(len(initial.Results)),
-		searchMethod:      initial.SearchMethod,
-		fallbackTriggered: initial.FallbackTriggered,
-		fallbackReason:    initial.FallbackReason,
-		maxResultsReached: maxResultsReached,
+		response: searchResponseMetadata(execution.response(initial)), results: compactResults,
+		seen: make(map[string]struct{}, len(initialResults)), execution: execution,
+		searchMethod: initial.SearchMethod, fallbackTriggered: initial.FallbackTriggered, fallbackReason: initial.FallbackReason,
 	}
 	for index := range state.results {
 		state.seen[searchResultID(state.results[index])] = struct{}{}
 	}
 	initialRows := continuationRows(state.results)
-	initialExhausted := initial.RetrievalExhausted ||
-		initial.CandidateBudgetReached ||
-		maxResultsReached
-	depthLimit := ownedOptions.MaxCandidateLimit
-	if depthLimit <= 0 {
-		depthLimit = int(^uint(0) >> 1)
-	}
-	lastDepth := ownedOptions.Limit
-	expand := func(expandCtx context.Context, depth int) ([][]any, bool, error) {
-		// A candidate budget is not evidence that retrieval is exhausted. Fail
-		// explicitly when no deeper supported request can be made. max_results
-		// limits emitted members, not how deeply we may search to find them.
-		if lastDepth >= depthLimit {
-			return nil, false, fmt.Errorf("continuation retrieval depth limit reached: %w", resultstream.ErrCapacity)
-		}
-		depth = min(depth, depthLimit)
-		expandedOptions := cloneContinuationSearchOptions(&ownedOptions)
-		expandedOptions.Limit = depth
-		response, expandErr := SearchTextChunksWithErrorPolicy(withRerankMemo(expandCtx, rerankMemo), query, &expandedOptions, cachedChunks, cachedEmbeds, searchQuery, errorPolicy)
-		if expandErr != nil {
-			return nil, false, expandErr
-		}
-		lastDepth = depth
+	rows := initialRows
+	expand := func(expandCtx context.Context, requested int) ([][]any, bool, error) {
 		state.mu.Lock()
 		defer state.mu.Unlock()
-		candidateBudgetReached := response.CandidateBudgetReached
-		if state.plateau.budgetReached(response) {
-			response = markContinuationCandidateBudget(response)
-			candidateBudgetReached = true
+		response, step, err := searchStep(expandCtx, requested)
+		if err != nil {
+			return nil, false, err
 		}
-		state.response = searchResponseMetadata(response)
-		state.searchMethod = response.SearchMethod
-		state.fallbackTriggered = response.FallbackTriggered
-		state.fallbackReason = response.FallbackReason
+		work := newSearchBatch(expandCtx)
 		for index := range response.Results {
+			if work.boundary() {
+				if err := work.check(); err != nil {
+					return nil, false, err
+				}
+			}
 			result := response.Results[index]
 			id := searchResultID(result)
 			if _, exists := state.seen[id]; exists {
@@ -379,19 +277,17 @@ func (s *Service) SearchTextContinuation(
 			}
 			state.seen[id] = struct{}{}
 			state.results = append(state.results, compactContinuationResult(result))
+			rows = append(rows, []any{state.results[len(state.results)-1]})
 		}
-		if continuationMaxResultsReached(maxResults, len(state.results), response.RetrievalExhausted, candidateBudgetReached) {
-			if len(state.results) > maxResults {
-				state.results = state.results[:maxResults]
-			}
-			state.maxResultsReached = true
+		if err := execution.observe(expandCtx, step, response, len(state.results), nil); err != nil {
+			return nil, false, err
 		}
-		exhausted := response.RetrievalExhausted ||
-			candidateBudgetReached ||
-			state.maxResultsReached
-		return continuationRows(state.results), exhausted, nil
+		state.results, rows = state.results[:execution.resultCount], rows[:execution.resultCount]
+		state.response = searchResponseMetadata(execution.response(response))
+		state.searchMethod, state.fallbackTriggered, state.fallbackReason = response.SearchMethod, response.FallbackTriggered, response.FallbackReason
+		return rows, execution.status.terminal, nil
 	}
-	stream, err := resultstream.NewProgressive(initialRows, initialExhausted, ownedOptions.Limit, expand)
+	stream, err := resultstream.NewProgressive(initialRows, execution.status.terminal, execution.completed.depth, expand)
 	if err != nil {
 		return nil, err
 	}
@@ -403,13 +299,6 @@ func (s *Service) SearchTextContinuation(
 		return nil, err
 	}
 	return searchPageFromResultStream(page)
-}
-
-func continuationMaxResultsReached(maxResults, resultCount int, retrievalExhausted, candidateBudgetReached bool) bool {
-	return maxResults > 0 &&
-		resultCount >= maxResults &&
-		!retrievalExhausted &&
-		!candidateBudgetReached
 }
 
 func (s *Service) searchContinuationRegistry() (continuationRegistry, error) {
@@ -512,19 +401,7 @@ func (s *searchMetadataStream) Pull(ctx context.Context, position uint64, n int)
 	page.Rows = continuationRows(results)
 	s.state.mu.RLock()
 	response := s.state.response
-	rankedPoolExhausted := response != nil && response.RetrievalExhausted && !response.CandidateBudgetReached
-	collectionExhausted := !page.HasMore && rankedPoolExhausted && !s.state.maxResultsReached
-	completion := SearchContinuationMoreResults
-	if !page.HasMore {
-		switch {
-		case s.state.maxResultsReached:
-			completion = SearchContinuationMaxResultsComplete
-		case rankedPoolExhausted:
-			completion = SearchContinuationCollectionComplete
-		default:
-			completion = SearchContinuationCandidateComplete
-		}
-	}
+	rankedPoolExhausted, collectionExhausted, completion := s.state.execution.status.page(page.HasMore)
 	page.Metadata = map[string]any{
 		"search_method":         s.state.searchMethod,
 		"response":              response,

@@ -1,0 +1,139 @@
+{
+  "BenchmarkHNSWChurn/heap_per_node-12": {
+    "develop": {
+      "median": {
+        "B/op": 43959344.0,
+        "allocs/op": 384595.0,
+        "heap-B/node": 802.4,
+        "ns/op": 805296666.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 792516458.0,
+          "heap-B/node": 801.3,
+          "B/op": 43937936.0,
+          "allocs/op": 384588.0
+        },
+        {
+          "round": 2,
+          "ns/op": 805296666.0,
+          "heap-B/node": 803.8,
+          "B/op": 43949736.0,
+          "allocs/op": 384595.0
+        },
+        {
+          "round": 3,
+          "ns/op": 848813250.0,
+          "heap-B/node": 805.6,
+          "B/op": 43959344.0,
+          "allocs/op": 384603.0
+        },
+        {
+          "round": 4,
+          "ns/op": 834273375.0,
+          "heap-B/node": 801.3,
+          "B/op": 43985680.0,
+          "allocs/op": 384618.0
+        },
+        {
+          "round": 5,
+          "ns/op": 797083875.0,
+          "heap-B/node": 802.4,
+          "B/op": 43968928.0,
+          "allocs/op": 384591.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 43960288.0,
+        "allocs/op": 384596.0,
+        "heap-B/node": 805.6,
+        "ns/op": 816577666.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 880672375.0,
+          "heap-B/node": 801.3,
+          "B/op": 43960288.0,
+          "allocs/op": 384596.0
+        },
+        {
+          "round": 2,
+          "ns/op": 796869667.0,
+          "heap-B/node": 802.4,
+          "B/op": 43948216.0,
+          "allocs/op": 384570.0
+        },
+        {
+          "round": 3,
+          "ns/op": 803207875.0,
+          "heap-B/node": 805.6,
+          "B/op": 43981360.0,
+          "allocs/op": 384588.0
+        },
+        {
+          "round": 4,
+          "ns/op": 816577666.0,
+          "heap-B/node": 806.3,
+          "B/op": 43954096.0,
+          "allocs/op": 384617.0
+        },
+        {
+          "round": 5,
+          "ns/op": 826521875.0,
+          "heap-B/node": 805.6,
+          "B/op": 43972848.0,
+          "allocs/op": 384616.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 11133704.0,
+        "allocs/op": 20258.0,
+        "heap-B/node": 801.0,
+        "ns/op": 790760292.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 790946125.0,
+          "heap-B/node": 800.7,
+          "B/op": 11111512.0,
+          "allocs/op": 20242.0
+        },
+        {
+          "round": 2,
+          "ns/op": 805240625.0,
+          "heap-B/node": 801.9,
+          "B/op": 11148712.0,
+          "allocs/op": 20282.0
+        },
+        {
+          "round": 3,
+          "ns/op": 790760292.0,
+          "heap-B/node": 801.0,
+          "B/op": 11099992.0,
+          "allocs/op": 20258.0
+        },
+        {
+          "round": 4,
+          "ns/op": 789922416.0,
+          "heap-B/node": 800.7,
+          "B/op": 11133704.0,
+          "allocs/op": 20257.0
+        },
+        {
+          "round": 5,
+          "ns/op": 782752500.0,
+          "heap-B/node": 807.0,
+          "B/op": 11159392.0,
+          "allocs/op": 20285.0
+        }
+      ]
+    }
+  }
+}

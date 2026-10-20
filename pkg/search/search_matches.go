@@ -153,7 +153,7 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 	if len(candidates) == 0 || (vectors == nil && fileStore == nil) {
 		return
 	}
-	scored, err := s.resolveVectorExactScorer(exactScorerPolicyCPU, vectors, fileStore).ScoreCandidates(ctx, embedding, candidates)
+	scored, err := s.resolveVectorExactScorer(vectors, fileStore).ScoreCandidates(ctx, embedding, candidates)
 	if err != nil {
 		return
 	}

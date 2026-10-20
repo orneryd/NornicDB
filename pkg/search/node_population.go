@@ -343,6 +343,7 @@ func (s *Service) clearNodeVectorMetadataLocked() {
 	clear(s.nodeNamedVector)
 	clear(s.nodePropVector)
 	clear(s.nodeChunkVectors)
+	s.vectorMembers.clear()
 	clear(s.nodeChunkSpans)
 }
 

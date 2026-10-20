@@ -301,6 +301,10 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	work := newSearchBatch(ctx)
+	if err := work.check(); err != nil {
+		return nil, err
+	}
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	if v.closed || v.file == nil {
@@ -322,6 +326,11 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	offsets := scratch.offsets[:0]
 	offsetsSorted := true
 	for _, cand := range candidates {
+		if work.boundary() {
+			if err := work.check(); err != nil {
+				return nil, err
+			}
+		}
 		ordinal, ok := v.idToOrdinal[cand.ID]
 		if !ok || ordinal < 0 || ordinal >= v.nextOrdinal {
 			continue
@@ -358,10 +367,8 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	}
 	batch := scratch.batch[:maxBatchBytes]
 	for i := 0; i < len(offsets); {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		if err := work.check(); err != nil {
+			return nil, err
 		}
 
 		start := offsets[i].vecOff
@@ -406,6 +413,9 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		}
 		return 0
 	})
+	if err := work.check(); err != nil {
+		return nil, err
+	}
 	return scored, nil
 }
 

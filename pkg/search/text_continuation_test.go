@@ -628,7 +628,11 @@ func TestSearchTextContinuationRankedThenIDStopsAfterRepeatedNonGrowingExpansion
 	require.False(t, second.HasMore)
 }
 
-func TestSearchTextContinuationRankedStopsAfterRepeatedNonGrowingExpansion(t *testing.T) {
+// A ranked producer that stops growing without reporting exhaustion gives no
+// evidence that the eligible population is exhausted. Continuation keeps
+// deepening and, at the configured depth limit, says it can't continue; it
+// never ends as if complete.
+func TestSearchTextContinuationRankedDoesNotEndOnNonGrowingExpansion(t *testing.T) {
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -664,28 +668,134 @@ func TestSearchTextContinuationRankedStopsAfterRepeatedNonGrowingExpansion(t *te
 		context.Background(), "library transcript", options, request,
 		nil, nil, searchQuery, ChunkedSearchErrorPolicy{},
 	)
+	ids := map[string]bool{}
+	for err == nil {
+		for _, result := range page.Results {
+			require.False(t, ids[result.ID], "duplicate %s", result.ID)
+			ids[result.ID] = true
+		}
+		require.True(t, page.HasMore, "ended with %s after %d results", page.Completion, len(ids))
+		request.QID = page.QID
+		request.N = 25
+		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+	}
+	require.ErrorIs(t, err, resultstream.ErrCapacity)
+	// The error may arrive before the last retrieved rows are delivered; none
+	// of them is reported as complete.
+	require.LessOrEqual(t, len(ids), 64)
+	require.Equal(t, 4096, requestedLimits[len(requestedLimits)-1])
+}
+
+// A ranked producer that never reports exhaustion still ends once a search
+// already as deep as everything the service indexes is followed by a deeper
+// one that adds nothing: candidate_pool_exhausted, with every result it
+// returned, instead of deepening until the stream times out.
+func TestSearchTextContinuationRankedEndsOnceDepthCoversTheIndex(t *testing.T) {
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	service := NewService(engine)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	for index := 0; index < 80; index++ {
+		node := &storage.Node{
+			ID: storage.NodeID(fmt.Sprintf("doc-%03d", index)), Labels: []string{"Document"},
+			Properties: map[string]any{"content": "library transcript"},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, service.IndexNode(node))
+	}
+	require.Equal(t, 80, service.FulltextDocCount())
+
+	var requestedLimits []int
+	searchQuery := func(_ context.Context, _ string, _ []float32, opts *SearchOptions) (*SearchResponse, error) {
+		requestedLimits = append(requestedLimits, opts.Limit)
+		results := make([]SearchResult, min(opts.Limit, 64))
+		for index := range results {
+			id := fmt.Sprintf("doc-%03d", index)
+			results[index] = SearchResult{ID: id, NodeID: storage.NodeID(id), Score: float64(80 - index)}
+		}
+		return &SearchResponse{Results: results, SearchMethod: "rrf_hybrid"}, nil
+	}
+
+	options := DefaultSearchOptions() // no candidate budget
+	options.Limit = 20
+	request := SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: SearchContinuationRanked, N: 25}
+	page, err := service.SearchTextContinuation(
+		context.Background(), "library transcript", options, request,
+		nil, nil, searchQuery, ChunkedSearchErrorPolicy{},
+	)
 	require.NoError(t, err)
-	ids := make([]string, 0, 64)
+	ids := map[string]bool{}
 	for {
 		for _, result := range page.Results {
-			ids = append(ids, result.ID)
+			require.False(t, ids[result.ID], "duplicate %s", result.ID)
+			ids[result.ID] = true
 		}
 		if !page.HasMore {
 			break
 		}
 		request.QID = page.QID
-		request.N = 25
 		page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
 		require.NoError(t, err)
 	}
-	require.Equal(t, []int{20, 40, 80, 160, 320}, requestedLimits)
 	require.Len(t, ids, 64)
-	require.Equal(t, "doc-000", ids[0])
-	require.Equal(t, "doc-063", ids[len(ids)-1])
-	require.False(t, page.RankedPoolExhausted)
-	require.False(t, page.CollectionExhausted)
 	require.Equal(t, SearchContinuationCandidateComplete, page.Completion)
-	require.False(t, page.HasMore)
+	require.Equal(t, []int{25, 50, 100}, requestedLimits)
+}
+
+// Once a deeper search adds nothing, a ranked continuation searches as deep
+// as everything the service indexes at once, instead of doubling through more
+// searches that the plateau already suggests are empty, and ends there.
+func TestSearchTextContinuationRankedJumpsToIndexDepthAfterAnEmptyExpansion(t *testing.T) {
+	for _, cap := range []int{0, 1000, 500} {
+		t.Run(fmt.Sprintf("cap_%d", cap), func(t *testing.T) {
+			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			service := NewService(engine)
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			for index := 0; index < 1000; index++ {
+				node := &storage.Node{
+					ID: storage.NodeID(fmt.Sprintf("doc-%04d", index)), Labels: []string{"Document"},
+					Properties: map[string]any{"content": "library transcript"},
+				}
+				_, err := engine.CreateNode(node)
+				require.NoError(t, err)
+				require.NoError(t, service.IndexNode(node))
+			}
+			var requestedLimits []int
+			searchQuery := func(_ context.Context, _ string, _ []float32, opts *SearchOptions) (*SearchResponse, error) {
+				requestedLimits = append(requestedLimits, opts.Limit)
+				results := make([]SearchResult, min(opts.Limit, 5))
+				for index := range results {
+					id := fmt.Sprintf("doc-%04d", index)
+					results[index] = SearchResult{ID: id, NodeID: storage.NodeID(id), Score: float64(10 - index)}
+				}
+				return &SearchResponse{Results: results, SearchMethod: "rrf_hybrid"}, nil
+			}
+			options := DefaultSearchOptions()
+			options.Limit = 10
+			options.MaxCandidateLimit = cap
+			request := SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: SearchContinuationRanked, N: 10}
+			page, err := service.SearchTextContinuation(context.Background(), "library transcript", options, request, nil, nil, searchQuery, ChunkedSearchErrorPolicy{})
+			if cap > 0 && cap < 1000 {
+				require.ErrorIs(t, err, resultstream.ErrCapacity)
+				require.Equal(t, []int{10, 20, 500}, requestedLimits)
+				return
+			}
+			require.NoError(t, err)
+			rows := 0
+			for {
+				rows += len(page.Results)
+				if !page.HasMore {
+					break
+				}
+				request.QID = page.QID
+				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+				require.NoError(t, err)
+			}
+			require.Equal(t, 5, rows)
+			require.Equal(t, SearchContinuationCandidateComplete, page.Completion)
+			require.Equal(t, []int{10, 20, 1000}, requestedLimits)
+		})
+	}
 }
 
 func TestSearchTextContinuationNonGrowingExpansionGetsSecondChance(t *testing.T) {

@@ -1,0 +1,240 @@
+{
+  "BenchmarkIVFPQCandidateGen-12": {
+    "develop": {
+      "median": {
+        "B/op": 608.0,
+        "allocs/op": 7.0,
+        "ns/op": 38271.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 37155.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 2,
+          "ns/op": 43390.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 3,
+          "ns/op": 38271.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 4,
+          "ns/op": 38438.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 5,
+          "ns/op": 37685.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 608.0,
+        "allocs/op": 7.0,
+        "ns/op": 38665.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 40153.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 2,
+          "ns/op": 38139.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 3,
+          "ns/op": 38228.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 4,
+          "ns/op": 39153.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 5,
+          "ns/op": 38665.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 609.0,
+        "allocs/op": 7.0,
+        "ns/op": 37994.0
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 37803.0,
+          "B/op": 608.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 2,
+          "ns/op": 38458.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 3,
+          "ns/op": 37695.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 4,
+          "ns/op": 38227.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        },
+        {
+          "round": 5,
+          "ns/op": 37994.0,
+          "B/op": 609.0,
+          "allocs/op": 7.0
+        }
+      ]
+    }
+  },
+  "BenchmarkIVFPQCandidateGenWithOverlay-12": {
+    "develop": {
+      "median": {
+        "B/op": 104.0,
+        "allocs/op": 5.0,
+        "ns/op": 247.7
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 245.1,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 2,
+          "ns/op": 247.7,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 3,
+          "ns/op": 247.8,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 4,
+          "ns/op": 255.9,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 5,
+          "ns/op": 247.4,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        }
+      ]
+    },
+    "original": {
+      "median": {
+        "B/op": 104.0,
+        "allocs/op": 5.0,
+        "ns/op": 259.2
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 302.8,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 2,
+          "ns/op": 253.3,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 3,
+          "ns/op": 257.0,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 4,
+          "ns/op": 262.7,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 5,
+          "ns/op": 259.2,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        }
+      ]
+    },
+    "tuned": {
+      "median": {
+        "B/op": 104.0,
+        "allocs/op": 5.0,
+        "ns/op": 255.8
+      },
+      "samples": [
+        {
+          "round": 1,
+          "ns/op": 255.7,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 2,
+          "ns/op": 258.3,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 3,
+          "ns/op": 255.8,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 4,
+          "ns/op": 259.6,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        },
+        {
+          "round": 5,
+          "ns/op": 254.0,
+          "B/op": 104.0,
+          "allocs/op": 5.0
+        }
+      ]
+    }
+  }
+}

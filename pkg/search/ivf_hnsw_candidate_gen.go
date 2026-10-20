@@ -42,34 +42,79 @@ func (g *IVFHNSWCandidateGen) SetClusterSelector(fn func(ctx context.Context, qu
 }
 
 func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, error) {
+	candidates, _, err := g.searchCandidatesWithExhaustion(ctx, query, k, minSimilarity)
+	return candidates, err
+}
+
+// candidatePopulation is the live vectors the populated clusters' graphs
+// hold together: what IVF-HNSW searches when it routes every cluster.
+func (g *IVFHNSWCandidateGen) candidatePopulation(context.Context) int {
+	_, population := g.graphPopulation()
+	return population
+}
+
+// graphPopulation is every populated cluster and the live vectors their
+// graphs hold together. A populated cluster without a graph adds nothing.
+func (g *IVFHNSWCandidateGen) graphPopulation() (clusters []int, population int) {
+	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() || g.getClusterHNSW == nil {
+		return nil, 0
+	}
+	clusters = g.clusterIndex.PopulatedClusters()
+	for _, cluster := range clusters {
+		if graph := g.getClusterHNSW(cluster); graph != nil {
+			population += graph.Size()
+		}
+	}
+	return clusters, population
+}
+
+func (g *IVFHNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, bool, error) {
+	candidates, evidence, err := g.searchCandidatesWithEvidence(ctx, query, k, minSimilarity)
+	return candidates, evidence.exhausted, err
+}
+
+// searchCandidatesWithEvidence searches the routed clusters' graphs. A
+// request as wide as the graphs' population routes every populated cluster
+// and searches each graph whole. The pass is routing-bound when every graph
+// search was itself exhausted and the merge cut nothing: a wider limit
+// searches the same graphs whole again. It is exhausted only when, besides,
+// every cluster was routed.
+func (g *IVFHNSWCandidateGen) searchCandidatesWithEvidence(ctx context.Context, query []float32, k int, minSimilarity float64) ([]Candidate, candidateEvidence, error) {
 	if g.clusterIndex == nil || !g.clusterIndex.IsClustered() {
-		return nil, localizedError(localization.SearchClusterIndexNotClustered(), nil)
+		return nil, candidateEvidence{}, localizedError(localization.SearchClusterIndexNotClustered(), nil)
 	}
 	if g.getClusterHNSW == nil {
-		return nil, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
+		return nil, candidateEvidence{}, localizedError(localization.SearchClusterHNSWLookupNotConfigured(), nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	clusterIDs := []int(nil)
-	if g.clusterSelector != nil {
-		clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+	totalLimit := boundCandidateLimit(k)
+	clusterIDs, population := g.graphPopulation()
+	routedAll := totalLimit >= population
+	if !routedAll {
+		clusterIDs = nil
+		if g.clusterSelector != nil {
+			clusterIDs = g.clusterSelector(ctx, query, g.numClustersToSearch)
+		}
+		if len(clusterIDs) == 0 {
+			clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
+		}
 	}
 	if len(clusterIDs) == 0 {
-		clusterIDs = g.clusterIndex.FindNearestClusters(query, g.numClustersToSearch)
-	}
-	if len(clusterIDs) == 0 {
-		return []Candidate{}, nil
+		return []Candidate{}, candidateEvidence{exhausted: routedAll, routedComplete: true}.withBound(0), nil
 	}
 
 	// If any required per-cluster index is missing, fall back to the existing
-	// exact cluster search (which still benefits from centroid routing).
+	// exact cluster search (which still benefits from centroid routing). It
+	// scores the routed clusters' members exactly, but not as a proof that
+	// every vector was searched.
 	for _, cid := range clusterIDs {
 		if g.getClusterHNSW(cid) == nil {
-			results, err := g.clusterIndex.SearchWithClusters(query, boundCandidateLimit(k), len(clusterIDs))
+			results, err := g.clusterIndex.SearchWithClusters(query, totalLimit, len(clusterIDs))
 			if err != nil {
-				return nil, err
+				return nil, candidateEvidence{}, err
 			}
 			out := make([]Candidate, 0, len(results))
 			for _, r := range results {
@@ -79,26 +124,36 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 				}
 				out = append(out, Candidate{ID: r.ID, Score: score})
 			}
-			return out, nil
+			return out, candidateEvidence{}, nil
 		}
 	}
 
-	totalLimit := boundCandidateLimit(k)
 	perCluster := (totalLimit + len(clusterIDs) - 1) / len(clusterIDs)
 
+	routed := true
 	best := make(map[string]float64, totalLimit)
 	for _, cid := range clusterIDs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, candidateEvidence{}, err
 		}
 		idx := g.getClusterHNSW(cid)
 		if idx == nil {
+			routed = false
 			continue
 		}
-		results, err := idx.Search(ctx, query, perCluster, minSimilarity)
-		if err != nil {
-			return nil, err
+		// The beam holds at least the graph's share of the limit, so a limit
+		// that covers the graph searches it whole.
+		limit, ef := perCluster, max(idx.Config().EfSearch, perCluster)
+		if routedAll {
+			// Search the whole graph: a beam as wide as its population scores
+			// all of it (searchWithEfExhaustion).
+			limit, ef = totalLimit, totalLimit
 		}
+		results, exhausted, err := idx.searchWithEfExhaustion(ctx, query, limit, minSimilarity, ef)
+		if err != nil {
+			return nil, candidateEvidence{}, err
+		}
+		routed = routed && exhausted
 		for _, r := range results {
 			score := float64(r.Score)
 			if prev, ok := best[r.ID]; !ok || score > prev {
@@ -114,6 +169,8 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > totalLimit {
 		out = out[:totalLimit]
+		routed = false
 	}
-	return out, nil
+	// The graphs score original coordinates: exact up to float32 slack.
+	return out, candidateEvidence{exhausted: routedAll && routed, routedComplete: routed}.withBound(0), nil
 }

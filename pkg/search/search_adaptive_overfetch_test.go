@@ -96,7 +96,7 @@ func TestAdaptiveVectorSearchWidensOnlyWhenUniqueNodesUnderfill(t *testing.T) {
 	require.Equal(t, []int{2, 4}, generator.limits)
 	require.Equal(t, []string{"doc-1", "doc-2"}, indexResultIDs(results))
 	require.Equal(t, 1, stats.retries)
-	require.Equal(t, 4, stats.rawCandidates)
+	require.Equal(t, 3, stats.rawCandidates, "the exact stage returns one result per node")
 }
 
 func TestAdaptiveVectorSearchDoesNotRetryWhenInitialResultsFillTarget(t *testing.T) {

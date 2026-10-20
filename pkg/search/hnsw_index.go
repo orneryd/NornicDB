@@ -113,7 +113,14 @@ type HNSWIndex struct {
 	internalToID []string
 	deleted      []bool
 	liveCount    int
-	vectors      []float32
+	// liveOrder holds every live internal ID in ascending (storage) order,
+	// plus removed ones not yet compacted away, never more than the live
+	// ones (liveOrderDead counts them). The population-wide scan ranges it,
+	// so its work follows the live population while it still reads the
+	// vectors in storage order.
+	liveOrder     []uint32
+	liveOrderDead int
+	vectors       []float32
 
 	// When set, vectors are resolved by ID at search/build time instead of from h.vectors.
 	// vecOff will be -1 for nodes that use the lookup (saves one full vector copy in RAM).
@@ -151,6 +158,23 @@ type HNSWIndex struct {
 type visitedGenState struct {
 	gen []uint16
 	cur uint16
+}
+
+// next starts a search generation, retaining prior stamps until wraparound.
+func (v *visitedGenState) next(size int) uint16 {
+	if len(v.gen) < size {
+		oldLen := len(v.gen)
+		// Inserts grow the node array one slot at a time. Retain spare
+		// capacity instead of copying the full stamp array on every insert.
+		v.gen = slices.Grow(v.gen, size-oldLen)[:size]
+		clear(v.gen[oldLen:])
+	}
+	v.cur++
+	if v.cur == 0 {
+		clear(v.gen)
+		v.cur = 1
+	}
+	return v.cur
 }
 
 type hnswDistNode struct {
@@ -222,8 +246,8 @@ func newHNSWIndex(dimensions int, config HNSWConfig, lookup VectorLookup) *HNSWI
 }
 
 // SetVectorLookup sets an optional lookup so vectors are resolved by ID at search time
-// instead of from the in-memory slice. When set, Add does not store vectors (vecOff = -1);
-// Load can leave vectors empty and use the lookup. Saves one full vector copy in RAM.
+// instead of from the in-memory slice. When set, Add does not store vectors the lookup
+// resolves (vecOff = -1); Load can leave vectors empty and use the lookup. Saves one full vector copy in RAM.
 func (h *HNSWIndex) SetVectorLookup(lookup VectorLookup) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -334,9 +358,7 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 
 	level := h.randomLevel()
 
-	// Allocation-free overflow guard for the uint32 internal-ID domain.
-	// util.SafeIntToUint32 would also work here but costs strconv/fmt
-	// allocations on the per-node hot path (~4 allocs/node measured).
+	// Reject the next slot before exhausting the uint32 internal-ID domain.
 	if uint64(len(h.nodeLevel)) >= uint64(^uint32(0)) {
 		return errHNSWIndexFull
 	}
@@ -346,8 +368,19 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 		return nil
 	}
 
+	// Lookup-mode nodes resolve their vector by ID. A vector the source no
+	// longer holds (removed after a build snapshot read it) cannot resolve, so
+	// the node keeps its own copy: an unresolvable node can't seed a layer
+	// search, and as the entry point it would leave every later insertion
+	// without neighbours. The replayed removal then tombstones it.
 	var normalized []float32
+	var resolved []float32
+	resolvedOK := false
 	if h.vectorLookup != nil {
+		resolved, resolvedOK = h.vectorLookup(id)
+		resolvedOK = resolvedOK && len(resolved) == h.dimensions
+	}
+	if resolvedOK {
 		if cap(h.addQueryScratch) < h.dimensions {
 			h.addQueryScratch = make([]float32, h.dimensions)
 		}
@@ -394,11 +427,14 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	h.neighborCountsOff = append(h.neighborCountsOff, countsOff32)
 	h.internalToID = append(h.internalToID, id)
 	if h.buildVectors != nil && len(h.buildVectors) < h.buildVectorLimit {
-		vec, _ := h.vectorLookup(id)
-		h.buildVectors = append(h.buildVectors, vec)
+		if !resolvedOK {
+			resolved = normalized
+		}
+		h.buildVectors = append(h.buildVectors, resolved)
 	}
 	h.idToInternal[id] = internalID
 	h.deleted = append(h.deleted, false)
+	h.liveOrder = append(h.liveOrder, internalID)
 	h.liveCount++
 
 	if !h.hasEntryPoint {
@@ -412,16 +448,30 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	epLevel := int(h.nodeLevel[ep])
 	neighbors := h.addBestScratch[:0]
 
+	// The descent can end on a removed vector, which can't seed a layer
+	// search; live is the last live node it moved to.
+	live := ep
 	for l := epLevel; l > level; l-- {
-		ep = h.searchLayerSingle(normalized, ep, l)
+		ep, _ = h.searchLayerSingleWithContext(context.Background(), normalized, ep, l, &live)
 	}
 
 	for l := min(level, epLevel); l >= 0; l-- {
 		var candidates []uint32
 		searched := true
+		removedEntry := false
 		if l == 0 && level0Candidates != nil {
 			candidates = level0Candidates
 			searched = false
+		} else if h.deleted[ep] {
+			// The descent ended on a removed vector, which is close to the new
+			// one: its live neighbours are the candidates. That costs a few
+			// distances, where a search from live would cost a full insert.
+			removedEntry = true
+			candidates = h.liveNeighborsLocked(ep, l, h.idsPool.Get().([]uint32)[:0])
+			if len(candidates) == 0 {
+				h.releaseCandidateIDs(candidates)
+				candidates = h.searchLayer(normalized, live, h.config.EfConstruction, l)
+			}
 		} else {
 			candidates = h.searchLayer(normalized, ep, h.config.EfConstruction, l)
 		}
@@ -435,7 +485,10 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 			h.insertNeighborAtLevelLocked(neighborID, l, internalID)
 		}
 
-		if len(candidates) > 0 {
+		switch {
+		case removedEntry && len(neighbors) > 0:
+			ep = neighbors[0] // closest selected; the candidates are unordered
+		case len(candidates) > 0:
 			ep = candidates[0]
 		}
 		if searched {
@@ -526,6 +579,7 @@ func (h *HNSWIndex) Clear() {
 	h.internalToID = make([]string, 0, 1024)
 	h.deleted = make([]bool, 0, 1024)
 	h.liveCount = 0
+	h.liveOrder, h.liveOrderDead = nil, 0
 	h.vectors = nil
 	if h.vectorLookup == nil {
 		h.vectors = make([]float32, 0, util.SafePreallocProduct(1024, h.dimensions))
@@ -628,28 +682,19 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	if minSimilarity <= -1 {
 		minSim32 = float32(math.Inf(-1))
 	}
-	ep := h.entryPoint
-
-	for l := h.maxLevel; l > 0; l-- {
-		var err error
-		ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l)
-		if err != nil {
-			return nil, false, err
-		}
+	var (
+		candidates []hnswDistItem
+		err        error
+	)
+	if ef >= h.liveCount {
+		// A beam as wide as the live population must return all of it. The
+		// graph can't promise that (a removed vector or a pruned link can cut
+		// live vectors off), so score every live vector instead: the same
+		// O(n) work the beam would do.
+		candidates, err = h.scanLiveLocked(ctx, normalized)
+	} else {
+		candidates, err = h.searchGraphLocked(ctx, normalized, ef, entryIDs)
 	}
-
-	entryBufAny := h.idsPool.Get()
-	entries := entryBufAny.([]uint32)[:0]
-	defer h.idsPool.Put(entries[:0])
-	entries = append(entries, ep)
-	for _, id := range entryIDs {
-		internalID, ok := h.idToInternal[id]
-		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
-			continue
-		}
-		entries = append(entries, internalID)
-	}
-	candidates, err := h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
 	if err != nil {
 		return nil, false, err
 	}
@@ -701,6 +746,112 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 		exhausted = liveCandidates == h.liveCount && (len(results) < k || liveCandidates <= k)
 	}
 	return results, exhausted, nil
+}
+
+// searchGraphLocked runs the layer-0 beam from the hierarchical entry point
+// and the given extra entry IDs, closest first. h.mu must be held.
+func (h *HNSWIndex) searchGraphLocked(ctx context.Context, query []float32, ef int, entryIDs []string) ([]hnswDistItem, error) {
+	ep := h.entryPoint
+	live := ep
+	for l := h.maxLevel; l > 0; l-- {
+		var err error
+		ep, err = h.searchLayerSingleWithContext(ctx, query, ep, l, &live)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	entryBufAny := h.idsPool.Get()
+	entries := entryBufAny.([]uint32)[:0]
+	defer h.idsPool.Put(entries[:0])
+	if h.deleted[ep] {
+		// The descent ended on a removed vector, which can't seed the layer-0
+		// search. Its live neighbours, next to the query, seed it instead;
+		// without any, the last live node the descent passed.
+		entries = h.liveNeighborsLocked(ep, 0, entries)
+		if len(entries) == 0 {
+			entries = append(entries, live)
+		}
+	} else {
+		entries = append(entries, ep)
+	}
+	for _, id := range entryIDs {
+		internalID, ok := h.idToInternal[id]
+		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
+			continue
+		}
+		entries = append(entries, internalID)
+	}
+	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, query, entries, ef, 0)
+}
+
+// liveNeighborsLocked appends node's live neighbours at level to out. h.mu
+// must be held.
+func (h *HNSWIndex) liveNeighborsLocked(node uint32, level int, out []uint32) []uint32 {
+	neighbors, _ := h.neighborsAtLevelLocked(node, level)
+	for _, neighbor := range neighbors {
+		if validHNSWIndex(neighbor, len(h.deleted)) && !h.deleted[neighbor] {
+			out = append(out, neighbor)
+		}
+	}
+	return out
+}
+
+// rebuildLiveOrderLocked sets liveOrder to the live internal IDs of a
+// restored graph, ascending. Caller holds h.mu for writing.
+func (h *HNSWIndex) rebuildLiveOrderLocked() {
+	live := make([]uint32, 0, h.liveCount)
+	for id, deleted := range h.deleted {
+		if !deleted && uint64(id) <= uint64(^uint32(0)) {
+			live = append(live, uint32(id))
+		}
+	}
+	h.liveOrder, h.liveOrderDead = live, 0
+}
+
+// compactLiveOrderLocked drops removed IDs from liveOrder in place, keeping
+// its order. Removal calls it once removed entries outnumber live ones, so
+// each removal costs amortized O(1) and liveOrder never holds more than
+// twice the live population. Caller holds h.mu for writing.
+func (h *HNSWIndex) compactLiveOrderLocked() {
+	live := h.liveOrder[:0]
+	for _, id := range h.liveOrder {
+		if validHNSWIndex(id, len(h.deleted)) && !h.deleted[id] {
+			live = append(live, id)
+		}
+	}
+	h.liveOrder, h.liveOrderDead = live, 0
+}
+
+// scanLiveLocked scores every live vector, closest first, in a slice from
+// itemsPool. It ranges liveOrder, so its work follows the live population
+// (tombstone slots left by removals are never visited) and reads vectors in
+// storage order. h.mu must be held.
+func (h *HNSWIndex) scanLiveLocked(ctx context.Context, query []float32) ([]hnswDistItem, error) {
+	items := h.itemsPool.Get().([]hnswDistItem)[:0]
+	for i, internalID := range h.liveOrder {
+		if i&1023 == 0 {
+			if err := ctx.Err(); err != nil {
+				h.itemsPool.Put(items[:0])
+				return nil, err
+			}
+		}
+		if !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
+			continue
+		}
+		vec := h.vectorAtLocked(internalID)
+		if len(vec) != h.dimensions {
+			continue
+		}
+		items = append(items, hnswDistItem{id: internalID, dist: float32(1.0) - vector.DotProductSIMD(query, vec)})
+	}
+	slices.SortFunc(items, func(left, right hnswDistItem) int {
+		if order := cmp.Compare(left.dist, right.dist); order != 0 {
+			return order
+		}
+		return cmp.Compare(left.id, right.id)
+	})
+	return items, nil
 }
 
 // Size returns the number of vectors in the index.
@@ -880,6 +1031,7 @@ func LoadHNSWIndex(path string, vectorLookup VectorLookup) (*HNSWIndex, error) {
 	h.internalToID = snap.InternalToID
 	h.deleted = snap.Deleted
 	h.liveCount = snap.LiveCount
+	h.rebuildLiveOrderLocked()
 	h.entryPoint = snap.EntryPoint
 	h.hasEntryPoint = snap.HasEntryPoint
 	h.maxLevel = snap.MaxLevel
@@ -1073,6 +1225,9 @@ func (h *HNSWIndex) removeLocked(internalID uint32) {
 
 	h.deleted[internalID] = true
 	h.liveCount--
+	if h.liveOrderDead++; h.liveOrderDead > h.liveCount {
+		h.compactLiveOrderLocked()
+	}
 
 	if validHNSWIndex(internalID, len(h.internalToID)) {
 		delete(h.idToInternal, h.internalToID[internalID])
@@ -1102,7 +1257,7 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 	for id := range h.nodeLevel {
 		internalID, ok := util.SafeIntToUint32(id)
 		if !ok {
-			continue
+			break
 		}
 		if validHNSWIndex(internalID, len(h.deleted)) && h.deleted[internalID] {
 			continue
@@ -1128,11 +1283,14 @@ func (h *HNSWIndex) reselectEntryPointLocked() {
 }
 
 func (h *HNSWIndex) searchLayerSingle(query []float32, entryID uint32, level int) uint32 {
-	out, _ := h.searchLayerSingleWithContext(context.Background(), query, entryID, level)
+	out, _ := h.searchLayerSingleWithContext(context.Background(), query, entryID, level, nil)
 	return out
 }
 
-func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []float32, entryID uint32, level int) (uint32, error) {
+// searchLayerSingleWithContext descends greedily within one layer. Each live
+// node it moves to is stored in *live (when live is non-nil), so a descent
+// that ends on a removed vector still leaves the closest live node it passed.
+func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []float32, entryID uint32, level int, live *uint32) (uint32, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1170,6 +1328,9 @@ func (h *HNSWIndex) searchLayerSingleWithContext(ctx context.Context, query []fl
 
 		if !changed {
 			break
+		}
+		if live != nil && !h.deleted[current] {
+			*live = current
 		}
 	}
 
@@ -1246,23 +1407,7 @@ func searchLayerHeapKernel[M layerCtxMode](h *HNSWIndex, ctx context.Context, qu
 	var mode M
 	visited := h.visitedPool.Get().(*visitedGenState)
 	defer h.visitedPool.Put(visited)
-	if len(visited.gen) < len(h.nodeLevel) {
-		oldLen := len(visited.gen)
-		if cap(visited.gen) < len(h.nodeLevel) {
-			next := make([]uint16, len(h.nodeLevel))
-			copy(next, visited.gen)
-			visited.gen = next
-		} else {
-			visited.gen = visited.gen[:len(h.nodeLevel)]
-			clear(visited.gen[oldLen:])
-		}
-	}
-	visited.cur++
-	if visited.cur == 0 {
-		clear(visited.gen)
-		visited.cur = 1
-	}
-	curGen := visited.cur
+	curGen := visited.next(len(h.nodeLevel))
 
 	candidates := h.heapPool.Get().(*distHeap)
 	candidates.Reset(false, ef*2)

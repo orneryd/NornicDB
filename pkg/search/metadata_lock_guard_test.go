@@ -63,16 +63,94 @@ type posSpan struct{ from, to token.Pos }
 
 func (p posSpan) contains(pos token.Pos) bool { return pos > p.from && pos < p.to }
 
-// metadataReadersWithoutIndexMu lists the Service methods in file with an
-// indexMu metadata access outside a span where the method holds indexMu,
-// unless the Locked suffix or the documented list says the caller holds it.
-//
-// A span opens at a top-level recv.indexMu.Lock/RLock call statement of the
-// method body and closes at the next top-level Unlock/RUnlock call, or at the
-// end of the body once the unlock is deferred. A lock taken inside a nested
-// block or closure opens no span; an unlock inside a nested block ends the
-// protection for the rest of that block; an access inside a closure is never
-// protected, since the closure can run after the release.
+// metadataBodyHasUnlockedRead checks one function's own lock spans. A closure
+// starts a new scope: its captured caller's lock cannot protect it after the
+// caller returns, but a lock acquired in the closure protects its own body.
+func metadataBodyHasUnlockedRead(body *ast.BlockStmt, recv string) bool {
+	var held []posSpan
+	open, deferred := token.NoPos, false
+	for _, stmt := range body.List {
+		switch indexMuCall(stmt, recv) {
+		case "lock":
+			if open == token.NoPos {
+				open, deferred = stmt.End(), false
+			}
+		case "defer":
+			if open != token.NoPos {
+				deferred = true
+			}
+		case "unlock":
+			if open != token.NoPos && !deferred {
+				held = append(held, posSpan{open, stmt.Pos()})
+				open = token.NoPos
+			}
+		}
+	}
+	if open != token.NoPos {
+		held = append(held, posSpan{open, body.End()})
+	}
+
+	var released []posSpan
+	ast.Inspect(body, func(n ast.Node) bool {
+		var list []ast.Stmt
+		var end token.Pos
+		switch b := n.(type) {
+		case *ast.FuncLit:
+			return false // Its acquisitions and releases belong to its own scope.
+		case *ast.BlockStmt:
+			if b != body {
+				list, end = b.List, b.End()
+			}
+		case *ast.CaseClause:
+			list, end = b.Body, b.End()
+		case *ast.CommClause:
+			list, end = b.Body, b.End()
+		}
+		for _, stmt := range list {
+			if indexMuCall(stmt, recv) == "unlock" {
+				released = append(released, posSpan{stmt.Pos(), end})
+			}
+		}
+		return true
+	})
+
+	protected := func(pos token.Pos) bool {
+		for _, r := range released {
+			if r.contains(pos) {
+				return false
+			}
+		}
+		for _, h := range held {
+			if h.contains(pos) {
+				return true
+			}
+		}
+		return false
+	}
+	bad := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if closure, ok := n.(*ast.FuncLit); ok {
+			if metadataBodyHasUnlockedRead(closure.Body, recv) {
+				bad = true
+			}
+			return false
+		}
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || !indexMuMetadata[sel.Sel.Name] {
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == recv && !protected(sel.Pos()) {
+			bad = true
+		}
+		return true
+	})
+	return bad
+}
+
+// metadataReadersWithoutIndexMu lists Service methods with a metadata access
+// outside their own indexMu span or a closure's own span. The Locked suffix and
+// documented caller-held methods retain their existing contract. Conditional
+// acquisitions do not open spans; nested releases end their block's protection.
 func metadataReadersWithoutIndexMu(file *ast.File, name string) []string {
 	var out []string
 	for _, decl := range file.Decls {
@@ -88,84 +166,7 @@ func metadataReadersWithoutIndexMu(file *ast.File, name string) []string {
 		if strings.HasSuffix(fn.Name.Name, "Locked") || metadataCallerHoldsIndexMu[key] {
 			continue
 		}
-
-		var held []posSpan
-		open, deferred := token.NoPos, false
-		for _, stmt := range fn.Body.List {
-			switch indexMuCall(stmt, recv) {
-			case "lock":
-				if open == token.NoPos {
-					open, deferred = stmt.End(), false
-				}
-			case "defer":
-				if open != token.NoPos {
-					deferred = true
-				}
-			case "unlock":
-				if open != token.NoPos && !deferred {
-					held = append(held, posSpan{open, stmt.Pos()})
-					open = token.NoPos
-				}
-			}
-		}
-		if open != token.NoPos {
-			held = append(held, posSpan{open, fn.Body.End()})
-		}
-
-		var released, closures []posSpan
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			var list []ast.Stmt
-			var end token.Pos
-			switch b := n.(type) {
-			case *ast.FuncLit:
-				closures = append(closures, posSpan{b.Pos(), b.End()})
-			case *ast.BlockStmt:
-				if b != fn.Body {
-					list, end = b.List, b.End()
-				}
-			case *ast.CaseClause:
-				list, end = b.Body, b.End()
-			case *ast.CommClause:
-				list, end = b.Body, b.End()
-			}
-			for _, stmt := range list {
-				if indexMuCall(stmt, recv) == "unlock" {
-					released = append(released, posSpan{stmt.Pos(), end})
-				}
-			}
-			return true
-		})
-
-		protected := func(pos token.Pos) bool {
-			for _, c := range closures {
-				if c.contains(pos) {
-					return false
-				}
-			}
-			for _, r := range released {
-				if r.contains(pos) {
-					return false
-				}
-			}
-			for _, h := range held {
-				if h.contains(pos) {
-					return true
-				}
-			}
-			return false
-		}
-		bad := false
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok || !indexMuMetadata[sel.Sel.Name] {
-				return true
-			}
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == recv && !protected(sel.Pos()) {
-				bad = true
-			}
-			return true
-		})
-		if bad {
+		if metadataBodyHasUnlockedRead(fn.Body, recv) {
 			out = append(out, key)
 		}
 	}
@@ -195,6 +196,12 @@ func TestMetadataReadersHoldIndexMu(t *testing.T) {
 		{"held span", `func (svc *Service) f() int { svc.indexMu.Lock(); n := len(svc.edgeTypes); svc.indexMu.Unlock(); return n }`, false},
 		{"read in a conditional while held", `func (s *Service) f(ok bool) int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); if ok { return len(s.nodeLabels) }; return 0 }`, false},
 		{"early release that returns", `func (s *Service) f(n int) int { s.indexMu.RLock(); if n < 0 { s.indexMu.RUnlock(); return 0 }; n = len(s.nodeLabels); s.indexMu.RUnlock(); return n }`, false},
+		{"closure with its own deferred lock", `func (s *Service) f() int { return func() int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); return len(s.nodeLabels) }() }`, false},
+		{"escaping closure with its own lock", `func (s *Service) f() func() int { return func() int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); return len(s.nodeLabels) } }`, false},
+		{"closure releases its own lock before the read", `func (s *Service) f() int { return func() int { s.indexMu.RLock(); s.indexMu.RUnlock(); return len(s.nodeLabels) }() }`, true},
+		{"nested closure cannot borrow a captured lock", `func (s *Service) f() func() int { return func() int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); return func() int { return len(s.nodeLabels) }() } }`, true},
+		{"nested closure acquires its own lock", `func (s *Service) f() int { return func() int { return func() int { s.indexMu.RLock(); defer s.indexMu.RUnlock(); return len(s.nodeLabels) }() }() }`, false},
+		{"closure lock does not protect a later outer read", `func (s *Service) f() int { func() { s.indexMu.RLock(); defer s.indexMu.RUnlock() }(); return len(s.nodeLabels) }`, true},
 		{"Locked suffix", `func (s *Service) fLocked() int { return len(s.nodePropVector) }`, false},
 	}
 	fset := token.NewFileSet()

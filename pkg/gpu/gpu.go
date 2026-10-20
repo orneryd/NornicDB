@@ -1532,23 +1532,8 @@ func (ei *EmbeddingIndex) shouldAutoSync(delta int) bool {
 //	Uses cosine similarity: score = dot(a,b) / (||a|| × ||b||)
 //	Range: [-1, 1] where 1 = identical, 0 = orthogonal, -1 = opposite
 func (ei *EmbeddingIndex) Search(query []float32, k int) ([]SearchResult, error) {
-	if len(query) != ei.dimensions {
-		return nil, ErrInvalidDimensions
-	}
-
-	ei.mu.RLock()
-	defer ei.mu.RUnlock()
-
-	if len(ei.nodeIDs) == 0 {
-		return nil, nil
-	}
-
-	// Use GPU if enabled and synced
-	if ei.manager != nil && ei.manager.IsEnabled() && ei.gpuSynced {
-		return ei.searchGPU(query, k)
-	}
-
-	return ei.searchCPU(query, k)
+	results, _, err := ei.SearchWithPopulation(query, k)
+	return results, err
 }
 
 // ScoreSubset computes similarity scores for a specific subset of node IDs.
