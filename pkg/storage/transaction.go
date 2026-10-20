@@ -91,6 +91,12 @@ type Operation struct {
 	EdgeID  EdgeID `json:"edge_id,omitempty"`
 	Edge    *Edge  `json:"edge,omitempty"`     // New state (for create/update) or nil
 	OldEdge *Edge  `json:"old_edge,omitempty"` // Old state (for update/delete rollback)
+	// ReplacesExisting is decode-only compatibility for buffered WAL records
+	// acknowledged by the short-lived 68db5d16d release writer. Current
+	// writers never set it: CREATE no longer replaces a stored relationship.
+	// Recovery must nevertheless preserve those records' zero-cardinality
+	// meaning instead of publishing them as a second physical relationship.
+	ReplacesExisting bool `json:"replaces_existing,omitempty"`
 
 	// FreshID is set on OpCreateNode / OpCreateEdge when the caller asserted
 	// the ID is newly minted and cannot collide with any prior tombstoned

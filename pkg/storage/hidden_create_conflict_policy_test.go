@@ -189,6 +189,83 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 	}
 }
 
+// A hidden-ID candidate is compared only after same-transaction writes have
+// produced the image commit would publish. This is the storage owner used by
+// MERGE ... ON CREATE SET and later SET clauses.
+func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
+	for _, buffered := range []bool{false, true} {
+		name := "sync"
+		if buffered {
+			name = "write-behind"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+				DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine.Close() })
+			for _, id := range []NodeID{"test:a", "test:b"} {
+				_, err := engine.CreateNode(&Node{ID: id})
+				require.NoError(t, err)
+			}
+			stored := &Edge{
+				ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK",
+				Properties: map[string]any{"key": "same", "payload": "stored"},
+			}
+			require.NoError(t, engine.CreateEdge(stored))
+			if buffered {
+				require.NoError(t, engine.FlushWriteBehind())
+			}
+			require.NoError(t, engine.SetEdgeManuallySuppressed(stored.ID, true))
+			before, err := engine.GetStoredEdge(stored.ID)
+			require.NoError(t, err)
+			before = comparableStoredEdge(before)
+
+			begin := func() *BadgerTransaction {
+				t.Helper()
+				tx, err := engine.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.SetNamespace("test"))
+				return tx
+			}
+			candidate := &Edge{
+				ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type,
+				Properties: map[string]any{"key": "same"},
+			}
+			tx := begin()
+			require.NoError(t, tx.CreateEdge(candidate))
+			require.True(t, tx.EdgeCreateWasNoOp(candidate.ID))
+			candidate.Properties["payload"] = "stored"
+			require.NoError(t, tx.UpdateEdge(candidate))
+			require.NoError(t, tx.Commit(), "the final image, not the intermediate CREATE image, decides identity")
+
+			different := &Edge{
+				ID: stored.ID, StartNode: stored.StartNode, EndNode: stored.EndNode, Type: stored.Type,
+				Properties: map[string]any{"key": "same"},
+			}
+			tx = begin()
+			require.NoError(t, tx.CreateEdge(different))
+			different.Properties["payload"] = "different"
+			require.NoError(t, tx.UpdateEdge(different))
+			err = tx.Commit()
+			var conflict *HiddenEdgeIdentityConflictError
+			require.ErrorAs(t, err, &conflict)
+			require.ErrorIs(t, err, ErrAlreadyExists)
+			require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", conflict.BoltErrorCode())
+
+			if buffered {
+				require.NoError(t, engine.FlushWriteBehind())
+			}
+			after, err := engine.GetStoredEdge(stored.ID)
+			require.NoError(t, err)
+			require.Equal(t, before, comparableStoredEdge(after))
+			count, err := engine.EdgeCount()
+			require.NoError(t, err)
+			require.EqualValues(t, 1, count)
+		})
+	}
+}
+
 func mustCount(t *testing.T, count int64, err error) int64 {
 	t.Helper()
 	require.NoError(t, err)

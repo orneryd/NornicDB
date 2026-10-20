@@ -10,8 +10,9 @@ type ExecuteResult struct {
 	// MapKeyOrders retains evaluated map traversal order for transaction HTTP metadata.
 	MapKeyOrders map[uintptr][]string `json:"-"`
 	// relationshipMergeNoOp distinguishes a stored hidden relationship's
-	// idempotent CREATE from both a create and a visible match. The pipeline
-	// therefore runs neither ON CREATE nor ON MATCH actions for the no-op.
+	// provisional no-op candidate from both a physical create and a visible
+	// match. The pipeline applies ON CREATE to finish the candidate image, but
+	// commit alone decides identical no-op versus permanent conflict.
 	relationshipMergeNoOp bool
 }
 

@@ -128,10 +128,12 @@ type BadgerTransaction struct {
 	nodeHeadCache map[NodeID]MVCCHead
 	pendingIndex  *pendingNodeIndex
 	pendingEdges  map[EdgeID]*Edge
-	// edgeCreateNoOps records identical CREATEs over stored hidden
-	// relationships. They stage no body, index, count, callback or WAL work;
-	// commit rechecks the latest stored image and suppression state at the one
-	// conflict owner before acknowledging the no-op.
+	// edgeCreateNoOps records CREATE candidates over stored hidden
+	// relationships. They stage only a transaction-visible candidate image:
+	// same-transaction SET/UPDATE writes replace that image without buffering
+	// body, index, count, callback or WAL work. The commit owner compares the
+	// final image with the latest stored predecessor before acknowledging the
+	// no-op or rejecting a permanent different-image conflict.
 	edgeCreateNoOps     map[EdgeID]*Edge
 	deferredEdgeWrites  map[EdgeID]struct{}
 	cancelledEdgeWrites map[EdgeID]struct{}
@@ -1499,16 +1501,16 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 		return err
 	}
 	if noOp {
+		tx.stageHiddenEdgeCreateLocked(edge)
 		return nil
 	}
 	return tx.bufferNewEdgeLocked(edge, startLabels, endLabels)
 }
 
-// EdgeCreateWasNoOp reports whether CreateEdge classified id as an identical
-// CREATE over a stored hidden relationship in this transaction. It is
-// disposition metadata only: callers use it to avoid reporting CREATE stats
-// or running MERGE actions for a storage no-op. Mutations still have exactly
-// one owner in validateNewEdgeLocked and commit revalidation below.
+// EdgeCreateWasNoOp reports whether CreateEdge found a stored hidden
+// predecessor and staged only a possible no-op candidate. Callers use this
+// disposition to avoid premature CREATE stats; same-transaction writes may
+// still complete the candidate image. Commit is the sole identity decision.
 func (tx *BadgerTransaction) EdgeCreateWasNoOp(id EdgeID) bool {
 	if tx == nil {
 		return false
@@ -1569,6 +1571,7 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 	}
 	for i, edge := range edges {
 		if noOps[i] {
+			tx.stageHiddenEdgeCreateLocked(edge)
 			continue
 		}
 		if err := tx.bufferNewEdgeLocked(edge, labels[i][0], labels[i][1]); err != nil {
@@ -1579,8 +1582,8 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 }
 
 // validateNewEdgeLocked checks that edge can be created in the transaction
-// and returns its endpoints' labels and whether it is an identical hidden
-// relationship no-op: it is not nil and has an ID, its
+// and returns its endpoints' labels and whether it is a hidden-relationship
+// no-op candidate: it is not nil and has an ID, its
 // namespace pins, both endpoints are visible (endpoint; ErrNotFound
 // otherwise), and no pending edge, edge earlier in the same batch or
 // committed edge has its ID (ErrAlreadyExists). Physical existence is never
@@ -1616,15 +1619,12 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 	}
 	existing, err := tx.getCommittedEdgeLocked(edge.ID)
 	if err == nil {
-		if !tx.engine.hidesEdge(visibleRead, existing, DecayScoringTime()) ||
-			!sameEdgeCreateIdentity(existing, edge) {
+		if !tx.engine.hidesEdge(visibleRead, existing, DecayScoringTime()) {
 			return nil, nil, false, ErrAlreadyExists
 		}
-		// The ID is already stored but hidden and the caller supplied the same
-		// semantic relationship image. Record only a commit-time assertion:
-		// no physical CREATE and therefore no entity-WAL, count, index,
-		// adjacency, cache or search-publication side effect.
-		tx.edgeCreateNoOps[edge.ID] = copyEdge(edge)
+		// A MERGE may add ON CREATE SET properties after CreateEdge. Defer
+		// semantic identity to the commit owner, which sees that final staged
+		// image. Until then this is a transaction-visible candidate only.
 		return nil, nil, true, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -1639,6 +1639,15 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 		return nil, nil, false, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
 	}
 	return startLabels, endLabels, false, nil
+}
+
+// stageHiddenEdgeCreateLocked makes a hidden-ID CREATE candidate visible to
+// later writes in this transaction without staging a physical mutation. The
+// final candidate is compared with the stored predecessor at commit.
+func (tx *BadgerTransaction) stageHiddenEdgeCreateLocked(edge *Edge) {
+	candidate := copyEdge(edge)
+	tx.edgeCreateNoOps[edge.ID] = candidate
+	tx.pendingEdges[edge.ID] = candidate
 }
 
 // sameEdgeCreateIdentity is the product identity of an idempotent hidden-edge
@@ -1732,10 +1741,19 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
 		return err
 	}
-	tx.engine.NotePropertyKeysInNamespace(tx.namespace, edge.Properties)
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 		return ErrNotFound
 	}
+	if _, hiddenCreate := tx.edgeCreateNoOps[edge.ID]; hiddenCreate {
+		// ON CREATE SET and later writes update only the candidate. If its final
+		// semantic image differs, commit returns the permanent hidden-ID
+		// conflict; if it is identical, no physical update is published.
+		candidate := copyEdge(edge)
+		tx.edgeCreateNoOps[edge.ID] = candidate
+		tx.pendingEdges[edge.ID] = candidate
+		return nil
+	}
+	tx.engine.NotePropertyKeysInNamespace(tx.namespace, edge.Properties)
 
 	// Load existing edge (pending or committed) for index maintenance.
 	var oldEdge *Edge
@@ -1904,6 +1922,13 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	// node, is gone: deleting it again changes nothing (#827).
 	if _, deleted := tx.deletedEdges[edgeID]; deleted {
 		return ErrNotFound
+	}
+	if _, hiddenCreate := tx.edgeCreateNoOps[edgeID]; hiddenCreate {
+		// CREATE followed by DELETE has no physical effect on its hidden
+		// predecessor. Remove only the transaction-visible candidate.
+		delete(tx.edgeCreateNoOps, edgeID)
+		delete(tx.pendingEdges, edgeID)
+		return nil
 	}
 
 	// Get edge to delete its indexes
@@ -3317,6 +3342,17 @@ func (tx *BadgerTransaction) OperationCount() int {
 	return len(tx.operations) + len(tx.connectedDeletes)
 }
 
+// RequiresCommitValidation reports whether a transaction with no physical
+// operations still has a staged decision that only the commit owner can make.
+// Hidden-edge CREATE candidates are deliberately operation-free until their
+// final image is compared, so implicit transactions must not discard them as
+// empty before validateSnapshotIsolationConflicts runs.
+func (tx *BadgerTransaction) RequiresCommitValidation() bool {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return len(tx.edgeCreateNoOps) > 0
+}
+
 // getCommittedNodeLocked reads a committed node for the transaction's own
 // work: a write's target, an endpoint, a constraint check, count
 // bookkeeping. It reads what storage holds, so a node the visibility layer
@@ -3677,10 +3713,11 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 	// statement-time classification.
 	for edgeID, candidate := range tx.edgeCreateNoOps {
 		stored, err := tx.engine.GetStoredEdge(edgeID)
-		if err != nil ||
-			!tx.engine.hidesEdge(visibleRead, stored, DecayScoringTime()) ||
-			!sameEdgeCreateIdentity(stored, candidate) {
+		if err != nil || !tx.engine.hidesEdge(visibleRead, stored, DecayScoringTime()) {
 			return ErrAlreadyExists
+		}
+		if !sameEdgeCreateIdentity(stored, candidate) {
+			return &HiddenEdgeIdentityConflictError{EdgeID: edgeID, Namespace: tx.namespace}
 		}
 	}
 	for _, op := range tx.operations {

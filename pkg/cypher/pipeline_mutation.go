@@ -732,12 +732,17 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		}
 		// The MERGE created its pattern (ON CREATE) or found it (ON MATCH).
 		actions := onMatchSet
+		actionStats := stats
 		if patternCreated {
 			actions = onCreateSet
 		} else if patternNoOp {
-			// A hidden identical relationship was neither created nor matched:
-			// its contract is a complete no-op, including MERGE actions.
-			actions = ""
+			// Storage found a hidden predecessor, so ON CREATE completes the
+			// transaction-visible candidate before the commit owner decides
+			// semantic identity. The candidate stages no publication, and an
+			// identical final image reports no CREATE/SET work; a different
+			// image makes commit return a permanent client error.
+			actions = onCreateSet
+			actionStats = &QueryStats{}
 		}
 		var produced []pipelineRow
 		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext)))
@@ -791,7 +796,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			// It can change identity values.
 			identities.reset()
 		}
-		if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
+		if err := e.applyMergeActions(ctx, produced, actions, actionStats); err != nil {
 			return nil, nil, err
 		}
 		out = append(out, produced...)
