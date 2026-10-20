@@ -35,3 +35,16 @@ func BenchmarkFabricExactNumbers(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkFabricExactCollectDistinctProjection(b *testing.B) {
+	input := &ResultStream{Columns: []string{"v"}}
+	for i := 0; i < 64; i++ {
+		input.Rows = append(input.Rows, []interface{}{int64(9007199254740992)}, []interface{}{float64(9007199254740992)}, []interface{}{int64(9007199254740993)})
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		exactNumericBenchmarkSink, _ = executeApplyInMemoryProjection(input,
+			"WITH collect({v: v}) AS rows UNWIND rows AS r WITH collect(DISTINCT r.v) AS keys RETURN keys")
+	}
+}
