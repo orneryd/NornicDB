@@ -110,7 +110,7 @@ func getRecallTool(defaultDatabase string) Tool {
 			"type": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Filter by node types.",
+				"description": "Match any listed node type (exact label).",
 			},
 			"tags": map[string]interface{}{
 				"type":        "array",
@@ -178,7 +178,7 @@ func getDiscoverTool(defaultDatabase string) Tool {
 			},
 			"depth": map[string]interface{}{
 				"type":        "integer",
-				"description": "Graph traversal depth for related context (1-3). Higher = more context but slower.",
+				"description": "Context depth: 1=matches only, 2=1 hop, 3=2 hops.",
 				"default":     1,
 				"minimum":     1,
 				"maximum":     3,
@@ -194,6 +194,7 @@ func getDiscoverTool(defaultDatabase string) Tool {
 		Description: `Find knowledge by MEANING, not exact keywords. Uses vector embeddings to find semantically
 similar content. Automatically falls back to keyword search if embeddings disabled.
 Use when you're asking "what do we know about X?" or "find similar to Y".
+Depth: 1=matches only (default), 2=1 hop, 3=2 hops.
 
 Examples:
 - discover(query="database connection pooling")
