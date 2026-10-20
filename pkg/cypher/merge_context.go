@@ -308,6 +308,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		node = existingNode
 	} else {
 		node = &storage.Node{
+			Database:   storage.DatabaseOf(store),
 			ID:         storage.NodeID(e.generateID()),
 			Labels:     labels,
 			Properties: matchProps,
@@ -413,16 +414,21 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	if parsedPattern.direction == mergeRelationshipIncoming {
 		mergeStartNode, mergeEndNode = endNode, startNode
 	}
-	// Cypher relationship properties inside the MERGE pattern are identity
+	// Resolve both native identities before either matching an existing edge or
+    // planning a new one; a local-ID lookup cannot choose its constituent.
+    startIdentity, startOK := mergeStartNode.Identity().NodeLookupID(store)
+    endIdentity, endOK := mergeEndNode.Identity().NodeLookupID(store)
+    if !startOK || !endOK { return nil, localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil) }
+    // Cypher relationship properties inside the MERGE pattern are identity
 	// fields. Scan the bounded endpoint pair so same-type relationships with
 	// different property identities remain distinct.
 	if existingEdge == nil {
-		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+		existingEdge, err = findRelationshipForMerge(store, startIdentity, endIdentity, parsedPattern.relType, parsedPattern.properties)
 		if err != nil {
 			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 		}
 		if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+			existingEdge, err = findRelationshipForMerge(store, endIdentity, startIdentity, parsedPattern.relType, parsedPattern.properties)
 			if err != nil {
 				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 			}
@@ -435,12 +441,14 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	} else {
 		// Create new relationship
 		edge = &storage.Edge{
-			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
+			Database:   storage.DatabaseOf(store),
+			ID:         e.newRelationshipMergeEdgeID(startIdentity, endIdentity, parsedPattern.relType, parsedPattern.properties),
 			Type:       parsedPattern.relType,
-			StartNode:  mergeStartNode.ID,
-			EndNode:    mergeEndNode.ID,
+			
+			
 			Properties: parsedPattern.properties,
 		}
+		if err := storage.BindRelationshipEndpoints(edge, mergeStartNode, mergeEndNode); err != nil { return nil, err }
 		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
 		if createErr != nil {
 			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)

@@ -81,14 +81,19 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		return nil, err
 	}
 	catalog := prepared.catalog
+	if err := catalog.BindTransactionScopes(tx); err != nil {
+		return nil, err
+	}
 
 	authToken := GetAuthTokenFromContext(ctx)
-	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
+	adapter := &cypherFabricExecutor{
 		base:        e,
 		authToken:   authToken,
 		autoCommit:  autoCommit,
 		transaction: tx,
-	}, func(dbName string) (storage.Engine, error) {
+		catalog:     catalog,
+	}
+	localExec := fabric.NewLocalFragmentExecutor(adapter, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
 			if err == nil {
@@ -116,6 +121,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		remoteExec = fabric.NewRemoteFragmentExecutor()
 		defer func() { _ = remoteExec.Close() }()
 	}
+	adapter.remote = remoteExec
 
 	statsAcc := &queryStatsAccumulator{}
 	ctx = context.WithValue(ctx, queryStatsAccumulatorKey{}, statsAcc)
@@ -562,11 +568,19 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 		if dbName == "" {
 			continue
 		}
-		catalog.Register(dbName, &fabric.LocationLocal{DBName: dbName})
+		register := func(name string) {
+			location := &fabric.LocationLocal{DBName: dbName}
+			if db.Type() == "composite" {
+				catalog.RegisterComposite(name, location)
+			} else {
+				catalog.Register(name, location)
+			}
+		}
+		register(dbName)
 		for alias := range e.dbManager.ListAliases(dbName) {
 			alias = strings.TrimSpace(alias)
 			if alias != "" {
-				catalog.Register(alias, &fabric.LocationLocal{DBName: dbName})
+				register(alias)
 			}
 		}
 
@@ -593,7 +607,11 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 				})
 				continue
 			}
-			catalog.Register(qualified, &fabric.LocationLocal{DBName: ref.DatabaseName})
+			actual, err := e.dbManager.ResolveDatabase(ref.DatabaseName)
+			if err != nil {
+				return nil, err
+			}
+			catalog.Register(qualified, &fabric.LocationLocal{DBName: actual})
 		}
 	}
 	return catalog, nil
@@ -630,6 +648,8 @@ func mapString(m map[string]interface{}, key string) string {
 }
 
 type cypherFabricExecutor struct {
+	catalog         *fabric.Catalog
+	remote          *fabric.RemoteFragmentExecutor
 	base            *StorageExecutor
 	authToken       string
 	autoCommit      bool
@@ -677,7 +697,8 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	if keywords["MATCH"] || keywords["STARTNODE"] || keywords["ENDNODE"] || keywords["SHORTESTPATH"] {
 		return nil, nil, false, nil
 	}
-	executor := c.base.cloneForStorage(c.base.storage)
+	engine := c.base.storage
+	executor := c.base.cloneForStorage(engine)
 	if err := executor.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, true, err
 	}
@@ -693,7 +714,11 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	}))
 	var exec *StorageExecutor
 	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
-		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
+		logical := c.fabricTransaction() != nil && c.fabricTransaction().IsCoordinatorScope(sub.ShardName)
+		if logical {
+			ctx = compositeStatementContext{Context: ctx}
+		}
+		if logical || !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
 			// Fabric has one write participant. Its local fragments share one
 			// transactional executor until the coordinator admits COMMIT.
 			// Concurrent read-only participants keep their independent path.
@@ -723,6 +748,11 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
+	previousIdentityScope := exec.graphIdentityScope
+	var catalog *fabric.Catalog
+	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil { catalog = prepared.catalog }
+	exec.graphIdentityScope = newGraphIdentityScope(catalog, exec.executionDatabaseName(ctx), exec.dbManager, c.authToken)
+	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	query = fabric.LocalQuery(query)
 	query, names := canonicalizeQuotedVariablesWithBindings(query, recordBindings)
 	if names != nil {
@@ -783,6 +813,9 @@ func startsWithKeywordAtLocal(s string, i int, kw string) bool {
 }
 
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
+	if tx := c.fabricTransaction(); tx != nil && tx.IsCoordinatorScope(sub.ShardName) {
+		return c.logicalCompositeExecutor(ctx, dbName, engine)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

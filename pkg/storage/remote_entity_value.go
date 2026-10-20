@@ -47,12 +47,14 @@ func (v RemoteEntityValue) MarshalJSON() ([]byte, error) {
 // Use json.Marshal(PublicRemoteMap(map[string]interface{}(entity))) when a Go
 // integration explicitly needs an ordinary public map rather than the marker.
 func PublicRemoteMap(value map[string]interface{}) map[string]interface{} {
-	if _, private := value[remoteIdentityKey].(remoteNumericIdentity); !private {
+	_, numeric := value[remoteIdentityKey].(remoteNumericIdentity)
+	_, source := value[remotePhysicalSourceKey].(remotePhysicalSource)
+	if !numeric && !source {
 		return value
 	}
 	public := make(map[string]interface{}, len(value)-1)
 	for key, element := range value {
-		if key != remoteIdentityKey {
+		if !(key == remoteIdentityKey && numeric) && !(key == remotePhysicalSourceKey && source) {
 			public[key] = element
 		}
 	}

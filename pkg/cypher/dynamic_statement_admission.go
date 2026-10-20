@@ -50,6 +50,11 @@ func (c *cypherFabricExecutor) promoteResolvedStatement(ctx context.Context, cal
 	if err := c.base.authorizeSelectedDatabase(ctx, dbName, statement); err != nil {
 		return err
 	}
+	if tx.IsCoordinatorScope(sub.ShardName) {
+		// The logical view has no Badger transaction or writer vote. Its actual
+		// source resolver admits each physical mutation before any effect.
+		return nil
+	}
 	if _, err := tx.GetOrOpen(sub.ShardName, true); err != nil {
 		return err
 	}

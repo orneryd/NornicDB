@@ -224,11 +224,13 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 
 			// Create relationship
 			edge := &storage.Edge{
-				ID:         storage.EdgeID(e.generateID()),
-				StartNode:  startNode.ID,
-				EndNode:    endNode.ID,
+				ID: storage.EdgeID(e.generateID()),
+
 				Type:       relType,
 				Properties: relProps,
+			}
+			if err := storage.BindRelationshipEndpoints(edge, startNode, endNode); err != nil {
+				return nil, err
 			}
 			plan.edges = append(plan.edges, edge)
 			if relVar != "" {
@@ -279,6 +281,16 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		return failure
 	}
 	store := e.getStorage(ctx)
+	for _, node := range plan.nodes {
+		if err := bindNativeCreationSource(store, node); err != nil {
+			return err
+		}
+	}
+	for _, edge := range plan.edges {
+		if err := bindNativeCreationSource(store, edge); err != nil {
+			return err
+		}
+	}
 	switch len(plan.nodes) {
 	case 0:
 	case 1:
@@ -1490,12 +1502,11 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 		}
 	}
 
-	// Strip canonical element ID prefix (4:dbname:rawid).
-	lookupID := idValue
-	if kind == "elementId" || strings.HasPrefix(lookupID, "4:") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == "4" {
-			lookupID = parts[2]
-		}
+	// Endpoint seeks use the same source selection as ordinary MATCH seeks.
+	// Ambiguous composite raw IDs stay on the normal predicate path.
+	lookupID, found, applicable := e.entitySeekLookup(idValue, "4", kind)
+	if !applicable || !found {
+		return "", nil
 	}
 
 	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))

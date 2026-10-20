@@ -27,18 +27,18 @@ func (s *pathSearch) backSteps(node *storage.Node, slot int) []pathSearchBack {
 			continue
 		}
 		direction := reverseDirection(transition.direction)
-		for _, edge := range s.relationships(node.ID, direction) {
+		for _, edge := range s.relationships(nativeGraphEntityKey(node), direction) {
 			if s.ctx.Err() != nil {
 				return nil
 			}
 			if !s.transitionHolds(transition, edge) {
 				continue
 			}
-			before, ok := s.e.loadTraversalEndpointNode(s.traversal, otherEnd(edge, node.ID))
+			before, ok := s.e.loadTraversalEndpointKey(s.traversal, nativeOtherEndpointKey(edge, nativeGraphEntityKey(node)))
 			if !ok || !s.slotHolds(move.from, before) {
 				continue
 			}
-			steps = append(steps, pathSearchBack{edge: edge, move: index, key: pathSearchKey{node: before.ID, slot: int32(move.from)}, node: before})
+			steps = append(steps, pathSearchBack{edge: edge, move: index, key: pathSearchKey{node: nativeGraphEntityKey(before), slot: int32(move.from)}, node: before})
 		}
 	}
 	return steps
@@ -131,7 +131,7 @@ func (s *pathSearch) expandBackward(w *pathSearchWalks) {
 func (s *pathSearch) meet(w *pathSearchWalks, p int32) {
 	forward := w.forward[p]
 	product := s.products[p]
-	backward, met := w.backward[pathSearchKey{node: product.node.ID, slot: int32(product.slot)}]
+	backward, met := w.backward[pathSearchKey{node: nativeGraphEntityKey(product.node), slot: int32(product.slot)}]
 	if met && (w.shortest < 0 || forward+backward < w.shortest) {
 		w.shortest = forward + backward
 	}
@@ -171,7 +171,7 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 		w.forward[entry.product] = 0
 		w.frontier = append(w.frontier, entry.product)
 	}
-	if end := (pathSearchKey{node: target.ID, slot: int32(s.a.final)}); s.slotHolds(s.a.final, target) {
+	if end := (pathSearchKey{node: nativeGraphEntityKey(target), slot: int32(s.a.final)}); s.slotHolds(s.a.final, target) {
 		w.backward[end] = 0
 		w.nodes[end] = target
 		w.back = append(w.back, end)
@@ -209,9 +209,9 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
 	position := max(0, w.shortest-w.backwardRadius)
 	var rows []pipelineRow
-	used := map[storage.EdgeID]struct{}{}
+	used := map[graphEntityKey]struct{}{}
 	stop := false
-	take := func(id storage.EdgeID) bool {
+	take := func(id graphEntityKey) bool {
 		if s.repeatable {
 			return true
 		}
@@ -221,7 +221,7 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 		used[id] = struct{}{}
 		return true
 	}
-	release := func(id storage.EdgeID) {
+	release := func(id graphEntityKey) {
 		if !s.repeatable {
 			delete(used, id)
 		}
@@ -240,13 +240,13 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 			return
 		}
 		for _, step := range w.succs[key] {
-			if stop || !take(step.edge.ID) {
+			if stop || !take(nativeGraphEntityKey(step.edge)) {
 				continue
 			}
 			next := path
 			next.steps = append(append([]pathSearchPathStep(nil), path.steps...), pathSearchPathStep{edge: step.edge, move: step.move, node: step.node})
 			back(step.key, next)
-			release(step.edge.ID)
+			release(nativeGraphEntityKey(step.edge))
 		}
 	}
 	var forward func(middle, p int32, hops []pathSearchHop)
@@ -261,11 +261,11 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 				path = s.pathOf(hops)
 			}
 			product := s.products[middle]
-			back(pathSearchKey{node: product.node.ID, slot: int32(product.slot)}, path)
+			back(pathSearchKey{node: nativeGraphEntityKey(product.node), slot: int32(product.slot)}, path)
 			return
 		}
 		for _, hop := range w.preds[p] {
-			id := s.products[hop.product].steps[hop.step].edge.ID
+			id := nativeGraphEntityKey(s.products[hop.product].steps[hop.step].edge)
 			if stop || !take(id) {
 				continue
 			}
@@ -279,7 +279,7 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 			continue
 		}
 		product := s.products[p]
-		if backward, met := w.backward[pathSearchKey{node: product.node.ID, slot: int32(product.slot)}]; met && backward == w.shortest-position {
+		if backward, met := w.backward[pathSearchKey{node: nativeGraphEntityKey(product.node), slot: int32(product.slot)}]; met && backward == w.shortest-position {
 			forward(int32(p), int32(p), nil)
 		}
 	}

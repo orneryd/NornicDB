@@ -250,7 +250,7 @@ func TestSelectedPathSearchCancelled(t *testing.T) {
 	cancel()
 	products, levels := len(search.products), len(search.levels)
 	calls := 0
-	keepGoing, found, _ := search.trails(2, 0, map[storage.EdgeID]struct{}{}, nil, func([]pathSearchHop) bool { calls++; return true })
+	keepGoing, found, _ := search.trails(2, 0, map[graphEntityKey]struct{}{}, nil, func([]pathSearchHop) bool { calls++; return true })
 	require.False(t, keepGoing)
 	require.False(t, found)
 	require.False(t, search.nextLevel(), "a cancelled search adds no level")

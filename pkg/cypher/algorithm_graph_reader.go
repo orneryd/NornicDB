@@ -6,7 +6,7 @@ import "github.com/orneryd/nornicdb/pkg/storage"
 // six whole-graph APOC extension algorithms. Existing (nodes, config) calls keep
 // their configuration; (nodes, types, config) adds the documented type filter.
 // Omitted/null types and ["*"] select all types; [] selects no relationships.
-func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
+func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{}) (*algorithmGraphExecutor, []algorithmGraphNode, map[string]interface{}, error) {
 	var config map[string]interface{}
 	var types map[string]struct{}
 	second := procedureArgument(args, 1)
@@ -43,14 +43,14 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 			return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2])
 		}
 	}
-	nodes, err := e.algorithmNodes(procedure, args)
+	graph, nodes, err := e.algorithmIdentityInput(procedure, args)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	if types == nil {
-		return e, nodes, config, nil
+		return graph, nodes, config, nil
 	}
-	return e.cloneWithStorage(&algorithmRelationshipReader{Engine: e.storage, types: types}), nodes, config, nil
+	return graph.filtered(types), nodes, config, nil
 }
 
 // Filter each adjacency read at the shared storage boundary, keeping direction,

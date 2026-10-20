@@ -369,22 +369,20 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 	if visit == nil {
 		return ErrInvalidData
 	}
-	seen := make(map[EdgeID]struct{})
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
 		}
+		// Catalog metadata is immutable for this stream. Capture it once;
+		// per-entity mutex/race bookkeeping must not grow with stream length.
+		source := c.sourceDescriptor(alias)
 		var visitErr error
 		err = StreamEdgesByType(ctx, engine, edgeType, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
-			if _, exists := seen[edge.ID]; exists {
-				return nil
-			}
-			seen[edge.ID] = struct{}{}
-			if err := visit(edge); err != nil {
+			if err := visit(source.edge(edge)); err != nil {
 				visitErr = err
 				return err
 			}

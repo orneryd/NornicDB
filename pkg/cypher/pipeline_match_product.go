@@ -206,7 +206,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 }
 
 func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
-	seen := make(map[storage.EdgeID]struct{})
+	seen := make(map[graphEntityKey]struct{})
 	for _, variable := range variables {
 		value, ok := row[variable].(map[string]interface{})
 		if !ok {
@@ -221,10 +221,10 @@ func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
 			if !ok || edge == nil {
 				return false
 			}
-			if _, reused := seen[edge.ID]; reused {
+			if _, reused := seen[nativeGraphEntityKey(edge)]; reused {
 				return false
 			}
-			seen[edge.ID] = struct{}{}
+			seen[nativeGraphEntityKey(edge)] = struct{}{}
 		}
 	}
 	return true

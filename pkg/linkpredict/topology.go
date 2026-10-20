@@ -92,10 +92,15 @@ import (
 //   - alice -- bob
 //   - alice -- charlie
 //   - bob -- diana
-type Graph map[storage.NodeID]NodeSet
+type Graph = GraphFor[storage.NodeID]
+
+// GraphFor keeps algorithm keys in the reader's identity domain.
+type GraphFor[K ~string] map[K]NodeSetFor[K]
 
 // NodeSet represents a set of node IDs (adjacent nodes).
-type NodeSet map[storage.NodeID]struct{}
+type NodeSet = NodeSetFor[storage.NodeID]
+
+type NodeSetFor[K ~string] map[K]struct{}
 
 // Prediction represents a predicted edge with confidence score.
 //
@@ -107,8 +112,10 @@ type NodeSet map[storage.NodeID]struct{}
 //   - Resource Allocation: Weighted sum (0.0-∞)
 //
 // To compare across algorithms, normalize scores to [0, 1] range.
-type Prediction struct {
-	TargetID  storage.NodeID
+type Prediction = PredictionFor[storage.NodeID]
+
+type PredictionFor[K ~string] struct {
+	TargetID  K
 	Score     float64
 	Algorithm string
 	Reason    string
@@ -452,16 +459,16 @@ func ResourceAllocation(graph Graph, source storage.NodeID, topK int) []Predicti
 
 // topKPredictions converts score map to sorted prediction list.
 // Scores are automatically normalized to [0, 1] range based on algorithm.
-func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string) []Prediction {
+func topKPredictions[K ~string](scores map[K]float64, k int, algorithm string) []PredictionFor[K] {
 	if scores == nil {
 		return nil // no such source
 	}
-	predictions := make([]Prediction, 0, len(scores))
+	predictions := make([]PredictionFor[K], 0, len(scores))
 
 	for nodeID, score := range scores {
 		// Normalize score to [0, 1] based on algorithm characteristics
 		normalizedScore := normalizeAlgorithmScore(score, algorithm)
-		predictions = append(predictions, Prediction{
+		predictions = append(predictions, PredictionFor[K]{
 			TargetID:  nodeID,
 			Score:     normalizedScore,
 			Algorithm: algorithm,
@@ -480,7 +487,7 @@ func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string)
 }
 
 // sortPredictions orders predictions by rankedBefore.
-func sortPredictions(predictions []Prediction) {
+func sortPredictions[K ~string](predictions []PredictionFor[K]) {
 	sort.Slice(predictions, func(i, j int) bool {
 		return rankedBefore(predictions[i].Score, predictions[j].Score, predictions[i].TargetID, predictions[j].TargetID)
 	})
@@ -490,7 +497,7 @@ func sortPredictions(predictions []Prediction) {
 // first, and equal scores by target node ID, so ties (common in small or
 // regular graphs) come in the same order on every run, not in map iteration
 // order, and a top-K cut keeps the same candidates.
-func rankedBefore(scoreA, scoreB float64, targetA, targetB storage.NodeID) bool {
+func rankedBefore[K ~string](scoreA, scoreB float64, targetA, targetB K) bool {
 	if scoreA != scoreB {
 		return scoreA > scoreB
 	}
@@ -543,18 +550,18 @@ func normalizeAlgorithmScore(score float64, algorithm string) float64 {
 }
 
 // Contains checks if a node exists in a set.
-func (ns NodeSet) Contains(id storage.NodeID) bool {
+func (ns NodeSetFor[K]) Contains(id K) bool {
 	_, exists := ns[id]
 	return exists
 }
 
 // Size returns the number of nodes in the set.
-func (ns NodeSet) Size() int {
+func (ns NodeSetFor[K]) Size() int {
 	return len(ns)
 }
 
 // Degree returns the degree (number of neighbors) for a node.
-func (g Graph) Degree(node storage.NodeID) int {
+func (g GraphFor[K]) Degree(node K) int {
 	if neighbors, exists := g[node]; exists {
 		return len(neighbors)
 	}
@@ -562,9 +569,9 @@ func (g Graph) Degree(node storage.NodeID) int {
 }
 
 // Neighbors returns the neighbor set for a node.
-func (g Graph) Neighbors(node storage.NodeID) NodeSet {
+func (g GraphFor[K]) Neighbors(node K) NodeSetFor[K] {
 	if neighbors, exists := g[node]; exists {
 		return neighbors
 	}
-	return make(NodeSet)
+	return make(NodeSetFor[K])
 }

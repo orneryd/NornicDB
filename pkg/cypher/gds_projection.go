@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -455,6 +456,7 @@ func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ..
 func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	projection := &GraphProjection{
 		Name:                     name,
+		Database:                 e.databaseName(),
 		NodeLabels:               make(map[string][]string),
 		NodeProperties:           make(map[string]map[string]interface{}),
 		NodePropertyTypes:        make(map[string]string),
@@ -469,18 +471,19 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
 	nodePropertyType := make(map[string]string) // one builder per projected key, shared across labels
-	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
-		for _, label := range node.Labels {
+	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(value *storage.Node) error {
+		node := projection.nativeNodeInput(value)
+		for _, label := range node.labels {
 			labelsSeen[label] = true
 		}
 		var labels []string
 		for _, spec := range nodeSpecs {
-			if spec.element != "*" && !nodeHasLabel(node, spec.element) {
+			if spec.element != "*" && !slices.Contains(node.labels, spec.element) {
 				continue
 			}
 			labels = appendUnique(labels, spec.name)
 			for _, property := range spec.properties {
-				exact, kind, ok, err := gdsConvertPropertyValue(node.Properties[property.property], nodePropertyType[property.key], true)
+				exact, kind, ok, err := gdsConvertPropertyValue(node.properties[property.property], nodePropertyType[property.key], true)
 				if err != nil {
 					return err
 				}
@@ -493,7 +496,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if !ok {
 					continue
 				}
-				id := string(node.ID)
+				id := node.key
 				if projection.NodeProperties[id] == nil {
 					projection.NodeProperties[id] = make(map[string]interface{})
 				}
@@ -501,8 +504,9 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			}
 		}
 		if labels != nil {
-			projection.NodeIDs = append(projection.NodeIDs, string(node.ID))
-			projection.NodeLabels[string(node.ID)] = labels
+			id := node.key
+			projection.NodeIDs = append(projection.NodeIDs, id)
+			projection.NodeLabels[id] = labels
 		}
 		return nil
 	})
@@ -547,14 +551,15 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	// Only projected relationships are kept for that (and, to refuse them
 	// with validateRelationships, those with an end outside the projection),
 	// so memory follows the projection, not the store.
-	var edges []*storage.Edge
-	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
-		typesSeen[edge.Type] = true
-		if !gdsTypeProjected(relSpecs, edge.Type) {
+	var edges []projectionEdgeInput
+	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(value *storage.Edge) error {
+		typesSeen[value.Type] = true
+		if !gdsTypeProjected(relSpecs, value.Type) {
 			return nil
 		}
-		_, hasStart := projection.nodeIndex[string(edge.StartNode)]
-		_, hasEnd := projection.nodeIndex[string(edge.EndNode)]
+		edge := projection.nativeEdgeInput(value)
+		_, hasStart := projection.nodeIndex[edge.source]
+		_, hasEnd := projection.nodeIndex[edge.target]
 		if hasStart && hasEnd || validateRelationships {
 			edges = append(edges, edge)
 		}
@@ -563,10 +568,10 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	if err != nil {
 		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
 	}
-	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	sort.Slice(edges, func(i, j int) bool { return edges[i].key < edges[j].key })
 	for _, edge := range edges {
-		typesSeen[edge.Type] = true
-		start, end := string(edge.StartNode), string(edge.EndNode)
+		typesSeen[edge.relationshipType] = true
+		start, end := edge.source, edge.target
 		_, hasStart := projection.nodeIndex[start]
 		_, hasEnd := projection.nodeIndex[end]
 		if !hasStart || !hasEnd {
@@ -579,7 +584,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			return nil, localizedError(localization.CypherGraphProceduresRelationshipEndNotProjected(side, id), nil)
 		}
 		for specIndex, spec := range relSpecs {
-			if spec.element != "*" && edge.Type != spec.element {
+			if spec.element != "*" && edge.relationshipType != spec.element {
 				continue
 			}
 			properties := make(map[string]float64, len(spec.properties))
@@ -587,7 +592,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if property.property == "*" {
 					continue // counted, by its COUNT aggregation
 				}
-				if exact, _, ok, err := gdsConvertPropertyValue(edge.Properties[property.property], "Relationship", true); err != nil {
+				if exact, _, ok, err := gdsConvertPropertyValue(edge.properties[property.property], "Relationship", true); err != nil {
 					return nil, err
 				} else if ok {
 					value := exact.(float64)
@@ -609,7 +614,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				directions = [][2]string{{start, end}, {end, start}}
 			}
 			for _, direction := range directions {
-				relationship := ProjectedRelationship{ID: string(edge.ID), Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
+				relationship := ProjectedRelationship{ID: edge.key, Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
 				if !spec.merges() {
 					projection.Relationships = append(projection.Relationships, relationship)
 					continue

@@ -405,7 +405,7 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 	if len(state.nodes) > 0 {
 		end := state.nodes[len(state.nodes)-1]
 		if bound, exists := row[first]; exists {
-			if node, ok := bound.(*storage.Node); !ok || node == nil || node.ID != end.ID {
+			if node, ok := bound.(*storage.Node); !ok || node == nil || !nativeEntitiesEqual(node, end) {
 				return nil
 			}
 		}

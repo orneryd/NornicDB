@@ -301,7 +301,7 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 			return nil, nil, err
 		}
 	}
-	return columns, rows, nil
+	return columns, storage.BindRemoteRowsToSource(rows, engine.PhysicalSourceKey()), nil
 }
 
 func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine) (*remoteParticipant, error) {

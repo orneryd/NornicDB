@@ -76,8 +76,12 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		projected.Rows = append(projected.Rows, values)
 	}
-	nodeIDs, edgeIDs := collectDeleteMutationTargets(projected)
+	mutationTargets := collectDeleteMutationTargets(projected)
 	store := e.getStorage(ctx)
+	nodeIDs, edgeIDs, lookupErr := mutationTargets.storageIDs(store)
+	if lookupErr != nil {
+		return nil, true, lookupErr
+	}
 	// A node relationships still connect is deleted for now and checked at
 	// commit, when the transaction can hold it (connectedNodeDeletes); a
 	// store without transactions checks here.
@@ -96,15 +100,15 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// Rows are deleted as they stream, so an entity an earlier row of the
 	// statement deleted reaches storage again: it is already gone
 	// (storage.ErrNotFound) and counts once, as in Neo4j (#827).
-	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
-	for _, edgeID := range edgeIDs {
+	deletedEdges := make(map[storage.EntityIdentity]struct{}, len(edgeIDs))
+	for index, edgeID := range edgeIDs {
 		if err := store.DeleteEdge(edgeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
 			return nil, true, err
 		}
-		deletedEdges[edgeID] = struct{}{}
+		deletedEdges[mutationTargets.edges[index].identity] = struct{}{}
 	}
 	if detach {
 		for _, nodeID := range nodeIDs {
@@ -113,7 +117,8 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				return nil, true, err
 			}
 			for _, edge := range incident {
-				deletedEdges[edge.ID] = struct{}{}
+				identity, _ := nativeEntityIdentity(edge)
+				deletedEdges[identity] = struct{}{}
 			}
 		}
 	}
@@ -136,7 +141,12 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	if deleted == nil {
 		deleted = &deletedEntities{}
 	}
-	deleted.add(nodeIDs, deletedEdges)
+	for _, target := range mutationTargets.nodes {
+		deleted.addTarget(target)
+	}
+	for identity := range deletedEdges {
+		deleted.addTarget(deleteTargetValue{kind: deleteProjectionRelationship, identity: identity})
+	}
 	e.replaceDeletedEntityViews(rows, deleted)
 	return stats, true, nil
 }

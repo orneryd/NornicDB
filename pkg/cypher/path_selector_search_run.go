@@ -8,7 +8,7 @@ import (
 
 // pathSearchKey is a pair of a data node and a slot of the automaton.
 type pathSearchKey struct {
-	node   storage.NodeID
+	node   graphEntityKey
 	slot   int32
 	counts string
 }
@@ -38,9 +38,9 @@ type pathSearchLink struct {
 }
 
 // uses reports whether the path through link uses the relationship id.
-func (link *pathSearchLink) uses(s *pathSearch, id storage.EdgeID) bool {
+func (link *pathSearchLink) uses(s *pathSearch, id graphEntityKey) bool {
 	for ; link != nil; link = link.prev {
-		if s.products[link.product].steps[link.step].edge.ID == id {
+		if nativeGraphEntityKey(s.products[link.product].steps[link.step].edge) == id {
 			return true
 		}
 	}
@@ -90,7 +90,7 @@ type pathSearchPathStep struct {
 
 // pathSearchEdgeKey caches the relationships of a node in a direction.
 type pathSearchEdgeKey struct {
-	node      storage.NodeID
+	node      graphEntityKey
 	direction string
 }
 
@@ -117,8 +117,8 @@ type pathSearch struct {
 	// the shortest walk from a product to it; ends restricts it to a set.
 	target   *storage.Node
 	distance map[pathSearchKey]int
-	ends     map[storage.NodeID]bool
-	nogoods  map[[2]int32][][]storage.EdgeID
+	ends     map[graphEntityKey]bool
+	nogoods  map[[2]int32][][]graphEntityKey
 	// dominators tells, once every product is expanded, the relationships
 	// every walk to a product takes; closed marks the end products no path
 	// can reach again.
@@ -139,12 +139,12 @@ func (e *StorageExecutor) newPathSearch(ctx context.Context, a *pathSearchAutoma
 // the slot's variable, the slot's labels and its predicates.
 func (s *pathSearch) slotHolds(slot int, node *storage.Node) bool {
 	held := &s.a.slots[slot]
-	if slot == s.a.final && (s.target != nil && node.ID != s.target.ID || s.ends != nil && !s.ends[node.ID]) {
+	if slot == s.a.final && (s.target != nil && !nativeEntitiesEqual(node, s.target) || s.ends != nil && !s.ends[nativeGraphEntityKey(node)]) {
 		return false
 	}
 	if held.variable != "" && !held.list {
 		if bound, exists := s.row[held.variable]; exists {
-			if boundNode, ok := bound.(*storage.Node); !ok || boundNode == nil || boundNode.ID != node.ID {
+			if boundNode, ok := bound.(*storage.Node); !ok || boundNode == nil || !nativeEntitiesEqual(boundNode, node) {
 				return false
 			}
 		}
@@ -180,7 +180,7 @@ func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge
 	}
 	if t.variable != "" && !t.list {
 		if bound, exists := s.row[t.variable]; exists {
-			if boundEdge, ok := bound.(*storage.Edge); !ok || boundEdge == nil || boundEdge.ID != edge.ID {
+			if boundEdge, ok := bound.(*storage.Edge); !ok || boundEdge == nil || !nativeEntitiesEqual(boundEdge, edge) {
 				return false
 			}
 		}
@@ -212,7 +212,7 @@ func (s *pathSearch) predicatesHold(variable string, value interface{}, predicat
 
 // relationships lists node's relationships in direction (in the
 // automaton's direction), cached.
-func (s *pathSearch) relationships(node storage.NodeID, direction string) []*storage.Edge {
+func (s *pathSearch) relationships(node graphEntityKey, direction string) []*storage.Edge {
 	key := pathSearchEdgeKey{node: node, direction: direction}
 	if edges, cached := s.edges[key]; cached {
 		return edges
@@ -249,7 +249,7 @@ func reverseDirection(direction string) string {
 
 // product returns the product of node and slot, added when new.
 func (s *pathSearch) productCounts(node *storage.Node, slot int, counts string) int32 {
-	key := pathSearchKey{node: node.ID, slot: int32(slot), counts: counts}
+	key := pathSearchKey{node: nativeGraphEntityKey(node), slot: int32(slot), counts: counts}
 	if index, exists := s.index[key]; exists {
 		return index
 	}
@@ -287,14 +287,14 @@ func (s *pathSearch) expand(p int32) {
 		if !valid {
 			continue
 		}
-		for _, edge := range s.relationships(node.ID, transition.direction) {
+		for _, edge := range s.relationships(nativeGraphEntityKey(node), transition.direction) {
 			if s.ctx.Err() != nil {
 				return
 			}
 			if !s.transitionHolds(transition, edge) {
 				continue
 			}
-			next, ok := s.e.loadTraversalEndpointNode(s.traversal, otherEnd(edge, node.ID))
+			next, ok := s.e.loadTraversalEndpointKey(s.traversal, nativeOtherEndpointKey(edge, nativeGraphEntityKey(node)))
 			if !ok || !s.chainHolds(chain, next) {
 				continue
 			}
@@ -315,7 +315,7 @@ func (s *pathSearch) begin(source *storage.Node) {
 		s.edges = map[pathSearchEdgeKey][]*storage.Edge{}
 		s.index = map[pathSearchKey]int32{}
 		s.roots = map[int32]int{}
-		s.nogoods = map[[2]int32][][]storage.EdgeID{}
+		s.nogoods = map[[2]int32][][]graphEntityKey{}
 	}
 	level := pathSearchLevel{index: map[int32]int32{}}
 	for index, chain := range s.a.chains[s.a.initial] {
@@ -349,7 +349,7 @@ func (s *pathSearch) reachable(p int32, depth int) bool {
 		return true
 	}
 	product := s.products[p]
-	distance, known := s.distance[pathSearchKey{node: product.node.ID, slot: int32(product.slot)}]
+	distance, known := s.distance[pathSearchKey{node: nativeGraphEntityKey(product.node), slot: int32(product.slot)}]
 	return known && (s.maxLength < 0 || depth+distance <= s.maxLength)
 }
 
@@ -384,7 +384,7 @@ func (s *pathSearch) nextLevel() bool {
 			}
 			added := &next.entries[index]
 			added.preds = append(added.preds, pathSearchPred{entry: int32(entryIndex), step: int32(stepIndex)})
-			if added.witness == nil && (s.repeatable || !entry.witness.uses(s, step.edge.ID)) {
+			if added.witness == nil && (s.repeatable || !entry.witness.uses(s, nativeGraphEntityKey(step.edge))) {
 				added.witness = &pathSearchLink{product: entry.product, step: int32(stepIndex), prev: entry.witness}
 			}
 		}
@@ -403,11 +403,11 @@ func (s *pathSearch) nextLevel() bool {
 			}
 			from := level.entries[pred.entry]
 			edge := s.products[from.product].steps[pred.step].edge
-			if depth > 0 && s.unexpanded == 0 && s.closedStep(from.product, edge.ID) {
+			if depth > 0 && s.unexpanded == 0 && s.closedStep(from.product, nativeGraphEntityKey(edge)) {
 				// Every walk to the product before uses the relationship.
 				continue
 			}
-			used := map[storage.EdgeID]struct{}{edge.ID: {}}
+			used := map[graphEntityKey]struct{}{nativeGraphEntityKey(edge): {}}
 			s.trails(depth, pred.entry, used, nil, func(hops []pathSearchHop) bool {
 				link := (*pathSearchLink)(nil)
 				for index := len(hops) - 1; index >= 0; index-- {
@@ -438,7 +438,7 @@ func (s *pathSearch) nextLevel() bool {
 // back to the first; it stops when yield returns false. It returns whether
 // it was not stopped, whether it found a path, and, when it found none, the
 // relationships of used that blocked it.
-func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]struct{}, hops []pathSearchHop, yield func([]pathSearchHop) bool) (bool, bool, []storage.EdgeID) {
+func (s *pathSearch) trails(depth int, entry int32, used map[graphEntityKey]struct{}, hops []pathSearchHop, yield func([]pathSearchHop) bool) (bool, bool, []graphEntityKey) {
 	if s.ctx.Err() != nil {
 		return false, false, nil
 	}
@@ -459,8 +459,8 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 		}
 	}
 	found := false
-	var conflicts []storage.EdgeID
-	conflict := func(id storage.EdgeID) {
+	var conflicts []graphEntityKey
+	conflict := func(id graphEntityKey) {
 		for _, have := range conflicts {
 			if have == id {
 				return
@@ -470,7 +470,7 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 	}
 	for _, pred := range s.levels[depth].entries[entry].preds {
 		from := s.levels[depth-1].entries[pred.entry]
-		id := s.products[from.product].steps[pred.step].edge.ID
+		id := nativeGraphEntityKey(s.products[from.product].steps[pred.step].edge)
 		if !s.repeatable {
 			if _, in := used[id]; in {
 				conflict(id)
@@ -553,7 +553,7 @@ func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearc
 			return
 		}
 	}
-	s.trails(depth, entry, map[storage.EdgeID]struct{}{}, nil, func(hops []pathSearchHop) bool {
+	s.trails(depth, entry, map[graphEntityKey]struct{}{}, nil, func(hops []pathSearchHop) bool {
 		if s.ctx.Err() != nil {
 			return false
 		}
@@ -634,7 +634,7 @@ func (s *pathSearch) done(targets map[int32]*pathSearchTarget) bool {
 	final := int32(s.a.final)
 	switch {
 	case s.target != nil:
-		index, exists := s.index[pathSearchKey{node: s.target.ID, slot: final}]
+		index, exists := s.index[pathSearchKey{node: nativeGraphEntityKey(s.target), slot: final}]
 		return exists && satisfied(index) || !exists && s.unexpanded == 0
 	case s.ends != nil:
 		all := true
@@ -670,7 +670,7 @@ func (s *pathSearch) closedEnd(p int32) bool {
 	}
 	closed := true
 	for _, hop := range s.dominators.incoming[p] {
-		if !s.closedStep(hop.product, s.products[hop.product].steps[hop.step].edge.ID) {
+		if !s.closedStep(hop.product, nativeGraphEntityKey(s.products[hop.product].steps[hop.step].edge)) {
 			closed = false
 			break
 		}
@@ -683,7 +683,7 @@ func (s *pathSearch) closedEnd(p int32) bool {
 // from product p along the relationship id: every walk of one step or more
 // from the source to p uses it already, or none reaches p. It holds only
 // once every product is expanded.
-func (s *pathSearch) closedStep(p int32, id storage.EdgeID) bool {
+func (s *pathSearch) closedStep(p int32, id graphEntityKey) bool {
 	s.dominate()
 	d := s.dominators
 	node := p + 1
@@ -707,7 +707,7 @@ func (s *pathSearch) closedStep(p int32, id storage.EdgeID) bool {
 // dominates a product is a relationship every walk to it takes.
 type pathSearchDominators struct {
 	idom         []int32
-	relationship map[storage.EdgeID]int32
+	relationship map[graphEntityKey]int32
 	incoming     map[int32][]pathSearchHop
 }
 
@@ -717,7 +717,7 @@ func (s *pathSearch) dominate() {
 	if s.dominators != nil {
 		return
 	}
-	d := &pathSearchDominators{relationship: map[storage.EdgeID]int32{}, incoming: map[int32][]pathSearchHop{}}
+	d := &pathSearchDominators{relationship: map[graphEntityKey]int32{}, incoming: map[int32][]pathSearchHop{}}
 	s.dominators, s.closed = d, map[int32]bool{}
 	products := int32(len(s.products))
 	count := 1 + products + int32(len(s.levels[0].entries))
@@ -729,7 +729,7 @@ func (s *pathSearch) dominate() {
 	for index := int32(0); index < count; index++ {
 		grow()
 	}
-	relationshipNode := func(id storage.EdgeID) int32 {
+	relationshipNode := func(id graphEntityKey) int32 {
 		node, exists := d.relationship[id]
 		if !exists {
 			node = grow()
@@ -739,7 +739,7 @@ func (s *pathSearch) dominate() {
 	}
 	link := func(from int32, p int32) {
 		for _, step := range s.products[p].steps {
-			via := relationshipNode(step.edge.ID)
+			via := relationshipNode(nativeGraphEntityKey(step.edge))
 			successors[from] = append(successors[from], via)
 			successors[via] = append(successors[via], step.to+1)
 		}

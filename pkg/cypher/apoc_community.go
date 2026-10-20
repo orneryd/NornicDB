@@ -5,7 +5,6 @@ import (
 	"context"
 
 	"github.com/orneryd/nornicdb/pkg/louvain"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // =============================================================================
@@ -32,7 +31,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	communities := graph.computeLouvain(nodes, weightProp)
 
 	// Build result
-	rows := algorithmRows(nodes, communities)
+	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -48,19 +47,19 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 // helps, then merges each community into one node; levels repeat until a
 // level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
 // numbered by their first node.
-func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+func (e *algorithmGraphExecutor) computeLouvain(nodes []algorithmGraphNode, weightProp string) map[graphEntityKey]int {
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[graphEntityKey]int{}
 	}
-	index := make(map[storage.NodeID]int, len(nodes))
-	unique := make([]*storage.Node, 0, len(nodes))
+	index := make(map[graphEntityKey]int, len(nodes))
+	unique := make([]algorithmGraphNode, 0, len(nodes))
 	for _, node := range nodes {
 		if _, listed := index[node.ID]; !listed {
 			index[node.ID] = len(unique)
 			unique = append(unique, node)
 		}
 	}
-	var relationships []*storage.Edge
+	var relationships []algorithmGraphEdge
 	for _, node := range unique {
 		// Enumerate physical relationships once. Undirected expansion and
 		// degree/weight accounting belong to louvain.RunUndirected;
@@ -80,7 +79,7 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 		}
 		return source, target, weight, sourceFound && targetFound
 	}, louvain.DefaultOptions()))
-	result := make(map[storage.NodeID]int, len(unique))
+	result := make(map[graphEntityKey]int, len(unique))
 	for i, node := range unique {
 		result[node.ID] = membership[i]
 	}
@@ -104,7 +103,7 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 
 	communities := graph.computeLabelPropagation(nodes)
 
-	rows := algorithmRows(nodes, communities)
+	rows := graphAlgorithmRows(nodes, communities)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -112,14 +111,14 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 	}, nil
 }
 
-func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[storage.NodeID]int {
+func (e *algorithmGraphExecutor) computeLabelPropagation(nodes []algorithmGraphNode) map[graphEntityKey]int {
 
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[graphEntityKey]int{}
 	}
 
 	// Initialize: each node gets its own label
-	labels := make(map[storage.NodeID]int)
+	labels := make(map[graphEntityKey]int)
 	for i, node := range nodes {
 		labels[node.ID] = i
 	}
@@ -187,7 +186,7 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 
 	components := graph.computeWCC(nodes)
 
-	rows := algorithmRows(nodes, components)
+	rows := graphAlgorithmRows(nodes, components)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "componentId"},
@@ -195,15 +194,15 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 	}, nil
 }
 
-func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]int {
+func (e *algorithmGraphExecutor) computeWCC(nodes []algorithmGraphNode) map[graphEntityKey]int {
 
 	if len(nodes) == 0 {
-		return map[storage.NodeID]int{}
+		return map[graphEntityKey]int{}
 	}
 
 	// Union-Find structure
-	parent := make(map[storage.NodeID]storage.NodeID)
-	rank := make(map[storage.NodeID]int)
+	parent := make(map[graphEntityKey]graphEntityKey)
+	rank := make(map[graphEntityKey]int)
 
 	for _, node := range nodes {
 		parent[node.ID] = node.ID
@@ -211,8 +210,8 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 	}
 
 	// Find with path compression
-	var find func(x storage.NodeID) storage.NodeID
-	find = func(x storage.NodeID) storage.NodeID {
+	var find func(x graphEntityKey) graphEntityKey
+	find = func(x graphEntityKey) graphEntityKey {
 		if parent[x] != x {
 			parent[x] = find(parent[x])
 		}
@@ -220,7 +219,7 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 	}
 
 	// Union by rank
-	union := func(x, y storage.NodeID) {
+	union := func(x, y graphEntityKey) {
 		px, py := find(x), find(y)
 		if px == py {
 			return
@@ -250,9 +249,9 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 	}
 
 	// Assign component IDs
-	componentMap := make(map[storage.NodeID]int)
+	componentMap := make(map[graphEntityKey]int)
 	nextID := 0
-	result := make(map[storage.NodeID]int)
+	result := make(map[graphEntityKey]int)
 
 	for _, node := range nodes {
 		root := find(node.ID)

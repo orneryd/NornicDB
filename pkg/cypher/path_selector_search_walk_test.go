@@ -106,11 +106,11 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	search := exec.newPathSearch(cancelled, plus.forward, pipelineRow{}, -1, s1)
-	side := search.newWalkSide(s1.ID, "outgoing", true)
+	side := search.newWalkSide(nativeGraphEntityKey(s1), "outgoing", true)
 	for len(side.frontier) < 300 {
-		side.frontier = append(side.frontier, s1.ID)
+		side.frontier = append(side.frontier, nativeGraphEntityKey(s1))
 	}
-	shortest, meets := search.walkLevel(side, search.newWalkSide(s4.ID, "incoming", true), true)
+	shortest, meets := search.walkLevel(side, search.newWalkSide(nativeGraphEntityKey(s4), "incoming", true), true)
 	require.Equal(t, -1, shortest)
 	require.Nil(t, meets)
 	require.Len(t, side.reached, 1)

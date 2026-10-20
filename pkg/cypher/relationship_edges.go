@@ -16,7 +16,7 @@ func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*st
 	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
 }
 
-func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
+func combineIncidentEdges[K ~string](ctx context.Context, _ K, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -31,7 +31,9 @@ func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, 
 		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if edge != nil && edge.StartNode == nodeID && edge.EndNode == nodeID {
+		// An incident self-relationship occurs in both lists. Compare its
+		// native endpoint identities, not an engine-domain lookup argument.
+		if edge != nil && edge.StartIdentity() == edge.EndIdentity() {
 			continue
 		}
 		edges = append(edges, edge)

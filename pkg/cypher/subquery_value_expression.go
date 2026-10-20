@@ -491,7 +491,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		inner := e.buildPathContext(path, matches)
 		correlated := true
 		for name, node := range inner.nodes {
-			if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || bound.ID != node.ID) {
+			if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || !nativeEntitiesEqual(bound, node)) {
 				correlated = false
 				break
 			}
@@ -500,7 +500,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 			if !correlated {
 				break
 			}
-			if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || bound.ID != relationship.ID) {
+			if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || !nativeEntitiesEqual(bound, relationship)) {
 				correlated = false
 				break
 			}
