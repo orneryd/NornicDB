@@ -27,7 +27,7 @@ func (r keepOneReranker) Rerank(_ context.Context, _ string, candidates []Rerank
 }
 
 // One score left of several candidates is the reranker's filtering, kept;
-// one candidate's one score is flat; no score keeps the fused order. A
+// one candidate's one score is flat; no score is a failed provider batch. A
 // candidate's header longer than the budget is cut to it.
 func TestRerankSingleSurvivorAndHeaderBudget(t *testing.T) {
 	ctx := context.Background()
@@ -41,21 +41,22 @@ func TestRerankSingleSurvivorAndHeaderBudget(t *testing.T) {
 			{result: SearchResult{ID: "r1", Relationship: &storage.Edge{ID: "r1", Type: "CITES"}}},
 		}
 	}
-	ordered, reason, reranked := svc.rerankGraphPool(ctx, "bridge", pool(), opts)
-	require.True(t, reranked)
-	require.Equal(t, SearchFallbackNone, reason)
-	require.Len(t, ordered, 1)
+	ordered, outcome := svc.rerankGraphPool(ctx, "bridge", pool(), opts)
+	require.Equal(t, rerankMethodApplied, outcome.Method)
+	require.Equal(t, SearchFallbackNone, outcome.FallbackReason)
+	require.Len(t, ordered, 2)
 	require.Equal(t, "r1", ordered[0].result.ID)
+	require.Equal(t, "a", ordered[1].result.ID)
 
-	ordered, reason, reranked = svc.rerankGraphPool(ctx, "bridge", pool()[1:], opts)
-	require.False(t, reranked)
-	require.Equal(t, SearchFallbackRerankScoresFlat, reason)
+	ordered, outcome = svc.rerankGraphPool(ctx, "bridge", pool()[1:], opts)
+	require.Equal(t, rerankMethodOriginal, outcome.Method)
+	require.Equal(t, SearchFallbackRerankScoresFlat, outcome.FallbackReason)
 	require.Len(t, ordered, 1)
 
 	svc.SetReranker(keepOneReranker{keep: "nothing at all"})
-	ordered, reason, reranked = svc.rerankGraphPool(ctx, "bridge", pool(), opts)
-	require.False(t, reranked)
-	require.Equal(t, SearchFallbackRerankScoresFlat, reason)
+	ordered, outcome = svc.rerankGraphPool(ctx, "bridge", pool(), opts)
+	require.Equal(t, rerankMethodOriginal, outcome.Method)
+	require.Equal(t, SearchFallbackRerankFailed, outcome.FallbackReason)
 	require.Len(t, ordered, 2)
 
 	require.True(t, rerankScoresFlat(0, 3, nil))

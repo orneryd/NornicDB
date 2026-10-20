@@ -206,12 +206,20 @@ func searchSeveralQueryChunks(
 	}
 	exhausted := true
 	var (
-		fusedIndexes   map[string]int
-		fused          []fusedResult
-		budgetReached  bool
-		fallbackReason SearchFallbackReason
-		embeddingErr   error
+		fusedIndexes     map[string]int
+		fused            []fusedResult
+		budgetReached    bool
+		fallbackReason   SearchFallbackReason
+		embeddingErr     error
+		rerankApplied    bool
+		rerankOrderOwned bool
+		rerankExcluded   map[string]struct{}
 	)
+	// Multi-chunk fusion creates a new candidate set, so it is a separate
+	// canonical outcome owner rather than a rerank consumer. Its explicit
+	// contract is: outer-RRF owns aggregate order, rerank is applied when any
+	// participating chunk applied it, and any participating fallback remains
+	// visible with the first reported reason.
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
 		if fatal := fatalChunkedSearchError(ctx, errorPolicy.FatalEmbeddingError, err); fatal != nil {
@@ -246,6 +254,14 @@ func searchSeveralQueryChunks(
 			continue
 		}
 		searched++
+		rerankApplied = rerankApplied || response.rerankApplied
+		rerankOrderOwned = rerankOrderOwned || response.rerankOrderOwned
+		for id := range response.rerankExcluded {
+			if rerankExcluded == nil {
+				rerankExcluded = make(map[string]struct{})
+			}
+			rerankExcluded[id] = struct{}{}
+		}
 		if response.FallbackReason != SearchFallbackNone && fallbackReason == SearchFallbackNone {
 			fallbackReason = response.FallbackReason
 		}
@@ -260,8 +276,8 @@ func searchSeveralQueryChunks(
 			fusedIndexes = make(map[string]int, capacity)
 			fused = make([]fusedResult, 0, capacity)
 		}
-		for rank := range response.Results {
-			result := &response.Results[rank]
+		for rank, orderedResult := range response.Results {
+			result := &orderedResult
 			id := string(result.NodeID)
 			if id == "" {
 				// A relationship, or a node known by ID only; a graph
@@ -291,29 +307,6 @@ func searchSeveralQueryChunks(
 		logQueryEmbeddingFallback(ctx, errorPolicy.Transport, embeddingErr)
 	}
 
-	if len(fused) == 0 {
-		if opts.FallbackEnabled != nil && !*opts.FallbackEnabled {
-			return &SearchResponse{
-				RetrievalExhausted:     exhausted && !budgetReached,
-				CandidateBudgetReached: budgetReached,
-				Status:                 "success",
-				Query:                  query,
-				Results:                []SearchResult{},
-				SearchMethod:           "chunked_rrf_hybrid",
-				FallbackTriggered:      false,
-			}, searched, nil
-		}
-		response, err := searchQuery(ctx, query, nil, opts)
-		if response != nil {
-			// The callback may return a cached response shared with other callers.
-			copy := *response
-			copy.CandidateBudgetReached = budgetReached || response.CandidateBudgetReached
-			copy.RetrievalExhausted = exhausted && response.RetrievalExhausted && !copy.CandidateBudgetReached
-			response = &copy
-		}
-		return withSearchFallback(response, fallbackReason), searched, err
-	}
-
 	slices.SortFunc(fused, func(left, right fusedResult) int {
 		if order := cmp.Compare(right.score, left.score); order != 0 {
 			return order
@@ -334,11 +327,43 @@ func searchSeveralQueryChunks(
 		TotalCandidates:        len(fusedIndexes),
 		Returned:               len(fused),
 		SearchMethod:           "chunked_rrf_hybrid",
+		rerankApplied:          rerankApplied,
+		rerankOrderOwned:       rerankOrderOwned,
 		FallbackTriggered:      false,
 		FallbackReason:         fallbackReason,
 	}
+	if rerankApplied {
+		response.SearchMethod += "+rerank"
+	}
 	if fallbackReason != SearchFallbackNone {
 		response.FallbackTriggered = true
+	}
+	for id := range rerankExcluded {
+		if _, included := fusedIndexes[id]; included {
+			delete(rerankExcluded, id)
+		}
+	}
+	if len(rerankExcluded) > 0 {
+		response.rerankExcluded = rerankExcluded
+	}
+	if len(fused) == 0 {
+		if response.selectionIsAuthoritative() {
+			return response, searched, nil
+		}
+		if opts.FallbackEnabled != nil && !*opts.FallbackEnabled {
+			response.FallbackTriggered = false
+			response.FallbackReason = SearchFallbackNone
+			return response, searched, nil
+		}
+		fallback, err := searchQuery(ctx, query, nil, opts)
+		if fallback != nil {
+			// The callback may return a cached response shared with other callers.
+			copy := *fallback
+			copy.CandidateBudgetReached = budgetReached || fallback.CandidateBudgetReached
+			copy.RetrievalExhausted = exhausted && fallback.RetrievalExhausted && !copy.CandidateBudgetReached
+			fallback = &copy
+		}
+		return withSearchFallback(fallback, fallbackReason), searched, err
 	}
 	for _, fusedResult := range fused {
 		result := *fusedResult.best
