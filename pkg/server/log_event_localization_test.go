@@ -315,7 +315,7 @@ func TestHTTP2EnabledLogPreservesFieldsAcrossLocales(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-			var output bytes.Buffer
+			var output synchronizedLogBuffer
 			logger := slog.New(slog.NewJSONHandler(&output, nil))
 			manager, err := localization.NewManager([]language.Tag{test.tag}, logger)
 			require.NoError(t, err)
