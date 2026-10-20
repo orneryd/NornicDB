@@ -149,7 +149,7 @@ func TestCodeIntelRelationshipIdentityWorkingSet(t *testing.T) {
 	defer cancel()
 	run := executeStreamed(ctx, exec, "MATCH ()-[r]->() RETURN startNode(r).id AS a,endNode(r).id AS b,type(r) AS t,r.site AS site,r.props_hash AS hash", 16)
 	t.Cleanup(func() { cancel(); <-run.stream.Done() })
-	require.True(t, run.stream.streamed(), "identity query must use the result stream: %v", run.err)
+	require.True(t, run.stream.streamed(), "identity query must use the result stream: %v", run.errIfDone())
 	// The producer is now stopped at stream demand. GC removes transient
 	// decoder allocations; retained MATCH inputs remain observable.
 	runtime.GC()
