@@ -2088,7 +2088,7 @@ func optionalRelationshipTypeMatches(filter, actual string) bool {
 }
 
 func joinedValueKey(val interface{}) string {
-	return cypherValueKey(val, cypherEquivalenceContract)
+	return cypherEquivalenceKey(val)
 }
 
 // ========================================

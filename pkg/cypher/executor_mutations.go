@@ -228,25 +228,25 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			if !ok {
 				return []*storage.Node{}, true, nil
 			}
-			allowed := map[string]struct{}{}
+			var items []interface{}
 			switch v := raw.(type) {
 			case []interface{}:
-				for _, item := range v {
-					allowed[fmt.Sprintf("%v", item)] = struct{}{}
-				}
+				items = v
 			case []string:
-				for _, item := range v {
-					allowed[item] = struct{}{}
+				items = make([]interface{}, len(v))
+				for i, item := range v {
+					items[i] = item
 				}
 			default:
 				return nil, false, nil
 			}
+			allowed, nonComparable := buildComparableMembershipIndex(items)
 			filtered := make([]*storage.Node, 0, len(nodes))
 			for _, n := range nodes {
 				if n == nil {
 					continue
 				}
-				if _, ok := allowed[fmt.Sprintf("%v", n.Properties[prop])]; ok {
+				if evaluateComparableMembership(n.Properties[prop], allowed, nonComparable, e.compareEqual) {
 					filtered = append(filtered, n)
 				}
 			}

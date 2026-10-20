@@ -13,8 +13,8 @@ import (
 func TestExactNumericConsumerFamilies(t *testing.T) {
 	for name, key := range map[string]func(interface{}) string{
 		"correlated_call": callSubqueryLookupKeyString,
-		"path_distinct": joinedValueKey,
-		"batch_match": propEqKeyBatch,
+		"path_distinct":   joinedValueKey,
+		"batch_match":     propEqKeyBatch,
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Equal(t, key(int64(9007199254740992)), key(float64(9007199254740992)))
