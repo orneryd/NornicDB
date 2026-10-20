@@ -35,8 +35,39 @@ func JSONScalar(value interface{}) (interface{}, bool) {
 		return v.String(), true
 	case CypherUUID:
 		return v.String(), true
+	case CypherPoint:
+		return JSONPoint(v), true
+	case *CypherPoint:
+		if v == nil {
+			return nil, true
+		}
+		return JSONPoint(*v), true
+	case CypherVector:
+		return JSONVector(v), true
 	}
 	return nil, false
+}
+
+// JSONPoint is the native HTTP point value; protocols may add metadata and
+// impose their own object-key order without redefining its contents.
+func JSONPoint(point CypherPoint) map[string]interface{} {
+	coordinates := make([]interface{}, 0, 3)
+	for _, coordinate := range point.Coordinates() {
+		coordinates = append(coordinates, JSONFloat(coordinate, 64))
+	}
+	return map[string]interface{}{"type": "Point", "coordinates": coordinates, "crs": map[string]interface{}{
+		"srid": int64(point.SRID), "name": point.CRSName(), "type": "link", "properties": map[string]interface{}{"href": point.CRSHref(), "type": "ogcwkt"},
+	}}
+}
+
+var jsonVectorTypeNames = map[VectorCoordinateType]string{
+	VectorInteger64: "Int64Vector", VectorInteger32: "Int32Vector", VectorInteger16: "Int16Vector",
+	VectorInteger8: "Int8Vector", VectorFloat64: "Float64Vector", VectorFloat32: "Float32Vector",
+}
+
+// JSONVector is the native HTTP vector description, not its coordinates.
+func JSONVector(vector CypherVector) map[string]interface{} {
+	return map[string]interface{}{"typeName": jsonVectorTypeNames[vector.Type], "incomparableType": true, "sequenceValue": false}
 }
 
 // JSONFloat is the native JSON spelling of a floating point number, including
@@ -82,6 +113,8 @@ func jsonTransportValue(value interface{}, remaining *int) (interface{}, error) 
 		value = converted
 	}
 	switch v := value.(type) {
+	case PathResult:
+		return jsonTransportValue(map[string]interface{}{"Nodes": v.Nodes, "Relationships": v.Relationships, "Length": v.Length, "SegmentLengths": v.SegmentLengths}, remaining)
 	case *storage.Node:
 		if v == nil {
 			return jsonTransportValue(nil, remaining)

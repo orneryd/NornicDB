@@ -357,6 +357,9 @@ type statementMemoryLimitKey struct{}
 // only tightens configured database limits, uses the existing reservation,
 // cancellation and rollback owner, and is inherited by nested execution.
 func WithStatementMemoryLimit(ctx context.Context, bytes int64) context.Context {
+	if bytes <= 0 {
+		return ctx
+	}
 	if current, _ := ctx.Value(statementMemoryLimitKey{}).(int64); current > 0 && current < bytes {
 		bytes = current
 	}

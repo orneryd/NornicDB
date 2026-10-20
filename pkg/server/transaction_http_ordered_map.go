@@ -69,27 +69,16 @@ func (value transactionHTTPOrderedMap) MarshalJSON() ([]byte, error) {
 // {"type":"Point","coordinates":[x,y(,z)],"crs":{"srid":…,"name":…,
 // "type":"link","properties":{"href":…,"type":"ogcwkt"}}}, keys in that order.
 func transactionHTTPPoint(point cypher.CypherPoint) transactionHTTPOrderedMap {
-	properties := transactionHTTPOrderedMap{keys: []string{"href", "type"}, values: map[string]interface{}{"href": point.CRSHref(), "type": "ogcwkt"}}
-	crs := transactionHTTPOrderedMap{keys: []string{"srid", "name", "type", "properties"}, values: map[string]interface{}{"srid": int64(point.SRID), "name": point.CRSName(), "type": "link", "properties": properties}}
-	coordinates := make([]interface{}, 0, 3)
-	for _, coordinate := range point.Coordinates() {
-		coordinates = append(coordinates, transactionHTTPFloat(coordinate, 64))
-	}
-	return transactionHTTPOrderedMap{keys: []string{"type", "coordinates", "crs"}, values: map[string]interface{}{"type": "Point", "coordinates": coordinates, "crs": crs}}
-}
-
-// transactionHTTPVectorTypeNames are the vector classes Neo4j's HTTP API
-// names, by coordinate type.
-var transactionHTTPVectorTypeNames = map[cypher.VectorCoordinateType]string{
-	cypher.VectorInteger64: "Int64Vector", cypher.VectorInteger32: "Int32Vector", cypher.VectorInteger16: "Int16Vector",
-	cypher.VectorInteger8: "Int8Vector", cypher.VectorFloat64: "Float64Vector", cypher.VectorFloat32: "Float32Vector",
+	value := cypher.JSONPoint(point)
+	crs := value["crs"].(map[string]interface{})
+	crs["properties"] = transactionHTTPOrderedMap{keys: []string{"href", "type"}, values: crs["properties"].(map[string]interface{})}
+	value["crs"] = transactionHTTPOrderedMap{keys: []string{"srid", "name", "type", "properties"}, values: crs}
+	return transactionHTTPOrderedMap{keys: []string{"type", "coordinates", "crs"}, values: value}
 }
 
 // transactionHTTPVector is a VECTOR as Neo4j 2026.09's HTTP API writes it:
 // not its coordinates but {"typeName":"Int64Vector","incomparableType":true,
 // "sequenceValue":false}, keys in that order (#907).
 func transactionHTTPVector(vector cypher.CypherVector) transactionHTTPOrderedMap {
-	return transactionHTTPOrderedMap{keys: []string{"typeName", "incomparableType", "sequenceValue"}, values: map[string]interface{}{
-		"typeName": transactionHTTPVectorTypeNames[vector.Type], "incomparableType": true, "sequenceValue": false,
-	}}
+	return transactionHTTPOrderedMap{keys: []string{"typeName", "incomparableType", "sequenceValue"}, values: cypher.JSONVector(vector)}
 }

@@ -1206,9 +1206,6 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 }
 
 func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
-	if converted, scalar := cypher.JSONScalar(value); scalar {
-		return converted, []interface{}{nil}
-	}
 	entityMeta := func(id, elementID, entityType string) []interface{} {
 		return []interface{}{map[string]interface{}{
 			"id": s.hashStringToInt64(id), "elementId": elementID,
@@ -1356,6 +1353,9 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}
 		return result, metadata
 	default:
+		if converted, scalar := cypher.JSONScalar(value); scalar {
+			return converted, []interface{}{nil}
+		}
 		if value != nil {
 			sequence := reflect.ValueOf(value)
 			if sequence.Kind() == reflect.Slice || sequence.Kind() == reflect.Array {

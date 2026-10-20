@@ -155,14 +155,14 @@ func TestMCPNativeReviewTemporalAndBytes(t *testing.T) {
 	s, authenticator := setupTestServer(t)
 	exec, err := s.getExecutorForDatabase("nornic")
 	require.NoError(t, err)
-	_, err = exec.Execute(context.Background(), "CREATE (:NativeBytes {value:$bytes})", map[string]interface{}{"bytes": []byte{0, 127, 128, 255}})
+	_, err = exec.Execute(context.Background(), "CREATE (:NativeBytes {value:$bytes, day:date('2024-01-02')})", map[string]interface{}{"bytes": []byte{0, 127, 128, 255}})
 	require.NoError(t, err)
 	host := httptest.NewServer(s.buildRouter())
 	t.Cleanup(host.Close)
 	token := getAuthToken(t, authenticator, "admin")
 	for _, path := range []string{"/mcp", "/mcp/tools/call"} {
 		_, result := nativeReviewCall(t, host, path, map[string]interface{}{
-			"query":      "MATCH (n:NativeBytes) RETURN date('2024-01-02'), duration('P1DT2S'), n.value, {nested: [date('2024-01-02'), n.value]}, $big",
+			"query":      "MATCH (n:NativeBytes) RETURN date('2024-01-02'), duration('P1DT2S'), n.value, {nested: [date('2024-01-02'), n.value]}, $big, point({x:1, y:2}), n",
 			"parameters": map[string]interface{}{"big": int64(9007199254740993)},
 		}, func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) })
 		require.False(t, result.IsError, result.Content)
@@ -175,6 +175,19 @@ func TestMCPNativeReviewTemporalAndBytes(t *testing.T) {
 		require.Equal(t, `[0,127,-128,-1]`, string(value.Rows[0][2]))
 		require.Equal(t, `{"nested":["2024-01-02",[0,127,-128,-1]]}`, string(value.Rows[0][3]))
 		require.Equal(t, "9007199254740993", string(value.Rows[0][4]))
+		require.JSONEq(t, `{"type":"Point","coordinates":[1.0,2.0],"crs":{"srid":7203,"name":"cartesian","type":"link","properties":{"href":"https://spatialreference.org/ref/sr-org/7203/ogcwkt/","type":"ogcwkt"}}}`, string(value.Rows[0][5]))
+		var node struct {
+			ID         string                     `json:"id"`
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		require.NoError(t, json.Unmarshal(value.Rows[0][6], &node))
+		require.NotEmpty(t, node.ID)
+		require.Equal(t, `"2024-01-02"`, string(node.Properties["day"]))
+		require.Equal(t, `[0,127,-128,-1]`, string(node.Properties["value"]))
+		_, vector := nativeReviewCall(t, host, path, map[string]interface{}{"query": "CYPHER 25 RETURN vector([1, 2], 2, INTEGER)"}, func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) })
+		require.False(t, vector.IsError, vector.Content)
+		require.NoError(t, json.Unmarshal([]byte(vector.Content[0].Text), &value))
+		require.JSONEq(t, `{"typeName":"Int64Vector","incomparableType":true,"sequenceValue":false}`, string(value.Rows[0][0]))
 	}
 }
 
