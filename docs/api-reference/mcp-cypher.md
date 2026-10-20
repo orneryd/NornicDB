@@ -73,10 +73,14 @@ values; `truncation.reasons` reports `max_rows`, `max_bytes`, and/or
 large to fit is omitted with `max_bytes`, even if that leaves no returned rows.
 Oversized columns/metadata and non-JSON values are errors. Long error messages
 carry an explicit truncation suffix to keep error responses within the same cap.
-Final rows go through the existing native result stream as they are produced;
-bounded requests bypass the native result cache. Plain reads stop once their
-output budget is full. Writes and procedure calls finish and validate their
-remaining effects while excess output is discarded. Native operations requiring
+Output admission belongs to the native execution context. Local, routed,
+rewritten, PROFILE, procedure, UNION ALL and Fabric results feed the same row
+consumer as they are produced; bounded requests bypass the result cache.
+Remote constituents use incremental HTTP row demand or Bolt pulls, with early
+upstream cancellation when a read's output budget fills. No remote response
+table is retained before admission. Writes and effectful procedure calls finish
+and validate their remaining effects while excess output is discarded.
+Native operations requiring
 materialization also use the existing transaction-memory accounting with a
 16 MiB request ceiling, or a stricter configured database limit; oversized lists,
 sorts and other tracked intermediate state fail as native memory-limit errors.
