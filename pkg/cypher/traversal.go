@@ -6,7 +6,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
