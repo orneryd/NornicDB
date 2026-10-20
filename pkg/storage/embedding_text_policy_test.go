@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"testing"
 	"time"
 
@@ -46,6 +47,16 @@ func TestEmbeddingTextPolicy(t *testing.T) {
 		require.Equal(t, tc.same, tc.policy.SameSource(tc.other, base), tc.name)
 	}
 
+	for _, key := range []string{"id", "tags"} {
+		consumed := CopyNode(base)
+		consumed.EmbedMeta = map[string]any{embeddingsource.MetaKey: (embeddingsource.Source{Properties: []string{key}}).Metadata()}
+		changed := CopyNode(base)
+		changed.Properties[key] = "different"
+		require.False(t, EmbeddingSourceMatches(consumed, changed, all), "declared provider input must invalidate")
+		changed = CopyNode(base)
+		changed.Properties["unconsumed"] = "different"
+		require.True(t, EmbeddingSourceMatches(consumed, changed, all), "unconsumed input must preserve")
+	}
 	var engine *BadgerEngine
 	require.Equal(t, defaultEmbeddingTextPolicy, engine.embeddingTextPolicyOrDefault())
 	engine = &BadgerEngine{}
@@ -63,6 +74,7 @@ func TestEmbeddingTextPolicy(t *testing.T) {
 // sidecar embeddings for readers; one that changes it deletes the sidecar,
 // so the node is unembedded and pending (#963).
 func TestTransactionUpdateKeepsOrInvalidatesManagedEmbeddings(t *testing.T) {
+	t.Run("recorded provider source", TestManagedEmbeddingSourceTransaction)
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)
 	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
@@ -182,6 +194,7 @@ func TestTransactionUpdateKeepsInlineEmbeddings(t *testing.T) {
 // must not store them again. Vectors the caller sets after the invalidation
 // are still written as given.
 func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
+	t.Run("recorded provider source", TestManagedEmbeddingSourceTransaction)
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)
 	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})

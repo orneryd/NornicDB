@@ -25,6 +25,9 @@ func (e *delayedPendingVisibilityEngine) FindNodeNeedingEmbedding() *storage.Nod
 	return node
 }
 
+func (e *delayedPendingVisibilityEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+	return e.Engine.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(node)
+}
 func (*delayedPendingVisibilityEngine) MarkNodeEmbedded(storage.NodeID) {}
 func (*delayedPendingVisibilityEngine) PendingEmbeddingsCount() int     { return 0 }
 
