@@ -1339,30 +1339,6 @@ func gdsNodeID(value interface{}) (storage.NodeID, bool) {
 	return "", false
 }
 
-// gdsInteger is a value of any Go integer type as an int64 (the shared
-// converters skip the narrow and unsigned ones).
-func gdsInteger(value interface{}) int64 {
-	switch number := value.(type) {
-	case int8:
-		return int64(number)
-	case int16:
-		return int64(number)
-	case int32:
-		return int64(number)
-	case uint:
-		return int64(number)
-	case uint8:
-		return int64(number)
-	case uint16:
-		return int64(number)
-	case uint32:
-		return int64(number)
-	case uint64:
-		return int64(number)
-	}
-	return toInt64(value)
-}
-
 // gdsTypeProjected reports whether a relationship projection takes the type.
 func gdsTypeProjected(relSpecs []gdsElementSpec, relType string) bool {
 	for _, spec := range relSpecs {

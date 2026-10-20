@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"sort"
 	"strings"
@@ -176,11 +177,8 @@ func neo4jValueRepr(value interface{}) string {
 
 // isRuntimeNumber reports whether v is a Cypher INTEGER or FLOAT value.
 func isRuntimeNumber(v interface{}) bool {
-	switch v.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return true
-	}
-	return false
+	_, ok := valueconvert.ReadNumber(v)
+	return ok
 }
 
 // joinsString reports whether a string + v at run time is the string joined

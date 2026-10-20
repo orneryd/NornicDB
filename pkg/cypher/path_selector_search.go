@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/binary"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
 	"strings"
@@ -1092,18 +1093,8 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 // pathLengthLimit is the longest length a length(p) <= value (strict: <)
 // conjunct allows; known is false for a value that isn't a number.
 func pathLengthLimit(value interface{}, strict bool) (int, bool) {
-	var limit float64
-	switch typed := value.(type) {
-	case int64:
-		limit = float64(typed)
-	case int:
-		limit = float64(typed)
-	case float64:
-		if math.IsNaN(typed) {
-			return 0, false
-		}
-		limit = typed
-	default:
+	limit, numeric := valueconvert.NumericFloat64(value)
+	if !numeric || math.IsNaN(limit) {
 		return 0, false
 	}
 	if strict {
@@ -1114,7 +1105,7 @@ func pathLengthLimit(value interface{}, strict bool) (int, bool) {
 	if limit > float64(VarLengthUnboundedMaxHops) {
 		return -1, false
 	}
-	return int(limit), true
+	return valueconvert.ToInt(limit, valueconvert.IntegerFloat)
 }
 
 // boundSelectedEndpoint returns the node a row binds to an endpoint's

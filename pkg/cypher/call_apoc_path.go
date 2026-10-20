@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"strconv"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -137,16 +137,8 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 // apocInteger reads an apoc.path integer setting as APOC does: a number,
 // truncated, or a string holding one; anything else, null included, fails.
 func apocInteger(key string, value interface{}) (int, error) {
-	if integer, ok := coerceInt64(value); ok {
-		return int(integer), nil
-	}
-	switch typed := value.(type) {
-	case float64:
-		return int(typed), nil
-	case string:
-		if number, err := strconv.ParseFloat(typed, 64); err == nil {
-			return int(number), nil
-		}
+	if integer, ok := valueconvert.ToInt(value, valueconvert.IntegerFloat|valueconvert.IntegerStrings|valueconvert.IntegerDecimalStrings); ok {
+		return integer, nil
 	}
 	return 0, localizedError(localization.CypherCoreApocPathConfigNumber(key, neo4jProvidedValue(value)), nil)
 }

@@ -24,15 +24,7 @@ func toFloat64(v interface{}) (float64, bool) {
 // toFloat64Slice keeps the numeric fast paths and reads other runtime lists
 // through the same input owner as collection functions.
 func toFloat64Slice(v interface{}) ([]float64, bool) {
-	switch v.(type) {
-	case []float64, []float32, []interface{}:
-		return convert.ToFloat64Slice(v)
-	}
-	items, ok := cypherListValue(v)
-	if !ok {
-		return nil, false
-	}
-	return convert.ToFloat64Slice(items)
+	return convert.ToFloat64Slice(v)
 }
 
 // findKeywordIndex finds a keyword at word boundaries in the string.

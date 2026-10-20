@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"cmp"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -242,14 +243,7 @@ func promoteIntegerToFloat(left, right interface{}) (interface{}, interface{}) {
 
 // cypherFloatValue returns a float32 or float64 value as a float64.
 func cypherFloatValue(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case float64:
-		return number, true
-	case float32:
-		return float64(number), true
-	default:
-		return 0, false
-	}
+	return valueconvert.FloatValue(value)
 }
 
 // compareIntegerWithFloat orders an integer against a float by their exact
@@ -259,27 +253,31 @@ func compareIntegerWithFloat(integer interface{}, number float64) (comparison in
 		return 0, false
 	}
 	whole := math.Trunc(number)
-	fraction := cmp.Compare(0, number-whole) // the float's side of a tie
+	fraction := cmp.Compare(0, number-whole)
 	if signed, isSigned := cypherSignedInteger(integer); isSigned {
-		switch {
-		case number >= 0x1p63:
+		narrowed, fits := valueconvert.Int64(whole, valueconvert.IntegerFloat)
+		if !fits {
+			if number < 0 {
+				return 1, true
+			}
 			return -1, true
-		case number < -0x1p63:
-			return 1, true
 		}
-		if comparison := cmp.Compare(signed, int64(whole)); comparison != 0 {
+		if comparison := cmp.Compare(signed, narrowed); comparison != 0 {
 			return comparison, true
 		}
 		return fraction, true
 	}
 	if unsigned, isUnsigned := cypherUnsignedInteger(integer); isUnsigned {
-		switch {
-		case number < 0:
+		// Negative fractions are smaller than every unsigned integer, even when
+		// truncation would produce zero.
+		if number < 0 {
 			return 1, true
-		case number >= 0x1p64:
+		}
+		narrowed, fits := valueconvert.ToUint64(whole, valueconvert.IntegerFloat)
+		if !fits {
 			return -1, true
 		}
-		if comparison := cmp.Compare(unsigned, uint64(whole)); comparison != 0 {
+		if comparison := cmp.Compare(unsigned, narrowed); comparison != 0 {
 			return comparison, true
 		}
 		return fraction, true
@@ -317,37 +315,11 @@ func compareCypherIntegers(left, right interface{}) (comparison int, ok bool) {
 }
 
 func cypherSignedInteger(value interface{}) (int64, bool) {
-	switch number := value.(type) {
-	case int:
-		return int64(number), true
-	case int8:
-		return int64(number), true
-	case int16:
-		return int64(number), true
-	case int32:
-		return int64(number), true
-	case int64:
-		return number, true
-	default:
-		return 0, false
-	}
+	return valueconvert.SignedInteger(value)
 }
 
 func cypherUnsignedInteger(value interface{}) (uint64, bool) {
-	switch number := value.(type) {
-	case uint:
-		return uint64(number), true
-	case uint8:
-		return uint64(number), true
-	case uint16:
-		return uint64(number), true
-	case uint32:
-		return uint64(number), true
-	case uint64:
-		return number, true
-	default:
-		return 0, false
-	}
+	return valueconvert.UnsignedInteger(value)
 }
 
 // cypherListValue is the runtime-list input owner. Consumers must use it rather
@@ -355,11 +327,5 @@ func cypherUnsignedInteger(value interface{}) (uint64, bool) {
 // arrays. Element conversion stays in toAnySlice, including recursive consumers
 // such as flatten and fromPairs. The ordinary boxed-list path does not allocate.
 func cypherListValue(value interface{}) ([]interface{}, bool) {
-	if list, ok := value.([]interface{}); ok {
-		return list, true
-	}
-	if cypherValueKindOf(value) != valueKindList {
-		return nil, false
-	}
-	return toAnySlice(value), true
+	return valueconvert.ListValue(value)
 }

@@ -3,9 +3,10 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"math"
 	"reflect"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 var pluginContextType = reflect.TypeOf((*context.Context)(nil)).Elem()
@@ -96,67 +97,39 @@ func convertPluginArgument(value reflect.Value, target reflect.Type) (reflect.Va
 	out := reflect.New(target).Elem()
 	switch target.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		var n int64
-		switch value.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			n = value.Int()
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			if value.Uint() > math.MaxInt64 {
-				return reflect.Value{}, false
-			}
-			n = int64(value.Uint())
-		case reflect.Float32, reflect.Float64:
-			f := value.Float()
-			if math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f || f < -math.Exp2(63) || f >= math.Exp2(63) {
-				return reflect.Value{}, false
-			}
-			n = int64(f)
-		default:
+		number, numeric := valueconvert.ReadReflectNumber(value)
+		if !numeric {
 			return reflect.Value{}, false
 		}
-		if out.OverflowInt(n) {
+		n, ok := number.Int64Bits(target.Bits(), valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat)
+		if !ok {
 			return reflect.Value{}, false
 		}
 		out.SetInt(n)
 		return out, true
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		var n uint64
-		switch value.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			if value.Int() < 0 {
-				return reflect.Value{}, false
-			}
-			n = uint64(value.Int())
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			n = value.Uint()
-		case reflect.Float32, reflect.Float64:
-			f := value.Float()
-			if math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f || f < 0 || f >= math.Exp2(64) {
-				return reflect.Value{}, false
-			}
-			n = uint64(f)
-		default:
+		number, numeric := valueconvert.ReadReflectNumber(value)
+		if !numeric {
 			return reflect.Value{}, false
 		}
-		if out.OverflowUint(n) {
+		n, ok := number.Uint64Bits(target.Bits(), valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat)
+		if !ok {
 			return reflect.Value{}, false
 		}
 		out.SetUint(n)
 		return out, true
 	case reflect.Float32, reflect.Float64:
-		var n float64
-		switch value.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			n = float64(value.Int())
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			n = float64(value.Uint())
-		case reflect.Float32, reflect.Float64:
-			n = value.Float()
-		default:
+		number, numeric := valueconvert.ReadReflectNumber(value)
+		if !numeric {
 			return reflect.Value{}, false
 		}
-		if out.OverflowFloat(n) {
-			return reflect.Value{}, false
+		n := number.Float64()
+		if target.Kind() == reflect.Float32 {
+			narrowed, ok := number.Float32()
+			if !ok {
+				return reflect.Value{}, false
+			}
+			n = float64(narrowed)
 		}
 		out.SetFloat(n)
 		return out, true

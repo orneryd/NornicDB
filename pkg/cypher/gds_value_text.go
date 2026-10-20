@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 	"strconv"
 	"strings"
@@ -42,8 +43,13 @@ func gdsJavaValueText(value interface{}, propertyValue bool, contexts ...context
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	}
-	if isIntegerProcedureValue(value) {
-		return strconv.FormatInt(gdsInteger(value), 10)
+	if number, numeric := valueconvert.ReadNumber(value); numeric && number.IsInteger() {
+		if integer, signed := number.Signed(); signed {
+			return strconv.FormatInt(integer, 10)
+		}
+		if integer, unsigned := number.Unsigned(); unsigned {
+			return strconv.FormatUint(integer, 10)
+		}
 	}
 	if items, list := cypherListValue(value); list {
 		prefix := ""

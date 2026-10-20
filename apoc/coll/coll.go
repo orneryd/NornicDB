@@ -542,12 +542,7 @@ func FrequenciesAsMap(list []interface{}) map[string]interface{} {
 // frequencyKey groups items as APOC counts them: numbers by value (1 and
 // 1.0 alike), anything else by its type and text.
 func frequencyKey(item interface{}) string {
-	switch number := item.(type) {
-	case int:
-		return fmt.Sprint("n:", float64(number))
-	case int64:
-		return fmt.Sprint("n:", float64(number))
-	case float64:
+	if number, ok := convert.NumericFloat64(item); ok {
 		return fmt.Sprint("n:", number)
 	}
 	return fmt.Sprintf("%T:%v", item, item)
@@ -877,19 +872,11 @@ func UnionAll(lists ...[]interface{}) []interface{} {
 // Numeric collection consumers use the shared scalar conversion after selecting
 // numeric values. Strings remain nonnumeric here, as in the existing APOC API.
 func toFloat64(v interface{}) (float64, bool) {
-	switch v.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return convert.ToFloat64(v)
-	}
-	return 0, false
+	return convert.NumericFloat64(v)
 }
 
 func toInt64(v interface{}) (int64, bool) {
-	switch v.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return convert.ToInt64(v)
-	}
-	return 0, false
+	return convert.Int64(v, convert.IntegerFloat)
 }
 func compare(a, b interface{}) int {
 	// Try numeric comparison

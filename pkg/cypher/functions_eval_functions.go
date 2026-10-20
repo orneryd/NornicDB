@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 	"time"
@@ -43,17 +44,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			// Strip outer parentheses and re-evaluate
 			return e.evaluateExpressionWithContextFull(ctx, expr[1:len(expr)-1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-	}
-
-	if open := rowSubscriptStart(expr); open > 0 {
-		value, _, err := e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
-			value := e.evaluateExpressionWithContextFull(ctx, part, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			return value, true, getExpressionFailure(ctx)
-		})
-		if err != nil {
-			recordExpressionFailure(ctx, err)
-		}
-		return value
 	}
 
 	// ========================================
@@ -179,22 +169,18 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			recordExpressionFailure(ctx, err)
 			return value
 		}
+		if list, ok := valueconvert.ReadList(innerVal); ok {
+			return int64(list.Len())
+		}
 		switch v := innerVal.(type) {
 		case string:
 			return int64(cyphertext.Length(v))
-		case []interface{}:
-			return int64(len(v))
 		case map[string]interface{}:
 			// A path carried as a computed-row map (WITH p AS path): read the
 			// recorded length, then the node list as a fallback.
 			if length, ok := v["length"]; ok {
-				switch distance := length.(type) {
-				case int:
-					return int64(distance)
-				case int64:
+				if distance, valid := valueconvert.Int64(length, valueconvert.IntegerFloat); valid {
 					return distance
-				case float64:
-					return int64(distance)
 				}
 			}
 			if nodesList, _, hasNodes, _ := pathValueParts(v); hasNodes {

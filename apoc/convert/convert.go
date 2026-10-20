@@ -7,7 +7,6 @@ package convert
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -41,17 +40,9 @@ func ToBoolean(value interface{}) bool {
 //	apoc.convert.toInteger('42') => 42
 //	apoc.convert.toInteger(3.14) => 3
 func ToInteger(value interface{}) int64 {
-	switch v := value.(type) {
-	case string:
-		i, _ := strconv.ParseInt(v, 10, 64)
-		return i
-	case bool:
-		if v {
-			return 1
-		}
-		return 0
-	}
-	if integer, ok := valueconvert.ToInt64(value); ok {
+	// APOC keeps integer-only strings and its boolean extension; recognition
+	// and checked narrowing, including ParseInt range failures, have one owner.
+	if integer, ok := valueconvert.Int64(value, valueconvert.IntegerFloat|valueconvert.IntegerStrings|valueconvert.IntegerBool); ok {
 		return integer
 	}
 	return 0

@@ -302,7 +302,11 @@ func TestGraphProjectIntegerKindsAndAliases(t *testing.T) {
 
 	// Every Go integer type converts, whatever storage hands back.
 	for value, want := range map[interface{}]int64{int8(-8): -8, int16(16): 16, int32(32): 32, int64(64): 64, int(1): 1, uint(2): 2, uint8(8): 8, uint16(160): 160, uint32(320): 320, uint64(640): 640} {
-		require.Equal(t, want, gdsInteger(value), "%T", value)
+		got, kind, valid, err := gdsConvertPropertyValue(value, "", false)
+		require.NoError(t, err)
+		require.True(t, valid)
+		require.Equal(t, "Integer", kind)
+		require.Equal(t, want, got, "%T", value)
 	}
 
 	// A.foo and B.bar both read x: a scalar on A, a list on B.

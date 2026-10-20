@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strings"
 
@@ -112,22 +113,17 @@ func apocMapRecursive(function string, values []interface{}) (bool, error) {
 // whose long value is 0 (so 0.5 too), and the strings "", "false", "no" and
 // "0" in any letter case; true for everything else.
 func apocToBoolean(value interface{}) bool {
-	switch v := value.(type) {
+	switch typed := value.(type) {
 	case nil:
 		return false
 	case bool:
-		return v
+		return typed
 	case string:
-		return !(v == "" || strings.EqualFold(v, "false") || strings.EqualFold(v, "no") || v == "0")
-	case float64:
-		return !math.IsNaN(v) && (v <= -1 || v >= 1)
-	case float32:
-		return !math.IsNaN(float64(v)) && (v <= -1 || v >= 1)
+		return !(typed == "" || strings.EqualFold(typed, "false") || strings.EqualFold(typed, "no") || typed == "0")
 	}
-	if cypherValueKindOf(value) == valueKindInteger {
-		// An unsigned value past int64 isn't read, and isn't 0.
-		number, read := cypherIntegerValue(value)
-		return !read || number != 0
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		floating := number.Float64()
+		return !math.IsNaN(floating) && (floating <= -1 || floating >= 1)
 	}
 	return true
 }

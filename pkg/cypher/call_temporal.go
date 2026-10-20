@@ -3,8 +3,8 @@ package cypher
 import (
 	"context"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -231,31 +231,18 @@ func coerceOptionalMVCCVersion(args []interface{}) (storage.MVCCVersion, bool, e
 }
 
 func coerceUint64Arg(val interface{}, name string) (uint64, error) {
-	switch v := val.(type) {
-	case int:
-		if v < 0 {
-			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
-		}
-		return uint64(v), nil
-	case int64:
-		if v < 0 {
-			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
-		}
-		return uint64(v), nil
-	case float64:
-		if v < 0 || v != float64(uint64(v)) {
+	if unsigned, ok := valueconvert.ToUint64(val, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat|valueconvert.IntegerStrings|valueconvert.IntegerTrimStrings); ok {
+		return unsigned, nil
+	}
+	if number, numeric := valueconvert.ReadNumber(val); numeric {
+		if number.Kind() == valueconvert.FloatNumber {
 			return 0, localizedError(localization.CypherSpecializedCallsUnsignedWholeNonNegative(name), nil)
 		}
-		return uint64(v), nil
-	case string:
-		parsed, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
-		if err != nil {
-			return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
+		if signed, ok := number.Signed(); ok && signed < 0 {
+			return 0, localizedError(localization.CypherSpecializedCallsUnsignedNonNegative(name), nil)
 		}
-		return parsed, nil
-	default:
-		return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 	}
+	return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 }
 
 func temporalNodesByLabel(engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {

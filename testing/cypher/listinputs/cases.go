@@ -75,6 +75,8 @@ func (input Input) PropertyValue() interface{} {
 	switch input.Literal {
 	case "[3,1,3]":
 		return []int64{3, 1, 3}
+	case "[3,-1,3]":
+		return []int64{3, -1, 3}
 	case "['c','a','c']":
 		return []string{"c", "a", "c"}
 	case "[{rank:3},{rank:1},{rank:3}]":

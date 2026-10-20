@@ -6,6 +6,7 @@ package meta
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
 )
@@ -104,17 +105,20 @@ func Stats() map[string]interface{} {
 //
 //	apoc.meta.type(value) => 'STRING', 'INTEGER', etc.
 func Type(value interface{}) string {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if number.IsInteger() {
+			return "INTEGER"
+		}
+		return "FLOAT"
+	}
+	if _, list := valueconvert.ReadList(value); list {
+		return "LIST"
+	}
 	switch value.(type) {
 	case string:
 		return "STRING"
-	case int, int64:
-		return "INTEGER"
-	case float64:
-		return "FLOAT"
 	case bool:
 		return "BOOLEAN"
-	case []interface{}:
-		return "LIST"
 	case map[string]interface{}:
 		return "MAP"
 	case *Node:

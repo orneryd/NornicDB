@@ -3,6 +3,7 @@ package util
 import (
 	"encoding/hex"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"hash"
 	"math"
 	"sort"
@@ -31,71 +32,67 @@ func hexDigest(digest hash.Hash, value interface{}) string {
 // their Cypher text (fmt.Stringer), which Java's may differ from.
 func DigestText(value interface{}) string {
 	var out strings.Builder
-	switch values := value.(type) {
-	case nil:
-	case []interface{}:
-		for _, item := range values {
-			if item != nil {
+	if list, ok := valueconvert.ReadList(value); ok {
+		for i := 0; i < list.Len(); i++ {
+			if item := list.At(i); item != nil {
 				writeJavaString(&out, item)
 			}
 		}
-	case []string:
-		for _, item := range values {
-			out.WriteString(item)
-		}
-	default:
+	} else if value != nil {
 		writeJavaString(&out, value)
 	}
 	return out.String()
 }
 
 func writeJavaString(out *strings.Builder, value interface{}) {
-	switch v := value.(type) {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if integer, signed := number.Signed(); signed {
+			out.WriteString(strconv.FormatInt(integer, 10))
+			return
+		}
+		if integer, unsigned := number.Unsigned(); unsigned {
+			out.WriteString(strconv.FormatUint(integer, 10))
+			return
+		}
+		out.WriteString(JavaDoubleString(number.Float64()))
+		return
+	}
+	if list, ok := valueconvert.ReadList(value); ok {
+		out.WriteByte('[')
+		for i := 0; i < list.Len(); i++ {
+			if i > 0 {
+				out.WriteString(", ")
+			}
+			writeJavaString(out, list.At(i))
+		}
+		out.WriteByte(']')
+		return
+	}
+	switch typed := value.(type) {
 	case nil:
 		out.WriteString("null")
 	case string:
-		out.WriteString(v)
+		out.WriteString(typed)
 	case bool:
-		out.WriteString(strconv.FormatBool(v))
-	case int:
-		out.WriteString(strconv.FormatInt(int64(v), 10))
-	case int32:
-		out.WriteString(strconv.FormatInt(int64(v), 10))
-	case int64:
-		out.WriteString(strconv.FormatInt(v, 10))
-	case float32:
-		out.WriteString(JavaDoubleString(float64(v)))
-	case float64:
-		out.WriteString(JavaDoubleString(v))
-	case []interface{}:
-		out.WriteByte('[')
-		for index, item := range v {
-			if index > 0 {
-				out.WriteString(", ")
-			}
-			writeJavaString(out, item)
-		}
-		out.WriteByte(']')
-	case []string:
-		out.WriteString("[" + strings.Join(v, ", ") + "]")
+		out.WriteString(strconv.FormatBool(typed))
 	case map[string]interface{}:
-		keys := make([]string, 0, len(v))
-		for key := range v {
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		out.WriteByte('{')
-		for index, key := range keys {
-			if index > 0 {
+		for i, key := range keys {
+			if i > 0 {
 				out.WriteString(", ")
 			}
 			out.WriteString(key)
 			out.WriteByte('=')
-			writeJavaString(out, v[key])
+			writeJavaString(out, typed[key])
 		}
 		out.WriteByte('}')
 	default:
-		out.WriteString(fmt.Sprint(v))
+		out.WriteString(fmt.Sprint(value))
 	}
 }
 

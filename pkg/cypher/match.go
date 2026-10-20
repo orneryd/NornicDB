@@ -39,40 +39,23 @@ func extractFuncInner(expr string) string {
 
 // compareForSort compares two values for sorting, returns true if a < b
 func compareForSort(a, b interface{}) bool {
-	if a == nil && b == nil {
-		return false
-	}
 	if a == nil {
-		return true
+		return b != nil
 	}
 	if b == nil {
 		return false
 	}
-	switch av := a.(type) {
-	case int64:
-		if bv, ok := b.(int64); ok {
-			return av < bv
+	if comparison, exact := compareCypherNumbersExactly(a, b); exact {
+		return comparison < 0
+	}
+	if left, numeric := strictNumericValue(a); numeric {
+		if right, numeric := strictNumericValue(b); numeric {
+			return left < right
 		}
-		if bv, ok := b.(float64); ok {
-			return float64(av) < bv
-		}
-	case int:
-		if bv, ok := b.(int); ok {
-			return av < bv
-		}
-		if bv, ok := b.(int64); ok {
-			return int64(av) < bv
-		}
-	case float64:
-		if bv, ok := b.(float64); ok {
-			return av < bv
-		}
-		if bv, ok := b.(int64); ok {
-			return av < float64(bv)
-		}
-	case string:
-		if bv, ok := b.(string); ok {
-			return av < bv
+	}
+	if left, text := a.(string); text {
+		if right, text := b.(string); text {
+			return left < right
 		}
 	}
 	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)

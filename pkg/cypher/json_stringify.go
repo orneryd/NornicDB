@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"reflect"
 	"sort"
@@ -90,70 +91,62 @@ func jsonStringifyProfileText(value interface{}) string {
 
 // write writes value as the profile's JSON text.
 func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
-	switch v := value.(type) {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if integer, signed := number.Signed(); signed {
+			out.WriteString(strconv.FormatInt(integer, 10))
+			return nil
+		}
+		if integer, unsigned := number.Unsigned(); unsigned {
+			out.WriteString(strconv.FormatUint(integer, 10))
+			return nil
+		}
+		return p.writeFloat(out, number.Float64())
+	}
+	switch typed := value.(type) {
 	case nil:
 		out.WriteString("null")
 	case bool:
-		out.WriteString(strconv.FormatBool(v))
+		out.WriteString(strconv.FormatBool(typed))
 	case string:
-		p.writeString(out, v)
-	case int64:
-		out.WriteString(strconv.FormatInt(v, 10))
-	case int:
-		out.WriteString(strconv.FormatInt(int64(v), 10))
-	case int32:
-		out.WriteString(strconv.FormatInt(int64(v), 10))
-	case float64:
-		return p.writeFloat(out, v)
-	case float32:
-		return p.writeFloat(out, float64(v))
-	case []interface{}:
-		out.WriteByte('[')
-		for index, item := range v {
-			if index > 0 {
-				out.WriteString(p.itemSeparator)
-			}
-			if err := p.write(out, item); err != nil {
-				return err
-			}
-		}
-		out.WriteByte(']')
+		p.writeString(out, typed)
 	case map[string]interface{}:
-		keys := make([]string, 0, len(v))
-		for key := range v {
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
 			keys = append(keys, key)
 		}
-		// Go orders strings by their UTF-8 bytes, which is code point order.
 		sort.Strings(keys)
 		out.WriteByte('{')
-		for index, key := range keys {
-			if index > 0 {
+		for i, key := range keys {
+			if i > 0 {
 				out.WriteString(p.itemSeparator)
 			}
 			p.writeString(out, key)
 			out.WriteString(p.keySeparator)
-			if err := p.write(out, v[key]); err != nil {
+			if err := p.write(out, typed[key]); err != nil {
 				return err
 			}
 		}
 		out.WriteByte('}')
 	case *CypherDuration:
-		if v == nil {
+		if typed == nil {
 			out.WriteString("null")
 			return nil
 		}
-		return p.write(out, pythonDurationTuple(*v))
+		return p.write(out, pythonDurationTuple(*typed))
 	case CypherDuration:
-		return p.write(out, pythonDurationTuple(v))
+		return p.write(out, pythonDurationTuple(typed))
 	case CypherPoint:
-		return p.write(out, pointTuple(v))
+		return p.write(out, pointTuple(typed))
 	case *CypherPoint:
-		if v == nil {
+		if typed == nil {
 			out.WriteString("null")
 			return nil
 		}
-		return p.write(out, pointTuple(*v))
+		return p.write(out, pointTuple(*typed))
 	default:
+		// Binary parameters and temporal text retain the profile's stringDefault
+		// contract before a generic numeric-list read (a byte array is not JSON's
+		// numeric list in the Python-driver profile).
 		if text, ok := stringDefaultText(value); ok {
 			if !p.stringDefault {
 				return p.unsupported(value)
@@ -169,27 +162,27 @@ func (p jsonProfile) write(out *strings.Builder, value interface{}) error {
 // writeReflected writes the typed lists and string-keyed maps property
 // values and parameters can be (a []int64, a map[string]string).
 func (p jsonProfile) writeReflected(out *strings.Builder, value interface{}) error {
-	reflected := reflect.ValueOf(value)
-	switch reflected.Kind() {
-	case reflect.Slice, reflect.Array:
-		items := make([]interface{}, reflected.Len())
-		for index := range items {
-			items[index] = reflected.Index(index).Interface()
-		}
-		return p.write(out, items)
-	case reflect.Map:
-		if reflected.Type().Key().Kind() == reflect.String {
-			entries := make(map[string]interface{}, reflected.Len())
-			iterator := reflected.MapRange()
-			for iterator.Next() {
-				entries[iterator.Key().String()] = iterator.Value().Interface()
+	if list, ok := valueconvert.ReadList(value); ok {
+		out.WriteByte('[')
+		for i := 0; i < list.Len(); i++ {
+			if i > 0 {
+				out.WriteString(p.itemSeparator)
 			}
-			return p.write(out, entries)
+			if err := p.write(out, list.At(i)); err != nil {
+				return err
+			}
 		}
-	case reflect.Int8, reflect.Int16, reflect.Uint8, reflect.Uint16, reflect.Uint32:
-		if reflected.Type().PkgPath() == "" {
-			return p.write(out, reflected.Convert(reflect.TypeOf(int64(0))).Interface())
+		out.WriteByte(']')
+		return nil
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() == reflect.Map && reflected.Type().Key().Kind() == reflect.String {
+		entries := make(map[string]interface{}, reflected.Len())
+		iterator := reflected.MapRange()
+		for iterator.Next() {
+			entries[iterator.Key().String()] = iterator.Value().Interface()
 		}
+		return p.write(out, entries)
 	}
 	return p.unsupported(value)
 }
