@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // PermissionRequirements describes the entitlements required to execute a query.
@@ -43,15 +44,13 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
 	query = classificationText(query)
-	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read:   true,
 		Schema: isSchemaPermissionQuery(query),
 		Admin:  isAdminPermissionQuery(query),
 	}
 	if !requirements.Schema && !requirements.Admin {
-		requirements.Write = keywords["CREATE"] || keywords["DELETE"] || keywords["SET"] ||
-			keywords["MERGE"] || keywords["REMOVE"]
+		requirements.Write = fabric.ReadQueryStructure(query).Writes()
 	}
 
 	// Every procedure the query calls counts, not just the first: a later
@@ -91,37 +90,51 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // string literals and comments is not a clause. Backticked name parts are
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
-	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
 	var procedures []ProcedureSpec
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
+	visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
+		procedures = append(procedures, procedure)
+		return false
+	})
+	return procedures
+}
+
+// visitRegisteredProcedureCalls is the registry-backed CALL reader shared by
+// authorization and transaction admission. A true visit stops the scan without
+// materializing a list of complete procedure specifications.
+func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, string) bool) bool {
+	structure := fabric.ReadQueryStructure(query)
+	if structure.Err != nil {
+		return false
+	}
+	return visitStructuredProcedureCalls(structure, visit)
+}
+
+// visitStructuredProcedureCalls visits only grammar-owned procedure invocation
+// nodes. Authorization and execution admission share this live registry reader.
+func visitStructuredProcedureCalls(structure *fabric.QueryStructure, visit func(ProcedureSpec, string) bool) bool {
+	ensureBuiltInProceduresRegistered()
+	for _, clause := range structure.Clauses {
+		if clause.Nested != nil && visitStructuredProcedureCalls(clause.Nested, visit) {
+			return true
 		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
-			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
-		}
-		if procedure, found := globalProcedureRegistry.Get(name); found {
-			procedures = append(procedures, procedure.Spec)
+		if clause.Kind != "CALL" || clause.Nested != nil {
 			continue
 		}
-		// Execution resolves exact names. Preserve conservative authorization
-		// for an invalid case variant without making it executable: every
-		// matching contract counts, since case-distinct registrations can
-		// require different permissions. An exact match above remains decisive.
+		if procedure, found := globalProcedureRegistry.Get(clause.Name); found {
+			if visit(procedure.Spec, clause.Text) {
+				return true
+			}
+			continue
+		}
+		// Invalid case variants still retain conservative permission requirements;
+		// only the exact registered name is executable.
 		for _, procedure := range globalProcedureRegistry.List() {
-			if strings.EqualFold(name, procedure.Name) {
-				procedures = append(procedures, procedure)
+			if strings.EqualFold(clause.Name, procedure.Name) && visit(procedure, clause.Text) {
+				return true
 			}
 		}
 	}
-	return procedures
+	return false
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword

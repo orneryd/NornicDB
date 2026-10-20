@@ -1514,6 +1514,11 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 		}
 		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
+		if proc.Spec.OwnsTransactions {
+			if err := procedureExec.checkPeriodicTransactionScope(procedureCtx, procName); err != nil {
+				return nil, err
+			}
+		}
 		result, err := procedureExec.executeProcedureHandler(procedureCtx, proc, callCypher, args)
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)

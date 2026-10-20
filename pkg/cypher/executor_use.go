@@ -372,7 +372,13 @@ func systemDatabaseStatementError(query string) error {
 	}
 	requirements := QueryPermissionRequirements(query)
 	graphAccess := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
-	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
+	// A grammar-known administration name is not necessarily an implemented
+	// native command. The actual graph operator owns its domain even when
+	// its statement cannot be planned; it cannot enter system metadata merely
+	// because Fabric recognizes the name. Declaration bodies stay with their
+	// selected native metadata handler.
+	_, nativeCommand := readNativeStatementCommand(query)
+	if requirements.Write || requirements.Schema || !nativeCommand && readNativeGraphCommand(query).kind == nativePipeline {
 		return graphAccess
 	}
 	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {

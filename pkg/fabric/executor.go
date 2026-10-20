@@ -27,6 +27,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	remoteModeUncertain    func(string) bool
 	rowEquivalence         RowEquivalenceFactory
 }
 
@@ -141,6 +142,9 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 	case *LocationRemote:
 		if e.remote == nil {
 			return nil, 0, fmt.Errorf("remote executor not configured")
+		}
+		if e.remoteModeUncertain != nil && e.remoteModeUncertain(f.Query) {
+			ctx = WithUnresolvedRemoteMode(ctx)
 		}
 		// The local execution frame receives records directly. Remote Cypher
 		// receives parameters, so render the same declared imports at dispatch.
@@ -280,14 +284,7 @@ func splitTopLevelCSV(s string) []string {
 }
 
 func participantKeyFromLocation(loc Location) string {
-	switch l := loc.(type) {
-	case *LocationLocal:
-		return "local:" + strings.TrimSpace(l.DBName)
-	case *LocationRemote:
-		return "remote:" + strings.TrimSpace(l.URI) + "|" + strings.TrimSpace(l.DBName)
-	default:
-		return fmt.Sprintf("unknown:%T", loc)
-	}
+	return LocationSourceKey(loc)
 }
 
 // executeApply implements correlated subquery semantics:
@@ -2561,7 +2558,7 @@ func (e *FabricExecutor) executeUnion(ctx context.Context, tx *FabricTransaction
 func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransaction, f *FragmentUnion, params map[string]interface{}, authToken string) ([]string, RowIterator, error) {
 	// Keep write branch execution sequential so shard write-routing remains deterministic.
 	// Read-only UNION branches execute concurrently and are merged in LHS/RHS order.
-	if fragmentContainsWrite(f.LHS) || fragmentContainsWrite(f.RHS) {
+	if e.serializeExec || fragmentContainsWrite(f.LHS) || fragmentContainsWrite(f.RHS) {
 		lhsCols, lhsIt, err := e.executeRows(ctx, tx, f.LHS, params, authToken)
 		if err != nil {
 			return nil, nil, fmt.Errorf("union LHS failed: %w", err)
@@ -2800,4 +2797,10 @@ func (c compiledRowCombiner) appendRows(rows [][]interface{}, outerRow []interfa
 		rows = append(rows, c.combine(outerRow, innerRow))
 	}
 	return rows
+}
+
+// SetRemoteModeUncertainty marks remote procedure calls whose actual mode must
+// come from their result summary. Missing mode evidence never means READ.
+func (e *FabricExecutor) SetRemoteModeUncertainty(uncertain func(string) bool) {
+	e.remoteModeUncertain = uncertain
 }

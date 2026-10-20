@@ -47,7 +47,57 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 	}
 	callees := func(body ast.Node, receiver string) []string {
 		var names []string
+		parents := map[ast.Node]ast.Node{}
+		var stack []ast.Node
 		ast.Inspect(body, func(node ast.Node) bool {
+			if node == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			if len(stack) > 0 {
+				parents[node] = stack[len(stack)-1]
+			}
+			stack = append(stack, node)
+			return true
+		})
+		// A handler returned or stored for a later CALL is a declaration, not
+		// execution by this procedure. Inline invoked/passed callbacks belong
+		// to this invocation, including independently owned periodic batches.
+		executedLiteral := func(literal *ast.FuncLit) bool {
+			_, invokedOrPassed := parents[literal].(*ast.CallExpr)
+			return invokedOrPassed
+		}
+		// Independently owned execution passes a cloned executor into a typed
+		// callback. Follow that receiver too: moving executable text into a
+		// callback must not hide a registered procedure from this inventory.
+		receivers := map[string]bool{receiver: true}
+		ast.Inspect(body, func(node ast.Node) bool {
+			literal, ok := node.(*ast.FuncLit)
+			if !ok {
+				return true
+			}
+			if !executedLiteral(literal) {
+				return false
+			}
+			for _, parameter := range literal.Type.Params.List {
+				pointer, ok := parameter.Type.(*ast.StarExpr)
+				if !ok {
+					continue
+				}
+				kind, ok := pointer.X.(*ast.Ident)
+				if !ok || kind.Name != "StorageExecutor" {
+					continue
+				}
+				for _, name := range parameter.Names {
+					receivers[name.Name] = true
+				}
+			}
+			return true
+		})
+		ast.Inspect(body, func(node ast.Node) bool {
+			if literal, ok := node.(*ast.FuncLit); ok && !executedLiteral(literal) {
+				return false
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -57,7 +107,7 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 				return true
 			}
 			object, ok := selector.X.(*ast.Ident)
-			if ok && object.Name == receiver {
+			if ok && receivers[object.Name] {
 				names = append(names, selector.Sel.Name)
 			}
 			return true

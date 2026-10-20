@@ -802,15 +802,13 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 // Syntax: CALL apoc.import.json(urlOrFile) YIELD nodes, relationships
 func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
-	prefixIDs := true
+	// The storage owner qualifies local IDs through transaction/admission
+	// wrappers too. Keep the import's supplied IDs local when it does so;
+	// pre-prefixing here would make that namespace part of the imported ID.
+	prefixIDs := storage.QualifiedEntityID(store, "") == ""
 	dbName := GetUseDatabaseFromContext(ctx)
 	if dbName == "" {
-		if ns, ok := store.(*storage.NamespacedEngine); ok {
-			dbName = ns.Namespace()
-			prefixIDs = false
-		} else {
-			dbName = "nornic"
-		}
+		dbName = "nornic"
 	}
 	ensureNodeID := func(id string) storage.NodeID {
 		if id == "" {

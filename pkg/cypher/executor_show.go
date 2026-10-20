@@ -376,6 +376,23 @@ func showCommandHead(cypher string) string {
 	return strings.TrimSpace(query[:end])
 }
 
+// showExecutionContinuation reads the executable continuation using the same
+// command-head and YIELD segment owners as applyShowTail. Option/predicate
+// values and stored declaration strings never become graph clauses.
+func showExecutionContinuation(query string) string {
+	query = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))
+	head := showCommandHead(query)
+	tail := strings.TrimSpace(query[len(head):])
+	if !startsWithKeywordFold(tail, "YIELD") {
+		return ""
+	}
+	body := strings.TrimSpace(tail[len("YIELD"):])
+	if start := showContinuationStart(body); start >= 0 {
+		return strings.TrimSpace(body[start:])
+	}
+	return ""
+}
+
 // executeShowWithTail runs a SHOW command: run lists every row of the command
 // (given the command without its tail), and applyShowTail applies the tail.
 // Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
@@ -538,7 +555,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	body := strings.TrimSpace(tail[len("YIELD"):])
 	// A clause after YIELD's items and segments continues the query over the
 	// yielded columns (Cypher 25 composition).
-	continuation := ""
+	continuation := showExecutionContinuation(query)
 	if start := showContinuationStart(body); start >= 0 {
 		continuation = strings.TrimSpace(body[start:])
 		body = strings.TrimSpace(body[:start])
