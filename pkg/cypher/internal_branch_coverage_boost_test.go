@@ -301,11 +301,11 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 	require.Equal(t, aNode, exec.resolveReturnExprFromVarMap(ctx, "s", varMap, "t", "r", nil, nil))
 	require.EqualValues(t, 7, exec.resolveReturnExprFromVarMap(ctx, "7", varMap, "t", "r", nil, nil))
 
-	require.Equal(t, "node:a", joinedValueKey(aNode))
-	require.Equal(t, "node:nil", joinedValueKey((*storage.Node)(nil)))
-	require.Equal(t, "edge:ab", joinedValueKey(abEdge))
-	require.Equal(t, "edge:nil", joinedValueKey((*storage.Edge)(nil)))
-	require.Contains(t, joinedValueKey(map[string]interface{}{"k": "v"}), "map")
+	require.Equal(t, "n:a", joinedValueKey(aNode))
+	require.Equal(t, "N", joinedValueKey((*storage.Node)(nil)))
+	require.Equal(t, "r:ab", joinedValueKey(abEdge))
+	require.Equal(t, "N", joinedValueKey((*storage.Edge)(nil)))
+	require.NotEqual(t, joinedValueKey(map[string]interface{}{"k": "v"}), joinedValueKey(map[string]interface{}{"k": 1}))
 
 	replaced := replaceIdentifierOutsideQuotes(`row + row.name + "row" + 'row' + `+"`row`"+` + {row: 1}`, "row", "$row")
 	require.Equal(t, `$row + $row.name + "row" + 'row' + `+"`row`"+` + {row: 1}`, replaced)

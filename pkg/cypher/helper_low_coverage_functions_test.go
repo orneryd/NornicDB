@@ -92,9 +92,9 @@ func TestLowCoverageHelpers_SmallFunctions(t *testing.T) {
 
 	// unwind_multi_match_create
 	require.Equal(t, "n:", propEqKeyBatch(nil))
-	require.Equal(t, "i:2", propEqKeyBatch(int64(2)))
-	require.Equal(t, "i:2", propEqKeyBatch(float64(2)))
-	require.Equal(t, "f:2.5", propEqKeyBatch(float64(2.5)))
+	require.Equal(t, "n:float64:2", propEqKeyBatch(int64(2)))
+	require.Equal(t, "n:float64:2", propEqKeyBatch(float64(2)))
+	require.Equal(t, "n:float64:2.5", propEqKeyBatch(float64(2.5)))
 	require.Equal(t, "s:x", propEqKeyBatch("x"))
 	require.Equal(t, "b:true", propEqKeyBatch(true))
 

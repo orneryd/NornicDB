@@ -1698,10 +1698,11 @@ func unwindItemsAreDistinctComparable(items []interface{}) bool {
 		if !rv.IsValid() || !rv.Type().Comparable() {
 			return false
 		}
-		if _, exists := seen[it]; exists {
+		key := membershipKey(it)
+		if _, exists := seen[key]; exists {
 			return false
 		}
-		seen[it] = struct{}{}
+		seen[key] = struct{}{}
 	}
 	return true
 }
@@ -2087,20 +2088,7 @@ func optionalRelationshipTypeMatches(filter, actual string) bool {
 }
 
 func joinedValueKey(val interface{}) string {
-	switch v := val.(type) {
-	case *storage.Node:
-		if v == nil {
-			return "node:nil"
-		}
-		return "node:" + string(v.ID)
-	case *storage.Edge:
-		if v == nil {
-			return "edge:nil"
-		}
-		return "edge:" + string(v.ID)
-	default:
-		return fmt.Sprintf("%#v", val)
-	}
+	return cypherValueKey(val, cypherEquivalenceContract)
 }
 
 // ========================================

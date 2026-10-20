@@ -550,7 +550,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				}
 			}
 
-			key := fmt.Sprintf("%v", keyParts)
+			key := cypherValueKey(keyParts, cypherEquivalenceContract)
 			groups[key] = append(groups[key], path)
 			if _, exists := groupKeys[key]; !exists {
 				groupKeys[key] = keyParts
@@ -1083,7 +1083,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 			if val == nil {
 				continue
 			}
-			key := fmt.Sprintf("%v", val)
+			key := joinedValueKey(val)
 			if _, exists := seen[key]; exists {
 				continue
 			}
