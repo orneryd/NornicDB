@@ -144,6 +144,13 @@ func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
 		return neo4j.BasicAuth(user, pass, "")
 	}
 	if token != "" {
+		// The shared HTTP authentication owner supplies a canonical validated
+		// Authorization value. Adapt its scheme at this native protocol boundary.
+		request := &http.Request{Header: make(http.Header)}
+		request.Header.Set("Authorization", token)
+		if user, password, ok := request.BasicAuth(); ok {
+			return neo4j.BasicAuth(user, password, "")
+		}
 		// Strip "Bearer " prefix if present (case-insensitive per RFC 7235) —
 		// neo4j.BearerAuth expects the raw token value without the scheme.
 		raw := token

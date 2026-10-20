@@ -92,6 +92,7 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 		{"fabric_local", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x }", "x"},
 		{"remote", "matrix_cmp", "USE matrix_cmp.remote UNWIND range(1,200000) AS x", "x"},
 		{"bolt", "matrix_cmp", "USE matrix_cmp.bolt UNWIND range(1,200000) AS x", "x"},
+		{"bolt_basic", "matrix_cmp", "USE matrix_cmp.bolt UNWIND range(1,200000) AS x", "x"},
 		{"bolt_profile", "matrix_cmp", "USE matrix_cmp.bolt PROFILE UNWIND range(1,200000) AS x", "x"},
 		{"bolt_apoc", "matrix_cmp", "USE matrix_cmp.bolt CALL apoc.cypher.run('UNWIND range(1,200000) AS x RETURN x',{}) YIELD value", "value.x"},
 		{"fabric_bolt", "matrix_cmp", "CALL { USE matrix_cmp.bolt UNWIND range(1,200000) AS x RETURN x } WITH x WHERE x > 20", "x"},
@@ -129,7 +130,11 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 					var before, after runtime.MemStats
 					runtime.ReadMemStats(&before)
 					remoteBytes.Store(0)
-					raw, response := nativeReviewCall(t, host, path, map[string]interface{}{"database": producer.database, "query": query, "parameters": parameters, "max_rows": 1}, authenticate)
+					credential := authenticate
+					if producer.name == "bolt_basic" {
+						credential = func(r *http.Request) { r.SetBasicAuth("admin", "password123") }
+					}
+					raw, response := nativeReviewCall(t, host, path, map[string]interface{}{"database": producer.database, "query": query, "parameters": parameters, "max_rows": 1}, credential)
 					runtime.ReadMemStats(&after)
 					require.False(t, response.IsError, response.Content)
 					require.LessOrEqual(t, len(raw), 1<<20)
