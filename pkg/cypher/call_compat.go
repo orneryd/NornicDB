@@ -341,7 +341,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 
 	sort.Slice(scored, func(i, j int) bool {
 		if scored[i].score == scored[j].score {
-			return scored[i].edge.ID < scored[j].edge.ID
+			return nativeEntityOrder(scored[i].edge, scored[j].edge) < 0
 		}
 		return scored[i].score > scored[j].score
 	})
@@ -471,10 +471,10 @@ func writeFulltextValue(content *strings.Builder, val interface{}) {
 // surface emit identical shapes.
 func edgeToMap(edge *storage.Edge) map[string]interface{} {
 	result := map[string]interface{}{
-		"_id":        string(edge.ID),
+		"_id":        nativeEntityOutputID(edge),
 		"_type":      edge.Type,
-		"_start":     string(edge.StartNode),
-		"_end":       string(edge.EndNode),
+		"_start":     nativeRelationshipStartOutputID(edge),
+		"_end":       nativeRelationshipEndOutputID(edge),
 		"properties": edge.Properties,
 	}
 	for key, value := range edge.Properties {
@@ -945,15 +945,17 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	if len(arguments) != 3 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "vector property setter requires three arguments")
 	}
+	store := e.getStorage(ctx)
 	identifier, validID := arguments[0].(string)
+    var native interface{}
 	switch entity := arguments[0].(type) {
 	case *storage.Node:
 		if !relationship && entity != nil {
-			identifier, validID = string(entity.ID), true
+			native, validID = entity, true
 		}
 	case *storage.Edge:
 		if relationship && entity != nil {
-			identifier, validID = string(entity.ID), true
+			native, validID = entity, true
 		}
 	}
 	propertyKey, validKey := arguments[1].(string)
@@ -964,7 +966,10 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	if !validID || !validKey || !validVector {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "vector property setter requires an entity, a STRING property key, and a numeric vector")
 	}
-	store := e.getStorage(ctx)
+    if native != nil {
+        identifier, validID = nativeEntityStorageID(store, native)
+        if !validID { return nil, nativeEntityNotFound(native) }
+    }
 	if relationship {
 		edge, err := store.GetEdge(storage.EdgeID(identifier))
 		if err != nil {
@@ -975,7 +980,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			if err := updateMutatedEdge(store, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
-			e.notifyEdgeMutated(string(edge.ID))
+			e.notifyNativeEntityMutated(store, edge)
 		}
 		if entity, ok := arguments[0].(*storage.Edge); ok {
 			entity.Properties = edge.Properties
@@ -992,7 +997,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		if err := updateMutatedNode(store, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
-		e.notifyNodeMutated(string(node.ID))
+		e.notifyNativeEntityMutated(store, node)
 	}
 	if entity, ok := arguments[0].(*storage.Node); ok {
 		entity.Properties = node.Properties

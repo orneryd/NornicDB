@@ -129,7 +129,7 @@ func writeCypher25PathText(out *strings.Builder, value interface{}) bool {
 	writeCypher25NodeText(out, path.Nodes[0])
 	for index, edge := range path.Relationships {
 		relationship := "[:" + cypher25NameText(edge.Type) + "]"
-		if edge.StartNode == path.Nodes[index].ID {
+		if nativeEdgeStartsAt(edge, path.Nodes[index]) {
 			out.WriteString("-" + relationship + "->")
 		} else {
 			out.WriteString("<-" + relationship + "-")

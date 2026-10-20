@@ -92,3 +92,24 @@ func (id EntityIdentity) Resolve(engine Engine) (EntityIdentity, bool) {
 	}
 	return id, true
 }
+
+// SourceEngine resolves metadata/property ownership without reading data or
+// opening transaction participants. Actual data operations keep their outer
+// transaction/admission engine and use LookupID instead.
+func (id EntityIdentity) SourceEngine(engine Engine) (Engine, bool) {
+    selected := engine
+    if engine != nil && id.Source == "" && (id.Database == "" || id.Database == DatabaseOf(engine)) { return engine, true }
+    for depth := 0; engine != nil && depth < 16; depth++ {
+        if sources, ok := engine.(interface { EntitySource(EntityIdentity) (Engine, error) }); ok {
+            source, err := sources.EntitySource(id)
+            return source, err == nil && source != nil
+        }
+        wrapper, ok := engine.(EngineUnwrapper)
+        if !ok || wrapper.GetInnerEngine() == engine { break }
+        engine = wrapper.GetInnerEngine()
+    }
+    if selected == nil { return nil, false }
+    if id.Database != "" && id.Database != DatabaseOf(selected) && id.Source == "" { return nil, false }
+    if _, ok := id.Resolve(selected); !ok { return nil, false }
+    return selected, true
+}

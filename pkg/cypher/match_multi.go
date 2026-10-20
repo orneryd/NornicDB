@@ -363,12 +363,8 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 // properties (e.g. "rel.evidence_source = $e"). The returned slices stay
 // index-aligned with each other.
 //
-// This reuses the existing node-only WHERE compiler
-// (binding_where_compile.go) unchanged by presenting each bound relationship
-// as a read-only property view alongside the row's real node bindings for
-// the duration of the WHERE check only — see bindingWithRelView. The real
-// *storage.Edge values (needed for RETURN/DELETE) are returned separately
-// and never replaced by the view.
+// The shared row predicate reads native nodes and native relationships through
+// compiledRowScope. Relationship kind and source survive every WHERE operand.
 func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
 	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	resultBindings := make([]binding, 0, len(bindings))
@@ -386,32 +382,6 @@ func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bin
 	}
 
 	return resultBindings, resultRels
-}
-
-// bindingWithRelView returns a binding row for WHERE-clause evaluation that
-// additionally exposes each bound relationship variable as a read-only,
-// node-shaped property view (ID + Properties only, no labels/edges). The
-// binding-where evaluator (binding_where_compile.go) only ever reads
-// `.Properties[prop]` or `.ID` off a bound variable via getBindingNodeValue,
-// so this view lets relationship property predicates (e.g.
-// "rel.evidence_source = $e") evaluate correctly without teaching every
-// WHERE-compiler function in binding_where_compile.go about a second
-// bound-value kind. Returns b unchanged when there is nothing to add.
-func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
-	if len(rels) == 0 {
-		return b
-	}
-	view := make(binding, len(b)+len(rels))
-	for k, v := range b {
-		view[k] = v
-	}
-	for k, edge := range rels {
-		if edge == nil {
-			continue
-		}
-		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Database: edge.Database, Properties: edge.Properties}
-	}
-	return view
 }
 
 // evaluateBindingWhere evaluates WHERE clause against a binding

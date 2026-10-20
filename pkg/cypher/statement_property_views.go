@@ -21,8 +21,8 @@ type statementPropertyViews struct {
 	projection storage.QueryResultProjection
 	nodes      map[*storage.Node]*storage.Node
 	edges      map[*storage.Edge]*storage.Edge
-	nodeBodies map[storage.NodeID]nodePropertyViewBody
-	edgeBodies map[storage.EdgeID]edgePropertyViewBody
+	nodeBodies map[graphEntityKey]nodePropertyViewBody
+	edgeBodies map[graphEntityKey]edgePropertyViewBody
 	bytes      int64
 }
 type nodePropertyViewBody struct {
@@ -85,7 +85,7 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 		return cached
 	}
 	// Include source, detached scoring body, projected map and map/key overhead.
-	bytes := int64(512+len(source.ID)) + 3*util.EstimateValueBytes(source.Properties) + util.EstimateValueBytes(source.Labels) + util.EstimateValueBytes(source.EmbedMeta)
+	bytes := 512 + nativeIdentityBytes(source) + 3*util.EstimateValueBytes(source.Properties) + util.EstimateValueBytes(source.Labels) + util.EstimateValueBytes(source.EmbedMeta)
 	for name, vector := range source.NamedEmbeddings {
 		bytes += int64(64 + len(name) + 4*cap(vector))
 	}
@@ -100,15 +100,15 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 	}
 	if v.nodes == nil {
 		v.nodes = make(map[*storage.Node]*storage.Node)
-		v.nodeBodies = make(map[storage.NodeID]nodePropertyViewBody)
+		v.nodeBodies = make(map[graphEntityKey]nodePropertyViewBody)
 	}
-	identity := storage.NodeID(source.IdentityKey())
+	identity := nativeGraphEntityKey(source)
 	body, ok := v.nodeBodies[identity]
 	// A wrapper may return a fresh pointer on every index recheck. Reuse only
 	// when its complete scoring input equals our detached snapshot: timestamps
 	// alone are not a body version, and an ID alone is never sufficient.
 	if !ok || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !slices.Equal(source.Labels, body.source.Labels) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
-		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Database: source.Database, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
+		snapshot := nativeNodeScoringSnapshot(source)
 		body = nodePropertyViewBody{snapshot, v.projection.NodeProperties(source)}
 		v.nodeBodies[identity] = body
 	}
@@ -128,7 +128,7 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 	if cached := v.edges[source]; cached != nil {
 		return cached
 	}
-	bytes := int64(512+len(source.ID)+len(source.StartNode)+len(source.EndNode)+len(source.Type)) + 3*util.EstimateValueBytes(source.Properties)
+	bytes := 512 + nativeIdentityBytes(source) + int64(len(source.Type)) + 3*util.EstimateValueBytes(source.Properties)
 	if !v.reserve(bytes) {
 		out := *source
 		out.Properties = v.projection.EdgeProperties(source)
@@ -136,12 +136,12 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 	}
 	if v.edges == nil {
 		v.edges = make(map[*storage.Edge]*storage.Edge)
-		v.edgeBodies = make(map[storage.EdgeID]edgePropertyViewBody)
+		v.edgeBodies = make(map[graphEntityKey]edgePropertyViewBody)
 	}
-	identity := storage.EdgeID(source.IdentityKey())
+	identity := nativeGraphEntityKey(source)
 	body, ok := v.edgeBodies[identity]
 	if !ok || source.Type != body.source.Type || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
-		snapshot := storage.CopyEdge(&storage.Edge{ID: source.ID, Database: source.Database, Type: source.Type, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
+		snapshot := nativeEdgeScoringSnapshot(source)
 		body = edgePropertyViewBody{snapshot, v.projection.EdgeProperties(source)}
 		v.edgeBodies[identity] = body
 	}

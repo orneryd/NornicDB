@@ -1852,10 +1852,9 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
 func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
-	if len(stores) > 0 && stores[0] != e.storage {
-		return e.cloneForStorage(stores[0]).relationshipEndpointWithProperties(edge, end, nil)
-	}
-	return e.relationshipEndpointWithProperties(edge, end, nil)
+    store := e.storage
+    if len(stores) > 0 { store = stores[0] }
+    return nativeRelationshipEndpointValue(e, edge, end, store)
 }
 
 func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge, end bool, properties []string) interface{} {

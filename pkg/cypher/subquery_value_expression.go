@@ -393,9 +393,8 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 
 // executeCorrelatedSubqueryBody runs a subquery body through the full
 // executor with the row's values it uses bound the way MATCH … CALL binds a
-// correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
-// relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
-// WITH $p AS v. Row parameters stay available.
+// correlated subquery's imports: native entities and scalar values remain
+// typed values bound by WITH $p AS v. Row parameters stay available.
 func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
 	params := make(map[string]interface{}, len(values))
 	for name, value := range getParamsFromContext(ctx) {
@@ -412,29 +411,8 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	carried := make([]string, 0, len(names))
 	for index, name := range names {
 		param := fmt.Sprintf("__subquery_row_%d", index)
-		switch value := values[name].(type) {
-		case *storage.Node:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH (%s) WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		case *storage.Edge:
-			if value == nil {
-				params[param] = nil
-				carried = append(carried, "$"+param+" AS "+name)
-				continue
-			}
-			params[param] = string(value.ID)
-			fmt.Fprintf(&prefix, "MATCH ()-[%s]->() WHERE id(%s) = $%s ", name, name, param)
-			carried = append(carried, name)
-		default:
-			params[param] = value
-			carried = append(carried, "$"+param+" AS "+name)
-		}
+        params[param] = values[name]
+        carried = append(carried, "$"+param+" AS "+name)
 	}
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
@@ -855,11 +833,13 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 // nodeDegreeCount is the degree of node along shape's direction and types.
 func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
 	store := e.getStorage(ctx)
+	id, selected := nativeNodeLookupID(store, node)
+	if !selected { return 0 }
 	var edges []*storage.Edge
 	if shape.outgoing {
-		edges, _ = store.GetOutgoingEdges(node.ID)
+		edges, _ = store.GetOutgoingEdges(id)
 	} else {
-		edges, _ = store.GetIncomingEdges(node.ID)
+		edges, _ = store.GetIncomingEdges(id)
 	}
 	if len(shape.types) == 0 {
 		return int64(len(edges))

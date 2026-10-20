@@ -13,7 +13,7 @@ const endpointPropertyCacheKey = "$\x00nornic_endpoint_properties"
 const endpointPropertyCacheBytes = 1 << 20
 
 type endpointPropertyKey struct {
-	id       storage.NodeID
+	id       graphEntityKey
 	property string
 }
 
@@ -103,7 +103,7 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 		return nil, true, nil
 	}
 	cache, _ := values[endpointPropertyCacheKey].(*endpointPropertyCache)
-	key := endpointPropertyKey{id: id, property: n.property}
+	key := endpointPropertyKey{id: nativeEndpointCacheKey(e.storage, id), property: n.property}
 	if cache != nil {
 		if value, cached := cache.values[key]; cached {
 			return value, true, nil

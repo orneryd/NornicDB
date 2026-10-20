@@ -20,9 +20,9 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 		return nil, err
 	}
 	labels := make(map[string]bool)
-	nodesByID := make(map[string]*storage.Node, len(nodes))
+	nodesByID := make(map[graphEntityKey]*storage.Node, len(nodes))
 	for _, node := range nodes {
-		nodesByID[node.IdentityKey()] = node
+		nodesByID[nativeGraphEntityKey(node)] = node
 		for _, label := range node.Labels {
 			labels[label] = true
 		}
@@ -49,12 +49,12 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 			startLabels[edge.Type] = make(map[string]bool)
 			endLabels[edge.Type] = make(map[string]bool)
 		}
-		if node := nodesByID[storage.EntityIdentityKey(edge.Database, string(edge.StartNode))]; node != nil {
+		if node := nodesByID[nativeEdgeGraphEndpointKeys(edge)[0]]; node != nil {
 			for _, label := range node.Labels {
 				startLabels[edge.Type][label] = true
 			}
 		}
-		if node := nodesByID[storage.EntityIdentityKey(edge.Database, string(edge.EndNode))]; node != nil {
+		if node := nodesByID[nativeEdgeGraphEndpointKeys(edge)[1]]; node != nil {
 			for _, label := range node.Labels {
 				endLabels[edge.Type][label] = true
 			}
@@ -64,14 +64,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	for _, relationshipType := range sortedStringSet(types) {
 		for _, start := range sortedStringSet(startLabels[relationshipType]) {
 			for _, end := range sortedStringSet(endLabels[relationshipType]) {
-				virtualEdges = append(virtualEdges, &storage.Edge{
-					Database:   e.executionDatabaseName(ctx),
-					ID:         storage.EdgeID("-" + strconv.Itoa(len(virtualNodes)+len(virtualEdges)+1)),
-					StartNode:  virtualByLabel[start].ID,
-					EndNode:    virtualByLabel[end].ID,
-					Type:       relationshipType,
-					Properties: map[string]interface{}{"name": relationshipType},
-				})
+				virtualEdges = append(virtualEdges, nativeSchemaRelationship(e.executionDatabaseName(ctx), storage.EdgeID("-" + strconv.Itoa(len(virtualNodes)+len(virtualEdges)+1)), virtualByLabel[start], virtualByLabel[end], relationshipType))
 			}
 		}
 	}

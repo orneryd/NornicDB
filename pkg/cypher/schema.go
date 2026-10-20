@@ -2211,7 +2211,8 @@ func (e *StorageExecutor) backfillCompositeIndex(name, label string, properties 
 		if node == nil || node.Properties == nil {
 			continue
 		}
-		entries[storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)] = node.Properties
+		id, selected := nativeSchemaIndexID(e.storage, node)
+		if selected { entries[id] = node.Properties }
 	}
 	if err := schema.BackfillCompositeIndex(name, entries); err != nil {
 		property := ""

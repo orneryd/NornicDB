@@ -90,11 +90,7 @@ func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) 
 	if result == nil {
 		return
 	}
-	recorder, ok := e.storage.(materializedAccessRecorder)
-	if !ok || recorder == nil {
-		return
-	}
-	materializedRows(recorder, result.Rows)
+	materializedRows(nativeMaterializedAccessRecorder{executor: e}, result.Rows)
 }
 
 // resultHasMaterializedEntities reports whether result returns a node or a
@@ -145,12 +141,20 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		if v == nil {
 			return false
 		}
-		id = string(v.ID)
+		if native, ok := recorder.(interface { RecordNativeEntityAccess(interface{}) }); ok {
+            native.RecordNativeEntityAccess(v)
+            return true
+        }
+        id = nativeEntityOutputID(v)
 	case *storage.Edge:
 		if v == nil {
 			return false
 		}
-		id = string(v.ID)
+		if native, ok := recorder.(interface { RecordNativeEntityAccess(interface{}) }); ok {
+            native.RecordNativeEntityAccess(v)
+            return true
+        }
+        id = nativeEntityOutputID(v)
 	case storage.RemotePathValue:
 		if _, _, valid := v.Parts(); !valid {
 			return false
@@ -266,7 +270,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	// Start with node metadata
 	// Use _nodeId for internal storage ID to avoid conflicts with user "id" property
 	result := map[string]interface{}{
-		"_nodeId": string(node.ID), // Internal storage ID for DELETE operations
+		"_nodeId": nativeEntityOutputID(node), // Internal storage ID for DELETE operations
 		"labels":  node.Labels,
 	}
 
@@ -279,7 +283,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 
 	// If no user "id" property, use storage ID for backward compatibility
 	if _, hasUserID := result["id"]; !hasUserID {
-		result["id"] = string(node.ID)
+		result["id"] = nativeEntityOutputID(node)
 	}
 
 	return result
@@ -323,10 +327,10 @@ func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {
 //	// result = {"_edgeId": "e1", "type": "KNOWS", "startNode": "n1", ...}
 func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
 	return map[string]interface{}{
-		"_edgeId":    string(edge.ID),
+		"_edgeId":    nativeEntityOutputID(edge),
 		"type":       edge.Type,
-		"startNode":  string(edge.StartNode),
-		"endNode":    string(edge.EndNode),
+		"startNode":  nativeRelationshipStartOutputID(edge),
+		"endNode":    nativeRelationshipEndOutputID(edge),
 		"properties": e.decayVisibleEdgeProperties(edge),
 	}
 }

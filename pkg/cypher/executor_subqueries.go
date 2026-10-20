@@ -159,9 +159,9 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 func rowMatchesSeedID(value interface{}, seedID string) bool {
 	switch v := value.(type) {
 	case *storage.Node:
-		return v != nil && string(v.ID) == seedID
+		return v != nil && nativeEntityOutputID(v) == seedID
 	case storage.Node:
-		return string(v.ID) == seedID
+		return nativeEntityOutputID(v) == seedID
 	case map[string]interface{}:
 		for _, key := range []string{"_nodeId", "id", "_id", "elementId"} {
 			if raw, ok := v[key]; ok {

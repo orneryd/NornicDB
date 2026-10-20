@@ -7,6 +7,7 @@ import "strings"
 // their source database's projection instead of being scored against this store.
 // Construct it once per result owner; raw debug/history/export reads omit it.
 type QueryResultProjection struct {
+	source Engine
 	engine      *BadgerEngine
 	prefix      string
 	now         int64
@@ -20,9 +21,9 @@ type QueryResultProjection struct {
 func NewQueryResultProjection(engine Engine) QueryResultProjection {
 	be, _ := UnwrapEngine(engine).(*BadgerEngine)
 	if be == nil || !be.IsDecayEnabled() {
-		return QueryResultProjection{}
+		return QueryResultProjection{source: engine, now: DecayScoringTime()}
 	}
-	return QueryResultProjection{engine: be, prefix: QualifiedEntityID(engine, ""), now: DecayScoringTime()}
+	return QueryResultProjection{source: engine, engine: be, prefix: QualifiedEntityID(engine, ""), now: DecayScoringTime()}
 }
 
 // NewNormalEventResultProjection projects normal subscription events without
@@ -65,6 +66,7 @@ func (p QueryResultProjection) NodeProperties(node *Node) map[string]interface{}
 	if node == nil {
 		return nil
 	}
+	p = p.forIdentity(node.Identity())
 	if p.engine == nil {
 		return node.Properties
 	}
@@ -88,6 +90,7 @@ func (p QueryResultProjection) EdgeProperties(edge *Edge) map[string]interface{}
 	if edge == nil {
 		return nil
 	}
+	p = p.forIdentity(edge.Identity())
 	if p.engine == nil {
 		return edge.Properties
 	}
@@ -108,9 +111,11 @@ func (p QueryResultProjection) EdgeProperties(edge *Edge) map[string]interface{}
 // Node projects a detached node for a query response, preserving typed identity.
 // The original pointer is returned without allocation when decay is disabled.
 func (p QueryResultProjection) Node(node *Node) *Node {
-	if node == nil || p.engine == nil {
+	if node == nil {
 		return node
 	}
+	p = p.forIdentity(node.Identity())
+	if p.engine == nil { return node }
 	out := *node
 	out.Properties = p.NodeProperties(node)
 	return &out
@@ -119,9 +124,11 @@ func (p QueryResultProjection) Node(node *Node) *Node {
 // Edge projects a detached relationship for a query response. Mutation owners
 // must keep the original edge, so unrelated writes retain suppressed fields.
 func (p QueryResultProjection) Edge(edge *Edge) *Edge {
-	if edge == nil || p.engine == nil {
+	if edge == nil {
 		return edge
 	}
+	p = p.forIdentity(edge.Identity())
+	if p.engine == nil { return edge }
 	out := *edge
 	out.Properties = p.EdgeProperties(edge)
 	return &out
@@ -131,3 +138,15 @@ func (p QueryResultProjection) Edge(edge *Edge) *Edge {
 // use it to bypass caches whose graph revision cannot represent elapsed decay.
 // For example, do not reuse cached search payloads when view.Enabled() is true.
 func (p QueryResultProjection) Enabled() bool { return p.engine != nil }
+
+func (p QueryResultProjection) forIdentity(identity EntityIdentity) QueryResultProjection {
+    if p.source == nil { return p }
+    selected, ok := identity.SourceEngine(p.source)
+    if !ok { p.engine = nil; return p }
+    if selected == p.source { return p }
+    p.source = selected
+    engine, _ := UnwrapEngine(selected).(*BadgerEngine)
+    if engine == nil || !engine.IsDecayEnabled() { p.engine = nil; return p }
+    p.engine, p.prefix = engine, QualifiedEntityID(selected, "")
+    return p
+}

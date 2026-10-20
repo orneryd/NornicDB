@@ -601,7 +601,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	for _, node := range nodes {
 		props, _ := json.Marshal(node.Properties)
 		csvContent.WriteString(fmt.Sprintf("%s,\"%s\",\"%s\"\n",
-			node.ID,
+			nativeEntityOutputID(node),
 			strings.Join(node.Labels, ";"),
 			strings.ReplaceAll(string(props), "\"", "\"\"")))
 	}
@@ -611,10 +611,10 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	for _, edge := range edges {
 		props, _ := json.Marshal(edge.Properties)
 		csvContent.WriteString(fmt.Sprintf("%s,%s,%s,%s,\"%s\"\n",
-			edge.ID,
+			nativeEntityOutputID(edge),
 			edge.Type,
-			edge.StartNode,
-			edge.EndNode,
+			nativeRelationshipStartOutputID(edge),
+			nativeRelationshipEndOutputID(edge),
 			strings.ReplaceAll(string(props), "\"", "\"\"")))
 	}
 
@@ -720,7 +720,7 @@ func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[strin
 	result := make([]map[string]interface{}, len(nodes))
 	for i, node := range nodes {
 		result[i] = map[string]interface{}{
-			"id":         string(node.ID),
+			"id":         nativeEntityOutputID(node),
 			"labels":     node.Labels,
 			"properties": node.Properties,
 		}
@@ -732,10 +732,10 @@ func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge) []map[strin
 	result := make([]map[string]interface{}, len(edges))
 	for i, edge := range edges {
 		result[i] = map[string]interface{}{
-			"id":         string(edge.ID),
+			"id":         nativeEntityOutputID(edge),
 			"type":       edge.Type,
-			"startNode":  string(edge.StartNode),
-			"endNode":    string(edge.EndNode),
+			"startNode":  nativeRelationshipStartOutputID(edge),
+			"endNode":    nativeRelationshipEndOutputID(edge),
 			"properties": edge.Properties,
 		}
 	}
@@ -863,7 +863,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if id, ok := nodeMap["id"].(string); ok {
-						node.ID = ensureNodeID(id)
+						setNativeCreatedNodeID(node, ensureNodeID(id))
 					}
 					if labels, ok := nodeMap["labels"].([]interface{}); ok {
 						for _, l := range labels {
@@ -876,7 +876,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 						node.Properties = props
 					}
 
-					if node.ID != "" {
+					if nativeEntityOutputID(node) != "" {
 						if _, err := store.CreateNode(node); err == nil {
 							nodesImported++
 						}
@@ -894,22 +894,22 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if id, ok := relMap["id"].(string); ok {
-						edge.ID = ensureEdgeID(id)
+						setNativeRelationshipCandidateID(edge, ensureEdgeID(id))
 					}
 					if t, ok := relMap["type"].(string); ok {
 						edge.Type = t
 					}
 					if start, ok := relMap["startNode"].(string); ok {
-						edge.StartNode = ensureNodeID(start)
+						setNativeRelationshipEndpoints(edge, ensureNodeID(start), storage.NodeID(nativeRelationshipEndOutputID(edge)))
 					}
 					if end, ok := relMap["endNode"].(string); ok {
-						edge.EndNode = ensureNodeID(end)
+						setNativeRelationshipEndpoints(edge, storage.NodeID(nativeRelationshipStartOutputID(edge)), ensureNodeID(end))
 					}
 					if props, ok := relMap["properties"].(map[string]interface{}); ok {
 						edge.Properties = props
 					}
 
-					if edge.ID != "" && edge.StartNode != "" && edge.EndNode != "" {
+					if nativeEntityOutputID(edge) != "" && nativeRelationshipStartOutputID(edge) != "" && nativeRelationshipEndOutputID(edge) != "" {
 						if err := store.CreateEdge(edge); err == nil {
 							relsImported++
 						}

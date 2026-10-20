@@ -22,7 +22,8 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	var apply func(storage.ManualSuppressionEngine) error
 	switch value := entity.(type) {
 	case *storage.Node:
-		id := value.ID
+		id, selected := nativeNodeLookupID(e.storage, value)
+		if !selected { return nil, nativeEntityNotFound(value) }
 		apply = func(engine storage.ManualSuppressionEngine) error {
 			if err := engine.SetNodeManuallySuppressed(id, suppressed); err != nil {
 				return err
@@ -44,7 +45,8 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 			return nil
 		}
 	case *storage.Edge:
-		id := value.ID
+		id, selected := nativeEdgeLookupID(e.storage, value)
+		if !selected { return nil, nativeEntityNotFound(value) }
 		apply = func(engine storage.ManualSuppressionEngine) error {
 			return engine.SetEdgeManuallySuppressed(id, suppressed)
 		}
