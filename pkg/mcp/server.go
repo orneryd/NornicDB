@@ -710,6 +710,9 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 	}
 
 	databaseSelection := extractDatabaseArg(args)
+	if databaseSelection == "" && name == ToolCypher {
+		databaseSelection = DatabaseFromContext(ctx)
+	}
 	if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
 		database, allowed := scope.Resolve(databaseSelection)
 		if !allowed {

@@ -24,6 +24,7 @@
 | `discover` | Finding by meaning, not keywords | `discover(query="auth implementation")` |
 | `link` | Connecting two nodes (from/to must be node IDs from store or Cypher) | `link(from="node-abc", to="node-xyz", relation="depends_on")` |
 | `tasks` | Task CRUD and listing | `tasks(title="Fix bug", priority="high")`, `tasks(status=["pending"], unblocked_only=true)` |
+| [`cypher`](../api-reference/mcp-cypher.md) | Native queries and APOC/GDS/retrieval procedures | `cypher(query="RETURN $value", parameters={"value": 42})` |
 
 ---
 

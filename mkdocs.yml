@@ -216,6 +216,7 @@ nav:
   - API Reference:
       - api-reference/README.md
       - Bolt Protocol: api-reference/bolt-protocol.md
+      - MCP Cypher Tool: api-reference/mcp-cypher.md
       - Cypher Functions: api-reference/cypher-functions/README.md
       - OpenAPI: api-reference/openapi.md
       - GraphQL: user-guides/graphql.md

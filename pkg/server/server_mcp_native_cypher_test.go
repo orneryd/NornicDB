@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -74,11 +76,12 @@ func TestMCPNativeCypherTransport(t *testing.T) {
 	t.Run("nested bound values and selected database", func(t *testing.T) {
 		payload := map[string]interface{}{"nested": map[string]interface{}{"list": []interface{}{float64(1), true, nil, "' MATCH (n) DELETE n //"}}}
 		result := success(t, call(t, admin, "/mcp", map[string]interface{}{
-			"database": "tenant_a", "query": "CREATE (n:Item {payload: $payload}) RETURN n.payload AS payload", "parameters": map[string]interface{}{"payload": payload},
+			"database": "tenant_a", "query": "CREATE (n:Item {name: $payload.nested.list[3]}) RETURN $payload AS payload, n.name AS name", "parameters": map[string]interface{}{"payload": payload},
 		}))
 		require.Equal(t, payload, result["rows"].([]interface{})[0].([]interface{})[0])
+		require.Equal(t, float64(1), result["stats"].(map[string]interface{})["nodes_created"])
 		result = success(t, call(t, reader, "/mcp/tools/call", map[string]interface{}{
-			"database": " PRIMARY ", "query": "MATCH (n:Item) RETURN n.payload AS payload",
+			"database": " PRIMARY ", "query": "MATCH (n:Item) RETURN n.name AS name",
 		}))
 		require.Len(t, result["rows"], 1)
 	})
@@ -95,9 +98,30 @@ func TestMCPNativeCypherTransport(t *testing.T) {
 
 	t.Run("URL database pin", func(t *testing.T) {
 		result := success(t, call(t, reader, "/mcp/tenant_a/tools/call", map[string]interface{}{
-			"database": "private", "query": "MATCH (n:Item) RETURN n.payload",
+			"database": "private", "query": "MATCH (n:Item) RETURN n.name",
 		}))
 		require.Len(t, result["rows"], 1)
+	})
+
+	t.Run("in-process adapter keeps request principal and selected database", func(t *testing.T) {
+		var ctx context.Context
+		handler := server.withAuth(func(w http.ResponseWriter, r *http.Request) {
+			ctx = server.withBifrostRBAC(r).Context()
+			require.Equal(t, auth.PrincipalID(getClaims(r)), cypher.GetAuthenticatedPrincipalFromContext(ctx))
+			require.Equal(t, "Bearer "+reader, cypher.GetAuthTokenFromContext(ctx))
+		}, auth.PermRead)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+reader)
+		handler(httptest.NewRecorder(), req)
+		require.NotNil(t, ctx)
+		adapter := &mcpToolRunnerAdapter{s: server.mcpServer}
+		result, err := adapter.CallTool(ctx, "cypher", map[string]interface{}{"query": "MATCH (n:Item) RETURN n.name"}, "tenant_a")
+		require.NoError(t, err)
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		var value map[string]interface{}
+		require.NoError(t, json.Unmarshal(encoded, &value))
+		require.Len(t, value["rows"], 1)
 	})
 
 	t.Run("native write and nested procedure modes", func(t *testing.T) {
@@ -121,6 +145,16 @@ func TestMCPNativeCypherTransport(t *testing.T) {
 			"parameters": map[string]interface{}{"statement": "RETURN $answer AS answer", "params": map[string]interface{}{"answer": "bound"}},
 		}))
 		require.Equal(t, "bound", result["rows"].([]interface{})[0].([]interface{})[0])
+	})
+
+	t.Run("write-only database privilege keeps native CREATE semantics", func(t *testing.T) {
+		require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", false, true))
+		defer func() {
+			require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", true, false))
+		}()
+		result := success(t, call(t, reader, "/mcp", map[string]interface{}{"database": "tenant_a", "query": "CREATE (:WriteOnly)"}))
+		require.Equal(t, float64(1), result["stats"].(map[string]interface{})["nodes_created"])
+		require.True(t, call(t, reader, "/mcp", map[string]interface{}{"database": "tenant_a", "query": "MATCH (n:WriteOnly) RETURN n"}).IsError)
 	})
 
 	t.Run("integer precision and numeric types", func(t *testing.T) {

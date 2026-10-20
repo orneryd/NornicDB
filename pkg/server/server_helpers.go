@@ -187,13 +187,22 @@ func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, d
 // so that Bifrost, GraphQL, and plugins can enforce per-database access. Call before passing r to heimdallHandler or graphqlHandler.
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	claims := getClaims(r)
+	// Native MCP tools also run in process with this context. Keep native
+	// identity and continuation ownership with the same request principal.
+	ctx := s.withRequestIdentity(r.Context(), r, claims)
+	ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
+	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(r, claims))
+	if !s.isRBACEnforced() {
+		ctx = cypher.WithAuthenticationDisabled(ctx)
+	}
+	r = r.WithContext(ctx)
 	if claims == nil {
 		if !s.isRBACEnforced() {
 			return r.WithContext(auth.WithRequestAuthenticationDisabled(r.Context()))
 		}
 		return r
 	}
-	ctx := r.Context()
+	ctx = r.Context()
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
