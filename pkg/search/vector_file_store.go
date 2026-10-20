@@ -326,6 +326,10 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	work := newSearchBatch(ctx)
+	if err := work.check(); err != nil {
+		return nil, err
+	}
 	if err := v.lockQueryRead(); err != nil {
 		return nil, err
 	}
@@ -353,6 +357,11 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 	offsets := scratch.offsets[:0]
 	offsetsSorted := true
 	for _, cand := range candidates {
+		if work.boundary() {
+			if err := work.check(); err != nil {
+				return nil, err
+			}
+		}
 		ordinal, ok := v.idToOrdinal[cand.ID]
 		if !ok || ordinal < 0 || ordinal >= v.nextOrdinal {
 			continue
@@ -386,8 +395,10 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		// Rows the mapping does not cover stay in offsets for ReadAt below.
 		unmapped := offsets[:0]
 		for _, entry := range offsets {
-			if err := ctx.Err(); err != nil {
-				return nil, err
+			if work.boundary() {
+				if err := work.check(); err != nil {
+					return nil, err
+				}
 			}
 			stored, ok := v.queryReadMap.Lookup(entry.id)
 			if !ok {
@@ -414,10 +425,8 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		}
 		batch := scratch.batch[:maxBatchBytes]
 		for i := 0; i < len(offsets); {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
+			if err := work.check(); err != nil {
+				return nil, err
 			}
 
 			start := offsets[i].vecOff
@@ -440,6 +449,11 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 			}
 			limit := n
 			for k := i; k < j; k++ {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return nil, err
+					}
+				}
 				localOff := int(offsets[k].vecOff - start)
 				if localOff < 0 || localOff+vecBytes > limit {
 					continue
@@ -464,6 +478,9 @@ func (v *VectorFileStore) scoreCandidatesDot(ctx context.Context, normalizedQuer
 		}
 		return 0
 	})
+	if err := work.check(); err != nil {
+		return nil, err
+	}
 	return scored, nil
 }
 
