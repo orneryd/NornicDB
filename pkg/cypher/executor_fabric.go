@@ -161,7 +161,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
 	if output, _ := ctx.Value(resultStreamKey{}).(*ResultStream); output.bounded() {
-		output.drain = fabric.FragmentContainsWrite(prepared.fragment) || !cacheableDynamicStatements(cypher, 0)
+		output.drain = fabric.FragmentContainsWrite(prepared.fragment) || outputRequiresDrain(ctx, cypher, 0)
 		ctx = resultstream.WithDrain(ctx, output.drain)
 		result := &ExecuteResult{Columns: prepared.fragment.OutputColumns(), Stats: &QueryStats{}}
 		output.begin(result.Columns)

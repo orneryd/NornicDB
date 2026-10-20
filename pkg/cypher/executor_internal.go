@@ -146,7 +146,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	upper := e.cachedUpperQuery(cypher)
-	ctx = prepareOutputStream(ctx, stream, cypher, e.maxResults())
+	// Internal rows feed the caller's operators. Only the outer result may
+	// apply the database output cap, after filtering/projection.
+	ctx = prepareOutputStream(ctx, stream, cypher, 0)
 
 	// If we're in an explicit transaction, execute within it.
 	if e.txContext != nil && e.txContext.active {

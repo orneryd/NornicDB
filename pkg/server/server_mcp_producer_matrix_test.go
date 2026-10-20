@@ -77,7 +77,8 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 		{"fabric_local", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x }", "x"},
 		{"remote", "matrix_cmp", "USE matrix_cmp.remote UNWIND range(1,200000) AS x", "x"},
 		{"fabric_remote", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},
-		{"fabric_union", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x UNION ALL USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},
+		{"fabric_filtered", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x } WITH x WHERE x > 20", "x"},
+		{"fabric_union", "matrix_cmp", "", "x"},
 	}
 	parameters := map[string]interface{}{
 		"statement": "UNWIND range(1,200000) AS x RETURN x",
@@ -96,6 +97,9 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 						delete(parameters, "payload")
 					}
 					query := producer.body + " RETURN " + projection + " AS selected"
+					if producer.name == "fabric_union" {
+						query = "USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN " + projection + " AS selected UNION ALL USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN " + projection + " AS selected"
+					}
 					if producer.name == "transaction" {
 						query += " COMMIT"
 					}

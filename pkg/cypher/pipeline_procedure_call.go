@@ -2,17 +2,26 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 // pipelineProcedureSource composes CALL/YIELD with its downstream consumer.
 // Argument validation, aliases and filtering still run through the ordinary
 // procedure owner; only retention changes.
 func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pipelineRowSource, clause string) (pipelineRowSource, []string, error) {
+	// Validate even when the input is empty, using the materialized operator's
+	// existing argument/YIELD contract without executing a procedure.
+	if _, _, _, err := e.pipelineApplyProcedureCall(ctx, nil, clause); err != nil {
+		return nil, nil, err
+	}
+	procedure, _ := globalProcedureRegistry.Get(extractProcedureName(clause))
+	arguments := explicitProcedureArgumentTexts(clause)
+	filter := parseYieldClause(clause)
 	var columns []string
-	if yield := parseYieldClause(clause); yield != nil {
-		for _, item := range yield.items {
+	if filter != nil {
+		for _, item := range filter.items {
 			name := item.name
 			if item.alias != "" {
 				name = item.alias
@@ -21,10 +30,25 @@ func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pip
 		}
 	}
 	return func(yield func(pipelineRow) bool) bool {
+		// Match the existing CALL operator: row-independent READ calls execute
+		// once, then replay their yielded values for later inputs. This state
+		// belongs to the native operator and is charged to its memory limit.
+		retention := newMemoryRetention(ctx)
+		defer retention.close()
+		shared, initialized := false, false
+		var cached [][]any
+		var cachedNames []string
 		valid := true
 		completed := input(func(row pipelineRow) bool {
+			if !initialized {
+				initialized = true
+				shared = procedure.Spec.Mode == ProcedureModeRead
+				for _, argument := range arguments {
+					shared = shared && !argumentUsesRowVariable(argument, row)
+				}
+			}
 			more := true
-			callCtx := resultstream.WithConsumer(ctx, func(names []string, values []any) (bool, error) {
+			emit := func(names []string, values []any) (bool, error) {
 				next := make(pipelineRow, len(row)+len(names))
 				for k, v := range row {
 					next[k] = v
@@ -34,19 +58,45 @@ func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pip
 						next[name] = values[i]
 					}
 				}
-				if filter := parseYieldClause(clause); filter != nil && filter.where != "" {
+				if filter != nil && filter.where != "" {
 					if len(e.filterPipelineRows(ctx, []pipelineRow{next}, filter.where)) == 0 {
 						return true, getExpressionFailure(ctx)
 					}
 				}
 				more = yield(next)
 				return more, nil
-			})
-			_, _, _, err := e.pipelineApplyProcedureCall(callCtx, []pipelineRow{row}, clause)
+			}
+			var err error
+			if shared && cached != nil {
+				for _, values := range cached {
+					more, err = emit(cachedNames, values)
+					if !more || err != nil {
+						break
+					}
+				}
+			} else {
+				if shared {
+					cached = make([][]any, 0)
+				}
+				callCtx := resultstream.WithConsumer(ctx, func(names []string, values []any) (bool, error) {
+					if shared {
+						if err := retention.reserveResultRow(values); err != nil {
+							return false, err
+						}
+						cachedNames = names
+						cached = append(cached, append([]any(nil), values...))
+					}
+					return emit(names, values)
+				})
+				_, _, _, err = e.pipelineApplyProcedureCall(callCtx, []pipelineRow{row}, clause)
+			}
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
+			}
+			if filter == nil && len(procedure.Spec.Returns) == 0 {
+				more = yield(row)
 			}
 			return more
 		})

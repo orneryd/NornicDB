@@ -891,6 +891,14 @@ var errInvalidTransactionRequestFormat = errors.New("invalid transaction request
 
 func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 	decoder := json.NewDecoder(body)
+	if err := decodeTransactionRequestValue(decoder, req); err != nil {
+		return err
+	}
+	_, err := io.Copy(io.Discard, body)
+	return err
+}
+
+func decodeTransactionRequestValue(decoder *json.Decoder, req *TransactionRequest) error {
 	decoder.UseNumber()
 	if err := decoder.Decode(req); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -901,9 +909,6 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 	}
 	if req.Statements == nil {
 		return fmt.Errorf("%w: transaction request must contain a statements list", errInvalidTransactionRequestFormat)
-	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return err
 	}
 	for i := range req.Statements {
 		for key, value := range req.Statements[i].Parameters {
@@ -922,7 +927,7 @@ func (s *Server) readTransactionRequest(r *http.Request, req *TransactionRequest
 			return stream.err
 		}
 		stream.demand = json.NewDecoder(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize))
-		return stream.demand.Decode(req)
+		return decodeTransactionRequestValue(stream.demand, req)
 	}
 	return decodeTransactionRequest(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize), req)
 }

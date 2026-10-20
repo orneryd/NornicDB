@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
@@ -115,13 +116,49 @@ func prepareOutputStream(ctx context.Context, stream *ResultStream, statement st
 	if !stream.bounded() {
 		return ctx
 	}
-	permissions := QueryPermissionRequirements(statement)
-	stream.drain = permissions.Write || permissions.Schema || permissions.Admin || resultstream.Drain(ctx)
-	// A dynamic CALL may perform effects in later input rows. Its own inner
-	// read frame stops when the shared final budget fills; write frames drain.
-	stream.drain = stream.drain || !cacheableDynamicStatements(statement, 0)
+	stream.drain = outputRequiresDrain(ctx, statement, 0) || resultstream.Drain(ctx)
 	stream.rowLimit = maxResults
-	return armResultStream(ctx, stream, statement, nil, nil)
+	return armResultStream(resultstream.WithDrain(ctx, stream.drain), stream, statement, nil, nil)
+}
+
+// outputRequiresDrain uses the native effect contract. Dynamic statements
+// known from literal/bound arguments are classified by the same owner. Unknown
+// row-dependent statements must finish: later inputs may perform effects.
+// This controls completion only; it does not grant execution permission.
+func outputRequiresDrain(ctx context.Context, statement string, depth int) bool {
+	permissions := QueryPermissionRequirements(statement)
+	if permissions.Write || permissions.Schema || permissions.Admin || depth > 16 {
+		return true
+	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+	for from := 0; from < len(statement); {
+		at := keywordIndexFrom(statement, "CALL", from, opts)
+		if at < 0 {
+			break
+		}
+		from = at + len("CALL")
+		name, ok := procedureNameAt(statement, queryGapEnd(statement, from))
+		if !ok {
+			continue
+		}
+		if name == "apoc.cypher.run" || name == "apoc.cypher.doitall" {
+			args := explicitProcedureArgumentTexts(statement[at:])
+			if len(args) == 0 {
+				return true
+			}
+			query, known := decodeCypherQuotedString(args[0])
+			if !known && strings.HasPrefix(args[0], "$") && isValidIdentifier(args[0][1:]) {
+				query, known = getParamsFromContext(ctx)[args[0][1:]].(string)
+			}
+			if !known || outputRequiresDrain(withQueryParams(ctx, nil), query, depth+1) {
+				return true
+			}
+		} else if !cacheableDynamicStatements(statement[at:], depth) {
+			return true
+		}
+	}
+	return false
 }
 
 func resultRowsSource(ctx context.Context, result *ExecuteResult) pipelineRowSource {

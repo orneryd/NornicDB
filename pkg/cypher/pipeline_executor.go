@@ -686,7 +686,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		clause := clauses[idx]
 		generations.next(rows)
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
-			clause.kind != pipelineClauseCall &&
+			!(clause.kind == pipelineClauseCall && !clause.optional && hasOutputStream(ctx)) &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
 			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesFor(ctx, clause) || streamsReturn(ctx, clauses, idx))) {
@@ -925,7 +925,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return remaining, handled, err
 			}
 		case pipelineClauseCall:
-			if !clause.optional {
+			if !clause.optional && hasOutputStream(ctx) {
 				input := source
 				if input == nil {
 					input = pipelineRowsSource(rows)
