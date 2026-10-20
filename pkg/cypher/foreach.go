@@ -1,35 +1,29 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/pkg/fabric"
+	"strings"
+)
 
-func parsePipelineForeach(clause string) (string, string, []pipelineClause, error) {
+func parsePipelineForeach(clause string, syntax ...*fabric.QueryClause) (string, string, []pipelineClause, error) {
 	invalid := func() error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
 	}
-	open := strings.Index(clause, "(")
-	if open < 0 || !strings.EqualFold(strings.TrimSpace(clause[:open]), "FOREACH") {
+	native, err := statementNativeClause(clause, "FOREACH", syntax...)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if native == nil {
 		return "", "", nil, invalid()
 	}
-	close := findMatchingParen(clause, open)
-	if close < 0 || strings.TrimSpace(clause[close+1:]) != "" {
+	scope, ok := native.Input.RootScope()
+	if !ok || scope.Kind != fabric.ExpressionIterationScope || len(scope.Declarations) != 1 {
 		return "", "", nil, invalid()
 	}
-	inner := clause[open+1 : close]
-	inIndex := topLevelKeywordIndex(inner, "IN")
-	if inIndex < 0 {
-		return "", "", nil, invalid()
-	}
-	variable := strings.TrimSpace(inner[:inIndex])
-	if !isValidIdentifier(variable) {
-		return "", "", nil, invalid()
-	}
-	remainder := inner[inIndex+len("IN"):]
-	pipeIndex := findTopLevelOperator(remainder, "|", false, true)
-	if pipeIndex < 0 {
-		return "", "", nil, invalid()
-	}
-	listExpression := strings.TrimSpace(remainder[:pipeIndex])
-	updates, supported := splitPipelineClauses(strings.TrimSpace(remainder[pipeIndex+1:]))
+	text := native.Input.Text()
+	declaration := scope.Declarations[0]
+	listExpression := strings.TrimSpace(text[scope.Input.Start:scope.Input.End])
+	updates, supported := splitPipelineClauses(strings.TrimSpace(text[scope.Visible+1 : scope.Close]))
 	if !supported || len(updates) == 0 {
 		return "", "", nil, invalid()
 	}
@@ -40,5 +34,5 @@ func parsePipelineForeach(clause string) (string, string, []pipelineClause, erro
 			return "", "", nil, invalid()
 		}
 	}
-	return variable, listExpression, updates, nil
+	return declaration.Name, listExpression, updates, nil
 }

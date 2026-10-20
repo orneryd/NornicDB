@@ -123,17 +123,15 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
-	// Local fragments own their lowering and restore generated names before
-	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	// A selected local fragment consumes the same backend lowering owner.
+	lowered, localRewrites, _, err := e.lowerLocalStatement(ctx, cypher, params)
 	if err != nil {
 		return nil, err
 	}
-	if labelRewrite != nil {
-		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+	cypher = lowered
+	if len(localRewrites) > 0 {
+		defer func() { result, retErr = restoreLocalStatement(result, retErr, localRewrites) }()
 	}
-
 	// Basic syntax validation to preserve existing error behavior.
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
@@ -172,13 +170,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
-		return err
-	}
-	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
-		return err
-	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateInvocationParameterTypes(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {

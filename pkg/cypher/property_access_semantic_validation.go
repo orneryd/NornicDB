@@ -3,6 +3,8 @@ package cypher
 import (
 	"reflect"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // propertyAccessExpectedTypes is what Neo4j names as the types a property
@@ -28,8 +30,8 @@ var propertyAccessStaticTypes = map[string]bool{
 // TypeError "Type mismatch: expected a map but was Long(5)"
 // (propertyAccessTypeError). Parameters are typed by
 // validateStaticPropertyAccessParameters, per execution.
-func validateStaticPropertyAccessTypes(cypher string) error {
-	return validatePropertyAccessTypes(cypher, nil)
+func validateStaticPropertyAccessTypes(cypher string, inputs ...*semanticStatementInput) error {
+	return validatePropertyAccessTypes(cypher, nil, inputs...)
 }
 
 // validateStaticPropertyAccessParameters is validateStaticPropertyAccessTypes
@@ -42,141 +44,26 @@ func validateStaticPropertyAccessTypes(cypher string) error {
 // access would reject is accessed ($m.a) or projected ($m AS m), so
 // parameterized statements on hot paths cost one scan.
 func validateStaticPropertyAccessParameters(cypher string, params map[string]interface{}) error {
-	if len(params) == 0 || !strings.ContainsAny(cypher, ".{[") || !parameterMayRejectPropertyAccess(cypher, params) {
-		return nil
-	}
-	return validatePropertyAccessTypes(cypher, params)
+	return (&StorageExecutor{}).validateInvocationParameterTypes(cypher, params, false)
 }
 
 // validatePropertyAccessTypes walks the clauses, tracking the static types of
 // the variables WITH and UNWIND bind, and checks every property access.
-func validatePropertyAccessTypes(cypher string, params map[string]interface{}) error {
-	return validatePropertyAccessClauses(cypher, nil, params)
+func validatePropertyAccessTypes(cypher string, params map[string]interface{}, inputs ...*semanticStatementInput) error {
+	return validatePropertyAccessClauses(cypher, nil, params, inputs...)
 }
 
 // validatePropertyAccessClauses is validatePropertyAccessTypes for a
 // statement or a subquery body that sees the outer variables' types. The
 // outer map is never modified. Declaration validity belongs to the shared
 // semantic scope walk; this visitor only tracks property receiver types.
-func validatePropertyAccessClauses(cypher string, outer map[string]string, params map[string]interface{}) error {
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-	types := outer
-	for _, clause := range clauses {
-		text := clause.text
-		switch clause.kind {
-		case pipelineClauseLet:
-			projections, err := parsePipelineLet(text)
-			if err != nil {
-				return err
-			}
-			next := make(map[string]string, len(types)+len(projections))
-			for name, typeName := range types {
-				next[name] = typeName
-			}
-			for _, projection := range projections {
-				if err := checkExpressionPropertyAccesses(projection.expression, types, params); err != nil {
-					return err
-				}
-				next[projection.alias] = propertyAccessExpressionType(projection.expression, types, params)
-			}
-			types = next
-		case pipelineClauseFilter:
-			if err := checkExpressionPropertyAccesses(pipelineFilterExpression(text), types, params); err != nil {
-				return err
-			}
-		case pipelineClauseWith, pipelineClauseReturn:
-			keyword := "WITH"
-			if clause.kind == pipelineClauseReturn {
-				keyword = "RETURN"
-			}
-			body, tail := projectionSemanticBodyAndTail(text, keyword)
-			if err := checkExpressionPropertyAccesses(body, types, params); err != nil {
-				return err
-			}
-			next := types
-			if clause.kind == pipelineClauseWith {
-				next = map[string]string{}
-				for _, raw := range splitTopLevelComma(body) {
-					expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-					if expression == "*" {
-						for variable, typeName := range types {
-							next[variable] = typeName
-						}
-						continue
-					}
-					name := alias
-					if name == "" {
-						name = simpleSemanticIdentifier(expression)
-					}
-					if name == "" {
-						continue
-					}
-					name = normalizeProjectionColumnName(name)
-					next[name] = propertyAccessExpressionType(expression, types, params)
-				}
-			}
-			// WHERE and ORDER BY see the projection's names; ORDER BY also
-			// sees the names it replaced.
-			if tail != "" {
-				visible := make(map[string]string, len(types)+len(next))
-				for variable, typeName := range types {
-					visible[variable] = typeName
-				}
-				for variable, typeName := range next {
-					visible[variable] = typeName
-				}
-				if err := checkExpressionPropertyAccesses(tail, visible, params); err != nil {
-					return err
-				}
-			}
-			types = next
-		case pipelineClauseUnwind:
-			expression, alias, ok := parsePipelineIteration(text)
-			if !ok {
-				continue
-			}
-			if err := checkExpressionPropertyAccesses(expression, types, params); err != nil {
-				return err
-			}
-			variable := normalizeProjectionColumnName(alias)
-			element := ""
-			listType := propertyAccessExpressionType(expression, types, params)
-			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {
-				if inner := listType[len("List<") : len(listType)-1]; inner != "T" {
-					element = inner
-				}
-			}
-			if _, known := types[variable]; known || element != "" {
-				next := make(map[string]string, len(types)+1)
-				for name, typeName := range types {
-					next[name] = typeName
-				}
-				delete(next, variable)
-				if element != "" {
-					next[variable] = element
-				}
-				types = next
-			}
-		default:
-			if err := checkPropertyAccesses(text, types, params); err != nil {
-				return err
-			}
-			if clause.kind == pipelineClauseSet {
-				if err := setClauseSourceTypeError(text, types, params); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
+func validatePropertyAccessClauses(cypher string, outer map[string]string, params map[string]interface{}, inputs ...*semanticStatementInput) error {
+	return propertyStatementAdmission(cypher, outer, params, inputs...)
 }
 
 // projectionSemanticBody is the projection items of a WITH / RETURN clause.
-func projectionSemanticBody(clause, keyword string) string {
-	body, _ := projectionSemanticBodyAndTail(clause, keyword)
+func projectionSemanticBody(clause, keyword string, syntax ...*fabric.QueryClause) string {
+	body, _ := projectionSemanticBodyAndTail(clause, keyword, syntax...)
 	return body
 }
 
@@ -184,15 +71,11 @@ func projectionSemanticBody(clause, keyword string) string {
 // projection items (after DISTINCT) and the WHERE / ORDER BY / SKIP / LIMIT
 // that follow. The clause is scanned with its keyword, which tells a
 // keyword-named first item from a clause (WITH where WHERE where = 3, #894).
-func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
-	end := len(clause)
-	for _, suffix := range []string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(clause, suffix); index >= len(keyword) && index < end {
-			end = index
-		}
+func projectionSemanticBodyAndTail(clause, keyword string, syntax ...*fabric.QueryClause) (string, string) {
+	if len(syntax) > 0 && syntax[0] != nil && syntax[0].Projection != nil {
+		return syntax[0].Projection.Text, syntax[0].Projection.Tail
 	}
-	body, _ := cutDistinct(clause[len(keyword):end])
-	return body, clause[end:]
+	return physicalProjectionBodyAndTail(clause, keyword)
 }
 
 // propertyAccessExpressionType is the static type of a projected or unwound
@@ -259,126 +142,11 @@ func rejectsPropertyAccess(typeName string) bool {
 	return true
 }
 
-// checkPropertyAccesses checks each property access in text whose base is a
-// string literal, a parameter or a variable of a known static type. A list
-// comprehension, quantifier (any / all / none / single) or reduce is checked
-// with its own variables shadowing the scope; a pattern comprehension and a
-// subquery body (EXISTS / COUNT / COLLECT / CALL { … }) see the outer
-// variables' types.
-func checkPropertyAccesses(text string, types map[string]string, params map[string]interface{}) error {
-	return scanPropertyAccesses(text, types, params, false)
-}
-
-// checkExpressionPropertyAccesses is checkPropertyAccesses for text that
-// holds only expressions (projection items, WHERE, ORDER BY, an UNWIND list),
-// where name { … } is a map projection: Neo4j's "Type mismatch: expected
-// Map, Node or Relationship but was Integer" for a base without properties.
+// checkExpressionPropertyAccesses is a compatibility entrance for expression
+// tests and adapters. It uses the same admitted frame as public statements;
+// there is no second scanner or local-scope map to reconstruct here.
 func checkExpressionPropertyAccesses(text string, types map[string]string, params map[string]interface{}) error {
-	if params != nil {
-		if err := validateStaticPropertySubscripts(text, staticTypeScope{values: types, params: params}); err != nil {
-			return err
-		}
-	}
-	return scanPropertyAccesses(text, types, params, true)
-}
-
-// scanPropertyAccesses checks the property accesses (and, in expression
-// text, the map projections) of text; see checkPropertyAccesses.
-func scanPropertyAccesses(text string, types map[string]string, params map[string]interface{}, expressions bool) error {
-	braces := newSubqueryBraceScanner(text, 0)
-	if strings.IndexByte(text, '.') < 0 && strings.IndexByte(text, '{') < 0 {
-		return nil
-	}
-	// A comprehension, quantifier or reduce is scanned in place: an access
-	// whose base reads a local of that name (localVariableShadowsAt) isn't
-	// the clause's variable, and a pattern comprehension or subquery body
-	// sees the outer types without the names bound around it.
-	var locals *localReader
-	local := func() *localReader {
-		if locals == nil {
-			reader := newLocalReader(text)
-			locals = &reader
-		}
-		return locals
-	}
-	for index := 0; index < len(text); index++ {
-		switch c := text[index]; {
-		case isCypherStringQuoteByte(c):
-			end := skipQuotedSemanticText(text, index)
-			if propertyAccessFollows(text, end) {
-				if err := propertyAccessMismatch("String", ""); err != nil {
-					return err
-				}
-			}
-			index = end - 1
-		case isCypherBacktickByte(c):
-			if _, next, ok := scanSymbolicName(text, index); ok {
-				index = next - 1
-			}
-		case c == '[':
-			end := findMatchingDelimiter(text, index, '[', ']')
-			if end < 0 {
-				return nil
-			}
-			if pattern, projection, isPattern := splitPatternComprehension(text[index : end+1]); isPattern {
-				// The pattern's own variables are nodes, relationships or
-				// paths; outer variables keep their types inside, but for
-				// the names bound around it.
-				inside := local().withoutTypes(types, index)
-				if err := checkPropertyAccesses(pattern, inside, params); err != nil {
-					return err
-				}
-				if err := checkExpressionPropertyAccesses(projection, inside, params); err != nil {
-					return err
-				}
-				index = end
-			}
-		case c == '{':
-			if index > 0 && braces.at(index) {
-				end := findMatchingDelimiter(text, index, '{', '}')
-				if end < 0 {
-					return nil
-				}
-				// A subquery body sees the outer variables.
-				if err := validatePropertyAccessClauses(text[index+1:end], local().withoutTypes(types, index), params); err != nil {
-					return err
-				}
-				index = end
-			}
-		case c == '$':
-			name, next, ok := scanIdentifierToken(text, index+1)
-			if !ok {
-				continue
-			}
-			if params != nil && propertyAccessFollows(text, next) && !namespacedCallFollows(text, next) {
-				if value, bound := params[name]; bound {
-					if err := propertyAccessMismatch(parameterPropertyAccessType(value), name); err != nil {
-						return err
-					}
-				}
-			}
-			index = next - 1
-		case isIdentStartByte(c):
-			if index > 0 && (isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$') {
-				continue
-			}
-			name, next, _ := scanIdentifierToken(text, index)
-			typeName := types[name]
-			if typeName != "" && localVariableShadowsAt(text, index, name) {
-				typeName = "" // a local of that name, not the clause's
-			}
-			if propertyAccessFollows(text, next) && !namespacedCallFollows(text, next) {
-				if err := propertyAccessMismatch(typeName, ""); err != nil {
-					return err
-				}
-			}
-			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !braces.at(after) {
-				return typeNameMismatchError("Map, Node or Relationship", typeName)
-			}
-			index = next - 1
-		}
-	}
-	return nil
+	return propertyStatementAdmission("RETURN "+text, types, params)
 }
 
 // propertyAccessMismatch is the SyntaxError of a property access on a base of

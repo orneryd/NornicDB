@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -104,7 +105,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		scope[caseBinding] = caseValue
 		return e.evaluateRowValue(caseBinding+expr[caseEnd:], scope)
 	}
-	if value, ok := values[expr]; ok && !isLiteralKeyword(expr) {
+	if value, ok := rowExpressionBinding(values, expr); ok {
 		return value, true, nil
 	}
 	// Relationship arrows contain comparison and subtraction characters.
@@ -1106,45 +1107,18 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 }
 
 func parseListComprehension(inner string) (variable, listExpression, predicate, projection string, ok bool) {
-	// The declaration as every reader reads it (bindingDeclaration): x IN[1]
-	// and x /* … */ IN l too.
-	variable, _, listStart, declared := bindingDeclaration(inner, 0)
-	if !declared {
+	scope, parsed := fabric.ComprehensionSyntax(inner)
+	if !parsed || len(scope.Declarations) == 0 {
 		return "", "", "", "", false
 	}
-	rest := inner[listStart:]
-	whereIndex := findListComprehensionToken(rest, " WHERE ")
-	pipeIndex := findListComprehensionToken(rest, "|")
-	endList := len(rest)
-	if whereIndex >= 0 && whereIndex < endList {
-		endList = whereIndex
-	}
-	if pipeIndex >= 0 && pipeIndex < endList {
-		endList = pipeIndex
-	}
-	listExpression = strings.TrimSpace(rest[:endList])
-	if listExpression == "" {
-		return "", "", "", "", false
-	}
-	if whereIndex >= 0 {
-		conditionEnd := len(rest)
-		if pipeIndex > whereIndex {
-			conditionEnd = pipeIndex
+	read := func(span fabric.ExpressionSpan) string {
+		if span.End <= span.Start {
+			return ""
 		}
-		predicate = strings.TrimSpace(rest[whereIndex+len(" WHERE ") : conditionEnd])
-		if predicate == "" {
-			return "", "", "", "", false
-		}
+		return inner[span.Start:span.End]
 	}
-	if pipeIndex >= 0 {
-		projection = strings.TrimSpace(rest[pipeIndex+1:])
-		if projection == "" {
-			return "", "", "", "", false
-		}
-	}
-	return variable, listExpression, predicate, projection, true
+	return scope.Declarations[0].Name, read(scope.Input), read(scope.Predicate), read(scope.Projection), true
 }
-
 func findListComprehensionToken(expression, token string) int {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	for index := 0; index < len(expression); index++ {
@@ -1516,7 +1490,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 func rowPredicateIsStrictLogical(expression string) bool {
 	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(expression, "XOR") >= 0
 	if mayContainArithmetic(expression) && !strictLogical {
-		checker := staticOperatorChecker{}
+		checker := (staticTypeScope{}).operatorChecker()
 		for _, operator := range []string{" AND ", " OR "} {
 			if left, right, found := splitByOperatorOutsideCase(expression, operator, true, true); found {
 				for _, operand := range []string{left, right} {

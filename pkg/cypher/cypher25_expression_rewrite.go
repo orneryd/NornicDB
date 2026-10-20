@@ -5,11 +5,12 @@ import (
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// Cypher 25 expression forms (Neo4j 2025.06 to 2026.02), as expressions
+// Cypher 25 expression normalization and bounded NornicDB extensions, as expressions
 // every evaluator already reads, rewritten once where a statement enters the
 // executor:
 //
@@ -17,12 +18,16 @@ import (
 //     DISTINCT's opposite); the ALL is dropped. RETURN all(x IN l WHERE p)
 //     is still the list predicate;
 //   - s"text {expr} text": the parts joined with +, each {expr} converted as
-//     Neo4j converts an interpolated value (interpolatedValue); null in, null
+//     the extension converts an interpolated value (interpolatedValue); null in, null
 //     out; \{ is a brace;
 //   - {k: v IN map [WHERE p] | key: value}: a map built from each entry, as
 //     __nornic_map_from_pairs over nested list comprehensions that bind k
 //     and v (an internal function, so the form doesn't depend on APOC);
 //   - RETURN / WITH … GROUP BY keys: the grouping it names (groupByEdits).
+//
+// Interpolated strings and map comprehensions are NornicDB extensions.
+// Neo4j 2025.12.1 rejects map-comprehension syntax; a Neo4j remote cannot execute
+// it. A NornicDB remote receives the original public form and lowers it locally.
 //
 // Each pass's edits are kept (queryRewrite), so columns and messages show the
 // client's text.
@@ -44,10 +49,34 @@ const mapFromPairsFunction = "__nornic_map_from_pairs"
 // cypher25 is the statement's version, which decides where RETURN ALL
 // begins (projectionAllEdits).
 func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRewrite, error) {
+	return rewriteCypher25Expressions(query, cypher25, expressionAll)
+}
+
+type expressionRewritePhase uint8
+
+const (
+	expressionAll expressionRewritePhase = iota
+	expressionPublicSyntax
+	expressionLocalExecution
+)
+
+// Map helper lowering runs only after routing. Interpolation retains its
+// existing early contract: it is a NornicDB extension without native grammar.
+// Public projection normalization also remains before graph planning.
+func rewriteCypher25Expressions(query string, cypher25 bool, phase expressionRewritePhase) (string, []*queryRewrite, error) {
 	var rewrites []*queryRewrite
 	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(query, cypher25) }
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, groupByEdits} {
-		edits, err := pass(query)
+	for _, pass := range []struct {
+		phase   expressionRewritePhase
+		rewrite func(string) ([]labelRewriteEdit, error)
+	}{
+		{expressionPublicSyntax, interpolationEdits}, {expressionLocalExecution, mapComprehensionEdits},
+		{expressionPublicSyntax, projectionAll}, {expressionPublicSyntax, groupByEdits},
+	} {
+		if phase != expressionAll && phase != pass.phase {
+			continue
+		}
+		edits, err := pass.rewrite(query)
 		if err != nil {
 			return query, nil, err
 		}
@@ -374,34 +403,26 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 //	__nornic_map_from_pairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
 //	    [v IN [m[k]] | [key, value]][0]])
 func mapComprehensionText(body string) (string, bool) {
-	key, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, 0, len(body)))
-	colon := skipASCIISpaces(body, end, len(body))
-	if !ok || colon >= len(body) || body[colon] != ':' {
+	var syntax fabric.ExpressionScope
+	found := false
+	for _, scope := range fabric.ExpressionScopes("{" + body + "}") {
+		if scope.Open == 0 && scope.Kind == fabric.ExpressionMapScope {
+			syntax, found = scope, true
+			break
+		}
+	}
+	if !found {
 		return "", false
 	}
-	value, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, colon+1, len(body)))
-	in := skipASCIISpaces(body, end, len(body))
-	if !ok || !matchKeywordAt(body, in, "IN") {
-		return "", false
+	read := func(span fabric.ExpressionSpan) string {
+		if span.End <= span.Start {
+			return ""
+		}
+		return body[span.Start-1 : span.End-1]
 	}
-	rest := body[in+2:]
-	bar := rowTopLevelPipeIndex(rest)
-	if bar < 0 {
-		return "", false
-	}
-	source, predicate := strings.TrimSpace(rest[:bar]), ""
-	if where := topLevelKeywordIndex(source, "WHERE"); where >= 0 {
-		source, predicate = strings.TrimSpace(source[:where]), strings.TrimSpace(source[where+len("WHERE"):])
-	}
-	projection := rest[bar+1:]
-	keyEnd := topLevelByteIndex(projection, 0, len(projection), ':')
-	if source == "" || keyEnd < 0 {
-		return "", false
-	}
-	keyExpression, valueExpression := strings.TrimSpace(projection[:keyEnd]), strings.TrimSpace(projection[keyEnd+1:])
-	if keyExpression == "" || valueExpression == "" {
-		return "", false
-	}
+	key, value := syntax.Declarations[0].Name, syntax.Declarations[1].Name
+	source, predicate := read(syntax.Input), read(syntax.Predicate)
+	keyExpression, valueExpression := read(syntax.Key), read(syntax.Projection)
 	// Map comprehensions nested in the parts.
 	for _, part := range []*string{&source, &predicate, &keyExpression, &valueExpression} {
 		if edits, _ := mapComprehensionEdits(*part); len(edits) > 0 {

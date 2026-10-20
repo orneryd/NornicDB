@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,14 +18,21 @@ type semanticValidationCache struct {
 
 type semanticValidationCacheShard struct {
 	mu      sync.RWMutex
-	entries map[string]struct{}
+	entries map[string]semanticValidationEntry
+}
+
+// Admission and its immutable lowering facts have the same bounded owner. A
+// recording alone does not imply that every semantic check has admitted a query.
+type semanticValidationEntry struct {
+	valid     bool
+	recording *scopeRecording
 }
 
 func newSemanticValidationCache(max int) *semanticValidationCache {
 	c := &semanticValidationCache{max: max}
 	shardLimit := max / boundedCacheShardCount
 	for i := range c.shards {
-		c.shards[i].entries = make(map[string]struct{}, shardLimit/4+1)
+		c.shards[i].entries = make(map[string]semanticValidationEntry, shardLimit/4+1)
 	}
 	return c
 }
@@ -35,9 +43,9 @@ func (cache *semanticValidationCache) contains(query string) bool {
 	}
 	sh := &cache.shards[boundedCacheStringShardIndex(query)]
 	sh.mu.RLock()
-	_, exists := sh.entries[query]
+	entry := sh.entries[query]
 	sh.mu.RUnlock()
-	return exists
+	return entry.valid
 }
 
 func (cache *semanticValidationCache) add(query string) {
@@ -49,7 +57,35 @@ func (cache *semanticValidationCache) add(query string) {
 	if len(sh.entries) >= cache.max/boundedCacheShardCount {
 		clear(sh.entries)
 	}
-	sh.entries[query] = struct{}{}
+	entry := sh.entries[query]
+	entry.valid = true
+	sh.entries[query] = entry
+	sh.mu.Unlock()
+}
+
+func (cache *semanticValidationCache) recording(query string) *scopeRecording {
+	if cache == nil {
+		return nil
+	}
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.RLock()
+	record := sh.entries[query].recording
+	sh.mu.RUnlock()
+	return record
+}
+
+func (cache *semanticValidationCache) addRecording(query string, record *scopeRecording) {
+	if cache == nil || cache.max <= 0 {
+		return
+	}
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.Lock()
+	if len(sh.entries) >= cache.max/boundedCacheShardCount {
+		clear(sh.entries)
+	}
+	entry := sh.entries[query]
+	entry.recording = record
+	sh.entries[query] = entry
 	sh.mu.Unlock()
 }
 
@@ -57,62 +93,19 @@ func (cache *semanticValidationCache) add(query string) {
 // contract before routing. Keeping this validation ahead of every physical
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
-func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool, inputs ...*semanticStatementInput) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
-	// Literal-bearing MERGE statements share one compile verdict through the
-	// canonical form (PR #1043 #6), looked up only when the exact text
-	// misses; failures are never cached, so a bad statement still reports
-	// its own error. Both keys carry the language version (semanticCacheKey).
-	key := semanticCacheKey(cypher, cypher25)
-	cached := e.mergeSemanticValidationCache.contains(key)
-	var canonicalKey string
-	var normalized bool
-	if !cached {
-		var canonical string
-		canonical, normalized = normalizeLiteralText(cypher)
-		if normalized {
-			canonicalKey = semanticCacheKey(canonical, cypher25)
-			cached = e.mergeSemanticValidationCache.contains(canonicalKey)
-		}
+	ctx := context.Background()
+	if cypher25 {
+		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	if cached {
-		return nil
+	var input *semanticStatementInput
+	if len(inputs) > 0 {
+		input = inputs[0]
 	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-
-	scope := newSemanticBindingScope()
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			addMergePatternBindings(scope, clause.text)
-		case pipelineClauseCreate:
-			addMergePatternBindings(scope, clause.text)
-		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
-		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
-				return err
-			}
-		}
-	}
-	if normalized {
-		e.mergeSemanticValidationCache.add(canonicalKey)
-	}
-	e.mergeSemanticValidationCache.add(key)
-	return nil
+	return e.validateSemanticScopesWithInput(ctx, cypher, input)
 }
 
 func addMergePatternBindings(scope *semanticBindingScope, clause string) {

@@ -24,6 +24,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 )
 
@@ -1626,7 +1627,7 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 // The executor owns USE, :USE and the transaction's database selection rules.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
-		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(ctx), session, query, params)
+		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(txphase.Statements(ctx)), session, query, params)
 		return result, session.Executor, err
 	}
 }
@@ -1943,7 +1944,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txSession.ID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(txSession.Expires),
+			Expires: transactionExpires(txSession.Expiration()),
 		},
 	}
 
@@ -1951,7 +1952,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
 			s.rollbackFailedTransaction(r.Context(), txSession, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.Expires)
+		response.Transaction.Expires = transactionExpires(txSession.Expiration())
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)

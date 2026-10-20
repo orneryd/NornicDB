@@ -71,6 +71,10 @@ type labelExpressionRewriter struct {
 	// r:$any(l)), as Neo4j 2026.09 allows: the test becomes the label
 	// predicate a MATCH pattern's row-dependent term becomes.
 	cypher25 bool
+	// admissionPatterns moves existing inline predicates into their public
+	// clause/group positions. Local function and expression lowering stays
+	// with the selected backend, so remote participants retain public syntax.
+	admissionPatterns bool
 }
 
 // labelPatternMode is how a pattern's label expressions are read.
@@ -556,6 +560,23 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 // pattern's label expressions become are ANDed in front of the WHERE body,
 // which is parenthesised when it has a top-level OR or XOR.
 func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, whereEnd int) error {
+	if r.admissionPatterns {
+		predicates, err := r.pattern(start, end, labelPatternMatch)
+		if err != nil {
+			return err
+		}
+		if whereStart >= 0 {
+			if len(predicates) > 0 {
+				return r.whereWithPredicates(whereStart, whereEnd, predicates)
+			}
+			return r.expression(whereStart, whereEnd)
+		}
+		if len(predicates) > 0 {
+			at := trimRightIndex(r.query, start, end)
+			r.edit(at, at, " WHERE "+strings.Join(predicates, " AND "))
+		}
+		return nil
+	}
 	prefixes, err := r.pathPrefixes(start, end)
 	if err != nil {
 		return err
@@ -665,8 +686,10 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 			}
 			i = close
 			if quantified {
-				if err := r.quantifiedRelationship(open, close, at, quantifier, mode); err != nil {
-					return err
+				if !r.admissionPatterns {
+					if err := r.quantifiedRelationship(open, close, at, quantifier, mode); err != nil {
+						return err
+					}
 				}
 				i = quantifier.end - 1
 			}
@@ -675,8 +698,10 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 			arrowEnd := arrowRunEnd(q, i, end)
 			if next := skipASCIISpaces(q, arrowEnd, end); next < end && q[next] != '[' {
 				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok {
-					if err := r.quantifiedArrow(i, arrowEnd, next, quantifier, mode); err != nil {
-						return err
+					if !r.admissionPatterns {
+						if err := r.quantifiedArrow(i, arrowEnd, next, quantifier, mode); err != nil {
+							return err
+						}
 					}
 					i = quantifier.end - 1
 					continue
@@ -704,6 +729,9 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 			return err
 		}
 		close = trimRightIndex(q, open+1, where)
+	}
+	if r.admissionPatterns {
+		return nil
 	}
 	if mode == labelPatternMatch && !quantified {
 		r.samePatternMapReads(open, i, close, variable, relationship, predicates)
@@ -945,7 +973,7 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 // moves out of its element: the moved text isn't read again (#1181). Its
 // generated variables continue the statement's.
 func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
-	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
+	sub := &labelExpressionRewriter{admissionPatterns: r.admissionPatterns, query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
 	if err := sub.expression(0, len(predicate)); err != nil {
 		return "", err
 	}
@@ -1238,6 +1266,17 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			}
 			i = close
 		case c == '(':
+			if r.admissionPatterns {
+				close := findMatchingDelimiter(q[:end], i, '(', ')')
+				if close < 0 {
+					return nil
+				}
+				if err := r.expression(i+1, close); err != nil {
+					return err
+				}
+				i = close
+				continue
+			}
 			next, err := r.parenthesised(start, i, end)
 			if err != nil {
 				return err
@@ -1250,6 +1289,10 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			j := i
 			for j < end && isIdentByte(q[j]) {
 				j++
+			}
+			if r.admissionPatterns {
+				i = j - 1
+				continue
 			}
 			if err := shortestPathExpressionError(q, i, j, end); err != nil {
 				return err

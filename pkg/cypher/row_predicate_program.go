@@ -101,9 +101,7 @@ func (p *preparedRowPredicate) holds(e *StorageExecutor, ctx context.Context, va
 }
 
 func compileRowPredicateValue(expr string) rowValueNode {
-	compiler := rowValueCompiler{}
-	node, _ := compiler.compile(expr)
-	return node
+	return rowValueProgramForFacts(expr).root
 }
 
 // compileRowPredicateParts compiles a predicate as evaluateRowPredicateParts

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
@@ -2711,8 +2712,7 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Equal(t, "s DESC", parsed.orderBy)
 	assert.Equal(t, "1", parsed.skip)
 	assert.Equal(t, "2", parsed.limit)
-	assert.False(t, parsed.misplacedWhere)
-	assert.True(t, parseYieldClause("CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s").misplacedWhere)
+	require.Error(t, fabric.ReadQueryStructure("CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s").Err)
 	// STARTS WITH and a WHERE inside a subquery are part of the predicate.
 	parsedPredicate := parseYieldClause("CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
 	assert.Equal(t, "s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s }", parsedPredicate.where)

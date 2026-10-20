@@ -20,7 +20,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		return nil, false, nil
 	}
 	for _, tail := range hint.readTail {
-		if topLevelKeywordIndex(tail, "ORDER BY") >= 0 {
+		if topLevelKeywordIndex(tail.text, "ORDER BY") >= 0 {
 			return nil, false, nil
 		}
 	}
@@ -168,7 +168,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	}, true, nil
 }
 
-func traversalSourceProperties(node nodePatternInfo, where string, tail []string, pathVariable string) []string {
+func traversalSourceProperties(node nodePatternInfo, where string, tail []pipelineClause, pathVariable string) []string {
 	if pathVariable != "" {
 		return nil
 	}
@@ -176,8 +176,8 @@ func traversalSourceProperties(node nodePatternInfo, where string, tail []string
 	if properties == nil || node.variable == "" {
 		return properties
 	}
-	for _, text := range tail {
-		used := pipelineNodePredicateProperties(node.variable, text, nil)
+	for _, clause := range tail {
+		used := pipelineNodeReadProperties(node.variable, physicalClauseReadReferences(clause), nil)
 		if used == nil {
 			return nil
 		}

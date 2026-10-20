@@ -16,7 +16,7 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	require.Equal(t, "WITH x CREATE (n)", stripLeadingWithImportsForFabricRecord("WITH x CREATE (n)", map[string]interface{}{"x": 1}))
 	require.Equal(t, "WITH x, y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("WITH x, y MATCH (n) RETURN n", map[string]interface{}{"x": 1}))
 	require.Equal(t, "WITH x AS y MATCH (n) RETURN n", stripLeadingWithImportsForFabricRecord("WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": 1, "y": 2}))
-	require.Equal(t, "USE shard RETURN $x", stripLeadingWithImportsForFabricRecord("WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
+	require.Equal(t, "USE shard RETURN x", stripLeadingWithImportsForFabricRecord("WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
 
 	// findLeadingWithEndLocal branches
 	require.Equal(t, -1, findLeadingWithEndLocal("WITH x + 1"))
@@ -44,7 +44,13 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	require.Greater(t, findLeadingWithEndLocal("WITH {k: 1} AS m MATCH (n) RETURN n"), 0)
 	require.Equal(t, -1, findLeadingWithEndLocal("WITH 'unterminated"))
 
-	// The canonical comma reader handles nesting, strings and quoted names.
+	// startsWithKeywordAtLocal boundaries
+	require.False(t, startsWithKeywordAtLocal("AMATCH", 1, "MATCH"))
+	require.False(t, startsWithKeywordAtLocal("MATCHED", 0, "MATCH"))
+	require.True(t, startsWithKeywordAtLocal(" MATCH (n) RETURN n ", 1, "MATCH"))
+	require.False(t, startsWithKeywordAtLocal("MATCH", -1, "MATCH"))
+
+	// The shared comma splitter preserves nesting/quotes and trims each field.
 	parts := splitTopLevelComma("a, apoc.map.fromPairs([[1,2],[3,4]]), 'x,y', `q,r`, b")
 	require.Equal(t, []string{"a", "apoc.map.fromPairs([[1,2],[3,4]])", "'x,y'", "`q,r`", "b"}, parts)
 	parts = splitTopLevelComma("a, \"x,y\", {k:[1,2,3]}, b")

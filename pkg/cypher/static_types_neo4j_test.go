@@ -94,10 +94,10 @@ func TestStaticTypeChecksMatchNeo4j(t *testing.T) {
 // predicates, unary plus, slices, subscripts and map projections are
 // reported, and each receiver kind takes its own keys.
 func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
-	checker := staticOperatorChecker{scope: staticTypeScope{
+	checker := (staticTypeScope{
 		kinds:  matchSemanticScope{"n": matchBindingNode},
 		values: map[string]string{"s": "String", "l": "List<Integer>", "m": "Map", "z": "Null"},
-	}}
+	}).operatorChecker()
 	for _, tc := range []struct {
 		expr  string
 		want  string

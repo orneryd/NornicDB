@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	grammar "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -45,6 +46,9 @@ type staticOperand struct {
 	// path or list of them whose type isn't otherwise known (a node's
 	// property, an aggregate): the match validator's value kind (#1055).
 	nonEntity bool
+	// union retains the source type name while kind is a common category.
+	union        bool
+	alternatives []string
 	// members are the static types of a map literal's entries by key, in a
 	// Cypher 25 statement (Neo4j 2026.09 types {a: 2}.a as an Integer;
 	// Neo4j 5.26 doesn't): staticMapMember reads them.
@@ -165,13 +169,6 @@ func staticValueCallType(expression string) string {
 		return result
 	}
 	return ""
-}
-
-// staticOperatorChecker infers expression types for the operator checks, from
-// a clause's variables and, when checking with parameter values, from them.
-type staticOperatorChecker struct {
-	scope  staticTypeScope
-	params map[string]interface{}
 }
 
 // operandMismatch is the SyntaxError for an operand the operator can't take.
@@ -355,12 +352,12 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (result st
 	// Multiplying a Float by an unresolved value can produce a Float or a
 	// Duration, never an Integer. Retain this exclusion for list subscripts.
 	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
-		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+		return typedOperand("Float or Duration"), nil
 	}
 	// Multiplying a Float by an unresolved value can produce a Float or a
 	// Duration, never an Integer. Retain this exclusion for list subscripts.
 	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
-		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+		return typedOperand("Float or Duration"), nil
 	}
 	return staticOperand{display: "Float, Integer or Duration", nonBoolean: true}, nil
 }
@@ -375,6 +372,7 @@ var staticComparisonKeywords = []string{"STARTS WITH", "ENDS WITH", "CONTAINS", 
 // error in it. CASE, list comprehensions, quantifiers, pattern expressions
 // and subqueries are not looked into: they bind their own variables.
 func (checker staticOperatorChecker) check(expression string) (staticOperand, error) {
+	checker = checker.trimNativeInput(expression)
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return staticOperand{}, nil
@@ -399,8 +397,8 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		// its result type (size([(n)-->() | 1]) is an Integer).
 		return staticPatternExpressionType(expression), nil
 	}
-	if inner, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
-		return checker.check(inner)
+	if _, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
+		return checker.checkRange(expression, 1, len(expression)-1)
 	}
 	if startsWithKeywordFold(expression, "CASE") {
 		if isCaseExpression(expression) && leadingCaseExpressionEnd(expression) == len(expression) {
@@ -415,8 +413,8 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	scan := maskCaseBlocks(expression)
 	for _, keyword := range []string{"OR", "XOR", "AND"} {
 		if index := infixKeywordIndex(scan, keyword); index > 0 {
-			for _, side := range [2]string{expression[:index], expression[index+len(keyword):]} {
-				operand, err := checker.check(side)
+			for _, span := range [2][2]int{{0, index}, {index + len(keyword), len(expression)}} {
+				operand, err := checker.checkRange(expression, span[0], span[1])
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -429,7 +427,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	}
 	// A bare NOT is a variable named not (WITH [1] AS not ... x IN not).
 	if startsWithKeywordFold(expression, "NOT") && strings.TrimSpace(expression[len("NOT"):]) != "" {
-		operand, err := checker.check(expression[len("NOT"):])
+		operand, err := checker.checkRange(expression, len("NOT"), len(expression))
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -444,7 +442,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	if index := topLevelKeywordIndex(scan, "IS"); index > 0 {
 		rest := strings.TrimSpace(expression[index+len("IS"):])
 		if !startsWithKeywordFold(rest, "NULL") && !startsWithKeywordFold(strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(rest), "NOT")), "NULL") {
-			if _, err := checker.check(expression[:index]); err != nil {
+			if _, err := checker.checkRange(expression, 0, index); err != nil {
 				return staticOperand{}, err
 			}
 			return knownOperand("Boolean"), nil
@@ -452,10 +450,10 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	}
 	for _, keyword := range staticComparisonKeywords {
 		if index := topLevelKeywordIndex(scan, keyword); index > 0 {
-			if _, err := checker.check(expression[:index]); err != nil {
+			if _, err := checker.checkRange(expression, 0, index); err != nil {
 				return staticOperand{}, err
 			}
-			right, err := checker.check(expression[index+len(keyword):])
+			right, err := checker.checkRange(expression, index+len(keyword), len(expression))
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -466,9 +464,10 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 	}
 	for _, operator := range staticComparisonOperators {
-		if left, right, found := splitAtOperator(expression, operator, findTopLevelOperator(scan, operator, false, true)); found && left != "" && right != "" {
-			for _, side := range [2]string{left, right} {
-				operand, err := checker.check(side)
+		index := findTopLevelOperator(scan, operator, false, true)
+		if left, right, found := splitAtOperator(expression, operator, index); found && left != "" && right != "" {
+			for _, span := range [2][2]int{{0, index}, {index + len(operator), len(expression)}} {
+				operand, err := checker.checkRange(expression, span[0], span[1])
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -487,18 +486,18 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		if !isOperandExpressionText(left) || !isOperandExpressionText(right) {
 			return staticOperand{}, nil
 		}
-		leftType, err := checker.check(left)
+		leftType, err := checker.checkRange(expression, 0, len(left))
 		if err != nil {
 			return staticOperand{}, err
 		}
-		rightType, err := checker.check(right)
+		rightType, err := checker.checkRange(expression, len(expression)-len(right), len(expression))
 		if err != nil {
 			return staticOperand{}, err
 		}
 		return checkOperator(operator, leftType, rightType, checker.scope.cypher25)
 	}
 	if expression[0] == '-' && len(expression) > 1 {
-		operand, err := checker.check(expression[1:])
+		operand, err := checker.checkRange(expression, 1, len(expression))
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -512,7 +511,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		return operand, nil
 	}
 	if expression[0] == '+' && len(expression) > 1 {
-		operand, err := checker.check(expression[1:])
+		operand, err := checker.checkRange(expression, 1, len(expression))
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -532,42 +531,54 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 }
 
 // checkCase type-checks a CASE expression: a searched CASE's conditions must
-// be booleans. Its type is the one type all its results share, if they do.
+// be booleans. Its result retains every possible branch type, so a function
+// signature is rejected only when none of the alternatives fits.
 func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOperand, error) {
 	if parsed.isSimple {
-		if _, err := checker.check(parsed.testExpression); err != nil {
+		if _, err := checker.checkRange(parsed.source, parsed.testSpan.Start, parsed.testSpan.End); err != nil {
 			return staticOperand{}, err
 		}
 	}
 	var result staticOperand
-	agree := true
-	merge := func(text string) error {
-		operand, err := checker.check(text)
+	var choices []string
+	unknown := false
+	merge := func(text string, start, end int) error {
+		operand, err := checker.checkRange(parsed.source, start, end)
 		if err != nil {
 			return err
 		}
-		switch {
-		case !operand.known():
-			agree = false
-		case !result.known():
+		if strings.EqualFold(strings.TrimSpace(text), "null") {
+			operand = knownOperand("Null")
+		}
+		name := operand.typeName()
+		if name == "" {
+			unknown = true
+			return nil
+		}
+		if result.typeName() == "" {
 			result = operand
-		case result.kind != operand.kind && result.numeric() && operand.numeric():
-			// Integer/Float alternatives are a numeric union, not an unknown
-			// result. Keep that constraint even when the selected branch depends
-			// on a row (and when an outer stream is empty).
-			result = knownOperand("Number")
-		case result.kind != operand.kind:
-			agree = false
+			return nil
+		}
+		if name == result.typeName() {
+			return nil
+		}
+		if choices == nil {
+			choices = staticTypeChoices(result.typeName())
+		}
+		for _, choice := range staticTypeChoices(name) {
+			if !containsString(choices, choice) {
+				choices = append(choices, choice)
+			}
 		}
 		return nil
 	}
 	for _, when := range parsed.whenClauses {
 		if parsed.isSimple {
-			if _, err := checker.check(when.value); err != nil {
+			if _, err := checker.checkRange(parsed.source, when.conditionSpan.Start, when.conditionSpan.End); err != nil {
 				return staticOperand{}, err
 			}
 		} else {
-			condition, err := checker.check(when.condition)
+			condition, err := checker.checkRange(parsed.source, when.conditionSpan.Start, when.conditionSpan.End)
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -575,17 +586,20 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 				return staticOperand{}, err
 			}
 		}
-		if err := merge(when.result); err != nil {
+		if err := merge(when.result, when.resultSpan.Start, when.resultSpan.End); err != nil {
 			return staticOperand{}, err
 		}
 	}
 	if strings.TrimSpace(parsed.elseResult) != "" {
-		if err := merge(parsed.elseResult); err != nil {
+		if err := merge(parsed.elseResult, parsed.elseSpan.Start, parsed.elseSpan.End); err != nil {
 			return staticOperand{}, err
 		}
 	}
-	if !agree {
+	if unknown {
 		return staticOperand{}, nil
+	}
+	if len(choices) > 1 {
+		return typedOperand(joinTypeNames(choices)), nil
 	}
 	return result, nil
 }
@@ -712,8 +726,17 @@ func staticSliceBounds(inner string) (from, to string, slice bool) {
 
 // checkPostfix type-checks a subscript (receiver[inner]), a slice
 // (receiver[from..to]) or a property access (receiver.key).
-func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, subscript bool) (staticOperand, error) {
-	receiver, err := checker.check(receiverText)
+func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, subscript bool, source ...string) (staticOperand, error) {
+	receiverChecker, innerChecker := checker, checker
+	if len(source) > 0 {
+		end := len(source[0]) - len(inner) - 1
+		if subscript {
+			end--
+		}
+		receiverChecker.scope = checker.scope.nativeRange(source[0], 0, end)
+		innerChecker.scope = checker.scope.nativeRange(source[0], end+1, end+1+len(inner))
+	}
+	receiver, err := receiverChecker.check(receiverText)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -727,8 +750,13 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		return staticOperand{}, nil
 	}
 	if from, to, slice := staticSliceBounds(inner); slice {
-		for _, bound := range [2]string{from, to} {
-			operand, err := checker.check(bound)
+		for index, bound := range [2]string{from, to} {
+			start, end := 0, len(from)
+			if index == 1 {
+				start, end = len(from)+2, len(inner)
+			}
+			operand, err := innerChecker.checkRange(inner, start, end)
+			_ = bound
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -746,7 +774,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		// (WHERE n.x[1..] is a list coercion error in Neo4j).
 		return knownOperand("List<T>"), nil
 	}
-	key, err := checker.check(inner)
+	key, err := innerChecker.check(inner)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -767,8 +795,8 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if invalidIntegerKey {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreListIndexTypeMismatch(key.display))
 		}
-		if element := strings.TrimSuffix(strings.TrimPrefix(receiver.kind, "List<"), ">"); element != "T" && !strings.ContainsAny(element, "<,") {
-			return knownOperand(element), nil
+		if element := elementOfType(receiver.typeName()); element != "" {
+			return typedOperand(element), nil
 		}
 	case receiver.kind == "Map" || receiver.kind == "Map, Node or Relationship":
 		if keyKnown && key.kind != "String" {
@@ -927,38 +955,64 @@ func staticMapProjectionSplit(expression string) (variable, items string, projec
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
 func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand, error) {
+	if scope, found := checker.rootBindingScope(expression); found {
+		if operand, handled, err := checker.checkNativeBindingScope(expression, scope); handled {
+			return operand, err
+		}
+	}
+	if receiver, inner, subscript, postfix := staticPostfixSplit(expression); postfix {
+		return checker.checkPostfix(receiver, inner, subscript, expression)
+	}
 	if expression[0] == '$' {
 		name := strings.TrimSpace(expression[1:])
-		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
+		if checker.scope.params == nil || simpleSemanticIdentifier(name) == "" {
 			return staticOperand{}, nil
 		}
-		value, bound := checker.params[name]
+		value, bound := checker.scope.params[name]
 		if !bound {
 			return staticOperand{}, nil
 		}
 		operand := staticParameterOperand(value)
+		// Neo4j leaves Float parameters to runtime in property/function and
+		// alias checks. Retain that policy through projected/imported frames.
+		if checker.scope.params != nil && operand.kind == "Float" {
+			return staticOperand{}, nil
+		}
 		operand.parameter = name
 		return operand, nil
-	}
-	if receiver, inner, subscript, postfix := staticPostfixSplit(expression); postfix {
-		return checker.checkPostfix(receiver, inner, subscript)
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
 		if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
 			return checker.checkListComprehension(variable, list, predicate, projection)
 		}
-		for _, item := range splitTopLevelComma(inner) {
-			if _, err := checker.check(item); err != nil {
+		var element staticOperand
+		for index, item := range splitTopLevelComma(inner) {
+			itemType, err := checker.childOperand(item, index).check(item)
+			if err != nil {
 				return staticOperand{}, err
 			}
+			if index == 0 {
+				element = itemType
+			} else {
+				element = commonStaticOperand(element, itemType)
+			}
 		}
-		return knownOperand(staticLiteralTypeNameOr(expression, "List<T>")), nil
+		if literal := staticLiteralTypeName(expression); literal != "" && literal != "List<T>" {
+			return knownOperand(literal), nil
+		}
+		// A list of admitted operands retains their element facts. Losing
+		// them here would erase invocation types before a local frame binds
+		// its iterator, even though that frame retains the parameter map.
+		if name := element.typeName(); name != "" && name != "Null" {
+			return knownOperand(listOfType(name)), nil
+		}
+		return knownOperand("List<T>"), nil
 	}
 	if expression[0] == '{' && findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
 		mapOperand := knownOperand("Map")
-		for _, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
+		for index, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
 			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				value, err := checker.check(pair[separator+1:])
+				value, err := checker.childOperand(pair[separator+1:], index).check(pair[separator+1:])
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -978,9 +1032,9 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.kind != "" && !staticProjectable(receiver.kind, checker.scope.cypher25) {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
-		for _, item := range splitTopLevelComma(items) {
+		for index, item := range splitTopLevelComma(items) {
 			if separator := findTopLevelMapKeyValueSeparator(item); separator > 0 {
-				if _, err := checker.check(item[separator+1:]); err != nil {
+				if _, err := checker.childOperand(item[separator+1:], index).check(item[separator+1:]); err != nil {
 					return staticOperand{}, err
 				}
 			}
@@ -991,8 +1045,8 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		if strings.EqualFold(function, "coalesce") {
 			result := knownOperand("Null")
 			agree := true
-			for _, text := range splitTopLevelComma(arguments) {
-				operand, err := checker.check(text)
+			for index, text := range splitTopLevelComma(arguments) {
+				operand, err := checker.childOperand(text, index).check(text)
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -1027,11 +1081,12 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		if !isQuantifierOrReduceFunction(function) {
 			for index, argument := range splitTopLevelComma(arguments) {
-				// normalize(s, NFC) names its normal form, not a variable.
-				if index == 1 && lowerASCII(function) == "normalize" {
+				// Preserve native syntax operands when decomposing a call;
+				// a mode/type token has no independent value-binding scope.
+				if syntax, named := grammar.FunctionSymbolArgument(function); named && index == syntax.Position {
 					continue
 				}
-				if _, err := checker.check(argument); err != nil {
+				if _, err := checker.childOperand(argument, index).check(argument); err != nil {
 					return staticOperand{}, err
 				}
 			}
@@ -1126,9 +1181,10 @@ func mayNeedStaticTypeCheck(text string) bool {
 // UNWIND lists, pattern property values) and that may contain arithmetic.
 // afterProjection is set for the WHERE and ORDER BY of a RETURN / WITH, which
 // see the projection's aliases. It allocates only for clauses with arithmetic.
-func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause, visit func(expression string, afterProjection bool) error) error {
+func forEachClauseOperatorExpression(clause pipelineClause, visit func(expression string, afterProjection bool) error, complete ...bool) error {
+	all := len(complete) > 0 && complete[0]
 	text := strings.TrimSpace(clause.text)
-	if !mayNeedStaticTypeCheck(text) {
+	if !all && !mayNeedStaticTypeCheck(text) {
 		return nil
 	}
 	visitPatternValues := func(pattern string) error {
@@ -1141,7 +1197,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 				if closing < 0 {
 					return nil
 				}
-				if body := pattern[index+1 : closing]; mayNeedStaticTypeCheck(body) {
+				if body := pattern[index+1 : closing]; all || mayNeedStaticTypeCheck(body) {
 					for _, pair := range splitTopLevelComma(body) {
 						if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
 							if err := visit(pair[separator+1:], false); err != nil {
@@ -1151,6 +1207,17 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 					}
 				}
 				index = closing
+			}
+		}
+		if all {
+			spans := elementPredicateSpans(pattern, 0, len(pattern))
+			for _, group := range quantifiedGroups(pattern) {
+				spans = append(spans, group.predicates...)
+			}
+			for _, span := range spans {
+				if err := visit(pattern[span[0]+len("WHERE"):span[1]], false); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -1166,14 +1233,14 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 				predicate = predicate[:index]
 			}
 		}
-		if !mayNeedStaticTypeCheck(predicate) {
+		if !all && !mayNeedStaticTypeCheck(predicate) {
 			return nil
 		}
 		return visit(predicate, afterProjection)
 	}
 	switch clause.kind {
 	case pipelineClauseLet:
-		projections, err := parsePipelineLet(clause.text)
+		projections, err := parsePipelineLet(clause.text, clause.syntax)
 		if err != nil {
 			return err
 		}
@@ -1192,19 +1259,19 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 		body := strings.TrimSpace(text[len(keyword):])
 		projection, rest := splitWithProjection(body)
 		projection, _ = cutDistinct(projection)
-		if mayNeedStaticTypeCheck(projection) {
+		if all || mayNeedStaticTypeCheck(projection) {
 			for _, item := range splitTopLevelComma(projection) {
 				expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-				if mayNeedStaticTypeCheck(expression) {
+				if all || mayNeedStaticTypeCheck(expression) {
 					if err := visit(expression, false); err != nil {
 						return err
 					}
 				}
 			}
 		}
-		if mayNeedStaticTypeCheck(rest) {
+		if all || mayNeedStaticTypeCheck(rest) {
 			return forEachProjectedTailExpression(projection, rest, func(expression string) error {
-				if !mayNeedStaticTypeCheck(expression) {
+				if !all && !mayNeedStaticTypeCheck(expression) {
 					return nil
 				}
 				return visit(expression, true)
@@ -1229,7 +1296,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 		return visitPatternValues(pattern)
 	case pipelineClauseSet:
 		for _, assignment := range splitSetAssignments(strings.TrimSpace(text[len("SET"):])) {
-			if operator := strings.Index(assignment, "="); operator > 0 && mayNeedStaticTypeCheck(assignment[operator+1:]) {
+			if operator := strings.Index(assignment, "="); operator > 0 && (all || mayNeedStaticTypeCheck(assignment[operator+1:])) {
 				if err := visit(assignment[operator+1:], false); err != nil {
 					return err
 				}
@@ -1295,11 +1362,32 @@ func forEachProjectedTailExpression(projection, rest string, visit func(expressi
 // a projection use projectedScope (built only when needed), where the
 // projection's aliases replace the variables they rename
 // (RETURN n.num AS n ORDER BY n + 2).
-func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
+func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope) error {
 	if clause.kind == pipelineClauseDelete {
 		if err := staticDeleteTargetTypeError(clause.text, scope); err != nil {
 			return err
 		}
+	}
+	clause = admitClauseOperands(clause)
+	if clause.admission.native {
+		clause = admitOperandFrames(clause, scope, projectedScope)
+		for _, operand := range clause.admission.operands {
+			expression := operand.expression
+			if !operand.Predicate && !mayNeedStaticTypeCheck(expression) {
+				continue
+			}
+			checker := operand.frame.operatorChecker()
+			typed, err := checker.check(expression)
+			if err != nil {
+				return err
+			}
+			if operand.Predicate {
+				if err := requireBooleanOperand(typed); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 	if where := topLevelKeywordIndex(clause.text, "WHERE"); where >= 0 {
 		predicate := clause.text[where+len("WHERE"):]
@@ -1312,7 +1400,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 		if projectedScope != nil {
 			predicateScope = projectedScope()
 		}
-		checker := staticOperatorChecker{scope: predicateScope, params: params}
+		checker := predicateScope.operatorChecker()
 		operand, err := checker.check(predicate)
 		if err != nil {
 			return err
@@ -1323,7 +1411,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 	}
 	if clause.kind == pipelineClauseFilter {
 		predicate := pipelineFilterExpression(clause.text)
-		checker := staticOperatorChecker{scope: scope, params: params}
+		checker := scope.operatorChecker()
 		operand, err := checker.check(predicate)
 		if err != nil {
 			return err
@@ -1332,14 +1420,16 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 			return err
 		}
 	}
-	var projected *staticOperatorChecker
-	return e.forEachClauseOperatorExpression(clause, func(expression string, afterProjection bool) error {
-		checker := staticOperatorChecker{scope: scope, params: params}
+	projected := scope.operatorChecker()
+	projectedReady := false
+	return forEachClauseOperatorExpression(clause, func(expression string, afterProjection bool) error {
+		checker := scope.operatorChecker()
 		if afterProjection && projectedScope != nil {
-			if projected == nil {
-				projected = &staticOperatorChecker{scope: projectedScope(), params: params}
+			if !projectedReady {
+				projected = projectedScope().operatorChecker()
+				projectedReady = true
 			}
-			checker = *projected
+			checker = projected
 		}
 		_, err := checker.check(expression)
 		return err
@@ -1353,19 +1443,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 // that operator could reject: numbers never are, and neither are strings or
 // lists next to +, so parameterized arithmetic on hot paths costs one scan.
 func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
-	if len(params) == 0 || !parameterMayMismatchOperator(cypher, params) {
-		return nil
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-	for _, clause := range clauses {
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{cypher25: cypher25}, nil, params); err != nil {
-			return err
-		}
-	}
-	return nil
+	return e.validateInvocationParameterTypes(cypher, params, cypher25)
 }
 
 // parameterMayMismatchOperator reports whether a $parameter next to an

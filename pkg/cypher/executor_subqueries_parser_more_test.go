@@ -29,10 +29,10 @@ func TestSubqueryParserHelpers_MoreBranches(t *testing.T) {
 	require.Equal(t, "x", lhs)
 	require.Equal(t, "[1, {k: 'a=b'}, 3]", rhs)
 
-	lhs, rhs, ok = splitTopLevelEqualityCallSubquery(`cfg = {"k":[1,2,3],"s":"a=b"}`)
+	lhs, rhs, ok = splitTopLevelEqualityCallSubquery(`cfg = {k:[1,2,3],s:'a=b'}`)
 	require.True(t, ok)
 	require.Equal(t, "cfg", lhs)
-	require.Equal(t, `{"k":[1,2,3],"s":"a=b"}`, rhs)
+	require.Equal(t, `{k:[1,2,3],s:'a=b'}`, rhs)
 
 	lhs, rhs, ok = splitTopLevelEqualityCallSubquery("arr = [func(1), {x: [2,3]}]")
 	require.True(t, ok)

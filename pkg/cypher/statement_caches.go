@@ -193,22 +193,21 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 	if !ok {
 		return scopes, statementScopesValid(scopes)
 	}
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens, opts.SkipBrackets = false, false
-	for from := 0; ; {
-		at := keywordIndexFrom(query, "USE", from, opts)
-		if at < 0 {
-			break
-		}
-		use, _, hasUse, err := fabric.ParseUseClause(query[at:], true)
-		if hasUse && err == nil && !use.IsDynamic() {
+	if !fabric.QuerySyntaxDemand(query).Has(fabric.NativeUseSyntax) {
+		return scopes, statementScopesValid(scopes)
+	}
+	structure := logicalStatementSyntax(query)
+	if structure.Err != nil {
+		return nil, false
+	}
+	for _, use := range structure.Uses() {
+		if !use.IsDynamic() {
 			scope, err := resolver.StatementCacheScope(use.Name)
 			if err != nil {
 				return nil, false
 			}
 			scopes = append(scopes, scope)
 		}
-		from = at + len("USE")
 	}
 	return scopes, statementScopesValid(scopes)
 }

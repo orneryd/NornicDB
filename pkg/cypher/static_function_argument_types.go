@@ -3,6 +3,7 @@ package cypher
 import (
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -316,21 +317,49 @@ func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
 // ("Float, Integer, String or List<T>", the type of 1 + x for an unknown x)
 // into them; a single type is itself.
 func staticTypeChoices(typeName string) []string {
-	return strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ")
+	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+		return []string{typeName}
+	}
+	var choices []string
+	start, depth := 0, 0
+	for index := 0; index < len(typeName); index++ {
+		switch typeName[index] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		}
+		if depth != 0 {
+			continue
+		}
+		width := 0
+		if strings.HasPrefix(typeName[index:], ", ") {
+			width = 2
+		} else if strings.HasPrefix(typeName[index:], " or ") {
+			width = 4
+		}
+		if width > 0 {
+			choices = append(choices, typeName[start:index])
+			start = index + width
+			index = start - 1
+		}
+	}
+	return append(choices, typeName[start:])
 }
 
 func (argument staticArgumentType) accepts(typeName string) bool {
-	if typeName == "" || len(argument.options) == 0 {
+	if typeName == "" || typeName == "Null" || len(argument.options) == 0 {
 		return true
 	}
 	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {
-		choices := staticTypeChoices(typeName)
-		for _, choice := range choices {
-			if argument.accepts(choice) {
-				return true
+		if choices := staticTypeChoices(typeName); len(choices) > 1 {
+			for _, choice := range choices {
+				if argument.accepts(choice) {
+					return true
+				}
 			}
+			return false
 		}
-		return false
 	}
 	if typeName == "Number" {
 		return argument.accepts("Integer") || argument.accepts("Float")
@@ -369,7 +398,7 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 // argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
-func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
+func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error, inputs ...fabric.ExpressionInput) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
@@ -404,7 +433,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			continue
 		}
 		if isReduceFormFunction(name) {
-			if err := checkReduceForm(name, text, open, check); err != nil {
+			if err := checkReduceForm(name, text, open, check, inputs...); err != nil {
 				return err
 			}
 			index = open + 1
@@ -420,6 +449,21 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		if closing < 0 {
 			return nil
 		}
+		var nativeArguments []fabric.ExpressionInput
+		var native bool
+		if len(inputs) > 0 && inputs[0].Valid() {
+			nativeArguments, native = inputs[0].FunctionArguments(open)
+		}
+		checkArgument := func(argument staticArgumentType, expression string, position int) error {
+			if native && position < len(nativeArguments) {
+				part := nativeArguments[position]
+				start, _, _ := part.RangeIn(inputs[0])
+				return check(argument, part.Text(), start)
+			}
+			// The standalone scanner has no source-span capability. Only the
+			// native invocation owner can transport an operand view.
+			return check(argument, expression, -1)
+		}
 		inner := strings.TrimSpace(text[open+1 : closing])
 		inner, _ = cutDistinctArgument(inner)
 		if strings.EqualFold(inner, "ALL") {
@@ -430,8 +474,8 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		}
 		if strings.EqualFold(name, "trim") {
 			if parameters, fromForm := trimFromArguments(inner); fromForm {
-				for _, expression := range parameters {
-					if err := check(arguments[0], expression, open+1); err != nil {
+				for position, expression := range parameters {
+					if err := checkArgument(arguments[0], expression, position); err != nil {
 						return err
 					}
 				}
@@ -466,7 +510,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				if len(arguments[position].options) == 0 {
 					continue // a position no type is checked at
 				}
-				if err := check(arguments[position], expression, open+1); err != nil {
+				if err := checkArgument(arguments[position], expression, position); err != nil {
 					return err
 				}
 			}
@@ -576,79 +620,7 @@ func staticFormatArguments(expressions []string) []staticArgumentType {
 // follows an opening parenthesis or a comma, so parameterized statements on
 // hot paths cost one byte scan.
 func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
-	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
-		return nil
-	}
-	var unwound map[string]string
-	if strings.IndexByte(cypher, '[') >= 0 {
-		unwound = unwindParameterBindings(cypher)
-	}
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
-		// A Cypher 25 statement's arguments are checked as Neo4j 2026.09
-		// checks them (toString takes any value there).
-		argument = argument.inVersion(cypher25)
-		expression = strings.TrimSpace(expression)
-		if parameter, bound := unwound[expression]; bound {
-			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
-			// types it: radians(x) for s = 'xy' is a type mismatch.
-			operand := staticParameterOperand(params[parameter])
-			if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
-				return nil
-			}
-			return typeNameMismatchError(argument.expected, operand.display)
-		}
-		if len(expression) < 2 || expression[0] != '$' {
-			return nil
-		}
-		name, next, ok := scanIdentifierToken(expression, 1)
-		if !ok || next != len(expression) {
-			return nil
-		}
-		// A missing parameter (nil) has no static type.
-		operand := staticParameterOperand(params[name])
-		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
-			return nil
-		}
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
-			localization.CypherCoreParameterTypeMismatch(name, argument.expected, operand.display))
-	})
-}
-
-// unwindParameterBindings maps each variable an UNWIND of a one-parameter
-// list binds (UNWIND [$s] AS x) to the parameter's name, when the statement
-// binds that name nowhere else (no second AS x), so a later binding can't be
-// taken for it.
-func unwindParameterBindings(cypher string) map[string]string {
-	var bindings map[string]string
-	for start := 0; ; {
-		index := findKeywordIndexInContext(cypher[start:], "UNWIND")
-		if index < 0 {
-			return bindings
-		}
-		body := cypher[start+index+len("UNWIND"):]
-		start += index + len("UNWIND")
-		as := findKeywordIndexInContext(body, "AS")
-		if as < 0 {
-			continue
-		}
-		source := strings.TrimSpace(body[:as])
-		alias, _, ok := scanIdentifierToken(strings.TrimSpace(body[as+len("AS"):]), 0)
-		if !ok || len(source) < 4 || !isListLiteral(source) {
-			continue
-		}
-		parameter := strings.TrimSpace(source[1 : len(source)-1])
-		name, next, isParameter := scanIdentifierToken(parameter, 1)
-		if !isParameter || parameter[0] != '$' || next != len(parameter) {
-			continue
-		}
-		if strings.Count(cypher, "AS "+alias) != 1 {
-			continue
-		}
-		if bindings == nil {
-			bindings = make(map[string]string)
-		}
-		bindings[alias] = name
-	}
+	return (&StorageExecutor{}).validateInvocationParameterTypes(cypher, params, cypher25)
 }
 
 // parameterMayBeFunctionArgument is validateStaticFunctionParameters' quick
@@ -676,8 +648,10 @@ func parameterMayBeFunctionArgument(cypher string) bool {
 // relationships, a path) and the literal types of variables bound by WITH …
 // AS or UNWIND.
 type staticTypeScope struct {
-	kinds  matchSemanticScope
-	values map[string]string
+	noLocalScopes bool
+	native        *semanticNativeInput
+	kinds         matchSemanticScope
+	values        map[string]string
 	// derived preserves operator constraints of projected expressions whose exact type is unknown.
 	derived map[string]staticOperand
 	// members are the member types of the variables a WITH bound to a map
@@ -762,34 +736,35 @@ func staticMemberAccessBase(expression string) (string, bool) {
 // literal's type or a variable's, or in a Cypher 25 statement a known
 // member's (m.a for m bound to {a: 2}).
 func (scope staticTypeScope) staticExpressionType(expression string) string {
-	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params)
+	operand := scope.staticExpressionOperand(expression)
+	if operand.nonBoolean {
+		return operand.display
 	}
-	if typeName := staticLiteralTypeName(expression); typeName != "" {
-		return typeName
+	return operand.typeName()
+}
+
+// staticExpressionOperand keeps the admitted parameter identity as well as its
+// type. Aliases clear that identity at the projection owner, not at a validator.
+func (scope staticTypeScope) staticExpressionOperand(expression string) staticOperand {
+	if typeName := staticLiteralTypeName(expression); typeName != "" && typeName != "List<T>" {
+		return typedOperand(typeName)
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
-		return scope.typeOf(variable)
+		return typedOperand(scope.typeOf(variable))
 	}
 	if _, member := staticMemberAccessBase(expression); member && scope.cypher25 {
-		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil {
-			return operand.kind
+		if operand, err := scope.operatorChecker().check(expression); err == nil {
+			return operand
 		}
-		return ""
+		return staticOperand{}
 	}
 	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
-	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
-		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
-		if err == nil {
-			if operand.known() {
-				return operand.kind
-			}
-			if operand.nonBoolean {
-				return operand.display
-			}
+	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") || len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
+		if operand, err := scope.operatorChecker().check(expression); err == nil {
+			return operand
 		}
 	}
-	return ""
+	return staticOperand{}
 }
 
 // validateStaticFunctionVariables rejects a function called with a variable
@@ -799,12 +774,16 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 // reduce, any / all / none / single) shadows the scope where it is bound
 // (localVariableShadowsAt) and is not checked there.
 func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
-	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
+	var input fabric.ExpressionInput
+	if scope.native != nil && scope.native.text == text {
+		input = scope.native.input
+	}
+	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope }, input)
 }
 
 // validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
 // the scope built only when a function has a variable argument.
-func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
+func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope, inputs ...fabric.ExpressionInput) error {
 	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
 		variable := simpleSemanticIdentifier(expression)
@@ -829,7 +808,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		default:
 			if memberBase, member := staticMemberAccessBase(expression); member {
 				variable = memberBase // its members' types (Cypher 25)
-			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !strings.EqualFold(function, "coalesce") {
+			} else if variable == "" && !strings.HasPrefix(strings.TrimSpace(expression), "$") && !mayNeedStaticTypeCheck(expression) && !strings.EqualFold(function, "coalesce") {
 				return nil
 			}
 		}
@@ -838,32 +817,54 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			scope = &built
 		}
 		argument = argument.inVersion(scope.cypher25)
+		operandScope := *scope
+		if at >= 0 {
+			operandScope = operandScope.nativeRange(text, at, at+len(expression))
+		} else {
+			operandScope.native = nil
+		}
+		shadows := func(name string) bool {
+			_, _, found := localBindingIn(scope.nativeScopesAt(text, at), at, name)
+			return found
+		}
+		var operandInput fabric.ExpressionInput
+		if operandScope.native != nil {
+			operandInput = operandScope.native.input
+		}
 		if startsWithKeywordFold(strings.TrimSpace(expression), "CASE") {
-			for _, reference := range semanticExpressionReferences(expression) {
-				if localVariableShadowsAt(text, at, reference) {
+			for _, reference := range semanticExpressionReferences(expression, operandInput) {
+				if shadows(reference) {
 					return nil // the comprehension owner checks its local types
 				}
 			}
 		}
-		typeName := scope.staticExpressionType(expression)
+		// The shared CASE result-type owner combines branches before checking
+		// the signature: reject only when no result type fits, otherwise
+		// retain runtime validation of the selected branch.
+		operand := operandScope.staticExpressionOperand(expression)
+		typeName := operand.typeName()
+		if operand.nonBoolean {
+			typeName = operand.display
+		}
 		if property {
 			// A node's or relationship's property is a property value,
 			// never an entity or a map (labels(n.x), id(n.x), point(n.x)
 			// are Neo4j's compile-time SyntaxError); another base's member
-			// has the type the scope knows for it (a Cypher 25 map's), or
+			// has the type the scope knows for it (a map extension's), or
 			// none.
 			if kind := scope.typeOf(base); kind == "Node" || kind == "Relationship" {
 				typeName = staticPropertyValueType
+				operand = typedOperand(typeName)
 			}
 		}
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
-		if localVariableShadowsAt(text, at, variable) {
+		if shadows(variable) {
 			return nil // the argument reads a local of that name
 		}
-		return staticArgumentMismatch(argument, typeName)
-	})
+		return operandMismatch(operand, argument.expected)
+	}, inputs...)
 }
 
 // staticPropertyValueType is the static type of a node's or relationship's
@@ -884,11 +885,11 @@ func entityPropertyRead(expression string) (string, bool) {
 // unwindStaticValueType is the element type of an UNWIND over a list literal
 // (UNWIND [1, 2] AS x binds an Integer), or "".
 func unwindStaticValueType(clause string) string {
-	body := strings.TrimSpace(clause[len("UNWIND"):])
-	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
-		body = strings.TrimSpace(body[:asIndex])
+	expression, _, ok := parsePipelineIteration(clause)
+	if !ok {
+		return ""
 	}
-	return staticListElementType(body)
+	return staticListElementType(expression)
 }
 
 // staticListElementType is the element type of a list expression whose
@@ -943,7 +944,7 @@ func uniformListElementType(list string) string {
 		if typeName == "" {
 			// A computed element (date('…')) keeps the type the operator check
 			// infers for it, as a WITH projection does.
-			if operand, err := (staticOperatorChecker{}).check(element); err == nil && operand.known() {
+			if operand, err := ((staticTypeScope{}).operatorChecker()).check(element); err == nil && operand.known() {
 				typeName = operand.kind
 			}
 		}
@@ -959,20 +960,42 @@ func uniformListElementType(list string) string {
 // call whose parentheses open at open: the call must have the function's
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
-func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
+func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error, inputs ...fabric.ExpressionInput) error {
 	closing := findMatchingDelimiter(text, open, '(', ')')
 	if closing < 0 {
 		return nil
 	}
-	form, ok := parseReduceForm(function, text[open+1:closing])
+	var syntax fabric.ExpressionScope
+	valid := false
+	if len(inputs) > 0 && inputs[0].Valid() {
+		for _, local := range inputs[0].ScopesAt(open + 1) {
+			if local.Open == open && strings.EqualFold(local.Function, function) {
+				syntax, valid = local, true
+				break
+			}
+		}
+	}
+	base := 0
+	if !valid {
+		syntax, valid = fabric.ReduceSyntax(strings.EqualFold(function, "allReduce"), text[open+1:closing])
+		base = open + 1
+	}
+	form := reduceForm{all: strings.EqualFold(function, "allReduce")}
+	if valid {
+		form.list = text[base+syntax.Input.Start : base+syntax.Input.End]
+		if syntax.Predicate.End > syntax.Predicate.Start {
+			form.predicate = text[base+syntax.Predicate.Start : base+syntax.Predicate.End]
+		}
+	}
+	ok := valid
 	if !ok {
 		entry := reduceFormEntries[lowerASCII(function)]
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(entry.name, entry.signature))
 	}
-	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list, open+1); err != nil || !form.all {
+	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list, base+syntax.Input.Start); err != nil || !form.all {
 		return err
 	}
-	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate, closing) // inside the scope of acc and the element
+	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate, base+syntax.Predicate.Start) // inside the scope of acc and the element
 }
 
 // reduceFormEntries are the catalog entries of reduce and allReduce, by

@@ -15,7 +15,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 	// The scan reads raw text, local variables included ([x IN l | x[0]]),
 	// so it can't tell an undefined variable.
 	scope.complete = false
-	checker := staticOperatorChecker{scope: scope, params: scope.params}
+	checker := scope.operatorChecker()
 	for index := 0; index < len(text); index++ {
 		if isCypherQuoteByte(text[index]) {
 			index = skipCypherQuotedText(text, index, text[index]) - 1
@@ -45,7 +45,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 			if !shadowed {
 				return err
 			}
-			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(receiver, text[index+1:end], true); err != nil {
+			if _, err := (local.operatorChecker()).checkPostfix(receiver, text[index+1:end], true); err != nil {
 				return err
 			}
 		}

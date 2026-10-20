@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -27,42 +28,19 @@ func isReduceFormFunction(name string) bool {
 // false when they don't have the function's form (allReduce takes a
 // predicate, reduce doesn't).
 func parseReduceForm(function, arguments string) (reduceForm, bool) {
-	form := reduceForm{all: lowerASCII(function) == "allreduce"}
-	parts := splitTopLevelComma(arguments)
-	if want := map[bool]int{false: 2, true: 3}[form.all]; len(parts) != want {
+	form := reduceForm{all: strings.EqualFold(function, "allReduce")}
+	syntax, parsed := fabric.ReduceSyntax(form.all, arguments)
+	if !parsed {
 		return form, false
 	}
-	assignment := strings.TrimSpace(parts[0])
-	accumulator, end, ok := scanIdentifierToken(assignment, 0)
-	if !ok {
-		return form, false
+	read := func(span fabric.ExpressionSpan) string {
+		if span.End <= span.Start {
+			return ""
+		}
+		return arguments[span.Start:span.End]
 	}
-	equals := skipSpaces(assignment, end)
-	if equals >= len(assignment) || assignment[equals] != '=' {
-		return form, false
-	}
-	form.accumulator, form.initial = accumulator, strings.TrimSpace(assignment[equals+1:])
-	iteration := strings.TrimSpace(parts[1])
-	variable, end, ok := scanIdentifierToken(iteration, 0)
-	if !ok {
-		return form, false
-	}
-	rest := strings.TrimLeft(iteration[end:], " \t\r\n")
-	if !startsWithKeywordFold(rest, "IN") {
-		return form, false
-	}
-	rest = rest[len("IN"):]
-	pipe := rowTopLevelPipeIndex(rest)
-	if pipe < 0 {
-		return form, false
-	}
-	form.variable, form.list, form.step = variable, strings.TrimSpace(rest[:pipe]), strings.TrimSpace(rest[pipe+1:])
-	if form.initial == "" || form.list == "" || form.step == "" {
-		return form, false
-	}
-	if form.all {
-		form.predicate = parts[2]
-	}
+	form.accumulator, form.variable = syntax.Declarations[0].Name, syntax.Declarations[1].Name
+	form.initial, form.list, form.step, form.predicate = read(syntax.Declarations[0].Source), read(syntax.Input), read(syntax.Projection), read(syntax.Predicate)
 	return form, true
 }
 
@@ -106,8 +84,7 @@ func (form reduceForm) appendPlan() *reduceAppendPlan {
 	// A CASE is the one form that holds a + outside brackets, which the
 	// arithmetic split doesn't skip; a step with one has no plan.
 	if !containsIdentifierToken(strings.ToLower(form.step), "case") {
-		compiler := rowValueCompiler{}
-		node, _ = compiler.compile(form.step)
+		node = rowValueProgramForFacts(form.step).root
 	}
 	var terms, texts []string
 	for node != nil {

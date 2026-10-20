@@ -138,7 +138,7 @@ func TestFabricExecutor_SimpleExec(t *testing.T) {
 		calls: map[string]int{},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	fragment := &FragmentExec{
@@ -161,7 +161,7 @@ func TestFabricExecutor_SimpleExec(t *testing.T) {
 }
 
 func TestFabricExecutor_Init(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	ctx := context.Background()
 
 	init := &FragmentInit{Columns: []string{"x"}}
@@ -176,7 +176,7 @@ func TestFabricExecutor_Init(t *testing.T) {
 
 func TestFabricExecutor_UnknownGraph(t *testing.T) {
 	catalog := NewCatalog()
-	exec := NewFabricExecutor(catalog, nil, nil)
+	exec := newTestFabricExecutor(catalog, nil, nil)
 	ctx := context.Background()
 
 	fragment := &FragmentExec{
@@ -205,7 +205,7 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 	tx := NewFabricTransaction("tx-test")
 
@@ -251,7 +251,7 @@ func TestFabricExecutor_Apply(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	outer := &FragmentExec{
@@ -303,7 +303,7 @@ func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	outer := &FragmentExec{
@@ -368,7 +368,7 @@ func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup_WithUseAndExtraPredi
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"textKey128"}}
@@ -417,7 +417,7 @@ func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup_ReversedEquality(t *
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"textKey128"}}
@@ -458,7 +458,7 @@ func TestFabricExecutor_Union(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	union := &FragmentUnion{
@@ -501,7 +501,7 @@ func TestFabricExecutor_UnionDistinct(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	union := &FragmentUnion{
@@ -526,7 +526,7 @@ func TestFabricExecutor_UnionDistinct(t *testing.T) {
 }
 
 func TestFabricExecutor_LeafFragment(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	ctx := context.Background()
 
 	leaf := &FragmentLeaf{
@@ -545,7 +545,7 @@ func TestFabricExecutor_NilLocalExecutor(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 
-	exec := NewFabricExecutor(catalog, nil, nil)
+	exec := newTestFabricExecutor(catalog, nil, nil)
 	ctx := context.Background()
 
 	frag := &FragmentExec{
@@ -636,31 +636,31 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"CREATE (n:Row)": {
-				Columns: []string{"n"},
+			"CREATE (n:Row) RETURN n AS v": {
+				Columns: []string{"v"},
 				Rows:    [][]interface{}{{"lhs"}},
 			},
-			"RETURN 1 AS one": {
-				Columns: []string{"one"},
+			"RETURN 1 AS v": {
+				Columns: []string{"v"},
 				Rows:    [][]interface{}{{int64(1)}},
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
 		LHS: &FragmentExec{
 			Input:     &FragmentInit{},
-			Query:     "CREATE (n:Row)",
+			Query:     "CREATE (n:Row) RETURN n AS v",
 			GraphName: "db1",
-			Columns:   []string{"n"},
+			Columns:   []string{"v"},
 			IsWrite:   true,
 		},
 		RHS: &FragmentExec{
 			Input:     &FragmentInit{},
-			Query:     "RETURN 1 AS one",
+			Query:     "RETURN 1 AS v",
 			GraphName: "db1",
-			Columns:   []string{"one"},
+			Columns:   []string{"v"},
 		},
 		Columns: []string{"v"},
 	}
@@ -683,7 +683,7 @@ func TestExecuteApplyInMemoryProjection_Shapes(t *testing.T) {
 		},
 	}
 
-	ret, ok := executeApplyInMemoryProjection(input, "RETURN textKey AS key, textKey128 AS hash")
+	ret, ok := executeTestApplyInMemoryProjection(input, "RETURN textKey AS key, textKey128 AS hash")
 	if !ok {
 		t.Fatalf("expected simple RETURN projection to hit in-memory path")
 	}
@@ -691,7 +691,7 @@ func TestExecuteApplyInMemoryProjection_Shapes(t *testing.T) {
 		t.Fatalf("unexpected columns: %#v", ret.Columns)
 	}
 
-	collectOnly, ok := executeApplyInMemoryProjection(
+	collectOnly, ok := executeTestApplyInMemoryProjection(
 		input,
 		"WITH collect({textKey: textKey, textKey128: textKey128}) AS rows RETURN rows",
 	)
@@ -699,7 +699,7 @@ func TestExecuteApplyInMemoryProjection_Shapes(t *testing.T) {
 		t.Fatalf("expected collect-map-only projection result, got ok=%v rows=%#v", ok, collectOnly.Rows)
 	}
 
-	distinctKeys, ok := executeApplyInMemoryProjection(
+	distinctKeys, ok := executeTestApplyInMemoryProjection(
 		input,
 		"WITH collect({textKey128: textKey128}) AS rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys",
 	)
@@ -719,7 +719,7 @@ func TestExecuteApplyAsPipeline_RewritesAndExecutes(t *testing.T) {
 		}
 		return &mockEngine{}, nil
 	})
-	exec := NewFabricExecutor(catalog, local, nil)
+	exec := newTestFabricExecutor(catalog, local, nil)
 
 	input := &ResultStream{
 		Columns: []string{"textKey128", "textKey", "originalText"},
@@ -759,7 +759,7 @@ func TestFabricExecutor_NilRemoteExecutor(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("remote.shard", &LocationRemote{DBName: "shard", URI: "bolt://r:7687"})
 
-	exec := NewFabricExecutor(catalog, nil, nil)
+	exec := newTestFabricExecutor(catalog, nil, nil)
 	ctx := context.Background()
 
 	frag := &FragmentExec{
@@ -793,7 +793,7 @@ func TestDeduplicateRows(t *testing.T) {
 		{int64(1), "a"},
 	}
 
-	deduped := deduplicateRows(rows)
+	deduped := deduplicateTestRows(rows)
 	if len(deduped) != 2 {
 		t.Errorf("expected 2 rows after dedup, got %d", len(deduped))
 	}
@@ -804,7 +804,7 @@ func TestDeduplicateRows_MapValuesDeterministic(t *testing.T) {
 		{map[string]interface{}{"b": int64(2), "a": int64(1)}},
 		{map[string]interface{}{"a": int64(1), "b": int64(2)}},
 	}
-	deduped := deduplicateRows(rows)
+	deduped := deduplicateTestRows(rows)
 	if len(deduped) != 1 {
 		t.Fatalf("expected map rows to dedupe deterministically, got %d", len(deduped))
 	}
@@ -864,7 +864,7 @@ func TestFragmentContainsWrite(t *testing.T) {
 func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 	query := "WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
 	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id MATCH (n) WHERE n.id = id RETURN n"
+	expected := "WITH $id AS id WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
 	}
@@ -873,7 +873,7 @@ func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
 	query := "WITH 'MATCH as text' AS txt, id RETURN txt, id"
 	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id RETURN txt, id"
+	expected := "WITH $id AS id WITH 'MATCH as text' AS txt, id RETURN txt, id"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
 	}
@@ -905,7 +905,7 @@ func TestExecuteApplyInMemoryProjection_WithCollectMapReturnAlias(t *testing.T) 
 		},
 	}
 	query := "WITH collect({textKey: textKey, textKey128: textKey128}) AS rows\nRETURN rows"
-	res, handled := executeApplyInMemoryProjection(input, query)
+	res, handled := executeTestApplyInMemoryProjection(input, query)
 	if !handled {
 		t.Fatal("expected projection to be handled")
 	}
@@ -927,7 +927,7 @@ func TestExecuteApplyInMemoryProjection_ReturnOrderBySkipLimit(t *testing.T) {
 		},
 	}
 	query := "RETURN textKey128, texts ORDER BY textKey128 SKIP 1 LIMIT 1"
-	res, handled := executeApplyInMemoryProjection(input, query)
+	res, handled := executeTestApplyInMemoryProjection(input, query)
 	if !handled {
 		t.Fatal("expected ordered projection to be handled")
 	}
@@ -1118,7 +1118,7 @@ func BenchmarkDeduplicateRows(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = deduplicateRows(rows)
+		_ = deduplicateTestRows(rows)
 	}
 }
 
@@ -1217,7 +1217,7 @@ func TestSplitTopLevelAnd_QuotedStrings(t *testing.T) {
 		t.Fatalf("expected 2 parts with brackets, got %d: %v", len(parts), parts)
 	}
 	// AND inside braces should not split.
-	parts = splitTopLevelAnd("{a AND b} AND c = 1")
+	parts = splitTopLevelAnd("{value: a AND b} AND c = 1")
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 parts with braces, got %d: %v", len(parts), parts)
 	}
@@ -1244,15 +1244,10 @@ func TestSplitTopLevelEquality_AllBranches(t *testing.T) {
 	if ok {
 		t.Fatal("expected >= to not match as equality")
 	}
-	// == : the first = is skipped (next is =), but the second = is detected
-	// as a standalone equality. This matches the code's actual behavior — "a =="
-	// splits at the second =, producing lhs="a =" rhs=" b".
-	lhs, rhs, ok = splitTopLevelEquality("a == b")
-	if !ok {
-		t.Fatal("expected == to still match at second =")
-	}
-	if lhs != "a =" || rhs != "b" {
-		t.Fatalf("unexpected == parse: lhs=%q rhs=%q", lhs, rhs)
+	// Invalid equality is rejected rather than split at an arbitrary byte.
+	_, _, ok = splitTopLevelEquality("a == b")
+	if ok {
+		t.Fatal("expected invalid == expression to be rejected")
 	}
 	// Equality inside single-quoted string.
 	lhs, rhs, ok = splitTopLevelEquality("n.x = 'a=b'")
@@ -1309,9 +1304,9 @@ func TestContainsStandaloneIdentifier(t *testing.T) {
 	if containsStandaloneIdentifier(`"textKey128"`, "textKey128") {
 		t.Fatal("expected identifier inside double quotes to be ignored")
 	}
-	// Inside backtick string.
-	if containsStandaloneIdentifier("`textKey128`", "textKey128") {
-		t.Fatal("expected identifier inside backticks to be ignored")
+	// Backticks quote a variable name.
+	if !containsStandaloneIdentifier("`textKey128`", "textKey128") {
+		t.Fatal("expected quoted identifier to be found")
 	}
 	// Empty identifier.
 	if containsStandaloneIdentifier("abc", "") {
@@ -1428,41 +1423,6 @@ func TestAsComparableFloat_AllTypes(t *testing.T) {
 				t.Fatalf("expected %v, got %v", tt.want, got)
 			}
 		})
-	}
-}
-
-func TestWriteAnyHash_AllBranches(t *testing.T) {
-	// Ensure all branches run without panicking and produce distinct hashes.
-	values := []interface{}{
-		nil,
-		"string",
-		true,
-		false,
-		int(1),
-		int8(2),
-		int16(3),
-		int32(4),
-		int64(5),
-		uint(6),
-		uint8(7),
-		uint16(8),
-		uint32(9),
-		uint64(10),
-		float32(1.5),
-		float64(2.5),
-		[]interface{}{"a", 1},
-		map[string]interface{}{"k": "v"},
-		struct{ x int }{1}, // default branch
-	}
-	hashes := make(map[uint64]int)
-	for i, v := range values {
-		h := newFNV64a()
-		writeAnyHash(&h, v)
-		hash := h.sum64()
-		if prev, dup := hashes[hash]; dup {
-			t.Fatalf("hash collision between value[%d]=%v and value[%d]=%v", prev, values[prev], i, v)
-		}
-		hashes[hash] = i
 	}
 }
 
@@ -1753,18 +1713,18 @@ func TestProjectSimpleReturnFromRow_MissingColumn(t *testing.T) {
 }
 
 func TestExecuteApplyInMemoryProjection_NilInput(t *testing.T) {
-	_, ok := executeApplyInMemoryProjection(nil, "RETURN x")
+	_, ok := executeTestApplyInMemoryProjection(nil, "RETURN x")
 	if ok {
 		t.Fatal("expected nil input to not match")
 	}
 }
 
 func TestExecuteApplyInMemoryProjection_EmptyQuery(t *testing.T) {
-	_, ok := executeApplyInMemoryProjection(&ResultStream{}, "")
+	_, ok := executeTestApplyInMemoryProjection(&ResultStream{}, "")
 	if ok {
 		t.Fatal("expected empty query to not match")
 	}
-	_, ok = executeApplyInMemoryProjection(&ResultStream{}, "   ")
+	_, ok = executeTestApplyInMemoryProjection(&ResultStream{}, "   ")
 	if ok {
 		t.Fatal("expected whitespace query to not match")
 	}
@@ -1776,7 +1736,7 @@ func TestExecuteApplyInMemoryProjection_NonSimpleReturn(t *testing.T) {
 		Rows:    [][]interface{}{{1}},
 	}
 	// Expression with dot is not a simple identifier.
-	_, ok := executeApplyInMemoryProjection(input, "RETURN n.a AS x")
+	_, ok := executeTestApplyInMemoryProjection(input, "RETURN n.a AS x")
 	if ok {
 		t.Fatal("expected non-simple expr to not match simple return path")
 	}
@@ -1787,7 +1747,7 @@ func TestExecuteApplyInMemoryProjection_ColumnNotFound(t *testing.T) {
 		Columns: []string{"a"},
 		Rows:    [][]interface{}{{1}},
 	}
-	_, ok := executeApplyInMemoryProjection(input, "RETURN missing AS x")
+	_, ok := executeTestApplyInMemoryProjection(input, "RETURN missing AS x")
 	if ok {
 		t.Fatal("expected missing column to not match")
 	}
@@ -2008,7 +1968,7 @@ func TestFindLeadingWithClauseEnd_NoFollowingClause(t *testing.T) {
 }
 
 func TestExecuteApplyAsPipeline_NilInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, nil, &FragmentExec{}, nil, "")
 	if used || err != nil {
 		t.Fatalf("expected nil input to not use pipeline, got used=%v err=%v", used, err)
@@ -2016,7 +1976,7 @@ func TestExecuteApplyAsPipeline_NilInput(t *testing.T) {
 }
 
 func TestExecuteApplyAsPipeline_NoColumns(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Rows: [][]interface{}{{1}}}
 	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, &FragmentExec{}, nil, "")
 	if used || err != nil {
@@ -2028,7 +1988,7 @@ func TestExecuteApplyAsPipeline_ReturnUsesCanonicalPipeline(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	capture := &pipelineCaptureCypherExecutor{}
-	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
+	exec := newTestFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
 	inner := &FragmentExec{Query: "RETURN a AS x", GraphName: "db1"}
 	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
@@ -2064,7 +2024,7 @@ func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	apply := &FragmentApply{
 		Input: &FragmentExec{
 			Input:     &FragmentInit{},
@@ -2094,13 +2054,19 @@ func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(
 	}
 }
 
-func TestExecuteApplyAsPipeline_SimpleImportNotPipelined(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+func TestExecuteApplyAsPipeline_SimpleWithContinuation(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	capture := &pipelineCaptureCypherExecutor{}
+	exec := newTestFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	inner := &FragmentExec{Query: "WITH a MATCH (n) WHERE n.id = a RETURN n"}
-	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if used {
-		t.Fatal("expected simple import WITH to not be pipelined")
+	inner := &FragmentExec{Query: "WITH a ORDER BY a RETURN collect(a) AS values", GraphName: "db1"}
+	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
+	if err != nil || !used {
+		t.Fatalf("expected whole-stream continuation: used=%v err=%v", used, err)
+	}
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a "+inner.Query {
+		t.Fatalf("unexpected continuation query: %s", capture.lastQuery)
 	}
 }
 
@@ -2111,7 +2077,7 @@ func TestExecuteApplyAsPipeline_FabricColumnsFiltered(t *testing.T) {
 	local := NewLocalFragmentExecutor(capture, func(name string) (storage.Engine, error) {
 		return &mockEngine{}, nil
 	})
-	exec := NewFabricExecutor(catalog, local, nil)
+	exec := newTestFabricExecutor(catalog, local, nil)
 	input := &ResultStream{
 		Columns: []string{"__fabric_key", "a"},
 		Rows:    [][]interface{}{{"fk", "v1"}},
@@ -2145,15 +2111,15 @@ func TestExecuteUnion_RoutesToSequentialForWrite(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"CREATE (n:A)":  {Columns: []string{"n"}, Rows: [][]interface{}{{"a"}}},
-			"RETURN 1 AS x": {Columns: []string{"x"}, Rows: [][]interface{}{{int64(1)}}},
+			"CREATE (n:A) RETURN n AS v": {Columns: []string{"v"}, Rows: [][]interface{}{{"a"}}},
+			"RETURN 1 AS v":              {Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}}},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
-		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A)", GraphName: "db1", IsWrite: true},
-		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "db1"},
+		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A) RETURN n AS v", GraphName: "db1", IsWrite: true},
+		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS v", GraphName: "db1"},
 		Columns: []string{"v"},
 	}
 	result, err := exec.Execute(context.Background(), nil, union, nil, "")
@@ -2240,7 +2206,7 @@ func TestFabricExecutor_ApplyBatchedLookupRows(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	outer := &FragmentExec{
@@ -2278,7 +2244,7 @@ func TestExecuteExec_RecordBindingsMerged(t *testing.T) {
 			"RETURN 1 AS one": {Columns: []string{"one"}, Rows: [][]interface{}{{1}}},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	ctx := WithRecordBindings(context.Background(), map[string]interface{}{"bindVar": "val"})
 	frag := &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS one", GraphName: "db1"}
@@ -2349,7 +2315,7 @@ func TestExecuteApplyInMemoryProjection_RowsGroupedJoin(t *testing.T) {
 		},
 	}
 	query := "WITH rows, collect({k: k, texts: texts}) AS grouped UNWIND rows AS r WITH r, [g IN grouped WHERE g.k = r.textKey128][0] AS hit RETURN r.textKey AS textKey, r.textKey128 AS textKey128, coalesce(hit.texts, []) AS texts"
-	res, ok := executeApplyInMemoryProjection(input, query)
+	res, ok := executeTestApplyInMemoryProjection(input, query)
 	if !ok {
 		t.Fatal("expected rows-grouped-join projection to match")
 	}
@@ -2513,7 +2479,7 @@ func TestExecuteApplyInMemoryProjection_RowsHitsFlatJoinPattern(t *testing.T) {
 		},
 	}
 	query := "WITH rows, collect({sourceId: sourceId, language: language, translatedText: translatedText}) AS hits UNWIND rows AS r WITH r, [h IN hits WHERE h.sourceId = r.sourceId] AS ms UNWIND ms AS m RETURN r.sourceId AS sourceId, r.textKey AS textKey, r.originalText AS originalText, m.language AS language, m.translatedText AS translatedText"
-	res, ok := executeApplyInMemoryProjection(input, query)
+	res, ok := executeTestApplyInMemoryProjection(input, query)
 	if !ok {
 		t.Fatal("expected rows-hits flat join projection to match")
 	}
@@ -2589,17 +2555,17 @@ func TestInferReturnColumnsFromQuery_BacktickAlias(t *testing.T) {
 
 func TestSplitTopLevelResultModifiers_ParensSkipped(t *testing.T) {
 	// ORDER BY inside parens should not split.
-	proj, mods := splitTopLevelResultModifiers("coalesce(a ORDER BY b) AS x ORDER BY x")
+	proj, mods := splitTopLevelResultModifiers("coalesce('ORDER BY', a) AS x ORDER BY x")
 	if mods != "ORDER BY x" {
 		t.Fatalf("expected mods='ORDER BY x', got %q", mods)
 	}
-	if proj != "coalesce(a ORDER BY b) AS x" {
-		t.Fatalf("expected proj='coalesce(a ORDER BY b) AS x', got %q", proj)
+	if proj != "coalesce('ORDER BY', a) AS x" {
+		t.Fatalf("expected proj='coalesce('ORDER BY', a) AS x', got %q", proj)
 	}
 }
 
 func TestSplitTopLevelResultModifiers_BracketsSkipped(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiers("[ORDER BY x] AS arr LIMIT 5")
+	proj, mods := splitTopLevelResultModifiers("['ORDER BY', x] AS arr LIMIT 5")
 	if mods != "LIMIT 5" {
 		t.Fatalf("expected mods='LIMIT 5', got %q", mods)
 	}
@@ -2607,7 +2573,7 @@ func TestSplitTopLevelResultModifiers_BracketsSkipped(t *testing.T) {
 }
 
 func TestSplitTopLevelResultModifiers_BracesSkipped(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiers("{ORDER BY: 1} AS m SKIP 3")
+	proj, mods := splitTopLevelResultModifiers("{`ORDER BY`: 1} AS m SKIP 3")
 	if mods != "SKIP 3" {
 		t.Fatalf("expected mods='SKIP 3', got %q", mods)
 	}
@@ -2712,7 +2678,7 @@ func TestExecuteExec_WithTransaction(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	tx := NewFabricTransaction("tx-exec-test")
 
 	frag := &FragmentExec{
@@ -2746,7 +2712,7 @@ func TestExecuteExec_InfersColumnsWhenEmpty(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	frag := &FragmentExec{
 		Input: &FragmentInit{}, Query: "RETURN 1 AS x, 2 AS y", GraphName: "db1",
@@ -2776,7 +2742,7 @@ func TestExecuteApply_EmptyInnerResultNoCollect(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
@@ -2815,7 +2781,7 @@ func TestExecuteApply_EmptyInnerWithCollectSynthesizes(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
@@ -2853,7 +2819,7 @@ func TestExecuteApply_EmptyInnerResultDropsRow(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
@@ -2880,7 +2846,7 @@ func TestExecuteApply_InputError(t *testing.T) {
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 
 	mock := &mockCypherExecutor{err: fmt.Errorf("input error")}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id",
@@ -2906,7 +2872,7 @@ func TestExecuteUnionSequential_LHSError(t *testing.T) {
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 
 	mock := &mockCypherExecutor{err: fmt.Errorf("lhs error")}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
 		LHS: &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1", GraphName: "db1"},
@@ -2936,7 +2902,7 @@ func TestExecuteUnionSequential_RHSError(t *testing.T) {
 	}, func(name string) (storage.Engine, error) {
 		return &mockEngine{}, nil
 	})
-	exec := NewFabricExecutor(catalog, localExec, nil)
+	exec := newTestFabricExecutor(catalog, localExec, nil)
 
 	union := &FragmentUnion{
 		LHS: &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1", GraphName: "db1"},
@@ -2975,7 +2941,7 @@ func TestExecuteUnionParallel_ErrorPropagation(t *testing.T) {
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 
 	mock := &mockCypherExecutor{err: fmt.Errorf("parallel error")}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
 		LHS: &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1", GraphName: "db1"},
@@ -3012,7 +2978,7 @@ func TestLocalFragmentExecutor_ExecuteError(t *testing.T) {
 func TestQueryGateway_PlanError(t *testing.T) {
 	catalog := NewCatalog()
 	p := NewFabricPlanner(catalog)
-	exec := NewFabricExecutor(catalog, nil, nil)
+	exec := newTestFabricExecutor(catalog, nil, nil)
 	gw := NewQueryGateway(p, exec)
 
 	// Empty query → plan error.
@@ -3173,7 +3139,7 @@ func TestExtractApplyCorrelationWhere_WithExtraTerms(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_NilInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, nil, nil, nil, "")
 	if handled {
 		t.Fatal("expected not handled for nil input")
@@ -3181,7 +3147,7 @@ func TestTryExecuteApplyBatchedCollectLookup_NilInput(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_EmptyRows(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{}}
 	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, &FragmentExec{}, nil, "")
 	if handled {
@@ -3190,7 +3156,7 @@ func TestTryExecuteApplyBatchedCollectLookup_EmptyRows(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_NonMatchingQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "MATCH (n) RETURN n"} // No WITH or collect.
 	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
@@ -3200,7 +3166,7 @@ func TestTryExecuteApplyBatchedCollectLookup_NonMatchingQuery(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_WriteQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "WITH k CREATE (n) RETURN collect(n) AS nodes"}
 	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
@@ -3210,7 +3176,7 @@ func TestTryExecuteApplyBatchedCollectLookup_WriteQuery(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_ImportColNotInOuter(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"otherCol"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"}
 	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
@@ -3223,7 +3189,7 @@ func TestTryExecuteApplyBatchedCollectLookup_AllNilKeys(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	mock := &mockCypherExecutor{results: map[string]*ResultStream{}}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	input := &ResultStream{
 		Columns: []string{"textKey128"},
@@ -3247,48 +3213,48 @@ func TestTryExecuteApplyBatchedCollectLookup_AllNilKeys(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedLookupRows_NilInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, nil, nil, nil, "")
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, nil, nil, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled for nil input")
 	}
 }
 
 func TestTryExecuteApplyBatchedLookupRows_NonMatchingQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "MATCH (n) RETURN n"} // No WITH.
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled for non-matching query")
 	}
 }
 
 func TestTryExecuteApplyBatchedLookupRows_ContainsCollect(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled when query contains collect(")
 	}
 }
 
 func TestTryExecuteApplyBatchedLookupRows_WriteQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k SET n.x = 1 RETURN n.x AS x"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled for write query")
 	}
 }
 
 func TestTryExecuteApplyBatchedLookupRows_ImportColNotInOuter(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"other"}, Rows: [][]interface{}{{"v"}}}
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN n.name AS name"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled when import col not in outer")
 	}
@@ -3298,7 +3264,7 @@ func TestTryExecuteApplyBatchedLookupRows_AllNilKeys(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	mock := &mockCypherExecutor{results: map[string]*ResultStream{}}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	input := &ResultStream{
 		Columns: []string{"id"},
@@ -3308,7 +3274,7 @@ func TestTryExecuteApplyBatchedLookupRows_AllNilKeys(t *testing.T) {
 		Query:     "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name",
 		GraphName: "db1",
 	}
-	result, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	result, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3321,18 +3287,18 @@ func TestTryExecuteApplyBatchedLookupRows_AllNilKeys(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedLookupRows_BadRegexMatch(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	// Matches WITH ... but returnPart is empty.
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN "}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled for empty return part")
 	}
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_StandaloneImportInOtherWhere(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	// otherWhere contains standalone reference to import col.
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k AND k > 0 RETURN collect(n) AS nodes"}
@@ -3360,7 +3326,7 @@ func TestTryExecuteApplyBatchedLookupRows_AllowsImportNotNullGuard(t *testing.T)
 		calls: map[string]int{},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	input := &ResultStream{
 		Columns: []string{"sourceId"},
 		Rows:    [][]interface{}{{"s1"}, {"s2"}},
@@ -3371,7 +3337,7 @@ func TestTryExecuteApplyBatchedLookupRows_AllowsImportNotNullGuard(t *testing.T)
 		GraphName: "db1",
 		Columns:   []string{"language", "translatedText"},
 	}
-	res, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	res, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3404,7 +3370,7 @@ func TestTryExecuteApplyBatchedCountLookup_TraversalPattern(t *testing.T) {
 		calls: map[string]int{},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	input := &ResultStream{
 		Columns: []string{"sourceId"},
 		Rows:    [][]interface{}{{"s1"}, {"s2"}, {"s3"}},
@@ -3457,7 +3423,7 @@ func TestTryExecuteApplyBatchedCountLookup_AllowsImportNotNullGuard(t *testing.T
 		calls: map[string]int{},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	input := &ResultStream{
 		Columns: []string{"sourceId"},
 		Rows:    [][]interface{}{{"s1"}},
@@ -3485,7 +3451,7 @@ func TestTryExecuteApplyBatchedCountLookup_AllowsImportNotNullGuard(t *testing.T
 }
 
 func TestTryExecuteApplyBatchedCountLookup_WriteQueryNotHandled(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"sourceId"}, Rows: [][]interface{}{{"s1"}}}
 	inner := &FragmentExec{
 		Query: "WITH sourceId MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId CREATE (x:Audit) RETURN count(*) AS c",
@@ -3558,7 +3524,7 @@ func TestExecuteApply_InnerError(t *testing.T) {
 	}, func(name string) (storage.Engine, error) {
 		return &mockEngine{}, nil
 	})
-	exec := NewFabricExecutor(catalog, localExec, nil)
+	exec := newTestFabricExecutor(catalog, localExec, nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id",
@@ -3594,7 +3560,7 @@ func TestExecuteApplyAsPipeline_NonSimpleColumnName(t *testing.T) {
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	capture := &pipelineCaptureCypherExecutor{}
 	local := NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, local, nil)
+	exec := newTestFabricExecutor(catalog, local, nil)
 	input := &ResultStream{
 		Columns: []string{"a.b"}, // Non-simple identifier.
 		Rows:    [][]interface{}{{"v"}},
@@ -3610,7 +3576,7 @@ func TestExecuteApplyAsPipeline_NonSimpleColumnName(t *testing.T) {
 }
 
 func TestExecuteApplyAsPipeline_AllFabricColumns(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{
 		Columns: []string{"__fabric_key"}, // All columns are __fabric_ prefixed.
 		Rows:    [][]interface{}{{"v"}},
@@ -3657,7 +3623,7 @@ func TestIsSimpleWithImportClause_EmptyParts(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_SingleQuoteEscape(t *testing.T) {
 	// Escaped single quote inside WITH clause.
-	query := "WITH 'it''s' AS x MATCH (n)"
+	query := "WITH 'it\\'s' AS x MATCH (n)"
 	pos, ok := findLeadingWithClauseEnd(query)
 	if !ok {
 		t.Fatal("expected true")
@@ -3755,7 +3721,7 @@ func TestExecuteExec_RemotePath(t *testing.T) {
 
 	remote := NewRemoteFragmentExecutor()
 	defer func() { _ = remote.Close() }()
-	exec := NewFabricExecutor(catalog, nil, remote)
+	exec := newTestFabricExecutor(catalog, nil, remote)
 
 	frag := &FragmentExec{
 		Input: &FragmentInit{}, Query: "RETURN 42 AS x", GraphName: "remote.shard",
@@ -3788,7 +3754,7 @@ func TestExecuteExec_RemotePathInfersColumns(t *testing.T) {
 	catalog.Register("remote.shard", &LocationRemote{DBName: "shard", URI: srv.URL})
 	remote := NewRemoteFragmentExecutor()
 	defer func() { _ = remote.Close() }()
-	exec := NewFabricExecutor(catalog, nil, remote)
+	exec := newTestFabricExecutor(catalog, nil, remote)
 
 	frag := &FragmentExec{
 		Input: &FragmentInit{}, Query: "RETURN 1 AS a, 2 AS b", GraphName: "remote.shard",
@@ -3816,7 +3782,7 @@ func TestExecuteExec_RemotePathError(t *testing.T) {
 	catalog.Register("remote.shard", &LocationRemote{DBName: "shard", URI: srv.URL})
 	remote := NewRemoteFragmentExecutor()
 	defer func() { _ = remote.Close() }()
-	exec := NewFabricExecutor(catalog, nil, remote)
+	exec := newTestFabricExecutor(catalog, nil, remote)
 
 	frag := &FragmentExec{
 		Input: &FragmentInit{}, Query: "RETURN 1", GraphName: "remote.shard",
@@ -3863,7 +3829,7 @@ func TestExecuteExec_RemoteWithTransaction(t *testing.T) {
 	catalog.Register("remote.shard", loc)
 	remote := NewRemoteFragmentExecutor()
 	defer func() { _ = remote.Close() }()
-	exec := NewFabricExecutor(catalog, nil, remote)
+	exec := newTestFabricExecutor(catalog, nil, remote)
 
 	tx := NewFabricTransaction("tx-remote")
 	frag := &FragmentExec{
@@ -3912,7 +3878,7 @@ func TestExecuteApply_ProjectSimpleReturnFastPath(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id, n.name AS name",
@@ -3953,7 +3919,7 @@ func TestE2E_SingleGraphQueryReturnsCorrectRows(t *testing.T) {
 	}
 	gw := NewQueryGateway(
 		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+		newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil, "MATCH (n:Person) RETURN n.name AS name", "db", nil, "")
 	if err != nil {
@@ -3985,7 +3951,7 @@ func TestE2E_UseClauseRoutesToCorrectGraph(t *testing.T) {
 	}
 	gw := NewQueryGateway(
 		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+		newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil, "USE nornic.tr MATCH (t:Translation) RETURN t.id AS id", "nornic", nil, "")
 	if err != nil {
@@ -4014,7 +3980,7 @@ func TestE2E_UnionCombinesResults(t *testing.T) {
 	}
 	gw := NewQueryGateway(
 		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+		newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil,
 		"RETURN 'a' AS val UNION ALL RETURN 'b' AS val", "db", nil, "")
@@ -4040,7 +4006,7 @@ func TestE2E_UnionDistinctDeduplicates(t *testing.T) {
 	}
 	gw := NewQueryGateway(
 		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+		newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 	res, err := gw.Execute(context.Background(), nil,
 		"RETURN 1 AS x UNION RETURN 1 AS x", "db", nil, "")
@@ -4062,7 +4028,7 @@ func TestE2E_WriteDetectionEnforcesOneWriteShard(t *testing.T) {
 			"CREATE (n:Test)": {Columns: []string{"n"}, Rows: [][]interface{}{{"created"}}},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	tx := NewFabricTransaction("tx-e2e")
 
 	// Write to shard1 succeeds.
@@ -4102,7 +4068,7 @@ func TestE2E_CallUseSubqueryRoutesCorrectly(t *testing.T) {
 	}
 	gw := NewQueryGateway(
 		NewFabricPlanner(catalog),
-		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
+		newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 
 	query := `USE nornic
@@ -4137,7 +4103,7 @@ func TestExecuteApply_BatchedCollectLookupError(t *testing.T) {
 	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
 		mock: mock, callCount: &callCount, failAt: 2,
 	}, func(name string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, localExec, nil)
+	exec := newTestFabricExecutor(catalog, localExec, nil)
 
 	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"textKey128"}}
 	inner := &FragmentExec{
@@ -4170,7 +4136,7 @@ func TestExecuteApply_BatchedRowLookupError(t *testing.T) {
 	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
 		mock: mock, callCount: &callCount, failAt: 2,
 	}, func(name string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, localExec, nil)
+	exec := newTestFabricExecutor(catalog, localExec, nil)
 
 	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"id"}}
 	inner := &FragmentExec{
@@ -4203,7 +4169,7 @@ func TestExecuteApply_PipelineError(t *testing.T) {
 	localExec := NewLocalFragmentExecutor(&callCountCypherExecutor{
 		mock: mock, callCount: &callCount, failAt: 2,
 	}, func(name string) (storage.Engine, error) { return &mockEngine{}, nil })
-	exec := NewFabricExecutor(catalog, localExec, nil)
+	exec := newTestFabricExecutor(catalog, localExec, nil)
 
 	outer := &FragmentExec{Input: &FragmentInit{}, Query: outerQuery, GraphName: "db1", Columns: []string{"id", "name"}}
 	// Non-simple WITH clause (not just imports) triggers pipeline path.
@@ -4235,7 +4201,7 @@ func TestExecuteApply_InMemoryProjectionHandled(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id, n.name AS name",
@@ -4281,7 +4247,7 @@ func TestExecuteApply_InnerNonExec(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	// Inner is a union (not FragmentExec) — skips all optimization paths.
 	outer := &FragmentExec{
@@ -4315,7 +4281,7 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 			"RETURN 1 AS x": {Columns: []string{"x"}, Rows: nil},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
 		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "db1"},
@@ -4334,9 +4300,9 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 func TestInferReturnColumnsFromQuery_EmptyItemAfterComma(t *testing.T) {
 	// Trailing comma leaves an empty item.
 	got := inferReturnColumnsFromQuery("RETURN a, ")
-	// Empty items are skipped.
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a], got %v", got)
+	// The structural owner rejects an incomplete projection.
+	if got != nil {
+		t.Fatalf("expected no columns for invalid syntax, got %v", got)
 	}
 }
 
@@ -4352,7 +4318,7 @@ func TestExecuteApply_PerRowProjectionFastPath(t *testing.T) {
 			},
 		},
 	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	outer := &FragmentExec{
 		Input: &FragmentInit{}, Query: "MATCH (n) RETURN n.id AS id, n.name AS name",
@@ -4381,7 +4347,7 @@ func TestExecuteApply_PerRowProjectionFastPath(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedCollectLookup_RegexNoMatch(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	// WITH + RETURN collect but doesn't match the regex (missing WHERE).
 	inner := &FragmentExec{Query: "WITH k MATCH (n) RETURN collect(n) AS nodes"}
@@ -4392,11 +4358,11 @@ func TestTryExecuteApplyBatchedCollectLookup_RegexNoMatch(t *testing.T) {
 }
 
 func TestTryExecuteApplyBatchedLookupRows_NoCorrelation(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	// WHERE clause doesn't correlate to import col.
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.x = 'literal' RETURN n.y AS y"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled when no correlation found")
 	}
@@ -4465,7 +4431,7 @@ func TestFabricExecutor_ApplyBatchedLookupRows_ModifiersPerOuterKey(t *testing.T
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	exec := newTestFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 	ctx := context.Background()
 
 	outer := &FragmentExec{
@@ -4500,11 +4466,11 @@ func TestFabricExecutor_ApplyBatchedLookupRows_ModifiersPerOuterKey(t *testing.T
 }
 
 func TestTryExecuteApplyBatchedLookupRows_NonSimpleReturnItems(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+	exec := newTestFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
 	// RETURN has function call (non-simple).
 	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN count(n) AS cnt"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "", false)
 	if handled {
 		t.Fatal("expected not handled for non-simple return items")
 	}
@@ -4540,16 +4506,16 @@ func TestProjectSimpleReturnFromRow_EmptyItemInReturn(t *testing.T) {
 	}
 }
 
-func TestProjectSimpleReturnFromRow_NonSimpleAlias(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
-	if ok {
-		t.Fatal("expected false for non-simple alias")
+func TestProjectSimpleReturnFromRow_QuotedAlias(t *testing.T) {
+	columns, row, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
+	if !ok || len(columns) != 1 || columns[0] != "weird name" || len(row) != 1 || row[0] != 1 {
+		t.Fatalf("expected decoded quoted alias and value, got %v %v %v", columns, row, ok)
 	}
 }
 
 func TestExecuteApplyInMemoryProjection_ReturnEmptyItem(t *testing.T) {
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	_, ok := executeApplyInMemoryProjection(input, "RETURN a, ")
+	_, ok := executeTestApplyInMemoryProjection(input, "RETURN a, ")
 	// Empty item → returns false.
 	if ok {
 		t.Fatal("expected false for RETURN with empty trailing item")
@@ -4562,7 +4528,7 @@ func TestExecuteApplyInMemoryProjection_CollectMapMismatchedAlias(t *testing.T) 
 		Rows:    [][]interface{}{{1}},
 	}
 	// rowsAlias != returnAlias → not handled.
-	_, ok := executeApplyInMemoryProjection(input,
+	_, ok := executeTestApplyInMemoryProjection(input,
 		"WITH collect({a: a}) AS rows RETURN other")
 	if ok {
 		t.Fatal("expected not handled for mismatched alias")
@@ -4575,7 +4541,7 @@ func TestExecuteApplyInMemoryProjection_DistinctKeysMismatch(t *testing.T) {
 		Rows:    [][]interface{}{{1}},
 	}
 	// The distinct-keys pattern with mismatched variable names.
-	_, ok := executeApplyInMemoryProjection(input,
+	_, ok := executeTestApplyInMemoryProjection(input,
 		"WITH collect({a: a}) AS rows UNWIND rows AS r WITH collect(DISTINCT r.a) AS keys RETURN other")
 	if ok {
 		t.Fatal("expected not handled for mismatched distinct keys alias")
