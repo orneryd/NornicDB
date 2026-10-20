@@ -237,3 +237,41 @@ func TestMCPNativeProducerCompletionAndReplay(t *testing.T) {
 	require.False(t, counted.IsError, counted.Content)
 	require.Contains(t, counted.Content[0].Text, `"rows":[[80]]`)
 }
+
+func TestMCPNativeProducerBatchTransactions(t *testing.T) {
+	s, authenticator := setupTestServer(t)
+	host := httptest.NewServer(s.buildRouter())
+	t.Cleanup(host.Close)
+	token := getAuthToken(t, authenticator, "admin")
+	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	for _, path := range []string{"/mcp", "/mcp/tools/call"} {
+		_, read := nativeReviewCall(t, host, path, map[string]interface{}{
+			"query": "UNWIND range(1,200000) AS x CALL { WITH x RETURN x AS y } IN TRANSACTIONS OF 7 ROWS RETURN y", "max_rows": 1,
+		}, authenticate)
+		require.False(t, read.IsError, read.Content)
+		require.Contains(t, read.Content[0].Text, `"rows":[[1]]`)
+		require.Contains(t, read.Content[0].Text, "max_rows")
+		_, wide := nativeReviewCall(t, host, path, map[string]interface{}{
+			"query": "UNWIND range(1,200000) AS x CALL { WITH x RETURN x AS y } IN TRANSACTIONS OF 1 ROWS RETURN $payload AS selected", "max_rows": 1,
+			"parameters": map[string]interface{}{"payload": strings.Repeat("x", 600000)},
+		}, authenticate)
+		require.False(t, wide.IsError, wide.Content)
+		require.Contains(t, wide.Content[0].Text, `"rows":[]`)
+		require.Contains(t, wide.Content[0].Text, "max_bytes")
+		_, written := nativeReviewCall(t, host, path, map[string]interface{}{
+			"query": "UNWIND range(1,40) AS x CALL { WITH x CREATE (:BoundBatchWrite {x:x}) RETURN x AS y } IN TRANSACTIONS OF 7 ROWS RETURN y", "max_rows": 1,
+		}, authenticate)
+		require.False(t, written.IsError, written.Content)
+		require.Contains(t, written.Content[0].Text, "max_rows")
+		_, failed := nativeReviewCall(t, host, path, map[string]interface{}{
+			"query": "UNWIND range(1,14) AS x CALL { WITH x CALL apoc.util.validate(x > 7,'batch stop',[]) CREATE (:BoundBatchPartial {x:x}) RETURN x AS y } IN TRANSACTIONS OF 7 ROWS RETURN y", "max_rows": 1,
+		}, authenticate)
+		require.True(t, failed.IsError, failed.Content)
+		require.Contains(t, failed.Content[0].Text, "batch stop")
+	}
+	for _, expected := range []struct{ label, count string }{{"BoundBatchWrite", "80"}, {"BoundBatchPartial", "14"}} {
+		_, result := nativeReviewCall(t, host, "/mcp", map[string]interface{}{"query": "MATCH (n:" + expected.label + ") RETURN count(n) AS count"}, authenticate)
+		require.False(t, result.IsError, result.Content)
+		require.Contains(t, result.Content[0].Text, `"rows":[[`+expected.count+`]]`)
+	}
+}
