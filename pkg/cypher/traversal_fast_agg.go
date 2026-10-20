@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -303,16 +304,8 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 				if !ok {
 					continue
 				}
-				switch n := v.(type) {
-				case int:
-					groupSum[groupID] += float64(n)
-				case int64:
-					groupSum[groupID] += float64(n)
-				case float64:
-					groupSum[groupID] += n
-				case float32:
-					groupSum[groupID] += float64(n)
-				default:
+				if number, numeric := valueconvert.NumericFloat64(v); numeric {
+					groupSum[groupID] += number
 				}
 			case "avgNodeProp":
 				otherNode := otherNodes[otherID]
@@ -323,17 +316,8 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 				if !ok {
 					continue
 				}
-				var num float64
-				switch n := v.(type) {
-				case int:
-					num = float64(n)
-				case int64:
-					num = float64(n)
-				case float64:
-					num = n
-				case float32:
-					num = float64(n)
-				default:
+				num, numeric := valueconvert.NumericFloat64(v)
+				if !numeric {
 					continue
 				}
 				groupSum[groupID] += num

@@ -5,6 +5,7 @@
 package search
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"regexp"
 	"strings"
 
@@ -364,61 +365,34 @@ func Range(label, property string, minVal, maxVal interface{}) []*NodeType {
 
 // inRange checks if value is within range
 func inRange(value, minVal, maxVal interface{}) bool {
-	switch v := value.(type) {
-	case int:
-		min, minOk := toInt(minVal)
-		max, maxOk := toInt(maxVal)
-		return minOk && maxOk && v >= min && v <= max
-	case int64:
-		min, minOk := toInt64(minVal)
-		max, maxOk := toInt64(maxVal)
-		return minOk && maxOk && v >= min && v <= max
-	case float64:
-		min, minOk := toFloat64(minVal)
-		max, maxOk := toFloat64(maxVal)
-		return minOk && maxOk && v >= min && v <= max
-	case string:
-		minStr, minOk := minVal.(string)
-		maxStr, maxOk := maxVal.(string)
-		return minOk && maxOk && v >= minStr && v <= maxStr
+	if integer, ok := valueconvert.IntegerValue(value); ok {
+		lower, lowerOK := toInt64(minVal)
+		upper, upperOK := toInt64(maxVal)
+		return lowerOK && upperOK && integer >= lower && integer <= upper
+	}
+	if floating, ok := valueconvert.NumericFloat64(value); ok {
+		lower, lowerOK := toFloat64(minVal)
+		upper, upperOK := toFloat64(maxVal)
+		return lowerOK && upperOK && floating >= lower && floating <= upper
+	}
+	if text, ok := value.(string); ok {
+		lower, lowerOK := minVal.(string)
+		upper, upperOK := maxVal.(string)
+		return lowerOK && upperOK && text >= lower && text <= upper
 	}
 	return false
 }
 
 func toInt(v interface{}) (int, bool) {
-	switch val := v.(type) {
-	case int:
-		return val, true
-	case int64:
-		return int(val), true
-	case float64:
-		return int(val), true
-	}
-	return 0, false
+	return valueconvert.ToInt(v, valueconvert.IntegerFloat)
 }
 
 func toInt64(v interface{}) (int64, bool) {
-	switch val := v.(type) {
-	case int:
-		return int64(val), true
-	case int64:
-		return val, true
-	case float64:
-		return int64(val), true
-	}
-	return 0, false
+	return valueconvert.Int64(v, valueconvert.IntegerFloat)
 }
 
 func toFloat64(v interface{}) (float64, bool) {
-	switch val := v.(type) {
-	case int:
-		return float64(val), true
-	case int64:
-		return float64(val), true
-	case float64:
-		return val, true
-	}
-	return 0, false
+	return valueconvert.NumericFloat64(v)
 }
 
 // In searches for values in a list.

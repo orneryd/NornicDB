@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 	"sync"
 
@@ -346,11 +347,6 @@ func mergeVariableAlreadyBoundError(variable string) error {
 
 // isNaNValue reports whether value is a floating-point NaN.
 func isNaNValue(value interface{}) bool {
-	switch typed := value.(type) {
-	case float64:
-		return math.IsNaN(typed)
-	case float32:
-		return math.IsNaN(float64(typed))
-	}
-	return false
+	floating, ok := valueconvert.FloatValue(value)
+	return ok && math.IsNaN(floating)
 }
