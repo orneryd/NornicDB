@@ -27,4 +27,10 @@ func BenchmarkExactNumericConsumers(b *testing.B) {
 			exactNumericConsumerBenchmarkSink = evaluateComparableMembership(values[i%len(values)], set, rest, equals)
 		}
 	})
+	b.Run("path_numeric_order", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			exactNumericConsumerBenchmarkSink = compareForSort(values[i%len(values)], values[(i+1)%len(values)])
+		}
+	})
 }
