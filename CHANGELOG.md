@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exceeds a request/search-step deadline, allowing the same position to be
   retried before the fixed expiry. Other producer errors and failed delivery of
   a produced page still retire the stream and release capacity (#1580).
+- Preserve typed-list parameters and stored list properties across collection
+  functions and plugin adapters through one shared runtime-list reader.
 
 - Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
   and read scalar endpoint properties without decoding whole node bodies (#1496, #1497).

@@ -21,6 +21,10 @@ type RemoteEntityValue map[string]interface{}
 // node and relationship identities rather than becoming a generic list.
 type RemotePathValue []RemoteEntityValue
 
+// CypherOpaqueSlice preserves path identity when a generic list reader sees
+// this slice carrier. A remote path is a graph scalar, not a Cypher list.
+func (RemotePathValue) CypherOpaqueSlice() {}
+
 const remoteIdentityKey = "\x00remoteIdentity"
 
 type remoteNumericIdentity struct{ id, start, end int64 }

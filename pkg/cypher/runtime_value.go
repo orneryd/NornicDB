@@ -131,7 +131,15 @@ func materializePropertyEntries(ctx context.Context, expressions []pipelinePrope
 				keys = append(keys, expression.key)
 			}
 		}
-		props[expression.key] = normalizePropValue(value)
+		// Expression maps carry runtime values, including exact unsigned
+		// numbers and typed lists. Storage coercion belongs to property bags;
+		// applying it here corrupts values before a numeric consumer reads them.
+		if orderedValue {
+			value = normalizeExpressionValue(value)
+		} else {
+			value = normalizePropValue(value)
+		}
+		props[expression.key] = value
 	}
 	if orderedValue {
 		if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {

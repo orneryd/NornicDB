@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
@@ -332,7 +333,7 @@ func fnStringOperation(name string) cypherfn.Func {
 			return nil, err
 		}
 		if name == "split" {
-			if delimiters, isList := values[1].([]interface{}); isList {
+			if delimiters, isList := cypherListValue(values[1]); isList {
 				return splitAtAnyDelimiter(name, text, delimiters)
 			}
 		}
@@ -432,12 +433,12 @@ func evalArgs(ctx cypherfn.Context, args []string) ([]interface{}, error) {
 // negative literal is Neo4j's compile-time SyntaxError; a negative value known
 // only at run time is out of range (ArgumentError).
 func replaceLimit(argument string, value interface{}) (int, error) {
-	limit, ok := cypherIntegerValue(value)
+	limit, ok := valueconvert.ToInt(value, valueconvert.IntegerOnly)
 	if !ok {
 		return 0, &cypherfn.TypeMismatchError{Function: "replace", Expected: "Integer", Value: value}
 	}
 	if limit >= 0 {
-		return int(limit), nil
+		return limit, nil
 	}
 	if _, err := strconv.ParseInt(strings.TrimSpace(argument), 10, 64); err == nil {
 		return 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
@@ -477,13 +478,8 @@ func fnIsNaN(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || values[0] == nil {
 		return nil, err
 	}
-	switch value := values[0].(type) {
-	case float64:
-		return math.IsNaN(value), nil
-	case float32:
-		return math.IsNaN(float64(value)), nil
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return false, nil
+	if floating, ok := valueconvert.NumericFloat64(values[0]); ok {
+		return math.IsNaN(floating), nil
 	}
 	return nil, &cypherfn.TypeMismatchError{Function: "isNaN", Expected: "Float or Integer", Value: values[0]}
 }
@@ -819,26 +815,8 @@ func fnListConversion(name string, convert versionedConversion) cypherfn.Func {
 // convertToIntegerOrNull is toIntegerOrNull: integers, floats (truncated),
 // booleans (1 / 0) and integer strings.
 func convertToIntegerOrNull(value interface{}) interface{} {
-	switch typed := value.(type) {
-	case bool:
-		if typed {
-			return int64(1)
-		}
-		return int64(0)
-	case string:
-		if integer, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil {
-			return integer
-		}
-		if number, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil && !math.IsNaN(number) && !math.IsInf(number, 0) {
-			return int64(number)
-		}
-		return nil
-	}
-	if integer, ok := cypherIntegerValue(value); ok {
+	if integer, ok := valueconvert.Int64(value, valueconvert.CypherIntegerConversion); ok {
 		return integer
-	}
-	if number, ok := toFloat64(value); ok && !math.IsNaN(number) && !math.IsInf(number, 0) {
-		return int64(number)
 	}
 	return nil
 }
@@ -870,18 +848,20 @@ func convertToStringOrNull(value interface{}) interface{} {
 		return typed
 	case bool:
 		return strconv.FormatBool(typed)
-	case float64:
-		return formatCypherValueString(typed)
-	case float32:
-		return formatCypherValueString(typed)
 	case time.Time, *time.Time, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
 		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime, CypherPoint, *CypherPoint:
 		return formatCypherValueString(typed)
 	case []interface{}, map[string]interface{}, *storage.Node, *storage.Edge:
 		return nil
 	}
-	if integer, ok := cypherIntegerValue(value); ok {
-		return strconv.FormatInt(integer, 10)
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if integer, signed := number.Signed(); signed {
+			return strconv.FormatInt(integer, 10)
+		}
+		if integer, unsigned := number.Unsigned(); unsigned {
+			return strconv.FormatUint(integer, 10)
+		}
+		return formatCypherValueString(value)
 	}
 	if stringer, ok := value.(fmt.Stringer); ok {
 		return stringer.String()
@@ -903,11 +883,9 @@ func convertToBooleanOrNull(value interface{}) interface{} {
 			return false
 		}
 		return nil
-	case float64, float32:
-		return nil
 	}
-	if integer, ok := cypherIntegerValue(value); ok {
-		return integer != 0
+	if number, numeric := valueconvert.ReadNumber(value); numeric && number.IsInteger() {
+		return number.Float64() != 0
 	}
 	return nil
 }
