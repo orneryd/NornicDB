@@ -1860,24 +1860,36 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, sto
 
 func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge, end bool, properties []string) interface{} {
 	id, exists := e.relationshipEndpointID(edge, end)
-	if !exists { return nil }
+	if !exists {
+		return nil
+	}
 	return e.readRelationshipEndpoint(id, properties)
 }
 
 func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool) (storage.NodeID, bool) {
-	if edge == nil { return "", false }
+	if edge == nil {
+		return "", false
+	}
 	edgeID, edgeSelected := edge.Identity().LookupID(e.storage, "5")
 	identity := edge.StartIdentity()
-	if end { identity = edge.EndIdentity() }
+	if end {
+		identity = edge.EndIdentity()
+	}
 	nodeID, nodeSelected := identity.NodeLookupID(e.storage)
-	if !edgeSelected || !nodeSelected { return "", false }
-	if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil { return "", false }
+	if !edgeSelected || !nodeSelected {
+		return "", false
+	}
+	if current, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
+		return "", false
+	}
 	return nodeID, true
 }
 
 func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties []string) interface{} {
 	node, err := e.newRelationshipEndpointReader(e.storage).read(id, properties)
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 	return node
 }
 

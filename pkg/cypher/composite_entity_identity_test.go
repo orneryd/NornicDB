@@ -93,7 +93,9 @@ func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
 		t.Run("projected algorithm keys", func(t *testing.T) {
 			_, err := exec.Execute(context.Background(), "USE comp CALL gds.graph.project('composite_identity', '*', '*')", nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _, _ = exec.Execute(context.Background(), "USE comp CALL gds.graph.drop('composite_identity')", nil) })
+			t.Cleanup(func() {
+				_, _ = exec.Execute(context.Background(), "USE comp CALL gds.graph.drop('composite_identity')", nil)
+			})
 			result, err := exec.Execute(context.Background(), "USE comp CALL gds.fastRP.stream('composite_identity', {embeddingDimension: 4}) YIELD nodeId RETURN count(DISTINCT nodeId)", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)

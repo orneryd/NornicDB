@@ -44,13 +44,13 @@ type SubTransaction struct {
 // This mirrors Neo4j's FabricTransaction.java.
 type FabricTransaction struct {
 	coordinatorScopes map[string]bool
-	subTxns        map[string]*SubTransaction
-	writeShard     string // name of the single shard that has writes, or ""
-	mu             sync.Mutex
-	state          string // "open", "committed", "rolledback"
-	txID           string
-	lifetimeCtx    context.Context
-	lifetimeCancel context.CancelFunc
+	subTxns           map[string]*SubTransaction
+	writeShard        string // name of the single shard that has writes, or ""
+	mu                sync.Mutex
+	state             string // "open", "committed", "rolledback"
+	txID              string
+	lifetimeCtx       context.Context
+	lifetimeCancel    context.CancelFunc
 }
 
 // NewFabricTransaction creates a new distributed transaction.

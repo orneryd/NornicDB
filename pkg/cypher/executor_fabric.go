@@ -750,7 +750,9 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	previousIdentityScope := exec.graphIdentityScope
 	var catalog *fabric.Catalog
-	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil { catalog = prepared.catalog }
+	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil {
+		catalog = prepared.catalog
+	}
 	exec.graphIdentityScope = newGraphIdentityScope(catalog, exec.executionDatabaseName(ctx), exec.dbManager, c.authToken)
 	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	query = fabric.LocalQuery(query)

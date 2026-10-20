@@ -88,7 +88,7 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 		node, err := composite.GetNode(NodeID("4:" + database + ":same"))
 		require.NoError(t, err)
 		require.Equal(t, database, node.Database)
-		node, err = composite.GetNodeProjected(NodeID("4:" + database + ":same"), nil)
+		node, err = composite.GetNodeProjected(NodeID("4:"+database+":same"), nil)
 		require.NoError(t, err)
 		require.Equal(t, database, node.Database)
 		edge, err := composite.GetEdge(EdgeID("5:" + database + ":rel"))

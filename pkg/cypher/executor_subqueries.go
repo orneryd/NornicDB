@@ -1157,9 +1157,11 @@ func (e *StorageExecutor) refreshCallSeedNodeAfterWrite(ctx context.Context, nod
 		return node, nil
 	}
 	store := e.getStorage(ctx)
-    lookup,valid := node.Identity().NodeLookupID(store)
-    if !valid { return node,nil }
-    current, err := e.getQueryNode(store, lookup)
+	lookup, valid := node.Identity().NodeLookupID(store)
+	if !valid {
+		return node, nil
+	}
+	current, err := e.getQueryNode(store, lookup)
 	if errors.Is(err, storage.ErrNotFound) {
 		return node, nil
 	}

@@ -65,18 +65,24 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 	}
 	store := e.getStorage(ctx)
 	for id := range staleNodes {
-		lookup,valid := id.NodeLookupID(store)
-        if !valid { delete(staleNodes,id); continue }
-        if current, err := e.getQueryNode(store, lookup); err == nil && current != nil {
+		lookup, valid := id.NodeLookupID(store)
+		if !valid {
+			delete(staleNodes, id)
+			continue
+		}
+		if current, err := e.getQueryNode(store, lookup); err == nil && current != nil {
 			staleNodes[id] = current
 		} else {
 			delete(staleNodes, id)
 		}
 	}
 	for id := range staleEdges {
-		lookup,valid := id.LookupID(store,"5")
-        if !valid { delete(staleEdges,id); continue }
-        if current, err := store.GetEdge(storage.EdgeID(lookup)); err == nil && current != nil {
+		lookup, valid := id.LookupID(store, "5")
+		if !valid {
+			delete(staleEdges, id)
+			continue
+		}
+		if current, err := store.GetEdge(storage.EdgeID(lookup)); err == nil && current != nil {
 			staleEdges[id] = current
 		} else {
 			delete(staleEdges, id)
