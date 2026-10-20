@@ -121,7 +121,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
-	"github.com/orneryd/nornicdb/pkg/voyage"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -329,6 +328,41 @@ type SearchResponse struct {
 	// chunks, how many were searched of how many. Zero for a one-chunk query.
 	QueryChunksSearched int `json:"query_chunks_searched,omitempty"`
 	QueryChunksTotal    int `json:"query_chunks_total,omitempty"`
+	rerankExcluded      map[string]struct{}
+	rerankApplied       bool
+	rerankOrderOwned    bool
+}
+
+// updateResults transforms this caller-owned response without changing order.
+func (r *SearchResponse) updateResults(update func(index int, result SearchResult) SearchResult) {
+	if r == nil || update == nil {
+		return
+	}
+	for index := range r.Results {
+		r.Results[index] = update(index, r.Results[index])
+	}
+}
+
+// selectionIsAuthoritative reports whether successful selection produced a
+// result that retrieval fallback must not replace. A rerank outcome may
+// deliberately select no eligible rows, by provider filtering or by the
+// request minimum on any outcome path; that empty outcome is still final.
+func (r *SearchResponse) selectionIsAuthoritative() bool {
+	return r != nil && (len(r.Results) > 0 || r.rerankApplied || len(r.rerankExcluded) > 0)
+}
+
+// reorderResultsByScore is the single post-search score-ordering boundary.
+// Every attempted rerank outcome has already established the authoritative
+// order, including original-order fallback. Consumers may transform values
+// but may not replace that order with a score-derived one.
+func (r *SearchResponse) reorderResultsByScore() bool {
+	if r == nil || r.rerankOrderOwned {
+		return false
+	}
+	sort.SliceStable(r.Results, func(i, j int) bool {
+		return r.Results[i].Score > r.Results[j].Score
+	})
+	return true
 }
 
 // ResultMetadata returns protocol-neutral search selection metadata.
@@ -443,7 +477,7 @@ type SearchOptions struct {
 	// for higher accuracy at the cost of latency
 	RerankEnabled  bool    // Enable cross-encoder reranking (default: false)
 	RerankTopK     int     // How many candidates to rerank (default: 100)
-	RerankMinScore float64 // Minimum cross-encoder score to include (default: 0)
+	RerankMinScore float64 // Minimum rerank score to include; search fallbacks without rerank output are unfiltered (default: 0)
 	// RerankMaxChars bounds the content sent for each candidate, in characters. Zero uses
 	// NORNICDB_SEARCH_RERANK_MAX_DOCUMENT_CHARS or the 2048-character default.
 	RerankMaxChars int
@@ -621,7 +655,7 @@ func (c *searchResultCache) Get(key string) *SearchResponse {
 		return nil
 	}
 	c.lru.MoveToFront(ent.element)
-	return ent.response
+	return cloneSearchResponse(ent.response)
 }
 
 func (c *searchResultCache) Put(key string, response *SearchResponse) {
@@ -637,7 +671,8 @@ func (c *searchResultCache) Put(key string, response *SearchResponse) {
 	if c.maxSize <= 0 {
 		return
 	}
-	retainedBytes := estimateSearchResponseBytes(response)
+	published := cloneSearchResponse(response)
+	retainedBytes := estimateSearchResponseBytes(published)
 	if c.maxBytes > 0 && retainedBytes > c.maxBytes {
 		if previous := c.entries[key]; previous != nil {
 			c.removeLocked(key, previous)
@@ -647,11 +682,29 @@ func (c *searchResultCache) Put(key string, response *SearchResponse) {
 	if previous := c.entries[key]; previous != nil {
 		c.removeLocked(key, previous)
 	}
-	entry := &searchResultCacheEntry{response: response, created: time.Now(), expires: expires, bytes: retainedBytes}
+	entry := &searchResultCacheEntry{response: published, created: time.Now(), expires: expires, bytes: retainedBytes}
 	entry.element = c.lru.PushFront(key)
 	c.entries[key] = entry
 	c.retainedBytes += retainedBytes
 	c.evictLocked()
+}
+
+// cloneSearchResponse gives the cache and each reader independent ownership of
+// the response and result slice. Published cache entries are never transformed
+// in place; adapters such as Kalman may safely update only their private copy.
+func cloneSearchResponse(response *SearchResponse) *SearchResponse {
+	if response == nil {
+		return nil
+	}
+	clone := *response
+	clone.Results = append([]SearchResult(nil), response.Results...)
+	if response.rerankExcluded != nil {
+		clone.rerankExcluded = make(map[string]struct{}, len(response.rerankExcluded))
+		for id := range response.rerankExcluded {
+			clone.rerankExcluded[id] = struct{}{}
+		}
+	}
+	return &clone
 }
 
 func (c *searchResultCache) Resize(maxSize int) {
@@ -4739,7 +4792,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 
 	// Try RRF hybrid search
 	response, err := s.rrfHybridSearch(ctx, query, embedding, opts)
-	if err == nil && len(response.Results) > 0 {
+	if err == nil && response.selectionIsAuthoritative() {
 		if resultCache != nil && response.FallbackReason != SearchFallbackRerankFailed {
 			resultCache.Put(cacheKey, response)
 		}
@@ -4935,11 +4988,18 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	// Step 6: Stage-2 reranking (optional). The method names the rerank only
 	// when it ordered the results; otherwise the fallback says why not.
 	rerankFallback := SearchFallbackNone
-	if opts.RerankEnabled && reranker != nil && reranker.Enabled() {
-		rerankTopK := effectiveRerankTopK(opts)
-		candidateBudgetReached = opts.Limit >= rerankTopK && len(fusedResults) > rerankTopK
-		fusedResults, rerankFallback = s.applyStage2Rerank(ctx, query, fusedResults, opts, seenOrphans, reranker)
-		if rerankFallback == SearchFallbackNone {
+	var rerankExcluded map[string]struct{}
+	if opts.RerankEnabled {
+		var outcome rerankOutcome
+		fusedResults, outcome = s.applyStage2Rerank(ctx, query, fusedResults, opts, seenOrphans, reranker)
+		rerankFallback = outcome.FallbackReason
+		if len(outcome.excludedIDs) > 0 {
+			rerankExcluded = make(map[string]struct{}, len(outcome.excludedIDs))
+			for _, id := range outcome.excludedIDs {
+				rerankExcluded[id] = struct{}{}
+			}
+		}
+		if outcome.Method == rerankMethodApplied {
 			if searchMethod == "rrf_hybrid" {
 				searchMethod = "rrf_hybrid+rerank"
 				message = fmt.Sprintf("RRF + Reranking (%s)", reranker.Name())
@@ -4975,6 +5035,9 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		TotalCandidates:        len(fusedResults),
 		Returned:               len(results),
 		SearchMethod:           searchMethod,
+		rerankApplied:          strings.HasSuffix(searchMethod, "+rerank"),
+		rerankExcluded:         rerankExcluded,
+		rerankOrderOwned:       opts.RerankEnabled,
 		FallbackTriggered:      fallback != SearchFallbackNone,
 		FallbackReason:         fallback,
 		Message:                message,
@@ -6586,162 +6649,83 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 //
 // Reranking is slower than Stage 1, so it should be used on a bounded TopK.
 //
-// The reason is SearchFallbackNone when the reranker ordered the results, and
-// otherwise why the results keep their fused order.
-func (s *Service) applyStage2Rerank(ctx context.Context, query string, results []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, reranker Reranker) ([]rrfResult, SearchFallbackReason) {
-	if len(results) == 0 || reranker == nil || !reranker.Enabled() {
-		return results, SearchFallbackNone
-	}
-
-	// Limit to top-K (optional; keeps prompt/service bounded).
+// The returned outcome is the only authority for result order, the TopK
+// output cap, whether rerank applied, and any fallback. This consumer only
+// maps the canonical result back to the RRF representation; it does not
+// filter, truncate or complete it.
+func (s *Service) applyStage2Rerank(ctx context.Context, query string, results []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, reranker Reranker) ([]rrfResult, rerankOutcome) {
+	// Top-K bounds both provider work and the canonical output population.
 	topK := effectiveRerankTopK(opts)
-	if len(results) > topK {
-		results = results[:topK]
+	if topK > len(results) {
+		topK = len(results)
 	}
 	rerankInput := results
 	memo := rerankMemoFromContext(ctx)
 
-	// Reuse scores within one continuation query and build content only for new
-	// candidates. This keeps depth expansion proportional to newly discovered
-	// candidates instead of repeatedly uploading the complete ranked prefix.
+	// Build the complete candidate identity/order once. Content is needed only
+	// for the provider prefix and only when continuation memoization has no raw
+	// provider outcome for that candidate.
 	candidates := make([]RerankCandidate, 0, len(rerankInput))
-	reranked := make([]RerankResult, 0, len(rerankInput))
-	memoHits := 0
+	newCandidates := 0
 	maxDocumentChars := effectiveRerankMaxChars(opts)
-	for _, r := range rerankInput {
-		if cached, ok, include := memo.get(query, r.ID); ok {
-			memoHits++
-			if include {
-				reranked = append(reranked, cached)
-			}
+	for index, r := range rerankInput {
+		candidate := RerankCandidate{ID: r.ID, Score: r.RRFScore}
+		if index >= topK {
+			candidates = append(candidates, candidate)
+			continue
+		}
+		if _, ok := memo.get(query, r.ID); ok {
+			candidates = append(candidates, candidate)
 			continue
 		}
 		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
 		if err != nil {
-			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
-				continue
-			}
+			_ = s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans)
+			candidates = append(candidates, candidate)
 			continue
 		}
 		if node == nil {
+			candidates = append(candidates, candidate)
 			continue
 		}
 
-		content := s.rerankCandidateContent(node, r, query, maxDocumentChars)
-		if content == "" {
-			continue
+		candidate.Content = s.rerankCandidateContent(node, r, query, maxDocumentChars)
+		if candidate.Content != "" {
+			newCandidates++
 		}
-
-		candidates = append(candidates, RerankCandidate{
-			ID:      r.ID,
-			Content: content,
-			Score:   r.RRFScore,
-		})
+		candidates = append(candidates, candidate)
 	}
 
-	if len(candidates) == 0 && len(reranked) == 0 && memoHits == 0 {
-		return results, SearchFallbackRerankNoCandidates
-	}
-
-	if len(candidates) > 0 {
+	if newCandidates > 0 && reranker != nil && reranker.Enabled() {
 		// Log before reranking
-		s.logPrintf("🔄 Reranking %d new candidates (query_len=%d reranker=%s)...", len(candidates), len(query), reranker.Name())
-		start := time.Now()
-
-		newResults, err := reranker.Rerank(ctx, query, candidates)
-		if err != nil {
-			s.logPrintf("⚠️ Reranking failed (%s): %v; using original order", reranker.Name(), err)
-			return results, SearchFallbackRerankFailed
-		}
-		memo.put(query, candidates, newResults)
-		reranked = append(reranked, newResults...)
-
-		// Log after reranking
-		s.logPrintf("✅ Reranking complete: %d new results in %v (%s)", len(newResults), time.Since(start), reranker.Name())
+		s.logPrintf("🔄 Reranking %d new candidates (query_len=%d reranker=%s)...", newCandidates, len(query), reranker.Name())
 	}
-
-	// Cached and newly returned scores must be merged into one ranking.
-	sort.SliceStable(reranked, func(i, j int) bool {
-		return reranked[i].FinalScore > reranked[j].FinalScore
+	start := time.Now()
+	outcome := s.runRerank(ctx, reranker, query, candidates, rerankRunOptions{
+		providerLimit: topK,
+		resultLimit:   opts.Limit,
+		minScore:      opts.RerankMinScore,
+		memo:          memo,
 	})
-
-	// If reranker produced nearly identical scores (e.g. model not discriminating),
-	// keep original RRF order and scores so the user gets the better ranking.
-	// This avoids replacing discriminative RRF (0.03, 0.02, ...) with flat 0.49 for all.
-	const minScoreRange = 0.05
-	var scoreMin, scoreMax float64
-	for i, r := range reranked {
-		s := r.FinalScore
-		if i == 0 {
-			scoreMin, scoreMax = s, s
-		} else {
-			if s < scoreMin {
-				scoreMin = s
-			}
-			if s > scoreMax {
-				scoreMax = s
-			}
-		}
-	}
-	if rerankScoresFlat(len(reranked), len(candidates)+memoHits, func() float64 { return scoreMax - scoreMin }) {
-		s.logPrintf("ℹ️ Reranking produced nearly identical scores (range=%.4f); using RRF order and scores", scoreMax-scoreMin)
-		return results, SearchFallbackRerankScoresFlat
+	if outcome.Method == rerankMethodApplied {
+		s.logPrintf("✅ Reranking complete: %d results in %v (%s)", len(outcome.Results), time.Since(start), reranker.Name())
 	}
 
-	// Build map by ID so we can reliably preserve VectorRank/BM25Rank when converting
-	// reranker output back to rrfResult. Without this, original ranks can be lost when
-	// reranking reorders or filters results.
-	resultsByID := make(map[string]*rrfResult, len(rerankInput))
-	for i := range rerankInput {
-		resultsByID[rerankInput[i].ID] = &rerankInput[i]
-	}
-
-	// Convert back to rrfResult format
-	rerankedResults := make([]rrfResult, 0, len(results))
-	usedIDs := make(map[string]struct{}, len(reranked))
-	for _, r := range reranked {
-		original := resultsByID[r.ID]
-		if original == nil {
-			s.logPrintf("⚠️ Reranker returned ID %q not in pre-rerank results; preserving result with zero ranks", r.ID)
-		}
-		// Apply per-request MinScore filter if configured. Note that individual rerankers
-		// may also apply their own MinScore internally.
-		if opts != nil && opts.RerankMinScore > 0 && r.FinalScore < opts.RerankMinScore {
-			continue
-		}
-		usedIDs[r.ID] = struct{}{}
-		var vectorRank, bm25Rank int
-		originalScore := r.BiScore
-		if original != nil {
-			vectorRank, bm25Rank = original.VectorRank, original.BM25Rank
-			originalScore = original.OriginalScore
-		}
+	rerankedResults := make([]rrfResult, 0, len(outcome.Results))
+	for _, r := range outcome.Results {
+		// The owner validated and rebound OriginalRank to this exact candidate
+		// pool, so the mapping needs neither an identity map nor a second lookup.
+		original := rerankInput[r.OriginalRank-1]
 		rerankedResults = append(rerankedResults, rrfResult{
 			ID:            r.ID,
-			MatchID:       originalMatchID(original),
-			RRFScore:      r.FinalScore, // Use cross-encoder score
-			VectorRank:    vectorRank,
-			BM25Rank:      bm25Rank,
-			OriginalScore: originalScore,
+			MatchID:       original.MatchID,
+			RRFScore:      r.FinalScore,
+			VectorRank:    original.VectorRank,
+			BM25Rank:      original.BM25Rank,
+			OriginalScore: original.OriginalScore,
 		})
 	}
-	if opts == nil || opts.RerankMinScore <= 0 {
-		for _, original := range rerankInput {
-			if _, ok := usedIDs[original.ID]; ok {
-				continue
-			}
-			rerankedResults = append(rerankedResults, original)
-		}
-	}
-
-	return rerankedResults, SearchFallbackNone
-}
-
-func originalMatchID(result *rrfResult) string {
-	if result == nil {
-		return ""
-	}
-	return result.MatchID
+	return rerankedResults, outcome
 }
 
 func effectiveRerankTopK(opts *SearchOptions) int {
@@ -6824,43 +6808,19 @@ func (s *Service) RerankCandidates(ctx context.Context, query string, candidates
 		defaults := defaultSearchOptionsValue()
 		opts = &defaults
 	}
-	if len(candidates) == 0 {
-		return []RerankResult{}, nil
-	}
-
 	s.mu.RLock()
 	reranker := s.reranker
 	s.mu.RUnlock()
 
-	// No configured reranker: return pass-through order/scores.
-	if reranker == nil || !reranker.Enabled() {
-		return voyage.PassThrough(candidates), nil
+	outcome := s.runRerank(ctx, reranker, query, candidates, rerankRunOptions{
+		providerLimit:            effectiveRerankTopK(opts),
+		minScore:                 opts.RerankMinScore,
+		minimumGovernsCandidates: true,
+	})
+	if outcome.failure != nil {
+		return nil, outcome.failure
 	}
-
-	topK := opts.RerankTopK
-	if topK > 0 && len(candidates) > topK {
-		candidates = candidates[:topK]
-	}
-
-	// An explicit rerank request has no fallback to report, so a failed
-	// rerank is an error rather than the candidates in their given order.
-	// The provider's error text is logged, not returned.
-	reranked, err := reranker.Rerank(ctx, query, candidates)
-	if err != nil {
-		s.logPrintf("⚠️ Reranking failed (%s): %v", reranker.Name(), err)
-		return nil, localizedError(localization.SearchRerankFailed(reranker.Name()), err)
-	}
-
-	if opts.RerankMinScore > 0 {
-		filtered := make([]RerankResult, 0, len(reranked))
-		for _, r := range reranked {
-			if r.FinalScore >= opts.RerankMinScore {
-				filtered = append(filtered, r)
-			}
-		}
-		return filtered, nil
-	}
-	return reranked, nil
+	return append([]RerankResult(nil), outcome.Results...), nil
 }
 
 // vectorSearchOnly performs vector-only search.

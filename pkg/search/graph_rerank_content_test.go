@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 
@@ -26,6 +27,7 @@ func (r recordingGraphReranker) Rerank(_ context.Context, _ string, candidates [
 		}
 		ranked = append(ranked, RerankResult{ID: candidate.ID, Content: candidate.Content, OriginalRank: index + 1, FinalScore: score})
 	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
 	return ranked, nil
 }
 
@@ -47,42 +49,53 @@ func TestGraphRerankReadsCandidateTextFromStorage(t *testing.T) {
 			{result: SearchResult{ID: "r1", Relationship: &storage.Edge{ID: "r1", Type: "CITES", StartNode: "a", EndNode: "b"}}},
 		}
 	}
-	ordered, reason, reranked := svc.rerankGraphPool(ctx, "zephyrine", bare(), opts)
-	require.True(t, reranked)
-	require.Equal(t, SearchFallbackNone, reason)
+	ordered, outcome := svc.rerankGraphPool(ctx, "zephyrine", bare(), opts)
+	require.Equal(t, rerankMethodApplied, outcome.Method)
+	require.Equal(t, SearchFallbackNone, outcome.FallbackReason)
 	require.Len(t, contents, 2)
 	require.Contains(t, contents[0], "doc a")
 	require.Contains(t, contents[1], "zephyrine bridge")
 	require.Equal(t, "r1", ordered[0].result.ID)
 
+	// TopK is both the provider-work bound and the final rerank output cap.
+	contents = nil
+	bounded := append(bare(), &graphCandidate{result: SearchResult{ID: "b", NodeID: "b"}})
+	boundedOpts := *opts
+	boundedOpts.RerankTopK = 2
+	ordered, outcome = svc.rerankGraphPool(ctx, "zephyrine", bounded, &boundedOpts)
+	require.Equal(t, rerankMethodApplied, outcome.Method)
+	require.Len(t, contents, 2)
+	require.Len(t, ordered, 2)
+	require.Equal(t, []string{"r1", "a"}, []string{ordered[0].result.ID, ordered[1].result.ID})
+
 	// An empty pool: nothing reranked, no reason.
-	_, reason, reranked = svc.rerankGraphPool(ctx, "zephyrine", nil, opts)
-	require.False(t, reranked)
-	require.Equal(t, SearchFallbackNone, reason)
+	_, outcome = svc.rerankGraphPool(ctx, "zephyrine", nil, opts)
+	require.Equal(t, rerankMethodOriginal, outcome.Method)
+	require.Equal(t, SearchFallbackNone, outcome.FallbackReason)
 
 	// One candidate: flat scores, the fused order kept.
-	ordered, reason, reranked = svc.rerankGraphPool(ctx, "zephyrine", bare()[:1], opts)
-	require.False(t, reranked)
-	require.Equal(t, SearchFallbackRerankScoresFlat, reason)
+	ordered, outcome = svc.rerankGraphPool(ctx, "zephyrine", bare()[:1], opts)
+	require.Equal(t, rerankMethodOriginal, outcome.Method)
+	require.Equal(t, SearchFallbackRerankScoresFlat, outcome.FallbackReason)
 	require.Len(t, ordered, 1)
 
 	// An entity no longer readable falls back to the hit's own text, or has none.
 	contents = nil
-	_, reason, _ = svc.rerankGraphPool(ctx, "zephyrine", []*graphCandidate{
+	_, outcome = svc.rerankGraphPool(ctx, "zephyrine", []*graphCandidate{
 		{result: SearchResult{ID: "gone", Properties: map[string]any{"name": "gone node"}}},
 		{result: SearchResult{ID: "gone-rel", Relationship: &storage.Edge{ID: "gone-rel", Type: "CITES", Properties: map[string]any{"reason": "old bridge"}}}},
 	}, opts)
-	require.Equal(t, SearchFallbackNone, reason)
+	require.Equal(t, SearchFallbackNone, outcome.FallbackReason)
 	require.Len(t, contents, 2)
 	require.Contains(t, contents[0], "gone node")
 	require.Contains(t, contents[1], "old bridge")
-	_, reason, _ = svc.rerankGraphPool(ctx, "zephyrine", []*graphCandidate{{result: SearchResult{ID: "nothing"}}}, opts)
-	require.Equal(t, SearchFallbackRerankNoCandidates, reason)
+	_, outcome = svc.rerankGraphPool(ctx, "zephyrine", []*graphCandidate{{result: SearchResult{ID: "nothing"}}}, opts)
+	require.Equal(t, SearchFallbackRerankNoCandidates, outcome.FallbackReason)
 
 	// A relationship's text is cut at the rerank's character limit.
 	contents = nil
 	opts.RerankMaxChars = 5
-	_, _, _ = svc.rerankGraphPool(ctx, "zephyrine", bare()[1:], opts)
+	_, _ = svc.rerankGraphPool(ctx, "zephyrine", bare()[1:], opts)
 	require.Equal(t, []string{"CITES"}, contents)
 }
 
@@ -99,7 +112,7 @@ func TestGraphRerankRelationshipTextReadsItsPropertyList(t *testing.T) {
 	})
 	var contents []string
 	svc.SetReranker(recordingGraphReranker{contents: &contents})
-	_, _, _ = svc.rerankGraphPool(ctx, "linked", []*graphCandidate{
+	_, _ = svc.rerankGraphPool(ctx, "linked", []*graphCandidate{
 		{result: SearchResult{ID: "opted", Relationship: &storage.Edge{ID: "opted", Type: "LINK"}}},
 		{result: SearchResult{ID: "gone", Relationship: &storage.Edge{ID: "gone", Type: "LINK", Properties: map[string]any{"search_text": "old why", "text": "unopted old"}}}},
 	}, DefaultSearchOptions())

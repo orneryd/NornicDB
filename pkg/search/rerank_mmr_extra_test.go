@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -22,6 +23,10 @@ type recordingReranker struct {
 	calls [][]RerankCandidate
 }
 
+type identityOrderedReranker struct {
+	calls [][]RerankCandidate
+}
+
 func (r *recordingReranker) Name() string                     { return "recording_reranker" }
 func (r *recordingReranker) Enabled() bool                    { return true }
 func (r *recordingReranker) IsAvailable(context.Context) bool { return true }
@@ -34,6 +39,32 @@ func (r *recordingReranker) Rerank(_ context.Context, _ string, candidates []Rer
 			BiScore:    candidate.Score,
 			FinalScore: 1 - float64(i)/10,
 		}
+	}
+	return results, nil
+}
+
+func (r *identityOrderedReranker) Name() string                     { return "identity_ordered_reranker" }
+func (r *identityOrderedReranker) Enabled() bool                    { return true }
+func (r *identityOrderedReranker) IsAvailable(context.Context) bool { return true }
+func (r *identityOrderedReranker) Rerank(_ context.Context, _ string, candidates []RerankCandidate) ([]RerankResult, error) {
+	r.calls = append(r.calls, append([]RerankCandidate(nil), candidates...))
+	ordered := append([]RerankCandidate(nil), candidates...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		priority := func(id string) int {
+			switch id {
+			case "nornic:b", "doc-b":
+				return 0
+			case "nornic:a", "doc-a":
+				return 1
+			default:
+				return 2
+			}
+		}
+		return priority(ordered[i].ID) < priority(ordered[j].ID)
+	})
+	results := make([]RerankResult, len(ordered))
+	for index, candidate := range ordered {
+		results[index] = RerankResult{ID: candidate.ID, FinalScore: 1 - float64(index)/10}
 	}
 	return results, nil
 }
@@ -119,8 +150,8 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	}
 	rerank := func(results []rrfResult, opts *SearchOptions, reranker Reranker, want SearchFallbackReason) []rrfResult {
 		t.Helper()
-		out, reason := svc.applyStage2Rerank(ctx, "query", results, opts, nil, reranker)
-		require.Equal(t, want, reason)
+		out, outcome := svc.applyStage2Rerank(ctx, "query", results, opts, nil, reranker)
+		require.Equal(t, want, outcome.FallbackReason)
 		return out
 	}
 	require.Equal(t, base, rerank(base, &SearchOptions{}, nil, SearchFallbackNone))
@@ -152,8 +183,7 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	require.Equal(t, base, rerank(base, &SearchOptions{}, flat, SearchFallbackRerankScoresFlat))
 
 	reranker := &coverageReranker{enabled: true, results: []RerankResult{{ID: "nornic:b", BiScore: 0.8, FinalScore: 0.95}, {ID: "missing", BiScore: 0.1, FinalScore: 0.2}, {ID: "nornic:a", BiScore: 0.9, FinalScore: 0.1}}}
-	reranked := rerank(base, &SearchOptions{RerankMinScore: 0.15}, reranker, SearchFallbackNone)
-	require.Equal(t, []rrfResult{{ID: "nornic:b", RRFScore: 0.95, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8}, {ID: "missing", RRFScore: 0.2, OriginalScore: 0.1}}, reranked)
+	require.Equal(t, base, rerank(base, &SearchOptions{RerankMinScore: 0.15}, reranker, SearchFallbackRerankFailed))
 }
 
 func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
@@ -240,9 +270,9 @@ func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
 	firstOut, _ := svc.applyStage2Rerank(ctx, "query", first, &SearchOptions{}, nil, reranker)
 	require.Len(t, firstOut, 2)
 	second := append(append([]rrfResult(nil), first...), rrfResult{ID: "nornic:c", RRFScore: 0.7})
-	secondOut, reason := svc.applyStage2Rerank(ctx, "query", second, &SearchOptions{}, nil, reranker)
+	secondOut, outcome := svc.applyStage2Rerank(ctx, "query", second, &SearchOptions{}, nil, reranker)
 	require.Len(t, secondOut, 3)
-	require.Equal(t, SearchFallbackNone, reason, "remembered scores still rerank")
+	require.Equal(t, SearchFallbackNone, outcome.FallbackReason, "remembered scores still rerank")
 
 	require.Len(t, reranker.calls, 2)
 	require.Len(t, reranker.calls[0], 2)
@@ -251,6 +281,43 @@ func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
 	svc.applyStage2Rerank(ctx, "different query", first, &SearchOptions{}, nil, reranker)
 	require.Len(t, reranker.calls, 3)
 	require.Len(t, reranker.calls[2], 2, "a distinct query must not reuse prior scores")
+}
+
+func TestStage2RerankMemoRebindsMovedCandidatesByIdentity(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { engine.Close() })
+	svc := NewServiceWithDimensions(engine, 2)
+	for _, id := range []string{"nornic:a", "nornic:b", "nornic:c"} {
+		_, err := engine.CreateNode(&storage.Node{
+			ID:         storage.NodeID(id),
+			Labels:     []string{"Doc"},
+			Properties: map[string]interface{}{"text": id + " searchable content"},
+		})
+		require.NoError(t, err)
+	}
+
+	reranker := &identityOrderedReranker{}
+	ctx := withRerankMemo(context.Background(), newRerankMemo())
+	shallow := []rrfResult{{ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:b", RRFScore: 0.8}}
+	shallowOut, shallowOutcome := svc.applyStage2Rerank(ctx, "query", shallow, &SearchOptions{}, nil, reranker)
+	require.Equal(t, SearchFallbackNone, shallowOutcome.FallbackReason)
+	require.Equal(t, []string{"nornic:b", "nornic:a"}, []string{shallowOut[0].ID, shallowOut[1].ID})
+
+	deeper := []rrfResult{{ID: "nornic:b", RRFScore: 1.0}, {ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:c", RRFScore: 0.7}}
+	deeperOut, deeperOutcome := svc.applyStage2Rerank(ctx, "query", deeper, &SearchOptions{}, nil, reranker)
+	require.Equal(t, SearchFallbackNone, deeperOutcome.FallbackReason)
+	require.False(t, deeperOutcome.FallbackTriggered)
+	require.Equal(t, []string{"nornic:b", "nornic:a", "nornic:c"}, []string{deeperOut[0].ID, deeperOut[1].ID, deeperOut[2].ID})
+
+	freshReranker := &identityOrderedReranker{}
+	freshOut, freshOutcome := svc.applyStage2Rerank(context.Background(), "query", deeper, &SearchOptions{}, nil, freshReranker)
+	require.Equal(t, freshOutcome.Method, deeperOutcome.Method)
+	require.Equal(t, freshOutcome.FallbackTriggered, deeperOutcome.FallbackTriggered)
+	require.Equal(t, freshOutcome.FallbackReason, deeperOutcome.FallbackReason)
+	require.Equal(t, []string{freshOut[0].ID, freshOut[1].ID, freshOut[2].ID}, []string{deeperOut[0].ID, deeperOut[1].ID, deeperOut[2].ID})
+
+	require.Len(t, reranker.calls, 2)
+	require.Equal(t, []RerankCandidate{{ID: "nornic:c", Content: "Doc nornic:c searchable content", Score: 0.7}}, reranker.calls[1])
 }
 
 var benchmarkRerankCandidateContent string

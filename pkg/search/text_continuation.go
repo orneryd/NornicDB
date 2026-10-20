@@ -314,20 +314,19 @@ func (s *Service) SearchTextContinuation(
 	}
 	maxResults := request.MaxResults
 	maxResultsReached := continuationMaxResultsReached(maxResults, len(initial.Results), initial.RetrievalExhausted, initial.CandidateBudgetReached)
-	if maxResultsReached {
-		if len(initial.Results) > maxResults {
-			initial.Results = initial.Results[:maxResults]
-		}
+	initialCount := len(initial.Results)
+	if maxResultsReached && initialCount > maxResults {
+		initialCount = maxResults
 	}
-	compactResults := make([]SearchResult, len(initial.Results))
-	for index := range initial.Results {
+	compactResults := make([]SearchResult, initialCount)
+	for index := 0; index < initialCount; index++ {
 		compactResults[index] = compactContinuationResult(initial.Results[index])
 	}
 	state := &searchContinuationState{
 		response:          searchResponseMetadata(initial),
 		results:           compactResults,
-		seen:              make(map[string]struct{}, len(initial.Results)),
-		plateau:           newContinuationPlateauTracker(len(initial.Results)),
+		seen:              make(map[string]struct{}, initialCount),
+		plateau:           newContinuationPlateauTracker(initialCount),
 		searchMethod:      initial.SearchMethod,
 		fallbackTriggered: initial.FallbackTriggered,
 		fallbackReason:    initial.FallbackReason,
@@ -371,8 +370,7 @@ func (s *Service) SearchTextContinuation(
 		state.searchMethod = response.SearchMethod
 		state.fallbackTriggered = response.FallbackTriggered
 		state.fallbackReason = response.FallbackReason
-		for index := range response.Results {
-			result := response.Results[index]
+		for _, result := range response.Results {
 			id := searchResultID(result)
 			if _, exists := state.seen[id]; exists {
 				continue
@@ -638,7 +636,7 @@ func cloneContinuationSearchOptions(options *SearchOptions) SearchOptions {
 // SearchResponse restores the canonical search response with this page's rows.
 func (p *SearchContinuationPage) SearchResponse() *SearchResponse {
 	response := searchResponseMetadata(p.response)
-	response.Results = p.Results
+	response.Results = append([]SearchResult(nil), p.Results...)
 	response.Returned = p.Returned
 	response.SearchMethod = p.SearchMethod
 	response.FallbackTriggered = p.FallbackTriggered

@@ -149,6 +149,86 @@ func TestSearchTextContinuationExpandsWithoutReembedding(t *testing.T) {
 	require.Equal(t, int32(2), embedCalls.Load())
 }
 
+func TestSearchTextContinuationUsesNodeIDWhenIDIsEmpty(t *testing.T) {
+	t.Run("ranked expansion", func(t *testing.T) {
+		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		service := NewService(engine)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		ids := []storage.NodeID{"node-a", "node-b", "node-c", "node-d"}
+		for _, id := range ids {
+			_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+			require.NoError(t, err)
+		}
+
+		searchQuery := func(_ context.Context, _ string, _ []float32, opts *SearchOptions) (*SearchResponse, error) {
+			count := min(opts.Limit, len(ids))
+			results := make([]SearchResult, count)
+			for index := range results {
+				results[index] = SearchResult{NodeID: ids[index], Score: float64(len(ids) - index)}
+			}
+			return &SearchResponse{Results: results, SearchMethod: "test", RetrievalExhausted: count == len(ids)}, nil
+		}
+		request := SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: SearchContinuationRanked, N: 2}
+		options := DefaultSearchOptions()
+		options.Limit = 2
+		options.MaxCandidateLimit = len(ids)
+		first, err := service.SearchTextContinuation(
+			context.Background(), "query", options, request,
+			nil, nil, searchQuery, ChunkedSearchErrorPolicy{},
+		)
+		require.NoError(t, err)
+		require.Len(t, first.Results, 2)
+		require.Equal(t, ids[:2], []storage.NodeID{first.Results[0].NodeID, first.Results[1].NodeID})
+		require.True(t, first.HasMore)
+
+		request.QID = first.QID
+		second, err := service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+		require.NoError(t, err)
+		require.Len(t, second.Results, 2)
+		require.Equal(t, ids[2:], []storage.NodeID{second.Results[0].NodeID, second.Results[1].NodeID})
+		require.False(t, second.HasMore)
+	})
+
+	t.Run("ranked then ID", func(t *testing.T) {
+		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		service := NewService(engine)
+		t.Cleanup(func() { require.NoError(t, service.Close()) })
+		for _, id := range []storage.NodeID{"node-a", "node-b", "node-c"} {
+			_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
+			require.NoError(t, err)
+		}
+
+		searchQuery := func(context.Context, string, []float32, *SearchOptions) (*SearchResponse, error) {
+			return &SearchResponse{
+				Results: []SearchResult{
+					{NodeID: "node-c", Score: 0.9},
+					{NodeID: "node-a", Score: 0.8},
+					{NodeID: "node-b", Score: 0.7},
+				},
+				SearchMethod: "test", RetrievalExhausted: true,
+			}, nil
+		}
+		page, err := service.SearchTextContinuation(
+			context.Background(), "query", &SearchOptions{Limit: 3},
+			SearchContinuationRequest{
+				Owner: "alice", Database: "nornic", Mode: SearchContinuationRankedThenID,
+				RankedLimit: 3, N: 3,
+			},
+			nil, nil, searchQuery, ChunkedSearchErrorPolicy{},
+		)
+		require.NoError(t, err)
+		require.Len(t, page.Results, 3)
+		require.Equal(t,
+			[]storage.NodeID{"node-c", "node-a", "node-b"},
+			[]storage.NodeID{page.Results[0].NodeID, page.Results[1].NodeID, page.Results[2].NodeID},
+		)
+		require.Equal(t,
+			[]string{SearchContinuationRankedPhase, SearchContinuationRankedPhase, SearchContinuationRankedPhase},
+			[]string{page.Results[0].Phase, page.Results[1].Phase, page.Results[2].Phase},
+		)
+	})
+}
+
 func TestSearchTextContinuationReusesRerankMemoAcrossExpansion(t *testing.T) {
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	service := NewService(engine)
@@ -821,7 +901,7 @@ func TestSearchTextContinuationRankedStopsAtDeclaredCandidateBudget(t *testing.T
 	require.Equal(t, []int{1, 2, 4, 8, 16, 32, 64, 128}, requestedLimits)
 }
 
-func TestSearchTextContinuationRerankBudgetBoundary(t *testing.T) {
+func TestSearchTextContinuationRerankTopKCapsRankedResults(t *testing.T) {
 	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
 		t.Run(string(mode), func(t *testing.T) {
 			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
@@ -861,7 +941,7 @@ func TestSearchTextContinuationRerankBudgetBoundary(t *testing.T) {
 				ChunkedSearchErrorPolicy{},
 			)
 			require.NoError(t, err)
-			require.False(t, page.RankedPoolExhausted)
+			require.True(t, page.RankedPoolExhausted)
 			require.Equal(t, "rrf_hybrid+rerank", page.SearchMethod)
 
 			if mode == SearchContinuationRanked {
@@ -873,8 +953,8 @@ func TestSearchTextContinuationRerankBudgetBoundary(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, page.Results, 1)
 				require.False(t, page.HasMore)
-				require.Equal(t, SearchContinuationCandidateComplete, page.Completion)
-				require.False(t, page.RankedPoolExhausted)
+				require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
+				require.True(t, page.RankedPoolExhausted)
 				return
 			}
 
@@ -891,7 +971,7 @@ func TestSearchTextContinuationRerankBudgetBoundary(t *testing.T) {
 	}
 }
 
-func TestSearchTextContinuationRerankBudgetDeepensShallowStartsToTopK(t *testing.T) {
+func TestSearchTextContinuationRerankCapsRankedPoolAtTopK(t *testing.T) {
 	embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
 	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -912,39 +992,132 @@ func TestSearchTextContinuationRerankBudgetDeepensShallowStartsToTopK(t *testing
 			)
 			require.NoError(t, err)
 			require.Equal(t, "rrf_hybrid+rerank", page.SearchMethod)
-			require.False(t, page.RankedPoolExhausted)
 
+			seen := map[string]struct{}{}
+			for {
+				for _, result := range page.Results {
+					seen[result.ID] = struct{}{}
+				}
+				if !page.HasMore {
+					break
+				}
+				request.QID = page.QID
+				request.N = 10
+				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+				require.NoError(t, err)
+			}
+			wantSeen := 10
+			if mode == SearchContinuationRankedThenID {
+				wantSeen = 30
+			}
+			require.Len(t, seen, wantSeen)
+			require.False(t, page.HasMore)
+			require.True(t, page.RankedPoolExhausted)
 			if mode == SearchContinuationRankedThenID {
 				require.Equal(t, 10, page.RankedCount)
 				require.NotNil(t, page.EligibleCount)
 				require.Equal(t, 30, *page.EligibleCount)
-				require.Len(t, page.Results, 12)
-				require.Equal(t, SearchContinuationRankedPhase, page.Results[0].Phase)
-				require.Equal(t, SearchContinuationRankedPhase, page.Results[9].Phase)
-				require.Equal(t, SearchContinuationCatalogPhase, page.Results[10].Phase)
-				require.True(t, page.HasMore)
-				return
+				require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
+			} else {
+				require.Equal(t, SearchContinuationCollectionComplete, page.Completion)
 			}
+		})
+	}
+}
 
-			seen := map[string]struct{}{}
-			for _, result := range page.Results {
-				seen[result.ID] = struct{}{}
+func TestSearchTextContinuationRerankMemoMatchesFreshMovedHybridPool(t *testing.T) {
+	engine := newNamespacedEngine(t)
+	service := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	service.SetSearchResultCachePolicy(0, 0)
+
+	add := func(id, content string, vector []float32) {
+		t.Helper()
+		node := &storage.Node{
+			ID:         storage.NodeID(id),
+			Labels:     []string{"Document"},
+			Properties: map[string]any{"content": content},
+		}
+		if vector != nil {
+			node.ChunkEmbeddings = [][]float32{vector}
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, service.IndexNode(node))
+	}
+	add("doc-a", "vector leader searchable content", []float32{1, 0})
+	add("doc-b", "needle with deliberately longer low frequency searchable content", []float32{0.999, 0.001})
+	for index := 0; index < 58; index++ {
+		add(fmt.Sprintf("vector-%02d", index), "vector-only searchable content", []float32{0.8, 0.2 + float32(index)/100})
+	}
+	for index := 0; index < 30; index++ {
+		add(fmt.Sprintf("lexical-%02d", index), strings.Repeat("needle ", 10)+"high frequency content", nil)
+	}
+	service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
+	service.SetReranker(&identityOrderedReranker{})
+
+	options := DefaultSearchOptions()
+	options.Limit = 15
+	options.VectorWeight = 2
+	options.BM25Weight = 1
+	options.MinRRFScore = 0
+	options.RerankEnabled = true
+	options.RerankTopK = 2
+	options.MaxCandidateLimit = 100
+	embed := func(context.Context, string) ([]float32, error) { return []float32{1, 0}, nil }
+
+	plainShallow := *options
+	plainShallow.RerankEnabled = false
+	shallow, err := service.Search(context.Background(), "needle", []float32{1, 0}, &plainShallow)
+	require.NoError(t, err)
+	plainDeep := plainShallow
+	plainDeep.Limit = 30
+	deep, err := service.Search(context.Background(), "needle", []float32{1, 0}, &plainDeep)
+	require.NoError(t, err)
+	position := func(results []SearchResult, id string) int {
+		for index := range results {
+			if results[index].ID == id {
+				return index
 			}
-			require.Len(t, page.Results, 5)
-			require.True(t, page.HasMore)
+		}
+		return -1
+	}
+	require.Less(t, position(shallow.Results, "doc-a"), position(shallow.Results, "doc-b"), "shallow RRF pool")
+	require.Less(t, position(deep.Results, "doc-b"), position(deep.Results, "doc-a"), "deeper RRF pool must move the memoized candidate")
 
-			request.QID = page.QID
-			request.N = 10
-			page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
+		t.Run(string(mode), func(t *testing.T) {
+			request := SearchContinuationRequest{Owner: "memo-move", Database: "nornic", Mode: mode, N: 15}
+			page, err := service.SearchTextContinuation(
+				context.Background(), "needle", options, request,
+				nil, embed, service.Search, ChunkedSearchErrorPolicy{},
+			)
 			require.NoError(t, err)
-			for _, result := range page.Results {
-				seen[result.ID] = struct{}{}
+			collected := append([]SearchResult(nil), page.Results...)
+			for {
+				require.Equal(t, "rrf_hybrid+rerank", page.SearchMethod)
+				require.False(t, page.FallbackTriggered)
+				require.Equal(t, SearchFallbackNone, page.FallbackReason)
+				if !page.HasMore || len(collected) >= 30 {
+					break
+				}
+				request.QID = page.QID
+				page, err = service.SearchTextContinuation(context.Background(), "", nil, request, nil, nil, nil, ChunkedSearchErrorPolicy{})
+				require.NoError(t, err)
+				collected = append(collected, page.Results...)
 			}
-			require.Len(t, page.Results, 5)
-			require.Len(t, seen, 10)
-			require.False(t, page.HasMore)
-			require.Equal(t, SearchContinuationCandidateComplete, page.Completion)
-			require.False(t, page.RankedPoolExhausted)
+
+			freshOptions := *options
+			freshOptions.Limit = 30
+			fresh, err := service.Search(context.Background(), "needle", []float32{1, 0}, &freshOptions)
+			require.NoError(t, err)
+			require.Equal(t, fresh.SearchMethod, page.SearchMethod)
+			require.Equal(t, fresh.FallbackTriggered, page.FallbackTriggered)
+			require.Equal(t, fresh.FallbackReason, page.FallbackReason)
+			require.GreaterOrEqual(t, len(collected), len(fresh.Results))
+			for index := range fresh.Results {
+				require.Equal(t, fresh.Results[index].ID, collected[index].ID, "result %d", index)
+			}
 		})
 	}
 }

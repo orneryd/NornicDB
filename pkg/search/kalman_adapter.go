@@ -213,26 +213,24 @@ func (ka *KalmanSearchAdapter) Search(ctx context.Context, query string, embeddi
 		ka.stats.PredictedLatencyMs = ka.latencyFilter.Predict(10)
 	}
 
-	// Enhance results
-	enhancedResults := make([]SearchResult, 0, len(response.Results))
-
-	for _, result := range response.Results {
-		enhanced := ka.enhanceResult(result, query)
-		enhancedResults = append(enhancedResults, enhanced)
-	}
+	response.updateResults(func(_ int, result SearchResult) SearchResult {
+		return ka.enhanceResult(result, query)
+	})
 
 	// Apply ranking stability
 	if ka.config.EnableRankingStability {
-		enhancedResults = ka.applyRankingStability(enhancedResults, query)
+		stable := append([]SearchResult(nil), response.Results...)
+		stable = ka.applyRankingStability(stable, query)
+		response.Results = stable
 	}
 
-	// Re-sort by enhanced score
-	ka.sortByScore(enhancedResults)
+	// The shared response boundary permits this historical score ordering only
+	// when no canonical rerank order was applied.
+	response.reorderResultsByScore()
 
 	// Record this ranking for future stability
-	ka.recordRanking(query, enhancedResults)
+	ka.recordRanking(query, response.Results)
 
-	response.Results = enhancedResults
 	return response, nil
 }
 
@@ -319,17 +317,6 @@ func (ka *KalmanSearchAdapter) recordRanking(query string, results []SearchResul
 	// Trim to window size
 	if len(ka.recentRankings) > ka.config.StabilityWindow {
 		ka.recentRankings = ka.recentRankings[1:]
-	}
-}
-
-// sortByScore sorts results by score (highest first).
-func (ka *KalmanSearchAdapter) sortByScore(results []SearchResult) {
-	for i := 0; i < len(results)-1; i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Score > results[i].Score {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
 	}
 }
 

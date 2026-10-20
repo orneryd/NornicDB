@@ -256,11 +256,14 @@ func TestServingPublicationRetiresCachedAnswers(t *testing.T) {
 			require.NoError(t, err)
 			again, err := svc.Search(ctx, "", []float32{1, 1}, opts)
 			require.NoError(t, err)
-			require.Same(t, before, again, "precondition: the answer is cached")
+			require.Equal(t, before, again, "precondition: the cached answer is unchanged")
+			require.NotSame(t, before, again, "cache reads return caller-owned responses")
+			revision := svc.IndexRevision()
 			p.publish(t, svc)
+			require.Greater(t, svc.IndexRevision(), revision, "publication must retire the prior cache revision")
 			after, err := svc.Search(ctx, "", []float32{1, 1}, opts)
 			require.NoError(t, err)
-			require.NotSame(t, before, after, "a cached answer outlived %s", p.name)
+			require.NotSame(t, before, after, "responses must not share caller-owned state after %s", p.name)
 		})
 	}
 }

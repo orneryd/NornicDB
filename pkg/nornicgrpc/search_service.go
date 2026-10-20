@@ -191,12 +191,9 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		if err != nil {
 			return nil, s.continuationStatus(ctx, err)
 		}
-		if provider, ok := any(page.SearchResponse()).(interface{ ResponseTrailers() map[string]string }); ok {
-			for key, value := range provider.ResponseTrailers() {
-				grpc.SetTrailer(ctx, metadata.Pairs(key, value))
-			}
-		}
-		return grpcContinuationResponse(page, time.Since(start)), nil
+		projected := page.SearchResponse()
+		setSearchResponseTrailers(ctx, projected)
+		return grpcContinuationResponse(page, projected, time.Since(start)), nil
 	}
 
 	opts := searchOptions(req, s.maxLimit, s.rerankEnabled)
@@ -222,6 +219,7 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		return nil, s.localizedStatus(ctx, codes.Internal, localization.SearchFailed(err))
 	}
 
+	setSearchResponseTrailers(ctx, resp)
 	out := make([]*gen.SearchHit, 0, len(resp.Results))
 	for _, r := range resp.Results {
 		out = append(out, grpcSearchHit(r))
@@ -235,6 +233,12 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 		Message:           resp.Message,
 		TimeSeconds:       time.Since(start).Seconds(),
 	}, nil
+}
+
+func setSearchResponseTrailers(ctx context.Context, response *search.SearchResponse) {
+	for key, value := range response.ResponseTrailers() {
+		grpc.SetTrailer(ctx, metadata.Pairs(key, value))
+	}
 }
 
 func (s *Service) continuationStatus(ctx context.Context, err error) error {
@@ -273,10 +277,10 @@ func searchOptions(req *gen.SearchTextRequest, maxLimit int, rerank bool) *searc
 	return opts
 }
 
-func grpcContinuationResponse(page *search.SearchContinuationPage, elapsed time.Duration) *gen.SearchTextResponse {
+func grpcContinuationResponse(page *search.SearchContinuationPage, projected *search.SearchResponse, elapsed time.Duration) *gen.SearchTextResponse {
 	response := &gen.SearchTextResponse{
-		SearchMethod: page.SearchMethod, FallbackTriggered: page.FallbackTriggered,
-		FallbackReason: string(page.FallbackReason),
+		SearchMethod: projected.SearchMethod, FallbackTriggered: projected.FallbackTriggered,
+		FallbackReason: string(projected.FallbackReason),
 		Qid:            page.QID, HasMore: page.HasMore, Position: page.Position,
 		Returned: uint32(page.Returned), Released: page.Released, TimeSeconds: elapsed.Seconds(),
 		Mode: string(page.Mode), RankedCount: int64(page.RankedCount),
@@ -294,9 +298,9 @@ func grpcContinuationResponse(page *search.SearchContinuationPage, elapsed time.
 		eligibleCount := int64(*page.EligibleCount)
 		response.EligibleCount = &eligibleCount
 	}
-	response.Hits = make([]*gen.SearchHit, 0, len(page.Results))
-	for index := range page.Results {
-		response.Hits = append(response.Hits, grpcSearchHit(page.Results[index]))
+	response.Hits = make([]*gen.SearchHit, 0, len(projected.Results))
+	for _, result := range projected.Results {
+		response.Hits = append(response.Hits, grpcSearchHit(result))
 	}
 	return response
 }

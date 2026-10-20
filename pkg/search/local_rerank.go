@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/rerankwire"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
@@ -78,8 +79,8 @@ func (r *LocalReranker) IsAvailable(ctx context.Context) bool {
 }
 
 // Rerank scores each candidate with the scorer and returns results sorted by
-// score (desc). A scorer error is an error (see Reranker); when every
-// candidate scores below MinScore, the candidates keep their order.
+// score (desc). A scorer error is an error (see Reranker). The raw scored
+// batch, including entries below MinScore, is retained for Service validation.
 func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if !r.Enabled() {
 		return voyage.PassThrough(candidates), nil
@@ -124,30 +125,24 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 			return nil, err
 		}
 		s := float64(score)
-		if r.cfg.MinScore > 0 && s < r.cfg.MinScore {
-			continue
-		}
 		scores = append(scores, scored{idx: i, score: s})
-	}
-
-	if len(scores) == 0 {
-		return voyage.PassThrough(candidates), nil
 	}
 
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
 
-	results := make([]RerankResult, 0, len(scores))
-	for rank, s := range scores {
-		c := candidates[s.idx]
-		results = append(results, RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: s.idx + 1,
-			NewRank:      rank + 1,
-			BiScore:      c.Score,
-			CrossScore:   s.score,
-			FinalScore:   s.score,
-		})
+	wireResults := make([]rerankwire.TypedResult, len(scores))
+	for index, score := range scores {
+		wireResults[index] = rerankwire.TypedResult{Index: score.idx, Score: score.score}
+	}
+	accepted, err := rerankwire.AcceptTyped(wireResults, len(candidates))
+	if err != nil {
+		return nil, err
+	}
+	results := make([]RerankResult, 0, len(accepted))
+	for rank, item := range accepted {
+		result := rerankResultForIndex(candidates, item.Index, rank+1, item.Score)
+		result.Filtered = r.cfg.MinScore > 0 && item.Score < r.cfg.MinScore
+		results = append(results, result)
 	}
 	return results, nil
 }
