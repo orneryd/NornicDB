@@ -138,10 +138,6 @@ func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) 
 		return nil, fmt.Errorf("native Cypher executor returned no result")
 	}
 	output := resultstream.BudgetFromContext(executionCtx)
-	result.Rows = output.Rows
-	if output.Columns != nil {
-		result.Columns = output.Columns
-	}
 	for _, reason := range output.Reasons {
 		budget.reason(reason)
 	}

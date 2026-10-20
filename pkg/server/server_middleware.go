@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 // =============================================================================
@@ -315,6 +316,24 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 				defer s.activeTxReqs.Add(-1)
 				next.ServeHTTP(w, r)
 			})
+			if mode := r.Header.Get(resultstream.StreamHeader); mode == "1" || mode == "pull-v1" {
+				// TimeoutHandler buffers its entire response and cannot flush.
+				// Streaming keeps the same deadline at this shared owner, with
+				// cancellation and a socket deadline instead of a response buffer.
+				controller := http.NewResponseController(w)
+				if r.ProtoMajor == 1 {
+					if err := controller.EnableFullDuplex(); err != nil {
+						s.writeNeo4jError(w, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err.Error())
+						return
+					}
+				}
+				ctx, cancel := context.WithTimeout(r.Context(), txTimeout)
+				defer cancel()
+				_ = controller.SetWriteDeadline(time.Now().Add(txTimeout))
+				defer controller.SetWriteDeadline(time.Time{})
+				txWrapped.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
 			http.TimeoutHandler(txWrapped, txTimeout, "request timeout: transaction busy").ServeHTTP(w, r)
 			return
 		default:

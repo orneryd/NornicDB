@@ -126,13 +126,33 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// A result stream the caller passed is for this statement only, not for
 	// the statements it runs on its behalf (#939).
 	stream, ctx := takeResultStream(ctx)
+	ctx, ownedOutput := claimOutputBudget(ctx)
 	outputCtx := ctx
 	if stream.bounded() {
+		// One memory-accounting lifetime encloses every routed producer,
+		// including scripts and distributed execution before normal dispatch.
+		memoryCtx, running, err := e.withRunningStatement(ctx, cypher)
+		if err != nil {
+			return nil, err
+		}
+		ctx = memoryCtx
+		defer func() {
+			if failure := running.memoryFailure(); failure != nil {
+				result, retErr = nil, failure
+			}
+			running.done()
+		}()
 		defer func() {
 			if retErr == nil && result != nil {
 				// Whole-result restorations have already run on fallback results.
 				stream.restoreRow = nil
 				retErr = stream.consumeResult(outputCtx, result)
+				if retErr == nil && ownedOutput != nil {
+					result.Rows = ownedOutput.Rows
+					if ownedOutput.Columns != nil {
+						result.Columns = ownedOutput.Columns
+					}
+				}
 				if stream.limitTruncated {
 					markResultTruncated(result, stream.rowLimit)
 				}
@@ -443,19 +463,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {
-		if stream.bounded() {
-			memoryCtx, running, err := e.withRunningStatement(ctx, cypher)
-			if err != nil {
-				return nil, err
-			}
-			ctx = memoryCtx
-			defer func() {
-				if err := running.memoryFailure(); err != nil {
-					result, retErr = nil, err
-				}
-				running.done()
-			}()
-		}
 		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}

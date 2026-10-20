@@ -8,6 +8,17 @@ import (
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
+type outputBudgetClaimedKey struct{}
+
+func claimOutputBudget(ctx context.Context) (context.Context, *resultstream.Budget) {
+	budget := resultstream.BudgetFromContext(ctx)
+	claimed, _ := ctx.Value(outputBudgetClaimedKey{}).(bool)
+	if budget == nil || claimed {
+		return ctx, nil
+	}
+	return context.WithValue(ctx, outputBudgetClaimedKey{}, true), budget
+}
+
 // WithResultBudget makes output retention a property of execution. Byte cost
 // includes a JSON row and its quoted JSON copy; transports reserve envelope
 // space separately and retain responsibility for final wire encoding.
@@ -105,7 +116,7 @@ func prepareOutputStream(ctx context.Context, stream *ResultStream, statement st
 		return ctx
 	}
 	permissions := QueryPermissionRequirements(statement)
-	stream.drain = permissions.Write || permissions.Schema || permissions.Admin
+	stream.drain = permissions.Write || permissions.Schema || permissions.Admin || resultstream.Drain(ctx)
 	// A dynamic CALL may perform effects in later input rows. Its own inner
 	// read frame stops when the shared final budget fills; write frames drain.
 	stream.drain = stream.drain || !cacheableDynamicStatements(statement, 0)
@@ -203,10 +214,22 @@ func indexedOutput(ctx context.Context, columns []string, count int, row func(in
 		}
 		return nil
 	}
-	if resultstream.BudgetFromContext(ctx) == nil && resultstream.ConsumerFromContext(ctx) == nil {
+	if !hasOutputStream(ctx) {
 		if err := materializeResultSource(ctx, result); err != nil {
 			return nil, err
 		}
 	}
 	return result, nil
+}
+
+func hasOutputStream(ctx context.Context) bool {
+	if resultstream.BudgetFromContext(ctx) != nil || resultstream.ConsumerFromContext(ctx) != nil {
+		return true
+	}
+	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+	if stream.bounded() {
+		return true
+	}
+	stream, _ = ctx.Value(resultStreamKey{}).(*ResultStream)
+	return stream.bounded()
 }

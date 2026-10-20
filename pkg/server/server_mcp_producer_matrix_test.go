@@ -1,0 +1,158 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// Every producer feeds the same execution output budget. All cases cross
+// row/byte exhaustion with both actual MCP HTTP forms and native storage.
+func TestMCPNativeProducerMatrix(t *testing.T) {
+	s, authenticator := setupTestServer(t)
+	store, err := s.dbManager.GetStorage("nornic")
+	require.NoError(t, err)
+	for i := 0; i < 12; i++ {
+		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("matrix-%d", i)), Labels: []string{"MatrixDoc"}, Properties: map[string]interface{}{"content": "matrix needle evidence", "eligible": i%2 == 0}, ChunkEmbeddings: [][]float32{{1, float32(i) / 20, 0}}})
+		require.NoError(t, err)
+	}
+	for i := 0; i < 12; i++ {
+		for _, distance := range []int{1, 2} {
+			require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("matrix-edge-%d-%d", i, distance)), StartNode: storage.NodeID(fmt.Sprintf("matrix-%d", i)), EndNode: storage.NodeID(fmt.Sprintf("matrix-%d", (i+distance)%12)), Type: "MATRIX"}))
+		}
+	}
+	executor, err := s.getExecutorForDatabase("nornic")
+	require.NoError(t, err)
+	service := search.NewServiceWithDimensions(store, 3)
+	t.Cleanup(func() { service.Close() })
+	require.NoError(t, service.BuildIndexes(context.Background()))
+	executor.SetSearchService(service)
+	router := s.buildRouter()
+	var remoteBytes atomic.Int64
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/db/matrix_remote/") {
+			w = review1601CountingWriter{ResponseWriter: w, remoteBytes: &remoteBytes}
+		}
+		router.ServeHTTP(w, r)
+	}))
+	t.Cleanup(host.Close)
+	require.NoError(t, s.dbManager.CreateDatabase("matrix_use"))
+	require.NoError(t, s.dbManager.CreateDatabase("matrix_remote"))
+	require.NoError(t, s.dbManager.CreateCompositeDatabase("matrix_cmp", []multidb.ConstituentRef{
+		{Alias: "local", DatabaseName: "nornic", Type: "local", AccessMode: "read"},
+		{Alias: "remote", DatabaseName: "matrix_remote", Type: "remote", AccessMode: "read", URI: host.URL, AuthMode: "oidc_forwarding"},
+	}))
+	token := getAuthToken(t, authenticator, "admin")
+	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	_, created := nativeReviewCall(t, host, "/mcp", map[string]interface{}{"query": "CALL gds.graph.project('mcp-producer-matrix','MatrixDoc','MATRIX')"}, authenticate)
+	require.False(t, created.IsError, created.Content)
+	t.Cleanup(func() {
+		_, _ = executor.Execute(context.Background(), "CALL gds.graph.drop('mcp-producer-matrix')", nil)
+	})
+	producers := []struct{ name, database, body, projection string }{
+		{"local", "nornic", "UNWIND range(1,200000) AS x", "x"},
+		{"use", "nornic", "USE matrix_use UNWIND range(1,200000) AS x", "x"},
+		{"identifier_rewrite", "nornic", "UNWIND range(1,200000) AS `x`", "`x`"},
+		{"label_rewrite", "nornic", "MATCH (n:MatrixDoc&MatrixDoc)", "n.content"},
+		{"profile", "nornic", "PROFILE UNWIND range(1,200000) AS x", "x"},
+		{"transaction", "nornic", "BEGIN UNWIND range(1,200000) AS x", "x"},
+		{"apoc_literal", "nornic", "CALL apoc.cypher.run('UNWIND range(1,200000) AS x RETURN x',{}) YIELD value", "value.x"},
+		{"apoc_bound", "nornic", "CALL apoc.cypher.run($statement,{}) YIELD value", "value.x"},
+		{"retrieval", "nornic", "CALL db.retrieve($request) YIELD node, score", "score"},
+		{"gds_louvain", "nornic", "CALL gds.louvain.stream('mcp-producer-matrix') YIELD nodeId, communityId", "communityId"},
+		{"gds_fastrp", "nornic", "CALL gds.fastRP.stream('mcp-producer-matrix',{embeddingDimension:4,randomSeed:42}) YIELD nodeId, embedding", "embedding"},
+		{"gds_similarity", "nornic", "CALL gds.nodeSimilarity.stream('mcp-producer-matrix',{topK:10,similarityCutoff:0}) YIELD node1, node2, similarity", "similarity"},
+		{"fabric_local", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x }", "x"},
+		{"remote", "matrix_cmp", "USE matrix_cmp.remote UNWIND range(1,200000) AS x", "x"},
+		{"fabric_remote", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},
+		{"fabric_union", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x UNION ALL USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},
+	}
+	parameters := map[string]interface{}{
+		"statement": "UNWIND range(1,200000) AS x RETURN x",
+		"request":   map[string]interface{}{"query": "matrix needle", "embedding": []float64{1, 0, 0}, "labels": []string{"MatrixDoc"}, "where": "node.eligible = $eligible", "limit": 8, "min_similarity": 0.0},
+		"eligible":  true,
+	}
+	for _, producer := range producers {
+		for _, path := range []string{"/mcp", "/mcp/tools/call"} {
+			for _, kind := range []string{"rows", "bytes"} {
+				t.Run(producer.name+path+"/"+kind, func(t *testing.T) {
+					projection := producer.projection
+					if kind == "bytes" {
+						projection = "$payload"
+						parameters["payload"] = strings.Repeat("x", 600000)
+					} else {
+						delete(parameters, "payload")
+					}
+					query := producer.body + " RETURN " + projection + " AS selected"
+					if producer.name == "transaction" {
+						query += " COMMIT"
+					}
+					runtime.GC()
+					var before, after runtime.MemStats
+					runtime.ReadMemStats(&before)
+					remoteBytes.Store(0)
+					raw, response := nativeReviewCall(t, host, path, map[string]interface{}{"database": producer.database, "query": query, "parameters": parameters, "max_rows": 1}, authenticate)
+					runtime.ReadMemStats(&after)
+					require.False(t, response.IsError, response.Content)
+					require.LessOrEqual(t, len(raw), 1<<20)
+					var result struct {
+						Rows       [][]interface{} `json:"rows"`
+						Truncation struct {
+							Reasons []string `json:"reasons"`
+						} `json:"truncation"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(response.Content[0].Text), &result))
+					if kind == "rows" {
+						require.Len(t, result.Rows, 1)
+						require.Contains(t, result.Truncation.Reasons, "max_rows")
+					} else {
+						require.Empty(t, result.Rows)
+						require.Contains(t, result.Truncation.Reasons, "max_bytes")
+					}
+					// Includes both peers for the remote cases, not just local retention.
+					ceiling := uint64(16 << 20)
+					// Byte cases include encoding/decoding the 600 kB bound parameter
+					// in both peers and its row/REST protocol representations.
+					if kind == "bytes" {
+						ceiling = 64 << 20
+					}
+					require.Less(t, after.TotalAlloc-before.TotalAlloc, ceiling, "producer buffered before the final execution sink")
+					if kind == "rows" {
+						require.Less(t, remoteBytes.Load(), int64(1<<20))
+					}
+					t.Logf("producer=%s bound=%s allocation=%d remote_bytes=%d", producer.name, kind, after.TotalAlloc-before.TotalAlloc, remoteBytes.Load())
+				})
+			}
+		}
+	}
+	for _, path := range []string{"/mcp", "/mcp/tools/call"} {
+		_, plan := nativeReviewCall(t, host, path, map[string]interface{}{"query": "EXPLAIN UNWIND range(1,200000000) AS x RETURN x", "max_rows": 1}, authenticate)
+		require.False(t, plan.IsError, plan.Content)
+		require.Contains(t, plan.Content[0].Text, `"rows":[]`)
+		require.Contains(t, plan.Content[0].Text, "plan")
+		for _, query := range []string{
+			"UNWIND range(1,200000) AS x RETURN x ORDER BY x",
+			"UNWIND range(1,2000000) AS x RETURN collect(x)",
+			"CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x } RETURN x ORDER BY x",
+		} {
+			_, failed := nativeReviewCall(t, host, path, map[string]interface{}{"database": "matrix_cmp", "query": query, "max_rows": 1}, authenticate)
+			require.True(t, failed.IsError, failed.Content)
+			require.Contains(t, failed.Content[0].Text, "db.memory.transaction.max threshold reached")
+			global, database := cypher.TransactionMemoryPoolUsage("matrix_cmp")
+			require.Zero(t, global)
+			require.Zero(t, database)
+		}
+	}
+}

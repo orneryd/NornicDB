@@ -177,6 +177,18 @@ func (b *boltTransport) query(ctx context.Context, statement string, params map[
 }
 
 func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	if consumer := resultstream.ConsumerFromContext(ctx); consumer != nil {
+		upstream, cancel := context.WithCancel(ctx)
+		defer cancel()
+		session := b.driver.NewSession(upstream, neo4j.SessionConfig{DatabaseName: b.database, AccessMode: accessModeForStatement(statement), FetchSize: 1})
+		defer func() { _ = session.Close(context.WithoutCancel(ctx)) }()
+		result, err := session.Run(upstream, statement, params)
+		if err != nil {
+			return nil, nil, err
+		}
+		columns, err := consumeBoltRows(upstream, result, consumer)
+		return columns, nil, err
+	}
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   accessModeForStatement(statement),
@@ -184,21 +196,13 @@ func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, 
 	defer func() { _ = session.Close(ctx) }()
 
 	rows := make([][]interface{}, 0)
-	var consumeErr error
-	columns, err := executeManagedStatement(ctx, session, statement, params, func(columns []string, record *neo4j.Record) {
+	columns, err := executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
 		row := make([]interface{}, len(record.Values))
 		for i, v := range record.Values {
 			row[i] = normalizeBoltValue(v)
 		}
-		if consumer := resultstream.ConsumerFromContext(ctx); consumer != nil {
-			_, consumeErr = consumer(columns, row)
-		} else {
-			rows = append(rows, row)
-		}
+		rows = append(rows, row)
 	})
-	if consumeErr != nil {
-		return nil, nil, consumeErr
-	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -273,6 +277,7 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
+		FetchSize:    1,
 	})
 	tx, err := session.BeginTransaction(ctx)
 	if err != nil {
@@ -283,6 +288,16 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 }
 
 func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	if consumer := resultstream.ConsumerFromContext(ctx); consumer != nil {
+		upstream, cancel := context.WithCancel(ctx)
+		defer cancel()
+		result, err := t.tx.Run(upstream, statement, params)
+		if err != nil {
+			return nil, nil, err
+		}
+		columns, err := consumeBoltRows(upstream, result, consumer)
+		return columns, nil, err
+	}
 	result, err := t.tx.Run(ctx, statement, params)
 	if err != nil {
 		return nil, nil, err

@@ -28,7 +28,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		return nil, err
 	}
 
-	if resultstream.BudgetFromContext(ctx) != nil || resultstream.ConsumerFromContext(ctx) != nil {
+	if hasOutputStream(ctx) {
 		result := &ExecuteResult{Columns: []string{"value"}, Stats: &QueryStats{}}
 		result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
 			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(columns []string, row []any) (bool, error) {

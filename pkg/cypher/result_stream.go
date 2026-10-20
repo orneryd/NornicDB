@@ -199,6 +199,9 @@ func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
 	if s.bounded() {
 		if s.rowLimit > 0 && s.produced >= s.rowLimit {
 			s.limitTruncated = true
+			if s.outputBudget != nil {
+				s.outputBudget.Mark("database_max_results")
+			}
 			s.full = true
 			return s.drain
 		}

@@ -66,6 +66,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -317,7 +318,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
-	result := e.formatHybridPredictionResults(predictions, config.SourceNode)
+	result := e.formatHybridPredictionResults(predictions, config.SourceNode, ctx)
 	result.gdsProjection = projection
 	return result, nil
 }
@@ -339,7 +340,7 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 	scores := linkpredict.TopologyScores(algorithm, graph, degree, config.SourceNode)
 	predictions := linkpredict.RankedPredictions(scores, config.candidateLimit(), algorithm)
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
-	result := e.formatLinkPredictionResults(predictions, config.SourceNode)
+	result := e.formatLinkPredictionResults(predictions, config.SourceNode, ctx)
 	result.gdsProjection = projection
 	return result, nil
 }
@@ -576,7 +577,17 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 }
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result
-func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID) *ExecuteResult {
+func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID, contexts ...context.Context) *ExecuteResult {
+	if len(contexts) > 0 {
+		result, err := indexedOutput(contexts[0], []string{"node1", "node2", "score"}, len(predictions), func(i int) []any {
+			pred := predictions[i]
+			return []any{string(sourceNode), string(pred.TargetID), pred.Score}
+		})
+		if err != nil {
+			return &ExecuteResult{Source: func(context.Context, resultstream.Consumer) error { return err }}
+		}
+		return result
+	}
 	result := &ExecuteResult{
 		Columns: []string{"node1", "node2", "score"},
 		Rows:    make([][]interface{}, 0, len(predictions)),
@@ -595,7 +606,17 @@ func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.
 }
 
 // formatHybridPredictionResults formats hybrid predictions with extended columns
-func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID) *ExecuteResult {
+func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID, contexts ...context.Context) *ExecuteResult {
+	if len(contexts) > 0 {
+		result, err := indexedOutput(contexts[0], []string{"node1", "node2", "score", "topology_score", "semantic_score", "reason"}, len(predictions), func(i int) []any {
+			pred := predictions[i]
+			return []any{string(sourceNode), string(pred.TargetID), pred.Score, pred.TopologyScore, pred.SemanticScore, pred.Reason}
+		})
+		if err != nil {
+			return &ExecuteResult{Source: func(context.Context, resultstream.Consumer) error { return err }}
+		}
+		return result
+	}
 	result := &ExecuteResult{
 		Columns: []string{"node1", "node2", "score", "topology_score", "semantic_score", "reason"},
 		Rows:    make([][]interface{}, 0, len(predictions)),

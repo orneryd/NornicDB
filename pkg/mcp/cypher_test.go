@@ -7,14 +7,30 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/stretchr/testify/require"
 )
+
+func budgetNativeRows(t *testing.T, native *cypher.ExecuteResult, maxRows int) (context.Context, *cypher.ExecuteResult) {
+	t.Helper()
+	ctx := cypher.WithResultBudget(context.Background(), maxRows, cypherMaxBytes-16*1024)
+	consume := resultstream.ConsumerFromContext(ctx)
+	for _, row := range native.Rows {
+		more, err := consume(native.Columns, row)
+		require.NoError(t, err)
+		if !more {
+			break
+		}
+	}
+	return ctx, native
+}
 
 func TestCypherResultBoundsPreserveNativeValues(t *testing.T) {
 	stats := &cypher.QueryStats{NodesCreated: 2}
 	metadata := map[string]interface{}{"receipt": map[string]interface{}{"outcome": "committed"}, "method": "native"}
 	native := &cypher.ExecuteResult{Columns: []string{"evidence"}, Rows: [][]interface{}{{map[string]interface{}{"id": "selected", "scores": []interface{}{0.5}, "passages": []string{"full text"}}}, {"omitted"}}, Stats: stats, Metadata: metadata}
-	result, err := newCypherResultBudget(context.Background(), 1).finish(context.Background(), native)
+	ctx, native := budgetNativeRows(t, native, 1)
+	result, err := newCypherResultBudget(ctx, 1).finish(ctx, native)
 	require.NoError(t, err)
 	want, err := json.Marshal(native.Rows[:1])
 	require.NoError(t, err)
@@ -35,7 +51,8 @@ func TestCypherResultBoundsPreserveNativeValues(t *testing.T) {
 	// JSON escaping counts toward the byte bound; a single large row is not
 	// silently cut inside a caller-selected value.
 	native = &cypher.ExecuteResult{Columns: []string{"value"}, Rows: [][]interface{}{{"small"}, {strings.Repeat("\"", cypherMaxBytes)}}}
-	result, err = newCypherResultBudget(context.Background(), 100).finish(context.Background(), native)
+	ctx, native = budgetNativeRows(t, native, 100)
+	result, err = newCypherResultBudget(ctx, 100).finish(ctx, native)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"small"}}, result.Rows)
 	require.Equal(t, []string{"max_bytes"}, result.Truncation.Reasons)

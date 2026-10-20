@@ -36,7 +36,13 @@ func (h *httpTransport) consumeRequest(ctx context.Context, method, target strin
 	if err != nil {
 		return nil, err
 	}
-	upstream, cancel := context.WithCancel(ctx)
+	var upstream context.Context
+	var cancel context.CancelFunc
+	if h.client.Timeout > 0 {
+		upstream, cancel = context.WithTimeout(ctx, h.client.Timeout)
+	} else {
+		upstream, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 	var input io.Reader = bytes.NewReader(encoded)
 	var credits *io.PipeWriter
