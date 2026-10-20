@@ -173,7 +173,7 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 				require.NoError(t, restarted.BuildIndexes(context.Background()))
 				require.Equal(t, 4, restarted.FulltextDocCount(), "nonempty partial artifacts skipped authoritative rebuild")
 				for _, id := range []string{"nornic:original0", "nornic:original1", "nornic:original2", "nornic:acknowledged"} {
-					_, ok := restarted.getVectorLookup()(id + "-named-v")
+					_, ok := restarted.getVectorLookup()(nodeNamedVectorKey(id, "v"))
 					require.True(t, ok, id)
 				}
 			})
@@ -212,7 +212,7 @@ func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.True(t, svc.IsReady())
 	require.Equal(t, 2, svc.FulltextDocCount())
-	_, ok := svc.getVectorLookup()("nornic:acknowledged-named-v")
+	_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:acknowledged", "v"))
 	require.True(t, ok)
 }
 
@@ -239,7 +239,7 @@ func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *tes
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.Equal(t, 2, svc.FulltextDocCount())
 	for _, id := range []string{"nornic:original", "nornic:acknowledged"} {
-		_, ok := svc.getVectorLookup()(id + "-named-v")
+		_, ok := svc.getVectorLookup()(nodeNamedVectorKey(id, "v"))
 		require.True(t, ok, id)
 	}
 }
@@ -275,6 +275,6 @@ func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 	restarted := populationPersistService(t, e, dir)
 	require.NoError(t, restarted.BuildIndexes(context.Background()))
 	require.Equal(t, 2, restarted.FulltextDocCount())
-	_, ok := restarted.getVectorLookup()("nornic:acknowledged-named-v")
+	_, ok := restarted.getVectorLookup()(nodeNamedVectorKey("nornic:acknowledged", "v"))
 	require.True(t, ok)
 }
