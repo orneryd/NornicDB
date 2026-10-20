@@ -8,7 +8,7 @@ func (stream *resultStream) resolvedQueryType() string {
 			return mode
 		}
 	}
-	var stats *cypher.QueryStats
+	var stats *QueryStats
 	if stream.result != nil {
 		stats = stream.result.Stats
 	}
