@@ -35,10 +35,15 @@ func indexValueKey(value interface{}) (interface{}, bool) {
 // holds it exactly (every float, and every integer within ±2^53 or otherwise
 // representable), else as the integer itself, uint64 when non-negative and
 // int64 when negative. Equal keys are exactly the numbers compareValues
-// equates, and compareSchemaIndexValues orders all three forms exactly.
+// equates, and compareSchemaIndexValues orders all three forms exactly. Both
+// zero signs are one key, +0: composite and lock hashes serialise keys as
+// text, where -0 and 0 would otherwise differ.
 func numericIndexKey(value interface{}) (interface{}, bool) {
 	switch n := value.(type) {
 	case float64:
+		if n == 0 {
+			return float64(0), true
+		}
 		return n, true
 	case int64:
 		return exactIntegerIndexKey(n), true
@@ -50,7 +55,11 @@ func numericIndexKey(value interface{}) (interface{}, bool) {
 		return exactUnsignedIndexKey(uint64(n)), true
 	}
 	// The narrower integer types and float32 always fit a float64 exactly.
-	return numericConstraintValue(value)
+	numeric, ok := numericConstraintValue(value)
+	if numeric == 0 {
+		numeric = 0 // float32 -0
+	}
+	return numeric, ok
 }
 
 func exactIntegerIndexKey(n int64) interface{} {
