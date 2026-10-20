@@ -363,7 +363,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Typed Go maps and slices become Cypher maps and lists here, once, for
 	// every route (#712).
-	params = normalizeQueryParameters(params)
+	params = normalizeQueryParameters(mergeInheritedQueryParams(ctx, params))
 	ctx = withQueryParams(ctx, params)
 
 	// Handle Neo4j shell/browser commands like :USE and :param before validation.

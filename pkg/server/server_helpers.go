@@ -427,12 +427,15 @@ func (w *responseWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
-// Flush implements http.Flusher interface for SSE streaming.
-// This is critical for Bifrost chat streaming to work properly.
+// FlushError preserves flushing through wrappers that expose Unwrap, including
+// response accounting wrappers, and reports socket errors to stream producers.
+func (w *responseWriter) FlushError() error {
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Flush implements http.Flusher for streaming handlers.
 func (w *responseWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
+	_ = w.FlushError()
 }
 
 // JSON helpers
