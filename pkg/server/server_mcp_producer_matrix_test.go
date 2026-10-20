@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -48,11 +50,18 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 		router.ServeHTTP(w, r)
 	}))
 	t.Cleanup(host.Close)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	boltServer := bolt.NewWithDatabaseManager(&bolt.Config{ReadBufferSize: 8192, WriteBufferSize: 8192, Authenticator: bolt.NewAuthenticatorAdapter(authenticator), RequireAuth: true}, nil, s.dbManager)
+	serveError := make(chan error, 1)
+	go func() { serveError <- boltServer.Serve(listener) }()
+	t.Cleanup(func() { require.NoError(t, boltServer.Close()); require.NoError(t, <-serveError) })
 	require.NoError(t, s.dbManager.CreateDatabase("matrix_use"))
 	require.NoError(t, s.dbManager.CreateDatabase("matrix_remote"))
 	require.NoError(t, s.dbManager.CreateCompositeDatabase("matrix_cmp", []multidb.ConstituentRef{
 		{Alias: "local", DatabaseName: "nornic", Type: "local", AccessMode: "read"},
 		{Alias: "remote", DatabaseName: "matrix_remote", Type: "remote", AccessMode: "read", URI: host.URL, AuthMode: "oidc_forwarding"},
+		{Alias: "bolt", DatabaseName: "matrix_remote", Type: "remote", AccessMode: "write", URI: "bolt://" + listener.Addr().String(), AuthMode: "user_password", User: "admin", Password: "password123"},
 	}))
 	token := getAuthToken(t, authenticator, "admin")
 	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
@@ -82,6 +91,10 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 		{"gds_prediction", "nornic", "CALL gds.linkPrediction.commonNeighbors.stream('mcp-producer-matrix',{sourceNode:'matrix-0',topK:10}) YIELD node1, node2, score", "score"},
 		{"fabric_local", "matrix_cmp", "CALL { USE matrix_cmp.local UNWIND range(1,200000) AS x RETURN x }", "x"},
 		{"remote", "matrix_cmp", "USE matrix_cmp.remote UNWIND range(1,200000) AS x", "x"},
+		{"bolt", "matrix_cmp", "USE matrix_cmp.bolt UNWIND range(1,200000) AS x", "x"},
+		{"bolt_profile", "matrix_cmp", "USE matrix_cmp.bolt PROFILE UNWIND range(1,200000) AS x", "x"},
+		{"bolt_apoc", "matrix_cmp", "USE matrix_cmp.bolt CALL apoc.cypher.run('UNWIND range(1,200000) AS x RETURN x',{}) YIELD value", "value.x"},
+		{"fabric_bolt", "matrix_cmp", "CALL { USE matrix_cmp.bolt UNWIND range(1,200000) AS x RETURN x } WITH x WHERE x > 20", "x"},
 		{"fabric_remote", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},
 		{"fabric_filtered", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x } WITH x WHERE x > 20", "x"},
 		{"fabric_union", "matrix_cmp", "", "x"},
@@ -163,9 +176,10 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 			"UNWIND range(1,2000000) AS x RETURN collect(x)",
 			"UNWIND range(1,200000) AS x CALL { WITH x RETURN x AS y } RETURN y ORDER BY y",
 			"CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x } RETURN x ORDER BY x",
+			"CALL { USE matrix_cmp.bolt UNWIND range(1,200000) AS x RETURN x } RETURN x ORDER BY x",
 		} {
 			database := "nornic"
-			if strings.Contains(query, "matrix_cmp.remote") {
+			if strings.Contains(query, "matrix_cmp.") {
 				database = "matrix_cmp"
 			}
 			_, failed := nativeReviewCall(t, host, path, map[string]interface{}{"database": database, "query": query, "max_rows": 1}, authenticate)
@@ -175,7 +189,13 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 			require.Zero(t, global)
 			require.Zero(t, databaseUsage)
 		}
+		_, written := nativeReviewCall(t, host, path, map[string]interface{}{"database": "matrix_cmp", "query": "USE matrix_cmp.bolt UNWIND range(1,40) AS x CREATE (:BoltBudgetWrite {x:x}) RETURN x", "max_rows": 1}, authenticate)
+		require.False(t, written.IsError, written.Content)
+		require.Contains(t, written.Content[0].Text, "max_rows")
 	}
+	_, counted := nativeReviewCall(t, host, "/mcp", map[string]interface{}{"database": "matrix_remote", "query": "MATCH (n:BoltBudgetWrite) RETURN count(n) AS count"}, authenticate)
+	require.False(t, counted.IsError, counted.Content)
+	require.Contains(t, counted.Content[0].Text, `"rows":[[80]]`)
 }
 
 func TestMCPNativeProducerCompletionAndReplay(t *testing.T) {
