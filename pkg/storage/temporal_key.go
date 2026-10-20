@@ -159,6 +159,9 @@ func stableTemporalKeyDigest(values ...interface{}) string {
 // temporalKeyHashValue is the form of one key value that keyHash hashes:
 // numbers as float64 (numericConstraintValue), lists through the canonical
 // constraint-list token, everything else unchanged. Scalar digests stay stable.
+// The digest is persisted, so it stays float64: integers beyond 2^53 that
+// round together share a history bucket, and every reader of the history and
+// current-pointer keys re-checks the exact key (keyEqual / keyMatches).
 func temporalKeyHashValue(v interface{}) interface{} {
 	if numeric, ok := numericConstraintValue(v); ok {
 		return numeric

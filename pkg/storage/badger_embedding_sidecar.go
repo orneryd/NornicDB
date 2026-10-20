@@ -218,9 +218,10 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 // sameStoredValue compares two property values as stored values: numbers by
 // value, lists and maps element by element, times as instants.
 func sameStoredValue(a, b any) bool {
-	if x, ok := numericConstraintValue(a); ok {
-		y, ok := numericConstraintValue(b)
-		return ok && x == y
+	if _, ok := numericConstraintValue(a); ok {
+		// Exactly, so an edit between integers beyond 2^53 is a change.
+		order, numeric, ordered := compareConstraintNumbers(reflect.ValueOf(a), reflect.ValueOf(b))
+		return numeric && ordered && order == 0
 	}
 	if x, ok := a.(time.Time); ok {
 		y, ok := b.(time.Time)
