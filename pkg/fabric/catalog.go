@@ -17,8 +17,9 @@ import (
 //
 // Thread-safe: all operations are protected by RWMutex.
 type Catalog struct {
-	graphs map[string]Location
-	mu     sync.RWMutex
+	graphs          map[string]Location
+	compositeScopes map[string]bool
+	mu              sync.RWMutex
 }
 
 // NewCatalog creates an empty catalog.
@@ -32,7 +33,7 @@ func NewCatalog() *Catalog {
 func (c *Catalog) Register(name string, loc Location) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.graphs[strings.ToLower(name)] = loc
+	c.registerGraphLocked(name, loc, false)
 }
 
 // Unregister removes a graph from the catalog.
@@ -40,6 +41,7 @@ func (c *Catalog) Unregister(name string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.graphs, strings.ToLower(name))
+	delete(c.compositeScopes, strings.ToLower(name))
 }
 
 // Resolve looks up a graph location by name.
@@ -94,6 +96,7 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 
 	// Clear existing registrations.
 	c.graphs = make(map[string]Location)
+	c.compositeScopes = make(map[string]bool)
 
 	databases := mgr.ListDatabases()
 	for _, db := range databases {
@@ -101,11 +104,11 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 		dbType := db.Type
 
 		// Register the database itself.
-		c.graphs[dbName] = &LocationLocal{DBName: dbName}
+		c.registerGraphLocked(dbName, &LocationLocal{DBName: dbName}, dbType == "composite")
 
 		// Register aliases.
 		for _, alias := range db.Aliases {
-			c.graphs[strings.ToLower(alias)] = &LocationLocal{DBName: dbName}
+			c.registerGraphLocked(alias, &LocationLocal{DBName: dbName}, dbType == "composite")
 		}
 
 		// Register constituents for composite databases.

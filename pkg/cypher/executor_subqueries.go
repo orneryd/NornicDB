@@ -1056,42 +1056,42 @@ func (e *StorageExecutor) refreshCallSeedNodeValues(ctx context.Context, seedRow
 		return seedRow, nil
 	}
 
-	importedNodeIDs := make(map[storage.NodeID]struct{}, len(importVars))
+	importedNodeIDs := make(map[storage.EntityIdentity]struct{}, len(importVars))
 	for _, variable := range importVars {
 		index, ok := colMap[variable]
 		if !ok || index < 0 || index >= len(seedRow) {
 			continue
 		}
 		if node, ok := seedRow[index].(*storage.Node); ok && node != nil {
-			importedNodeIDs[node.ID] = struct{}{}
+			importedNodeIDs[node.Identity()] = struct{}{}
 		}
 	}
 	if len(importedNodeIDs) == 0 {
 		return seedRow, nil
 	}
 
-	checkedIDs := make(map[storage.NodeID]struct{}, len(importedNodeIDs))
-	updatedNodes := make(map[storage.NodeID]*storage.Node, len(importedNodeIDs))
+	checkedIDs := make(map[storage.EntityIdentity]struct{}, len(importedNodeIDs))
+	updatedNodes := make(map[storage.EntityIdentity]*storage.Node, len(importedNodeIDs))
 	var refreshed []interface{}
 	for index, value := range seedRow {
 		node, ok := value.(*storage.Node)
 		if !ok || node == nil {
 			continue
 		}
-		if _, imported := importedNodeIDs[node.ID]; !imported {
+		if _, imported := importedNodeIDs[node.Identity()]; !imported {
 			continue
 		}
-		if _, checked := checkedIDs[node.ID]; !checked {
-			checkedIDs[node.ID] = struct{}{}
+		if _, checked := checkedIDs[node.Identity()]; !checked {
+			checkedIDs[node.Identity()] = struct{}{}
 			current, err := e.refreshCallSeedNodeAfterWrite(ctx, node, stats)
 			if err != nil {
 				return nil, err
 			}
 			if current != nil {
-				updatedNodes[node.ID] = current
+				updatedNodes[node.Identity()] = current
 			}
 		}
-		if current := updatedNodes[node.ID]; current != nil {
+		if current := updatedNodes[node.Identity()]; current != nil {
 			if refreshed == nil {
 				refreshed = append([]interface{}(nil), seedRow...)
 			}
@@ -1108,7 +1108,12 @@ func (e *StorageExecutor) refreshCallSeedNodeAfterWrite(ctx context.Context, nod
 	if node == nil || !queryStatsMayContainNodeMutation(stats) {
 		return node, nil
 	}
-	current, err := e.getQueryNode(e.getStorage(ctx), node.ID)
+	store := e.getStorage(ctx)
+	lookup, valid := node.Identity().NodeLookupID(store)
+	if !valid {
+		return node, nil
+	}
+	current, err := e.getQueryNode(store, lookup)
 	if errors.Is(err, storage.ErrNotFound) {
 		return node, nil
 	}

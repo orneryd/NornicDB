@@ -14,8 +14,8 @@ import (
 // a write stretch: Neo4j 5.26 reads a deleted entity the same way wherever
 // it is reached in the rest of the statement (#907).
 type deletedEntities struct {
-	nodes map[storage.NodeID]struct{}
-	edges map[storage.EdgeID]struct{}
+	nodes map[storage.EntityIdentity]struct{}
+	edges map[storage.EntityIdentity]struct{}
 }
 
 type deletedEntitiesKey struct{}
@@ -49,17 +49,25 @@ func pipelineClausesMayDelete(clauses []pipelineClause) bool {
 
 // add records deleted nodes and relationships.
 func (d *deletedEntities) add(nodeIDs []storage.NodeID, edgeIDs map[storage.EdgeID]struct{}) {
-	if len(nodeIDs) > 0 && d.nodes == nil {
-		d.nodes = make(map[storage.NodeID]struct{}, len(nodeIDs))
-	}
 	for _, id := range nodeIDs {
-		d.nodes[id] = struct{}{}
-	}
-	if len(edgeIDs) > 0 && d.edges == nil {
-		d.edges = make(map[storage.EdgeID]struct{}, len(edgeIDs))
+		d.addTarget(deleteTargetValue{kind: deleteProjectionNode, identity: storage.EntityIdentity{LocalID: string(id)}})
 	}
 	for id := range edgeIDs {
-		d.edges[id] = struct{}{}
+		d.addTarget(deleteTargetValue{kind: deleteProjectionRelationship, identity: storage.EntityIdentity{LocalID: string(id)}})
+	}
+}
+
+func (d *deletedEntities) addTarget(target deleteTargetValue) {
+	if target.kind == deleteProjectionNode {
+		if d.nodes == nil {
+			d.nodes = map[storage.EntityIdentity]struct{}{}
+		}
+		d.nodes[target.identity] = struct{}{}
+	} else if target.kind == deleteProjectionRelationship {
+		if d.edges == nil {
+			d.edges = map[storage.EntityIdentity]struct{}{}
+		}
+		d.edges[target.identity] = struct{}{}
 	}
 }
 
@@ -94,8 +102,8 @@ func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted 
 // properties. A view is equal to the entity by ID, as entities compare.
 type deletedEntityViews struct {
 	executor *StorageExecutor
-	nodes    map[storage.NodeID]struct{}
-	edges    map[storage.EdgeID]struct{}
+	nodes    map[storage.EntityIdentity]struct{}
+	edges    map[storage.EntityIdentity]struct{}
 }
 
 // replace returns value with its deleted entities replaced by their views,
@@ -106,14 +114,16 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 		if typed == nil {
 			return value, false
 		}
-		if _, deleted := v.nodes[typed.ID]; deleted {
+		identity, _ := nativeEntityIdentity(typed)
+		if _, deleted := v.nodes[identity]; deleted {
 			return v.node(typed), true
 		}
 	case *storage.Edge:
 		if typed == nil {
 			return value, false
 		}
-		if _, deleted := v.edges[typed.ID]; deleted {
+		identity, _ := nativeEntityIdentity(typed)
+		if _, deleted := v.edges[identity]; deleted {
 			return v.edge(typed), true
 		}
 	case []interface{}:
@@ -166,11 +176,11 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
-	return &storage.Node{ID: node.ID}
+	return nativeDeletedNodeValue(node)
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
-	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
+	return nativeDeletedEdgeValue(edge)
 }
 
 // mayBeDeletedRelationshipView reports whether edge has the shape of a deleted
@@ -296,13 +306,15 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 		if relationshipOnly || entity == nil {
 			return false
 		}
-		_, found := d.nodes[entity.ID]
+		identity, _ := nativeEntityIdentity(entity)
+		_, found := d.nodes[identity]
 		return found
 	case *storage.Edge:
 		if entity == nil {
 			return false
 		}
-		_, found := d.edges[entity.ID]
+		identity, _ := nativeEntityIdentity(entity)
+		_, found := d.edges[identity]
 		return found
 	default:
 		return false

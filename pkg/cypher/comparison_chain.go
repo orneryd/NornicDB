@@ -55,10 +55,11 @@ func evaluateComparisonChain(
 	resolve func(string, foldPosition) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
-	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25)
+	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25, domains...)
 }
-func evaluateComparisonChainInContext(ctx context.Context, expression string, resolve func(string, foldPosition) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool) (interface{}, bool, bool, error) {
+func evaluateComparisonChainInContext(ctx context.Context, expression string, resolve func(string, foldPosition) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool, domains ...graphIdentityDomain) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
 		return nil, false, false, nil
@@ -66,7 +67,7 @@ func evaluateComparisonChainInContext(ctx context.Context, expression string, re
 	position := comparisonFoldPosition(&scan)
 	value, resolved, err := evaluateScannedComparisonChain(ctx, expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
 		return resolve(operand, position)
-	}, compare, cypher25)
+	}, compare, cypher25, domains...)
 	return value, true, resolved, err
 }
 
@@ -94,6 +95,7 @@ func evaluateScannedComparisonChain(
 	resolve func(int, string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, error) {
 	if scan.count > 1 && mayContainSubqueryExpression(expression) && constantFalseLink(expression, scan, cypher25) {
 		// Neo4j folds a link of two literals before it plans the chain's
@@ -111,10 +113,10 @@ func evaluateScannedComparisonChain(
 			// same comparison implementation and exactly one evaluation per operand.
 			return evaluateComparisonLinks(expression, scan, normalizeIdentity, func(i int, text string) (interface{}, bool, error) {
 				return resolveApplyOperand(cached, i, func(i int) (interface{}, bool, error) { return resolve(i, text) })
-			}, compare, cypher25, true)
+			}, compare, cypher25, true, domains...)
 		}
 	}
-	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25, true)
+	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25, true, domains...)
 }
 
 // constantFalseLink reports a link of the chain between two literals that is
@@ -142,15 +144,12 @@ func constantFalseLink(expression string, scan *comparisonChainScan, cypher25 bo
 
 // resolveText is false for compiled operands, which already retain their text.
 // Numeric constant folding still reads the text when promotion can apply.
-func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25, resolveText bool) (interface{}, bool, error) {
+func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25, resolveText bool, domains ...graphIdentityDomain) (interface{}, bool, error) {
 	leftText := ""
 	if resolveText {
 		leftText = scan.operand(expression, 0)
 	}
 	left, leftOK, leftErr := resolve(0, leftText)
-	if normalizeIdentity {
-		left = rowIdentityPayload(left)
-	}
 	hasNull, resolved := false, leftOK
 	firstErr := leftErr
 	for index := 0; index < scan.count; index++ {
@@ -165,23 +164,24 @@ func evaluateComparisonLinks(expression string, scan *comparisonChainScan, norma
 			firstErr = rightErr
 		}
 		resolved = resolved && rightOK
-		if normalizeIdentity {
-			right = rowIdentityPayload(right)
-		}
 		// A later false discards an earlier error; a decided false never
 		// evaluates the remaining operands. Each operand is evaluated once.
 		if leftOK && rightOK && leftErr == nil && rightErr == nil {
+			comparisonLeft, comparisonRight := left, right
+			if normalizeIdentity {
+				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right, domains...)
+			}
 			if left == nil || right == nil {
 				hasNull = true
 			} else {
 				if operator == "!=" {
 					operator = "<>"
 				}
-				leftValue, rightValue := left, right
+				leftValue, rightValue := comparisonLeft, comparisonRight
 				_, leftFloat := cypherFloatValue(left)
 				_, rightFloat := cypherFloatValue(right)
 				if leftFloat != rightFloat {
-					leftValue, rightValue = promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
+					leftValue, rightValue = promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), comparisonLeft, comparisonRight, cypher25)
 				}
 				comparison := compare(leftValue, rightValue, operator)
 				if comparison == nil {

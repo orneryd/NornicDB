@@ -59,23 +59,26 @@ import (
 // **Topology only**: "You and Jake have 8 mutual friends" (strong structure)
 // **Semantic**: "But Jake is really into art, not sports" (weak interest match)
 // **Hybrid**: "Maybe you know Jake through school, but not sure you'd be close"
-type HybridScorer struct {
+type HybridScorer = HybridScorerFor[storage.NodeID]
+
+// HybridScorerFor uses the same scoring owner for a typed graph domain.
+type HybridScorerFor[K ~string] struct {
 	config          HybridConfig
-	semanticScorer  SemanticScorerFunc
-	degree          DegreeFunc         // nil: Graph.Degree
+	semanticScorer  SemanticScorerFuncFor[K]
+	degree          DegreeFuncFor[K]   // nil: Graph.Degree
 	ensembleWeights map[string]float64 // For ensemble topological scoring
 }
 
 // SetDegreeFunction sets the degrees the degree-based topology scores read
 // (DegreeFunc); nil, the default, uses Graph.Degree.
-func (h *HybridScorer) SetDegreeFunction(degree DegreeFunc) {
+func (h *HybridScorerFor[K]) SetDegreeFunction(degree DegreeFuncFor[K]) {
 	h.degree = degree
 }
 
 // topology is one topology algorithm's top k predictions, rescaled to
 // [0, 1] by the algorithm's own scale (normalizeAlgorithmScore).
-func (h *HybridScorer) topology(algorithm string, graph Graph, source storage.NodeID, k int) []Prediction {
-	return topKPredictions(TopologyScores(algorithm, graph, h.degree, source), k, algorithm)
+func (h *HybridScorerFor[K]) topology(algorithm string, graph GraphFor[K], source K, k int) []PredictionFor[K] {
+	return topKPredictions(TopologyScoresFor(algorithm, graph, h.degree, source), k, algorithm)
 }
 
 // HybridConfig configures hybrid scoring behavior.
@@ -168,10 +171,16 @@ func DefaultHybridConfig() HybridConfig {
 //
 //		return cosineSimilarity(sourceNode.Embedding, targetNode.Embedding)
 //	}
-type SemanticScorerFunc func(ctx context.Context, source, target storage.NodeID) float64
+type SemanticScorerFunc = SemanticScorerFuncFor[storage.NodeID]
+
+type SemanticScorerFuncFor[K ~string] func(ctx context.Context, source, target K) float64
 
 // NewHybridScorer creates a new hybrid scorer with the given configuration.
 func NewHybridScorer(config HybridConfig) *HybridScorer {
+	return NewHybridScorerFor[storage.NodeID](config)
+}
+
+func NewHybridScorerFor[K ~string](config HybridConfig) *HybridScorerFor[K] {
 	// Normalize weights if needed
 	if config.TopologyWeight+config.SemanticWeight == 0 {
 		config.TopologyWeight = 0.5
@@ -187,7 +196,7 @@ func NewHybridScorer(config HybridConfig) *HybridScorer {
 		"preferential_attachment": 0.15,
 	}
 
-	return &HybridScorer{
+	return &HybridScorerFor[K]{
 		config:          config,
 		ensembleWeights: ensembleWeights,
 	}
@@ -202,7 +211,7 @@ func NewHybridScorer(config HybridConfig) *HybridScorer {
 //	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
 //		return inferenceEngine.GetSimilarity(source, target)
 //	})
-func (h *HybridScorer) SetSemanticScorer(fn SemanticScorerFunc) {
+func (h *HybridScorerFor[K]) SetSemanticScorer(fn SemanticScorerFuncFor[K]) {
 	h.semanticScorer = fn
 }
 
@@ -233,9 +242,9 @@ func (h *HybridScorer) SetSemanticScorer(fn SemanticScorerFunc) {
 //			pred.Metadata["topology_score"],
 //			pred.Metadata["semantic_score"])
 //	}
-func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.NodeID, topK int) []HybridPrediction {
+func (h *HybridScorerFor[K]) Predict(ctx context.Context, graph GraphFor[K], source K, topK int) []HybridPredictionFor[K] {
 	// Get topological predictions
-	var topologyPreds []Prediction
+	var topologyPreds []PredictionFor[K]
 
 	if h.config.UseEnsemble {
 		topologyPreds = h.ensembleTopology(graph, source, topK*3) // Get more for ensemble
@@ -253,7 +262,7 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 	}
 
 	// Compute semantic scores for candidates
-	hybridPreds := make([]HybridPrediction, 0, len(topologyPreds))
+	hybridPreds := make([]HybridPredictionFor[K], 0, len(topologyPreds))
 
 	for _, topoPred := range topologyPreds {
 		semanticScore := 0.0
@@ -270,7 +279,7 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 			continue
 		}
 
-		hybridPreds = append(hybridPreds, HybridPrediction{
+		hybridPreds = append(hybridPreds, HybridPredictionFor[K]{
 			TargetID:       topoPred.TargetID,
 			Score:          hybridScore,
 			TopologyScore:  topoPred.Score,
@@ -294,8 +303,10 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 }
 
 // HybridPrediction represents a prediction combining topology and semantics.
-type HybridPrediction struct {
-	TargetID       storage.NodeID
+type HybridPrediction = HybridPredictionFor[storage.NodeID]
+
+type HybridPredictionFor[K ~string] struct {
+	TargetID       K
 	Score          float64 // Combined hybrid score
 	TopologyScore  float64 // Raw topology score
 	SemanticScore  float64 // Raw semantic score
@@ -304,7 +315,7 @@ type HybridPrediction struct {
 }
 
 // singleTopology runs a single topology algorithm.
-func (h *HybridScorer) singleTopology(graph Graph, source storage.NodeID, k int) []Prediction {
+func (h *HybridScorerFor[K]) singleTopology(graph GraphFor[K], source K, k int) []PredictionFor[K] {
 	switch algorithm := h.config.TopologyAlgorithm; algorithm {
 	case "common_neighbors", "jaccard", "adamic_adar", "preferential_attachment", "resource_allocation":
 		return h.topology(algorithm, graph, source, k)
@@ -318,7 +329,7 @@ func (h *HybridScorer) singleTopology(graph Graph, source storage.NodeID, k int)
 //
 // This runs all 5 topology algorithms and blends their scores using
 // configured weights. More robust than single algorithm, but slower.
-func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k int) []Prediction {
+func (h *HybridScorerFor[K]) ensembleTopology(graph GraphFor[K], source K, k int) []PredictionFor[K] {
 	// Run all algorithms
 	// Every candidate of every algorithm, so a pair's ensemble score doesn't
 	// depend on the other candidates; k applies to the ensemble.
@@ -341,7 +352,7 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 	}
 
 	// Aggregate scores
-	aggregated := make(map[storage.NodeID]float64)
+	aggregated := make(map[K]float64)
 
 	for _, pred := range cn {
 		aggregated[pred.TargetID] += h.ensembleWeights["common_neighbors"] * pred.Score
@@ -360,9 +371,9 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 	}
 
 	// Convert to predictions
-	predictions := make([]Prediction, 0, len(aggregated))
+	predictions := make([]PredictionFor[K], 0, len(aggregated))
 	for nodeID, score := range aggregated {
-		predictions = append(predictions, Prediction{
+		predictions = append(predictions, PredictionFor[K]{
 			TargetID:  nodeID,
 			Score:     score,
 			Algorithm: "ensemble",
@@ -381,7 +392,7 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 }
 
 // normalizeScores normalizes prediction scores to [0, 1] range.
-func (h *HybridScorer) normalizeScores(predictions []Prediction) []Prediction {
+func (h *HybridScorerFor[K]) normalizeScores(predictions []PredictionFor[K]) []PredictionFor[K] {
 	if len(predictions) == 0 {
 		return predictions
 	}
@@ -419,7 +430,7 @@ func (h *HybridScorer) normalizeScores(predictions []Prediction) []Prediction {
 // explainPrediction describes both scores, each by its band: strong (above
 // 0.6), moderate (above 0.3), weak (above 0) or none, so the text follows
 // the numbers beside it ("Strong structural connection, no semantic match").
-func (h *HybridScorer) explainPrediction(topoScore, semanticScore float64) string {
+func (h *HybridScorerFor[K]) explainPrediction(topoScore, semanticScore float64) string {
 	return scoreBand(topoScore, "Strong structural connection", "Moderate structural connection", "Weak structural connection", "No structural connection") +
 		", " + scoreBand(semanticScore, "strong semantic similarity", "moderate semantic similarity", "weak semantic similarity", "no semantic match")
 }

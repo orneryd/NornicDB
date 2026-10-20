@@ -66,6 +66,9 @@ type RemoteCypherMode interface{ ResolvedWriteMode() (write, known bool) }
 // RemoteEngine implements Engine by forwarding operations to a remote NornicDB instance
 // via Bolt protocol (preferred) or HTTP tx API (fallback), auto-detected from the URI scheme.
 type RemoteEngine struct {
+	sourceKey string
+	database  string
+
 	transport remoteTransport
 	schema    *SchemaManager
 }
@@ -111,6 +114,8 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 	}
 
 	return &RemoteEngine{
+		sourceKey: PhysicalLocationKey(uri, database, true),
+		database:  database,
 		transport: transport,
 		schema:    NewSchemaManager(),
 	}, nil
@@ -1468,7 +1473,11 @@ func (r *RemoteEngine) QueryCypher(ctx context.Context, statement string, params
 		ctx, cancel = defaultCtx()
 		defer cancel()
 	}
-	return r.transport.queryWithColumns(ctx, statement, params)
+	columns, rows, err := r.transport.queryWithColumns(ctx, statement, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	return columns, BindRemoteRowsToSource(rows, r.PhysicalSourceKey()), nil
 }
 
 // BeginCypherTx opens an explicit remote transaction handle.

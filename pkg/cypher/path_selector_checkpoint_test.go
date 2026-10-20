@@ -113,7 +113,7 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 					search.expandForward(w)
 				case "backward":
 					search.begin(source)
-					key := pathSearchKey{node: target.ID, slot: int32(plan.forward.final)}
+					key := pathSearchKey{node: nativeGraphEntityKey(target), slot: int32(plan.forward.final)}
 					w := &pathSearchWalks{backward: map[pathSearchKey]int{key: 0}, nodes: map[pathSearchKey]*storage.Node{key: target}, succs: map[pathSearchKey][]pathSearchBack{}, back: []pathSearchKey{key}, forward: map[int32]int{}}
 					search.expandBackward(w)
 				case "trace":

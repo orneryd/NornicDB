@@ -18,7 +18,7 @@ import (
 // pathSearchWalkHop is how a walk from one end reached a node: from the node
 // before it, along edge.
 type pathSearchWalkHop struct {
-	from storage.NodeID
+	from graphEntityKey
 	edge *storage.Edge
 }
 
@@ -34,10 +34,10 @@ type pathSearchWalkReach struct {
 // wanted), and the nodes reached last.
 type pathSearchWalkSide struct {
 	direction string
-	reached   map[storage.NodeID]pathSearchWalkReach
-	more      map[storage.NodeID][]pathSearchWalkHop
-	frontier  []storage.NodeID
-	next      []storage.NodeID
+	reached   map[graphEntityKey]pathSearchWalkReach
+	more      map[graphEntityKey][]pathSearchWalkHop
+	frontier  []graphEntityKey
+	next      []graphEntityKey
 	radius    int
 }
 
@@ -103,15 +103,15 @@ func equalStrings(a, b []string) bool {
 // search can't answer, which leaves the pair to the general search.
 func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) ([]pipelineRow, bool) {
 	a := s.a
-	if viewport, ok := TemporalViewportFromContext(s.ctx); a.uniform == nil || source.ID == target.ID || ok && viewport.Enabled() {
+	if viewport, ok := TemporalViewportFromContext(s.ctx); a.uniform == nil || nativeEntitiesEqual(source, target) || ok && viewport.Enabled() {
 		return nil, false
 	}
 	if !s.chainHolds(a.chains[a.initial][a.uniformStart], source) || !s.slotHolds(a.final, target) {
 		return nil, true
 	}
-	forward := s.newWalkSide(source.ID, a.uniform.direction, groups)
-	backward := s.newWalkSide(target.ID, reverseDirection(a.uniform.direction), groups)
-	shortest, meets := -1, []storage.NodeID(nil)
+	forward := s.newWalkSide(nativeGraphEntityKey(source), a.uniform.direction, groups)
+	backward := s.newWalkSide(nativeGraphEntityKey(target), reverseDirection(a.uniform.direction), groups)
+	shortest, meets := -1, []graphEntityKey(nil)
 	for shortest < 0 && len(forward.frontier) > 0 && len(backward.frontier) > 0 && s.ctx.Err() == nil &&
 		(s.maxLength < 0 || forward.radius+backward.radius < s.maxLength) {
 		if len(forward.frontier) <= len(backward.frontier) {
@@ -163,11 +163,11 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 }
 
 // newWalkSide starts the walk search from the node id.
-func (s *pathSearch) newWalkSide(id storage.NodeID, direction string, groups bool) *pathSearchWalkSide {
-	side := &pathSearchWalkSide{direction: direction, reached: map[storage.NodeID]pathSearchWalkReach{id: {}},
-		frontier: []storage.NodeID{id}}
+func (s *pathSearch) newWalkSide(id graphEntityKey, direction string, groups bool) *pathSearchWalkSide {
+	side := &pathSearchWalkSide{direction: direction, reached: map[graphEntityKey]pathSearchWalkReach{id: {}},
+		frontier: []graphEntityKey{id}}
 	if groups {
-		side.more = map[storage.NodeID][]pathSearchWalkHop{}
+		side.more = map[graphEntityKey][]pathSearchWalkHop{}
 	}
 	return side
 }
@@ -179,7 +179,7 @@ func (s *pathSearch) newWalkSide(id storage.NodeID, direction string, groups boo
 // level would have met this side earlier. So one shortest walk ends the
 // level at the first node met, and every shortest walk needs the level
 // whole, for the hops into its nodes.
-func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (int, []storage.NodeID) {
+func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (int, []graphEntityKey) {
 	reached := side.radius + 1
 	shortest := -1
 	next := side.next[:0]
@@ -202,7 +202,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 				if !walkTypeMatches(s.a.uniform.types, edge.Type) {
 					continue
 				}
-				node := otherEnd(edge, id)
+				node := nativeOtherEndpointKey(edge, id)
 				known, seen := side.reached[node]
 				hop := pathSearchWalkHop{from: id, edge: edge}
 				switch {
@@ -214,7 +214,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 						shortest = reached + met.depth
 						if !groups {
 							side.frontier, side.radius = nil, reached
-							return shortest, []storage.NodeID{node}
+							return shortest, []graphEntityKey{node}
 						}
 					}
 				case groups && known.depth == reached:
@@ -229,7 +229,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 	if shortest < 0 {
 		return -1, nil
 	}
-	var meets []storage.NodeID
+	var meets []graphEntityKey
 	for _, node := range next {
 		if met, both := other.reached[node]; both && reached+met.depth == shortest {
 			meets = append(meets, node)
@@ -239,8 +239,8 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 }
 
 // walkEdges lists node's relationships in direction, in two lists.
-func (s *pathSearch) walkEdges(node storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
-	return incidentEdgeListsContext(s.ctx, s.e.storage, node, direction)
+func (s *pathSearch) walkEdges(node graphEntityKey, direction string) ([]*storage.Edge, []*storage.Edge, error) {
+	return nativeGraphIncidentEdges(s.ctx, s.e.storage, node, direction)
 }
 
 // walkTypeMatches reports whether a relationship of the type name takes a
@@ -259,7 +259,7 @@ func walkTypeMatches(types []string, name string) bool {
 
 // walkHops returns the shortest walks from side's end to node, each as its
 // hops from node back to the end: one, or all of them for groups.
-func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, groups bool) [][]pathSearchWalkHop {
+func (s *pathSearch) walkHops(side *pathSearchWalkSide, node graphEntityKey, groups bool) [][]pathSearchWalkHop {
 	if s.ctx.Err() != nil {
 		return nil
 	}
@@ -301,8 +301,8 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 	if s.ctx.Err() != nil {
 		return nil, true
 	}
-	nodes := map[storage.NodeID]*storage.Node{source.ID: source, target.ID: target}
-	var ids []storage.NodeID
+	nodes := map[graphEntityKey]*storage.Node{nativeGraphEntityKey(source): source, nativeGraphEntityKey(target): target}
+	var ids []graphEntityKey
 	for _, walk := range walks {
 		if s.ctx.Err() != nil {
 			return nil, true
@@ -311,7 +311,7 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 			if s.ctx.Err() != nil {
 				return nil, true
 			}
-			for _, id := range [2]storage.NodeID{edge.StartNode, edge.EndNode} {
+			for _, id := range nativeEdgeGraphEndpointKeys(edge) {
 				if _, known := nodes[id]; !known {
 					nodes[id] = nil
 					ids = append(ids, id)
@@ -320,7 +320,7 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 		}
 	}
 	if len(ids) > 0 {
-		loaded, err := s.e.storage.BatchGetNodes(ids)
+		loaded, err := nativeGraphBatchNodes(s.e.storage, ids)
 		if err != nil {
 			return nil, false
 		}
@@ -336,12 +336,12 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 			return nil, true
 		}
 		steps := make([]pathSearchPathStep, len(walk))
-		at := source.ID
+		at := nativeGraphEntityKey(source)
 		for index, edge := range walk {
 			if s.ctx.Err() != nil {
 				return nil, true
 			}
-			at = otherEnd(edge, at)
+			at = nativeOtherEndpointKey(edge, at)
 			steps[index] = pathSearchPathStep{edge: edge, node: nodes[at]}
 		}
 		path, ok := s.a.walkPathContext(s.ctx, source, steps)

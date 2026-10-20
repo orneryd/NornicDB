@@ -86,12 +86,17 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	typeSet := buildRelTypeSet(relMatch.Relationship.Types)
 	store := e.getStorage(ctx)
 	edgeIDs := make([]storage.EdgeID, 0)
-	seen := make(map[storage.EdgeID]struct{})
+	seen := make(map[storage.EntityIdentity]struct{})
 	for _, source := range sources {
 		if source == nil {
 			continue
 		}
-		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, source.ID, relMatch.Relationship.Direction)
+		sourceLookup, ok := nativeEntityStorageID(store, source)
+		if !ok {
+			continue
+		}
+		sourceID := storage.NodeID(sourceLookup)
+		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, sourceID, relMatch.Relationship.Direction)
 		if err != nil {
 			return nil, true, err
 		}
@@ -102,7 +107,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			if len(relMatch.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, relMatch.Relationship.Properties) {
 				continue
 			}
-			target, ok, err := e.boundRelationshipDeleteTargetNode(store, source.ID, edge, relMatch.Relationship.Direction)
+			target, ok, err := e.boundRelationshipDeleteTargetNode(store, sourceID, edge, relMatch.Relationship.Direction)
 			if err != nil {
 				return nil, true, err
 			}
@@ -125,11 +130,16 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 					continue
 				}
 			}
-			if _, exists := seen[edge.ID]; exists {
+			identity, _ := nativeEntityIdentity(edge)
+			if _, exists := seen[identity]; exists {
 				continue
 			}
-			seen[edge.ID] = struct{}{}
-			edgeIDs = append(edgeIDs, edge.ID)
+			edgeID, ok := nativeEntityStorageID(store, edge)
+			if !ok {
+				continue
+			}
+			seen[identity] = struct{}{}
+			edgeIDs = append(edgeIDs, storage.EdgeID(edgeID))
 			if limit > 0 && len(edgeIDs) >= limit {
 				break
 			}
@@ -274,23 +284,27 @@ func (e *StorageExecutor) boundRelationshipDeleteTargetNode(
 	edge *storage.Edge,
 	direction string,
 ) (*storage.Node, bool, error) {
+	start, end, ok := nativeEdgeStorageEndpoints(store, edge)
+	if !ok {
+		return nil, false, nil
+	}
 	var targetID storage.NodeID
 	switch direction {
 	case "outgoing":
-		if edge.StartNode != sourceID {
+		if start != sourceID {
 			return nil, false, nil
 		}
-		targetID = edge.EndNode
+		targetID = end
 	case "incoming":
-		if edge.EndNode != sourceID {
+		if end != sourceID {
 			return nil, false, nil
 		}
-		targetID = edge.StartNode
+		targetID = start
 	case "both":
-		if edge.StartNode == sourceID {
-			targetID = edge.EndNode
-		} else if edge.EndNode == sourceID {
-			targetID = edge.StartNode
+		if start == sourceID {
+			targetID = end
+		} else if end == sourceID {
+			targetID = start
 		} else {
 			return nil, false, nil
 		}

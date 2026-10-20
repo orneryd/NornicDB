@@ -11,10 +11,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type useAuthDBInfo struct{}
+type useAuthDBInfo struct{ composite bool }
 
-func (useAuthDBInfo) Name() string         { return "cmp" }
-func (useAuthDBInfo) Type() string         { return "composite" }
+func (useAuthDBInfo) Name() string { return "cmp" }
+func (info useAuthDBInfo) Type() string {
+	if info.composite {
+		return "composite"
+	}
+	return "standard"
+}
 func (useAuthDBInfo) Status() string       { return "online" }
 func (useAuthDBInfo) IsDefault() bool      { return false }
 func (useAuthDBInfo) CreatedAt() time.Time { return time.Now() }
@@ -27,7 +32,7 @@ type useAuthDBManager struct {
 func (m *useAuthDBManager) CreateDatabase(name string) error { return nil }
 func (m *useAuthDBManager) DropDatabase(name string) error   { return nil }
 func (m *useAuthDBManager) ListDatabases() []DatabaseInfoInterface {
-	return []DatabaseInfoInterface{useAuthDBInfo{}}
+	return []DatabaseInfoInterface{useAuthDBInfo{composite: m.IsCompositeDatabase("cmp")}}
 }
 func (m *useAuthDBManager) Exists(name string) bool                      { return true }
 func (m *useAuthDBManager) CreateAlias(alias, databaseName string) error { return nil }
@@ -56,9 +61,15 @@ func (m *useAuthDBManager) GetCompositeConstituents(compositeName string) ([]int
 	return []interface{}{}, nil
 }
 func (m *useAuthDBManager) ListCompositeDatabases() []DatabaseInfoInterface {
-	return []DatabaseInfoInterface{useAuthDBInfo{}}
+	if m.IsCompositeDatabase("cmp") {
+		return m.ListDatabases()
+	}
+	return nil
 }
-func (m *useAuthDBManager) IsCompositeDatabase(name string) bool { return name == "cmp" }
+func (m *useAuthDBManager) IsCompositeDatabase(name string) bool {
+	_, composite := m.engine.(*storage.CompositeEngine)
+	return name == "cmp" && composite
+}
 func (m *useAuthDBManager) GetStorageForUse(name string, authToken string) (interface{}, error) {
 	m.lastAuthToken = authToken
 	return m.engine, nil

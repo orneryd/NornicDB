@@ -179,8 +179,8 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				endNode := path.Nodes[len(path.Nodes)-1]
 
 				// Check if path matches any bound variables
-				startMatches := boundStartNode == nil || startNode.ID == boundStartNode.ID
-				endMatches := boundEndNode == nil || endNode.ID == boundEndNode.ID
+				startMatches := boundStartNode == nil || nativeEntitiesEqual(startNode, boundStartNode)
+				endMatches := boundEndNode == nil || nativeEntitiesEqual(endNode, boundEndNode)
 
 				if startMatches && endMatches {
 					pathContext := e.buildPathContext(path, matches)
@@ -236,7 +236,7 @@ func mergeNodeBindingsChecked(existing binding, current map[string]*storage.Node
 		merged[name] = node
 	}
 	for name, node := range current {
-		if previous := merged[name]; previous != nil && node != nil && previous.ID != node.ID {
+		if previous := merged[name]; previous != nil && node != nil && !nativeEntitiesEqual(previous, node) {
 			return nil, false
 		}
 		if merged[name] == nil {
@@ -262,7 +262,7 @@ func mergeRelBindingsChecked(existing, current map[string]*storage.Edge) (map[st
 	}
 	for k, v := range current {
 		prev := merged[k]
-		if prev != nil && v != nil && prev.ID != v.ID {
+		if prev != nil && v != nil && !nativeEntitiesEqual(prev, v) {
 			return nil, false
 		}
 		if prev == nil {
@@ -310,7 +310,7 @@ func sameRelationshipBinding(left, right interface{}) bool {
 	leftEdge, leftIsEdge := left.(*storage.Edge)
 	rightEdge, rightIsEdge := right.(*storage.Edge)
 	if leftIsEdge || rightIsEdge {
-		return leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID
+		return leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && nativeEntitiesEqual(leftEdge, rightEdge)
 	}
 	leftList, leftIsList := left.([]*storage.Edge)
 	rightList, rightIsList := right.([]*storage.Edge)
@@ -318,7 +318,7 @@ func sameRelationshipBinding(left, right interface{}) bool {
 		return false
 	}
 	for index := range leftList {
-		if leftList[index] == nil || rightList[index] == nil || leftList[index].ID != rightList[index].ID {
+		if leftList[index] == nil || rightList[index] == nil || !nativeEntitiesEqual(leftList[index], rightList[index]) {
 			return false
 		}
 	}
@@ -405,7 +405,7 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 		if edge == nil {
 			continue
 		}
-		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Properties: edge.Properties}
+		view[k] = &storage.Node{ID: storage.NodeID(edge.ID), Database: edge.Database, Properties: edge.Properties}
 	}
 	return view
 }
@@ -458,10 +458,10 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
-			return storage.NodeElementID(e.executionDatabaseName(ctx), node.ID)
+			return node.ElementID(e.executionDatabaseName(ctx))
 		}
 		if edge, ok := rels[inner].(*storage.Edge); ok && edge != nil {
-			return storage.RelationshipElementID(e.executionDatabaseName(ctx), edge.ID)
+			return edge.ElementID(e.executionDatabaseName(ctx))
 		}
 		return nil
 	}

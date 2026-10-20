@@ -515,7 +515,7 @@ func GraphAccess(manager DatabaseManagerInterface, graph string, canAccess func(
 // the physical target needs the statement's data permissions. An empty name
 // selects the request's execution database from the context.
 func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database, query string) error {
-	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
+	_, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
 	if !ok {
 		return AuthorizeQuery(ctx, query)
 	}
@@ -527,6 +527,16 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 		// Those statements decide data permissions on their own targets.
 		selectionOnly = startsWithKeywordFold(body, "USE") ||
 			e.dbManager != nil && e.dbManager.IsCompositeDatabase(database) && e.shouldUseFabricPlanner(body)
+	}
+	return e.authorizeDatabaseRequirements(ctx, database, QueryPermissionRequirements(query), selectionOnly)
+}
+
+// Physical source operations carry their typed read/write requirements to the
+// same permission owner as statements. No synthetic query text is classified.
+func (e *StorageExecutor) authorizeDatabaseRequirements(ctx context.Context, database string, requirements PermissionRequirements, selectionOnly bool) error {
+	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
+	if !ok {
+		return authorizePermissionRequirements(ctx, requirements)
 	}
 	if database == "" {
 		database = authorization.database
@@ -546,7 +556,7 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 			}
 			continue
 		}
-		if err := AuthorizeQuery(withExecutionDatabase(ctx, selected), query); err != nil {
+		if err := authorizePermissionRequirements(withExecutionDatabase(ctx, selected), requirements); err != nil {
 			return err
 		}
 	}
@@ -635,8 +645,20 @@ func AuthorizeQuery(ctx context.Context, query string) error {
 	if hasPermission == nil {
 		return nil
 	}
+	return enforcePermissionRequirements(ctx, QueryPermissionRequirements(query), hasPermission)
+}
+
+func authorizePermissionRequirements(ctx context.Context, requirements PermissionRequirements) error {
+	hasPermission := contextPermissions(ctx)
+	if hasPermission == nil {
+		return nil
+	}
+	return enforcePermissionRequirements(ctx, requirements, hasPermission)
+}
+
+func enforcePermissionRequirements(ctx context.Context, requirements PermissionRequirements, hasPermission func(string) bool) error {
 	allowsBoosted, _ := ctx.Value(procedureGrantCheckerKey{}).(func(string) bool)
-	if missing := MissingPermission(QueryPermissionRequirements(query), hasPermission, allowsBoosted); missing != "" {
+	if missing := MissingPermission(requirements, hasPermission, allowsBoosted); missing != "" {
 		return &PermissionDeniedError{Permission: missing}
 	}
 	return nil

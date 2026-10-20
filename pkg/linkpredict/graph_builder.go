@@ -111,6 +111,33 @@ type GraphBuilder struct {
 
 // NewGraphBuilder creates a new optimized graph builder.
 func NewGraphBuilder(engine storage.Engine, config *BuildConfig) *GraphBuilder {
+	config = normalizedBuildConfig(config)
+
+	return &GraphBuilder{
+		config:  config,
+		storage: engine,
+	}
+}
+
+// GraphReader supplies typed keys without rewriting native storage values.
+// The builder owns chunking, filtering, parallel work and cancellation.
+type GraphReader[K ~string, N, E any] interface {
+	AllNodes() ([]N, error)
+	NodeKey(N) K
+	NodeDisplay(K) string
+	GetOutgoingEdges(K) ([]E, error)
+	EdgeEndpoints(E) (K, K, string)
+}
+
+type nativeGraphReader struct{ storage.Engine }
+
+func (nativeGraphReader) NodeKey(node *storage.Node) storage.NodeID { return node.ID }
+func (nativeGraphReader) NodeDisplay(key storage.NodeID) string     { return string(key) }
+func (nativeGraphReader) EdgeEndpoints(edge *storage.Edge) (storage.NodeID, storage.NodeID, string) {
+	return edge.StartNode, edge.EndNode, edge.Type
+}
+
+func normalizedBuildConfig(config *BuildConfig) *BuildConfig {
 	if config == nil {
 		config = DefaultBuildConfig()
 	}
@@ -124,10 +151,14 @@ func NewGraphBuilder(engine storage.Engine, config *BuildConfig) *GraphBuilder {
 		config.CacheTTL = time.Hour
 	}
 
-	return &GraphBuilder{
-		config:  config,
-		storage: engine,
-	}
+	return config
+}
+
+// BuildGraphFromReader uses the same graph-construction kernel as GraphBuilder.
+// The caller owns its key domain; this entry point does not persist a cache.
+func BuildGraphFromReader[K ~string, N, E any](ctx context.Context, reader GraphReader[K, N, E], config *BuildConfig) (GraphFor[K], error) {
+	graph, _, _, err := buildGraphStreaming(ctx, reader, normalizedBuildConfig(config))
+	return graph, err
 }
 
 // Build constructs a graph with all optimizations.
@@ -184,32 +215,36 @@ func (b *GraphBuilder) Build(ctx context.Context) (Graph, error) {
 
 // buildStreaming constructs graph with chunked processing and parallel edge fetching.
 func (b *GraphBuilder) buildStreaming(ctx context.Context) (Graph, int, int, error) {
+	return buildGraphStreaming(ctx, nativeGraphReader{b.storage}, b.config)
+}
+
+func buildGraphStreaming[K ~string, N, E any](ctx context.Context, reader GraphReader[K, N, E], config *BuildConfig) (GraphFor[K], int, int, error) {
 	// Get all nodes (we need IDs, but won't hold all data at once)
-	nodes, err := b.storage.AllNodes()
+	nodes, err := reader.AllNodes()
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("failed to get nodes: %w", err)
 	}
 
 	totalNodes := len(nodes)
 	if totalNodes == 0 {
-		return make(Graph), 0, 0, nil
+		return make(GraphFor[K]), 0, 0, nil
 	}
 
 	// Pre-allocate graph with capacity hints
-	graph := make(Graph, totalNodes)
+	graph := make(GraphFor[K], totalNodes)
 	var graphMu sync.RWMutex
 	var totalEdges int64
 
 	// Initialize all node entries (fast, minimal memory per entry)
 	for _, node := range nodes {
-		graph[node.ID] = make(NodeSet)
+		graph[reader.NodeKey(node)] = make(NodeSetFor[K])
 	}
 
 	// Process nodes in chunks
 	startTime := time.Now()
 	processed := 0
 
-	for start := 0; start < totalNodes; start += b.config.ChunkSize {
+	for start := 0; start < totalNodes; start += config.ChunkSize {
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
@@ -217,14 +252,14 @@ func (b *GraphBuilder) buildStreaming(ctx context.Context) (Graph, int, int, err
 		default:
 		}
 
-		end := start + b.config.ChunkSize
+		end := start + config.ChunkSize
 		if end > totalNodes {
 			end = totalNodes
 		}
 		chunk := nodes[start:end]
 
 		// Process chunk with parallel edge fetching
-		edgesInChunk, err := b.processChunkParallel(ctx, graph, &graphMu, chunk)
+		edgesInChunk, err := processGraphChunkParallel(ctx, reader, config, graph, &graphMu, chunk)
 		if err != nil {
 			return nil, 0, 0, err
 		}
@@ -233,12 +268,12 @@ func (b *GraphBuilder) buildStreaming(ctx context.Context) (Graph, int, int, err
 		processed = end
 
 		// Progress callback
-		if b.config.ProgressCallback != nil {
-			b.config.ProgressCallback(processed, totalNodes, time.Since(startTime))
+		if config.ProgressCallback != nil {
+			config.ProgressCallback(processed, totalNodes, time.Since(startTime))
 		}
 
 		// GC hint to reduce peak memory
-		if b.config.GCAfterChunk {
+		if config.GCAfterChunk {
 			runtime.GC()
 		}
 	}
@@ -247,11 +282,13 @@ func (b *GraphBuilder) buildStreaming(ctx context.Context) (Graph, int, int, err
 }
 
 // processChunkParallel fetches edges for a chunk of nodes in parallel.
-func (b *GraphBuilder) processChunkParallel(
+func processGraphChunkParallel[K ~string, N, E any](
 	ctx context.Context,
-	graph Graph,
+	reader GraphReader[K, N, E],
+	config *BuildConfig,
+	graph GraphFor[K],
 	graphMu *sync.RWMutex,
-	chunk []*storage.Node,
+	chunk []N,
 ) (int, error) {
 	var wg sync.WaitGroup
 	var edgeCount int64
@@ -259,7 +296,7 @@ func (b *GraphBuilder) processChunkParallel(
 	var firstError sync.Once
 
 	// Semaphore to limit concurrent workers
-	sem := make(chan struct{}, b.config.WorkerCount)
+	sem := make(chan struct{}, config.WorkerCount)
 
 schedule:
 	for _, node := range chunk {
@@ -277,33 +314,36 @@ schedule:
 		}
 		wg.Add(1)
 
-		go func(nodeID storage.NodeID) {
+		go func(nodeID K) {
 			defer wg.Done()
 			defer func() { <-sem }() // Release semaphore
 
-			edges, err := b.storage.GetOutgoingEdges(nodeID)
+			edges, err := reader.GetOutgoingEdges(nodeID)
 			if err != nil {
-				firstError.Do(func() { readErr = fmt.Errorf("failed to read relationships of node %q: %w", nodeID, err) })
+				firstError.Do(func() {
+					readErr = fmt.Errorf("failed to read relationships of node %q: %w", reader.NodeDisplay(nodeID), err)
+				})
 				return
 			}
 
 			// Lock graph for writing
 			graphMu.Lock()
 			for _, edge := range edges {
-				if len(b.config.RelationshipTypes) > 0 && !slices.Contains(b.config.RelationshipTypes, edge.Type) {
+				start, end, relationshipType := reader.EdgeEndpoints(edge)
+				if len(config.RelationshipTypes) > 0 && !slices.Contains(config.RelationshipTypes, relationshipType) {
 					continue
 				}
-				graph[edge.StartNode][edge.EndNode] = struct{}{}
-				if b.config.Undirected {
+				graph[start][end] = struct{}{}
+				if config.Undirected {
 					// Ensure target node exists in graph
-					if _, exists := graph[edge.EndNode]; exists {
-						graph[edge.EndNode][edge.StartNode] = struct{}{}
+					if _, exists := graph[end]; exists {
+						graph[end][start] = struct{}{}
 					}
 				}
 				atomic.AddInt64(&edgeCount, 1)
 			}
 			graphMu.Unlock()
-		}(node.ID)
+		}(reader.NodeKey(node))
 	}
 
 	// Never return a partially built graph while a worker can still mutate it.

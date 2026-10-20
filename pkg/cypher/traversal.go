@@ -441,7 +441,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
 		for _, path := range paths {
-			if len(path.Nodes) > 0 && path.Nodes[0].ID == path.Nodes[len(path.Nodes)-1].ID {
+			if len(path.Nodes) > 0 && nativeEntitiesEqual(path.Nodes[0], path.Nodes[len(path.Nodes)-1]) {
 				filtered = append(filtered, path)
 			}
 		}
@@ -1888,7 +1888,7 @@ func (repeats chainNodeRepeats) consistent(path PathResult, position int) bool {
 	if repeats == nil || repeats[position] < 0 {
 		return true
 	}
-	return chainPositionNode(path, position).ID == chainPositionNode(path, repeats[position]).ID
+	return nativeEntitiesEqual(chainPositionNode(path, position), chainPositionNode(path, repeats[position]))
 }
 
 func chainPositionNode(path PathResult, position int) *storage.Node {
@@ -1902,7 +1902,7 @@ func chainPositionNode(path PathResult, position int) *storage.Node {
 func pathResultsReuseRelationship(left, right PathResult) bool {
 	for _, leftRelationship := range left.Relationships {
 		for _, rightRelationship := range right.Relationships {
-			if leftRelationship != nil && rightRelationship != nil && leftRelationship.ID == rightRelationship.ID {
+			if leftRelationship != nil && rightRelationship != nil && nativeEntitiesEqual(leftRelationship, rightRelationship) {
 				return true
 			}
 		}

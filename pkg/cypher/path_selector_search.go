@@ -1066,10 +1066,10 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 		rows = s.pair(source, target, count, groups, direct, bind)
 	} else {
 		if ends != nil {
-			s.ends = make(map[storage.NodeID]bool, len(ends))
+			s.ends = make(map[graphEntityKey]bool, len(ends))
 			s.retain(int64(len(ends)) * searchEntryBytes)
 			for _, node := range ends {
-				s.ends[node.ID] = true
+				s.ends[nativeGraphEntityKey(node)] = true
 			}
 		}
 		rows = s.run(source, count, groups, bind)
@@ -1283,17 +1283,7 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 
 // sameSelectedEntity reports whether two values are the same node or the
 // same relationship.
-func sameSelectedEntity(a, b interface{}) bool {
-	switch left := a.(type) {
-	case *storage.Node:
-		right, ok := b.(*storage.Node)
-		return ok && left != nil && right != nil && left.ID == right.ID
-	case *storage.Edge:
-		right, ok := b.(*storage.Edge)
-		return ok && left != nil && right != nil && left.ID == right.ID
-	}
-	return false
-}
+func sameSelectedEntity(a, b interface{}) bool { return nativeEntitiesEqual(a, b) }
 
 // reverseSlice reverses values in place.
 func reverseSlice[T any](values []T) {

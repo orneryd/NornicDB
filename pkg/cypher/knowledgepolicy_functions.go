@@ -37,6 +37,7 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
 }
 
 type resolvedEntity struct {
+	identity       storage.EntityIdentity
 	entityID       string
 	labels         []string
 	createdAtNanos int64
@@ -53,7 +54,8 @@ func (e *StorageExecutor) resolveEntityForDecay(
 	arg := strings.TrimSpace(argExpr)
 	if node, ok := nodes[arg]; ok {
 		return resolvedEntity{
-			entityID:       storage.QualifiedEntityID(e.storage, string(node.ID)),
+			identity:       node.Identity(),
+			entityID:       nativeEntityMetadataID(e.storage, node.Identity()),
 			labels:         node.Labels,
 			createdAtNanos: node.CreatedAt.UnixNano(),
 			versionAtNanos: node.UpdatedAt.UnixNano(),
@@ -61,7 +63,8 @@ func (e *StorageExecutor) resolveEntityForDecay(
 	}
 	if rel, ok := rels[arg]; ok {
 		return resolvedEntity{
-			entityID:       storage.QualifiedEntityID(e.storage, string(rel.ID)),
+			identity:       rel.Identity(),
+			entityID:       nativeEntityMetadataID(e.storage, rel.Identity()),
 			isEdge:         true,
 			edgeType:       rel.Type,
 			createdAtNanos: rel.CreatedAt.UnixNano(),
@@ -90,8 +93,13 @@ func (ent resolvedEntity) score(scorer *knowledgepolicy.Scorer, accessMeta *know
 // time: the statement's clock (the instant datetime.statement() reads), so
 // every decay function of one statement scores at one instant (#866). Outside
 // a statement it is the current time.
-func (e *StorageExecutor) getDecayContext(ctx context.Context) (be *storage.BadgerEngine, nowNanos int64, ok bool) {
-	be = unwrapBadgerEngine(e.storage)
+func (e *StorageExecutor) getDecayContext(ctx context.Context, entities ...*resolvedEntity) (be *storage.BadgerEngine, nowNanos int64, ok bool) {
+	store := e.getStorage(ctx)
+	if len(entities) > 0 && entities[0] != nil {
+		entity := entities[0]
+		store, entity.entityID = e.nativeEntityMetadataTarget(ctx, entity.identity)
+	}
+	be = unwrapBadgerEngine(store)
 	if be == nil {
 		return nil, 0, false
 	}
@@ -127,7 +135,7 @@ func (e *StorageExecutor) evalDecayScore(
 		return 1.0
 	}
 
-	be, nowNanos, ok := e.getDecayContext(ctx)
+	be, nowNanos, ok := e.getDecayContext(ctx, &ent)
 	if !ok {
 		return 1.0
 	}
@@ -177,7 +185,7 @@ func (e *StorageExecutor) evalDecay(
 		return decayDisabledMap(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback)
 	}
 
-	be, nowNanos, ok := e.getDecayContext(ctx)
+	be, nowNanos, ok := e.getDecayContext(ctx, &ent)
 	if !ok {
 		return decayDisabledMap(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback)
 	}
@@ -227,7 +235,7 @@ func (e *StorageExecutor) evalPolicy(
 		return minimalPolicyMap("")
 	}
 
-	be, _, ok := e.getDecayContext(ctx)
+	be, _, ok := e.getDecayContext(ctx, &ent)
 	if !ok {
 		return minimalPolicyMap(ent.entityID)
 	}

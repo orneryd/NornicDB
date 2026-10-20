@@ -10,7 +10,9 @@ import (
 // resource allocation, preferential attachment). GDS counts a node's
 // relationships, a parallel one again and a self-loop once; Graph.Degree
 // counts its distinct neighbours.
-type DegreeFunc func(storage.NodeID) int
+type DegreeFunc = DegreeFuncFor[storage.NodeID]
+
+type DegreeFuncFor[K ~string] func(K) int
 
 // TopologyScores is algorithm's raw score (not rescaled) for each candidate
 // of source: common_neighbors, jaccard, adamic_adar, resource_allocation or
@@ -19,6 +21,11 @@ type DegreeFunc func(storage.NodeID) int
 // attachment, every node that isn't a neighbour. degree gives the
 // degree-based scores' degrees; nil uses graph.Degree.
 func TopologyScores(algorithm string, graph Graph, degree DegreeFunc, source storage.NodeID) map[storage.NodeID]float64 {
+	return TopologyScoresFor(algorithm, graph, degree, source)
+}
+
+// TopologyScoresFor shares the topology kernel with typed graph readers.
+func TopologyScoresFor[K ~string](algorithm string, graph GraphFor[K], degree func(K) int, source K) map[K]float64 {
 	neighbors, exists := graph[source]
 	if !exists {
 		return nil
@@ -26,7 +33,7 @@ func TopologyScores(algorithm string, graph Graph, degree DegreeFunc, source sto
 	if degree == nil {
 		degree = graph.Degree
 	}
-	scores := make(map[storage.NodeID]float64)
+	scores := make(map[K]float64)
 	if algorithm == "preferential_attachment" {
 		sourceDegree := float64(degree(source))
 		for candidate := range graph {
@@ -37,7 +44,7 @@ func TopologyScores(algorithm string, graph Graph, degree DegreeFunc, source sto
 		}
 		return scores
 	}
-	candidates := make(map[storage.NodeID]struct{})
+	candidates := make(map[K]struct{})
 	for neighbor := range neighbors {
 		for candidate := range graph[neighbor] {
 			if _, isNeighbor := neighbors[candidate]; candidate == source || isNeighbor {
@@ -50,7 +57,7 @@ func TopologyScores(algorithm string, graph Graph, degree DegreeFunc, source sto
 		algorithm = "adamic_adar"
 	}
 	for candidate := range candidates {
-		if score := PairScore(algorithm, source, candidate, neighbors, graph[candidate], degree); score > 0 {
+		if score := PairScoreFor(algorithm, source, candidate, neighbors, graph[candidate], degree); score > 0 {
 			scores[candidate] = score
 		}
 	}
@@ -65,6 +72,12 @@ func TopologyScores(algorithm string, graph Graph, degree DegreeFunc, source sto
 // (Σ 1/degree) and preferential_attachment (degree(first) · degree(second)).
 // A node and itself share no neighbours, as GDS scores them.
 func PairScore(algorithm string, first, second storage.NodeID, a, b NodeSet, degree DegreeFunc) float64 {
+	return PairScoreFor(algorithm, first, second, a, b, degree)
+}
+
+// PairScoreFor is the same scoring kernel for a caller's typed graph keys.
+// Native storage IDs never need to carry an encoded physical-source key.
+func PairScoreFor[K ~string, S ~map[K]struct{}](algorithm string, first, second K, a, b S, degree func(K) int) float64 {
 	if algorithm == "preferential_attachment" {
 		return float64(degree(first) * degree(second))
 	}
@@ -110,12 +123,17 @@ func PairScore(algorithm string, first, second storage.NodeID, a, b NodeSet, deg
 // RankedPredictions is the top k of scores (every one for k below 1) with
 // their raw values, best first; ties go to the smaller node id.
 func RankedPredictions(scores map[storage.NodeID]float64, k int, algorithm string) []Prediction {
+	return RankedPredictionsFor(scores, k, algorithm)
+}
+
+// RankedPredictionsFor retains the reader's key type through ranking.
+func RankedPredictionsFor[K ~string](scores map[K]float64, k int, algorithm string) []PredictionFor[K] {
 	if scores == nil {
 		return nil // no such source
 	}
-	predictions := make([]Prediction, 0, len(scores))
+	predictions := make([]PredictionFor[K], 0, len(scores))
 	for nodeID, score := range scores {
-		predictions = append(predictions, Prediction{TargetID: nodeID, Score: score, Algorithm: algorithm, Reason: "Topological similarity"})
+		predictions = append(predictions, PredictionFor[K]{TargetID: nodeID, Score: score, Algorithm: algorithm, Reason: "Topological similarity"})
 	}
 	sortPredictions(predictions)
 	if k > 0 && len(predictions) > k {

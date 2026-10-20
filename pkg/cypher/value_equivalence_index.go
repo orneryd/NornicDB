@@ -12,7 +12,7 @@ type cypherEncodedKey string
 type cypherNaNKey uint64
 type cypherEntityKey struct {
 	kind byte
-	id   string
+	id   graphEntityKey
 }
 
 // cypherComparableKey normalizes scalars without formatting numbers or
@@ -26,12 +26,12 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 		if value == nil {
 			return nil, true
 		}
-		return cypherEntityKey{'n', string(value.ID)}, true
+		return cypherEntityKey{'n', nativeGraphEntityKey(value)}, true
 	case *storage.Edge:
 		if value == nil {
 			return nil, true
 		}
-		return cypherEntityKey{'r', string(value.ID)}, true
+		return cypherEntityKey{'r', nativeGraphEntityKey(value)}, true
 	case storage.RemoteEntityValue:
 		if value == nil {
 			return nil, true

@@ -367,14 +367,14 @@ func candidateAgreesWithRow(row, cand traversalOptRow, sharedNodeVars, sharedRel
 	for _, v := range sharedNodeVars {
 		left := row.nodes[v]
 		right := cand.nodes[v]
-		if left == nil || right == nil || left.ID != right.ID {
+		if left == nil || right == nil || !nativeEntitiesEqual(left, right) {
 			return false
 		}
 	}
 	for _, v := range sharedRelVars {
 		left := row.rels[v]
 		right := cand.rels[v]
-		if left == nil || right == nil || left.ID != right.ID {
+		if left == nil || right == nil || !nativeEntitiesEqual(left, right) {
 			return false
 		}
 	}

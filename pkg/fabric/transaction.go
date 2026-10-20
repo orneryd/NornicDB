@@ -43,13 +43,14 @@ type SubTransaction struct {
 //
 // This mirrors Neo4j's FabricTransaction.java.
 type FabricTransaction struct {
-	subTxns        map[string]*SubTransaction
-	writeShard     string // name of the single shard that has writes, or ""
-	mu             sync.Mutex
-	state          string // "open", "committed", "rolledback"
-	txID           string
-	lifetimeCtx    context.Context
-	lifetimeCancel context.CancelFunc
+	subTxns           map[string]*SubTransaction
+	coordinatorScopes map[string]bool
+	writeShard        string // name of the single shard that has writes, or ""
+	mu                sync.Mutex
+	state             string // "open", "committed", "rolledback"
+	txID              string
+	lifetimeCtx       context.Context
+	lifetimeCancel    context.CancelFunc
 }
 
 // NewFabricTransaction creates a new distributed transaction.
@@ -114,6 +115,11 @@ func (t *FabricTransaction) GetOrOpen(shardName string, isWrite bool) (*SubTrans
 
 	if t.state != "open" {
 		return nil, fmt.Errorf("transaction is %s", t.state)
+	}
+	if t.coordinatorScopes[shardName] {
+		// A logical scope carries dispatch context, never a physical vote or
+		// lifecycle callback. Its actual entity source joins independently.
+		return &SubTransaction{ShardName: shardName, State: "open"}, nil
 	}
 
 	// Check write constraint before anything else.

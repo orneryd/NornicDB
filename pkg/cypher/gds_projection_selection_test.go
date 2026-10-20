@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,9 +21,9 @@ func TestGDSProjectedEmptyTypeSelectionPoliciesShared(t *testing.T) {
 	empty, degreeEmpty, _, err := exec.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: "selection", SourceNode: "a", RelationshipTypes: []string{}})
 	require.NoError(t, err)
 	require.NotEqual(t, all, empty)
-	require.Empty(t, empty[storage.NodeID("a")])
-	require.Equal(t, 1, degreeAll(storage.NodeID("a")))
-	require.Equal(t, 0, degreeEmpty(storage.NodeID("a")))
+	require.Empty(t, empty[graphProjectionKey("a")])
+	require.Equal(t, 1, degreeAll(graphProjectionKey("a")))
+	require.Equal(t, 0, degreeEmpty(graphProjectionKey("a")))
 	projection, err := lookupGraphProjection("selection", "selection")
 	require.NoError(t, err)
 	fastAll, err := selectGDSSubgraph(projection, nil, nil, "")
@@ -75,8 +74,8 @@ func TestGDSNativeAggregationReaderParity(t *testing.T) {
 		require.Equal(t, []interface{}{float64(9007199254740992), nil, nil, 2.0}, values.Rows[0])
 		selected, degree, _, err := exec.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: graph, SourceNode: "a"})
 		require.NoError(t, err)
-		require.Contains(t, selected[storage.NodeID("a")], storage.NodeID("b"))
-		require.Equal(t, 1, degree(storage.NodeID("a")))
+		require.Contains(t, selected[graphProjectionKey("a")], graphProjectionKey("b"))
+		require.Equal(t, 1, degree(graphProjectionKey("a")))
 	}
 	left, err := run("CALL gds.fastRP.stream('nativeReaders', {embeddingDimension: 8, randomSeed: 42, propertyRatio: 1.0, featureProperties: ['features'], relationshipWeightProperty: 'w'})")
 	require.NoError(t, err)

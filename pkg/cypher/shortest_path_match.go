@@ -378,7 +378,7 @@ func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestP
 			return nil, errBoundShortestRelationships(shortestPathFunctionName(m.findAll))
 		}
 	}
-	if start.ID == end.ID && m.traversal.Relationship.MinHops > 0 {
+	if nativeEntitiesEqual(start, end) && m.traversal.Relationship.MinHops > 0 {
 		return nil, errShortestCommonEndpoints()
 	}
 	maxLength, ok := e.selectedPathLimit(ctx, m.plan, row)

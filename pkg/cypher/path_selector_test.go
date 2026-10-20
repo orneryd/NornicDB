@@ -209,7 +209,7 @@ func TestPathSelectorHelpers(t *testing.T) {
 	require.True(t, distinctNodeIDs(ids))
 	ids, ok = pathNodeIDs(map[string]interface{}{"nodes": []interface{}{a, b}})
 	require.True(t, ok)
-	require.Equal(t, []storage.NodeID{"a", "b"}, ids)
+	require.Equal(t, []graphEntityKey{"a", "b"}, ids)
 	_, ok = pathNodeIDs(map[string]interface{}{"nodes": []interface{}{"x"}})
 	require.False(t, ok)
 	_, ok = pathNodeIDs(map[string]interface{}{})

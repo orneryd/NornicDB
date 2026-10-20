@@ -80,16 +80,16 @@ type apocSequence struct {
 
 // apocExpansion is one apoc.path.* request.
 type apocExpansion struct {
-	starts          []*storage.Node
+	starts          []algorithmGraphNode
 	minLevel        int
 	maxLevel        int // -1: no maximum; below -1: no path
 	relationships   []apocRelationshipStep
 	labels          apocLabelFilter
 	sequence        *apocSequence
-	allowNodes      map[storage.NodeID]bool
-	denyNodes       map[storage.NodeID]bool
-	terminatorNodes map[storage.NodeID]bool
-	endNodes        map[storage.NodeID]bool
+	allowNodes      map[graphEntityKey]bool
+	denyNodes       map[graphEntityKey]bool
+	terminatorNodes map[graphEntityKey]bool
+	endNodes        map[graphEntityKey]bool
 	endsOnly        bool // only paths ending at a termination or end node
 	uniqueness      string
 	bfs             bool
@@ -125,7 +125,11 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 		}
 		return []*storage.Node{typed}, nil
 	case string:
-		node, err := e.getQueryNode(e.storage, storage.NodeID(normalizeNodeIDValue(typed).(string)))
+		id, valid := graphEntityLookupID(e.storage, typed, e.graphIdentityDomain())
+		if !valid {
+			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
+		}
+		node, err := e.getQueryNode(e.storage, id)
 		if err != nil || node == nil {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
@@ -251,8 +255,8 @@ func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interfac
 			if err != nil {
 				return err
 			}
-			set := make(map[storage.NodeID]bool, len(nodes))
-			for _, node := range nodes {
+			set := make(map[graphEntityKey]bool, len(nodes))
+			for _, node := range algorithmNativeNodes(nodes, e.storage) {
 				set[node.ID] = true
 			}
 			switch key {
@@ -417,7 +421,7 @@ func nodeHasLabelIn(node *storage.Node, labels map[string]bool) bool {
 
 // verdict is how the filters treat a node reached at depth: whether a path
 // ending there is returned, and whether expansion continues past it.
-func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand bool, err error) {
+func (x *apocExpansion) verdict(node algorithmGraphNode, depth int) (include, expand bool, err error) {
 	if x.maxLevel < -1 {
 		return false, false, nil
 	}
@@ -429,19 +433,19 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 	if err != nil {
 		return false, false, err
 	}
-	if x.denyNodes[node.ID] || nodeHasLabelIn(node, labels.deny) {
+	if x.denyNodes[node.ID] || nodeHasLabelIn(node.value, labels.deny) {
 		return false, false, nil
 	}
-	if x.terminatorNodes[node.ID] || nodeHasLabelIn(node, labels.terminate) {
+	if x.terminatorNodes[node.ID] || nodeHasLabelIn(node.value, labels.terminate) {
 		if depth < x.minLevel {
 			return false, expand, nil
 		}
 		return include, false, nil
 	}
-	if x.endNodes[node.ID] || nodeHasLabelIn(node, labels.end) {
+	if x.endNodes[node.ID] || nodeHasLabelIn(node.value, labels.end) {
 		return include, expand, nil
 	}
-	if (labels.allow != nil && !nodeHasLabelIn(node, labels.allow)) || (x.allowNodes != nil && !x.allowNodes[node.ID]) {
+	if (labels.allow != nil && !nodeHasLabelIn(node.value, labels.allow)) || (x.allowNodes != nil && !x.allowNodes[node.ID]) {
 		return false, false, nil
 	}
 	return include && !x.endsOnly, expand, nil
@@ -450,15 +454,15 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 // apocSteps lists the relationships the filter steps follow from node: no
 // steps follow every relationship. The path algorithms (dijkstra, aStar,
 // allSimplePaths) read their relTypesAndDirections through it too (#1185).
-func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+func (e *algorithmGraphExecutor) apocSteps(node graphEntityKey, steps []apocRelationshipStep) []algorithmGraphEdge {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
 	out, _ := e.storage.GetOutgoingEdges(node)
 	in, _ := e.storage.GetIncomingEdges(node)
-	var edges []*storage.Edge
-	seen := make(map[storage.EdgeID]bool)
-	take := func(edge *storage.Edge, step apocRelationshipStep) {
+	var edges []algorithmGraphEdge
+	seen := make(map[graphEntityKey]bool)
+	take := func(edge algorithmGraphEdge, step apocRelationshipStep) {
 		if step.follows(edge, node) && !seen[edge.ID] {
 			seen[edge.ID] = true
 			edges = append(edges, edge)
@@ -480,17 +484,14 @@ func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshi
 }
 
 // otherEnd is the node edge leads to from the node from.
-func otherEnd(edge *storage.Edge, from storage.NodeID) storage.NodeID {
-	if edge.StartNode == from {
-		return edge.EndNode
-	}
-	return edge.StartNode
+func algorithmOtherEnd(edge algorithmGraphEdge, from graphEntityKey) graphEntityKey {
+	return otherEndpoint(edge.StartNode, edge.EndNode, from)
 }
 
 // follows reports whether this filter entry follows edge from the node
 // from: its type matches (any, for "") and, for a direction, from is the
 // edge's start (out) or end (in).
-func (step apocRelationshipStep) follows(edge *storage.Edge, from storage.NodeID) bool {
+func (step apocRelationshipStep) follows(edge algorithmGraphEdge, from graphEntityKey) bool {
 	if step.relType != "" && edge.Type != step.relType {
 		return false
 	}
@@ -508,8 +509,8 @@ func (step apocRelationshipStep) follows(edge *storage.Edge, from storage.NodeID
 // frontier shares each path's prefix; only a returned path is copied out
 // (path).
 type apocStep struct {
-	node   *storage.Node
-	edge   *storage.Edge // nil at the start node
+	node   algorithmGraphNode
+	edge   *algorithmGraphEdge // nil at the start node
 	parent *apocStep
 	depth  int
 }
@@ -518,9 +519,9 @@ type apocStep struct {
 func (step *apocStep) path() PathResult {
 	path := PathResult{Nodes: make([]*storage.Node, step.depth+1), Relationships: make([]*storage.Edge, step.depth), Length: step.depth}
 	for at := step; at != nil; at = at.parent {
-		path.Nodes[at.depth] = at.node
+		path.Nodes[at.depth] = algorithmNodeValue(at.node)
 		if at.edge != nil {
-			path.Relationships[at.depth-1] = at.edge
+			path.Relationships[at.depth-1] = algorithmEdgeValue(*at.edge)
 		}
 	}
 	return path
@@ -529,12 +530,13 @@ func (step *apocStep) path() PathResult {
 // runApocExpansion expands every start node and returns the ends of the
 // paths the filters include, in BFS or DFS order, at most limit of them.
 func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion) ([]*apocStep, error) {
+	graph := e.algorithmGraph(ctx)
 	var results []*apocStep
 	if x.limit == 0 {
 		return results, nil
 	}
-	globalNodes := make(map[storage.NodeID]bool)
-	globalRelationships := make(map[storage.EdgeID]bool)
+	globalNodes := make(map[graphEntityKey]bool)
+	globalRelationships := make(map[graphEntityKey]bool)
 	for _, start := range x.starts {
 		// Every start node starts its own path, even one already reached.
 		frontier := []*apocStep{{node: start}}
@@ -566,7 +568,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			if err != nil {
 				return nil, err
 			}
-			edges := e.apocSteps(step.node.ID, filter)
+			edges := graph.apocSteps(step.node.ID, filter)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
 				// A path never turns straight back along the relationship
@@ -581,8 +583,8 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 				if !apocUnique(x.uniqueness, step, edge, otherID, globalNodes, globalRelationships) {
 					continue
 				}
-				other, err := e.getQueryNode(e.storage, otherID)
-				if err != nil || other == nil {
+				other, err := graph.storage.node(otherID)
+				if err != nil {
 					continue
 				}
 				switch x.uniqueness {
@@ -591,7 +593,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 				case "RELATIONSHIP_GLOBAL":
 					globalRelationships[edge.ID] = true
 				}
-				next = append(next, &apocStep{node: other, edge: edge, parent: step, depth: step.depth + 1})
+				next = append(next, &apocStep{node: other, edge: &edge, parent: step, depth: step.depth + 1})
 			}
 			if x.bfs {
 				frontier = append(frontier, next...)
@@ -607,7 +609,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 
 // apocUnique applies the uniqueness rule to following edge from the path
 // ending at step to otherID.
-func apocUnique(uniqueness string, step *apocStep, edge *storage.Edge, otherID storage.NodeID, globalNodes map[storage.NodeID]bool, globalRelationships map[storage.EdgeID]bool) bool {
+func apocUnique(uniqueness string, step *apocStep, edge algorithmGraphEdge, otherID graphEntityKey, globalNodes map[graphEntityKey]bool, globalRelationships map[graphEntityKey]bool) bool {
 	switch uniqueness {
 	case "NODE_GLOBAL":
 		return !globalNodes[otherID]
@@ -661,7 +663,7 @@ func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedu
 		if err != nil {
 			return nil, err
 		}
-		x.starts = starts
+		x.starts = algorithmNativeNodes(starts, e.storage)
 	}
 	if len(args) > 1 && args[1] != nil {
 		config, ok := args[1].(map[string]interface{})
@@ -700,16 +702,20 @@ func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, ro
 // callApocPathExpandConfig implements apoc.path.expandConfig(start, config)
 // :: (path).
 func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e = e.cloneForStorage(e.getStorage(ctx))
 	x, err := e.apocExpansionFromArguments(args, apocPathExpandConfigProcedure)
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
+		return []interface{}{e.pathToMap(end.path())}
+	}, "path")
 }
 
 // callApocPathExpand implements apoc.path.expand(start, relationshipFilter,
 // labelFilter, minLevel, maxLevel) :: (path).
 func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e = e.cloneForStorage(e.getStorage(ctx))
 	// Null filters are none; null levels fail, as in APOC.
 	config := map[string]interface{}{}
 	for index, key := range []string{"", "relationshipFilter", "labelFilter", "minLevel", "maxLevel"} {
@@ -725,33 +731,40 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
+		return []interface{}{e.pathToMap(end.path())}
+	}, "path")
 }
 
 // callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
 // config) :: (node).
 func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e = e.cloneForStorage(e.getStorage(ctx))
 	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphNodesProcedure)
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{end.node} }, "node")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{algorithmNodeValue(end.node)} }, "node")
 }
 
 // callApocPathSpanningTree implements apoc.path.spanningTree(start, config)
 // :: (path): a path from the start to every node reached once.
 func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e = e.cloneForStorage(e.getStorage(ctx))
 	x, err := e.apocExpansionFromArguments(args, apocPathSpanningTreeProcedure)
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} {
+		return []interface{}{e.pathToMap(end.path())}
+	}, "path")
 }
 
 // callApocPathSubgraphAll implements apoc.path.subgraphAll(start, config) ::
 // (nodes, relationships): the nodes subgraphNodes returns and every
 // relationship between two of them.
 func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e = e.cloneForStorage(e.getStorage(ctx))
 	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure)
 	if err != nil {
 		return nil, err
@@ -761,20 +774,21 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 		return nil, err
 	}
 	nodes := make([]interface{}, 0, len(ends))
-	members := make(map[storage.NodeID]bool, len(ends))
+	graph := e.algorithmGraph(ctx)
+	members := make(map[graphEntityKey]bool, len(ends))
 	for _, end := range ends {
 		node := end.node
 		if !members[node.ID] {
 			members[node.ID] = true
-			nodes = append(nodes, node)
+			nodes = append(nodes, algorithmNodeValue(node))
 		}
 	}
 	relationships := make([]interface{}, 0)
 	for _, value := range nodes {
-		edges, _ := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
+		edges, _ := graph.storage.GetOutgoingEdges(graph.storage.nodeKey(value.(*storage.Node)))
 		for _, edge := range edges {
 			if members[edge.EndNode] {
-				relationships = append(relationships, edge)
+				relationships = append(relationships, algorithmEdgeValue(edge))
 			}
 		}
 	}

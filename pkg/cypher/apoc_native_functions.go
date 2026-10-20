@@ -153,10 +153,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		}
 	}
 	steps := parseApocRelationshipFilter(filter)
-	matches := func(edge *storage.Edge, direction string) bool {
-		if edge == nil {
-			return false
-		}
+	matches := func(edge algorithmGraphEdge, direction string) bool {
 		if len(steps) == 0 {
 			return true
 		}
@@ -167,13 +164,19 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		}
 		return false
 	}
-	outgoing, incoming, err := incidentEdgeListsContext(ctx, e.storage, node.ID, "both")
+	store, err := e.graphFunctionStorage(e.databaseName(), e.getStorage(ctx))
+	if err != nil {
+		return nil, err
+	}
+	graph := &algorithmGraphStorage{source: store, reader: store, scope: e.graphIdentityScope}
+	outgoing, incoming, err := graph.incidentEdges(ctx, graph.nodeKey(node))
 	if err != nil {
 		return nil, err
 	}
 	var count int64
+	targetKey := graph.nodeKey(target)
 	for _, pair := range []struct {
-		edges     []*storage.Edge
+		edges     []algorithmGraphEdge
 		direction string
 	}{{outgoing, "out"}, {incoming, "in"}} {
 		for i, edge := range pair.edges {
@@ -188,7 +191,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 				if pair.direction == "in" {
 					other = edge.StartNode
 				}
-				if other == target.ID {
+				if other == targetKey {
 					return true, nil
 				}
 			} else {

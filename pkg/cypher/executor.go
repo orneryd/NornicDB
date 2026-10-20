@@ -453,6 +453,7 @@ type StorageExecutor struct {
 	syntaxValidationCache *syntaxValidationCache
 	syntaxValidationOnce  sync.Once
 
+	graphIdentityScope *graphIdentityScope
 	// log is the structured logger used for slow-query and operational log
 	// emission. Threaded via SetLogger after construction (D-01 non-breaking
 	// pattern — NewStorageExecutor signature unchanged). Nil-safe via the
@@ -549,6 +550,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		lookupCacheMu = txWrapper.txNodeLookupCacheMu
 	}
 	return &StorageExecutor{
+		graphIdentityScope:             e.graphIdentityScope,
 		parser:                         e.parser,
 		storage:                        override,
 		propertyDecayEngine:            unwrapBadgerEngine(override),

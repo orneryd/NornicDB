@@ -6,16 +6,15 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Priority Queue for Dijkstra/A*
 type pathItem struct {
-	nodeID storage.NodeID
+	nodeID graphEntityKey
 	cost   float64
-	path   []storage.NodeID
+	path   []graphEntityKey
 	index  int
 }
 
@@ -41,20 +40,11 @@ func (pq *priorityQueue) Pop() interface{} {
 	return item
 }
 
-// getNodeEdges returns all edges for a node.
-func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
-	var result []*storage.Edge
-	outgoing, _ := e.storage.GetOutgoingEdges(nodeID)
-	incoming, _ := e.storage.GetIncomingEdges(nodeID)
-	result = append(result, outgoing...)
-	result = append(result, incoming...)
-	return result
-}
-
 // callApocAlgoDijkstra implements Dijkstra's shortest path.
 func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	graph := e.algorithmGraph(ctx)
 	const procedure = "apoc.algo.dijkstra"
-	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
+	startID, endID, steps, err := graph.pathAlgorithmArguments(procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -72,20 +62,23 @@ func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []inter
 			return nil, procedureArgumentTypeError(procedure, "defaultWeight", "FLOAT", value)
 		}
 	}
-	path, weight := e.dijkstra(startID, endID, steps, weightProp, defaultWeight)
+	path, weight := graph.dijkstra(startID, endID, steps, weightProp, defaultWeight)
 	if path == nil {
 		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
 	}
-	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{path, weight}}}, nil
+	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{graph.storage.outputPath(path), weight}}}, nil
 }
 
-func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]storage.NodeID, float64) {
-	dist := make(map[storage.NodeID]float64)
+func (e *algorithmGraphExecutor) dijkstra(startID, endID graphEntityKey, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]graphEntityKey, float64) {
+	if startID == "" || endID == "" {
+		return nil, 0
+	}
+	dist := make(map[graphEntityKey]float64)
 	dist[startID] = 0
 	pq := &priorityQueue{}
 	heap.Init(pq)
-	heap.Push(pq, &pathItem{nodeID: startID, cost: 0, path: []storage.NodeID{startID}})
-	visited := make(map[storage.NodeID]bool)
+	heap.Push(pq, &pathItem{nodeID: startID, cost: 0, path: []graphEntityKey{startID}})
+	visited := make(map[graphEntityKey]bool)
 
 	for pq.Len() > 0 {
 		current := heap.Pop(pq).(*pathItem)
@@ -97,7 +90,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 			return current.path, current.cost
 		}
 		for _, edge := range e.apocSteps(current.nodeID, steps) {
-			neighbor := otherEnd(edge, current.nodeID)
+			neighbor := algorithmOtherEnd(edge, current.nodeID)
 			if visited[neighbor] {
 				continue
 			}
@@ -112,7 +105,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 			newDist := dist[current.nodeID] + weight
 			if oldDist, exists := dist[neighbor]; !exists || newDist < oldDist {
 				dist[neighbor] = newDist
-				newPath := append([]storage.NodeID{}, current.path...)
+				newPath := append([]graphEntityKey{}, current.path...)
 				newPath = append(newPath, neighbor)
 				heap.Push(pq, &pathItem{nodeID: neighbor, cost: newDist, path: newPath})
 			}
@@ -123,8 +116,9 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 
 // callApocAlgoAStar implements A* pathfinding.
 func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	graph := e.algorithmGraph(ctx)
 	const procedure = "apoc.algo.aStar"
-	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
+	startID, endID, steps, err := graph.pathAlgorithmArguments(procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -140,53 +134,53 @@ func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interfac
 	if err != nil {
 		return nil, err
 	}
-	path, weight := e.astar(startID, endID, steps, weightProp, latProp, lonProp)
+	path, weight := graph.astar(startID, endID, steps, weightProp, latProp, lonProp)
 	if path == nil {
 		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
 	}
-	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{path, weight}}}, nil
+	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{graph.storage.outputPath(path), weight}}}, nil
 }
 
-func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]storage.NodeID, float64) {
-	endNode, err := e.getQueryNode(e.storage, endID)
+func (e *algorithmGraphExecutor) astar(startID, endID graphEntityKey, steps []apocRelationshipStep, weightProp, latProp, lonProp string) ([]graphEntityKey, float64) {
+	endNode, err := e.storage.node(endID)
 	if err != nil {
 		return nil, 0
 	}
 	endLat, endLon := 0.0, 0.0
-	if lat, ok := endNode.Properties[latProp]; ok {
+	if lat, ok := endNode.value.Properties[latProp]; ok {
 		if f, ok := toFloat64(lat); ok {
 			endLat = f
 		}
 	}
-	if lon, ok := endNode.Properties[lonProp]; ok {
+	if lon, ok := endNode.value.Properties[lonProp]; ok {
 		if f, ok := toFloat64(lon); ok {
 			endLon = f
 		}
 	}
-	heuristic := func(nodeID storage.NodeID) float64 {
-		node, err := e.getQueryNode(e.storage, nodeID)
+	heuristic := func(nodeID graphEntityKey) float64 {
+		node, err := e.storage.node(nodeID)
 		if err != nil {
 			return 0
 		}
 		lat, lon := 0.0, 0.0
-		if l, ok := node.Properties[latProp]; ok {
+		if l, ok := node.value.Properties[latProp]; ok {
 			if f, ok := toFloat64(l); ok {
 				lat = f
 			}
 		}
-		if l, ok := node.Properties[lonProp]; ok {
+		if l, ok := node.value.Properties[lonProp]; ok {
 			if f, ok := toFloat64(l); ok {
 				lon = f
 			}
 		}
 		return math.Sqrt((lat-endLat)*(lat-endLat) + (lon-endLon)*(lon-endLon))
 	}
-	gScore := make(map[storage.NodeID]float64)
+	gScore := make(map[graphEntityKey]float64)
 	gScore[startID] = 0
 	pq := &priorityQueue{}
 	heap.Init(pq)
-	heap.Push(pq, &pathItem{nodeID: startID, cost: heuristic(startID), path: []storage.NodeID{startID}})
-	visited := make(map[storage.NodeID]bool)
+	heap.Push(pq, &pathItem{nodeID: startID, cost: heuristic(startID), path: []graphEntityKey{startID}})
+	visited := make(map[graphEntityKey]bool)
 
 	for pq.Len() > 0 {
 		current := heap.Pop(pq).(*pathItem)
@@ -198,7 +192,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 		}
 		visited[current.nodeID] = true
 		for _, edge := range e.apocSteps(current.nodeID, steps) {
-			neighbor := otherEnd(edge, current.nodeID)
+			neighbor := algorithmOtherEnd(edge, current.nodeID)
 			if visited[neighbor] {
 				continue
 			}
@@ -213,7 +207,7 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 			tentativeG := gScore[current.nodeID] + weight
 			if oldG, exists := gScore[neighbor]; !exists || tentativeG < oldG {
 				gScore[neighbor] = tentativeG
-				newPath := append([]storage.NodeID{}, current.path...)
+				newPath := append([]graphEntityKey{}, current.path...)
 				newPath = append(newPath, neighbor)
 				heap.Push(pq, &pathItem{nodeID: neighbor, cost: tentativeG + heuristic(neighbor), path: newPath})
 			}
@@ -225,8 +219,9 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, steps []apocRelat
 // callApocAlgoAllSimplePaths finds all simple paths of at most maxNodes
 // relationships, as in APOC (#1185): below 1, none.
 func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	graph := e.algorithmGraph(ctx)
 	const procedure = "apoc.algo.allSimplePaths"
-	startID, endID, steps, err := pathAlgorithmArguments(procedure, args)
+	startID, endID, steps, err := graph.pathAlgorithmArguments(procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -234,27 +229,30 @@ func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args [
 	if err != nil {
 		return nil, err
 	}
-	var paths [][]storage.NodeID
+	var paths [][]graphEntityKey
 	if maxNodes > 0 {
-		paths = e.findAllSimplePaths(startID, endID, steps, int(maxNodes))
+		paths = graph.findAllSimplePaths(startID, endID, steps, int(maxNodes))
 	}
 	rows := make([][]interface{}, len(paths))
 	for i, path := range paths {
-		rows[i] = []interface{}{path}
+		rows[i] = []interface{}{graph.storage.outputPath(path)}
 	}
 	return &ExecuteResult{Columns: []string{"path"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, steps []apocRelationshipStep, maxDepth int) [][]storage.NodeID {
-	var result [][]storage.NodeID
-	visited := make(map[storage.NodeID]bool)
-	var dfs func(current storage.NodeID, path []storage.NodeID, depth int)
-	dfs = func(current storage.NodeID, path []storage.NodeID, depth int) {
+func (e *algorithmGraphExecutor) findAllSimplePaths(startID, endID graphEntityKey, steps []apocRelationshipStep, maxDepth int) [][]graphEntityKey {
+	if startID == "" || endID == "" {
+		return nil
+	}
+	var result [][]graphEntityKey
+	visited := make(map[graphEntityKey]bool)
+	var dfs func(current graphEntityKey, path []graphEntityKey, depth int)
+	dfs = func(current graphEntityKey, path []graphEntityKey, depth int) {
 		if depth > maxDepth {
 			return
 		}
 		if current == endID {
-			pathCopy := make([]storage.NodeID, len(path))
+			pathCopy := make([]graphEntityKey, len(path))
 			copy(pathCopy, path)
 			result = append(result, pathCopy)
 			return
@@ -262,26 +260,25 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, step
 		visited[current] = true
 		defer func() { visited[current] = false }()
 		for _, edge := range e.apocSteps(current, steps) {
-			neighbor := otherEnd(edge, current)
+			neighbor := algorithmOtherEnd(edge, current)
 			if visited[neighbor] {
 				continue
 			}
 			dfs(neighbor, append(path, neighbor), depth+1)
 		}
 	}
-	dfs(startID, []storage.NodeID{startID}, 0)
+	dfs(startID, []graphEntityKey{startID}, 0)
 	return result
 }
 
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.algo.pageRank"
-	nodes, err := e.algorithmNodes(procedure, args)
+	graph, nodes, config, err := e.readAlgorithmGraph(procedure, args)
 	if err != nil {
 		return nil, err
 	}
 	// The config map: iterations (default 20) and dampingFactor (0.85).
-	config := algorithmConfig(args)
 	iterations, damping := 20, 0.85
 	if n, ok := fastRPConfigInt(config["iterations"]); ok && n > 0 {
 		iterations = n
@@ -289,25 +286,25 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 	if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
 		damping = d
 	}
-	scores := e.computePageRank(nodes, damping, iterations)
-	rows := algorithmRows(nodes, scores)
+	scores := graph.computePageRank(nodes, damping, iterations)
+	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
 // computePageRank ranks the given nodes over the relationships between
 // them: a relationship to a node outside the set carries no score, and no
 // outside node is ranked (#1164).
-func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
+func (e *algorithmGraphExecutor) computePageRank(nodes []algorithmGraphNode, damping float64, iterations int) map[graphEntityKey]float64 {
 	if len(nodes) == 0 {
-		return map[storage.NodeID]float64{}
+		return map[graphEntityKey]float64{}
 	}
 	n := float64(len(nodes))
-	scores := make(map[storage.NodeID]float64, len(nodes))
-	newScores := make(map[storage.NodeID]float64, len(nodes))
+	scores := make(map[graphEntityKey]float64, len(nodes))
+	newScores := make(map[graphEntityKey]float64, len(nodes))
 	for _, node := range nodes {
 		scores[node.ID] = 1.0 / n
 	}
-	targets := make(map[storage.NodeID][]storage.NodeID, len(nodes))
+	targets := make(map[graphEntityKey][]graphEntityKey, len(nodes))
 	for _, node := range nodes {
 		edges, _ := e.storage.GetOutgoingEdges(node.ID)
 		for _, edge := range edges {
@@ -340,33 +337,33 @@ func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.betweenness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computeBetweenness(nodes)
-	rows := algorithmRows(nodes, scores)
+	scores := graph.computeBetweenness(nodes)
+	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
-	scores := make(map[storage.NodeID]float64)
+func (e *algorithmGraphExecutor) computeBetweenness(nodes []algorithmGraphNode) map[graphEntityKey]float64 {
+	scores := make(map[graphEntityKey]float64)
 	for _, node := range nodes {
 		scores[node.ID] = 0
 	}
 	for _, s := range nodes {
-		stack := []storage.NodeID{}
-		pred := make(map[storage.NodeID][]storage.NodeID)
-		sigma := make(map[storage.NodeID]float64)
-		dist := make(map[storage.NodeID]int)
+		stack := []graphEntityKey{}
+		pred := make(map[graphEntityKey][]graphEntityKey)
+		sigma := make(map[graphEntityKey]float64)
+		dist := make(map[graphEntityKey]int)
 		for _, node := range nodes {
-			pred[node.ID] = []storage.NodeID{}
+			pred[node.ID] = []graphEntityKey{}
 			sigma[node.ID] = 0
 			dist[node.ID] = -1
 		}
 		sigma[s.ID] = 1
 		dist[s.ID] = 0
-		queue := []storage.NodeID{s.ID}
+		queue := []graphEntityKey{s.ID}
 		for len(queue) > 0 {
 			v := queue[0]
 			queue = queue[1:]
@@ -384,7 +381,7 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 				}
 			}
 		}
-		delta := make(map[storage.NodeID]float64)
+		delta := make(map[graphEntityKey]float64)
 		for _, node := range nodes {
 			delta[node.ID] = 0
 		}
@@ -411,25 +408,25 @@ func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	nodes, err := e.algorithmNodes("apoc.algo.closeness", args)
+	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computeCloseness(nodes)
-	rows := algorithmRows(nodes, scores)
+	scores := graph.computeCloseness(nodes)
+	rows := graphAlgorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.NodeID]float64 {
-	scores := make(map[storage.NodeID]float64)
+func (e *algorithmGraphExecutor) computeCloseness(nodes []algorithmGraphNode) map[graphEntityKey]float64 {
+	scores := make(map[graphEntityKey]float64)
 	n := len(nodes)
 	for _, source := range nodes {
-		dist := make(map[storage.NodeID]int)
+		dist := make(map[graphEntityKey]int)
 		for _, node := range nodes {
 			dist[node.ID] = -1
 		}
 		dist[source.ID] = 0
-		queue := []storage.NodeID{source.ID}
+		queue := []graphEntityKey{source.ID}
 		totalDist := 0
 		reachable := 0
 		for len(queue) > 0 {
@@ -460,11 +457,12 @@ func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.No
 
 // callApocNeighborsTohop gets neighbors up to N hops.
 func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	startID, relType, maxHops, err := parseNeighborArguments(args)
+	graph := e.algorithmGraph(ctx)
+	startID, relType, maxHops, err := graph.parseNeighborArguments(args)
 	if err != nil {
 		return nil, err
 	}
-	neighbors, err := e.getNeighborsByhop(ctx, startID, relType, maxHops)
+	neighbors, err := graph.getNeighborsByhop(ctx, startID, relType, maxHops)
 	if err != nil {
 		return nil, err
 	}
@@ -474,28 +472,28 @@ func (e *StorageExecutor) callApocNeighborsTohop(ctx context.Context, args []int
 			if nodeID == startID {
 				continue
 			}
-			node, err := e.getQueryNode(e.getStorage(ctx), nodeID)
+			node, err := graph.storage.node(nodeID)
 			if err != nil {
 				return nil, err
 			}
-			rows = append(rows, []interface{}{node})
+			rows = append(rows, []interface{}{algorithmNodeValue(node)})
 		}
 	}
 	return &ExecuteResult{Columns: []string{"node"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage.NodeID, relType string, maxHops int) ([][]storage.NodeID, error) {
+func (e *algorithmGraphExecutor) getNeighborsByhop(ctx context.Context, startID graphEntityKey, relType string, maxHops int) ([][]graphEntityKey, error) {
 	if relType == "" || maxHops < 1 {
 		return nil, nil
 	}
 	filters := parseApocRelationshipFilter(relType)
-	store := e.getStorage(ctx)
-	visited := make(map[storage.NodeID]bool)
+	store := e.storage
+	visited := make(map[graphEntityKey]bool)
 	visited[startID] = true
-	current := []storage.NodeID{startID}
-	var result [][]storage.NodeID
+	current := []graphEntityKey{startID}
+	var result [][]graphEntityKey
 	for hop := 0; hop < maxHops && len(current) > 0; hop++ {
-		var next []storage.NodeID
+		var next []graphEntityKey
 		includeStart := false
 		for _, nodeID := range current {
 			if err := ctx.Err(); err != nil {
@@ -509,7 +507,7 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 			if err != nil {
 				return nil, err
 			}
-			edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
+			edges := make([]algorithmGraphEdge, 0, len(outgoing)+len(incoming))
 			edges = append(edges, outgoing...)
 			edges = append(edges, incoming...)
 			for _, edge := range edges {
@@ -548,11 +546,12 @@ func (e *StorageExecutor) getNeighborsByhop(ctx context.Context, startID storage
 
 // callApocNeighborsByhop gets neighbors grouped by hop.
 func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	startID, relType, maxHops, err := parseNeighborArguments(args)
+	graph := e.algorithmGraph(ctx)
+	startID, relType, maxHops, err := graph.parseNeighborArguments(args)
 	if err != nil {
 		return nil, err
 	}
-	neighborsByHop, err := e.getNeighborsByhop(ctx, startID, relType, maxHops)
+	neighborsByHop, err := graph.getNeighborsByhop(ctx, startID, relType, maxHops)
 	if err != nil {
 		return nil, err
 	}
@@ -564,24 +563,24 @@ func (e *StorageExecutor) callApocNeighborsByhop(ctx context.Context, args []int
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var nodeIDs []storage.NodeID
+		var nodeIDs []graphEntityKey
 		if depth < len(neighborsByHop) {
 			nodeIDs = neighborsByHop[depth]
 		}
 		nodesList := make([]interface{}, 0, len(nodeIDs))
 		for _, nodeID := range nodeIDs {
-			node, err := e.getQueryNode(e.getStorage(ctx), nodeID)
+			node, err := graph.storage.node(nodeID)
 			if err != nil {
 				return nil, err
 			}
-			nodesList = append(nodesList, node)
+			nodesList = append(nodesList, algorithmNodeValue(node))
 		}
 		rows = append(rows, []interface{}{nodesList})
 	}
 	return &ExecuteResult{Columns: []string{"nodes"}, Rows: rows}, nil
 }
 
-func parseNeighborArguments(args []interface{}) (storage.NodeID, string, int, error) {
+func (e *algorithmGraphExecutor) parseNeighborArguments(args []interface{}) (graphEntityKey, string, int, error) {
 	if len(args) < 1 || len(args) > 3 {
 		return "", "", 0, fmt.Errorf("neighbor procedures require between one and three arguments")
 	}
@@ -603,7 +602,7 @@ func parseNeighborArguments(args []interface{}) (storage.NodeID, string, int, er
 		}
 		maxHops = int(toInt64(args[2]))
 	}
-	return start.ID, filter, maxHops, nil
+	return e.storage.nodeKey(start), filter, maxHops, nil
 }
 
 // pathAlgorithmArguments reads the arguments every path algorithm starts
@@ -611,11 +610,11 @@ func parseNeighborArguments(args []interface{}) (storage.NodeID, string, int, er
 // given by its id, NornicDB's kept form. relTypesAndDirections is APOC's
 // "TYPE>|<TYPE|TYPE" (#1185), read as apoc.path's relationshipFilter: a type
 // without a direction, and an empty filter, follow both directions.
-func pathAlgorithmArguments(procedure string, args []interface{}) (start, end storage.NodeID, steps []apocRelationshipStep, err error) {
-	if start, err = requiredProcedureNodeID(procedure, args, 0, "startNode"); err != nil {
+func (e *algorithmGraphExecutor) pathAlgorithmArguments(procedure string, args []interface{}) (start, end graphEntityKey, steps []apocRelationshipStep, err error) {
+	if start, err = e.requiredNodeKey(procedure, args, 0, "startNode"); err != nil {
 		return "", "", nil, err
 	}
-	if end, err = requiredProcedureNodeID(procedure, args, 1, "endNode"); err != nil {
+	if end, err = e.requiredNodeKey(procedure, args, 1, "endNode"); err != nil {
 		return "", "", nil, err
 	}
 	filter, err := optionalProcedureString(procedure, args, 2, "relTypesAndDirections", "")
@@ -628,25 +627,25 @@ func pathAlgorithmArguments(procedure string, args []interface{}) (start, end st
 // algorithmRows are a whole-graph algorithm's rows, {node, value}, one per
 // given node that has a value, in the given nodes' order (a node listed twice
 // once), so the same call on the same graph gives the same rows (#1183).
-func algorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) [][]interface{} {
+func algorithmRows[T any](nodes []algorithmGraphNode, values map[graphEntityKey]T) [][]interface{} {
 	rows := make([][]interface{}, 0, len(values))
-	seen := make(map[storage.NodeID]struct{}, len(values))
+	seen := make(map[graphEntityKey]struct{}, len(values))
 	for _, node := range nodes {
 		value, ok := values[node.ID]
 		if _, listed := seen[node.ID]; !ok || listed {
 			continue
 		}
 		seen[node.ID] = struct{}{}
-		rows = append(rows, []interface{}{node, value})
+		rows = append(rows, []interface{}{algorithmNodeValue(node), value})
 	}
 	return rows
 }
 
 // renumberInNodeOrder numbers communities 0, 1, … by their first node in the
 // given nodes' order, so community IDs don't depend on map order (#1183).
-func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]int) map[storage.NodeID]int {
+func renumberInNodeOrder(nodes []algorithmGraphNode, communities map[graphEntityKey]int) map[graphEntityKey]int {
 	numbers := make(map[int]int)
-	result := make(map[storage.NodeID]int, len(communities))
+	result := make(map[graphEntityKey]int, len(communities))
 	for _, node := range nodes {
 		community, ok := communities[node.ID]
 		if !ok {
@@ -662,14 +661,6 @@ func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]i
 	return result
 }
 
-// algorithmConfig is the config map an algorithm procedure reads from its
-// second argument, for pageRank and louvain alike (#1164). Any other second
-// argument (the documented relationship-type list, #1169) gives no config.
-func algorithmConfig(args []interface{}) map[string]interface{} {
-	config, _ := procedureArgument(args, 1).(map[string]interface{})
-	return config
-}
-
 // algorithmNodes reads the nodes a whole-graph algorithm runs over from its
 // first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
@@ -681,7 +672,7 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	if items, isList := cypherListValue(value); isList {
 		if len(items) == 0 {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return e.storage.GetAllNodes(), nil
 		}
 		if _, isNode := items[0].(*storage.Node); isNode {
 			nodes := make([]*storage.Node, 0, len(items))
@@ -701,24 +692,14 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	switch label := value.(type) {
 	case nil:
-		return nodesInIDOrder(e.storage.GetAllNodes()), nil
+		return e.storage.GetAllNodes(), nil
 	case string:
 		if label == "" {
-			return nodesInIDOrder(e.storage.GetAllNodes()), nil
+			return e.storage.GetAllNodes(), nil
 		}
 		nodes, _ := e.storage.GetNodesByLabel(label)
-		return nodesInIDOrder(nodes), nil
+		return nodes, nil
 	default:
 		return nil, typeError()
 	}
-}
-
-// nodesInIDOrder sorts the nodes an algorithm reads from storage by ID, so
-// the same graph gives the same order on every engine (#1183); a node list
-// the caller passes keeps its order. It sorts a copy: storage may share the
-// slice it returns.
-func nodesInIDOrder(nodes []*storage.Node) []*storage.Node {
-	sorted := append([]*storage.Node(nil), nodes...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
-	return sorted
 }

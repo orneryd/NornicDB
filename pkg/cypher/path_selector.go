@@ -613,7 +613,7 @@ func fnPatternMarker(cypherfn.Context, []string) (interface{}, error) {
 }
 
 // pathNodeIDs returns the IDs of a path value's nodes in order.
-func pathNodeIDs(value interface{}) ([]storage.NodeID, bool) {
+func pathNodeIDs(value interface{}) ([]graphEntityKey, bool) {
 	var nodes []interface{}
 	switch path := value.(type) {
 	case map[string]interface{}:
@@ -629,27 +629,27 @@ func pathNodeIDs(value interface{}) ([]storage.NodeID, bool) {
 	default:
 		return nil, false
 	}
-	ids := make([]storage.NodeID, 0, len(nodes))
+	ids := make([]graphEntityKey, 0, len(nodes))
 	for _, item := range nodes {
 		node, ok := item.(*storage.Node)
 		if !ok || node == nil {
 			return nil, false
 		}
-		ids = append(ids, node.ID)
+		ids = append(ids, nativeGraphEntityKey(node))
 	}
 	return ids, true
 }
 
-func pathResultNodeIDs(path *PathResult) []storage.NodeID {
-	ids := make([]storage.NodeID, len(path.Nodes))
+func pathResultNodeIDs(path *PathResult) []graphEntityKey {
+	ids := make([]graphEntityKey, len(path.Nodes))
 	for i, node := range path.Nodes {
-		ids[i] = node.ID
+		ids[i] = nativeGraphEntityKey(node)
 	}
 	return ids
 }
 
 // distinctNodeIDs reports whether no ID in ids repeats.
-func distinctNodeIDs(ids []storage.NodeID) bool {
+func distinctNodeIDs[K ~string](ids []K) bool {
 	for i := 1; i < len(ids); i++ {
 		for j := 0; j < i; j++ {
 			if ids[i] == ids[j] {
