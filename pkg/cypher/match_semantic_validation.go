@@ -146,6 +146,20 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		// Command syntax owns its local names. Record its admitted transition
 		// so decomposition retains a frame without interpreting it as row syntax.
 		if clause.kind == pipelineClauseCommand {
+			if yield := clause.syntax.Yield; yield != nil {
+				if yield.Star {
+					compiledScope.add(clause, before, types)
+					return types, false, nil
+				}
+				for _, item := range yield.Items {
+					name := item.Name
+					if item.Alias != "" {
+						name = item.Alias
+					}
+					types[name] = staticOperand{}
+				}
+				stale = true
+			}
 			compiledScope.add(clause, before, types)
 			continue
 		}

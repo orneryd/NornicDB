@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"hash/fnv"
 	"sort"
@@ -31,10 +32,7 @@ import (
 // backtick-quoted name without its quotes and with each doubled backtick as
 // one backtick; any other text as is.
 func symbolicNameValue(written string) string {
-	if len(written) >= 2 && written[0] == '`' && written[len(written)-1] == '`' {
-		return strings.ReplaceAll(written[1:len(written)-1], "``", "`")
-	}
-	return written
+	return cyphertext.SymbolicNameValue(written)
 }
 
 // isOneSymbolicName reports whether text (surrounding whitespace ignored) is

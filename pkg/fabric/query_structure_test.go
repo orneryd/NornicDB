@@ -172,3 +172,35 @@ func TestEmbeddingProjectionScope(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandContinuationsPreserveNativeDescriptors(t *testing.T) {
+	for _, command := range []string{
+		"SHOW FUNCTIONS YIELD name",
+		"TERMINATE TRANSACTIONS 'missing-999' YIELD transactionId AS name",
+	} {
+		text := "USE comp.one " + command + " UNWIND [1, 2] AS i OPTIONAL CALL (name) { USE comp.two RETURN name AS m } WITH name, i, m RETURN name, i, m"
+		q := ReadQueryStructure(text)
+		require.NoError(t, q.Err, text)
+		var kinds []string
+		for _, clause := range q.Clauses {
+			kinds = append(kinds, clause.Kind)
+			require.Equal(t, strings.TrimSpace(text[clause.Start:clause.End]), clause.Text)
+		}
+		require.Equal(t, []string{"USE", strings.Fields(command)[0], "UNWIND", "CALL", "WITH", "RETURN"}, kinds)
+		require.Equal(t, command, q.Clauses[1].Text)
+		if strings.HasPrefix(command, "TERMINATE") {
+			require.Equal(t, "transactionId", q.Clauses[1].Yield.Items[0].Name)
+			require.Equal(t, "name", q.Clauses[1].Yield.Items[0].Alias)
+		} else {
+			require.Equal(t, "name", q.Clauses[1].Yield.Items[0].Name)
+		}
+		call := q.Clauses[3]
+		require.True(t, call.Optional)
+		require.True(t, call.Scoped)
+		require.Equal(t, []string{"name"}, call.ScopeNames)
+		require.NotNil(t, call.Nested)
+		require.Equal(t, "comp.two", call.Nested.Clauses[0].Use.Name)
+		require.Equal(t, "name", call.Nested.Clauses[1].Projection.Items[0].Name)
+		require.Equal(t, "m", call.Nested.Clauses[1].Projection.Items[0].Alias)
+	}
+}
