@@ -59,13 +59,8 @@ func compareForSort(a, b interface{}) bool {
 	if b == nil {
 		return false
 	}
-	if comparison, exact := compareCypherNumbersExactly(a, b); exact {
-		return comparison < 0
-	}
-	if left, numeric := strictNumericValue(a); numeric {
-		if right, numeric := strictNumericValue(b); numeric {
-			return left < right
-		}
+	if order, numeric, ordered := storage.CompareNumericValues(a, b); numeric {
+		return ordered && order < 0
 	}
 	if left, text := a.(string); text {
 		if right, text := b.(string); text {
