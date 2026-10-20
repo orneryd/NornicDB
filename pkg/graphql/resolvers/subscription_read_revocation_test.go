@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,7 @@ import (
 
 func TestSubscriptionsRevalidateDatabaseRead(t *testing.T) {
 	db := testDB(t)
-	manager := testDBManager(t, db)
+	manager := testutil.DatabaseManager(t, db)
 	require.NoError(t, manager.CreateDatabase("revocation_named"))
 	resolver := NewResolver(db, manager)
 	t.Cleanup(resolver.EventBroker.Close)

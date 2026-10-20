@@ -1,6 +1,7 @@
 package nornicdb_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +55,7 @@ func TestProviderHTTPWorkerPartialFailure(t *testing.T) {
 			if provider == "ollama" {
 				path = "/api/embeddings"
 			}
-			base, err := embed.NewEmbedder(&embed.Config{Provider: provider, Mode: "text", APIURL: server.URL, APIPath: path, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
+			base, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: provider, Mode: "text", APIURL: server.URL, APIPath: path, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
 			require.NoError(t, err)
 			engine, err := storage.NewBadgerEngineInMemory()
 			require.NoError(t, err)
@@ -101,7 +102,7 @@ func TestProviderHTTPWorkerMultimodalChunkMetadata(t *testing.T) {
 		})
 	}))
 	t.Cleanup(server.Close)
-	base, err := embed.NewEmbedder(&embed.Config{Provider: "voyage", Mode: "multimodal", APIURL: server.URL, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
+	base, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: "voyage", Mode: "multimodal", APIURL: server.URL, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
 	require.NoError(t, err)
 	engine, err := storage.NewBadgerEngineInMemory()
 	require.NoError(t, err)

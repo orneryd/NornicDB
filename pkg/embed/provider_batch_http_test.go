@@ -113,7 +113,7 @@ func newBatchProvider(tb testing.TB, provider, mode string, mock *batchHTTPMock)
 	if provider == "ollama" {
 		cfg.APIPath = "/api/embeddings"
 	}
-	e, err := embed.NewEmbedder(cfg)
+	e, err := embed.NewEmbedder(context.Background(), cfg)
 	require.NoError(tb, err)
 	return e
 }

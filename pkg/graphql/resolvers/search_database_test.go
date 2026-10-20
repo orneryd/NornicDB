@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -18,7 +19,7 @@ import (
 func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 	nr := &nodeResolver{resolver}
@@ -79,7 +80,7 @@ func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 func TestSearchAndSimilarRefuseCompositeDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := testDB(t)
-	dbManager := testDBManager(t, db)
+	dbManager := testutil.DatabaseManager(t, db)
 	resolver := NewResolver(db, dbManager)
 	qr := &queryResolver{resolver}
 	nr := &nodeResolver{resolver}
