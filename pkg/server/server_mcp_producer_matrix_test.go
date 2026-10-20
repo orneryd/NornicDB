@@ -244,6 +244,8 @@ func TestMCPNativeProducerBatchTransactions(t *testing.T) {
 	t.Cleanup(host.Close)
 	token := getAuthToken(t, authenticator, "admin")
 	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	_, constraint := nativeReviewCall(t, host, "/mcp", map[string]interface{}{"query": "CREATE CONSTRAINT mcp_batch_partial_key FOR (n:BoundBatchPartial) REQUIRE n.key IS UNIQUE"}, authenticate)
+	require.False(t, constraint.IsError, constraint.Content)
 	for _, path := range []string{"/mcp", "/mcp/tools/call"} {
 		_, read := nativeReviewCall(t, host, path, map[string]interface{}{
 			"query": "UNWIND range(1,200000) AS x CALL { WITH x RETURN x AS y } IN TRANSACTIONS OF 7 ROWS RETURN y", "max_rows": 1,
@@ -264,10 +266,11 @@ func TestMCPNativeProducerBatchTransactions(t *testing.T) {
 		require.False(t, written.IsError, written.Content)
 		require.Contains(t, written.Content[0].Text, "max_rows")
 		_, failed := nativeReviewCall(t, host, path, map[string]interface{}{
-			"query": "UNWIND range(1,14) AS x CALL { WITH x CALL apoc.util.validate(x > 7,'batch stop',[]) CREATE (:BoundBatchPartial {x:x}) RETURN x AS y } IN TRANSACTIONS OF 7 ROWS RETURN y", "max_rows": 1,
+			"query": "UNWIND range(1,14) AS x CALL { WITH x CREATE (:BoundBatchPartial {key:$lane + toString(CASE WHEN x > 7 THEN 1 ELSE x END)}) RETURN x AS y } IN TRANSACTIONS OF 7 ROWS RETURN y", "max_rows": 1,
+			"parameters": map[string]interface{}{"lane": path},
 		}, authenticate)
 		require.True(t, failed.IsError, failed.Content)
-		require.Contains(t, failed.Content[0].Text, "batch stop")
+		require.Contains(t, failed.Content[0].Text, "BoundBatchPartial")
 	}
 	for _, expected := range []struct{ label, count string }{{"BoundBatchWrite", "80"}, {"BoundBatchPartial", "14"}} {
 		_, result := nativeReviewCall(t, host, "/mcp", map[string]interface{}{"query": "MATCH (n:" + expected.label + ") RETURN count(n) AS count"}, authenticate)
