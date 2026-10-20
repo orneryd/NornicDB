@@ -139,7 +139,7 @@ func (e *StorageExecutor) pipelineBatchCallSource(ctx context.Context, input pip
 			batch = append(batch, row)
 			return len(batch) < batchSize || flush()
 		})
-		if valid && more {
+		if completed && valid && more {
 			flush()
 		}
 		return completed && valid
