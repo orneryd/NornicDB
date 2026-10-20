@@ -28,6 +28,9 @@ func TestCompositeSelectedPathSourceBoundary(t *testing.T) {
 		t.Run(endpoint.name, func(t *testing.T) {
 			target, err := endpoint.store.GetNode(endpoint.id)
 			require.NoError(t, err)
+            ordinary, err := executor.Execute(context.Background(), "WITH $source AS a,$target AS b MATCH p=(a)-[:R*0..2]->(b) RETURN count(*)", map[string]interface{}{"source": source, "target": target})
+            require.NoError(t, err)
+            require.Equal(t, [][]interface{}{{endpoint.want}}, ordinary.Rows)
 			for _, pattern := range []string{"(a)-[:R*0..2]->(b)", "(a)(()-[:R]->()){0,2}(b)"} {
 				result, err := executor.Execute(context.Background(), "WITH $source AS a,$target AS b MATCH p = ANY SHORTEST "+pattern+" RETURN count(*)", map[string]interface{}{"source": source, "target": target})
 				require.NoError(t, err, pattern)

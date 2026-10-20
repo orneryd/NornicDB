@@ -62,14 +62,16 @@ func planPipelineTraversalScan(match *TraversalMatch, where string, row pipeline
 func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
 	store := e.getStorage(ctx)
 	oriented := func(edge *storage.Edge) error {
+        start, end, selected := nativeEdgeStorageEndpoints(store, edge)
+        if !selected { return nil }
 		if match.Relationship.Direction == "incoming" {
-			return visit(edge, edge.EndNode, edge.StartNode)
+			return visit(edge, end, start)
 		}
-		if err := visit(edge, edge.StartNode, edge.EndNode); err != nil {
+		if err := visit(edge, start, end); err != nil {
 			return err
 		}
-		if match.Relationship.Direction == "both" && edge.StartNode != edge.EndNode {
-			return visit(edge, edge.EndNode, edge.StartNode)
+		if match.Relationship.Direction == "both" && start != end {
+			return visit(edge, end, start)
 		}
 		return nil
 	}
@@ -91,16 +93,18 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 				return nil
 			}
+            nodeID, selected := nativeNodeLookupID(store, node)
+            if !selected { return nil }
 			traversal := &TraversalContext{relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match), cancelCtx: ctx}
 			var edges []*storage.Edge
 			var err error
 			switch match.Relationship.Direction {
 			case "incoming":
-				edges = e.traversalEdges(traversal, node.ID, false)
+				edges = e.traversalEdges(traversal, nodeID, false)
 			case "both":
-				edges, err = undirectedIncidentEdges(store, node.ID)
+				edges, err = undirectedIncidentEdges(store, nodeID)
 			default:
-				edges = e.traversalEdges(traversal, node.ID, true)
+				edges = e.traversalEdges(traversal, nodeID, true)
 			}
 			if err != nil {
 				return err
@@ -112,8 +116,9 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				start, end := edge.StartNode, edge.EndNode
-				if match.Relationship.Direction == "incoming" || (match.Relationship.Direction == "both" && start != node.ID) {
+                start, end, selected := nativeEdgeStorageEndpoints(store, edge)
+                if !selected { continue }
+				if match.Relationship.Direction == "incoming" || (match.Relationship.Direction == "both" && start != nodeID) {
 					start, end = end, start
 				}
 				if err := visit(edge, start, end); err != nil {

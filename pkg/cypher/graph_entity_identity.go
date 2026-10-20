@@ -685,43 +685,55 @@ func nativeGraphBatchNodes(source storage.Engine, keys []graphEntityKey) (map[gr
 // and the physical namespace of its Badger participant. Every write route uses
 // these same adapters; a foreign source is rejected before tokens or data change.
 func nativeNodeLookupID(engine storage.Engine, node *storage.Node) (storage.NodeID, bool) {
-    id, ok := nativeEntityStorageID(engine, node)
-    return storage.NodeID(id), ok
+	id, ok := nativeEntityStorageID(engine, node)
+	return storage.NodeID(id), ok
 }
 
 func (w *transactionStorageWrapper) nativeStorageNode(node *storage.Node) (*storage.Node, storage.NodeID, error) {
-    if node == nil { return nil, "", storage.ErrInvalidData }
-    id, ok := nativeNodeLookupID(w, node)
-    if !ok { return nil, "", storage.ErrNotFound }
-    if w.namespace == "" { return node, id, nil }
-    physical := storage.CopyNode(node)
-    physical.ID = w.prefixNodeID(id)
-    return physical, id, nil
+	if node == nil {
+		return nil, "", storage.ErrInvalidData
+	}
+	id, ok := nativeNodeLookupID(w, node)
+	if !ok {
+		return nil, "", storage.ErrNotFound
+	}
+	if w.namespace == "" {
+		return node, id, nil
+	}
+	physical := storage.CopyNode(node)
+	physical.ID = w.prefixNodeID(id)
+	return physical, id, nil
 }
 
 func (w *transactionStorageWrapper) nativeStorageEdge(edge *storage.Edge) (*storage.Edge, error) {
-    if edge == nil { return nil, storage.ErrInvalidData }
-    id, ok := nativeEntityStorageID(w, edge)
-    start, end, endpoints := nativeEdgeStorageEndpoints(w, edge)
-    if !ok || !endpoints { return nil, storage.ErrNotFound }
-    if w.namespace == "" { return edge, nil }
-    physical := storage.CopyEdge(edge)
-    physical.ID = w.prefixEdgeID(storage.EdgeID(id))
-    physical.StartNode, physical.EndNode = w.prefixNodeID(start), w.prefixNodeID(end)
-    return physical, nil
+	if edge == nil {
+		return nil, storage.ErrInvalidData
+	}
+	id, ok := nativeEntityStorageID(w, edge)
+	start, end, endpoints := nativeEdgeStorageEndpoints(w, edge)
+	if !ok || !endpoints {
+		return nil, storage.ErrNotFound
+	}
+	if w.namespace == "" {
+		return edge, nil
+	}
+	physical := storage.CopyEdge(edge)
+	physical.ID = w.prefixEdgeID(storage.EdgeID(id))
+	physical.StartNode, physical.EndNode = w.prefixNodeID(start), w.prefixNodeID(end)
+	return physical, nil
 }
 
 // Stored namespace membership is checked before exposing a participant value.
 // It is a physical-prefix boundary, never a key for comparing graph entities.
 func (w *transactionStorageWrapper) storedNodeInNamespace(node *storage.Node) bool {
-    return node != nil && (w.namespace == "" || strings.HasPrefix(string(node.ID), w.namespace+w.separator))
+	return node != nil && (w.namespace == "" || strings.HasPrefix(string(node.ID), w.namespace+w.separator))
 }
 func (w *transactionStorageWrapper) storedEdgeInNamespace(edge *storage.Edge) bool {
-    return edge != nil && (w.namespace == "" || strings.HasPrefix(string(edge.ID), w.namespace+w.separator))
+	return edge != nil && (w.namespace == "" || strings.HasPrefix(string(edge.ID), w.namespace+w.separator))
 }
 func (w *transactionStorageWrapper) userNodeHasPrefix(node *storage.Node, prefix string) bool {
-    id, ok := nativeNodeLookupID(w, node)
-    return ok && strings.HasPrefix(string(id), prefix)
+	id, ok := nativeNodeLookupID(w, node)
+	return ok && strings.HasPrefix(string(id), prefix)
 }
 
 func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node {
@@ -743,13 +755,15 @@ func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node
 // Point/batch readers retain their existing deep-copy contract below. Both
 // restore the same endpoint IDs and database/source provenance.
 func (w *transactionStorageWrapper) toUserEdgeView(edge *storage.Edge) storage.Edge {
-    out := *edge
-    out.ID, out.Database = w.unprefixEdgeID(out.ID), w.namespace
-    out.StartNode, out.EndNode = w.unprefixNodeID(out.StartNode), w.unprefixNodeID(out.EndNode)
-    return out
+	out := *edge
+	out.ID, out.Database = w.unprefixEdgeID(out.ID), w.namespace
+	out.StartNode, out.EndNode = w.unprefixNodeID(out.StartNode), w.unprefixNodeID(out.EndNode)
+	return out
 }
 func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge {
-    if edge == nil { return nil }
-    out := w.toUserEdgeView(edge)
-    return storage.CopyEdge(&out)
+	if edge == nil {
+		return nil
+	}
+	out := w.toUserEdgeView(edge)
+	return storage.CopyEdge(&out)
 }
