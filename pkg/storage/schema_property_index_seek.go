@@ -9,53 +9,41 @@ import (
 // propertyIndexKeyKinds records which kinds of key a property index's sorted
 // keys hold, and so whether binary search finds a bound in the order
 // compareSchemaIndexValues sorted them in (sortedKeyRangeLocked). That order
-// agrees with Cypher's comparison only within one kind: strings by code point,
-// integers exactly, and numbers that a float64 holds exactly; a string and a
-// number, a boolean, NaN or an integer beyond 2^53 against a float don't
-// compare consistently, and an index holding them is never narrowed.
+// agrees with Cypher's comparison within one kind: strings by code point, and
+// numbers by exact value (compareConstraintNumbers), as Cypher compares stored
+// numbers (compareCypherNumbersExactly), integers beyond 2^53 and floats
+// included. A string and a number, a boolean or NaN don't compare
+// consistently, and an index holding them is never narrowed.
 type propertyIndexKeyKinds struct {
-	strings      bool // every key is a string
-	integers     bool // every key is an integer
-	exactNumbers bool // every key is a float (not NaN) or an integer within ±2^53
-	hasKeys      bool
+	strings bool // every key is a string
+	numbers bool // every key is a number other than NaN
+	hasKeys bool
 }
 
-// maxExactFloatInteger is 2^53, the largest magnitude below which every
-// integer is a float64.
-const maxExactFloatInteger = 1 << 53
-
 func newPropertyIndexKeyKinds(keys []interface{}) propertyIndexKeyKinds {
-	kinds := propertyIndexKeyKinds{strings: true, integers: true, exactNumbers: true, hasKeys: len(keys) > 0}
+	kinds := propertyIndexKeyKinds{strings: true, numbers: true, hasKeys: len(keys) > 0}
 	for _, key := range keys {
-		isString, isInteger, isExactNumber := indexValueKinds(key)
+		isString, isNumber := indexValueKinds(key)
 		kinds.strings = kinds.strings && isString
-		kinds.integers = kinds.integers && isInteger
-		kinds.exactNumbers = kinds.exactNumbers && isExactNumber
+		kinds.numbers = kinds.numbers && isNumber
 	}
 	return kinds
 }
 
 // indexValueKinds classifies one index key or range bound.
-func indexValueKinds(value interface{}) (isString, isInteger, isExactNumber bool) {
+func indexValueKinds(value interface{}) (isString, isNumber bool) {
 	switch typed := value.(type) {
 	case string:
-		return true, false, false
+		return true, false
 	case bool:
-		return false, false, false
+		return false, false
 	case float32:
-		return false, false, !math.IsNaN(float64(typed))
+		return false, !math.IsNaN(float64(typed))
 	case float64:
-		return false, false, !math.IsNaN(typed)
+		return false, !math.IsNaN(typed)
 	}
 	reflected := reflect.ValueOf(value)
-	switch {
-	case reflected.CanInt():
-		number := reflected.Int()
-		return false, true, number >= -maxExactFloatInteger && number <= maxExactFloatInteger
-	case reflected.CanUint():
-		return false, true, reflected.Uint() <= maxExactFloatInteger
-	}
-	return false, false, false
+	return false, reflected.CanInt() || reflected.CanUint()
 }
 
 // seekable reports whether a bound can be found by binary search in keys of
@@ -64,8 +52,8 @@ func (kinds propertyIndexKeyKinds) seekable(bound interface{}) bool {
 	if !kinds.hasKeys {
 		return false
 	}
-	isString, isInteger, isExactNumber := indexValueKinds(bound)
-	return kinds.strings && isString || kinds.integers && isInteger || kinds.exactNumbers && isExactNumber
+	isString, isNumber := indexValueKinds(bound)
+	return kinds.strings && isString || kinds.numbers && isNumber
 }
 
 // sortedKeyRangeLocked returns the sorted non-null keys of idx that bounds

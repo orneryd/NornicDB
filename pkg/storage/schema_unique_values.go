@@ -26,7 +26,7 @@ func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value int
 	constraint.mu.RLock()
 	defer constraint.mu.RUnlock()
 
-	valueKey, ok := uniqueConstraintValueKey(value)
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return nil
 	}
@@ -62,7 +62,7 @@ func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property 
 	if !exists || value == nil {
 		return "", false, exists, false
 	}
-	valueKey, ok := uniqueConstraintValueKey(value)
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return "", false, true, false
 	}
@@ -78,7 +78,7 @@ func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, propert
 	if !exists || value == nil {
 		return "", false, false, exists
 	}
-	valueKey, ok := uniqueConstraintValueKey(value)
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return "", false, false, true
 	}
@@ -99,7 +99,7 @@ func (sm *SchemaManager) uniqueValueHolders(label, property string, value interf
 	if !exists {
 		return nil, false, false
 	}
-	valueKey, ok := uniqueConstraintValueKey(value)
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return nil, false, true
 	}
@@ -112,7 +112,7 @@ func (sm *SchemaManager) uniqueValueHolders(label, property string, value interf
 	if found && view.keep(holder) {
 		holders = append(holders, holder)
 	}
-	holders = view.uniqueValueMatches(holders, label, property, value, valueKey)
+	holders = view.valueMatches(holders, label, property, valueKey)
 	return holders, cacheComplete, true
 }
 
@@ -129,7 +129,7 @@ func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, 
 	if found && !view.keep(nodeID) {
 		nodeID, found = "", false
 	}
-	if pending := view.uniqueValueMatches(nil, label, property, value, valueKey); len(pending) > 0 {
+	if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
 		sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
 		nodeID, found = pending[0], true
 	}
@@ -143,7 +143,7 @@ func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, 
 // is per constrained value, not per constraint.
 //
 // The value is stored in its canonical comparable form returned by
-// uniqueConstraintValueKey so semantically equal but type-distinct values
+// indexValueKey so semantically equal but type-distinct values
 // (e.g. int and int64) use the same lock and serialize correctly. Values
 // that are not comparable cannot acquire a lock; their constraint is still
 // validated at commit but without commit-window serialization. (In practice
@@ -215,7 +215,7 @@ func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string,
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
-			if key, _, ok := nodeConstraintLockKey(c, node); ok {
+			if key, ok := nodeConstraintLockKey(c, node); ok {
 				if keys == nil {
 					keys = make([]uniqueConstraintLockKey, 0, len(nodes))
 				}
@@ -227,11 +227,9 @@ func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string,
 }
 
 // nodeConstraintLockKey is the canonical node key projection for both commit
-// and MERGE admission. Composite constraints lock one tuple, never its columns.
-// rounded reports a composite tuple holding an integer the generic composite
-// index rounds (exactConstraintIntegerKey); any other tuple is filed in that
-// index under the lock's own hash.
-func nodeConstraintLockKey(c Constraint, node *Node) (key uniqueConstraintLockKey, rounded bool, ok bool) {
+// and MERGE admission. Composite constraints lock one tuple, never its columns,
+// under the hash the constraint's composite index files that tuple under.
+func nodeConstraintLockKey(c Constraint, node *Node) (uniqueConstraintLockKey, bool) {
 	var properties []string
 	switch {
 	case (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey) && len(c.Properties) > 0:
@@ -239,33 +237,30 @@ func nodeConstraintLockKey(c Constraint, node *Node) (key uniqueConstraintLockKe
 	case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
 		properties = c.Properties[:len(c.Properties)-2]
 	default:
-		return uniqueConstraintLockKey{}, false, false
+		return uniqueConstraintLockKey{}, false
 	}
 	// Preserve TEMPORAL's raw whole-key hash for composite list-bearing keys.
 	if c.Type == ConstraintTemporal && len(properties) > 1 {
 		if spec, ok := splitTemporalKeySpec(c.Properties); ok {
 			value, missing := spec.keyValue(node.Properties)
 			if missing == "" && spec.composite() && spec.listBearing(value) {
-				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, false, true
+				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, true
 			}
 		}
 	}
 	if len(properties) == 1 {
 		value, ok := constraintLockValue(node, properties[0])
-		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, false, ok
+		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok
 	}
 	values := make([]interface{}, len(properties))
 	for i, property := range properties {
 		value, ok := constraintLockValue(node, property)
 		if !ok {
-			return uniqueConstraintLockKey{}, false, false
-		}
-		if _, exact := value.(exactConstraintIntegerKey); exact {
-			rounded = true
+			return uniqueConstraintLockKey{}, false
 		}
 		values[i] = value
 	}
-	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: constraintCompositeKey(values)}, rounded, true
+	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: constraintCompositeKey(values)}, true
 }
 
 // constraintLockValue is node's canonical value of prop for a constraint key
@@ -276,7 +271,7 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 	if !has || rawValue == nil {
 		return nil, false
 	}
-	return uniqueConstraintValueKey(rawValue)
+	return indexValueKey(rawValue)
 }
 
 // acquireUniqueConstraintCommitLocks acquires exact UNIQUE value locks for
@@ -462,12 +457,11 @@ func newEngineWriteLockOwner() string {
 }
 
 // mergeAdmissionKey couples the canonical commit lock with the constraint
-// whose current equality index supplies the node to catch up to. indexHash is
-// a composite tuple's full key in that index, projected once with the lock.
+// whose current equality index supplies the node to catch up to. A composite
+// lock's value is the tuple's full key hash in that index.
 type mergeAdmissionKey struct {
 	lock       uniqueConstraintLockKey
 	properties []string
-	indexHash  string
 }
 
 func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]interface{}) []mergeAdmissionKey {
@@ -480,22 +474,11 @@ func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]inter
 		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}
-		key, rounded, ok := nodeConstraintLockKey(c, node)
+		key, ok := nodeConstraintLockKey(c, node)
 		if !ok || !lockableUniqueConstraintKey(key) {
 			continue
 		}
-		admission := mergeAdmissionKey{lock: key, properties: c.Properties}
-		if len(c.Properties) > 1 {
-			admission.indexHash, _ = key.value.(string)
-			if rounded {
-				values := make([]interface{}, len(c.Properties))
-				for i, property := range c.Properties {
-					values[i], _ = indexValueKey(props[property])
-				}
-				admission.indexHash = NewCompositeKey(values...).Hash
-			}
-		}
-		keys = append(keys, admission)
+		keys = append(keys, mergeAdmissionKey{lock: key, properties: c.Properties})
 	}
 	return keys
 }
@@ -519,7 +502,7 @@ func (sm *SchemaManager) RegisterUniqueValue(label, property string, value inter
 	if !exists {
 		return
 	}
-	valueKey, ok := uniqueConstraintValueKey(value)
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return
 	}
@@ -539,7 +522,7 @@ func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value int
 	if !exists {
 		return
 	}
-	valueKey, ok := uniqueConstraintValueKey(value)
+	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return
 	}

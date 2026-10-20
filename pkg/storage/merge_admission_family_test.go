@@ -22,7 +22,7 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 			props := map[string]interface{}{"tenant": int64(7), "id": int64(42)}
 			keys := schema.uniqueMergeKeys([]string{"Tuple"}, props)
 			require.Len(t, keys, 1)
-			canonical, _, ok := nodeConstraintLockKey(c, &Node{Properties: props})
+			canonical, ok := nodeConstraintLockKey(c, &Node{Properties: props})
 			require.True(t, ok)
 			require.Equal(t, canonical, keys[0].lock)
 			// Numeric aliases must use commit's same tuple, in schema order.
@@ -73,9 +73,8 @@ func TestMergeAdmissionCanonicalTuple(t *testing.T) {
 	}
 }
 
-// Adjacent integers above 2^53 are distinct tuple values. Commit validation
-// and MERGE admission share one exact holder test, although the generic
-// composite index files both tuples under one rounded key.
+// Adjacent integers above 2^53 are distinct tuple values: the composite index,
+// commit validation and MERGE admission all key them exactly.
 func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 	even, odd := int64(9007199254740992), int64(9007199254740993)
 	require.False(t, compareValues(even, odd))
@@ -134,19 +133,21 @@ func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 			}
 			require.Error(t, err, "the exact tuple remains unique")
 
-			// The projected index hash finds both rounded neighbours; the exact
-			// holder decides.
+			// The lock hash is the index's exact key for the tuple: it lists
+			// only the odd tuple's node, not its rounded neighbour.
 			keys := schema.uniqueMergeKeys([]string{"Tuple"}, oddProps)
 			require.Len(t, keys, 1)
-			require.ElementsMatch(t, []NodeID{evenID, oddID}, idx.lookupFullHash(keys[0].indexHash))
+			hash, _ := keys[0].lock.value.(string)
+			require.Equal(t, []NodeID{oddID}, idx.lookupFullHash(hash))
+			require.Equal(t, []NodeID{evenID}, idx.LookupFull(int64(7), even))
 			holder, found, complete := fresh.mergeAdmissionHolder(schema, "test", keys[0], oddProps)
 			require.True(t, found)
 			require.True(t, complete)
 			require.Equal(t, oddID, holder)
 			plain := schema.uniqueMergeKeys([]string{"Tuple"}, map[string]interface{}{"tenant": int64(7), "id": int64(42)})
 			require.Len(t, plain, 1)
-			require.Equal(t, plain[0].lock.value, plain[0].indexHash, "a tuple without rounded values reuses the lock hash")
-			require.Equal(t, idx.LookupFull(int64(7), int64(42)), idx.lookupFullHash(plain[0].indexHash))
+			plainHash, _ := plain[0].lock.value.(string)
+			require.Equal(t, idx.LookupFull(int64(7), int64(42)), idx.lookupFullHash(plainHash))
 
 			require.ErrorIs(t, stale.PrepareMergeNode(context.Background(), []string{"Tuple"}, oddProps), ErrConflict)
 			require.NoError(t, fresh.PrepareMergeNode(context.Background(), []string{"Tuple"}, oddProps))
