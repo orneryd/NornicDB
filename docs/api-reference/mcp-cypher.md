@@ -64,7 +64,7 @@ properties, scores, evidence, passages and method/ranking information.
 Temporal/duration values use native strings and byte arrays use signed integer
 arrays, recursively inside maps, lists and entity properties.
 
-`max_rows` defaults to 100 and accepts integers from 1 through 1000. The result
+`max_rows` defaults to 100 and accepts integers from 1 through 1000. The
 complete serialized MCP HTTP response is bounded to 1 MiB, including the
 JSON-RPC/direct envelope, text escaping and `structuredContent` duplication.
 Bounds omit whole rows, preserving complete selected

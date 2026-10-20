@@ -113,7 +113,7 @@ func TestMCPNativeReviewExecutionAndWireBounds(t *testing.T) {
 		for _, query := range []string{"RETURN range(1, 100000000)", "UNWIND range(1, 200000) AS x RETURN x ORDER BY x"} {
 			_, response := nativeReviewCall(t, host, path, map[string]interface{}{"query": query, "max_rows": 1}, authenticate)
 			require.True(t, response.IsError, response.Content)
-			require.Contains(t, response.Content[0].Text, "TransactionMemoryLimit")
+			require.Contains(t, response.Content[0].Text, "db.memory.transaction.max threshold reached")
 		}
 	}
 }
