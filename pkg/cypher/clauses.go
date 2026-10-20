@@ -2075,7 +2075,7 @@ func joinedValueKey(val interface{}) string {
 		}
 		return "edge:" + string(nativeGraphEntityKey(v))
 	default:
-		return cypherValueKey(val, cypherEquivalenceContract)
+		return cypherEquivalenceKey(val)
 	}
 }
 
