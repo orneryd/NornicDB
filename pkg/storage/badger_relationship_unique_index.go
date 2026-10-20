@@ -42,9 +42,7 @@ func relationshipConstraintValueKeys(properties []string, values map[string]inte
 			if v != v {
 				ok = false
 			} // NaN is not an equality/map key.
-			if v == 0 {
-				key = float64(0)
-			}
+		case int64, uint64: // an exact integer beyond float64 precision (numericIndexKey)
 		case string, bool:
 		case compositeIndexKey:
 			ok = includeComposite
