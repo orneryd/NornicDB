@@ -39,14 +39,16 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	if len(relationship.Types) > 0 && !slices.Contains(relationship.Types, edge.Type) {
 		return nil, true, true
 	}
-	endpoints := []storage.NodeID{edge.StartNode}
+    startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+    if !selected { return nil, true, true }
+    endpoints := []storage.NodeID{startID}
 	switch relationship.Direction {
 	case "incoming":
-		endpoints = []storage.NodeID{edge.EndNode}
+		endpoints = []storage.NodeID{endID}
 	case "outgoing":
 	default:
-		if edge.EndNode != edge.StartNode {
-			endpoints = append(endpoints, edge.EndNode)
+		if endID != startID {
+			endpoints = append(endpoints, endID)
 		}
 	}
 	// The traversal trusts its seeds: each must match the start node's own

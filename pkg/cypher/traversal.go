@@ -45,7 +45,7 @@ type TraversalContext struct {
 	direction        string // "outgoing", "incoming", "both"
 	minHops          int
 	maxHops          int
-	usedEdges        map[storage.EdgeID]bool
+	usedEdges        map[graphEntityKey]bool
 	paths            []PathResult
 	nodeCache        map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
 	limit            int                              // OPTIMIZATION: Early termination limit (0 = no limit)
@@ -281,13 +281,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if matches == nil {
 		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
 	}
-	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
-		matches.boundEndNodeID = endSeedNodes[0].ID
-	}
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
 		result.Columns = append(result.Columns, item.column())
 	}
+    foreignBoundEnd := false
+    if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
+        id, selected := nativeNodeLookupID(e.storage, endSeedNodes[0])
+        foreignBoundEnd = !selected
+        if selected { matches.boundEndNodeID = id }
+    }
 
 	// Store the path variable for path functions (relationships(path), nodes(path), length(path))
 	if pathVariable != "" {
@@ -311,7 +314,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	// A plain relationship count is answered from the counters when they can
 	// (relationshipCountFromStore decides), instead of materializing paths.
-	if whereClause == "" && pathVariable == "" && len(returnItems) == 1 {
+	if !foreignBoundEnd && whereClause == "" && pathVariable == "" && len(returnItems) == 1 {
 		if count, ok, err := e.relationshipCountFromStore(ctx, matches, returnItems[0]); ok {
 			if err != nil {
 				return nil, err
@@ -327,7 +330,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (c)<-[:PART_OF]-(p) RETURN c.name, count(p)
 	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
-	if whereClause == "" && pathVariable == "" {
+	if !foreignBoundEnd && whereClause == "" && pathVariable == "" {
 		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
 			if err != nil {
 				return nil, err
@@ -341,8 +344,10 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// This avoids traversing from all nodes when we only need one specific node
 	var optimizedStartNodes []*storage.Node
 	usedPropertyIndex := false
-	if len(seedNodes) > 0 {
-		optimizedStartNodes = seedNodes
+    if foreignBoundEnd {
+        usedPropertyIndex = true
+    } else if len(seedNodes) > 0 {
+        optimizedStartNodes = seedNodes
 		usedPropertyIndex = true
 	} else if whereClause != "" {
 		// Direct element/id equality seek on start variable:
@@ -399,7 +404,10 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	// Execute traversal with optimized start nodes if available
 	var paths []PathResult
-	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
+    if foreignBoundEnd {
+        // Keep the existing projection/aggregation owner for an empty match.
+        paths = nil
+    } else if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
 		// Final even when empty: a bound end node with no qualifying path must
 		// not fall through to the store-wide scan below.
 		paths = endSeededPaths
@@ -1530,14 +1538,16 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			if edge == nil {
 				continue
 			}
+            startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+            if !selected { continue }
 			switch relationship.Direction {
 			case "outgoing":
-				add(edge.StartNode)
+				add(startID)
 			case "incoming":
-				add(edge.EndNode)
+				add(endID)
 			default:
-				add(edge.StartNode)
-				add(edge.EndNode)
+				add(startID)
+				add(endID)
 			}
 		}
 	}
@@ -1630,7 +1640,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			direction:                    match.Relationship.Direction,
 			minHops:                      match.Relationship.MinHops,
 			maxHops:                      match.Relationship.MaxHops,
-			usedEdges:                    make(map[storage.EdgeID]bool),
+			usedEdges:                    make(map[graphEntityKey]bool),
 			nodeCache:                    make(map[storage.NodeID]*storage.Node),
 			limit:                        ctxLimit,
 			temporalViewport:             viewport,
@@ -1703,7 +1713,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					direction:                    match.Relationship.Direction,
 					minHops:                      match.Relationship.MinHops,
 					maxHops:                      match.Relationship.MaxHops,
-					usedEdges:                    make(map[storage.EdgeID]bool),
+					usedEdges:                    make(map[graphEntityKey]bool),
 					nodeCache:                    make(map[storage.NodeID]*storage.Node),
 					temporalViewport:             viewport,
 					temporalChecker:              checker,
@@ -1969,7 +1979,7 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 		direction:     rel.Direction,
 		minHops:       rel.MinHops,
 		maxHops:       rel.MaxHops,
-		usedEdges:     make(map[storage.EdgeID]bool),
+		usedEdges:     make(map[graphEntityKey]bool),
 		nodeCache:     make(map[storage.NodeID]*storage.Node),
 		cancelCtx:     traversalCtx,
 		repeatable:    repeatableElements(traversalCtx),
@@ -2034,6 +2044,8 @@ func (e *StorageExecutor) findPaths(
 	endPattern *nodePatternInfo,
 ) []PathResult {
 	var results []PathResult
+    currentID, selected := nativeNodeLookupID(e.storage, currentNode)
+    if !selected { return results }
 
 	// Every frame and sibling expansion must observe cancellation. Sampling
 	// recursive entries alone leaves callers expanding the remaining siblings
@@ -2052,7 +2064,7 @@ func (e *StorageExecutor) findPaths(
 	}
 
 	// Check if current path meets minimum length and endpoint requirements
-	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentNode.ID == ctx.endNodeID) {
+	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentID == ctx.endNodeID) {
 		if e.matchesEndPattern(currentNode, endPattern) {
 			// A path the expansion keeps counts against the statement's
 			// memory limit; going over cancels the statement (#1343).
@@ -2082,12 +2094,12 @@ func (e *StorageExecutor) findPaths(
 	var edges []*storage.Edge
 	switch ctx.direction {
 	case "outgoing":
-		edges = e.traversalEdges(ctx, currentNode.ID, true)
+		edges = e.traversalEdges(ctx, currentID, true)
 	case "incoming":
-		edges = e.traversalEdges(ctx, currentNode.ID, false)
+		edges = e.traversalEdges(ctx, currentID, false)
 	case "both":
 		var err error
-		edges, err = undirectedIncidentEdges(e.storage, currentNode.ID)
+		edges, err = undirectedIncidentEdges(e.storage, currentID)
 		if err != nil && ctx.cancelCtx != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return results
@@ -2102,7 +2114,8 @@ func (e *StorageExecutor) findPaths(
 		// A Cypher path may revisit a node, but it cannot reuse a relationship.
 		// This also prevents an undirected expansion from walking the same edge
 		// immediately back in the opposite direction.
-		if ctx.usedEdges[edge.ID] && !ctx.repeatable {
+        edgeKey := nativeGraphEntityKey(edge)
+        if ctx.usedEdges[edgeKey] && !ctx.repeatable {
 			continue
 		}
 		// Check relationship type filter
@@ -2122,29 +2135,24 @@ func (e *StorageExecutor) findPaths(
 		}
 
 		// Get next node
-		var nextNodeID storage.NodeID
-		if ctx.direction == "outgoing" || (ctx.direction == "both" && edge.StartNode == currentNode.ID) {
-			nextNodeID = edge.EndNode
-		} else {
-			nextNodeID = edge.StartNode
-		}
-		// On its last possible hop a path bound to end at one node ends at
-		// no other: any other neighbour is skipped unread.
-		if ctx.endNodeID != "" && depth+1 >= ctx.maxHops && nextNodeID != ctx.endNodeID {
-			continue
-		}
+        startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+        if !selected { continue }
+        nextNodeID := startID
+        if ctx.direction == "outgoing" || (ctx.direction == "both" && startID == currentID) {
+            nextNodeID = endID
+        }
 
 		nextNode, ok := e.loadTraversalEndpointNode(ctx, nextNodeID)
 		if !ok {
 			continue
 		}
 
-		ctx.usedEdges[edge.ID] = true
+		ctx.usedEdges[edgeKey] = true
 
 		// Recurse with optimized path copying (pre-allocate exact size)
 		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
 		if !ok {
-			ctx.usedEdges[edge.ID] = false
+			ctx.usedEdges[edgeKey] = false
 			continue
 		}
 		newPathNodes := make([]*storage.Node, nextNodesLen)
@@ -2153,7 +2161,7 @@ func (e *StorageExecutor) findPaths(
 
 		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
 		if !ok {
-			ctx.usedEdges[edge.ID] = false
+			ctx.usedEdges[edgeKey] = false
 			continue
 		}
 		newPathEdges := make([]*storage.Edge, nextEdgesLen)
@@ -2164,7 +2172,7 @@ func (e *StorageExecutor) findPaths(
 		results = append(results, subPaths...)
 
 		// Unmark for sibling paths.
-		ctx.usedEdges[edge.ID] = false
+		ctx.usedEdges[edgeKey] = false
 	}
 
 	return results

@@ -29,7 +29,7 @@ func (w *transactionStorageWrapper) StreamEdgesByType(ctx context.Context, edgeT
 		}
 		// The transaction already hands out copies; strip prefixes in place
 		// on a shallow copy, as StreamNodesByLabelProjected does.
-        out := w.toUserEdgeView(edge)
+		out := w.toUserEdgeView(edge)
 		return visit(&out)
 	})
 }

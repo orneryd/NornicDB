@@ -1324,24 +1324,6 @@ func gdsPropertyTypeKey(label, key string) string {
 	return label + "\x00" + key
 }
 
-// gdsNodeID is the common node representation reader for GDS procedures,
-// filters and utility functions. Whether an ID is projected, stored or a label
-// is the caller's selection contract; this reader preserves the ID exactly.
-func gdsNodeID(value interface{}) (storage.NodeID, bool) {
-	switch node := value.(type) {
-	case *storage.Node:
-		if node != nil {
-			return node.ID, true
-		}
-	case string:
-		return storage.NodeID(node), true
-	default:
-		if isIntegerProcedureValue(value) {
-			return storage.NodeID(fmt.Sprint(value)), true
-		}
-	}
-	return "", false
-}
 
 // gdsInteger is a value of any Go integer type as an int64 (the shared
 // converters skip the narrow and unsigned ones).
