@@ -74,6 +74,9 @@ func (b *CommitBuffer) deletedEntityIDs(kind bufferedEntityKind, visit func(stri
 // entityStateLocked resolves the first relevant state, newest generation
 // first. All point, boolean and overlay readers use this same decision.
 func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string) bufferedEntityState {
+	if w == nil {
+		return bufferedEntityState{}
+	}
 	if state := w.active.entityState(kind, id); state.found {
 		return state
 	}

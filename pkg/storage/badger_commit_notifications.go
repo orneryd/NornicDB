@@ -56,12 +56,12 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 	// delays delivery. Keep event payloads independent of subsequent caller edits.
 	for i := range n.ops {
 		op := &n.ops[i]
+		op.snapshotForNotification()
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if !n.revisionPublished {
 				b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
 			}
-			op.Node = copyNode(op.Node)
 		case OpDeleteNode:
 			for _, id := range op.DeletedEdgeIDs {
 				b.recordEdgeDeletion(id, !n.revisionPublished)
@@ -75,7 +75,6 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 			if !n.revisionPublished {
 				b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
 			}
-			op.Edge = copyEdge(op.Edge)
 		case OpDeleteEdge:
 			b.recordEdgeDeletion(op.EdgeID, !n.revisionPublished)
 		}
@@ -145,7 +144,7 @@ func (b *BadgerEngine) notifyCommitOperations(ops []Operation) {
 		case OpCreateNode:
 			b.dispatchNodeCreated(op.Node)
 		case OpUpdateNode:
-			b.dispatchNodeUpdated(op.Node)
+			b.dispatchNodeUpdatedOutcome(op.Node, op.embeddingOutcome)
 		case OpDeleteNode:
 			for _, id := range op.DeletedEdgeIDs {
 				b.dispatchEdgeDeleted(id)

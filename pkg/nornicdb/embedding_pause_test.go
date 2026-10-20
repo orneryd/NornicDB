@@ -188,11 +188,11 @@ type pendingWriterEngine struct {
 	onCount func()
 }
 
-func (e *pendingWriterEngine) PendingEmbeddingsCount() int {
+func (e *pendingWriterEngine) CountPendingEmbeddingIDs(accept func([]byte) bool) int {
 	if e.onCount != nil {
 		e.onCount()
 	}
-	return 0
+	return storage.CountPendingEmbeddingIDs(e.Engine, accept)
 }
 
 // DB.Cypher holds db.mu.RLock for the whole statement, so the embedding

@@ -40,6 +40,8 @@ type commitWriter struct {
 	beforeLarge func()
 	// onBatch, when set, is told about every batch the writer opens.
 	onBatch func(next *badger.Txn)
+
+	embeddingOutcome *Node
 }
 
 func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *commitWriter {
@@ -111,7 +113,7 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		if err := cw.db.commit(cw.txn, cw.reserveNotification); err != nil {
+		if err := cw.commitOutcome(); err != nil {
 			return err
 		}
 		cw.publishPendingEmbeddingAdds()
@@ -151,3 +153,7 @@ func (cw *commitWriter) abort() error {
 // property-key tokens durable. Commit reports it as is, as before the
 // commit writer existed.
 var errPersistingTokens = errors.New("persisting property key dictionary")
+
+func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
+	return cw.db.commitShared(cw.txn, cw.reserveNotification)
+}

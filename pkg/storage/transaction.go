@@ -76,8 +76,10 @@ const (
 // It is also JSON-serialized into the WAL buffered-commit payload, so every
 // field carries a tag.
 type Operation struct {
-	Type      OperationType `json:"type"`
-	Timestamp time.Time     `json:"timestamp,omitempty"`
+	// Runtime notification kind; never part of WAL or persisted data.
+	embeddingOutcome bool
+	Type             OperationType `json:"type"`
+	Timestamp        time.Time     `json:"timestamp,omitempty"`
 
 	// For node operations
 	NodeID  NodeID `json:"node_id,omitempty"`
@@ -156,7 +158,12 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	}
 
 	nodeCopy := &Node{
+		embeddingOwner:             node.embeddingOwner,
+		embeddingOwnerID:           node.embeddingOwnerID,
 		ID:                         node.ID,
+		embeddingRevision:          node.embeddingRevision,
+		embeddingAttempt:           node.embeddingAttempt,
+		embeddingPublication:       node.embeddingPublication,
 		Labels:                     make([]string, 0, len(node.Labels)),
 		CreatedAt:                  node.CreatedAt,
 		UpdatedAt:                  node.UpdatedAt,

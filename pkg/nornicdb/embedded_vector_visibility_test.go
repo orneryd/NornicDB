@@ -27,40 +27,44 @@ func vectorOnlySearch(t *testing.T, svc *search.Service, vector []float32) *sear
 func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 	ctx := context.Background()
 	config := DefaultConfig()
-	config.Memory.DecayEnabled = false
-	config.Memory.AutoLinksEnabled = false
+	config.Memory.DecayEnabled, config.Memory.AutoLinksEnabled = false, false
+	config.Memory.EmbeddingEnabled = true
 	db, err := Open(t.TempDir(), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
-	dbName := db.defaultDatabaseName()
-	svc, err := db.EnsureSearchIndexesBuilt(ctx, dbName, nil)
+	svc, err := db.EnsureSearchIndexesBuilt(ctx, db.defaultDatabaseName(), nil)
 	require.NoError(t, err)
 	require.True(t, svc.IsReady())
-
-	_, err = db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"SearchSource"}, Properties: map[string]interface{}{"content": "bravo filler"}})
+	_, err = db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"SearchSource"}, Properties: map[string]any{"content": "bravo filler"}})
 	require.NoError(t, err)
 	vector := unitVector(config.Memory.EmbeddingDimensions)
+	worker := NewEmbedWorker(&unitVectorEmbedder{dims: config.Memory.EmbeddingDimensions}, db.baseStorage, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true, EmbedBatchSize: 1, ChunkSize: 512})
+	t.Cleanup(worker.Close)
+	type observation struct {
+		response *search.SearchResponse
+		err      error
+	}
+	observed := make(chan observation, 1)
+	worker.SetOnEmbedded(func(node *storage.Node) {
+		opts := search.DefaultSearchOptions()
+		opts.Limit, opts.MinRRFScore = 10, 0
+		response, err := svc.Search(ctx, "zulu", vector, opts)
+		observed <- observation{response, err}
+	})
+	worker.StartWorkers()
+	select {
+	case got := <-observed:
+		require.NoError(t, got.err)
+		require.Len(t, got.response.Results, 1, "reason=%s", got.response.FallbackReason)
+		require.Equal(t, storage.NodeID("source"), got.response.Results[0].NodeID)
+		require.Equal(t, 1, got.response.Results[0].VectorRank)
+		require.Equal(t, 1, svc.EmbeddingCount())
+	case <-time.After(10 * time.Second):
+		t.Fatal("the public worker did not publish its accepted outcome")
+	}
 	stored, err := db.storage.GetNode("source")
 	require.NoError(t, err)
-	embedded := storage.CopyNode(stored)
-	embedded.ChunkEmbeddings = [][]float32{vector}
-	// The worker's write: the embedding key space only, with no node event.
-	sidecar, ok := db.storage.(storage.EmbeddingSidecarUpdater)
-	require.True(t, ok)
-	require.NoError(t, sidecar.UpdateNodeEmbeddingSidecar(embedded))
-	stored, err = db.storage.GetNode("source")
-	require.NoError(t, err)
-	require.Len(t, stored.ChunkEmbeddings, 1, "the vector is persisted")
-
-	qualified := storage.CopyNode(embedded)
-	qualified.ID = storage.NodeID(dbName + ":source")
-	db.onNodeEmbedded(qualified)
-
-	response := vectorOnlySearch(t, svc, vector)
-	require.Len(t, response.Results, 1, "reason=%s", response.FallbackReason)
-	require.Equal(t, storage.NodeID("source"), response.Results[0].NodeID)
-	require.Equal(t, 1, response.Results[0].VectorRank)
-	require.Equal(t, 1, svc.EmbeddingCount())
+	require.Len(t, stored.ChunkEmbeddings, 1, "the searchable vector is persisted")
 }
 
 // End to end: when WaitForEmbeddings reports the worker's embeddings done, a

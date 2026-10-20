@@ -119,7 +119,7 @@ func TestEmbedWorker_ProcessNextBatch_ShouldYieldBranch(t *testing.T) {
 	w.SetShouldYield(func() bool { return true })
 	didWork := w.processNextBatch()
 	require.False(t, didWork)
-	require.Equal(t, 1, w.QueueLen())
+	require.Equal(t, 1, len(w.trigger))
 }
 
 func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
@@ -156,10 +156,7 @@ func TestEmbedWorker_EmbedBatchHelpers_EdgeBranches(t *testing.T) {
 		})
 		t.Cleanup(func() { w.Close() })
 
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			w.cancel()
-		}()
+		w.cancel()
 
 		embs, err := w.embedBatchWithRetry([]string{"a", "b"})
 		require.Error(t, err)
@@ -208,6 +205,11 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 
+		snapshot, err := engine.GetNode(node.ID)
+		require.NoError(t, err)
+		snapshot, err = storage.SnapshotNodeForEmbedding(snapshot)
+		require.NoError(t, err)
+
 		qe := &queueBranchEngine{Engine: engine, findNode: &storage.Node{ID: node.ID}}
 		ew := &EmbedWorker{
 			embedder: newMockEmbedder(),
@@ -215,8 +217,8 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 			config:   &EmbedWorkerConfig{BatchDelay: time.Millisecond, MaxRetries: 1, ChunkSize: 64, ChunkOverlap: 8},
 			ctx:      context.Background(),
 			trigger:  make(chan struct{}, 1),
-			recentlyProcessed: map[string]time.Time{
-				string(node.ID): time.Now(),
+			recentlyProcessed: map[string]recentNodeEmbedding{
+				string(node.ID): {at: time.Now(), revision: snapshot.EmbeddingRevision()},
 			},
 		}
 
@@ -246,7 +248,8 @@ func TestEmbedWorker_ProcessNextBatch_AdditionalBranches(t *testing.T) {
 
 		require.True(t, ew.processNextBatch())
 		require.Equal(t, int64(1), ew.failed.Load())
-		require.Equal(t, []storage.NodeID{node.ID}, qe.added)
+		require.Empty(t, qe.added, "failed writes leave MAIN")
+		require.Contains(t, ew.nodeRetries, node.ID)
 	})
 }
 

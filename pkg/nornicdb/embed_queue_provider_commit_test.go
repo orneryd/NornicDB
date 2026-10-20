@@ -1,0 +1,111 @@
+package nornicdb
+
+import (
+	"testing"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+type providerCommitQueue struct {
+	*rejectingSidecarQueue
+	started, release chan struct{}
+}
+
+func (q *providerCommitQueue) UpdateNodeEmbeddingSidecar(node *storage.Node) error {
+	close(q.started)
+	<-q.release
+	return q.rejectingSidecarQueue.UpdateNodeEmbeddingSidecar(node)
+}
+
+func TestEmbedWorkerProviderChangeSerializesCommit(t *testing.T) {
+	for _, setter := range []string{"single", "resolver"} {
+		for _, retry := range []bool{false, true} {
+			t.Run(setter+map[bool]string{false: "/first", true: "/retry"}[retry], func(t *testing.T) {
+				worker, queue, old := nodeSaveRetryFixture(t, "whole", 1, 0)
+				if retry {
+					queue.rejections = 1
+					require.True(t, worker.processNextBatch())
+					makeNodeSaveRetriesReady(worker)
+				}
+				gate := &providerCommitQueue{queue, make(chan struct{}), make(chan struct{})}
+				worker.storage = gate
+				published := make(chan bool, 1)
+				worker.onEmbedded = func(*storage.Node) { published <- worker.currentEmbedder() == old }
+				written := make(chan struct{})
+				go func() { worker.processNextBatch(); close(written) }()
+				<-gate.started
+				locked := worker.providerWriteMu.TryLock()
+				if locked {
+					worker.providerWriteMu.Unlock()
+					t.Error("write/publication boundary did not hold the provider barrier")
+				}
+				replacement := newMockEmbedder()
+				replacement.model = "replacement"
+				started, changed := make(chan struct{}), make(chan struct{})
+				go func() {
+					close(started)
+					if setter == "single" {
+						worker.SetEmbedder(replacement)
+					} else {
+						worker.SetEmbedderResolver(func(storage.NodeID) (embed.Embedder, error) { return replacement, nil })
+					}
+					close(changed)
+				}()
+				<-started
+				select {
+				case <-changed:
+					t.Error("provider change completed while old sidecar commit was blocked")
+				case <-time.After(20 * time.Millisecond):
+				}
+				close(gate.release)
+				<-written
+				<-changed
+				require.True(t, <-published, "publication belongs before provider transition")
+				active, err := worker.resolveEmbedder("node-000")
+				require.NoError(t, err)
+				require.Same(t, replacement, active)
+			})
+		}
+	}
+}
+
+func TestEmbedWorkerProviderChangeRejectsObsoleteRetry(t *testing.T) {
+	worker, queue, old := nodeSaveRetryFixture(t, "whole", 1, 1)
+	require.True(t, worker.processNextBatch())
+	makeNodeSaveRetriesReady(worker)
+	node, _ := worker.claimNextNodeResult()
+	require.NotNil(t, node)
+	worker.SetEmbedder(newMockEmbedder())
+	node.ChunkEmbeddings, node.EmbedMeta = [][]float32{{1, 0}}, map[string]any{"embedding_model": old.Model()}
+	require.True(t, worker.writeEmbeddedNode(node))
+	worker.releaseNodeClaim(node.ID)
+	require.Equal(t, 1, queue.attempts[node.ID], "obsolete validated claim must not reach storage")
+	require.True(t, worker.processNextBatch(), "replacement provider must retain pending ownership")
+	require.Equal(t, 2, queue.attempts[node.ID])
+}
+
+func TestEmbedWorkerProviderChangeDBLockOrder(t *testing.T) {
+	worker, queue, _ := nodeSaveRetryFixture(t, "whole", 1, 0)
+	db := &DB{baseStorage: queue.Engine, embedQueue: worker, config: DefaultConfig()}
+	// A blocked commit owns the provider barrier. DB.SetEmbedder must not
+	// hold db.mu while it waits, since publication is allowed to read db.mu.
+	worker.providerWriteMu.RLock()
+	started, done := make(chan struct{}), make(chan struct{})
+	go func() { close(started); db.SetEmbedder(newMockEmbedder()); close(done) }()
+	<-started
+	select {
+	case <-done:
+		t.Error("DB provider setter bypassed commit barrier")
+	case <-time.After(20 * time.Millisecond):
+	}
+	available := db.mu.TryRLock()
+	if available {
+		db.mu.RUnlock()
+	}
+	worker.providerWriteMu.RUnlock()
+	require.True(t, available, "DB lifecycle mutex must be available to blocked publication")
+	<-done
+}

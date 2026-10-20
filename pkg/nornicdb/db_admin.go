@@ -620,7 +620,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// feeds) unchanged, and they're invalidated otherwise so the embed worker
 	// regenerates them (#963). We intentionally do NOT touch NamedEmbeddings
 	// here (those are user-provided, e.g., Qdrant points).
-	before := &storage.Node{Labels: n.Labels, Properties: make(map[string]interface{}, len(n.Properties))}
+	before := &storage.Node{EmbedMeta: n.EmbedMeta, Labels: n.Labels, Properties: make(map[string]interface{}, len(n.Properties))}
 	for k, v := range n.Properties {
 		before.Properties[k] = v
 	}
@@ -633,7 +633,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		n.Properties[k] = v
 	}
 
-	invalidateManagedEmbeddings := !embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(db.config)).SameSource(before, n)
+	invalidateManagedEmbeddings := !storage.EmbeddingSourceMatches(before, n, embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromConfig(db.config)))
 	if invalidateManagedEmbeddings {
 		embeddingutil.InvalidateManagedEmbeddings(n)
 	}
@@ -642,9 +642,10 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 		return nil, err
 	}
 
-	// Kick the embed worker so regeneration starts quickly (it will pull from the pending index).
-	if invalidateManagedEmbeddings && embedQueue != nil {
-		embedQueue.Trigger()
+	// Every committed body update can start a new attempt, even when its
+	// embedding source is unchanged. The attempt owner compares revisions.
+	if embedQueue != nil {
+		embedQueue.Enqueue(string(n.ID))
 	}
 
 	// Keep search results immediately consistent after updates.
@@ -674,6 +675,7 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 		return ErrClosed
 	}
 	storageEngine := db.storage
+	embedQueue := db.embedQueue
 	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
@@ -683,7 +685,13 @@ func (db *DB) DeleteNode(ctx context.Context, id string) error {
 		return err
 	}
 
-	return storageEngine.DeleteNode(storage.NodeID(id))
+	if err := storageEngine.DeleteNode(storage.NodeID(id)); err != nil {
+		return err
+	}
+	if embedQueue != nil {
+		embedQueue.Enqueue(id)
+	}
+	return nil
 }
 
 // GraphEdge represents an edge for HTTP API.
@@ -1744,7 +1752,6 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 		return ErrClosed
 	}
 	storageEngine := db.storage
-	defaultDB := db.defaultDatabaseName()
 	db.mu.RUnlock()
 
 	// Collect IDs to delete first (can't delete while iterating)
@@ -1761,12 +1768,7 @@ func (db *DB) DeleteUserData(ctx context.Context, userID string) error {
 
 	// Now delete the collected nodes
 	for _, id := range toDelete {
-		// Remove from search indexes first (before storage deletion), but wait for any
-		// in-flight build to finish so a stale scan cannot re-add the deleted node.
-		if err := db.removeNodeFromSearchIndexes(ctx, defaultDB, storageEngine, id); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
-			return err
-		}
-		if err := storageEngine.DeleteNode(id); err != nil {
+		if err := db.DeleteNode(ctx, string(id)); err != nil {
 			return err
 		}
 	}
@@ -1783,6 +1785,7 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 		return ErrClosed
 	}
 	storageEngine := db.storage
+	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
 	anonymousID := generateID()
@@ -1804,6 +1807,9 @@ func (db *DB) AnonymizeUserData(ctx context.Context, userID string) error {
 	for _, n := range toUpdate {
 		if err := storageEngine.UpdateNode(n); err != nil {
 			return err
+		}
+		if embedQueue != nil {
+			embedQueue.Enqueue(string(n.ID))
 		}
 	}
 

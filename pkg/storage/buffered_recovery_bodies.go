@@ -168,6 +168,7 @@ func restoreBufferedNodeVectors(node *Node, id NodeID, read embeddingRecordReade
 		}
 		if fresh {
 			delete(meta, embeddingContentUpdatedAtKey)
+			delete(meta, embeddingRangeManifestKey)
 			node.EmbedMeta = meta
 			if len(meta) == 0 {
 				node.EmbedMeta = nil

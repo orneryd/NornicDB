@@ -2,7 +2,6 @@
 package storage
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -874,6 +873,12 @@ func deleteEmbeddingKeysInTxn(txn *badger.Txn, nodeID NodeID) error {
 // The callback owns each key, including when it stages deletion until commit.
 // An empty range copies no keys and allocates no per-key work.
 func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
+	return visitEmbeddingKeysExcept(txn, nodeID, embeddingRangeRetention{}, visit, options...)
+}
+
+// visitEmbeddingKeysExcept observes the full range but copies only keys whose
+// old values are not already replaced by the caller's final write set.
+func visitEmbeddingKeysExcept(txn *badger.Txn, nodeID NodeID, retained embeddingRangeRetention, visit func([]byte) error, options ...embeddingKeyScanOptions) error {
 	var scan embeddingKeyScanOptions
 	if len(options) > 0 {
 		scan = options[0]
@@ -882,32 +887,26 @@ func visitEmbeddingKeys(txn *badger.Txn, nodeID NodeID, visit func([]byte) error
 		(*hook)(nodeID)
 	}
 	for _, prefix := range embeddingPrefixes(nodeID) {
-		err := func() error {
-			opts := badgerIteratorOptions()
-			opts.Prefix = prefix
-			it := txn.NewIterator(opts)
-			defer it.Close()
-			start := prefix
-			if bytes.Compare(scan.after, start) > 0 {
-				start = scan.after
-			}
-			for it.Seek(start); it.Valid(); it.Next() {
-				key := it.Item().Key()
-				if prefix[0] == prefixEmbedding {
-					belongs, err := embeddingKeyBelongsTo(txn, key, nodeID, scan.references)
-					if err != nil {
-						return err
-					}
-					if !belongs {
-						continue
-					}
-				}
-				if err := visit(it.Item().KeyCopy(nil)); err != nil {
+		if prefix[0] == prefixEmbeddingCurrent {
+			if indexed, err := visitEmbeddingManifestKeys(txn, nodeID, retained, visit, scan.after); indexed || err != nil {
+				if err != nil {
 					return err
 				}
+				continue
 			}
-			return nil
-		}()
+		}
+		err := visitEmbeddingPrefixKeys(txn, prefix, scan.after, func(key []byte) error {
+			if prefix[0] == prefixEmbedding {
+				belongs, err := embeddingKeyBelongsTo(txn, key, nodeID, scan.references)
+				if err != nil {
+					return err
+				}
+				if !belongs {
+					return nil
+				}
+			}
+			return visit(key)
+		}, retained)
 		if err != nil {
 			return err
 		}

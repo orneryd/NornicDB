@@ -944,6 +944,10 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 	if node == nil {
 		return
 	}
+	// Accepted embedding outcomes use the same authoritative storage event.
+	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(node) {
+		return
+	}
 
 	dbName, local, ok := splitQualifiedID(string(node.ID))
 	if !ok {

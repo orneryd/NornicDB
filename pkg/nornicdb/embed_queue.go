@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,11 +25,6 @@ const (
 
 type deterministicTextChunker interface {
 	ChunkText(text string, maxTokens, overlap int) ([]string, error)
-}
-
-type providerRetryState struct {
-	failures int
-	retryAt  time.Time
 }
 
 // EmbedWorker manages async embedding generation using a pull-based model.
@@ -85,13 +81,12 @@ type EmbedWorker struct {
 
 	// Recently processed node IDs to prevent re-processing before DB commit is visible
 	// This prevents the same node being processed multiple times in quick succession
-	recentlyProcessed map[string]time.Time
+	recentlyProcessed  map[string]recentNodeEmbedding
+	nodeUpdates        map[string]struct{} // mu; mutation notifications consumed by retry owner
+	nodeUpdatesPending atomic.Bool
 
 	// Track nodes we've already logged as skipped (to avoid log spam)
 	loggedSkip map[string]bool
-	// providerRetries coordinates a provider-wide cooldown after transient
-	// failures so retained queue work cannot hot-loop against an outage.
-	providerRetries map[string]providerRetryState
 
 	// Debounce state for k-means clustering trigger
 	clusterDebounceTimer   *time.Timer
@@ -102,8 +97,16 @@ type EmbedWorker struct {
 	// claimMu serializes find+claim. claimedNodes remains authoritative while a
 	// provider request is in flight because storage-side pending-index removals
 	// are not guaranteed to become visible immediately.
-	claimMu      sync.Mutex
-	claimedNodes map[string]struct{}
+	claimMu       sync.Mutex
+	claimedNodes  map[string]*nodeEmbeddingAttempt
+	claimSequence uint64
+	// Provider setters linearize against sidecar commit and publication.
+	providerWriteMu sync.RWMutex
+
+	nodeRetries   map[storage.NodeID]*nodeEmbeddingRetry // claimMu: retry ownership until an accepted outcome
+	retrySequence uint64                                 // claimMu: FIFO failure order, independent of deadline
+
+	embeddingEpoch atomic.Uint64
 
 	// workersStarted is true once StartWorkers() has been called (used when DeferWorkerStart is true).
 	workersStarted bool
@@ -133,10 +136,9 @@ type EmbedWorkerConfig struct {
 	NumWorkers   int           // Number of concurrent workers (default: 1, 0 disables background workers)
 	ScanInterval time.Duration // Recovery scan interval (default: 15m, minimum: 30s); Enqueue wakes immediately.
 	BatchDelay   time.Duration // Minimum delay after each provider request (default: 500ms)
-	MaxRetries   int           // Max attempts within one provider request cycle (default: 3)
-	// ProviderRetryBackoff and ProviderRetryBackoffMax control the cooldown
-	// between queue-level retries after transient provider failures. MaxRetries
-	// still bounds attempts within one provider call; it never parks a node.
+	MaxRetries   int           // DLQ retries after the initial attempt; then terminal (default: 3)
+	// ProviderRetryBackoff and ProviderRetryBackoffMax control per-node DLQ backoff.
+	// MAIN is never held back.
 	ProviderRetryBackoff    time.Duration // default: 2s
 	ProviderRetryBackoffMax time.Duration // default: 1m
 	// TriggerDebounceDelay delays enqueue-triggered scans until writes lull.
@@ -222,10 +224,9 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
 		ctx:               ctx,
 		cancel:            cancel,
 		trigger:           make(chan struct{}, 1),
-		recentlyProcessed: make(map[string]time.Time),
+		recentlyProcessed: make(map[string]recentNodeEmbedding),
 		loggedSkip:        make(map[string]bool),
-		providerRetries:   make(map[string]providerRetryState),
-		claimedNodes:      make(map[string]struct{}),
+		claimedNodes:      make(map[string]*nodeEmbeddingAttempt),
 	}
 	ew.operatorPaused.Store(config.StartPaused)
 
@@ -272,9 +273,19 @@ func (ew *EmbedWorker) StartWorkers() {
 // SetEmbedder sets or updates the embedder (for async initialization).
 // This allows the worker to start before the model is loaded.
 func (ew *EmbedWorker) SetEmbedder(embedder embed.Embedder) {
+	ew.providerWriteMu.Lock()
+	defer ew.providerWriteMu.Unlock()
+	ew.setEmbedderUnderWriteBarrier(embedder)
+}
+
+// setEmbedderUnderWriteBarrier is also used by DB.SetEmbedder, which acquires
+// the provider barrier before db.mu so publication can enter DB locks.
+func (ew *EmbedWorker) setEmbedderUnderWriteBarrier(embedder embed.Embedder) {
 	ew.mu.Lock()
 	ew.embedder = embedder
+	ew.embeddingEpoch.Add(1)
 	ew.mu.Unlock()
+	ew.invalidateNodeEmbeddingRetries()
 	// Trigger immediate processing now that embedder is available
 	ew.signalAllWorkers()
 }
@@ -291,27 +302,18 @@ func (ew *EmbedWorker) currentEmbedder() embed.Embedder {
 // SetEmbedderResolver selects a provider for a fully-qualified node ID. This
 // supports per-database model spaces without coupling the worker to a provider.
 func (ew *EmbedWorker) SetEmbedderResolver(resolver func(storage.NodeID) (embed.Embedder, error)) {
+	ew.providerWriteMu.Lock()
+	defer ew.providerWriteMu.Unlock()
 	ew.mu.Lock()
 	ew.embedderResolver = resolver
+	ew.embeddingEpoch.Add(1)
 	ew.mu.Unlock()
+	ew.invalidateNodeEmbeddingRetries()
+	ew.signalTrigger()
 }
 
 func (ew *EmbedWorker) resolveEmbedder(nodeID storage.NodeID) (embed.Embedder, error) {
-	ew.mu.Lock()
-	resolver := ew.embedderResolver
-	fallback := ew.embedder
-	ew.mu.Unlock()
-	if resolver == nil {
-		return fallback, nil
-	}
-	provider, err := resolver(nodeID)
-	if err != nil {
-		return nil, err
-	}
-	if provider == nil {
-		return fallback, nil
-	}
-	return provider, nil
+	return ew.selectEmbeddingProvider().resolve(nodeID)
 }
 
 // SetOnEmbedded sets a callback to be called after a node is embedded.
@@ -436,6 +438,7 @@ func (ew *EmbedWorker) signalAllWorkers() {
 type WorkerStats struct {
 	Running   bool `json:"running"`
 	InFlight  int  `json:"in_flight"`
+	Pending   int  `json:"pending"`
 	Processed int  `json:"processed"`
 	Failed    int  `json:"failed"`
 	Parked    int  `json:"parked"`
@@ -452,34 +455,15 @@ type EmbeddingFailure struct {
 	FailedAt string         `json:"failed_at,omitempty"`
 }
 
-// Stats returns current worker statistics.
-// QueueLen returns the current pending-embedding queue depth for the
-// observability nornicdb_embed_queue_depth GaugeFunc (Plan 04-05 D-15b).
-//
-// EmbedWorker is pull-based: there is no in-memory queue of work items
-// waiting to be processed. Instead, the worker periodically scans
-// storage for nodes lacking embeddings (the storage-side
-// "pending-embedding index" is the durable queue). For the M1 scrape
-// surface we report the trigger channel buffer depth (a coarse upper
-// bound on outstanding wake-up signals); deeper visibility into the
-// storage-side pending count is deferred to a future plan that wires
-// the AddToPendingEmbeddings counter through here.
-//
-// The metric value is therefore a lower-bound on actual outstanding
-// work — when alerts trigger SREs should also check the storage-side
-// pending-embeddings index. Documented in CONTEXT D-15b.
-func (ew *EmbedWorker) QueueLen() int {
-	if ew == nil {
-		return 0
-	}
-	return len(ew.trigger)
-}
+// QueueLen returns the canonical outstanding work count, including backoff DLQ.
+func (ew *EmbedWorker) QueueLen() int { return ew.PendingEmbeddingsCount() }
 
 func (ew *EmbedWorker) Stats() WorkerStats {
 	inFlight := int(ew.inFlight.Load())
 	return WorkerStats{
 		Running:   inFlight > 0,
 		InFlight:  inFlight,
+		Pending:   ew.PendingEmbeddingsCount(),
 		Processed: int(ew.processed.Load()),
 		Failed:    int(ew.failed.Load()),
 		Parked:    int(ew.parked.Load()),
@@ -538,14 +522,14 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 			}
 			return retried, err
 		}
-		embeddingutil.InvalidateManagedEmbeddings(node)
-		sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
-		if !ok {
-			return retried, fmt.Errorf("storage engine %T does not support embedding sidecar writes", ew.storage)
+		node, err = storage.SnapshotNodeForEmbedding(node)
+		if err != nil {
+			return retried, err
 		}
+		embeddingutil.InvalidateManagedEmbeddings(node)
 		// Clearing the embedding state deletes the sidecar records (meta
 		// and chunk keys) so the node can be re-embedded cleanly.
-		if err := sidecar.UpdateNodeEmbeddingSidecar(node); err != nil {
+		if err := ew.commitNodeReset(node); err != nil {
 			return retried, err
 		}
 		ew.addNodeToPendingEmbeddings(node.ID)
@@ -640,11 +624,12 @@ func (ew *EmbedWorker) Reset() {
 	// Reset state under lock
 	ew.mu.Lock()
 	ew.initialScanDone = false
-	ew.recentlyProcessed = make(map[string]time.Time)
+	ew.recentlyProcessed = make(map[string]recentNodeEmbedding)
 	ew.loggedSkip = make(map[string]bool)
 	ew.mu.Unlock()
 	ew.claimMu.Lock()
-	ew.claimedNodes = make(map[string]struct{})
+	ew.claimedNodes = make(map[string]*nodeEmbeddingAttempt)
+	ew.clearNodeEmbeddingRetriesLocked()
 	ew.claimMu.Unlock()
 	ew.processed.Store(0)
 	ew.failed.Store(0)
@@ -696,6 +681,9 @@ func (ew *EmbedWorker) Close() {
 	// Context cancellation is enough to stop workers.
 	// Wait synchronously for worker shutdown to complete.
 	ew.wg.Wait()
+	ew.claimMu.Lock()
+	ew.clearNodeEmbeddingRetriesLocked()
+	ew.claimMu.Unlock()
 }
 
 // scheduleClusteringDebounced accumulates embedding counts and debounces the k-means trigger.
@@ -822,6 +810,9 @@ func (ew *EmbedWorker) worker() {
 		if paused && ew.restoreHolds.Load() == 0 {
 			delay = time.Second
 		}
+		if !paused {
+			delay = ew.nodeEmbeddingRetryDelay(delay)
+		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ew.ctx.Done():
@@ -835,7 +826,7 @@ func (ew *EmbedWorker) worker() {
 			// Every worker rechecks model/pause readiness after a broadcast.
 
 		case <-timer.C:
-			if ew.currentEmbedder() != nil && !ew.embeddingPaused() {
+			if delay == recoveryInterval && ew.currentEmbedder() != nil && !ew.embeddingPaused() {
 				// Catch writes/imports that bypass Enqueue, including missing
 				// pending-index entries. Never scan on a short empty-queue tick.
 				ew.refreshEmbeddingIndexIfDue(false)
@@ -899,7 +890,7 @@ func (ew *EmbedWorker) processUntilEmpty() embedBatchResult {
 						}
 					}
 				}
-				if batchProcessed > 0 && ew.onQueueEmpty != nil {
+				if batchProcessed > 0 && ew.onQueueEmpty != nil && ew.PendingEmbeddingsCount() == 0 {
 					ew.scheduleClusteringDebounced(batchProcessed)
 				}
 				return result
@@ -969,43 +960,33 @@ func (ew *EmbedWorker) processNextBatchResult() embedBatchResult {
 }
 
 func (ew *EmbedWorker) processNextReadyBatch() bool {
-	ew.mu.Lock()
-	hasResolver := ew.embedderResolver != nil
-	embedder := ew.embedder
-	ew.mu.Unlock()
+	selection := ew.selectEmbeddingProvider()
+	hasResolver, embedder := selection.resolver != nil, selection.provider
 	if hasResolver {
-		return ew.processNextResolvedBatch()
+		return ew.processNextResolvedBatch(selection)
 	}
 	if provider, ok := embedder.(embed.DocumentPropertyChunkEmbedder); ok && provider.UsesDocumentProperties() {
-		return ew.processNextNode()
+		return ew.processNextNode(selection)
 	}
 	if batcher, ok := embedder.(embed.DocumentBatchChunkEmbedder); ok && ew.config.EmbedBatchSize > 1 {
 		if _, indexed := ew.storage.(EmbeddingIndexManager); indexed {
-			return ew.processNextDocumentBatch(embedder, batcher)
+			return ew.processNextDocumentBatch(embedder, batcher, selection)
 		}
 	}
-	return ew.processNextNode()
+	return ew.processNextNode(selection)
 }
 
-func (ew *EmbedWorker) processNextResolvedBatch() bool {
+func (ew *EmbedWorker) processNextResolvedBatch(selections ...embeddingSelection) bool {
 	limit := ew.config.EmbedBatchSize
 	if limit < 1 {
 		limit = 1
 	}
-	nodes := make([]*storage.Node, 0, limit)
-	skipped := false
-	for len(nodes) < limit {
-		node, removed := ew.claimNextNodeResult()
-		if node == nil {
-			skipped = removed
-			break
-		}
-		nodes = append(nodes, node)
-	}
+	nodes, skipped := ew.claimNodeBatch(limit, ew.embeddingSelection(selections))
 	if len(nodes) == 0 {
 		return skipped
 	}
 
+	progressed := skipped
 	type resolvedGroup struct {
 		provider        embed.Embedder
 		batcher         embed.DocumentBatchChunkEmbedder
@@ -1014,20 +995,19 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 	}
 	groups := make(map[string]*resolvedGroup)
 	for _, node := range nodes {
-		provider, err := ew.resolveEmbedder(node.ID)
+		provider, err := ew.resolveAttemptEmbedder(node)
 		if err != nil || provider == nil {
 			if err == nil {
 				err = errors.New("embedding provider is not configured")
 			}
-			ew.failed.Add(1)
-			ew.markNodeEmbeddingFailed(node.ID, err)
+			progressed = ew.failNodeEmbedding(node, err) || progressed
 			ew.releaseNodeClaim(node.ID)
 			continue
 		}
 		if structured, ok := provider.(embed.DocumentPropertyChunkEmbedder); ok && structured.UsesDocumentProperties() {
 			propertyBatcher, batchOK := provider.(embed.DocumentPropertyBatchChunkEmbedder)
 			if !batchOK || limit == 1 {
-				ew.processClaimedNode(node, provider)
+				progressed = ew.processClaimedNode(node, provider) || progressed
 				continue
 			}
 			key := fmt.Sprintf("%T:%p", provider, provider)
@@ -1041,7 +1021,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 		}
 		batcher, ok := provider.(embed.DocumentBatchChunkEmbedder)
 		if !ok || limit == 1 {
-			ew.processClaimedNode(node, provider)
+			progressed = ew.processClaimedNode(node, provider) || progressed
 			continue
 		}
 		key := fmt.Sprintf("%T:%p", provider, provider)
@@ -1055,13 +1035,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	for _, group := range groups {
-		if !ew.waitForProviderRetry(group.provider) {
-			for _, node := range group.nodes {
-				ew.addNodeToPendingEmbeddings(node.ID)
-				ew.releaseNodeClaim(node.ID)
-			}
-			continue
-		}
+
 		sources := make([]embeddingutil.EmbedText, len(group.nodes))
 		texts := make([]string, len(group.nodes))
 		properties := make([]map[string]any, len(group.nodes))
@@ -1077,7 +1051,6 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 		} else {
 			results, resultErrors = ew.embedDocumentBatchIsolated(group.batcher, texts)
 		}
-		ew.recordProviderBatchOutcome(group.provider, resultErrors)
 		for _, resultErr := range resultErrors {
 			if resultErr != nil {
 				fmt.Printf("⚠️  Failed to embed %d-node batch: %s\n", len(group.nodes), compactWorkerError(resultErr, 300))
@@ -1085,31 +1058,18 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 			}
 		}
 		for index, node := range group.nodes {
-			if resultErrors[index] != nil {
-				ew.failed.Add(1)
-				if !isRetryableEmbeddingError(resultErrors[index]) {
-					ew.markNodeEmbeddingFailed(node.ID, resultErrors[index])
-				} else {
-					ew.addNodeToPendingEmbeddings(node.ID)
-				}
-				ew.releaseNodeClaim(node.ID)
-				continue
-			}
-			if results[index] == nil {
-				ew.failed.Add(1)
-				ew.markNodeEmbeddingFailed(node.ID, errors.New("embedding provider returned no document result"))
-				ew.releaseNodeClaim(node.ID)
-				continue
-			}
-			ew.persistEmbeddedNode(node, sources[index], results[index].Chunks, results[index].Embeddings, documentResultMeta(results[index]), group.provider)
+			result := documentNodeEmbeddingResult(results[index], resultErrors[index])
+			progressed = ew.persistEmbeddedNode(node, sources[index], result, group.provider) || progressed
 			ew.releaseNodeClaim(node.ID)
 		}
 	}
-	ew.signalTrigger()
-	return true
+	if progressed {
+		ew.signalTrigger()
+	}
+	return progressed
 }
 
-func (ew *EmbedWorker) processNextNode() bool {
+func (ew *EmbedWorker) processNextNode(selections ...embeddingSelection) bool {
 	// Check for cancellation at the start
 	select {
 	case <-ew.ctx.Done():
@@ -1117,7 +1077,7 @@ func (ew *EmbedWorker) processNextNode() bool {
 	default:
 	}
 
-	node, skipped := ew.claimNextNodeResult()
+	node, skipped := ew.claimNextNodeResult(ew.embeddingSelection(selections))
 	if node == nil {
 		return skipped // Removing a deleted candidate advances the drain.
 	}
@@ -1136,25 +1096,21 @@ func (ew *EmbedWorker) processNextNode() bool {
 	// The node from storage may be accessed by other goroutines (e.g., HTTP handlers)
 	// Modifying the Properties map directly causes "concurrent map iteration and map write"
 	node = copyNodeForEmbedding(node)
-	provider, resolveErr := ew.resolveEmbedder(node.ID)
+	provider, resolveErr := ew.resolveAttemptEmbedder(node)
 	if resolveErr != nil || provider == nil {
 		if resolveErr == nil {
 			resolveErr = errors.New("embedding provider is not configured")
 		}
-		ew.failed.Add(1)
-		ew.markNodeEmbeddingFailed(node.ID, resolveErr)
+		progressed := ew.failNodeEmbedding(node, resolveErr)
 		ew.releaseNodeClaim(node.ID)
-		return true
+		return progressed
 	}
 	return ew.processClaimedNode(node, provider)
 }
 
 func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Embedder) bool {
 	defer ew.releaseNodeClaim(node.ID)
-	if !ew.waitForProviderRetry(provider) {
-		ew.addNodeToPendingEmbeddings(node.ID)
-		return false
-	}
+
 	// Build text for embedding (labels and properties per config include/exclude)
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	source := embeddingutil.BuildEmbedText(node.Properties, node.Labels, opts)
@@ -1164,43 +1120,23 @@ func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Emb
 	// Voyage contextualized mode uses this to return provider-generated chunks;
 	// other providers fall back to deterministic local chunking + micro-batches.
 	propertyEmbedder, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
-	var chunks []string
-	var embeddings [][]float32
-	var providerMeta map[string]any
-	var err error
+	var result nodeEmbeddingResult
 	if usesProperties && propertyEmbedder.UsesDocumentProperties() {
-		var result *embed.DocumentChunkResult
-		result, err = propertyEmbedder.EmbedDocumentPropertyChunks(ew.ctx, text, node.Properties, ew.config.ChunkSize, ew.config.ChunkOverlap)
+		document, err := propertyEmbedder.EmbedDocumentPropertyChunks(ew.ctx, text, node.Properties, ew.config.ChunkSize, ew.config.ChunkOverlap)
 		ew.waitAfterProviderRequest()
-		if result != nil {
-			chunks = result.Chunks
-			embeddings = result.Embeddings
-			providerMeta = documentResultMeta(result)
-		}
+		result = documentNodeEmbeddingResult(document, err)
 	} else {
-		chunks, embeddings, providerMeta, err = ew.embedDocumentWith(provider, text, node.ID)
+		result.chunks, result.vectors, result.metadata, result.err = ew.embedDocumentWith(provider, text, node.ID)
 	}
-	if err != nil {
-		ew.failed.Add(1)
-		ew.recordProviderFailure(provider, err)
-		if !isRetryableEmbeddingError(err) {
-			ew.markNodeEmbeddingFailed(node.ID, err)
-			return true
-		}
-		fmt.Printf("⚠️  Failed to embed node %s: %v\n", node.ID, err)
-		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
-		return true
-	}
-	ew.clearProviderFailure(provider)
 
-	return ew.persistEmbeddedNode(node, source, chunks, embeddings, providerMeta, provider)
+	return ew.persistEmbeddedNode(node, source, result, provider)
 }
 
 // processNextDocumentBatch embeds a batch of nodes with batcher, the batch
 // interface of provider. The whole batch is attributed to that one provider
 // (retry gate, outcome, persisted metadata), even if SetEmbedder replaces the
 // worker's embedder meanwhile.
-func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher embed.DocumentBatchChunkEmbedder) bool {
+func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher embed.DocumentBatchChunkEmbedder, selections ...embeddingSelection) bool {
 	select {
 	case <-ew.ctx.Done():
 		return false
@@ -1208,27 +1144,12 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 	}
 
 	limit := ew.config.EmbedBatchSize
-	nodes := make([]*storage.Node, 0, limit)
-	skipped := false
-	for len(nodes) < limit {
-		node, removed := ew.claimNextNodeResult()
-		if node == nil {
-			skipped = removed
-			break
-		}
-		nodes = append(nodes, node)
-	}
+	nodes, skipped := ew.claimNodeBatch(limit, ew.embeddingSelection(selections))
 	if len(nodes) == 0 {
 		return skipped
 	}
-	if !ew.waitForProviderRetry(provider) {
-		for _, node := range nodes {
-			ew.addNodeToPendingEmbeddings(node.ID)
-			ew.releaseNodeClaim(node.ID)
-		}
-		return false
-	}
 
+	progressed := skipped
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
 	sources := make([]embeddingutil.EmbedText, len(nodes))
 	texts := make([]string, len(nodes))
@@ -1237,31 +1158,15 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 		texts[i] = sources[i].Text
 	}
 	results, resultErrors := ew.embedDocumentBatchIsolated(batcher, texts)
-	ew.recordProviderBatchOutcome(provider, resultErrors)
 	for i, node := range nodes {
-		if resultErrors[i] != nil {
-			ew.failed.Add(1)
-			err := resultErrors[i]
-			if !isRetryableEmbeddingError(err) {
-				ew.markNodeEmbeddingFailed(node.ID, err)
-			} else {
-				ew.addNodeToPendingEmbeddings(node.ID)
-			}
-			ew.releaseNodeClaim(node.ID)
-			continue
-		}
-		result := results[i]
-		if result == nil {
-			ew.markNodeEmbeddingFailed(node.ID, errors.New("embedding provider returned no document result"))
-			ew.failed.Add(1)
-			ew.releaseNodeClaim(node.ID)
-			continue
-		}
-		ew.persistEmbeddedNode(node, sources[i], result.Chunks, result.Embeddings, documentResultMeta(result), provider)
+		result := documentNodeEmbeddingResult(results[i], resultErrors[i])
+		progressed = ew.persistEmbeddedNode(node, sources[i], result, provider) || progressed
 		ew.releaseNodeClaim(node.ID)
 	}
-	ew.signalTrigger()
-	return true
+	if progressed {
+		ew.signalTrigger()
+	}
+	return progressed
 }
 
 func (ew *EmbedWorker) embedDocumentBatchIsolated(batcher embed.DocumentBatchChunkEmbedder, texts []string) ([]*embed.DocumentChunkResult, []error) {
@@ -1332,6 +1237,9 @@ func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
 	if result == nil {
 		return meta
 	}
+	if result.Source != nil {
+		meta[embeddingsource.MetaKey] = result.Source.Metadata()
+	}
 	if result.ChunkerVersion != "" {
 		meta["chunker_version"] = result.ChunkerVersion
 	}
@@ -1344,54 +1252,17 @@ func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
 	return meta
 }
 
-// persistEmbeddedNode writes node's embedding: its chunk vectors, and
-// metadata including where each chunk (cut from source) lies in node's
-// string properties (#1060).
-func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingutil.EmbedText, chunks []string, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
-	if len(embeddings) == 0 || embeddings[0] == nil || len(embeddings[0]) == 0 {
-		fmt.Printf("⚠️  Failed to generate embedding for node %s: empty embedding\n", node.ID)
-		ew.failed.Add(1)
-		ew.markNodeEmbeddingFailed(node.ID, errors.New("embedding provider returned an empty embedding"))
-		return true
-	}
-
-	embeddingutil.ApplyManagedEmbedding(node, embeddings, provider.Model(), provider.Dimensions(), time.Now())
-	if spaceProvider, ok := provider.(embed.EmbeddingSpaceProvider); ok {
-		if space := spaceProvider.EmbeddingSpace(); space != "" {
-			node.EmbedMeta["embedding_space"] = space
-		}
-	}
-	for key, value := range providerMeta {
-		node.EmbedMeta[key] = value
-	}
-	embeddingutil.RecordChunkSpans(node, source, chunks)
-
-	// The worker writes ONLY the embedding key space (chunk vectors plus the
-	// metadata record): no node-record transaction, no MVCC version, no
-	// UpdatedAt bump. The writeback lands only while the stored node still
-	// has the properties and labels this copy was embedded from; it removes
-	// the pending marker in the same commit, so the worker never removes it
-	// afterwards, where it would drop a marker a later business write set
-	// (#889).
-	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
-	if !ok {
-		fmt.Printf("⚠️  Storage engine %T does not support embedding sidecar writes; re-queuing node %s\n", ew.storage, node.ID)
-		ew.addNodeToPendingEmbeddings(node.ID)
-		ew.failed.Add(1)
-		return true
-	}
-	updateErr := sidecar.UpdateNodeEmbeddingSidecar(node)
+// writeEmbeddedNode commits a newly requested provider result. Failed saves
+// discard that result and record only the per-node DLQ state.
+func (ew *EmbedWorker) writeEmbeddedNode(node *storage.Node) bool {
+	updateErr := ew.commitNodeOutcome(node)
 	if errors.Is(updateErr, storage.ErrEmbeddingSourceChanged) {
-		// The node changed while it was being embedded: the embedding is of
-		// its old content and was not written. The change left the node
-		// pending; it is embedded again once the recently-processed wait
-		// (which also covers a change still being flushed) has passed (#889).
+		ew.rejectNodeOutcome(node.ID)
 		fmt.Printf("🔁 Node %s changed while it was being embedded; re-embedding its new content\n", node.ID)
-		ew.addNodeToPendingEmbeddings(node.ID)
-		ew.markRecentlyProcessed(node.ID)
-		return true
+		return true // releaseNodeClaim alone restores MAIN, exactly once.
 	}
 	if errors.Is(updateErr, storage.ErrNotFound) {
+		ew.dropNodeEmbeddingRetry(node.ID)
 		// Node was deleted - remove from pending index and skip.
 		fmt.Printf("⚠️  Node %s was deleted before embedding could be saved - skipping\n", node.ID)
 		ew.markNodeEmbedded(node.ID)
@@ -1399,19 +1270,8 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingu
 	}
 	if updateErr != nil {
 		fmt.Printf("⚠️  Failed to update node embedding state: %s; re-queuing for retry\n", compactWorkerError(updateErr, 300))
-		ew.addNodeToPendingEmbeddings(node.ID) // Re-queue so another worker can retry
-		ew.failed.Add(1)
-		return true // Failed but we tried - continue to next node
+		return ew.failNodeEmbedding(node, updateErr)
 	}
-
-	// Call callback to update search index
-	if ew.onEmbedded != nil {
-		ew.onEmbedded(node)
-	}
-
-	ew.processed.Add(1)
-	// Track this node as recently processed to prevent re-processing before DB commit is visible
-	ew.markRecentlyProcessed(node.ID)
 
 	// Log success with appropriate message
 	if len(node.ChunkEmbeddings) > 0 {
@@ -1468,85 +1328,6 @@ func embeddingErrorRetryability(err error) (retryable, classified bool) {
 	return false, false
 }
 
-func providerRetryKey(provider embed.Embedder) string {
-	return fmt.Sprintf("%T:%p", provider, provider)
-}
-
-func (ew *EmbedWorker) waitForProviderRetry(provider embed.Embedder) bool {
-	if provider == nil || ew.config == nil || ew.config.ProviderRetryBackoff <= 0 {
-		return true
-	}
-	key := providerRetryKey(provider)
-	for {
-		ew.mu.Lock()
-		state := ew.providerRetries[key]
-		ew.mu.Unlock()
-		delay := time.Until(state.retryAt)
-		if delay <= 0 {
-			return true
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ew.ctx.Done():
-			timer.Stop()
-			return false
-		case <-timer.C:
-		}
-	}
-}
-
-func (ew *EmbedWorker) recordProviderBatchOutcome(provider embed.Embedder, errs []error) {
-	for _, err := range errs {
-		if err != nil && isRetryableEmbeddingError(err) {
-			ew.recordProviderFailure(provider, err)
-			return
-		}
-	}
-	// A terminal input error is not a provider outage. Successful neighboring
-	// documents likewise prove the provider is available.
-	ew.clearProviderFailure(provider)
-}
-
-func (ew *EmbedWorker) recordProviderFailure(provider embed.Embedder, err error) {
-	if provider == nil || !isRetryableEmbeddingError(err) || ew.config == nil || ew.config.ProviderRetryBackoff <= 0 {
-		return
-	}
-	backoffMax := ew.config.ProviderRetryBackoffMax
-	if backoffMax < ew.config.ProviderRetryBackoff {
-		backoffMax = ew.config.ProviderRetryBackoff
-	}
-	key := providerRetryKey(provider)
-	ew.mu.Lock()
-	if ew.providerRetries == nil {
-		ew.providerRetries = make(map[string]providerRetryState)
-	}
-	state := ew.providerRetries[key]
-	state.failures++
-	delay := ew.config.ProviderRetryBackoff
-	for attempt := 1; attempt < state.failures && delay < backoffMax; attempt++ {
-		if delay > backoffMax/2 {
-			delay = backoffMax
-			break
-		}
-		delay *= 2
-	}
-	if retryAfter, ok := retryDelay(err); ok && retryAfter > delay {
-		delay = retryAfter
-	}
-	state.retryAt = time.Now().Add(delay)
-	ew.providerRetries[key] = state
-	ew.mu.Unlock()
-}
-
-func (ew *EmbedWorker) clearProviderFailure(provider embed.Embedder) {
-	if provider == nil {
-		return
-	}
-	ew.mu.Lock()
-	delete(ew.providerRetries, providerRetryKey(provider))
-	ew.mu.Unlock()
-}
-
 func retryDelay(err error) (time.Duration, bool) {
 	type delayedRetry interface{ RetryDelay() time.Duration }
 	var delayed delayedRetry
@@ -1556,23 +1337,25 @@ func retryDelay(err error) (time.Duration, bool) {
 	return 0, false
 }
 
-// markRecentlyProcessed starts the node's recently-processed wait
-// (wasRecentlyProcessed): the worker skips the node until a write it made, or
-// a change it is waiting for, is visible.
-func (ew *EmbedWorker) markRecentlyProcessed(nodeID storage.NodeID) {
+// markRecentlyProcessed records the accepted body revision. The time bounds
+// retention of that record; a different revision never waits for its expiry.
+func (ew *EmbedWorker) markRecentlyProcessed(node *storage.Node) {
 	ew.mu.Lock()
 	defer ew.mu.Unlock()
 	if ew.recentlyProcessed == nil {
-		ew.recentlyProcessed = make(map[string]time.Time)
+		ew.recentlyProcessed = make(map[string]recentNodeEmbedding)
 	}
-	ew.recentlyProcessed[string(nodeID)] = time.Now()
+	ew.recentlyProcessed[string(node.ID)] = recentNodeEmbedding{at: time.Now(), revision: node.EmbeddingRevision()}
 }
 
 // markNodeEmbeddingFailed records a permanent provider failure outside user
 // properties, removes it from the pending index, and lets later content edits
 // retry it by clearing managed embedding metadata during invalidation.
-func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr error) {
+func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr error, sources ...*storage.Node) {
 	node, err := ew.storage.GetNode(nodeID)
+	if err == nil {
+		node, err = storage.SnapshotNodeForEmbedding(node)
+	}
 	if err != nil || node == nil {
 		// A deleted node does not need retrying; an unexpected storage read error
 		// does, so leave it pending in that case.
@@ -1580,6 +1363,20 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 			ew.markNodeEmbedded(nodeID)
 		}
 		return
+	}
+	if len(sources) != 0 {
+		node = sources[0]
+	} else {
+		// Explicit failure administration also gets a fresh owned attempt.
+		selection := ew.selectEmbeddingProvider()
+		ew.claimMu.Lock()
+		if ew.claimedNodes == nil {
+			ew.claimedNodes = make(map[string]*nodeEmbeddingAttempt)
+		}
+		ew.observeNodeRevisionLocked(node)
+		ew.bindNodeAttemptLocked(node, selection)
+		ew.claimMu.Unlock()
+		defer ew.releaseNodeClaim(nodeID)
 	}
 	node = copyNodeForEmbedding(node)
 	if node.EmbedMeta == nil {
@@ -1590,20 +1387,20 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 	node.EmbedMeta["embedding_error"] = compactWorkerError(embedErr, 300)
 	node.EmbedMeta["embedding_failed_at"] = time.Now().UTC().Format(time.RFC3339)
 
-	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
-	if !ok {
-		fmt.Printf("⚠️  Storage engine %T does not support embedding sidecar writes; re-queuing node %s\n", ew.storage, nodeID)
-		ew.addNodeToPendingEmbeddings(nodeID)
-		return
-	}
-	if updateErr := sidecar.UpdateNodeEmbeddingSidecar(node); updateErr != nil {
+	if updateErr := ew.commitNodeOutcome(node); updateErr != nil {
+		if errors.Is(updateErr, storage.ErrEmbeddingSourceChanged) {
+			ew.rejectNodeOutcome(nodeID)
+			return
+		}
 		fmt.Printf("⚠️  Failed to persist permanent embedding failure for node %s: %s; re-queuing\n", nodeID, compactWorkerError(updateErr, 300))
+		// The attempt owner keeps this DLQ entry retryable until the marker
+		// commits. Re-added MAIN markers cannot hide it from draining.
 		ew.addNodeToPendingEmbeddings(nodeID)
 		return
 	}
 
 	// The writeback removed the pending marker in its own commit (#889).
-	ew.parked.Add(1)
+	// The accepted outcome callback moved ownership to the durable terminal marker.
 	fmt.Printf("⛔ Permanent embedding failure for node %s: %s\n", nodeID, compactWorkerError(embedErr, 300))
 }
 
@@ -1627,36 +1424,44 @@ func (ew *EmbedWorker) claimNextNode() *storage.Node {
 	return node
 }
 
-// claimNextNodeResult distinguishes a removed candidate from an empty lookup.
-// The bool is true only when a deleted candidate was skipped and marked done.
-func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
+// claimNextNodeResultFrom reserves one fresh authoritative body and provider selection.
+func (ew *EmbedWorker) claimNextNodeResultFrom(mainOnly bool, selections ...embeddingSelection) (*storage.Node, bool) {
+	selection := ew.embeddingSelection(selections)
 	ew.claimMu.Lock()
 	defer ew.claimMu.Unlock()
+	ew.applyNodeUpdatesLocked()
 
 	// Rechecked for every claim, so a pause or restore that starts while a
 	// batch is being filled leaves the nodes not yet claimed pending.
 	if ew.operatorPaused.Load() || ew.restoreHolds.Load() > 0 {
 		return nil, false
 	}
-	pending := ew.findNodeWithoutEmbedding()
-	if pending == nil {
+	if selection.generation != ew.embeddingEpoch.Load() {
+		return nil, false
+	}
+	pendingID := ew.nextEmbeddingNodeID(time.Now(), mainOnly)
+	if pendingID == "" {
 		return nil, false
 	}
 	if ew.claimedNodes == nil {
-		ew.claimedNodes = make(map[string]struct{})
+		ew.claimedNodes = make(map[string]*nodeEmbeddingAttempt)
 	}
-	id := string(pending.ID)
+	id := string(pendingID)
 	if _, claimed := ew.claimedNodes[id]; claimed {
 		return nil, false
 	}
 
-	node, err := ew.storage.GetNode(pending.ID)
+	node, err := ew.storage.GetNode(pendingID)
+	if err == nil {
+		node, err = storage.SnapshotNodeForEmbedding(node)
+	}
 	if err != nil || node == nil {
 		// A deleted node needs no embedding; one that couldn't be read (for
 		// example while a restore replaces the store) stays pending, as in
 		// markNodeEmbeddingFailed.
 		if nodeGone(node, err) {
-			ew.markNodeEmbedded(pending.ID)
+			ew.dropNodeEmbeddingRetryLocked(pendingID)
+			ew.markNodeEmbedded(pendingID)
 			return nil, true
 		}
 		return nil, false
@@ -1665,8 +1470,9 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 		return nil, false
 	}
 
-	ew.claimedNodes[id] = struct{}{}
-	ew.inFlight.Add(1)
+	ew.applyNodeUpdatesLocked() // Include notifications received while finding/reading the fresh body.
+	ew.observeNodeRevisionLocked(node)
+	ew.bindNodeAttemptLocked(node, selection)
 	ew.markNodeEmbedded(node.ID)
 	return copyNodeForEmbedding(node), false
 }
@@ -1674,9 +1480,17 @@ func (ew *EmbedWorker) claimNextNodeResult() (*storage.Node, bool) {
 func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
 	ew.claimMu.Lock()
 	id := string(nodeID)
-	if _, claimed := ew.claimedNodes[id]; claimed {
+	attempt, claimed := ew.claimedNodes[id]
+	if claimed {
 		delete(ew.claimedNodes, id)
 		ew.inFlight.Add(-1)
+	}
+	if claimed && (attempt.invalidated || attempt.token.ProviderGeneration != ew.embeddingEpoch.Load() || ew.ctx.Err() != nil) {
+		// An update needs another attempt; a deletion must not recreate its
+		// pending marker when the invalidated claim finishes.
+		if node, err := ew.embeddingSnapshot(nodeID); !nodeGone(node, err) {
+			ew.addNodeToPendingEmbeddings(nodeID)
+		}
 	}
 	ew.claimMu.Unlock()
 }
@@ -1685,22 +1499,35 @@ func (ew *EmbedWorker) wasRecentlyProcessed(nodeID storage.NodeID) bool {
 	ew.mu.Lock()
 	defer ew.mu.Unlock()
 	if ew.recentlyProcessed == nil {
-		ew.recentlyProcessed = make(map[string]time.Time)
+		ew.recentlyProcessed = make(map[string]recentNodeEmbedding)
 	}
 	if ew.loggedSkip == nil {
 		ew.loggedSkip = make(map[string]bool)
 	}
 	id := string(nodeID)
-	if lastProcessed, ok := ew.recentlyProcessed[id]; ok && time.Since(lastProcessed) < 30*time.Second {
-		if !ew.loggedSkip[id] {
-			ew.loggedSkip[id] = true
-			fmt.Printf("⏭️  Skipping node %s: recently processed (waiting for DB sync)\n", nodeID)
+	if previous, ok := ew.recentlyProcessed[id]; ok && time.Since(previous.at) < 30*time.Second {
+		same := true
+		if ew.storage != nil {
+			current, err := ew.embeddingSnapshot(nodeID)
+			if err != nil {
+				same = false
+			} else {
+				same, err = previous.revision.MatchesNode(current)
+				same = same && err == nil
+			}
 		}
-		return true
+		if same {
+			if !ew.loggedSkip[id] {
+				ew.loggedSkip[id] = true
+				fmt.Printf("Skipping node %s: same processed body revision\n", nodeID)
+			}
+			return true
+		}
+		delete(ew.recentlyProcessed, id)
 	}
 	delete(ew.loggedSkip, id)
-	for candidate, processedAt := range ew.recentlyProcessed {
-		if time.Since(processedAt) > time.Minute {
+	for candidate, previous := range ew.recentlyProcessed {
+		if time.Since(previous.at) > time.Minute {
 			delete(ew.recentlyProcessed, candidate)
 			delete(ew.loggedSkip, candidate)
 		}
@@ -1783,6 +1610,10 @@ func (ew *EmbedWorker) embedChunksInBatchesWith(provider embed.Embedder, chunks 
 		if err != nil {
 			return nil, localizedError(localization.NornicDBCoreEmbedBatchFailed(start+1, end, len(chunks), string(nodeID), err), err)
 		}
+		// Preserve response/input association before flattening. A later
+		// underfull response cannot cancel an earlier overfull one. This
+		// transport error is carried to the common result-acceptance owner;
+		// it does not certify vector usability or publish an outcome.
 		if len(batchEmbeddings) != len(batch) {
 			return nil, localizedError(localization.NornicDBCoreEmbeddingCountMismatch(string(nodeID), len(batchEmbeddings), len(batch)), nil)
 		}
@@ -1798,17 +1629,8 @@ func (ew *EmbedWorker) embedDocumentWith(provider embed.Embedder, text string, n
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		meta := make(map[string]any)
+		meta := documentResultMeta(result)
 		if result != nil {
-			if result.ChunkerVersion != "" {
-				meta["chunker_version"] = result.ChunkerVersion
-			}
-			if result.TotalTokens > 0 {
-				meta["embedding_total_tokens"] = result.TotalTokens
-			}
-			if len(result.Chunks) > 0 && (result.ChunkerVersion != "" || result.TotalTokens > 0) {
-				meta["chunk_texts"] = append([]string(nil), result.Chunks...)
-			}
 			return result.Chunks, result.Embeddings, meta, nil
 		}
 		return nil, nil, meta, nil
@@ -1835,49 +1657,34 @@ func (ew *EmbedWorker) embedBatchWithRetry(chunks []string) ([][]float32, error)
 }
 
 func (ew *EmbedWorker) embedBatchWithRetryFor(provider embed.Embedder, chunks []string) ([][]float32, error) {
-	var embeddings [][]float32
-	var err error
-	for attempt := 1; attempt <= ew.config.MaxRetries; attempt++ {
-		type embedResult struct {
-			embeddings [][]float32
-			err        error
-		}
-		resultCh := make(chan embedResult, 1)
-		go func() {
-			var embs [][]float32
-			var embedErr error
-			if typed, ok := provider.(embed.TypedEmbedder); ok {
-				embs, embedErr = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
-			} else {
-				embs, embedErr = provider.EmbedBatch(ew.ctx, chunks)
-			}
-			resultCh <- embedResult{embeddings: embs, err: embedErr}
-		}()
-		select {
-		case <-ew.ctx.Done():
-			return nil, ew.ctx.Err()
-		case result := <-resultCh:
-			embeddings, err = result.embeddings, result.err
-		}
-		ew.waitAfterProviderRequest()
-		if err == nil {
-			return embeddings, nil
-		}
-		if !isRetryableEmbeddingError(err) {
-			break
-		}
-		if attempt < ew.config.MaxRetries {
-			backoff := time.Duration(attempt) * 2 * time.Second
-			fmt.Printf("   ⚠️  Embed batch attempt %d failed (batch_size=%d), retrying in %v\n", attempt, len(chunks), backoff)
-			select {
-			case <-ew.ctx.Done():
-				return nil, ew.ctx.Err()
-			case <-time.After(backoff):
-			}
-			continue
-		}
+	select {
+	case <-ew.ctx.Done():
+		return nil, ew.ctx.Err()
+	default:
 	}
-	return nil, err
+	// One request per queue attempt. The shared DLQ owns every retry.
+	type embedResult struct {
+		vectors [][]float32
+		err     error
+	}
+	resultCh := make(chan embedResult, 1)
+	go func() {
+		var vectors [][]float32
+		var err error
+		if typed, ok := provider.(embed.TypedEmbedder); ok {
+			vectors, err = typed.EmbedBatchWithInputType(ew.ctx, chunks, embed.InputTypeDocument)
+		} else {
+			vectors, err = provider.EmbedBatch(ew.ctx, chunks)
+		}
+		resultCh <- embedResult{vectors, err}
+	}()
+	select {
+	case <-ew.ctx.Done():
+		return nil, ew.ctx.Err()
+	case result := <-resultCh:
+		ew.waitAfterProviderRequest()
+		return result.vectors, result.err
+	}
 }
 
 // averageEmbeddings computes the element-wise average of multiple embeddings.
@@ -1913,6 +1720,7 @@ func (s WorkerStats) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"running":   s.Running,
 		"in_flight": s.InFlight,
+		"pending":   s.Pending,
 		"processed": s.Processed,
 		"failed":    s.Failed,
 		"parked":    s.Parked,
@@ -1940,6 +1748,8 @@ func copyNodeForEmbedding(src *storage.Node) *storage.Node {
 		CreatedAt: src.CreatedAt,
 		UpdatedAt: src.UpdatedAt,
 	}
+
+	dst.CopyEmbeddingIdentityFrom(src)
 
 	// Copy labels
 	copy(dst.Labels, src.Labels)
@@ -1977,20 +1787,19 @@ func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *Embe
 	return NewEmbedWorker(embedder, storage, config)
 }
 
-// Enqueue is now just a trigger - tells worker to check for work.
-//
-// A write to the node ends its recently-processed wait (wasRecentlyProcessed):
-// the wait covers the worker's own embedding write becoming visible, not a
-// later change to the node, which may have changed its embedding source and
-// is checked at once (#963). nodeID may carry its database prefix or not.
+// Enqueue is a wakeup/read hint. Only an observed body-revision change resets
+// attempts or bypasses the processed-body wait, even when notifications repeat.
 func (ew *EmbedWorker) Enqueue(nodeID string) {
-	ew.mu.Lock()
-	for id := range ew.recentlyProcessed {
-		if id == nodeID || strings.HasSuffix(id, ":"+nodeID) {
-			delete(ew.recentlyProcessed, id)
-			delete(ew.loggedSkip, id)
-		}
+	if ew.closed.Load() {
+		return
 	}
+	// Do not wait on claimMu/storage: updates also wake an idle empty claim.
+	ew.mu.Lock()
+	if ew.nodeUpdates == nil {
+		ew.nodeUpdates = make(map[string]struct{})
+	}
+	ew.nodeUpdates[nodeID] = struct{}{}
+	ew.nodeUpdatesPending.Store(true)
 	ew.mu.Unlock()
 	ew.Trigger()
 }

@@ -49,16 +49,11 @@ func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notificat
 // shard markers/parts and metadata. The iterator must close before a write
 // rotates the commit writer's Badger batch. Only live keys are copied.
 func (cw *commitWriter) replaceEmbeddingKeys(id NodeID, embeddings [][]float32, references ...embeddingReferenceView) error {
-	var cleanup embeddingKeyCleanupOptions
+	var scan embeddingKeyScanOptions
 	if len(references) > 0 {
-		cleanup.references = &references[0]
+		scan.references = &references[0]
 	}
-	if _, err := cw.removeEmbeddingKeys(id, 0, cleanup); err != nil {
-		return err
-	}
-	return writeEmbeddingChunks(id, embeddings, func(key, value []byte) error {
-		return cw.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
-	})
+	return cw.replaceEmbeddingRange(id, embeddings, nil, scan)
 }
 
 var errEmbeddingKeyLimit = errors.New("embedding key batch full")

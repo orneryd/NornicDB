@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"strings"
 	"time"
 	"unicode"
@@ -272,7 +273,8 @@ func (e *VoyageEmbedder) EmbedDocumentPropertyBatchChunks(ctx context.Context, f
 	embeddings := orderedVoyageEmbeddings(resp, len(inputs))
 	results := make([]*DocumentChunkResult, len(inputs))
 	for index := range inputs {
-		results[index] = &DocumentChunkResult{Chunks: textChunks[index], Embeddings: [][]float32{embeddings[index]}, Model: e.Model()}
+		_, structured := properties[index][voyageapi.MultimodalContentProperty]
+		results[index] = &DocumentChunkResult{Chunks: textChunks[index], Embeddings: [][]float32{embeddings[index]}, Model: e.Model(), Source: &embeddingsource.Source{Text: !structured, Properties: []string{voyageapi.MultimodalContentProperty}}}
 	}
 	return results, nil
 }
