@@ -120,6 +120,29 @@ func relationshipBoundaryGraph(files []*ast.File, fset *token.FileSet, info *typ
 	}
 
 	values := map[types.Object]map[*types.Func]bool{}
+	dispatch := map[*types.Func]map[*types.Func]bool{}
+	functionTargets := func(function *types.Func) map[*types.Func]bool {
+		if cached := dispatch[function]; cached != nil {
+			return cached
+		}
+		result := map[*types.Func]bool{function: true}
+		dispatch[function] = result
+		signature := function.Type().(*types.Signature)
+		if signature.Recv() == nil {
+			return result
+		}
+		contract, ok := signature.Recv().Type().Underlying().(*types.Interface)
+		if !ok || relationshipStoragePrimitive(function) {
+			return result
+		}
+		for candidate := range functions {
+			implementation := candidate.Type().(*types.Signature)
+			if candidate.Name() == function.Name() && implementation.Recv() != nil && types.Implements(implementation.Recv().Type(), contract) {
+				result[candidate] = true
+			}
+		}
+		return result
+	}
 	var targets func(ast.Expr) map[*types.Func]bool
 	targets = func(expression ast.Expr) map[*types.Func]bool {
 		if literal, ok := expression.(*ast.FuncLit); ok {
@@ -139,7 +162,7 @@ func relationshipBoundaryGraph(files []*ast.File, fset *token.FileSet, info *typ
 		}
 		object := valueObject(expression)
 		if function, ok := object.(*types.Func); ok {
-			return map[*types.Func]bool{function: true}
+			return functionTargets(function)
 		}
 		return values[object]
 	}
