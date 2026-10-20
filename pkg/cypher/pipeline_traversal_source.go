@@ -146,7 +146,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				}
 				return nil
 			}
-			err := plan.visitEdges(rowCtx, e, match, func(edge *storage.Edge, start, end storage.NodeID) error {
+			err := e.relationshipExecutionFor(rowCtx, pattern, where).visitTraversalScanEdges(rowCtx, plan, match, func(edge *storage.Edge, start, end storage.NodeID) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
