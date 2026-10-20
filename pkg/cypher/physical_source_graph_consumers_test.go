@@ -92,10 +92,10 @@ func TestPhysicalSourceGraphConsumers(t *testing.T) {
 	base, err := storage.NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	manager, err := multidb.NewDatabaseManager(base, &multidb.Config{
-        RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
-            return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
-        },
-    })
+		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
+			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
+		},
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	require.NoError(t, manager.CreateCompositeDatabase("comp", constituents))
@@ -138,7 +138,14 @@ func TestPhysicalSourceGraphConsumers(t *testing.T) {
 		})
 	}
 	for _, procedure := range []string{"expandConfig", "spanningTree"} {
-		result := execute(t, "CALL apoc.path."+procedure+"($roots,{relationshipFilter:'R>',minLevel:2,maxLevel:2}) YIELD path RETURN count(DISTINCT path)")
+        config, tail := "{relationshipFilter:'R>',minLevel:2,maxLevel:2}", "RETURN count(DISTINCT path)"
+        if procedure == "spanningTree" {
+            // spanningTree admits minLevel 0 or 1; retain the same depth-two
+            // output assertion by selecting that depth through public Cypher.
+            config = "{relationshipFilter:'R>',minLevel:1,maxLevel:2}"
+            tail = "WITH path WHERE length(path)=2 RETURN count(DISTINCT path)"
+        }
+        result := execute(t, "CALL apoc.path."+procedure+"($roots,"+config+") YIELD path "+tail)
 		require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 	}
 	result := execute(t, "CALL apoc.path.subgraphAll($roots,{relationshipFilter:'R>',maxLevel:2}) YIELD nodes,relationships RETURN size(nodes),size(relationships)")

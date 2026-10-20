@@ -36,6 +36,11 @@ func TestTransactionStorageWrapper_StreamEdgesByType(t *testing.T) {
 
 	var got []string
 	require.NoError(t, storage.StreamEdgesByType(context.Background(), wrapper, "REL", func(edge *storage.Edge) error {
+        point, err := wrapper.GetEdge(edge.ID)
+        require.NoError(t, err)
+        require.Equal(t, point.Identity(), edge.Identity(), "stream and point reads select the same physical relationship")
+        require.Equal(t, point.StartIdentity(), edge.StartIdentity())
+        require.Equal(t, point.EndIdentity(), edge.EndIdentity())
 		got = append(got, string(edge.ID)+":"+string(edge.StartNode)+"->"+string(edge.EndNode))
 		return nil
 	}))

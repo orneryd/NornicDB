@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -18,7 +17,6 @@ func (w *transactionStorageWrapper) StreamEdgesByType(ctx context.Context, edgeT
 	if w.tx == nil {
 		return storage.StreamEdgesByType(ctx, w.underlying, edgeType, visit)
 	}
-	prefix := w.namespace + w.separator
 	return w.tx.StreamEdgesByType(ctx, edgeType, func(edge *storage.Edge) error {
 		if edge == nil {
 			return nil
@@ -26,15 +24,12 @@ func (w *transactionStorageWrapper) StreamEdgesByType(ctx context.Context, edgeT
 		if w.namespace == "" {
 			return visit(edge)
 		}
-		if !strings.HasPrefix(string(edge.ID), prefix) {
+		if !w.storedEdgeInNamespace(edge) {
 			return nil
 		}
 		// The transaction already hands out copies; strip prefixes in place
 		// on a shallow copy, as StreamNodesByLabelProjected does.
-		out := *edge
-		out.ID = w.unprefixEdgeID(out.ID)
-		out.StartNode = w.unprefixNodeID(out.StartNode)
-		out.EndNode = w.unprefixNodeID(out.EndNode)
+        out := w.toUserEdgeView(edge)
 		return visit(&out)
 	})
 }

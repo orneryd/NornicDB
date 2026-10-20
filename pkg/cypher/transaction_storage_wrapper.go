@@ -196,51 +196,23 @@ func (w *transactionStorageWrapper) clearMutatedNodeIDs(processed map[string]str
 
 // Write operations - go through transaction for atomicity
 func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if node == nil {
-		return "", storage.ErrInvalidData
-	}
-	if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
-		return "", err
-	}
-	if w.namespace == "" {
-		id, err := w.tx.CreateNode(node)
-		if err == nil {
-			w.markMutatedNodeID(id)
-		}
-		return id, err
-	}
-	namespaced := storage.CopyNode(node)
-	namespaced.ID = w.prefixNodeID(node.ID)
-	actualID, err := w.tx.CreateNode(namespaced)
-	if err != nil {
-		return "", err
-	}
-	userID := w.unprefixNodeID(actualID)
-	w.markMutatedNodeID(userID)
-	return userID, nil
+    physical, _, err := w.nativeStorageNode(node)
+    if err != nil { return "", err }
+    if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil { return "", err }
+    actualID, err := w.tx.CreateNode(physical)
+    if err != nil { return "", err }
+    userID := w.unprefixNodeID(actualID)
+    w.markMutatedNodeID(userID)
+    return userID, nil
 }
 
 func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
-	if node == nil {
-		return storage.ErrInvalidData
-	}
-	if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
-		return err
-	}
-	if w.namespace == "" {
-		err := w.tx.UpdateNode(node)
-		if err == nil {
-			w.markMutatedNodeID(node.ID)
-		}
-		return err
-	}
-	namespaced := storage.CopyNode(node)
-	namespaced.ID = w.prefixNodeID(node.ID)
-	err := w.tx.UpdateNode(namespaced)
-	if err == nil {
-		w.markMutatedNodeID(node.ID)
-	}
-	return err
+    physical, id, err := w.nativeStorageNode(node)
+    if err != nil { return err }
+    if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil { return err }
+    err = w.tx.UpdateNode(physical)
+    if err == nil { w.markMutatedNodeID(id) }
+    return err
 }
 
 func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
@@ -254,20 +226,10 @@ func (w *transactionStorageWrapper) DeleteConnectedNode(id storage.NodeID) error
 }
 
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
-	if edge == nil {
-		return storage.ErrInvalidData
-	}
-	if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
-		return err
-	}
-	if w.namespace == "" {
-		return w.tx.CreateEdge(edge)
-	}
-	namespaced := storage.CopyEdge(edge)
-	namespaced.ID = w.prefixEdgeID(edge.ID)
-	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
-	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
-	return w.tx.CreateEdge(namespaced)
+    physical, err := w.nativeStorageEdge(edge)
+    if err != nil { return err }
+    if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil { return err }
+    return w.tx.CreateEdge(physical)
 }
 
 func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
@@ -332,20 +294,10 @@ func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, e
 }
 
 func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
-	if edge == nil {
-		return storage.ErrInvalidData
-	}
-	if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
-		return err
-	}
-	if w.namespace == "" {
-		return w.tx.UpdateEdge(edge)
-	}
-	namespaced := storage.CopyEdge(edge)
-	namespaced.ID = w.prefixEdgeID(edge.ID)
-	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
-	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
-	return w.tx.UpdateEdge(namespaced)
+    physical, err := w.nativeStorageEdge(edge)
+    if err != nil { return err }
+    if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil { return err }
+    return w.tx.UpdateEdge(physical)
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.Node, error) {
@@ -374,17 +326,14 @@ func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, pr
 		if w.namespace == "" {
 			return visit(node)
 		}
-		if !strings.HasPrefix(string(node.ID), w.namespace+w.separator) {
+		if !w.storedNodeInNamespace(node) {
 			return nil
 		}
 		// Streaming readers treat nodes as immutable, matching
 		// NamespacedEngine.StreamNodesByLabelProjected. Strip only the ID
 		// prefix here; a second deep property copy would make every explicit
 		// transaction scan allocate once more per visited node.
-		out := *node
-		out.ID = w.unprefixNodeID(out.ID)
-		out.Database = w.namespace
-		return visit(&out)
+        return visit(w.toUserNode(node))
 	})
 }
 
@@ -409,10 +358,7 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 			}
 			// Streamed nodes are read-only for the caller, as in
 			// StreamNodesByLabelProjected: strip the ID prefix on a shallow copy.
-			out := *node
-			out.ID = w.unprefixNodeID(out.ID)
-			out.Database = w.namespace
-			return fn(&out)
+            return fn(w.toUserNode(node))
 		})
 	}
 	nodes, err := w.AllNodes()
@@ -428,7 +374,7 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 		if node == nil {
 			continue
 		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
+		if opts.Prefix != "" && !w.userNodeHasPrefix(node, opts.Prefix) {
 			continue
 		}
 		out := node
@@ -498,7 +444,9 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabel(label string, visit fun
 		if node == nil {
 			continue
 		}
-		if !visit(node.ID) {
+        id, ok := nativeNodeLookupID(w, node)
+        if !ok { return storage.ErrNotFound }
+        if !visit(id) {
 			return nil
 		}
 	}
@@ -566,9 +514,7 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.Nod
 	}
 	var candidate storage.Edge
 	edges, err := w.tx.MatchEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
-		candidate = *edge
-		candidate.ID = w.unprefixEdgeID(edge.ID)
-		candidate.StartNode, candidate.EndNode = startID, endID
+        candidate = w.toUserEdgeView(edge)
 		return match(&candidate)
 	})
 	if err != nil {
@@ -721,33 +667,17 @@ func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error
 }
 
 func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
-	var relationshipTypes []string
-	for _, edge := range edges {
-		if edge == nil {
-			return storage.ErrInvalidData
-		}
-		relationshipTypes = append(relationshipTypes, edge.Type)
-	}
-	if err := w.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil {
-		return err
-	}
-	if w.namespace == "" {
-		return w.tx.BulkCreateEdges(edges)
-	}
-	namespaced := make([]*storage.Edge, len(edges))
-	for i, edge := range edges {
-		if edge == nil {
-			// The transaction rejects it, as CreateEdge does.
-			namespaced[i] = nil
-			continue
-		}
-		cp := storage.CopyEdge(edge)
-		cp.ID = w.prefixEdgeID(edge.ID)
-		cp.StartNode = w.prefixNodeID(edge.StartNode)
-		cp.EndNode = w.prefixNodeID(edge.EndNode)
-		namespaced[i] = cp
-	}
-	return w.tx.BulkCreateEdges(namespaced)
+    relationshipTypes := make([]string, 0, len(edges))
+    physical := edges
+    if w.namespace != "" { physical = make([]*storage.Edge, len(edges)) }
+    for i, edge := range edges {
+        value, err := w.nativeStorageEdge(edge)
+        if err != nil { return err }
+        physical[i] = value
+        relationshipTypes = append(relationshipTypes, edge.Type)
+    }
+    if err := w.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil { return err }
+    return w.tx.BulkCreateEdges(physical)
 }
 
 func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
@@ -817,32 +747,7 @@ func (w *transactionStorageWrapper) unprefixEdgeID(id storage.EdgeID) storage.Ed
 	return id
 }
 
-func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node {
-	if node == nil {
-		return nil
-	}
-	// The storage layer already returned a private copy (copyNode / a freshly
-	// decoded node), so the Properties map and Labels slice are owned by this
-	// caller. A shallow struct copy that rewrites the ID prefix is enough; the
-	// previous storage.CopyNode deep-copied every property a second time just
-	// to change the ID (#1110).
-	out := *node
-	out.ID = w.unprefixNodeID(node.ID)
-	out.Database = w.namespace
-	return &out
-}
 
-func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge {
-	if edge == nil {
-		return nil
-	}
-	out := storage.CopyEdge(edge)
-	out.ID = w.unprefixEdgeID(out.ID)
-	out.Database = w.namespace
-	out.StartNode = w.unprefixNodeID(out.StartNode)
-	out.EndNode = w.unprefixNodeID(out.EndNode)
-	return out
-}
 
 func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) []*storage.Edge {
 	out := make([]*storage.Edge, 0, len(edges))
@@ -853,10 +758,9 @@ func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) []*storag
 }
 
 func (w *transactionStorageWrapper) toUserNamespacedEdges(edges []*storage.Edge) []*storage.Edge {
-	prefix := w.namespace + w.separator
-	out := make([]*storage.Edge, 0, len(edges))
+    out := make([]*storage.Edge, 0, len(edges))
 	for _, edge := range edges {
-		if edge == nil || !strings.HasPrefix(string(edge.ID), prefix) {
+		if !w.storedEdgeInNamespace(edge) {
 			continue
 		}
 		out = append(out, w.toUserEdge(edge))
@@ -873,10 +777,9 @@ func (w *transactionStorageWrapper) toUserNodes(nodes []*storage.Node) []*storag
 }
 
 func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node) []*storage.Node {
-	prefix := w.namespace + w.separator
-	out := make([]*storage.Node, 0, len(nodes))
+    out := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
-		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
+		if w.storedNodeInNamespace(node) {
 			out = append(out, w.toUserNode(node))
 		}
 	}
@@ -1014,10 +917,10 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType
 		if edge == nil {
 			continue
 		}
-		nodeID := edge.EndNode
-		if start {
-			nodeID = edge.StartNode
-		}
+        startID, endID, ok := nativeEdgeStorageEndpoints(w, edge)
+        if !ok { continue }
+        nodeID := endID
+        if start { nodeID = startID }
 		node, err := w.GetNode(nodeID)
 		if err != nil || node == nil {
 			continue
