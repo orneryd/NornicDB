@@ -87,7 +87,7 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 				require.Empty(t, node.ChunkEmbeddings, "the first version's embedding must not be stored")
 				worker.mu.Lock()
 				for id := range worker.recentlyProcessed {
-					worker.recentlyProcessed[id] = time.Now().Add(-time.Minute)
+					worker.recentlyProcessed[id] = recentNodeEmbedding{at: time.Now().Add(-time.Minute)}
 				}
 				worker.mu.Unlock()
 				worker.Trigger()
@@ -106,7 +106,7 @@ func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 // markRecentlyProcessed starts the wait on a worker whose map wasn't made yet.
 func TestEmbedWorkerMarkRecentlyProcessedStartsTheWait(t *testing.T) {
 	worker := &EmbedWorker{}
-	worker.markRecentlyProcessed("node")
+	worker.markRecentlyProcessed(&storage.Node{ID: "node"})
 	require.True(t, worker.wasRecentlyProcessed("node"))
 	require.False(t, worker.wasRecentlyProcessed("other"))
 }

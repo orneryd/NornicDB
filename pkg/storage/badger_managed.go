@@ -232,7 +232,26 @@ func (m *managedBadgerDB) advanceDiscardTs() {
 func (m *managedBadgerDB) DropPrefix(prefixes ...[]byte) error {
 	m.commitGate.Lock()
 	defer m.commitGate.Unlock()
+	ts, err := m.oracle.assign()
+	if err != nil {
+		return err
+	}
+	defer m.oracle.finish(ts)
 	return m.DB.DropPrefix(prefixes...)
+}
+
+// DropAll publishes its destructive boundary through the same oracle as
+// ordinary writes. Restore may load older versions, but cannot revive a proof
+// from the store it replaced.
+func (m *managedBadgerDB) DropAll() error {
+	m.commitGate.Lock()
+	defer m.commitGate.Unlock()
+	ts, err := m.oracle.assign()
+	if err != nil {
+		return err
+	}
+	defer m.oracle.finish(ts)
+	return m.DB.DropAll()
 }
 
 // NewTransaction is not available on the managed handle: a transaction must
@@ -272,6 +291,11 @@ func (m *managedBadgerDB) Backup(w io.Writer, since uint64) (uint64, error) {
 func (m *managedBadgerDB) Load(r io.Reader, maxPendingWrites int) error {
 	m.commitGate.Lock()
 	defer m.commitGate.Unlock()
+	ts, err := m.oracle.assign()
+	if err != nil {
+		return err
+	}
+	defer m.oracle.finish(ts)
 	if err := m.DB.Load(r, maxPendingWrites); err != nil {
 		return err
 	}

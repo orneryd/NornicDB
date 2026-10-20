@@ -125,8 +125,13 @@ func TestEmbeddingSidecar_StaleSidecarIgnored(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	node := sidecarTestNode(t, b, "sidecar-stale", map[string]any{"title": "v1"}, now)
 
-	// Stamp the sidecar with an UpdatedAt from BEFORE the body's own time.
-	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now.Add(-time.Hour))))
+	// Inject an old persisted stamp directly: source-checked writes now repair
+	// a source-preserving body-version change at acceptance.
+	require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+	stale, err := encodeValue(map[string]any{"has_embedding": true, "chunk_count": 1, embeddingContentUpdatedAtKey: now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)})
+	require.NoError(t, err)
+	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(node.ID), stale) }))
+	b.cacheDeleteNode(node.ID)
 
 	got, err := b.GetNode(node.ID)
 	require.NoError(t, err)
