@@ -1030,9 +1030,9 @@ func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 		stats.LabelsRemoved > 0 || stats.IndexesAdded > 0 ||
 		stats.IndexesRemoved > 0 || stats.ConstraintsAdded > 0 ||
 		stats.ConstraintsRemoved > 0
-    if result != nil {
-        stats.QueryType = cypher.CompletedStatementQueryType(result.Metadata, stats.ContainsUpdates || stats.ContainsSystemUpdates)
-    }
+	if result != nil {
+		stats.QueryType = cypher.CompletedStatementQueryType(result.Metadata, stats.ContainsUpdates || stats.ContainsSystemUpdates)
+	}
 	return stats
 }
 
