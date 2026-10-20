@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 // ResultStream lets a caller consume the rows of an auto-commit read as the
@@ -36,6 +37,8 @@ type ResultStream struct {
 	// consume is a synchronous bounded sink. It shares the projection/scan
 	// stream with pull consumers, without channels or retained result rows.
 	consume        func([]string, []interface{}) (bool, error)
+	restoreRow     func(*ExecuteResult) *ExecuteResult
+	outputBudget   *resultstream.Budget
 	consumeErr     error
 	full           bool
 	drain          bool
@@ -115,8 +118,17 @@ func WithResultStream(ctx context.Context, stream *ResultStream) context.Context
 // target, a procedure's query) are not the client's statement.
 func takeResultStream(ctx context.Context) (*ResultStream, context.Context) {
 	stream, _ := ctx.Value(resultStreamKey{}).(*ResultStream)
+	if consumer := resultstream.ConsumerFromContext(ctx); consumer != nil {
+		stream = NewBoundedResultStream(consumer)
+	}
 	if stream == nil {
 		return nil, ctx
+	}
+	if stream.bounded() {
+		// A new statement frame shares the consumer/budget, never RETURN's
+		// binding or rewrite state. USE and PROFILE forward it before arming.
+		stream = NewBoundedResultStream(stream.consume)
+		return stream, WithResultStream(resultstream.WithoutConsumer(ctx), stream)
 	}
 	return stream, context.WithValue(ctx, resultStreamKey{}, (*ResultStream)(nil))
 }
@@ -131,6 +143,10 @@ func armResultStream(ctx context.Context, stream *ResultStream, statement string
 	stream.statement = statement
 	stream.mapColumns = mapColumns
 	stream.recordAccess = recordAccess
+	stream.outputBudget = resultstream.BudgetFromContext(ctx)
+	if stream.bounded() {
+		ctx = WithResultStream(resultstream.WithoutConsumer(ctx), nil)
+	}
 	return context.WithValue(ctx, armedResultStreamKey{}, stream)
 }
 
@@ -188,14 +204,23 @@ func (s *ResultStream) emit(ctx context.Context, row []interface{}) bool {
 		}
 		s.produced++
 		if !s.full {
-			keepGoing, err := s.consume(s.columns, row)
+			columns := s.columns
+			if s.restoreRow != nil {
+				restored := s.restoreRow(&ExecuteResult{Columns: columns, Rows: [][]any{row}})
+				columns = restored.Columns
+				if len(restored.Rows) == 0 {
+					return true
+				}
+				row = restored.Rows[0]
+			}
+			keepGoing, err := s.consume(columns, row)
 			s.consumeErr = err
 			s.full = !keepGoing || err != nil
 			if keepGoing && err == nil {
 				s.recordBatch([][]interface{}{row})
 			}
 		}
-		return s.consumeErr == nil && (!s.full || s.drain)
+		return s.consumeErr == nil && (!s.full || s.drain) && (s.drain || s.outputBudget == nil || len(s.outputBudget.Reasons) == 0)
 	}
 	if !s.started {
 		s.buffered = append(s.buffered, row)

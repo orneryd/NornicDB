@@ -13,6 +13,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 // Compile-time interface assertion.
@@ -182,13 +183,21 @@ func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, 
 	defer func() { _ = session.Close(ctx) }()
 
 	rows := make([][]interface{}, 0)
-	columns, err := executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
+	var consumeErr error
+	columns, err := executeManagedStatement(ctx, session, statement, params, func(columns []string, record *neo4j.Record) {
 		row := make([]interface{}, len(record.Values))
 		for i, v := range record.Values {
 			row[i] = normalizeBoltValue(v)
 		}
-		rows = append(rows, row)
+		if consumer := resultstream.ConsumerFromContext(ctx); consumer != nil {
+			_, consumeErr = consumer(columns, row)
+		} else {
+			rows = append(rows, row)
+		}
 	})
+	if consumeErr != nil {
+		return nil, nil, consumeErr
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -439,21 +448,23 @@ type remoteTxRequest struct {
 	Statements []remoteStatement `json:"statements"`
 }
 
+type remoteResult struct {
+	Columns []string          `json:"columns"`
+	Data    []remoteResultRow `json:"data"`
+}
+type remoteResultRow struct {
+	RawRow []json.RawMessage `json:"row"`
+	Row    []interface{}     `json:"-"`
+	Meta   []interface{}     `json:"meta"`
+	REST   []json.RawMessage `json:"rest"`
+	Graph  struct {
+		Nodes         []map[string]interface{} `json:"nodes"`
+		Relationships []map[string]interface{} `json:"relationships"`
+	} `json:"graph"`
+}
 type remoteTxResponse struct {
-	Results []struct {
-		Columns []string `json:"columns"`
-		Data    []struct {
-			RawRow []json.RawMessage `json:"row"`
-			Row    []interface{}     `json:"-"`
-			Meta   []interface{}     `json:"meta"`
-			REST   []json.RawMessage `json:"rest"`
-			Graph  struct {
-				Nodes         []map[string]interface{} `json:"nodes"`
-				Relationships []map[string]interface{} `json:"relationships"`
-			} `json:"graph"`
-		} `json:"data"`
-	} `json:"results"`
-	Errors []struct {
+	Results []remoteResult `json:"results"`
+	Errors  []struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"errors"`
@@ -499,6 +510,11 @@ func (h *httpTransport) doRequest(ctx context.Context, body remoteTxRequest) (*r
 }
 
 func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (*remoteTxResponse, error) {
+	if consumer := resultstream.ConsumerFromContext(ctx); consumer != nil {
+		if request, ok := body.(remoteTxRequest); ok && len(request.Statements) == 1 {
+			return h.consumeRequest(ctx, method, targetURL, request, consumer)
+		}
+	}
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -536,36 +552,8 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	}
 	for resultIndex := range txResp.Results {
 		for rowIndex := range txResp.Results[resultIndex].Data {
-			data := &txResp.Results[resultIndex].Data[rowIndex]
-			if data.REST != nil && len(data.REST) != len(data.RawRow) {
-				return nil, localizedError(localization.StorageRemoteRESTRowLengthMismatch(), nil)
-			}
-			entities := make(map[string]interface{})
-			for _, node := range data.Graph.Nodes {
-				entities[fmt.Sprint(node["elementId"])] = map[string]interface{}{
-					remoteIdentityKey: remoteNumericIdentity{id: remoteHTTPNumericID(node["id"]), start: -1, end: -1},
-					"elementId":       node["elementId"], "labels": node["labels"], "properties": node["properties"],
-				}
-			}
-			for _, edge := range data.Graph.Relationships {
-				entities[fmt.Sprint(edge["elementId"])] = map[string]interface{}{
-					remoteIdentityKey: remoteNumericIdentity{id: remoteHTTPNumericID(edge["id"]), start: remoteHTTPEndpointID(edge, "startNode", entities), end: remoteHTTPEndpointID(edge, "endNode", entities)},
-					"elementId":       edge["elementId"], "type": edge["type"], "properties": edge["properties"],
-					"startNodeElementId": edge["startNodeElementId"], "endNodeElementId": edge["endNodeElementId"],
-				}
-			}
-			metadataIndex := 0
-			data.Row = make([]interface{}, len(data.RawRow))
-			for column, raw := range data.RawRow {
-				var rest json.RawMessage
-				if len(data.REST) == len(data.RawRow) {
-					rest = data.REST[column]
-				}
-				value, err := decodeRemoteHTTPValueWithREST(raw, rest, data.Meta, &metadataIndex, entities)
-				if err != nil {
-					return nil, err
-				}
-				data.Row[column] = value
+			if err := normalizeRemoteResultRow(&txResp.Results[resultIndex].Data[rowIndex]); err != nil {
+				return nil, err
 			}
 		}
 	}

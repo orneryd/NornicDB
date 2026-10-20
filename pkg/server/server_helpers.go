@@ -442,6 +442,10 @@ func (s *Server) readJSON(r *http.Request, v interface{}) error {
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	if stream, ok := w.(*transactionRowStream); ok {
+		stream.writeJSON(status, v)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)

@@ -21,6 +21,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 )
@@ -818,6 +819,9 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 
 // handleTransactionEndpoint routes transaction-related requests
 func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Request, dbName string, remaining []string) {
+	if r.Header.Get(resultstream.StreamHeader) == "1" && r.Method == http.MethodPost {
+		w, r = s.withTransactionRowStream(w, r, dbName)
+	}
 	switch {
 	case len(remaining) == 0:
 		// POST /db/{dbName}/tx - open new transaction
@@ -1605,6 +1609,10 @@ func (s *Server) runRequestStatements(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) (failed bool) {
+	if err := configureTransactionRowStream(ctx, statements); err != nil {
+		response.Errors = append(response.Errors, QueryError{Code: "Neo.ClientError.Request.InvalidFormat", Message: err.Error()})
+		return true
+	}
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	if claims != nil {

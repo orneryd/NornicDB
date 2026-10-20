@@ -13,6 +13,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -159,6 +160,40 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
+	if output, _ := ctx.Value(resultStreamKey{}).(*ResultStream); output.bounded() {
+		output.drain = fabric.FragmentContainsWrite(prepared.fragment) || !cacheableDynamicStatements(cypher, 0)
+		ctx = resultstream.WithDrain(ctx, output.drain)
+		result := &ExecuteResult{Columns: prepared.fragment.OutputColumns(), Stats: &QueryStats{}}
+		output.begin(result.Columns)
+		err := fabricExecutor.Produce(ctx, tx, prepared.fragment, params, authToken, func(columns []string, row []any) (bool, error) {
+			one := &fabric.ResultStream{Columns: columns, Rows: [][]any{row}}
+			e.normalizeFabricRowWrapper(cypher, one)
+			columns = one.Columns
+			if len(one.Rows) == 0 {
+				return true, nil
+			}
+			row = one.Rows[0]
+			output.columns = columns
+			return output.emit(ctx, row), output.consumeErr
+		})
+		if err != nil {
+			if autoCommit {
+				_ = tx.Rollback(nil)
+			}
+			return nil, fabricGraphReferenceError(err)
+		}
+		if autoCommit {
+			if budget := resultstream.BudgetFromContext(ctx); budget != nil && len(budget.Reasons) > 0 && !output.drain {
+				_ = tx.Rollback(nil)
+			} else if err := tx.Commit(nil, nil); err != nil {
+				return nil, err
+			}
+		}
+		result.Columns = output.columns
+		stats := statsAcc.snapshot()
+		result.Stats = &stats
+		return result, nil
+	}
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
@@ -685,6 +720,22 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 		acc.add(result.Stats)
 	}
 	return result.Columns, result.Rows, nil
+}
+
+func (c *cypherFabricExecutor) ProduceInput(ctx context.Context, query string, params map[string]interface{}, columns []string, input resultstream.Producer, consume resultstream.Consumer) error {
+	exec := c.base.cloneForStorage(c.base.storage)
+	ctx = withQueryParams(withExpressionFailureSlot(ctx), params)
+	seed := &ExecuteResult{Columns: columns, Source: input}
+	stream := NewBoundedResultStream(consume)
+	ctx = armResultStream(resultstream.WithoutConsumer(ctx), stream, query, nil, nil)
+	result, err := exec.executeSourceTail(ctx, seed, query)
+	if err == nil && result != nil && !stream.streamed() {
+		err = stream.consumeResult(ctx, result)
+	}
+	if failure := getExpressionFailure(ctx); err == nil && failure != nil {
+		err = failure
+	}
+	return err
 }
 
 func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[string]interface{}) string {

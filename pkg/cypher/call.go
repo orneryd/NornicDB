@@ -21,6 +21,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"runtime"
 	"sort"
 	"strconv"
@@ -308,6 +309,9 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	}
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
+	}
+	if seed.Source != nil {
+		return e.executeSourceTail(ctx, seed, tail)
 	}
 	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
 		return projected, err
@@ -1425,6 +1429,30 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	if err := validateYieldColumnsExist(result.Columns, yield); err != nil {
 		return nil, err
 	}
+	if result.Source != nil && yield.orderBy == "" && yield.skip == "" && yield.limit == "" {
+		original := *result
+		projected, err := e.applyYieldFilter(ctx, &ExecuteResult{Columns: result.Columns}, yield)
+		if err != nil {
+			return nil, err
+		}
+		result.Columns = projected.Columns
+		result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
+			return consumeResultRows(ctx, &original, func(columns []string, row []any) (bool, error) {
+				one, err := e.applyYieldFilter(ctx, &ExecuteResult{Columns: columns, Rows: [][]any{row}}, yield)
+				if err != nil {
+					return false, err
+				}
+				if len(one.Rows) == 0 {
+					return true, nil
+				}
+				return consume(one.Columns, one.Rows[0])
+			})
+		}
+		return result, nil
+	}
+	if err := materializeResultSource(ctx, result); err != nil {
+		return nil, err
+	}
 
 	// Apply column selection and aliasing (if not YIELD *)
 	if !yield.yieldAll && len(yield.items) > 0 {
@@ -1562,7 +1590,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 			return e.executeCallTail(ctx, result, tailCypher)
 		}
-		return result, nil
+		return finishProcedureSource(ctx, result)
 	}
 
 	// Terminal chokepoint of the converged procedure router: every built-in

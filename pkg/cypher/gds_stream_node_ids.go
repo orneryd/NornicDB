@@ -1,6 +1,9 @@
 package cypher
 
-import "context"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
+)
 
 // gdsStreamNodeIDColumns are the columns of every GDS algorithm stream that
 // hold projected node ids; "shared" is node similarity's list of {nodeId,
@@ -48,6 +51,17 @@ func gdsStreamHandler(procedure string, handler ProcedureHandler) ProcedureHandl
 // renderNodeIDs renders the result's node-id columns, and the nodeId of the
 // maps a list column holds, through nodeIDValue.
 func (p *GraphProjection) renderNodeIDs(result *ExecuteResult, columns []string) {
+	if result.Source != nil {
+		produce := result.Source
+		result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
+			return produce(ctx, func(names []string, row []any) (bool, error) {
+				one := &ExecuteResult{Columns: names, Rows: [][]any{row}}
+				p.renderNodeIDs(one, columns)
+				return consume(names, one.Rows[0])
+			})
+		}
+		return
+	}
 	var indexes []int
 	for i, column := range result.Columns {
 		for _, name := range columns {

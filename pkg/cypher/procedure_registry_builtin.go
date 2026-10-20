@@ -533,7 +533,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.fastRP.stream", "gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsFastRPStream(args)
+				return e.callGdsFastRPStream(args, ctx)
 			})
 		registerBuiltInProcedure("gds.fastRP.stats", "gds.fastRP.stats(graphName :: STRING, configuration = {} :: MAP) :: (nodeCount :: INTEGER, preProcessingMillis :: INTEGER, computeMillis :: INTEGER, configuration :: MAP)", localization.CypherProcedureMetadata("gds.fastRP.stats"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

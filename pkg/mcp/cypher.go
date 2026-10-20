@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 const (
@@ -123,8 +124,9 @@ func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) 
 		return nil, fmt.Errorf("native Cypher executor unavailable")
 	}
 	budget := newCypherResultBudget(ctx, maxRows)
-	stream := cypher.NewBoundedResultStream(budget.consume)
-	executionCtx := cypher.WithResultStream(cypher.WithStatementMemoryLimit(ctx, cypherExecutionMemoryBytes), stream)
+	// Execution owns row/byte admission. The protocol reserves envelope and
+	// summary space; its existing final encoder still enforces the wire cap.
+	executionCtx := cypher.WithResultBudget(cypher.WithStatementMemoryLimit(ctx, cypherExecutionMemoryBytes), maxRows, cypherMaxBytes-16*1024)
 	result, err := executor.Execute(executionCtx, query, parameters)
 	if err != nil {
 		return nil, err
@@ -134,6 +136,14 @@ func (s *Server) handleCypher(ctx context.Context, args map[string]interface{}) 
 	}
 	if result == nil {
 		return nil, fmt.Errorf("native Cypher executor returned no result")
+	}
+	output := resultstream.BudgetFromContext(executionCtx)
+	result.Rows = output.Rows
+	if output.Columns != nil {
+		result.Columns = output.Columns
+	}
+	for _, reason := range output.Reasons {
+		budget.reason(reason)
 	}
 	return budget.finish(ctx, result)
 }

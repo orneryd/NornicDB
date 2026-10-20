@@ -28,6 +28,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
@@ -91,16 +92,20 @@ var fastRPConfigKeys = []string{
 }
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsFastRPStream(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	embeddings, _, projection, err := e.runGdsFastRP("gds.fastRP.stream", args)
 	if err != nil {
 		return nil, err
 	}
-	rows := make([][]any, 0, len(embeddings))
-	for _, embedding := range embeddings {
-		rows = append(rows, []any{embedding.nodeID, embedding.vector})
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
 	}
-	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows, gdsProjection: projection}, nil
+	result, err := indexedOutput(ctx, []string{"nodeId", "embedding"}, len(embeddings), func(i int) []any { return []any{embeddings[i].nodeID, embeddings[i].vector} })
+	if result != nil {
+		result.gdsProjection = projection
+	}
+	return result, err
 }
 
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it

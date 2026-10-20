@@ -611,7 +611,7 @@ type pipelineRowOutput struct {
 	wrote bool
 }
 
-func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput, inputSources ...pipelineRowSource) (*ExecuteResult, bool, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -672,6 +672,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		}
 	}
 	var source pipelineRowSource
+	if len(inputSources) > 0 {
+		source = inputSources[0]
+	}
 	var terminalCallColumns []string
 	// The rows each clause builds count against the statement's memory
 	// limit, and the estimate follows the rows the pipeline holds now, not
@@ -683,6 +686,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		clause := clauses[idx]
 		generations.next(rows)
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
+			clause.kind != pipelineClauseCall &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
 			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesFor(ctx, clause) || streamsReturn(ctx, clauses, idx))) {
@@ -899,7 +903,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
 			}
 			idx += consumed
-			if idx+1 < len(clauses) && (pipelineClauseAggregatesFor(ctx, clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1)) {
+			if idx+1 < len(clauses) && (pipelineClauseAggregatesFor(ctx, clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1) || clauses[idx+1].kind == pipelineClauseCall) {
 				source = unwound
 				rows = nil
 				continue
@@ -921,6 +925,21 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return remaining, handled, err
 			}
 		case pipelineClauseCall:
+			if !clause.optional {
+				input := source
+				if input == nil {
+					input = pipelineRowsSource(rows)
+				}
+				transformed, yielded, err := e.pipelineProcedureSource(ctx, input, clause.text)
+				if err != nil {
+					return nil, true, err
+				}
+				source, rows = transformed, nil
+				for _, name := range yielded {
+					scope[name] = struct{}{}
+				}
+				continue
+			}
 			var newRows []pipelineRow
 			var yielded []string
 			ok := true

@@ -1,10 +1,14 @@
 // Package cypher provides Cypher query execution for NornicDB.
 package cypher
 
+import "github.com/orneryd/nornicdb/pkg/resultstream"
+
 // ExecuteResult holds execution results in Neo4j-compatible format.
 type ExecuteResult struct {
-	Columns  []string
-	Rows     [][]interface{}
+	Columns []string
+	Rows    [][]interface{}
+	// Source enumerates output without retaining a second full row table.
+	Source   resultstream.Producer `json:"-"`
 	Stats    *QueryStats
 	Metadata map[string]interface{} // Additional result metadata (e.g., execution plan)
 	// MapKeyOrders retains evaluated map traversal order for transaction HTTP metadata.

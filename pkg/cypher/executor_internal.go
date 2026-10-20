@@ -44,6 +44,17 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	stream, ctx := takeResultStream(ctx)
+	if stream.bounded() {
+		defer func() {
+			if retErr == nil && result != nil {
+				retErr = stream.consumeResult(ctx, result)
+				if stream.limitTruncated {
+					markResultTruncated(result, stream.rowLimit)
+				}
+			}
+		}()
+	}
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}
@@ -135,6 +146,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	upper := e.cachedUpperQuery(cypher)
+	ctx = prepareOutputStream(ctx, stream, cypher, e.maxResults())
 
 	// If we're in an explicit transaction, execute within it.
 	if e.txContext != nil && e.txContext.active {

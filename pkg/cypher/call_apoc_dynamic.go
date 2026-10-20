@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"strings"
 	"time"
 )
@@ -27,6 +28,30 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		return nil, err
 	}
 
+	if resultstream.BudgetFromContext(ctx) != nil || resultstream.ConsumerFromContext(ctx) != nil {
+		result := &ExecuteResult{Columns: []string{"value"}, Stats: &QueryStats{}}
+		result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
+			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(columns []string, row []any) (bool, error) {
+				value := make(map[string]any, len(columns))
+				for i, column := range columns {
+					if i < len(row) {
+						value[column] = row[i]
+					}
+				}
+				return consume(result.Columns, []any{value})
+			}))
+			inner, err := e.executeUserStatement(innerCtx, innerQuery, params)
+			if err != nil {
+				return fmt.Errorf("%s inner query failed: %w", procedure, err)
+			}
+			if inner != nil {
+				addQueryStats(result.Stats, inner.Stats)
+				result.Metadata = inner.Metadata
+			}
+			return nil
+		}
+		return result, nil
+	}
 	// Execute the inner query
 	innerResult, err := e.executeUserStatement(ctx, innerQuery, params)
 	if err != nil {

@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -47,9 +46,7 @@ func (e cypherEnvelope) encode(result interface{}, failure string) ([]byte, erro
 type cypherResultBudget struct {
 	result      *cypherToolResult
 	envelope    cypherEnvelope
-	remaining   int
 	initialized bool
-	full        bool
 }
 
 func newCypherResultBudget(ctx context.Context, maxRows int) *cypherResultBudget {
@@ -94,51 +91,10 @@ func (b *cypherResultBudget) init(columns []string) error {
 	}
 	// Reserve native counters and the marker; arbitrary metadata is budgeted
 	// at completion and can evict retained rows without retaining extra rows.
-	b.remaining = cypherMaxBytes - len(encoded) - 1024
-	if b.remaining < 0 {
+	if len(encoded)+1024 > cypherMaxBytes {
 		return fmt.Errorf("Cypher columns and envelope exceed response byte limit")
 	}
 	return nil
-}
-
-func (b *cypherResultBudget) consume(columns []string, row []interface{}) (bool, error) {
-	if b.full {
-		return false, nil
-	}
-	if err := b.init(columns); err != nil {
-		return false, err
-	}
-	if len(b.result.Rows) >= b.result.Truncation.MaxRows {
-		b.reason("max_rows")
-		b.full = true
-		return false, nil
-	}
-	converted, err := cypher.JSONTransportValue(row, b.remaining)
-	if errors.Is(err, cypher.ErrJSONValueTooLarge) {
-		b.reason("max_bytes")
-		b.full = true
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	encoded, err := json.Marshal(converted)
-	if err != nil {
-		return false, err
-	}
-	quoted, err := json.Marshal(string(encoded))
-	if err != nil {
-		return false, err
-	}
-	delta := len(encoded) + len(quoted) // reserves both row separators too
-	if delta > b.remaining {
-		b.reason("max_bytes")
-		b.full = true
-		return false, nil
-	}
-	b.remaining -= delta
-	b.result.Rows = append(b.result.Rows, converted.([]interface{}))
-	return true, nil
 }
 
 func (b *cypherResultBudget) finish(ctx context.Context, native *cypher.ExecuteResult) (*cypherToolResult, error) {
@@ -148,18 +104,7 @@ func (b *cypherResultBudget) finish(ctx context.Context, native *cypher.ExecuteR
 	if err := b.init(native.Columns); err != nil {
 		return nil, err
 	}
-	for _, row := range native.Rows {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		more, err := b.consume(native.Columns, row)
-		if err != nil {
-			return nil, err
-		}
-		if !more {
-			break
-		}
-	}
+	b.result.Rows = native.Rows
 	b.result.Stats = native.Stats
 	metadata, err := cypher.JSONTransportValue(native.Metadata, cypherMaxBytes/2)
 	if err != nil {

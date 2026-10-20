@@ -2,8 +2,57 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"strings"
 )
+
+// pipelineProcedureSource composes CALL/YIELD with its downstream consumer.
+// Argument validation, aliases and filtering still run through the ordinary
+// procedure owner; only retention changes.
+func (e *StorageExecutor) pipelineProcedureSource(ctx context.Context, input pipelineRowSource, clause string) (pipelineRowSource, []string, error) {
+	var columns []string
+	if yield := parseYieldClause(clause); yield != nil {
+		for _, item := range yield.items {
+			name := item.name
+			if item.alias != "" {
+				name = item.alias
+			}
+			columns = append(columns, name)
+		}
+	}
+	return func(yield func(pipelineRow) bool) bool {
+		valid := true
+		completed := input(func(row pipelineRow) bool {
+			more := true
+			callCtx := resultstream.WithConsumer(ctx, func(names []string, values []any) (bool, error) {
+				next := make(pipelineRow, len(row)+len(names))
+				for k, v := range row {
+					next[k] = v
+				}
+				for i, name := range names {
+					if i < len(values) {
+						next[name] = values[i]
+					}
+				}
+				if filter := parseYieldClause(clause); filter != nil && filter.where != "" {
+					if len(e.filterPipelineRows(ctx, []pipelineRow{next}, filter.where)) == 0 {
+						return true, getExpressionFailure(ctx)
+					}
+				}
+				more = yield(next)
+				return more, nil
+			})
+			_, _, _, err := e.pipelineApplyProcedureCall(callCtx, []pipelineRow{row}, clause)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				valid = false
+				return false
+			}
+			return more
+		})
+		return completed && valid
+	}, columns, nil
+}
 
 // pipelineProcedureCallsAreClauses reports whether every CALL in the statement
 // is a top-level procedure call. Unknown procedures are admitted so execution
