@@ -48,28 +48,10 @@ func compareForSort(a, b interface{}) bool {
 	if b == nil {
 		return false
 	}
+	if order, numeric, ordered := storage.CompareNumericValues(a, b); numeric {
+		return ordered && order < 0
+	}
 	switch av := a.(type) {
-	case int64:
-		if bv, ok := b.(int64); ok {
-			return av < bv
-		}
-		if bv, ok := b.(float64); ok {
-			return float64(av) < bv
-		}
-	case int:
-		if bv, ok := b.(int); ok {
-			return av < bv
-		}
-		if bv, ok := b.(int64); ok {
-			return int64(av) < bv
-		}
-	case float64:
-		if bv, ok := b.(float64); ok {
-			return av < bv
-		}
-		if bv, ok := b.(int64); ok {
-			return av < float64(bv)
-		}
 	case string:
 		if bv, ok := b.(string); ok {
 			return av < bv
