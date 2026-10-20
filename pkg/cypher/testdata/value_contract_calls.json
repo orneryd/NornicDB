@@ -1692,6 +1692,195 @@
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addTupleValuesByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addTupleValuesByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueHash:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueHash",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueHash:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueHash",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:3",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:4",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:5",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:6",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexCanonicalEquivalence",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:1",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:2",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:3",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:4",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:5",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:6",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
+    "id": "value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:7",
+    "file": "value_equivalence_index_test.go",
+    "caller": "TestCypherValueIndexHashCollisions",
+    "callee": "addTupleValuesByContract",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Regression or allocation probe exercises this explicitly selected contract."
+  },
+  {
     "id": "value_equivalence_test.go:TestCypherEquivalenceKey:cypherValueKey:1",
     "file": "value_equivalence_test.go",
     "caller": "TestCypherEquivalenceKey",

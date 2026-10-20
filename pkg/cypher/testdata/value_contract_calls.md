@@ -2,7 +2,7 @@
 
 Mechanically enumerated by TestValueContractInventory with Go ASTs. IDs use file, enclosing function, callee and ordinal; formatting-only line shifts do not create consumers. The guard rejects added, removed or changed sites, implicit constructor names, missing arguments, uninitialized contract variables and constructor aliases. Every registered site includes its required contract and reason.
 
-193 total sites, 130 production sites. Tests and allocation probes are also registered in testdata/value_contract_calls.json.
+220 total sites, 130 production sites. Tests and allocation probes are also registered in testdata/value_contract_calls.json.
 
 | Call site | Required contract | Reason |
 |---|---|---|
@@ -134,5 +134,26 @@ Mechanically enumerated by TestValueContractInventory with Go ASTs. IDs use file
 | `value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:2` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
 | `value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
 | `value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:2` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addByContract:1` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addByContract:2` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addTupleValuesByContract:1` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:addTupleValuesByContract:2` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueHash:1` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueHash:2` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:1` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:2` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:3` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:4` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:5` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexCanonicalEquivalence:cypherValueKey:6` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleByContract:1` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleByContract:2` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:1` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:2` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:3` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:4` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:5` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:6` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
+| `value_equivalence_index_test.go:TestCypherValueIndexHashCollisions:addTupleValuesByContract:7` | `cypherEquivalenceContract` | Regression or allocation probe exercises this explicitly selected contract. |
 | `value_ordering.go:compareCypherComparableValues:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `value_ordering.go:cypherSortRank:temporalOrderParts:1` | `ordering (separate contract)` | Ordering is a separate temporal contract, outside equality/equivalence identity. |
