@@ -182,9 +182,9 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 
 	require.Equal(t, "<nil>", callSubqueryLookupKeyString(nil))
 	require.Equal(t, "s:name", callSubqueryLookupKeyString([]byte(" \"name\" ")))
-	require.Equal(t, "i:7", callSubqueryLookupKeyString(7))
-	require.Equal(t, "i64:8", callSubqueryLookupKeyString(int64(8)))
-	require.Equal(t, "f:1.5", callSubqueryLookupKeyString(1.5))
+	require.Equal(t, "n:float64:7", callSubqueryLookupKeyString(7))
+	require.Equal(t, "n:float64:8", callSubqueryLookupKeyString(int64(8)))
+	require.Equal(t, "n:float64:1.5", callSubqueryLookupKeyString(1.5))
 	require.Equal(t, "b:1", callSubqueryLookupKeyString(true))
 	require.Contains(t, callSubqueryLookupKeyString(struct{ X int }{X: 1}), "struct")
 

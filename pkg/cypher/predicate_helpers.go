@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -76,29 +75,13 @@ func evaluateComparableMembership(actual interface{}, comparableSet map[interfac
 }
 
 // membershipKey is the key of a comparable value in a membership index
-// (buildComparableMembershipIndex). Cypher compares numbers by value (1 = 1.0,
-// an integer parameter that arrives as a float over HTTP equals the stored
-// integer), so every integer type, and every whole-valued float in int64
-// range, keys as int64; other floats key as float64. Integers keep their
-// exact value, including above 2^53.
+// (buildComparableMembershipIndex). The storage owner supplies numeric identity,
+// including mixed signed/unsigned/float values and integers above 2^53.
 func membershipKey(v interface{}) interface{} {
-	if integer, ok := valueconvert.IntegerValue(v); ok {
-		return integer
-	}
-	if unsigned, ok := valueconvert.UnsignedInteger(v); ok {
-		return unsigned
-	}
-	if floating, ok := valueconvert.FloatValue(v); ok {
-		return floatMembershipKey(floating)
+	if key, numeric := storage.NumericValueKey(v); numeric {
+		return key
 	}
 	return v
-}
-
-func floatMembershipKey(f float64) interface{} {
-	if integer, ok := valueconvert.Int64(f, valueconvert.IntegerFloat|valueconvert.IntegerWholeFloat); ok {
-		return integer
-	}
-	return f
 }
 
 func isComparableValue(v interface{}) bool {

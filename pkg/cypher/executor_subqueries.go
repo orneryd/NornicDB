@@ -1657,6 +1657,9 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 }
 
 func callSubqueryLookupKeyString(v interface{}) string {
+	if key, numeric := storage.NumericValueKey(v); numeric {
+		return fmt.Sprintf("n:%T:%v", key, key)
+	}
 	switch x := v.(type) {
 	case nil:
 		return "<nil>"
@@ -1664,18 +1667,15 @@ func callSubqueryLookupKeyString(v interface{}) string {
 		return "s:" + normalizeCallSubqueryLookupString(x)
 	case []byte:
 		return "s:" + normalizeCallSubqueryLookupString(string(x))
-	case int:
-		return fmt.Sprintf("i:%d", x)
-	case int64:
-		return fmt.Sprintf("i64:%d", x)
-	case float64:
-		return fmt.Sprintf("f:%g", x)
 	case bool:
 		if x {
 			return "b:1"
 		}
 		return "b:0"
 	default:
+		if key, ok := storage.PropertyValueKey(v); ok {
+			return fmt.Sprintf("v:%T:%v", key, key)
+		}
 		return fmt.Sprintf("%T:%v", v, v)
 	}
 }

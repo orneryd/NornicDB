@@ -727,30 +727,23 @@ func parsePropsBodyForUnwindFastPath(propsBody, unwindVar string) (map[string]st
 }
 
 // propEqKeyBatch produces a stable string key used to index the per-batch
-// MATCH-prefetch map. It coerces integer and float types so an int64
-// coming from a Bolt row and an equivalent float64 stored on a node hash
-// to the same key. Strings, bools, and nil get their own unambiguous
-// prefixes so they cannot collide with numeric keys.
+// MATCH-prefetch map. Numeric and nested property identity come from storage's
+// canonical key owner; strings, bools and nil keep separate prefixes.
 func propEqKeyBatch(v interface{}) string {
 	if v == nil {
 		return "n:"
 	}
-	if i, ok := coerceInt64(v); ok {
-		return fmt.Sprintf("i:%d", i)
-	}
-	if f, ok := coerceFloat64(v); ok {
-		// Integer-valued floats hash to the same key as the int form so a
-		// Bolt int64 and a Cypher float literal compare equal through the map.
-		if f == float64(int64(f)) {
-			return fmt.Sprintf("i:%d", int64(f))
-		}
-		return fmt.Sprintf("f:%g", f)
+	if key, numeric := storage.NumericValueKey(v); numeric {
+		return fmt.Sprintf("n:%T:%v", key, key)
 	}
 	if s, ok := v.(string); ok {
 		return "s:" + s
 	}
 	if b, ok := v.(bool); ok {
 		return fmt.Sprintf("b:%t", b)
+	}
+	if key, ok := storage.PropertyValueKey(v); ok {
+		return fmt.Sprintf("v:%T:%v", key, key)
 	}
 	return fmt.Sprintf("x:%v", v)
 }

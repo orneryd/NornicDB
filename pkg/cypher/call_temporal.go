@@ -256,6 +256,9 @@ func temporalNodesByLabel(engine storage.Engine, label string, version storage.M
 }
 
 func valuesEqual(a, b interface{}) bool {
+	if order, numeric, ordered := storage.CompareNumericValues(a, b); numeric {
+		return ordered && order == 0
+	}
 	if reflect.DeepEqual(a, b) {
 		return true
 	}
