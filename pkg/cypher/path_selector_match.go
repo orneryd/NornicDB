@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 
@@ -138,21 +139,14 @@ func pathSelectorCount(ctx context.Context, count string) (int, error) {
 	} else {
 		value = pathSelectorCountLiteral(count)
 	}
-	var number int64
-	switch typed := value.(type) {
-	case int64:
-		number = typed
-	case int:
-		number = int64(typed)
-	case int32:
-		number = int64(typed)
-	default:
+	number, valid := valueconvert.ToInt(value, valueconvert.IntegerOnly)
+	if !valid {
 		return 0, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherMatchingPathSelectorCountType(pathSelectorCountTypeName(value)))
 	}
 	if number <= 0 {
 		return 0, localizedStatusError("Neo.ClientError.General.InvalidArguments", "InvalidArguments",
-			localization.CypherMatchingPathSelectorCountInvalid(strconv.FormatInt(number, 10)))
+			localization.CypherMatchingPathSelectorCountInvalid(strconv.FormatInt(int64(number), 10)))
 	}
 	return int(number), nil
 }

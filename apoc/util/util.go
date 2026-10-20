@@ -9,6 +9,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math/rand"
 	"strings"
 	"time"
@@ -206,19 +207,22 @@ func When(condition bool, trueValue, falseValue interface{}) interface{} {
 //	apoc.util.typeOf('hello') => 'STRING'
 //	apoc.util.typeOf(42) => 'INTEGER'
 func TypeOf(value interface{}) string {
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if number.IsInteger() {
+			return "INTEGER"
+		}
+		return "FLOAT"
+	}
+	if _, list := valueconvert.ReadList(value); list {
+		return "LIST"
+	}
 	switch value.(type) {
 	case nil:
 		return "NULL"
 	case bool:
 		return "BOOLEAN"
-	case int, int64, int32:
-		return "INTEGER"
-	case float64, float32:
-		return "FLOAT"
 	case string:
 		return "STRING"
-	case []interface{}:
-		return "LIST"
 	case map[string]interface{}:
 		return "MAP"
 	default:

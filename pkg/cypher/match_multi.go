@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 
@@ -1295,14 +1296,7 @@ func cartesianOffsetValuesEqual(left, right interface{}, offset int64) bool {
 
 // int64OfValue reports an integer value exactly (int or int64).
 func int64OfValue(v interface{}) (int64, bool) {
-	switch x := v.(type) {
-	case int:
-		return int64(x), true
-	case int64:
-		return x, true
-	default:
-		return 0, false
-	}
+	return valueconvert.IntegerValue(v)
 }
 
 // Cartesian keys implement predicate equality for both candidate pushdown

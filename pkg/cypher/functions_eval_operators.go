@@ -112,13 +112,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if strings.HasPrefix(expr, "-") && len(expr) > 1 {
 		inner := strings.TrimSpace(expr[1:])
 		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch v := result.(type) {
-		case int64:
-			return -v
-		case float64:
-			return -v
-		case int:
-			return -v
+		if result == nil {
+			return nil
+		}
+		if negated, handled, err := numericArithmetic('-', int64(0), result); handled {
+			recordExpressionFailure(ctx, err)
+			return negated
 		}
 	}
 

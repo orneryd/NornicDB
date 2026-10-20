@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -119,15 +120,10 @@ func apocToBoolean(value interface{}) bool {
 		return v
 	case string:
 		return !(v == "" || strings.EqualFold(v, "false") || strings.EqualFold(v, "no") || v == "0")
-	case float64:
-		return !math.IsNaN(v) && (v <= -1 || v >= 1)
-	case float32:
-		return !math.IsNaN(float64(v)) && (v <= -1 || v >= 1)
 	}
-	if cypherValueKindOf(value) == valueKindInteger {
-		// An unsigned value past int64 isn't read, and isn't 0.
-		number, read := cypherIntegerValue(value)
-		return !read || number != 0
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		floating := number.Float64()
+		return !math.IsNaN(floating) && (floating <= -1 || floating >= 1)
 	}
 	return true
 }

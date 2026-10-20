@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -22,33 +23,7 @@ import (
 
 // cypherIntegerOperand returns v as an int64 when it is a Cypher INTEGER.
 func cypherIntegerOperand(v interface{}) (int64, bool) {
-	switch n := v.(type) {
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	case int32:
-		return int64(n), true
-	case int16:
-		return int64(n), true
-	case int8:
-		return int64(n), true
-	case uint8:
-		return int64(n), true
-	case uint16:
-		return int64(n), true
-	case uint32:
-		return int64(n), true
-	case uint:
-		if uint64(n) <= math.MaxInt64 {
-			return int64(n), true
-		}
-	case uint64:
-		if n <= math.MaxInt64 {
-			return int64(n), true
-		}
-	}
-	return 0, false
+	return valueconvert.IntegerValue(v)
 }
 
 // longOverflowError is Neo4j's error for INTEGER arithmetic outside int64.
