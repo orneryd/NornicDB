@@ -134,5 +134,6 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 		separator = ":"
 	}
 	e.txContext.storageWrapper = &transactionStorageWrapper{tx: tx, underlying: system, namespace: namespace, separator: separator}
+	e.txContext.storageWrapper.initNamespacePrefix()
 	return e, nil
 }

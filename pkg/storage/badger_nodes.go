@@ -272,9 +272,7 @@ func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
 func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) {
 	return b.getNodeByID(id, v,
 		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-			return b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
-				return b.loadNodeEmbeddingState(txn, node, id, false)
-			})
+			return b.readQueryNodeItemInTxn(txn, item, id)
 		},
 		copyNodeForCaller,
 		b.cacheFillQueryNode,

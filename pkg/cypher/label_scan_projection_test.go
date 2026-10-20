@@ -89,8 +89,11 @@ func TestLabelScanReadsOnlyUsedProperties(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(10)}, {int64(20)}, {int64(30)}}, rows)
 	require.Equal(t, []string{"b"}, projection)
 
-	rows, projection = run("MATCH (p:P) RETURN p ORDER BY p.a LIMIT 1")
-	require.Nil(t, projection)
+	store.projections = nil
+	result, err := exec.Execute(ctx, "MATCH (p:P) RETURN p ORDER BY p.a LIMIT 1", nil)
+	require.NoError(t, err)
+	require.Empty(t, store.projections, "label IDs feed query reads without decoding discarded projected bodies")
+	rows = result.Rows
 	node := rows[0][0].(*storage.Node)
 	require.Equal(t, "x", node.Properties["big"])
 

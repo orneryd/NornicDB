@@ -95,7 +95,12 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	if record.Tombstoned || record.Node == nil {
 		return nil, ErrNotFound
 	}
-	node := copyNode(record.Node)
+	var node *Node
+	if vectors {
+		node = copyNode(record.Node)
+	} else {
+		node = copyNodeForCaller(record.Node)
+	}
 	if b.hidesNode(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
@@ -275,7 +280,9 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	properties []string,
 	v readVisibility,
 	visit func(*Node) error,
+	queryRead ...bool,
 ) error {
+	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -290,7 +297,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 		defer it.Close()
 		for it.Next() {
 			nodeID := it.NodeID()
-			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, true, v)
+			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, !queryNodes, v)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -305,7 +312,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 				}
 			}
 			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
+				if err := visit(projectCachedNodeForRead(node, properties, false, queryNodes)); err != nil {
 					return err
 				}
 			}
@@ -338,7 +345,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	afterNodeID NodeID,
 	v readVisibility,
 	visit func(*Node) error,
+	queryRead ...bool,
 ) error {
+	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -356,6 +365,9 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+			if queryNodes {
+				return b.readQueryNodeItemInTxn(txn, item, nodeID)
+			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		emit := func(node *Node) error {

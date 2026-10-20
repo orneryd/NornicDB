@@ -292,7 +292,8 @@ func (b *BadgerEngine) StreamStoredNodesByLabelProjected(label string, propertie
 	return b.streamNodesByLabelProjectedInScope("", label, properties, storedRead, visit)
 }
 
-func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, properties []string, v readVisibility, visit func(*Node) error) error {
+func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
+	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -321,6 +322,9 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 	coversDecided := false
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+			if queryNodes {
+				return b.readQueryNodeItemInTxn(txn, item, nodeID)
+			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		cachedNode := func(nodeID NodeID) (*Node, bool) {
@@ -330,7 +334,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 			if !ok || b.writeBehind != nil {
 				return nil, false
 			}
-			return projectCachedNodeForRead(cached, properties, false), true
+			return projectCachedNodeForRead(cached, properties, false, queryNodes), true
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.hidesNode(v, node, nowNanos) {
@@ -439,10 +443,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 		if !nodeIDInScope(n.ID, scope) || b.hidesNode(v, n, nowNanos) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(n, properties, false)); err != nil {
-			if err == ErrIterationStopped {
-				return nil
-			}
+		if err := visit(projectCachedNodeForRead(n, properties, false, queryNodes)); err != nil {
 			return err
 		}
 	}
@@ -473,11 +474,14 @@ func (b *BadgerEngine) mergeWriteBehindNodes(nodes, overlay []*Node, touched map
 	return out
 }
 
-func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings bool) *Node {
+func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings bool, queryRead ...bool) *Node {
 	if node == nil {
 		return nil
 	}
 	if properties == nil {
+		if len(queryRead) > 0 && queryRead[0] && !stripEmbeddings {
+			return copyNodeForCaller(node)
+		}
 		if stripEmbeddings {
 			return copyNodeWithoutEmbeddings(node)
 		}

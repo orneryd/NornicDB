@@ -1752,6 +1752,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator:      separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+	txWrapper.initNamespacePrefix()
 
 	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
 	defer func() {
