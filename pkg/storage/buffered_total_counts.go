@@ -22,7 +22,7 @@ func visitOperationTotalCounts(op Operation, visit func(string, bool, int64)) {
 			visit(string(op.NodeID), true, -remaining)
 		}
 	case OpCreateEdge:
-		if op.Edge != nil && !op.ReplacesExisting {
+		if op.Edge != nil {
 			visit(string(op.Edge.ID), true, 1)
 		}
 	case OpDeleteEdge:

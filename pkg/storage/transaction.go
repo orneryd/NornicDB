@@ -91,10 +91,6 @@ type Operation struct {
 	EdgeID  EdgeID `json:"edge_id,omitempty"`
 	Edge    *Edge  `json:"edge,omitempty"`     // New state (for create/update) or nil
 	OldEdge *Edge  `json:"old_edge,omitempty"` // Old state (for update/delete rollback)
-	// ReplacesExisting marks a CREATE accepted over a stored edge. Its
-	// physical writes and notifications remain CREATE, but it contributes
-	// no cardinality increase, including after buffered WAL replay.
-	ReplacesExisting bool `json:"replaces_existing,omitempty"`
 
 	// FreshID is set on OpCreateNode / OpCreateEdge when the caller asserted
 	// the ID is newly minted and cannot collide with any prior tombstoned

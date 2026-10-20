@@ -9,6 +9,10 @@ type ExecuteResult struct {
 	Metadata map[string]interface{} // Additional result metadata (e.g., execution plan)
 	// MapKeyOrders retains evaluated map traversal order for transaction HTTP metadata.
 	MapKeyOrders map[uintptr][]string `json:"-"`
+	// relationshipMergeNoOp distinguishes a stored hidden relationship's
+	// idempotent CREATE from both a create and a visible match. The pipeline
+	// therefore runs neither ON CREATE nor ON MATCH actions for the no-op.
+	relationshipMergeNoOp bool
 }
 
 // QueryStats holds query execution statistics.
