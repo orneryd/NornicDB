@@ -16,7 +16,7 @@ func (b *BadgerEngine) hasCommitListeners() bool {
 }
 
 func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotification {
-	if !b.hasCommitListeners() {
+	if !b.hasCommitListeners() && !b.hasNamespaceCatalogUpdates(ops) {
 		return nil
 	}
 	n := &commitNotification{ops: ops}
@@ -34,6 +34,9 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 
 func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
 	if !b.hasCommitListeners() {
+		if op.Type == OpCreateNode || op.Type == OpUpdateNode {
+			b.publishNamespaceCatalog(op.Node)
+		}
 		return
 	}
 	if op.Node != nil {
@@ -46,31 +49,42 @@ func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
 	b.completeCommitNotification(n)
 }
 
-func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
+func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool, revisions ...bool) {
+	publishRevision := len(revisions) == 0 || revisions[0]
 	for i := range ops {
 		op := &ops[i]
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
-			b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
+			}
 			if snapshot {
 				op.Node = copyNode(op.Node)
 			}
 		case OpDeleteNode:
-			b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
+			}
 			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
 			b.deleteCleanup.recordDelete()
 			for _, id := range op.DeletedEdgeIDs {
-				b.graphMutationVersions.changed(namespaceForEdgeID(id))
+				if publishRevision {
+					b.graphMutationVersions.changed(namespaceForEdgeID(id))
+				}
 				b.forgetManualSuppression(manualSuppressionEdge, string(id))
 				b.deleteCleanup.recordDelete()
 			}
 		case OpCreateEdge, OpUpdateEdge:
-			b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
+			}
 			if snapshot {
 				op.Edge = copyEdge(op.Edge)
 			}
 		case OpDeleteEdge:
-			b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
+			}
 			b.forgetManualSuppression(manualSuppressionEdge, string(op.EdgeID))
 			b.deleteCleanup.recordDelete()
 		}
@@ -81,6 +95,7 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 	if n == nil {
 		return
 	}
+	b.publishNamespaceCatalogOperations(n.ops)
 	b.notificationMu.Lock()
 	n.ready = true
 	if b.notificationDraining {

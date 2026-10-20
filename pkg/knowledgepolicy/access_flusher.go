@@ -178,6 +178,11 @@ func (f *AccessFlusher) Flush() {
 
 func (f *AccessFlusher) flush() {
 	start := time.Now()
+	var token any
+	guard, guarded := f.store.(NamespaceTaskStore)
+	if guarded {
+		token = guard.CaptureNamespaceTask()
+	}
 	merged := f.accumulator.DrainAll()
 
 	// Emit batch-size histogram even for empty batches (the zero-row short-
@@ -218,76 +223,85 @@ func (f *AccessFlusher) flush() {
 
 	now := time.Now().UnixNano()
 	for entityID, delta := range merged {
-		entry, err := f.store.GetAccessMeta(entityID)
-		if err != nil {
-			continue
-		}
-		if entry == nil {
-			entry = &AccessMetaEntry{
-				TargetID:    entityID,
-				TargetScope: ScopeNode,
+		run := func() error {
+			entry, err := f.store.GetAccessMeta(entityID)
+			if err != nil {
+				return nil
 			}
-		}
-
-		meta := EntityMeta{Scope: entry.TargetScope}
-		if f.entityMeta != nil {
-			if resolved, err := f.entityMeta.GetEntityMeta(entityID); err == nil {
-				meta = resolved
-				if meta.Scope != "" {
-					entry.TargetScope = meta.Scope
+			if entry == nil {
+				entry = &AccessMetaEntry{
+					TargetID:    entityID,
+					TargetScope: ScopeNode,
 				}
 			}
-		}
 
-		appliedFixed := f.applyOnAccessMutations(entityID, entry, meta, now)
-
-		if !appliedFixed["accessCount"] {
-			entry.Fixed.AccessCount = int64(counter(entry.Fixed.AccessCount).merge(delta.accessCount))
-		}
-		if !appliedFixed["traversalCount"] {
-			entry.Fixed.TraversalCount = int64(counter(entry.Fixed.TraversalCount).merge(delta.traversalCount))
-		}
-		if !appliedFixed["lastAccessedAt"] {
-			entry.Fixed.LastAccessedAt = int64(timestamp(entry.Fixed.LastAccessedAt).merge(delta.lastAccessedAt))
-		}
-		if !appliedFixed["lastTraversedAt"] {
-			entry.Fixed.LastTraversedAt = int64(timestamp(entry.Fixed.LastTraversedAt).merge(delta.lastTraversedAt))
-		}
-
-		// Custom values merge onto the stored ones by their own kind's rule. A
-		// stored value that isn't an int64 is replaced, as before.
-		if len(delta.counters) > 0 || len(delta.timestamps) > 0 {
-			if entry.Overflow == nil {
-				entry.Overflow = make(map[string]interface{})
-			}
-			for k, v := range delta.counters {
-				stored, _ := entry.Overflow[k].(int64)
-				entry.Overflow[k] = int64(counter(stored).merge(v))
-			}
-			for k, v := range delta.timestamps {
-				stored, ok := entry.Overflow[k].(int64)
-				if !ok {
-					entry.Overflow[k] = int64(v)
-					continue
+			meta := EntityMeta{Scope: entry.TargetScope}
+			if f.entityMeta != nil {
+				if resolved, err := f.entityMeta.GetEntityMeta(entityID); err == nil {
+					meta = resolved
+					if meta.Scope != "" {
+						entry.TargetScope = meta.Scope
+					}
 				}
-				entry.Overflow[k] = int64(timestamp(stored).merge(v))
 			}
-		}
 
-		entry.LastMutatedAt = now
-		entry.MutationCount++
+			appliedFixed := f.applyOnAccessMutations(entityID, entry, meta, now)
 
-		if f.evaluatePropertySuppression(entityID, entry, meta, now) {
-			propertySuppressionChanges++
-			// Suppression state changed — trigger re-embedding.
-			if f.embedInvalidate != nil && entry.TargetScope != ScopeEdge {
-				f.embedInvalidate(entityID)
+			if !appliedFixed["accessCount"] {
+				entry.Fixed.AccessCount = int64(counter(entry.Fixed.AccessCount).merge(delta.accessCount))
 			}
-		}
+			if !appliedFixed["traversalCount"] {
+				entry.Fixed.TraversalCount = int64(counter(entry.Fixed.TraversalCount).merge(delta.traversalCount))
+			}
+			if !appliedFixed["lastAccessedAt"] {
+				entry.Fixed.LastAccessedAt = int64(timestamp(entry.Fixed.LastAccessedAt).merge(delta.lastAccessedAt))
+			}
+			if !appliedFixed["lastTraversedAt"] {
+				entry.Fixed.LastTraversedAt = int64(timestamp(entry.Fixed.LastTraversedAt).merge(delta.lastTraversedAt))
+			}
 
-		_ = f.store.PutAccessMeta(entityID, entry)
-		if f.suppressionRecheck != nil {
-			f.suppressionRecheck(entityID, meta)
+			// Custom values merge onto the stored ones by their own kind's rule. A
+			// stored value that isn't an int64 is replaced, as before.
+			if len(delta.counters) > 0 || len(delta.timestamps) > 0 {
+				if entry.Overflow == nil {
+					entry.Overflow = make(map[string]interface{})
+				}
+				for k, v := range delta.counters {
+					stored, _ := entry.Overflow[k].(int64)
+					entry.Overflow[k] = int64(counter(stored).merge(v))
+				}
+				for k, v := range delta.timestamps {
+					stored, ok := entry.Overflow[k].(int64)
+					if !ok {
+						entry.Overflow[k] = int64(v)
+						continue
+					}
+					entry.Overflow[k] = int64(timestamp(stored).merge(v))
+				}
+			}
+
+			entry.LastMutatedAt = now
+			entry.MutationCount++
+
+			if f.evaluatePropertySuppression(entityID, entry, meta, now) {
+				propertySuppressionChanges++
+				// Suppression state changed — trigger re-embedding.
+				if f.embedInvalidate != nil && entry.TargetScope != ScopeEdge {
+					f.embedInvalidate(entityID)
+				}
+			}
+
+			_ = f.store.PutAccessMeta(entityID, entry)
+			if f.suppressionRecheck != nil {
+				f.suppressionRecheck(entityID, meta)
+			}
+
+			return nil
+		}
+		if guarded {
+			_ = guard.RunNamespaceTask(token, entityID, run)
+		} else {
+			_ = run()
 		}
 	}
 }

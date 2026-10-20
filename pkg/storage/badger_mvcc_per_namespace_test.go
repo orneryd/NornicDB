@@ -237,6 +237,18 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 	require.NoError(t, err)
 	defer reopened.Close()
 
+	// A cold snapshot can derive the floor without publishing cache state or
+	// repairing metadata. Eager initialization must still persist it afterward.
+	version := reopened.currentMVCCReadVersion("nornic")
+	require.Equal(t, uint64(1), version.CommitSequence)
+	reopened.mvccByNamespaceMu.RLock()
+	_, cached := reopened.mvccByNamespace["nornic"]
+	reopened.mvccByNamespaceMu.RUnlock()
+	require.False(t, cached)
+	persistedAfterRead, err := reopened.loadPersistedNamespaceSequence("nornic")
+	require.NoError(t, err)
+	require.Zero(t, persistedAfterRead)
+
 	require.NoError(t, reopened.EnsureNamespaceMVCC("nornic"))
 
 	persistedAfterEnsure, err := reopened.loadPersistedNamespaceSequence("nornic")

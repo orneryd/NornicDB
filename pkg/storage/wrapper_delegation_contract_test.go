@@ -272,6 +272,11 @@ func (s *delegationSpyEngine) DeleteByPrefix(prefix string) (int64, int64, error
 	return s.MemoryEngine.DeleteByPrefix(prefix)
 }
 
+func (s *delegationSpyEngine) DeleteByPrefixContext(ctx context.Context, prefix string) (int64, int64, error) {
+	s.record("DeleteByPrefix")
+	return s.MemoryEngine.DeleteByPrefixContext(ctx, prefix)
+}
+
 // --- Optional capabilities ---------------------------------------------------
 
 func (s *delegationSpyEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {

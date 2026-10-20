@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -12,11 +13,18 @@ type boltDatabaseManagerAdapter struct {
 	manager *multidb.DatabaseManager
 }
 
+func (a *boltDatabaseManagerAdapter) CreateDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.CreateDatabaseContext(ctx, name)
+}
+
 func (a *boltDatabaseManagerAdapter) CreateDatabase(name string) error {
-	return a.manager.CreateDatabase(name)
+	return a.manager.CreateDatabaseContext(context.Background(), name)
 }
 func (a *boltDatabaseManagerAdapter) DropDatabase(name string) error {
-	return a.manager.DropDatabase(name)
+	return a.manager.DropDatabaseContext(context.Background(), name)
+}
+func (a *boltDatabaseManagerAdapter) DropDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropDatabaseContext(ctx, name)
 }
 func (a *boltDatabaseManagerAdapter) Exists(name string) bool { return a.manager.Exists(name) }
 func (a *boltDatabaseManagerAdapter) CreateAlias(alias, databaseName string) error {
@@ -42,6 +50,10 @@ func (a *boltDatabaseManagerAdapter) GetDatabaseLimits(databaseName string) (int
 	return a.manager.GetDatabaseLimits(databaseName)
 }
 func (a *boltDatabaseManagerAdapter) CreateCompositeDatabase(name string, constituents []interface{}) error {
+	return a.CreateCompositeDatabaseContext(context.Background(), name, constituents)
+}
+
+func (a *boltDatabaseManagerAdapter) CreateCompositeDatabaseContext(ctx context.Context, name string, constituents []interface{}) error {
 	refs := make([]multidb.ConstituentRef, len(constituents))
 	for i, c := range constituents {
 		ref, ok := c.(multidb.ConstituentRef)
@@ -64,10 +76,14 @@ func (a *boltDatabaseManagerAdapter) CreateCompositeDatabase(name string, consti
 		}
 		refs[i] = ref
 	}
-	return a.manager.CreateCompositeDatabase(name, refs)
+	return a.manager.CreateCompositeDatabaseContext(ctx, name, refs)
 }
 func (a *boltDatabaseManagerAdapter) DropCompositeDatabase(name string) error {
-	return a.manager.DropCompositeDatabase(name)
+	return a.DropCompositeDatabaseContext(context.Background(), name)
+}
+
+func (a *boltDatabaseManagerAdapter) DropCompositeDatabaseContext(ctx context.Context, name string) error {
+	return a.manager.DropCompositeDatabaseContext(ctx, name)
 }
 func (a *boltDatabaseManagerAdapter) AddConstituent(compositeName string, constituent interface{}) error {
 	if m, ok := constituent.(map[string]interface{}); ok {

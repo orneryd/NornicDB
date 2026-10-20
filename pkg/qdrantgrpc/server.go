@@ -158,11 +158,11 @@ type Config struct {
 	// If nil, those query variants return FailedPrecondition.
 	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
 
-	// DropDatabase drops a collection's database together with the state the
+	// DropDatabaseContext drops a collection's database together with the state the
 	// server derives from it, such as its search index, as Cypher's DROP
 	// DATABASE does. nil drops it from the database manager only, which leaves
 	// a dropped collection's vectors in its search service.
-	DropDatabase func(name string) error
+	DropDatabaseContext func(ctx context.Context, name string) error
 
 	// BindQueryEmbedding captures the provider used by EmbedQuery for a text
 	// request. It must preserve an existing binding in nested batch calls.
@@ -435,7 +435,7 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 	if store, ok := collections.(*databaseCollectionStore); ok && store.defaultDrop && searchProvider != nil {
 		paired := *store
 		paired.defaultDrop = false
-		paired.dropDatabase = func(name string) error {
+		paired.dropDatabase = func(ctx context.Context, name string) error {
 			engine, err := store.dbManager.GetStorage(name)
 			if err != nil {
 				return err
@@ -444,7 +444,7 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 			if err != nil {
 				return err
 			}
-			if err := store.dropDatabase(name); err != nil {
+			if err := store.dropDatabase(ctx, name); err != nil {
 				return err
 			}
 			if svc != nil {
@@ -1030,9 +1030,9 @@ func NewServerWithDatabaseManager(config *Config, dbManager *multidb.DatabaseMan
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
-	var dropDatabase func(name string) error
+	var dropDatabase func(ctx context.Context, name string) error
 	if config != nil {
-		dropDatabase = config.DropDatabase
+		dropDatabase = config.DropDatabaseContext
 	}
 	collections, err := NewDatabaseCollectionStore(dbManager, dropDatabase)
 	if err != nil {

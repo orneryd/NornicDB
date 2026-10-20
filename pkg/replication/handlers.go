@@ -2,9 +2,11 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // RegisterClusterHandlers wires a Replicator's handler methods into a ClusterTransport.
@@ -160,16 +162,37 @@ func RegisterClusterHandlers(t *ClusterTransport, r Replicator) {
 			if err := decodeGob(msg.Payload, &cmd); err != nil {
 				return nil, localizedError(localization.ReplicationRPCDecodeFailed("forward apply", err), err)
 			}
+			// Capture request scope before Raft can stamp the admitted payload.
+			namespaceLifecycle := isNamespaceLifecycle(&cmd)
 			timeout := 30 * time.Second
 			if deadline, ok := ctx.Deadline(); ok {
 				if d := time.Until(deadline); d > 0 && d < timeout {
 					timeout = d
 				}
 			}
-			err := h.HandleForwardApply(&cmd, timeout)
+			var err error
+			if contextual, ok := r.(interface {
+				HandleForwardApplyContext(context.Context, *Command, time.Duration) error
+			}); ok {
+				err = contextual.HandleForwardApplyContext(ctx, &cmd, timeout)
+			} else {
+				err = h.HandleForwardApply(&cmd, timeout)
+			}
 			respPayload := forwardApplyResponse{}
 			if err != nil {
 				respPayload.Err = err.Error()
+			}
+			if namespaceLifecycle && err != nil {
+				var outcome *storage.NamespaceDropError
+				respPayload.DropOutcome = "aborted"
+				if errors.As(err, &outcome) && !outcome.Aborted {
+					respPayload.DropOutcome = "pending"
+					if outcome.Committed {
+						respPayload.DropOutcome = "committed"
+					}
+				}
+				respPayload.Canceled = errors.Is(err, context.Canceled)
+				respPayload.Deadline = errors.Is(err, context.DeadlineExceeded)
 			}
 			payload, encErr := encodeGob(respPayload)
 			if encErr != nil {

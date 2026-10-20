@@ -137,12 +137,25 @@ func (v heldViewer) View(fn func(txn *badger.Txn) error) error { return v.db.vie
 // Update runs fn in a read-write transaction at the published timestamp and
 // commits it as one ordinary commit. Badger's per-batch size limit applies.
 func (m *managedBadgerDB) Update(fn func(txn *badger.Txn) error) error {
+	return m.update(fn, false)
+}
+
+// updateHeld is reserved for Restore while it owns the read hold.
+func (m *managedBadgerDB) updateHeld(fn func(txn *badger.Txn) error) error { return m.update(fn, true) }
+
+func (m *managedBadgerDB) update(fn func(txn *badger.Txn) error, held bool) error {
 	if m.DB.IsClosed() {
 		return badger.ErrDBClosed
 	}
-	readTs, err := m.oracle.beginRead()
-	if err != nil {
-		return err
+	var readTs uint64
+	if held {
+		readTs = m.oracle.beginReadHeld()
+	} else {
+		var err error
+		readTs, err = m.oracle.beginRead()
+		if err != nil {
+			return err
+		}
 	}
 	defer m.oracle.endRead(readTs)
 	txn := m.DB.NewTransactionAt(readTs, true)

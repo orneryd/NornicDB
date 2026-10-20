@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -207,14 +208,39 @@ func (e *ReplicatedEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
 }
 
 func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
-	payload, err := encodeGob(struct {
-		Prefix string `json:"prefix"`
-	}{Prefix: prefix})
+	return e.DeleteByPrefixContext(context.Background(), prefix)
+}
+
+// DeleteByPrefixContext retains the caller's cancellation through replication.
+func (e *ReplicatedEngine) DeleteByPrefixContext(ctx context.Context, prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
+	op := storage.NamespaceDropFromContext(ctx)
+	if op == nil {
+		op = storage.NewNamespaceDrop(nil)
+	}
+	payload, err := encodeGob(namespaceDropCommand{Prefix: prefix, Catalog: op.CatalogMutation()})
 	if err != nil {
 		return 0, 0, localizedError(localization.ReplicationEngineEncodeDeletePrefixFailed(err), err)
 	}
-	if err := e.replicator.Apply(&Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}, e.timeout); err != nil {
-		return 0, 0, err
+	cmd := &Command{Type: CmdDeleteByPrefix, Data: payload, Timestamp: time.Now()}
+	if isNamespaceLifecycle(cmd) {
+		cmd.namespaceDrop = op
+		ctx = storage.WithNamespaceDrop(ctx, op)
+	}
+	if replicator, ok := e.replicator.(ContextReplicator); ok {
+		err = replicator.ApplyContext(ctx, cmd, e.timeout)
+	} else if ctx.Done() == nil {
+		err = e.replicator.Apply(cmd, e.timeout)
+	} else {
+		err = storage.ErrNotImplemented
+	}
+	if err != nil {
+		if op.Committed() {
+			err = errors.Join(err, ctx.Err())
+		}
+		return 0, 0, op.Result(err)
 	}
 	// Best-effort counts are not returned by the replication protocol today.
 	return 0, 0, nil

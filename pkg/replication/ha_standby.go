@@ -11,6 +11,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // HAStandbyReplicator implements hot standby replication between 2 nodes.
@@ -625,6 +626,14 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 
 // Apply applies a command to storage.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext carries cancellation through local preparation and the ACK wait.
+func (r *HAStandbyReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.closed.Load() {
 		return ErrClosed
 	}
@@ -638,21 +647,33 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 
 	traceWrites := os.Getenv("NORNICDB_CLUSTER_TRACE_WRITES") != ""
 	start := time.Now()
-	if err := r.storage.ApplyCommand(cmd); err != nil {
+	if err := applyStorageContext(ctx, r.storage, cmd); err != nil {
 		return err
 	}
 	applyDur := time.Since(start)
 
 	// Honor write-ack mode: optionally wait for standby acknowledgement.
 	walPos, _ := r.storage.GetWALPosition()
+	if isNamespaceLifecycle(cmd) {
+		op := storage.NamespaceDropFromContext(ctx)
+		if op == nil {
+			op = cmd.namespaceDrop
+		}
+		if op != nil && op.JournalPosition() != 0 {
+			walPos = op.JournalPosition()
+		}
+	}
 	ackStart := time.Now()
-	ackErr := r.waitForReplicationAck(walPos, timeout)
+	ackErr := r.waitForReplicationAckContext(ctx, walPos, timeout)
 	ackDur := time.Since(ackStart)
 	if traceWrites {
 		r.config.logPrintf(context.Background(), slog.LevelInfo, "[HA Primary] Apply type=%d apply=%s ack=%s total=%s mode=%s wal=%d err=%v",
 			cmd.Type, applyDur, ackDur, time.Since(start), r.config.HAStandby.SyncMode, walPos, ackErr)
 	}
-	return ackErr
+	if ackErr != nil {
+		return &storage.AppliedMutationError{Cause: ackErr}
+	}
+	return nil
 }
 
 // ApplyBatch applies multiple commands.
@@ -669,6 +690,10 @@ func (r *HAStandbyReplicator) ApplyBatch(cmds []*Command, timeout time.Duration)
 // For async mode, it returns immediately. For quorum mode, it waits until the
 // standby has acknowledged WAL up to the target position or the timeout elapses.
 func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.Duration) error {
+	return r.waitForReplicationAckContext(context.Background(), target, timeout)
+}
+
+func (r *HAStandbyReplicator) waitForReplicationAckContext(ctx context.Context, target uint64, timeout time.Duration) error {
 	mode := r.config.HAStandby.SyncMode
 	if mode == SyncAsync || target == 0 || r.walStreamer == nil {
 		return nil
@@ -690,7 +715,7 @@ func (r *HAStandbyReplicator) waitForReplicationAck(target uint64, timeout time.
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -966,7 +991,7 @@ func (a *WALApplier) ApplyBatch(entries []*WALEntry) (uint64, error) {
 			continue // Already applied
 		}
 
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		if err := applyCommittedStorageCommand(a.storage, entry.Command); err != nil {
 			return lastApplied, err
 		}
 
@@ -983,7 +1008,7 @@ func (a *WALApplier) Flush() error {
 	defer a.mu.Unlock()
 
 	for _, entry := range a.pendingBatch {
-		if err := a.storage.ApplyCommand(entry.Command); err != nil {
+		if err := applyCommittedStorageCommand(a.storage, entry.Command); err != nil {
 			return err
 		}
 	}

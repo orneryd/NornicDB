@@ -349,6 +349,12 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // processing non-existent nodes. It will skip up to 100 stale entries
 // before giving up to prevent infinite loops.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
+	releaseAdmission, err := b.beginNamespaceMutation(context.Background(), nil, nil, false, namespacePublicationFresh)
+	if err != nil {
+		return nil
+	}
+	defer releaseAdmission()
+
 	if b.ensureOpen() != nil {
 		return nil
 	}
@@ -427,32 +433,37 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 // MarkNodeEmbedded removes a node from the pending embeddings index.
 // Call this after successfully embedding a node.
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(pendingEmbedKey(nodeID))
+	_ = b.withNamespaceSideStateWrite(string(nodeID), func() error {
+		_ = b.withUpdate(func(txn *badger.Txn) error {
+			return txn.Delete(pendingEmbedKey(nodeID))
+		})
+		return nil
 	})
 }
 
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
 // Call this when creating a node that needs embedding.
 func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
-		item, err := txn.Get(nodeKey(nodeID))
-		if err == nil {
-			var node *Node
-			if err = item.Value(func(value []byte) error {
-				var decodeErr error
-				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), value)
-				return decodeErr
-			}); err != nil {
+	_ = b.withNamespaceSideStateWrite(string(nodeID), func() error {
+		return b.withUpdate(func(txn *badger.Txn) error {
+			item, err := txn.Get(nodeKey(nodeID))
+			if err == nil {
+				var node *Node
+				if err = item.Value(func(value []byte) error {
+					var decodeErr error
+					node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), value)
+					return decodeErr
+				}); err != nil {
+					return err
+				}
+				if !b.embeddingLabelsAllowed(node) {
+					return nil
+				}
+			} else if err != badger.ErrKeyNotFound {
 				return err
 			}
-			if !b.embeddingLabelsAllowed(node) {
-				return nil
-			}
-		} else if err != badger.ErrKeyNotFound {
-			return err
-		}
-		return txn.Set(pendingEmbedKey(nodeID), []byte{})
+			return txn.Set(pendingEmbedKey(nodeID), []byte{})
+		})
 	})
 }
 
@@ -484,6 +495,11 @@ func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
 // It also removes stale entries for nodes that no longer exist or already have embeddings.
 // Use this on startup or after bulk imports.
 func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
+	release, err := b.beginWrite()
+	if err != nil {
+		return 0
+	}
+	defer release()
 	added := 0
 	removed := 0
 

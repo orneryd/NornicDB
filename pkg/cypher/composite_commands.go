@@ -330,7 +330,14 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 	}
 
 	// Create composite database
-	err := e.dbManager.CreateCompositeDatabase(dbName, constituents)
+	var err error
+	if manager, ok := e.dbManager.(interface {
+		CreateCompositeDatabaseContext(context.Context, string, []interface{}) error
+	}); ok {
+		err = manager.CreateCompositeDatabaseContext(ctx, dbName, constituents)
+	} else {
+		err = e.dbManager.CreateCompositeDatabaseContext(ctx, dbName, constituents)
+	}
 	if err != nil {
 		return nil, localizedError(localization.CypherCompositeCreateDatabaseFailed(dbName, err), err)
 	}
@@ -396,7 +403,8 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 	}
 
 	// Drop composite database
-	err := e.dbManager.DropCompositeDatabase(dbName)
+	var err error
+	err = e.dbManager.DropCompositeDatabaseContext(ctx, dbName)
 	if err != nil {
 		return nil, localizedError(localization.CypherCompositeDropDatabaseFailed(dbName, err), err)
 	}

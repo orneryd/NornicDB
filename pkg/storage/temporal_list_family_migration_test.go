@@ -162,11 +162,15 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 			err := inner.RebuildTemporalIndexes(ctx)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, context.Canceled))
-			require.False(t, inner.temporalIndexReady.Load())
 			current, err := inner.temporalIndexFormatIsCurrent()
 			require.NoError(t, err)
-			require.False(t, current, "failed rebuild leaves format marker absent")
-			if partial, ok := ctx.(*cancelAfterInitialCheckContext); ok {
+			if mode == "cancel" {
+				require.True(t, inner.temporalIndexReady.Load(), "rejected admission preserves the complete index")
+				require.True(t, current, "rejected admission preserves its durable format marker")
+			} else {
+				require.False(t, inner.temporalIndexReady.Load())
+				require.False(t, current, "an admitted failed rebuild leaves format marker absent")
+				partial := ctx.(*cancelAfterInitialCheckContext)
 				require.GreaterOrEqual(t, partial.checks, 2)
 			}
 			require.NoError(t, inner.RebuildTemporalIndexes(context.Background()))
@@ -176,7 +180,7 @@ func TestTemporalListFamilyTemporalFormat4Trust(t *testing.T) {
 			require.True(t, inner.temporalIndexReady.Load())
 			_, err = engine.CreateNode(&Node{ID: "overlap", Labels: []string{c.Label}, Properties: pair[1]})
 			require.Error(t, err)
-			t.Logf("TLF_FORMAT4_TRUST mode=%s failed-untrusted retry-trusted", mode)
+			t.Logf("TLF_FORMAT4_TRUST mode=%s admission-phase-checked retry-trusted", mode)
 		})
 	}
 }

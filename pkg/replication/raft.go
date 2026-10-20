@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // RaftState represents the current state of a Raft node.
@@ -122,7 +124,11 @@ type RaftReplicator struct {
 	leaderAddr  string
 
 	// Log (protected by logMu)
-	logMu       sync.RWMutex
+	logMu sync.RWMutex
+
+	// applyMu serializes state-machine application and discard cleanup.
+	// Metadata locks are released before either invokes storage.
+	applyMu     sync.Mutex
 	log         []*RaftLogEntry
 	commitIndex uint64
 	lastApplied uint64
@@ -202,11 +208,30 @@ func (r *RaftReplicator) peerCount() int {
 
 // applyFuture represents a pending apply operation.
 type applyFuture struct {
-	cmd    *Command
-	index  uint64
-	term   uint64
-	errCh  chan error
-	doneCh chan struct{}
+	caller      context.Context // admission only; committed entries outlive the caller
+	cmd         *Command
+	index       uint64
+	term        uint64
+	errCh       chan error
+	doneCh      chan struct{}
+	resolveOnce sync.Once
+}
+
+func (future *applyFuture) resolve(err error) {
+	future.resolveOnce.Do(func() {
+		future.errCh <- err
+		if future.doneCh != nil {
+			close(future.doneCh)
+		}
+	})
+}
+
+func (r *RaftReplicator) takeApplyFuture(index uint64) *applyFuture {
+	r.futuresMu.Lock()
+	defer r.futuresMu.Unlock()
+	future := r.futures[index]
+	delete(r.futures, index)
+	return future
 }
 
 // rpcRequest represents an incoming RPC request.
@@ -553,6 +578,8 @@ func (r *RaftReplicator) sendVoteRequestRPC(ctx context.Context, conn PeerConnec
 
 // becomeLeader transitions this node to leader state.
 func (r *RaftReplicator) becomeLeader(ctx context.Context, term uint64) {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 	r.mu.Lock()
 	if r.currentTerm != term || r.state == StateLeader {
 		r.mu.Unlock()
@@ -803,32 +830,104 @@ func (r *RaftReplicator) runApplyLoop(ctx context.Context) {
 
 // processApply handles a single apply request.
 func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) {
+	if future.caller != nil {
+		if err := future.caller.Err(); err != nil {
+			if op := future.cmd.namespaceDrop; op != nil {
+				op.Abort()
+			}
+			future.errCh <- err
+			return
+		}
+	}
 	r.mu.RLock()
 	isLeader := r.state == StateLeader
 	term := r.currentTerm
 	r.mu.RUnlock()
 
 	if !isLeader {
+		if op := future.cmd.namespaceDrop; op != nil {
+			op.Abort()
+		}
 		future.errCh <- ErrNotLeader
 		return
 	}
+	if isNamespaceLifecycle(future.cmd) {
+		// A prepared DROP fences native publications. Earlier committed log
+		// entries must cross the state machine before installing that fence;
+		// otherwise an earlier same-namespace write would wait on the DROP
+		// which is itself waiting behind that write in the apply order.
+		caller := future.caller
+		if caller == nil {
+			caller = context.Background()
+		}
+		if err := r.awaitNamespacePreparationFrontier(caller, future.cmd, term); err != nil {
+			if op := future.cmd.namespaceDrop; op != nil {
+				op.Abort()
+			}
+			future.resolve(err)
+			return
+		}
+		if preparer, ok := r.storage.(interface {
+			PrepareCommandContext(context.Context, *Command) error
+		}); ok {
+			caller := future.caller
+			if caller == nil {
+				caller = context.Background()
+			}
+			if err := preparer.PrepareCommandContext(caller, future.cmd); err != nil {
+				future.errCh <- err
+				return
+			}
+			future.cmd.namespaceDrop.DeferConsensusCompletion()
+		} else if future.cmd.namespaceDrop != nil {
+			future.errCh <- storage.ErrNotImplemented
+			return
+		}
+	}
 
 	// Append to local log
-	r.logMu.Lock()
-	entry := &RaftLogEntry{
-		Index:   r.log[len(r.log)-1].Index + 1,
-		Term:    term,
-		Command: future.cmd,
+	var entry *RaftLogEntry
+	appendLog := func() error {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		if r.state != StateLeader || r.currentTerm != term {
+			return ErrNotLeader
+		}
+		if op := future.cmd.namespaceDrop; op != nil {
+			if err := stampNamespaceDrop(future.cmd, op); err != nil {
+				return err
+			}
+		}
+		r.logMu.Lock()
+		entry = &RaftLogEntry{
+			Index:   r.log[len(r.log)-1].Index + 1,
+			Term:    term,
+			Command: future.cmd,
+		}
+		r.log = append(r.log, entry)
+		future.index = entry.Index
+		future.term = term
+		r.futuresMu.Lock()
+		r.futures[entry.Index] = future
+		r.futuresMu.Unlock()
+		r.logMu.Unlock()
+		return nil
 	}
-	r.log = append(r.log, entry)
-	future.index = entry.Index
-	future.term = term
-	r.logMu.Unlock()
-
-	// Track this future for commit notification
-	r.futuresMu.Lock()
-	r.futures[entry.Index] = future
-	r.futuresMu.Unlock()
+	if op := future.cmd.namespaceDrop; op != nil {
+		caller := future.caller
+		if caller == nil {
+			caller = context.Background()
+		}
+		if err := op.Propose(caller, appendLog); err != nil {
+			future.errCh <- err
+			return
+		}
+	} else {
+		if err := appendLog(); err != nil {
+			future.resolve(err)
+			return
+		}
+	}
 
 	// If single node, commit immediately
 	if r.peerCount() == 0 {
@@ -836,18 +935,7 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 		r.commitIndex = entry.Index
 		r.logMu.Unlock()
 
-		// Apply to state machine
-		err := r.storage.ApplyCommand(future.cmd)
-
-		r.logMu.Lock()
-		r.lastApplied = entry.Index
-		r.logMu.Unlock()
-
-		r.futuresMu.Lock()
-		delete(r.futures, entry.Index)
-		r.futuresMu.Unlock()
-
-		future.errCh <- err
+		r.applyCommittedEntries()
 		return
 	}
 
@@ -870,26 +958,31 @@ func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture)
 
 	for {
 		select {
+		case <-future.doneCh:
+			return
 		case <-ctx.Done():
-			future.errCh <- ctx.Err()
+			future.resolve(ctx.Err())
 			return
 		case <-r.stopCh:
-			future.errCh <- ErrClosed
+			future.resolve(ErrClosed)
 			return
 		case <-timeout:
 			r.futuresMu.Lock()
 			delete(r.futures, future.index)
 			r.futuresMu.Unlock()
-			future.errCh <- localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil)
+			future.resolve(localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil))
 			return
 		case <-ticker.C:
+			if future.cmd != nil && future.cmd.namespaceDrop != nil {
+				continue
+			} // the completion owner resolves DROP
 			r.logMu.RLock()
 			committed := r.commitIndex >= future.index
 			applied := r.lastApplied >= future.index
 			r.logMu.RUnlock()
 
 			if applied {
-				future.errCh <- nil
+				future.resolve(nil)
 				return
 			}
 
@@ -919,6 +1012,8 @@ func (r *RaftReplicator) runCommitLoop(ctx context.Context) {
 
 // advanceCommitIndex checks if any entries can be committed.
 func (r *RaftReplicator) advanceCommitIndex() {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 	r.mu.RLock()
 	isLeader := r.state == StateLeader
 	term := r.currentTerm
@@ -929,7 +1024,6 @@ func (r *RaftReplicator) advanceCommitIndex() {
 	}
 
 	r.logMu.Lock()
-	defer r.logMu.Unlock()
 
 	// Find highest index replicated to majority of servers
 	for n := r.commitIndex + 1; n < uint64(len(r.log)); n++ {
@@ -955,30 +1049,8 @@ func (r *RaftReplicator) advanceCommitIndex() {
 		}
 	}
 
-	// Apply committed entries to state machine
-	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		applyIdx := r.lastApplied
-
-		if int(applyIdx) < len(r.log) {
-			entry := r.log[applyIdx]
-			if entry.Command != nil {
-				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
-				}
-			}
-		}
-
-		// Notify any waiting futures
-		r.futuresMu.Lock()
-		if future, ok := r.futures[applyIdx]; ok {
-			delete(r.futures, applyIdx)
-			r.futuresMu.Unlock()
-			future.errCh <- nil
-		} else {
-			r.futuresMu.Unlock()
-		}
-	}
+	r.logMu.Unlock()
+	r.applyCommittedEntriesLocked()
 }
 
 // runPeerConnector maintains connections to peers.
@@ -1151,6 +1223,8 @@ func (r *RaftReplicator) handleVoteRequest(req *VoteRequest) *VoteResponse {
 
 // handleAppendEntriesRequest processes an incoming AppendEntries request.
 func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *AppendEntriesResponse {
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 	// TRC-20: follower-side apply span.
 	_, applySpan := startApplySpan(context.Background(), req.LeaderID, req.Term, req.PrevLogIndex, len(req.Entries))
 	defer applySpan.End()
@@ -1192,7 +1266,12 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 
 	// Check log consistency
 	r.logMu.Lock()
-	defer r.logMu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			r.logMu.Unlock()
+		}
+	}()
 
 	// Check if we have the entry at PrevLogIndex with matching term
 	if req.PrevLogIndex > 0 {
@@ -1224,6 +1303,17 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		if int(idx) < len(r.log) {
 			if r.log[idx].Term != entry.Term {
 				// Conflict: delete this and all following entries
+				discardedEntries := append([]*RaftLogEntry(nil), r.log[idx:]...)
+				r.logMu.Unlock()
+				for _, discarded := range discardedEntries {
+					if discarded.Command != nil && discarded.Command.namespaceDrop != nil {
+						discarded.Command.namespaceDrop.Abort()
+					}
+					if future := r.takeApplyFuture(discarded.Index); future != nil {
+						future.resolve(ErrNotLeader)
+					}
+				}
+				r.logMu.Lock()
 				clear(r.log[idx:])
 				r.log = r.log[:idx]
 				r.log = append(r.log, entry)
@@ -1252,18 +1342,9 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		}
 	}
 
-	// Apply committed entries to state machine
-	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		if int(r.lastApplied) < len(r.log) {
-			entry := r.log[r.lastApplied]
-			if entry.Command != nil {
-				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
-				}
-			}
-		}
-	}
+	locked = false
+	r.logMu.Unlock()
+	r.applyCommittedEntriesLocked()
 
 	resp.Success = true
 	return resp
@@ -1306,9 +1387,22 @@ func (r *RaftReplicator) HandleForwardApply(cmd *Command, timeout time.Duration)
 	return r.Apply(cmd, timeout)
 }
 
+func (r *RaftReplicator) HandleForwardApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(ctx, cmd, timeout)
+}
+
 // Apply applies a command through Raft consensus.
 // If this node is not the leader, it forwards the command to the leader automatically.
 func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyContext(context.Background(), cmd, timeout)
+}
+
+// ApplyContext cancels queue/forward/consensus waits. Once appended to the Raft
+// log, application remains independent of a caller that no longer awaits ACK.
+func (r *RaftReplicator) ApplyContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Plan 04-06-03 D-15a: observe apply latency at the function-exit
 	// chokepoint via the pre-bound MET-25 observer (zero alloc when ctx
 	// has no sampled span). Wrapped at the outer entry so retries /
@@ -1340,34 +1434,52 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		if r.transport == nil {
 			return ErrNotLeader
 		}
-		fwdCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		fwdCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		conn, err := r.transport.Connect(fwdCtx, leaderAddr)
 		if err != nil {
 			return localizedError(localization.ReplicationRaftForwardToLeaderFailed(err), err)
 		}
 		if fa, ok := conn.(forwardApplySender); ok {
-			return fa.SendForwardApply(fwdCtx, cmd, timeout)
+			err := fa.SendForwardApply(fwdCtx, cmd, timeout)
+			var outcome *storage.NamespaceDropError
+			if errors.As(err, &outcome) {
+				return err
+			}
+			return commandWaitOutcome(cmd, err)
 		}
 		return ErrNotLeader
 	}
 
+	if isNamespaceLifecycle(cmd) && cmd.namespaceDrop == nil {
+		cmd.namespaceDrop = storage.NewNamespaceDrop(nil)
+	}
 	future := &applyFuture{
-		cmd:   cmd,
-		errCh: make(chan error, 1),
+		caller: ctx,
+		cmd:    cmd,
+		errCh:  make(chan error, 1),
+		doneCh: make(chan struct{}),
 	}
 
 	select {
 	case r.applyCh <- future:
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-time.After(timeout):
 		return localizedError(localization.ReplicationRaftApplyQueueFull(), nil)
 	}
 
 	select {
 	case err := <-future.errCh:
+		if cmd.namespaceDrop != nil {
+			return cmd.namespaceDrop.Result(err)
+		}
 		return err
+	case <-ctx.Done():
+		return commandWaitOutcome(cmd, ctx.Err())
 	case <-time.After(timeout):
-		return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
+		err := localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
+		return commandWaitOutcome(cmd, err)
 	}
 }
 
@@ -1523,10 +1635,7 @@ func (r *RaftReplicator) Shutdown() error {
 	// Fail any pending futures
 	r.futuresMu.Lock()
 	for _, future := range r.futures {
-		select {
-		case future.errCh <- ErrClosed:
-		default:
-		}
+		future.resolve(ErrClosed)
 	}
 	r.futures = make(map[uint64]*applyFuture)
 	r.futuresMu.Unlock()

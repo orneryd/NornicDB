@@ -21,6 +21,8 @@ import (
 type CompositeEngine struct {
 	// name is the composite database's name (SetCompositeName).
 	name string
+	// The catalog namespace has a lifetime even for an empty/remote-only graph.
+	namespaceLifetimeSource Engine
 
 	// Constituents maps alias names to their storage engines
 	constituents map[string]Engine

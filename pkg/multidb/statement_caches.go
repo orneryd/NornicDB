@@ -179,6 +179,15 @@ func (m *DatabaseManager) statementCacheScopeLocked(name string) (string, *State
 // invalidateStatementCacheReferenceLocked retires only selections resolving
 // through the removed name, then purges their entries from surviving owners.
 func (m *DatabaseManager) invalidateStatementCacheReferenceLocked(name string) {
+	m.retireDatabaseStatementCacheScopesLocked(name)
+	for _, resource := range m.statementCaches {
+		resource.InvalidateScopes()
+	}
+}
+
+// The publication fence retires tokens without executing external cache code.
+// Disposal and index callbacks run in lifecycle completion.
+func (m *DatabaseManager) retireDatabaseStatementCacheScopesLocked(name string) {
 	for selection, scope := range m.statementCacheScopes {
 		for _, reference := range scope.references {
 			if reference == name {
@@ -187,9 +196,6 @@ func (m *DatabaseManager) invalidateStatementCacheReferenceLocked(name string) {
 				break
 			}
 		}
-	}
-	for _, resource := range m.statementCaches {
-		resource.InvalidateScopes()
 	}
 }
 

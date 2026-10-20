@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil/remotenamespace"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -908,6 +909,12 @@ func TestHandleOpenTransaction(t *testing.T) {
 func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 	server, auth := setupTestServer(t)
 	token := getAuthToken(t, auth, "admin")
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !remotenamespace.Respond(w, r) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "errors": []any{}})
+		}
+	}))
+	t.Cleanup(peer.Close)
 
 	var remoteEngines []storage.Engine
 	t.Cleanup(func() {
@@ -932,7 +939,7 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 			DatabaseName: "remote_db",
 			Type:         "remote",
 			AccessMode:   "read_write",
-			URI:          "http://remote.example",
+			URI:          peer.URL,
 		},
 	}))
 
