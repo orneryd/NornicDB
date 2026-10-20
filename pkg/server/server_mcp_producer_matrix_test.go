@@ -171,9 +171,9 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 			_, failed := nativeReviewCall(t, host, path, map[string]interface{}{"database": database, "query": query, "max_rows": 1}, authenticate)
 			require.True(t, failed.IsError, failed.Content)
 			require.Contains(t, failed.Content[0].Text, "db.memory.transaction.max threshold reached")
-			global, database := cypher.TransactionMemoryPoolUsage("matrix_cmp")
+			global, databaseUsage := cypher.TransactionMemoryPoolUsage(database)
 			require.Zero(t, global)
-			require.Zero(t, database)
+			require.Zero(t, databaseUsage)
 		}
 	}
 }

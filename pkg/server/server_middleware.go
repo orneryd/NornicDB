@@ -329,7 +329,10 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 				}
 				ctx, cancel := context.WithTimeout(r.Context(), txTimeout)
 				defer cancel()
-				_ = controller.SetWriteDeadline(time.Now().Add(txTimeout))
+				deadline := time.Now().Add(txTimeout)
+				_ = controller.SetReadDeadline(deadline)
+				_ = controller.SetWriteDeadline(deadline)
+				defer controller.SetReadDeadline(time.Time{})
 				defer controller.SetWriteDeadline(time.Time{})
 				txWrapped.ServeHTTP(w, r.WithContext(ctx))
 				return

@@ -32,9 +32,9 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		columns := []string{"value"}
 		result := &ExecuteResult{Columns: columns, Stats: &QueryStats{}}
 		result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
-			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(columns []string, row []any) (bool, error) {
-				value := make(map[string]any, len(columns))
-				for i, column := range columns {
+			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(innerColumns []string, row []any) (bool, error) {
+				value := make(map[string]any, len(innerColumns))
+				for i, column := range innerColumns {
 					if i < len(row) {
 						value[column] = row[i]
 					}
@@ -148,14 +148,14 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 
 			started := time.Now()
 			var rows int64
-			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(columns []string, row []any) (bool, error) {
+			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(innerColumns []string, row []any) (bool, error) {
 				index := rows
 				rows++
 				if !more {
 					return resultstream.Drain(ctx), nil
 				}
-				value := make(map[string]any, len(columns))
-				for i, column := range columns {
+				value := make(map[string]any, len(innerColumns))
+				for i, column := range innerColumns {
 					if i < len(row) {
 						value[column] = row[i]
 					}
