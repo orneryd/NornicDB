@@ -16,8 +16,8 @@ type FabricPlanner struct {
 }
 
 func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
-	parts := make([]string, 0, 2)
-	ops := make([]bool, 0, 1)
+	var parts []string
+	var ops []bool
 	structure := ReadQueryStructure(query)
 	if structure.Err != nil {
 		return nil, nil, false, structure.Err
@@ -81,7 +81,7 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 // selecting a branch's USE target so one branch cannot absorb another's text or
 // graph scope. CALL import binding remains a per-branch responsibility.
 func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
-	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed)
+	parts, ops, hasUnion, err := SplitQueryUnion(trimmed)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
-			inner, err := p.planSingleQuery(subRest, sub, scope, true)
+			inner, err := p.planQuery(subRest, sub, scope, true)
 			if err != nil {
 				return nil, err
 			}

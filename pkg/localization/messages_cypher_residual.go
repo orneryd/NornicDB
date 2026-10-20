@@ -9,6 +9,7 @@ const (
 	MessageCypherResidualUnionAllClauseNotFound         MessageID = "cypherresidual.union_all_clause_not_found"
 	MessageCypherResidualUnionBranchFailed              MessageID = "cypherresidual.union_branch_failed"
 	MessageCypherResidualUnionColumnCountMismatch       MessageID = "cypherresidual.union_column_count_mismatch"
+	MessageCypherResidualUnionColumnNamesMismatch       MessageID = "cypherresidual.union_column_names_mismatch"
 	MessageCypherResidualOptionalMatchNotFound          MessageID = "cypherresidual.optional_match_not_found"
 	MessageCypherResidualForeachClauseNotFound          MessageID = "cypherresidual.foreach_clause_not_found"
 	MessageCypherResidualLoadCSVUnsupported             MessageID = "cypherresidual.load_csv_unsupported"
@@ -64,6 +65,11 @@ func CypherResidualUnionBranchFailed(branch int, query string, cause error) Mess
 // CypherResidualUnionColumnCountMismatch identifies incompatible UNION projections.
 func CypherResidualUnionColumnCountMismatch(expected, actual int) Message {
 	return cypherResidualMessage(MessageCypherResidualUnionColumnCountMismatch, fmt.Sprintf("UNION queries must return the same number of columns (got %d and %d)", expected, actual), map[string]any{"Expected": expected, "Actual": actual})
+}
+
+// CypherResidualUnionColumnNamesMismatch identifies incompatible UNION names.
+func CypherResidualUnionColumnNamesMismatch(expected, actual []string) Message {
+	return cypherResidualMessage(MessageCypherResidualUnionColumnNamesMismatch, fmt.Sprintf("UNION queries must return the same columns (got %v and %v)", expected, actual), map[string]any{"Expected": expected, "Actual": actual})
 }
 
 // CypherResidualOptionalMatchNotFound identifies a routed query missing OPTIONAL MATCH.

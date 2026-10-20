@@ -796,6 +796,15 @@ func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expression
 // not resolve with its Neo4j status: a graph that doesn't exist is
 // DatabaseNotFound "Graph not found: <name>".
 func fabricGraphReferenceError(err error) error {
+	var columns *fabric.UnionColumnsError
+	if errors.As(err, &columns) {
+		semantic := &SemanticError{
+			Code: "Neo.ClientError.Statement.SyntaxError", Detail: "DifferentColumnsInUnion", Message: columns.Message.Fallback,
+		}
+		return &classifiedCypherError{
+			cause: localizedError(columns.Message, semantic), code: semantic.Code, detail: semantic.Detail,
+		}
+	}
 	var notFound *fabric.GraphNotFoundError
 	if errors.As(err, &notFound) {
 		return localizedStatusError("Neo.ClientError.Database.DatabaseNotFound", "DatabaseNotFound", localization.CypherCommandRoutingGraphNotFound(notFound.Name))

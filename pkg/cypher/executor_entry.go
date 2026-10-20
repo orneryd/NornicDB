@@ -204,7 +204,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			fabricQuery = false
 		} else {
 			if err := syntax.ValidateUnions(); err != nil {
-				return nil, err
+				return nil, fabricGraphReferenceError(err)
 			}
 			if len(syntax.LocalEdits) > 0 {
 				columns := syntax.ResultColumns()

@@ -1,10 +1,16 @@
 package fabric
 
-import "fmt"
-
 // All UNION routes reconcile the declared/runtime schema before concatenation
 // or DISTINCT. Conversion is lazy, preserving the row-stream close contract.
 func (e *FabricExecutor) mergeUnionRows(f *FragmentUnion, lhs []string, left RowIterator, rhs []string, right RowIterator) ([]string, RowIterator, error) {
+	// Missing participant metadata uses the branch's already compiled result
+	// columns. This reconciliation runs only for UNION, including empty rows.
+	if lhs == nil && f.LHS != nil {
+		lhs = f.LHS.OutputColumns()
+	}
+	if rhs == nil && f.RHS != nil {
+		rhs = f.RHS.OutputColumns()
+	}
 	columns := f.Columns
 	if len(columns) == 0 {
 		columns = lhs
@@ -20,7 +26,7 @@ func (e *FabricExecutor) mergeUnionRows(f *FragmentUnion, lhs []string, left Row
 		}
 		order, same := UnionColumnOrder(columns, branch)
 		if !same {
-			return nil, fmt.Errorf("UNION queries must return the same columns (got %v and %v)", columns, branch)
+			return nil, &UnionColumnsError{Message: UnionColumnMismatchMessage(columns, branch)}
 		}
 		if order == nil {
 			return rows, nil

@@ -1,7 +1,5 @@
 package fabric
 
-import "fmt"
-
 // ProjectionColumns is the schema declared by projection syntax; a star waits
 // for runtime scope. Alias values, variable names and expression text retain
 // their distinct Cypher naming rules.
@@ -124,7 +122,7 @@ func (q *QueryStructure) validateUnionSchemas() error {
 			continue
 		}
 		if _, same := UnionColumnOrder(expected, columns); !same {
-			return fmt.Errorf("UNION queries must return the same columns (got %v and %v)", expected, columns)
+			return &UnionColumnsError{Message: UnionColumnMismatchMessage(expected, columns)}
 		}
 	}
 	return nil
