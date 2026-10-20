@@ -228,6 +228,11 @@ func (s *Session) handleRun(data []byte) error {
 	defer s.clearActiveRun()
 	ctx = s.withSessionIdentity(ctx)
 	ctx = cypher.WithClientStatement(ctx)
+	incremental := boltTxMetadata(metadata)[resultstream.StreamHeader] == "pull-v1" ||
+		s.inTransaction && boltTxMetadata(s.txMetadata)[resultstream.StreamHeader] == "pull-v1"
+	if incremental {
+		ctx = cypher.WithStatementMemoryLimit(ctx, 16<<20)
+	}
 	if mode != nil || s.authResult != nil {
 		// The principal's one permission resolver (principalAccess), which the
 		// executor authorizes the statement, the databases it selects and the
@@ -240,12 +245,12 @@ func (s *Session) handleRun(data []byte) error {
 
 	runStart := time.Now()
 	var result *QueryResult
-	if !s.inTransaction && !isWrite && s.messageQueue != nil {
+	if (incremental || !s.inTransaction && !isWrite) && s.messageQueue != nil {
 		// An auto-commit read produces its rows as PULL asks for them
 		// once it has more than lazyResultThreshold (#939); RUN and those
 		// PULLs are then already answered.
 		var served bool
-		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart)
+		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart, isWrite, incremental)
 		if served {
 			return nil
 		}
@@ -332,17 +337,11 @@ func (s *Session) handleRun(data []byte) error {
 	// Note: Neo4j only sends qid for EXPLICIT transactions, not implicit/autocommit
 	// For implicit transactions, only send fields and t_first
 	if s.inTransaction {
-		statementID := s.queryId
-		s.queryId++
-		if s.resultStreams == nil {
-			s.resultStreams = make(map[int64]*resultStream)
-		}
-		s.resultStreams[statementID] = &resultStream{
+		statementID := s.registerExplicitResult(resultStream{
 			result:   result,
 			isWrite:  isWrite,
 			database: resultDatabase,
-		}
-		s.latestStatementID = statementID
+		})
 		successMetadata := map[string]any{
 			"fields":  result.Columns,
 			"t_first": int64(0),
@@ -700,6 +699,17 @@ func packStreamMapHeader(data []byte) (size, offset int, err error) {
 	default:
 		return 0, 0, fmt.Errorf("not a map marker: 0x%02X", marker)
 	}
+}
+
+func (s *Session) registerExplicitResult(stream resultStream) int64 {
+	statementID := s.queryId
+	s.queryId++
+	if s.resultStreams == nil {
+		s.resultStreams = make(map[int64]*resultStream)
+	}
+	s.resultStreams[statementID] = &stream
+	s.latestStatementID = statementID
+	return statementID
 }
 
 func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bool) {

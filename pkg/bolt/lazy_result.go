@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 // lazyResultThreshold is how many rows an auto-commit read produces before
@@ -24,13 +25,15 @@ const lazyResultThreshold = 1000
 // sent, as in Neo4j. DISCARD, RESET, GOODBYE, any other message and a closed
 // connection cancel it.
 type lazyResult struct {
-	session  *Session
-	stream   *cypher.ResultStream
-	cancel   context.CancelFunc
-	query    string
-	database string
-	start    time.Time
-	rows     int
+	session     *Session
+	stream      *cypher.ResultStream
+	cancel      context.CancelFunc
+	query       string
+	database    string
+	start       time.Time
+	rows        int
+	isWrite     bool
+	statementID int64
 
 	// helperDone is closed when serveLazyResult returns; nil until the
 	// statement streams.
@@ -54,16 +57,43 @@ var errStatementAborted = errors.New("statement aborted")
 // client's PULLs on a helper goroutine while the statement runs here;
 // runStreamed then returns served once both are done, with nothing left to
 // answer. Only a statement that streams starts a goroutine.
-func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time) (result *QueryResult, served bool, err error) {
-	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start}
-	lazy.stream = cypher.NewResultStream(lazyResultThreshold, lazy)
+func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time, modes ...bool) (result *QueryResult, served bool, err error) {
+	var isWrite, incremental bool
+	if len(modes) > 0 {
+		isWrite = modes[0]
+	}
+	if len(modes) > 1 {
+		incremental = modes[1]
+	}
+	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start, isWrite: isWrite}
+	threshold := lazyResultThreshold
+	if incremental {
+		threshold = 1
+	}
+	lazy.stream = cypher.NewResultStream(threshold, lazy)
 	defer lazy.endStatement()
-	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
+	if incremental {
+		// The protocol only supplies demand. Native execution owns routing,
+		// transformations, completion modes and bounded materialization.
+		ctx = resultstream.WithConsumer(ctx, func(columns []string, row []any) (bool, error) { return lazy.stream.ConsumeRow(ctx, columns, row) })
+	} else {
+		ctx = cypher.WithResultStream(ctx, lazy.stream)
+	}
+	result, err = executor.Execute(ctx, query, params)
 	// Bolt owns this deadline, so it marks the timeout for any executor.
 	err = nornicerrors.MarkStatementTimeout(err, context.Cause(ctx))
 	lazy.result, lazy.err, lazy.finished = result, err, true
 	if lazy.helperDone == nil {
+		if incremental && result != nil {
+			result.Rows = lazy.stream.TakeBufferedRows()
+			if columns := lazy.stream.Columns(); columns != nil {
+				result.Columns = columns
+			}
+		}
 		return result, false, err
+	}
+	if s.inTransaction {
+		s.recordExplicitTransactionWrite(query, params, isWrite)
 	}
 	return nil, true, nil
 }
@@ -74,11 +104,17 @@ func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, ex
 // is still that goroutine's.
 func (l *lazyResult) ResultStreamStarted() {
 	s := l.session
-	s.lastQueryIsWrite = false
+	s.lastQueryIsWrite = l.isWrite
+	if l.isWrite {
+		s.pendingFlush = true
+	}
 	s.lastQueryDatabase = l.database
 	s.lastResult = &QueryResult{Columns: l.stream.Columns()}
 	s.resultIndex = 0
 	s.lastLazy = l
+	if s.inTransaction {
+		l.statementID = s.registerExplicitResult(resultStream{result: s.lastResult, isWrite: l.isWrite, database: l.database, lazy: l})
+	}
 	l.helperDone = make(chan struct{})
 	go func() {
 		defer close(l.helperDone)
@@ -105,10 +141,14 @@ func (l *lazyResult) endStatement() {
 // error, ends the result and goes back to the session's message loop
 // (pendingMessage, pendingErr).
 func (s *Session) serveLazyResult(lazy *lazyResult) {
-	err := s.sendSuccessNoFlush(map[string]any{
+	metadata := map[string]any{
 		"fields":  s.lastResult.Columns,
 		"t_first": int64(0),
-	})
+	}
+	if s.inTransaction {
+		metadata["qid"] = lazy.statementID
+	}
+	err := s.sendSuccessNoFlush(metadata)
 	if err == nil {
 		err = s.flushRunResponse()
 	}

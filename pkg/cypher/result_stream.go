@@ -328,6 +328,23 @@ func (s *ResultStream) Finish() { close(s.done) }
 // Columns returns the result's columns once Started is closed.
 func (s *ResultStream) Columns() []string { return s.columns }
 
+// ConsumeRow bridges composed execution sources to the existing pull stream.
+// It runs on the producer goroutine; Next supplies demand from the consumer.
+func (s *ResultStream) ConsumeRow(ctx context.Context, columns []string, row []any) (bool, error) {
+	if !s.started {
+		s.begin(columns)
+	}
+	more := s.emit(ctx, row)
+	if !more && ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	return more, s.consumeErr
+}
+
+// TakeBufferedRows returns a completed producer's rows when it never reached
+// the streaming threshold. Call only after production, before Finish.
+func (s *ResultStream) TakeBufferedRows() [][]any { rows, _ := s.end(); return rows }
+
 // Next returns up to n rows (every remaining row when n <= 0) once Started
 // is closed, producing them as needed, and whether the result is
 // exhausted: the statement finished and every row was returned. Once it

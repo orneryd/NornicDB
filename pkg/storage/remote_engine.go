@@ -182,7 +182,7 @@ func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, 
 		defer cancel()
 		session := b.driver.NewSession(upstream, neo4j.SessionConfig{DatabaseName: b.database, AccessMode: accessModeForStatement(statement), FetchSize: 1})
 		defer func() { _ = session.Close(context.WithoutCancel(ctx)) }()
-		result, err := session.Run(upstream, statement, params)
+		result, err := session.Run(upstream, statement, params, neo4j.WithTxMetadata(map[string]any{resultstream.StreamHeader: "pull-v1"}))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -274,12 +274,17 @@ func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteState
 }
 
 func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
-	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
+	config := neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
-		FetchSize:    1,
-	})
-	tx, err := session.BeginTransaction(ctx)
+	}
+	var options []func(*neo4j.TransactionConfig)
+	if resultstream.ConsumerFromContext(ctx) != nil || resultstream.BudgetFromContext(ctx) != nil {
+		config.FetchSize = 1
+		options = append(options, neo4j.WithTxMetadata(map[string]any{resultstream.StreamHeader: "pull-v1"}))
+	}
+	session := b.driver.NewSession(ctx, config)
+	tx, err := session.BeginTransaction(ctx, options...)
 	if err != nil {
 		_ = session.Close(ctx)
 		return nil, err
