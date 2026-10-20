@@ -70,6 +70,42 @@ func TestRowFunctionContextExecutionState(t *testing.T) {
 	}
 }
 
+func TestRowFunctionContextBindingDoesNotEscapeEvaluation(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "row_context_storage"))
+	row := pipelineRow{"n": &storage.Node{ID: "n"}, "x": "a"}
+	for _, database := range []string{"first_context", "second_context", "first_context"} {
+		ctx := withExpressionFailureSlot(context.WithValue(context.Background(), ctxKeyUseDatabase, database))
+		for range 3 {
+			value, ok := exec.evaluateRowExpressionWithContext(ctx, "[elementId(n)]", row)
+			require.True(t, ok)
+			require.Equal(t, []interface{}{"4:" + database + ":n"}, value)
+			require.NotContains(t, row, rowStatementContextKey)
+			predicate := "head([elementId(n)]) STARTS WITH '4:" + database + ":'"
+			require.True(t, exec.evaluateRowPredicate(ctx, predicate, row))
+			require.NotContains(t, row, rowStatementContextKey)
+			require.NoError(t, getExpressionFailure(ctx))
+		}
+	}
+	// An enclosing evaluation owns its binding, even when a nested caller
+	// supplies another context. It must not be overwritten or removed.
+	outer := context.WithValue(context.Background(), ctxKeyUseDatabase, "outer_context")
+	row[rowStatementContextKey] = outer
+	inner := context.WithValue(context.Background(), ctxKeyUseDatabase, "inner_context")
+	value, ok := exec.evaluateRowExpressionWithContext(inner, "[elementId(n)]", row)
+	require.True(t, ok)
+	require.Equal(t, []interface{}{"4:outer_context:n"}, value)
+	require.Same(t, outer, row[rowStatementContextKey])
+	require.True(t, exec.evaluateRowPredicate(inner, "toLower(x) = 'a'", row))
+	require.Same(t, outer, row[rowStatementContextKey])
+	delete(row, rowStatementContextKey)
+	// Error returns also release the temporary binding.
+	ctx := withExpressionFailureSlot(context.Background())
+	_, _ = exec.evaluateRowExpressionWithContext(ctx, "substring('abc', 0, -1)", row)
+	require.Error(t, getExpressionFailure(ctx))
+	require.NotContains(t, row, rowStatementContextKey)
+	require.Equal(t, pipelineRow{"n": &storage.Node{ID: "n"}, "x": "a"}, row)
+}
+
 func testRowFunctionSelectedDatabase(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "row_context_storage"))
 	// USE/Fabric can select an execution identity different from the storage
