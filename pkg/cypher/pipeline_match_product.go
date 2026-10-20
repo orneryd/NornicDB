@@ -20,7 +20,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "(") && !containsRelationshipPattern(part) {
-			if variable := e.parseNodePattern(ctx, part).variable; variable != "" {
+			if variable := nodePatternStructure(part).variable; variable != "" {
 				nodeVariables = append(nodeVariables, variable)
 			}
 		}
@@ -65,7 +65,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 			}
 			paths = append(paths, path)
 		} else if strings.HasPrefix(part, "(") {
-			if variable := e.parseNodePattern(ctx, part).variable; variable == "" {
+			if variable := nodePatternStructure(part).variable; variable == "" {
 				part = "(" + newBinding() + part[1:]
 			} else if own := nodeWhere[variable]; own != "" {
 				part += " WHERE " + own

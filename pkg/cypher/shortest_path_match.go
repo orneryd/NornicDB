@@ -81,7 +81,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		return e.parseSelectedPathMatchContext(ctx, inner, pathVariable, others, selector, predicate, terms)
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
-	traversal := e.parseTraversalPattern(ctx, inner)
+	traversal := e.parseTraversalPatternStructure(ctx, inner)
 	if !ok || traversal == nil || traversal.IsChained {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
 			localization.CypherMatchingShortestPathSingleRelationship(funcName))

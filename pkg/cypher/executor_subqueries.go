@@ -279,7 +279,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	// including ID/property indexed WHERE predicates.
 	if findKeywordIndex(trimmedOuter, "MATCH") == 0 &&
 		!hasOuterPipelineClauses &&
-		!containsRelationshipPattern(trimmedOuter) {
+		!containsRelationshipPattern(trimmedOuter) && patternMapsAreConstant(trimmedOuter) {
 		matchBody := strings.TrimSpace(trimmedOuter[len("MATCH"):])
 		whereClause := ""
 		if whereIdx := findKeywordIndex(matchBody, "WHERE"); whereIdx >= 0 {
@@ -297,11 +297,17 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			matchBody = strings.TrimSpace(matchBody[:whereIdx])
 		}
 
-		np := e.parseNodePattern(ctx, matchBody)
+		np := readNodePattern(ctx, matchBody, e.patternPropertyKeys)
 		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
+			rowCtx, prepared, prepareErr := e.preparePatternRow(ctx, matchBody, nil)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			ctx, matchBody = rowCtx, prepared
+			np = e.parseNodePattern(ctx, matchBody)
 			if whereClause != "" {
 				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
 				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
@@ -335,7 +341,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if whereClause == "" {
 					return nodes, nil
 				}
-				seedQuery := strings.TrimSpace(outerPart) + " RETURN " + variable
+				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
 				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
 				if err != nil {
 					return nil, err
@@ -353,7 +359,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			}
 			// Same rule: preserve non-indexable WHERE semantics through generic executor.
 			if whereClause != "" {
-				seedQuery := strings.TrimSpace(outerPart) + " RETURN " + variable
+				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
 				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
 				if err != nil {
 					return nil, err

@@ -52,10 +52,12 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx := withValueBindings(ctx, row)
-		materializedPattern := pattern
+		rowCtx, materializedPattern, prepareErr := e.preparePatternRow(withValueBindings(ctx, row), pattern, row)
+		if prepareErr != nil {
+			return nil, true, prepareErr
+		}
 		materializedWhere := whereClause
-		physicalWhere := pipelineTraversalPushdownPredicate(ctx, materializedWhere, row, variables)
+		physicalWhere, residualWhere := pipelineTraversalPredicates(ctx, materializedWhere, row, variables)
 		rowHint := hint
 		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
 			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
@@ -101,8 +103,8 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		e.normalizeSetMatchRowsToNodes(result, store)
 		e.normalizeSetMatchRowsToEdges(result, store)
 		var rowWhere *preparedRowPredicate
-		if materializedWhere != "" {
-			rowWhere = prepareRowPredicate(materializedWhere)
+		if residualWhere != "" {
+			rowWhere = prepareRowPredicate(residualWhere)
 		}
 		for _, resultRow := range result.Rows {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
@@ -134,8 +136,14 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 // The conjuncts, and which variables each reads, come from the statement's
 // clause plan: only the row's names are checked per row.
 func pipelineTraversalPushdownPredicate(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) string {
+	pushdown, _ := pipelineTraversalPredicates(ctx, whereClause, row, localVariables)
+	return pushdown
+}
+
+// Each WHERE conjunct runs once: at traversal or after the outer-row join.
+func pipelineTraversalPredicates(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) (string, string) {
 	if strings.TrimSpace(whereClause) == "" {
-		return ""
+		return "", ""
 	}
 	local := make(map[string]struct{}, len(localVariables))
 	for _, variable := range localVariables {
@@ -143,6 +151,7 @@ func pipelineTraversalPushdownPredicate(ctx context.Context, whereClause string,
 	}
 	terms := pipelinePushdownTermsFor(ctx, whereClause)
 	pushable := make([]string, 0, len(terms.terms))
+	residual := make([]string, 0, len(terms.terms))
 	for index, term := range terms.terms {
 		dependsOnOuterBinding := false
 		for name := range row {
@@ -156,9 +165,11 @@ func pipelineTraversalPushdownPredicate(ctx context.Context, whereClause string,
 		}
 		if !dependsOnOuterBinding {
 			pushable = append(pushable, term)
+		} else {
+			residual = append(residual, term)
 		}
 	}
-	return strings.Join(pushable, " AND ")
+	return strings.Join(pushable, " AND "), strings.Join(residual, " AND ")
 }
 
 func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool {
@@ -223,7 +234,7 @@ func pipelineBoundNode(row pipelineRow, variable string) (*storage.Node, bool) {
 // boundTraversalLimitSafe admits a cap only when both endpoint identities are
 // already checked by the traversal and no other outer binding can reject a path.
 func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern string, row pipelineRow, variables []string) bool {
-	match := e.parseTraversalPattern(ctx, pattern)
+	match := e.parseTraversalPatternStructure(ctx, pattern)
 	if match == nil || match.IsChained {
 		return false
 	}

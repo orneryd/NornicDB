@@ -1144,19 +1144,25 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 		return nil, false, nil
 	}
 	matchBody := split.body
+	// This counter plan owns a relationship pattern, never a path assignment
+	// or shortestPath call. Decline their syntax before reading any values.
+	if !strings.HasPrefix(matchBody, "(") || !containsRelationshipPattern(matchBody) {
+		return nil, false, nil
+	}
 	if len(splitTopLevelComma(matchBody)) != 1 {
 		return nil, false, nil
 	}
-	matches := e.parseTraversalPattern(ctx, matchBody)
-	if matches == nil {
-		return nil, false, nil
-	}
+	// A counter owns one projected item. Decline other projections before
+	// reading a traversal that this plan cannot consume.
 	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
-	if len(items) > 1 && items[0].expr == "*" {
-		// RETURN *, items: the general projection writes the * out (#883).
+	if len(items) != 1 {
 		return nil, false, nil
 	}
-	if len(items) != 1 {
+	if !patternMapsAreConstant(matchBody) {
+		return nil, false, nil
+	}
+	matches := e.parseTraversalPatternStructure(ctx, matchBody)
+	if matches == nil {
 		return nil, false, nil
 	}
 	count, ok, err := e.relationshipCountFromStore(ctx, matches, items[0])
@@ -1183,6 +1189,9 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	// A path assignment (p = (n:L)) is the general route's, which binds the
 	// path: read as a node, its variable would be "p = (n".
 	if !e.isSingleNodePattern(matchBody) || extractPathAssignmentVariable(matchBody) != "" {
+		return nil, false, nil
+	}
+	if !patternMapsAreConstant(matchBody) || !patternMapsAreConstant(whereClause) || streamsReturn(ctx, clauses, 1) {
 		return nil, false, nil
 	}
 	nodePattern := e.parseNodePattern(ctx, matchBody)
@@ -1641,7 +1650,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		return expanded, true, nil
 	}
 	if len(parts) > 1 || len(parts) == 1 && strings.HasPrefix(strings.TrimSpace(parts[0]), "(") &&
-		!containsRelationshipPattern(parts[0]) && e.parseNodePattern(ctx, parts[0]).variable == "" {
+		!containsRelationshipPattern(parts[0]) && nodePatternStructure(parts[0]).variable == "" {
 		where := ""
 		if patternEnd < len(body) {
 			where = strings.TrimSpace(body[patternEnd+len("WHERE"):])
@@ -1693,7 +1702,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		// node.
 		_, pattern, _ = splitPathAssignment(pattern)
 	}
-	basePattern := e.parseNodePattern(ctx, pattern)
+	basePattern := nodePatternStructure(pattern)
 	if basePattern.variable == "" {
 		return nil, false, nil
 	}
@@ -2033,7 +2042,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 				}
 			}
 		}
-		joinedNodes, joinedRelationships := e.executeChainedMatch(ctx, pattern, []binding{nodes}, []relationshipBinding{relationships})
+		joinedNodes, joinedRelationships := e.executeChainedMatch(withValueBindings(ctx, row), pattern, []binding{nodes}, []relationshipBinding{relationships})
 		for index, nodeBindings := range joinedNodes {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeBindings)))
 			for name, value := range row {
@@ -2056,24 +2065,45 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 }
 
 func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	match := e.parseTraversalPattern(ctx, pattern)
-	if match == nil || match.IsChained || !match.Relationship.VariableLength || match.Relationship.Variable == "" {
+	split := pipelineMatchWhereFor(ctx, clause)
+	pattern, whereClause := split.pattern, split.where
+	open, close := firstRelationshipBracket(pattern)
+	if open < 0 || close < 0 {
+		return nil, false, nil
+	}
+	// Admission needs the variable and length, not a type list or normalized
+	// traversal. Read the complete structure only for a bound list candidate.
+	declaration := relationshipDeclarationHead(pattern[open+1 : close])
+	if !declaration.hasLength || declaration.variable == "" {
 		return nil, false, nil
 	}
 	for _, row := range rows {
-		if _, exists := row[match.Relationship.Variable]; !exists {
+		if _, exists := row[declaration.variable]; !exists {
 			return nil, false, nil
 		}
 	}
-
+	// Admission needs only syntax and existing bindings. Property values belong
+	// to the input row, after this operator has accepted the pattern.
+	shape := e.parseTraversalPatternStructure(ctx, pattern)
+	if shape == nil || shape.IsChained || !shape.Relationship.VariableLength || shape.Relationship.Variable == "" {
+		return nil, false, nil
+	}
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		relationships, ok := pipelineRelationshipList(row[match.Relationship.Variable])
+		relationships, ok := pipelineRelationshipList(row[shape.Relationship.Variable])
 		if !ok || len(relationships) == 0 || !repeatableElements(ctx) && relationshipListReusesEdge(relationships) {
 			continue
 		}
+		rowCtx, prepared, err := e.preparePatternRow(ctx, pattern, row)
+		if err != nil {
+			return nil, true, err
+		}
+		match := e.parseTraversalPattern(rowCtx, prepared)
+		if match == nil {
+			return nil, true, getExpressionFailure(ctx)
+		}
+
 		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {
 			start, startErr := e.getQueryNode(store, endpoints[0])
 			end, endErr := e.getQueryNode(store, endpoints[1])
@@ -2103,8 +2133,14 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			if match.EndNode.variable != "" {
 				expanded[match.EndNode.variable] = end
 			}
+			if whereClause != "" && !e.evaluateMatchWhereCondition(ctx, whereClause, map[string]interface{}(expanded)) {
+				continue
+			}
 			out = append(out, expanded)
 		}
+	}
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, true, failure
 	}
 	return out, true, nil
 }

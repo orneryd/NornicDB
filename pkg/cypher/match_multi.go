@@ -141,13 +141,6 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
 	// traversal; only a lone node pattern is matched as a node.
 	isRelationshipPattern := containsRelationshipPattern(pattern)
-	var matches *TraversalMatch
-	if isRelationshipPattern {
-		matches = e.parseTraversalPattern(ctx, pattern)
-		if matches == nil {
-			return newBindings, newRelBindings
-		}
-	}
 
 	for idx, existing := range existingBindings {
 		var existingRels relationshipBinding
@@ -155,6 +148,25 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			existingRels = existingRelBindings[idx]
 		}
 
+		rowScope := valueBindingsLayer(ctx, len(existing)+len(existingRels))
+		for name, node := range existing {
+			rowScope[name] = node
+		}
+		for name, relationship := range existingRels {
+			rowScope[name] = relationship
+		}
+		rowCtx, rowPattern, prepareErr := e.preparePatternRow(ctx, pattern, rowScope)
+		if prepareErr != nil {
+			recordExpressionFailure(ctx, prepareErr)
+			return nil, nil
+		}
+		var matches *TraversalMatch
+		if isRelationshipPattern {
+			matches = e.parseTraversalPattern(rowCtx, rowPattern)
+			if matches == nil {
+				return newBindings, newRelBindings
+			}
+		}
 		// Check for relationship pattern
 		if isRelationshipPattern {
 			// Check if any bound variables are referenced
@@ -163,13 +175,16 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
+				if !e.pipelineNodeMatchesPattern(boundStartNode, matches.StartNode) {
+					continue
+				}
 				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
+					paths = e.traverseChainedGraph(rowCtx, matches, []*storage.Node{boundStartNode})
 				} else {
-					paths = e.traverseFromNode(ctx, boundStartNode, matches)
+					paths = e.traverseFromNode(rowCtx, boundStartNode, matches)
 				}
 			} else {
-				paths = e.traverseGraph(ctx, matches)
+				paths = e.traverseGraph(rowCtx, matches)
 			}
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
@@ -203,17 +218,19 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			}
 		} else {
 			// Simple node pattern
-			nodePattern := e.parseNodePattern(ctx, pattern)
+			nodePattern := e.parseNodePattern(rowCtx, rowPattern)
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				// Variable is bound, just propagate
+				if !e.pipelineNodeMatchesPattern(boundNode, nodePattern) {
+					continue
+				}
 				newBindings = append(newBindings, existing)
 				newRelBindings = append(newRelBindings, existingRels)
 				continue
 			}
 
-			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
+			nodes, _ := e.loadPatternNodes(rowCtx, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
 				b := make(binding)

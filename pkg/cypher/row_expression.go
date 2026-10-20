@@ -258,7 +258,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if search == nil {
 				search = context.Background()
 			}
-			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
+			value, handled, err := e.evaluateShortestPathValue(withValueBindings(search, values), function, argument, nodes)
 			return value, handled, err
 		case "startnode", "endnode":
 			if value, handled, err := e.rowRelationshipEndpoint(function, argument, values); handled || err != nil {
@@ -2045,7 +2045,12 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 // EXISTS { pattern } owner with the whole row, so bound relationships, row
 // values in property maps and rows without a node binding are all seen.
 func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
-	return e.evaluateRowExistsPredicate(ctx, "EXISTS { "+strings.TrimSpace(pattern)+" }", values)
+	rowCtx, prepared, err := e.preparePatternRow(ctx, strings.TrimSpace(pattern), values)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false, true
+	}
+	return e.evaluateRowExistsPredicate(rowCtx, "EXISTS { "+prepared+" }", values)
 }
 
 // rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the

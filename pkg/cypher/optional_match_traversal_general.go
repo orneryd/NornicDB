@@ -134,91 +134,11 @@ func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.
 // no-op). An unbound variable is an independent node scan: each row joins
 // with every matching node, or carries a null binding when nothing matches.
 func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
-	// Each candidate row counts against the statement's memory limit before
-	// it is kept (#1343).
-	retention := newMemoryRetention(ctx)
-	defer retention.close()
-	group := firstParenGroup(clause.pattern)
-	if group == "" {
+	if firstParenGroup(clause.pattern) == "" {
 		return rows, nil
 	}
-	np := e.parseNodePattern(ctx, group)
-	varName := np.variable
-	if varName == "" {
-		varName = traversalAnonVar
-	} else if _, bound := rows[0].nodes[varName]; bound {
-		return rows, nil
-	}
-	propertyExpressions := nodePatternPropertyExpressions(group)
-
-	candidates, err := e.loadNodesWithTemporalViewport(ctx, np.labels)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]traversalOptRow, 0, len(rows))
-	for _, row := range rows {
-		scope := pipelineRowFromTraversalOptionalRow(row)
-		matched := false
-		for _, node := range candidates {
-			propertyMatch := true
-			for name, expression := range propertyExpressions {
-				expected, resolved, err := e.evaluateRowValue(expression, scope)
-				if err != nil {
-					return nil, err
-				}
-				if !resolved {
-					expected = np.properties[name]
-				}
-				actual, exists := node.Properties[name]
-				if !exists || !e.compareEqual(actual, expected) {
-					propertyMatch = false
-					break
-				}
-			}
-			if !propertyMatch {
-				continue
-			}
-			cand := extendTraversalRow(row, varName, node, "", nil)
-			if !e.traversalOptionalWhereMatches(ctx, clause.where, cand) {
-				continue
-			}
-			cand.optionalMatched = true
-			if err := retention.reserveTraversalRow(cand); err != nil {
-				return nil, err
-			}
-			out = append(out, cand)
-			matched = true
-		}
-		if !matched {
-			unmatched := extendTraversalRow(row, varName, nil, "", nil)
-			if err := retention.reserveTraversalRow(unmatched); err != nil {
-				return nil, err
-			}
-			out = append(out, unmatched)
-		}
-	}
-	return out, nil
+	return e.applyGeneralOptionalClause(ctx, rows, clause)
 }
-
-func nodePatternPropertyExpressions(group string) map[string]string {
-	open := strings.IndexByte(group, '{')
-	close := strings.LastIndexByte(group, '}')
-	if open < 0 || close <= open {
-		return nil
-	}
-	expressions := make(map[string]string)
-	for _, pair := range splitTopLevelComma(group[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
-			continue
-		}
-		name := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-		expressions[name] = strings.TrimSpace(pair[separator+1:])
-	}
-	return expressions
-}
-
 func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 	scope := make(pipelineRow, len(row.nodes)+len(row.rels)+len(row.values))
 	for name, node := range row.nodes {

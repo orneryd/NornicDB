@@ -64,11 +64,14 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 			return nil, false
 		}
 	}
+	if !patternMapsAreConstant(matchPart) {
+		return nil, false
+	}
 	var varName string
 	var label string
 	var matchProps map[string]interface{}
 	if strings.Contains(matchPart, "{") {
-		nodePattern := e.parseNodePattern(ctx, matchPart)
+		nodePattern := readNodePattern(ctx, matchPart, e.patternPropertyKeys)
 		varName = strings.TrimSpace(nodePattern.variable)
 		if varName == "" || len(nodePattern.labels) != 1 {
 			return nil, false
@@ -144,6 +147,14 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return nil, false
 	}
 
+	if len(matchProps) > 0 {
+		var propertyErr error
+		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(ctx, matchPart)
+		if propertyErr != nil {
+			recordExpressionFailure(ctx, propertyErr)
+			return nil, true
+		}
+	}
 	columns := make([]string, len(returnItems))
 	for i, item := range returnItems {
 		columns[i] = item.column()
@@ -236,11 +247,14 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if strings.Count(preWithSegment, "(") != 1 || strings.Count(preWithSegment, ")") != 1 || strings.Contains(preWithSegment, "-") || strings.Contains(preWithSegment, ",") {
 		return nil, false
 	}
+	if !patternMapsAreConstant(preWithSegment) {
+		return nil, false
+	}
 	var varName string
 	var label string
 	var matchProps map[string]interface{}
 	if strings.Contains(preWithSegment, "{") {
-		nodePattern := e.parseNodePattern(ctx, preWithSegment)
+		nodePattern := readNodePattern(ctx, preWithSegment, e.patternPropertyKeys)
 		varName = strings.TrimSpace(nodePattern.variable)
 		if varName == "" || len(nodePattern.labels) != 1 {
 			return nil, false
@@ -378,6 +392,14 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		return nil, false
 	}
 
+	if len(matchProps) > 0 {
+		var propertyErr error
+		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(ctx, preWithSegment)
+		if propertyErr != nil {
+			recordExpressionFailure(ctx, propertyErr)
+			return nil, true
+		}
+	}
 	rows := make([][]interface{}, 0, util.SafePreallocCap(len(nodeScores)))
 	nodeCtx := map[string]*storage.Node{varName: nil}
 	var preWhereFilter func(*storage.Node) bool

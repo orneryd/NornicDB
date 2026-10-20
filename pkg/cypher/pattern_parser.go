@@ -89,13 +89,26 @@ func containsReservedKeyword(s string) bool {
 //	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
 func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
+	return readNodePattern(ctx, pattern, e.parsePropertyMap)
+}
+
+// nodePatternStructure reads node identity and labels without evaluating properties.
+func nodePatternStructure(pattern string) nodePatternInfo {
+	head, _ := splitNodePatternProperties(pattern)
+	variable, labels, err := parseNodeHead(head)
+	return nodePatternInfo{variable: variable, labels: labels, labelErr: err}
+}
+
+func readNodePattern(ctx context.Context, pattern string, properties patternPropertyReader) nodePatternInfo {
 	info := nodePatternInfo{
-		labels:     []string{},
-		properties: make(map[string]interface{}),
+		labels: []string{},
 	}
 	head, props := splitNodePatternProperties(pattern)
-	if props != "" {
-		info.properties = e.parsePropertyMap(ctx, props, true)
+	if props == "" {
+		// No property span has no value phase, for either reader.
+		info.properties = make(map[string]interface{})
+	} else {
+		info.properties = properties(ctx, props, true)
 	}
 	info.variable, info.labels, info.labelErr = parseNodeHead(head)
 	return info
@@ -147,6 +160,10 @@ func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) 
 }
 
 func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) map[string]interface{} {
+	return e.readPropertyMap(ctx, propsStr, retainNull, e.parsePropertyValue)
+}
+
+func (e *StorageExecutor) readPropertyMap(ctx context.Context, propsStr string, retainNull bool, valueReader func(context.Context, string) interface{}) map[string]interface{} {
 	props := make(map[string]interface{})
 
 	// Remove outer braces
@@ -172,7 +189,7 @@ func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string,
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
-		value := e.parsePropertyValue(ctx, valueStr)
+		value := valueReader(ctx, valueStr)
 		if value == nil && !retainNull {
 			continue
 		}

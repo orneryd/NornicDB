@@ -186,6 +186,10 @@ type RelationshipPattern struct {
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
 func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern {
+	return readRelationshipPattern(ctx, pattern, e.parsePropertyMap)
+}
+
+func readRelationshipPattern(ctx context.Context, pattern string, properties patternPropertyReader) *RelationshipPattern {
 	result := &RelationshipPattern{
 		Direction:  "both",
 		MinHops:    1,
@@ -253,7 +257,7 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 		// Property maps are valid with or without a relationship type, e.g.
 		// [r {name: 'value'}] and [r:TYPE {name: 'value'}].
 		if declaration.properties != "" {
-			result.Properties = e.parseProperties(ctx, declaration.properties)
+			result.Properties = properties(ctx, declaration.properties, true)
 		}
 		result.Variable = declaration.variable
 		result.Types = declaration.types
@@ -930,6 +934,14 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 	if strings.TrimSpace(nodePattern.variable) == "" || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
+	// Variable references alone do not establish a start-node predicate:
+	// graph predicates and producers can reference only the start variable,
+	// but must run once per matched row, never during seed pruning as well.
+	// The shared complete plan admits only simple, side-effect-free operands.
+	plan := planRowPredicate(whereClause)
+	if plan == nil || !plan.complete {
+		return nil, false, nil
+	}
 	for _, reference := range semanticExpressionReferences(whereClause) {
 		if strings.SplitN(reference, ".", 2)[0] != nodePattern.variable {
 			return nil, false, nil
@@ -1149,15 +1161,24 @@ type TraversalSegment struct {
 // the clause pipeline runs one (quantified_path_pattern.go).
 // Uses a state machine instead of regex to properly handle parentheses in property values
 func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+	return e.readTraversalPattern(ctx, pattern, e.parsePropertyMap)
+}
+
+// Structural admission uses the same string reader without evaluating values.
+func (e *StorageExecutor) parseTraversalPatternStructure(ctx context.Context, pattern string) *TraversalMatch {
+	return e.readTraversalPattern(ctx, pattern, e.patternPropertyKeys)
+}
+
+func (e *StorageExecutor) readTraversalPattern(ctx context.Context, pattern string, properties patternPropertyReader) *TraversalMatch {
 	if hasQuantifiedGroup(pattern) {
 		return nil
 	}
 	pattern = normalizeAnonymousTraversalRelationships(pattern)
 	// First check if this is a chained pattern (has multiple relationship segments)
 	if e.isChainedPattern(pattern) {
-		return e.parseChainedTraversalPattern(ctx, pattern)
+		return e.readChainedTraversalPattern(ctx, pattern, properties)
 	}
-	return e.parseTraversalPatternStateMachine(ctx, pattern)
+	return e.readTraversalPatternStateMachine(ctx, pattern, properties)
 }
 
 func normalizeAnonymousTraversalRelationships(pattern string) string {
@@ -1218,6 +1239,10 @@ func (e *StorageExecutor) isChainedPattern(pattern string) bool {
 
 // parseChainedTraversalPattern parses multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+	return e.readChainedTraversalPattern(ctx, pattern, e.parsePropertyMap)
+}
+
+func (e *StorageExecutor) readChainedTraversalPattern(ctx context.Context, pattern string, properties patternPropertyReader) *TraversalMatch {
 	result := &TraversalMatch{
 		IsChained:         true,
 		Segments:          []TraversalSegment{},
@@ -1345,7 +1370,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 	var allNodes []nodePatternInfo
 	for _, part := range parts {
 		nodeStr := strings.Trim(part.nodeStr, "()")
-		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, nodeStr))
+		allNodes = append(allNodes, readNodePattern(ctx, nodeStr, properties))
 	}
 
 	// Build segments
@@ -1358,7 +1383,7 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 		segment := TraversalSegment{
 			FromNode:     allNodes[i],
 			ToNode:       allNodes[i+1],
-			Relationship: *e.parseRelationshipPattern(ctx, relStr),
+			Relationship: *readRelationshipPattern(ctx, relStr, properties),
 		}
 		result.Segments = append(result.Segments, segment)
 	}
@@ -1387,6 +1412,10 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 // parseTraversalPatternStateMachine parses patterns with a state machine
 // to properly handle parentheses and special characters inside quoted property values.
 func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
+	return e.readTraversalPatternStateMachine(ctx, pattern, e.parsePropertyMap)
+}
+
+func (e *StorageExecutor) readTraversalPatternStateMachine(ctx context.Context, pattern string, properties patternPropertyReader) *TraversalMatch {
 	// Find the boundaries of (startNode), -[rel]->, and (endNode)
 	// respecting quotes and nested parentheses
 
@@ -1434,9 +1463,9 @@ func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context,
 	endNodeStr := pattern[endStart+1 : endEnd]
 
 	return &TraversalMatch{
-		StartNode:    e.parseNodePatternFromString(ctx, startNodeStr),
-		Relationship: *e.parseRelationshipPattern(ctx, relStr),
-		EndNode:      e.parseNodePatternFromString(ctx, endNodeStr),
+		StartNode:    readNodePattern(ctx, startNodeStr, properties),
+		Relationship: *readRelationshipPattern(ctx, relStr, properties),
+		EndNode:      readNodePattern(ctx, endNodeStr, properties),
 	}
 }
 

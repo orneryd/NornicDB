@@ -35,6 +35,10 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		limit = limitedRows
 	}
 
+	if !patternMapsAreConstant(baseMatchSegment) {
+		return nil, false, nil
+	}
+
 	pseudo := baseMatchSegment + " RETURN __delete_probe__"
 	returnIdx := findKeywordIndex(pseudo, "RETURN")
 	if returnIdx <= 0 {
@@ -46,12 +50,12 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		return nil, false, nil
 	}
 
-	sourcePattern := e.parseNodePattern(ctx, clauses[0])
+	sourcePattern := readNodePattern(ctx, clauses[0], e.patternPropertyKeys)
 	if sourcePattern.variable == "" {
 		return nil, false, nil
 	}
 	relPatternText := strings.TrimSpace(clauses[1])
-	relMatch := e.parseTraversalPattern(ctx, relPatternText)
+	relMatch := e.parseTraversalPatternStructure(ctx, relPatternText)
 	if relMatch == nil || relMatch.IsChained {
 		return nil, false, nil
 	}
@@ -73,7 +77,12 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		whereClause = strings.TrimSpace(pseudo[whereIdx+len("WHERE") : returnIdx])
 	}
 
-	sources, err := e.collectBoundRelationshipDeleteSources(ctx, sourcePattern, inTransactionWrapper)
+	rowCtx, sourceText, err := e.preparePatternRow(ctx, clauses[0], nil)
+	if err != nil {
+		return nil, true, err
+	}
+	sourcePattern = e.parseNodePattern(rowCtx, sourceText)
+	sources, err := e.collectBoundRelationshipDeleteSources(rowCtx, sourcePattern, inTransactionWrapper)
 	if err != nil {
 		return nil, true, err
 	}
@@ -91,37 +100,48 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if source == nil {
 			continue
 		}
-		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, source.ID, relMatch.Relationship.Direction)
+		rowCtx, rowPattern, err := e.preparePatternRow(ctx, relPatternText, map[string]interface{}{sourcePattern.variable: source})
+		if err != nil {
+			return nil, true, err
+		}
+		rowMatch := e.parseTraversalPattern(rowCtx, rowPattern)
+		if failure := getExpressionFailure(rowCtx); failure != nil {
+			return nil, true, failure
+		}
+		if rowMatch == nil || !e.pipelineNodeMatchesPattern(source, rowMatch.StartNode) {
+			continue
+		}
+		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, source.ID, rowMatch.Relationship.Direction)
 		if err != nil {
 			return nil, true, err
 		}
 		for _, edge := range candidates {
-			if edge == nil || !relationshipTypeAllowed(edge.Type, relMatch.Relationship.Types, typeSet) {
+			if edge == nil || !relationshipTypeAllowed(edge.Type, rowMatch.Relationship.Types, typeSet) {
 				continue
 			}
-			if len(relMatch.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, relMatch.Relationship.Properties) {
+			if len(rowMatch.Relationship.Properties) > 0 && !e.edgeMatchesProps(edge, rowMatch.Relationship.Properties) {
 				continue
 			}
-			target, ok, err := e.boundRelationshipDeleteTargetNode(store, source.ID, edge, relMatch.Relationship.Direction)
+			target, ok, err := e.boundRelationshipDeleteTargetNode(store, source.ID, edge, rowMatch.Relationship.Direction)
 			if err != nil {
 				return nil, true, err
 			}
-			if !ok || !e.matchesEndPattern(target, &relMatch.EndNode) {
+			if !ok || !e.matchesEndPattern(target, &rowMatch.EndNode) {
 				continue
 			}
 			if whereClause != "" {
 				pathCtx := PathContext{
 					nodes: map[string]*storage.Node{
-						relMatch.StartNode.variable: source,
+						rowMatch.StartNode.variable: source,
 					},
 					rels: map[string]*storage.Edge{
 						deleteVar: edge,
 					},
 				}
-				if relMatch.EndNode.variable != "" {
-					pathCtx.nodes[relMatch.EndNode.variable] = target
+				if rowMatch.EndNode.variable != "" {
+					pathCtx.nodes[rowMatch.EndNode.variable] = target
 				}
-				if !e.evaluateWhereOnPath(ctx, whereClause, pathCtx) {
+				if !e.evaluateWhereOnPath(rowCtx, whereClause, pathCtx) {
 					continue
 				}
 			}
