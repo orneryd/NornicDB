@@ -136,7 +136,9 @@ func (e *StorageExecutor) pipelineBatchCallSource(ctx context.Context, input pip
 				valid = false
 				return false
 			}
-			batch = append(batch, row)
+			// Sources may reuse their binding map for the next row. A native
+			// transaction batch owns the bindings it retains until commit.
+			batch = append(batch, mergeCallPipelineRows(row, nil))
 			return len(batch) < batchSize || flush()
 		})
 		if completed && valid && more {
