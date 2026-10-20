@@ -31,7 +31,7 @@ func getCypherTool(defaultDatabase string) Tool {
 	})
 	return Tool{
 		Name:        ToolCypher,
-		Description: "Execute parameterized native Cypher, including traversal and APOC, GDS and retrieval procedures, with the caller's database permissions and execution limits. Returns columns, rows, stats, metadata and explicit truncation (default 100 rows, maximum 1000 rows and 1 MiB of result JSON). Native retrieval paging uses its own n/qid/discard parameters; no generic query cursor is created. Use smaller native pages/projections when truncated. Example: query='CALL db.retrieve($request)', parameters={request:{query:'topic', where:'node.allowed = $allowed', limit:10}, allowed:true}.",
+		Description: "Execute parameterized native Cypher, including traversal and APOC, GDS and retrieval procedures, with the authenticated caller's database permissions and execution limits. Returns columns, rows, stats, metadata and explicit truncation (default 100 rows, maximum 1000 rows and 1 MiB for the complete MCP response). Native retrieval paging uses its own n/qid/discard parameters; no generic query cursor is created. Use smaller native pages/projections when truncated. Example: query='CALL db.retrieve($request)', parameters={request:{query:'topic', where:'node.allowed = $allowed', limit:10}, allowed:true}.",
 		InputSchema: schema,
 	}
 }

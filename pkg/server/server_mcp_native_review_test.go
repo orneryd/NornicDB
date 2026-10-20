@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -56,7 +57,9 @@ func TestMCPNativeReviewStandaloneDeniesAnonymous(t *testing.T) {
 	db, err := nornicdb.Open("", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	for _, config := range []*mcp.ServerConfig{nil, {NativeCypherEnabled: true}} {
+	enabled := mcp.DefaultServerConfig()
+	enabled.NativeCypherEnabled = true
+	for _, config := range []*mcp.ServerConfig{nil, enabled} {
 		s := mcp.NewServer(db, config)
 		mux := http.NewServeMux()
 		s.RegisterRoutes(mux)
@@ -105,7 +108,47 @@ func TestMCPNativeReviewExecutionAndWireBounds(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(response.Content[0].Text), &value))
 			require.Contains(t, value.Truncation.Reasons, "max_bytes")
 		}
+		// Blocking/native list-producing operations use the existing transaction
+		// memory owner rather than materializing an unbounded result for the sink.
+		for _, query := range []string{"RETURN range(1, 100000000)", "UNWIND range(1, 200000) AS x RETURN x ORDER BY x"} {
+			_, response := nativeReviewCall(t, host, path, map[string]interface{}{"query": query, "max_rows": 1}, authenticate)
+			require.True(t, response.IsError, response.Content)
+			require.Contains(t, response.Content[0].Text, "TransactionMemoryLimit")
+		}
 	}
+}
+
+func TestMCPNativeReviewBoundsPreserveWrites(t *testing.T) {
+	s, authenticator := setupTestServer(t)
+	host := httptest.NewServer(s.buildRouter())
+	t.Cleanup(host.Close)
+	token := getAuthToken(t, authenticator, "admin")
+	authenticate := func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	for _, path := range []string{"/mcp", "/mcp/tools/call"} {
+		for _, query := range []string{
+			"UNWIND range(1, 40) AS x CREATE (:BoundWrite {x:x}) RETURN x",
+			"UNWIND range(1, 40) AS x CALL apoc.cypher.run($statement, {x:x}) YIELD value RETURN value",
+		} {
+			_, result := nativeReviewCall(t, host, path, map[string]interface{}{
+				"query": query, "max_rows": 1, "parameters": map[string]interface{}{"statement": "CREATE (:BoundWrite {x:$x}) RETURN $x AS x"},
+			}, authenticate)
+			require.False(t, result.IsError, result.Content)
+			var value struct {
+				Rows       [][]interface{} `json:"rows"`
+				Truncation struct {
+					Reasons []string `json:"reasons"`
+				} `json:"truncation"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(result.Content[0].Text), &value))
+			require.Len(t, value.Rows, 1)
+			require.Contains(t, value.Truncation.Reasons, "max_rows")
+		}
+	}
+	executor, err := s.getExecutorForDatabase("nornic")
+	require.NoError(t, err)
+	result, err := executor.Execute(context.Background(), "MATCH (n:BoundWrite) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(160)}}, result.Rows)
 }
 
 func TestMCPNativeReviewTemporalAndBytes(t *testing.T) {
@@ -153,6 +196,7 @@ func TestMCPNativeReviewCredentialForwarding(t *testing.T) {
 	t.Cleanup(host.Close)
 	require.NoError(t, s.dbManager.CreateCompositeDatabase("native_cmp", []multidb.ConstituentRef{{Alias: "remote", DatabaseName: "native_remote", Type: "remote", AccessMode: "read", URI: host.URL, AuthMode: "oidc_forwarding"}}))
 	credentials := map[string]func(*http.Request){
+		"basic":         func(r *http.Request) { r.SetBasicAuth("admin", "password123") },
 		"bearer":        func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) },
 		"api_key":       func(r *http.Request) { r.Header.Set("X-API-Key", token) },
 		"cookie":        func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "nornicdb_token", Value: token}) },
@@ -168,7 +212,11 @@ func TestMCPNativeReviewCredentialForwarding(t *testing.T) {
 				mu.Lock()
 				actual := seen
 				mu.Unlock()
-				require.Equal(t, "Bearer "+token, actual)
+				expected := "Bearer " + token
+				if name == "basic" {
+					expected = "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:password123"))
+				}
+				require.Equal(t, expected, actual)
 			}
 		})
 	}

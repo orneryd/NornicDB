@@ -703,7 +703,7 @@ func (s *Server) doListTools(ctx context.Context) ListToolsResponse {
 
 func (s *Server) nativeCypherAuthenticated(ctx context.Context) bool {
 	return s.config.NativeCypherEnabled && strings.TrimSpace(cypher.GetAuthenticatedPrincipalFromContext(ctx)) != "" &&
-		auth.RequestDatabaseScopeFromContext(ctx) != nil && auth.RequestEntitlementResolverFromContext(ctx) != nil
+		auth.RequestDatabaseScopeFromContext(ctx) != nil && auth.RequestEntitlementResolverFromContext(ctx) != nil && s.config.DatabaseScopedExecutor != nil
 }
 
 func (s *Server) toolDefinitions(database string, native bool) []Tool {

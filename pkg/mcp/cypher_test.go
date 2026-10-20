@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/require"
 )
@@ -62,20 +61,17 @@ func TestCypherResultSerializationAndCancellationErrors(t *testing.T) {
 }
 
 func TestCypherArgumentValidation(t *testing.T) {
-	config := DefaultServerConfig()
-	config.NativeCypherEnabled = true
-	server := NewServer(nil, config)
-	ctx := auth.WithRequestPrincipal(context.Background(), func(string, auth.Permission) bool { return true }, auth.NewRequestDatabaseScope("nornic", map[string]string{"nornic": "nornic"}))
-	ctx = cypher.WithAuthenticatedPrincipal(ctx, "test-principal")
+	server := NewServer(nil, nil)
+	ctx := context.Background()
 	for _, args := range []map[string]interface{}{
 		{}, {"query": " "}, {"query": 1}, {"query": "RETURN 1", "unknown": true},
 		{"query": "RETURN 1", "database": 1}, {"query": "RETURN 1", "parameters": nil},
 		{"query": "RETURN 1", "max_rows": "1"}, {"query": "RETURN 1", "max_rows": int64(-1)},
 		{"query": "RETURN 1", "max_rows": 1001}, {"query": "RETURN 1", "max_rows": 1001.0},
 	} {
-		_, err := server.CallTool(ctx, ToolCypher, args)
+		_, err := server.handleCypher(ctx, args)
 		require.Error(t, err)
 	}
-	_, err := server.CallTool(ctx, ToolCypher, map[string]interface{}{"query": "RETURN 1"})
+	_, err := server.handleCypher(ctx, map[string]interface{}{"query": "RETURN 1"})
 	require.ErrorContains(t, err, "executor unavailable")
 }
