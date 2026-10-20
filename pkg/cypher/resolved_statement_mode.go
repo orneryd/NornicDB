@@ -25,9 +25,13 @@ func ResolvedStatementQueryType(metadata map[string]interface{}) (string, bool) 
 // to positively observed completed writes. Without either evidence it returns
 // an empty optional mode; a protocol with a static routing type retains it.
 func CompletedStatementQueryType(metadata map[string]interface{}, wrote bool) string {
-    if mode, known := ResolvedStatementQueryType(metadata); known { return mode }
-    if wrote { return "w" }
-    return ""
+	if mode, known := ResolvedStatementQueryType(metadata); known {
+		return mode
+	}
+	if wrote {
+		return "w"
+	}
+	return ""
 }
 
 func resolvedStatementModeResult(result *ExecuteResult, write bool) *ExecuteResult {
