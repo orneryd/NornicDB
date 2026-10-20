@@ -1547,7 +1547,11 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 	store := e.getStorage(ctx)
 	labels := match.StartNode.labels
 	var stream func(func(*storage.Node) error) error
-	if len(labels) > 0 {
+	if e.queryNodeReader(store) != nil {
+		stream = func(visit func(*storage.Node) error) error {
+			return streamQueryNodes(ctx, store, labels, visit)
+		}
+	} else if len(labels) > 0 {
 		reader, ok := store.(storage.ProjectedLabelNodeReader)
 		if !ok {
 			return nil, false, nil
