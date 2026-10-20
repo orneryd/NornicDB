@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"testing"
 
@@ -38,6 +39,17 @@ type streamedExecution struct {
 	err    error
 }
 
+// errIfDone can be used in diagnostics before the stream has finished. Done
+// publishes Execute's outcome; Started only publishes the stream's metadata.
+func (run *streamedExecution) errIfDone() error {
+	select {
+	case <-run.stream.Done():
+		return run.err
+	default:
+		return nil
+	}
+}
+
 // executeStreamed runs query with a result stream of the given threshold
 // on its own goroutine, as Bolt does, and returns once the statement
 // started streaming or finished.
@@ -61,6 +73,46 @@ func newStreamTestExecutor(t *testing.T, items int) (*StorageExecutor, *counting
 	_, err := exec.Execute(context.Background(), fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", items-1), nil)
 	require.NoError(t, err)
 	return exec, engine
+}
+
+func TestExecuteStreamedErrorPublication(t *testing.T) {
+	exec, _ := newStreamTestExecutor(t, 1)
+	for _, tc := range []struct {
+		query   string
+		wantErr bool
+	}{
+		{"UNWIND range(1, 100) AS i RETURN i", false},
+		{"UNWIND range(1, 100) AS i RETURN 10 / (i - 50) AS x", true},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			run := executeStreamed(ctx, exec, tc.query, 1)
+			defer func() { cancel(); <-run.stream.Done() }()
+			require.True(t, run.stream.streamed())
+			require.NoError(t, run.errIfDone(), "reading diagnostics must not wait for stream demand")
+			consumed := make(chan struct{})
+			go func() {
+				run.stream.Next(-1)
+				close(consumed)
+			}()
+			for {
+				_ = run.errIfDone()
+				select {
+				case <-run.stream.Done():
+					<-consumed
+					if tc.wantErr {
+						require.ErrorContains(t, run.errIfDone(), "/ by zero")
+					} else {
+						require.NoError(t, run.errIfDone())
+					}
+					return
+				default:
+					runtime.Gosched()
+				}
+			}
+		})
+	}
 }
 
 // A streamed read produces rows, and reads the label, only as far as they
