@@ -132,8 +132,7 @@ func (run relationshipAccessExecution) selectedPaths(ctx context.Context, plan *
 	bind := func(path pathSearchPath) (pipelineRow, bool) {
 		return e.bindSelectedPath(ctx, plan, automaton, reversed, row, path)
 	}
-	search := e.newPathSearch(ctx, automaton, row, maxLength, source)
-	search.access = &run
+	search := run.newPathSearch(ctx, automaton, row, maxLength, source)
 	var rows []pipelineRow
 	if target != nil {
 		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated

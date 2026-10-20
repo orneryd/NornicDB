@@ -89,7 +89,7 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 					}
 					atBound = bound
 				})
-				search = e.newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
+				search = e.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
 				bind := func(path pathSearchPath) (pipelineRow, bool) {
 					bound++
 					return e.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
@@ -143,7 +143,7 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
 		require.True(t, ok)
 		var paths []pathSearchPath
-		s := e.newPathSearch(base, plan.forward, pipelineRow{}, 4, source)
+		s := e.relationshipExecutionFor(nil, "", "").newPathSearch(base, plan.forward, pipelineRow{}, 4, source)
 		s.pair(source, target, 1, true, false, func(path pathSearchPath) (pipelineRow, bool) { paths = append(paths, path); return pipelineRow{}, true })
 		require.NotEmpty(t, paths)
 		for _, path := range paths {
@@ -197,7 +197,7 @@ func TestSelectedPathUniformEligibilityAndTrailFallback(t *testing.T) {
 		if repeat {
 			searchCtx = withRepeatableElements(ctx)
 		}
-		s := e.newPathSearch(searchCtx, plan.forward, pipelineRow{}, 2, source)
+		s := e.relationshipExecutionFor(nil, "", "").newPathSearch(searchCtx, plan.forward, pipelineRow{}, 2, source)
 		paths := s.pair(source, source, 1, true, true, func(path pathSearchPath) (pipelineRow, bool) {
 			return e.bindSelectedPath(searchCtx, plan, plan.forward, false, pipelineRow{}, path)
 		})
@@ -222,7 +222,7 @@ func TestSelectedPathZeroCounterGuard(t *testing.T) {
 	a := *plan.forward
 	a.counters = append([]pathSearchCounter(nil), a.counters...)
 	a.counters[0].max = 0
-	s := e.newPathSearch(ctx, &a, pipelineRow{}, 0, source)
+	s := e.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, &a, pipelineRow{}, 0, source)
 	s.begin(source)
 	require.Len(t, s.levels[0].entries, 1)
 	require.Equal(t, a.final, s.products[s.levels[0].entries[0].product].slot)

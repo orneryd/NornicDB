@@ -153,14 +153,14 @@ func relationshipStoragePrimitive(function *types.Func) bool {
     if function == nil || function.Pkg() == nil {
         return false
     }
-    if function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/storage" && !relationshipBoundaryStorageAdapter(function) {
+    if function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/storage" && function.Pkg().Path() != "github.com/orneryd/nornicdb/pkg/search" && !relationshipBoundaryStorageAdapter(function) {
         return false
     }
     name := function.Name()
     if !strings.Contains(name, "Edge") && !strings.Contains(name, "Relationship") && !strings.Contains(name, "Degree") {
         return false
     }
-    for _, prefix := range []string{"Get", "All", "Stream", "Seek", "Count", "Has", "Find", "EdgeCount", "RelationshipCount"} {
+    for _, prefix := range []string{"Get", "All", "Stream", "Seek", "Count", "Has", "Find", "Outgoing", "Incoming", "VectorQuery", "EdgeCount", "RelationshipCount"} {
         if strings.HasPrefix(name, prefix) {
             return true
         }
@@ -264,11 +264,14 @@ func TestRelationshipAccessProgramExecutionBoundaryStorageSurface(t *testing.T) 
 		"_, _ = e.storage.EdgeCountByStartLabel(\"L\", \"T\")",
 		"_, _ = e.storage.EdgeCountByEndLabel(\"L\", \"T\")",
 		"_, _, _ = e.storage.(storage.AdjacentEdgesEngine).GetAdjacentEdges(node)",
+		"_, _, _ = e.storage.(storage.EdgeHeaderReader).OutgoingEdgeHeaders(node)",
+		"_, _, _ = e.storage.(storage.EdgeHeaderReader).IncomingEdgeHeaders(node)",
 		"_, _, _ = e.storage.(storage.RelationshipPropertySeeker).SeekRelationships(ctx, \"T\", []string{\"p\"}, []interface{}{1})",
 		"_ = storage.StreamEdgesByType(ctx, e.storage, \"T\", func(*storage.Edge) error { return nil })",
 	}
+	reads = append(reads, "_, _ = e.searchService.VectorQueryRelationships(ctx, []float32{1}, search.RelationshipVectorQuerySpec{})")
 	var fixture strings.Builder
-	fixture.WriteString("package cypher\nimport (\"context\"; \"github.com/orneryd/nornicdb/pkg/storage\")\n")
+	fixture.WriteString("package cypher\nimport (\"context\"; \"github.com/orneryd/nornicdb/pkg/storage\"; \"github.com/orneryd/nornicdb/pkg/search\")\n")
 	for index, read := range reads {
 		fmt.Fprintf(&fixture, "func(e *StorageExecutor) relationshipPrimitive%d(ctx context.Context, node storage.NodeID, edge storage.EdgeID) *ExecuteResult { %s; return nil }\n", index, read)
 	}

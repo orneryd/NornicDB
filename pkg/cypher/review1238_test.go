@@ -109,7 +109,7 @@ func TestReview1238CancelledReconstruction(t *testing.T) {
 	if !ok {
 		t.Fatal("compile")
 	}
-	s := e.newPathSearch(c, plan.forward, pipelineRow{}, -1, start)
+	s := e.relationshipExecutionFor(nil, "", "").newPathSearch(c, plan.forward, pipelineRow{}, -1, start)
 	calls := 0
 	rows, ok := s.uniformPair(start, previous, true, func(p pathSearchPath) (pipelineRow, bool) {
 		calls++
@@ -167,7 +167,7 @@ func TestReview1238CancelledLevel(t *testing.T) {
 		t.Fatal("compile")
 	}
 	c, cancel := context.WithCancel(c)
-	s := e.newPathSearch(c, p.forward, pipelineRow{}, -1, source)
+	s := e.relationshipExecutionFor(nil, "", "").newPathSearch(c, p.forward, pipelineRow{}, -1, source)
 	s.begin(source)
 	before := len(s.products)
 	cancel()

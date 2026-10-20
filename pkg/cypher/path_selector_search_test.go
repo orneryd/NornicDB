@@ -243,7 +243,7 @@ func TestSelectedPathSearchCancelled(t *testing.T) {
 	require.NoError(t, err)
 	source := result.Rows[0][0].(*storage.Node)
 	cancelled, cancel := context.WithCancel(ctx)
-	search := exec.newPathSearch(cancelled, plan.forward, pipelineRow{}, -1, source)
+	search := exec.relationshipExecutionFor(nil, "", "").newPathSearch(cancelled, plan.forward, pipelineRow{}, -1, source)
 	search.begin(source)
 	require.True(t, search.nextLevel())
 	require.True(t, search.nextLevel())
@@ -324,7 +324,7 @@ func TestSelectedPathSearchLengthBound(t *testing.T) {
 	corner, err := grid.pipelineMatchRows(ctx, pipelineRow{}, "MATCH (s:G {x: 0, y: 0})")
 	require.NoError(t, err)
 	source := corner[0]["s"].(*storage.Node)
-	search := grid.newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
+	search := grid.relationshipExecutionFor(nil, "", "").newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
 	rows := search.run(source, 1, false, func(path pathSearchPath) (pipelineRow, bool) {
 		return grid.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
 	})
