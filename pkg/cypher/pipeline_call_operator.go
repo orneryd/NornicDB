@@ -197,7 +197,8 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					}
 				}
 				branchCtx = withPipelineImports(withValueBindings(branchCtx, branchInput), carried)
-				if metadata != nil && metadata.consume != nil && hasReturn {
+				var stream *ResultStream
+				if metadata != nil && metadata.consume != nil && hasReturn && (!isUnion || unionAll) {
 					consumer := resultstream.ConsumerFromContext(branchCtx)
 					if consumer == nil {
 						consumer = func(columns []string, values []any) (bool, error) {
@@ -206,11 +207,15 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 							return more, getExpressionFailure(runCtx)
 						}
 					}
-					branchCtx = prepareOutputStream(branchCtx, NewBoundedResultStream(consumer), query, 0)
+					stream = NewBoundedResultStream(consumer)
+					branchCtx = prepareOutputStream(branchCtx, stream, query, 0)
 					bindResultStream(branchCtx, query, branchClauses)
 				}
 
 				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+				if execErr == nil && stream.bounded() {
+					execErr = stream.consumeResult(branchCtx, inner)
+				}
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}
@@ -232,6 +237,15 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				inner, execErr = runExec.executeUnionBranches(bodyCtx, body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(bodyCtx, body)
+			}
+			if execErr == nil && metadata != nil && metadata.consume != nil && hasReturn && inner != nil {
+				for _, values := range inner.Rows {
+					more = metadata.consume(appendCallReturnRows(nil, outer, inner.Columns, [][]any{values})[0])
+					if !more && !resultstream.Drain(runCtx) {
+						break
+					}
+				}
+				inner.Rows = nil
 			}
 			// A composed source invokes downstream operators while producing.
 			// Their retained rows belong to the caller, so a whole-scope mark

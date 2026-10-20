@@ -1836,7 +1836,9 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 			branchCtx = resultstream.WithConsumer(ctx, func(columns []string, row []any) (bool, error) {
 				if combinedResult == nil {
 					combinedResult = &ExecuteResult{Columns: columns, Stats: &QueryStats{}}
-					stream.begin(columns)
+				}
+				if !stream.streamed() {
+					stream.begin(combinedResult.Columns)
 				}
 				order, same := unionColumnOrder(combinedResult.Columns, columns)
 				if !same {

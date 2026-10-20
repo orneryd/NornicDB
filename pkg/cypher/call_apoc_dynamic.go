@@ -29,7 +29,8 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 	}
 
 	if hasOutputStream(ctx) {
-		result := &ExecuteResult{Columns: []string{"value"}, Stats: &QueryStats{}}
+		columns := []string{"value"}
+		result := &ExecuteResult{Columns: columns, Stats: &QueryStats{}}
 		result.Source = func(ctx context.Context, consume resultstream.Consumer) error {
 			innerCtx := WithResultStream(resultstream.WithoutConsumer(ctx), NewBoundedResultStream(func(columns []string, row []any) (bool, error) {
 				value := make(map[string]any, len(columns))
@@ -38,7 +39,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 						value[column] = row[i]
 					}
 				}
-				return consume(result.Columns, []any{value})
+				return consume(columns, []any{value})
 			}))
 			inner, err := e.executeUserStatement(innerCtx, innerQuery, params)
 			if err != nil {
@@ -128,8 +129,9 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 	// Split by semicolons (respecting quotes)
 	queries := e.splitBySemicolon(statements)
 
+	columns := []string{"row", "result"}
 	result := &ExecuteResult{
-		Columns: []string{"row", "result"},
+		Columns: columns,
 		Stats:   &QueryStats{},
 	}
 
@@ -159,7 +161,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 					}
 				}
 				var err error
-				more, err = consume(result.Columns, []any{index, value})
+				more, err = consume(columns, []any{index, value})
 				return more || resultstream.Drain(ctx), err
 			}))
 			innerResult, err := e.executeUserStatement(innerCtx, query, params)
@@ -170,7 +172,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 				return err
 			}
 			if statistics && more {
-				more, err = consume(result.Columns, []any{int64(-1), runManyStatistics(innerResult, rows, time.Since(started))})
+				more, err = consume(columns, []any{int64(-1), runManyStatistics(innerResult, rows, time.Since(started))})
 				if err != nil {
 					return err
 				}
