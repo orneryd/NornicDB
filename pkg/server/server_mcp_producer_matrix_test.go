@@ -98,7 +98,7 @@ func TestMCPNativeProducerMatrix(t *testing.T) {
 		{"remote", "matrix_cmp", "USE matrix_cmp.remote UNWIND range(1,200000) AS x", "x"},
 		{"bolt", "matrix_cmp", "USE matrix_cmp.bolt UNWIND range(1,200000) AS x", "x"},
 		{"bolt_basic", "matrix_cmp", "USE matrix_cmp.bolt UNWIND range(1,200000) AS x", "x"},
-		{"bolt_profile", "matrix_cmp", "USE matrix_cmp.bolt PROFILE UNWIND range(1,200000) AS x", "x"},
+		{"bolt_profile", "matrix_cmp", "PROFILE USE matrix_cmp.bolt UNWIND range(1,200000) AS x", "x"},
 		{"bolt_apoc", "matrix_cmp", "USE matrix_cmp.bolt CALL apoc.cypher.run('UNWIND range(1,200000) AS x RETURN x',{}) YIELD value", "value.x"},
 		{"fabric_bolt", "matrix_cmp", "CALL { USE matrix_cmp.bolt UNWIND range(1,200000) AS x RETURN x } WITH x WHERE x > 20", "x"},
 		{"fabric_remote", "matrix_cmp", "CALL { USE matrix_cmp.remote UNWIND range(1,200000) AS x RETURN x }", "x"},

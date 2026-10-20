@@ -94,6 +94,12 @@ func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, ex
 	}
 	if s.inTransaction {
 		s.recordExplicitTransactionWrite(query, params, isWrite)
+		// Execution has ended. Release RUN's lifecycle claim before Finish
+		// lets the final PULL claim the native deferred-flush operation.
+		// The caller's deferred finishRun remains an idempotent safety net.
+		if finishErr := s.txLifecycle.finishRun(); finishErr != nil {
+			lazy.err = finishErr
+		}
 	}
 	return nil, true, nil
 }
@@ -243,6 +249,9 @@ func (s *Session) fillLazyResult(stream *resultStream, n int) error {
 // error: IGNORED when RESET or GOODBYE cancelled the statement, otherwise
 // the statement's FAILURE, as RUN reports it.
 func (s *Session) sendLazyFailure(failure *lazyStatementError) error {
+	if errors.Is(failure.err, errTransactionTimedOut) {
+		return s.sendTransactionTimeoutAfterJoin()
+	}
 	if errors.Is(failure.err, context.Canceled) && (failure.reason == MsgReset || failure.reason == MsgGoodbye) {
 		if err := s.sendIgnored(); err != nil {
 			return err
