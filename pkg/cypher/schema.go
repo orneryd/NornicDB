@@ -2212,7 +2212,9 @@ func (e *StorageExecutor) backfillCompositeIndex(name, label string, properties 
 			continue
 		}
 		id, selected := nativeSchemaIndexID(e.storage, node)
-		if selected { entries[id] = node.Properties }
+		if selected {
+			entries[id] = node.Properties
+		}
 	}
 	if err := schema.BackfillCompositeIndex(name, entries); err != nil {
 		property := ""

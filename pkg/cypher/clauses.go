@@ -2033,7 +2033,7 @@ func joinedValueKey(val interface{}) string {
 		}
 		return "edge:" + string(nativeGraphEntityKey(v))
 	default:
-		return fmt.Sprintf("%#v", val)
+		return cypherValueKey(val, cypherEquivalenceContract)
 	}
 }
 

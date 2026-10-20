@@ -7,7 +7,7 @@ import "strings"
 // their source database's projection instead of being scored against this store.
 // Construct it once per result owner; raw debug/history/export reads omit it.
 type QueryResultProjection struct {
-	source Engine
+	source      Engine
 	engine      *BadgerEngine
 	prefix      string
 	now         int64
@@ -115,7 +115,9 @@ func (p QueryResultProjection) Node(node *Node) *Node {
 		return node
 	}
 	p = p.forIdentity(node.Identity())
-	if p.engine == nil { return node }
+	if p.engine == nil {
+		return node
+	}
 	out := *node
 	out.Properties = p.NodeProperties(node)
 	return &out
@@ -128,7 +130,9 @@ func (p QueryResultProjection) Edge(edge *Edge) *Edge {
 		return edge
 	}
 	p = p.forIdentity(edge.Identity())
-	if p.engine == nil { return edge }
+	if p.engine == nil {
+		return edge
+	}
 	out := *edge
 	out.Properties = p.EdgeProperties(edge)
 	return &out
@@ -140,13 +144,23 @@ func (p QueryResultProjection) Edge(edge *Edge) *Edge {
 func (p QueryResultProjection) Enabled() bool { return p.engine != nil }
 
 func (p QueryResultProjection) forIdentity(identity EntityIdentity) QueryResultProjection {
-    if p.source == nil { return p }
-    selected, ok := identity.SourceEngine(p.source)
-    if !ok { p.engine = nil; return p }
-    if selected == p.source { return p }
-    p.source = selected
-    engine, _ := UnwrapEngine(selected).(*BadgerEngine)
-    if engine == nil || !engine.IsDecayEnabled() { p.engine = nil; return p }
-    p.engine, p.prefix = engine, QualifiedEntityID(selected, "")
-    return p
+	if p.source == nil {
+		return p
+	}
+	selected, ok := identity.SourceEngine(p.source)
+	if !ok {
+		p.engine = nil
+		return p
+	}
+	if selected == p.source {
+		return p
+	}
+	p.source = selected
+	engine, _ := UnwrapEngine(selected).(*BadgerEngine)
+	if engine == nil || !engine.IsDecayEnabled() {
+		p.engine = nil
+		return p
+	}
+	p.engine, p.prefix = engine, QualifiedEntityID(selected, "")
+	return p
 }

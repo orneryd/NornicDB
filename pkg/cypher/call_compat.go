@@ -920,7 +920,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 	})
 }
 
-
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
 func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -947,7 +946,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	store := e.getStorage(ctx)
 	identifier, validID := arguments[0].(string)
-    var native interface{}
+	var native interface{}
 	switch entity := arguments[0].(type) {
 	case *storage.Node:
 		if !relationship && entity != nil {
@@ -966,10 +965,12 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	if !validID || !validKey || !validVector {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "vector property setter requires an entity, a STRING property key, and a numeric vector")
 	}
-    if native != nil {
-        identifier, validID = nativeEntityStorageID(store, native)
-        if !validID { return nil, nativeEntityNotFound(native) }
-    }
+	if native != nil {
+		identifier, validID = nativeEntityStorageID(store, native)
+		if !validID {
+			return nil, nativeEntityNotFound(native)
+		}
+	}
 	if relationship {
 		edge, err := store.GetEdge(storage.EdgeID(identifier))
 		if err != nil {

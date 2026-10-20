@@ -411,8 +411,8 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	carried := make([]string, 0, len(names))
 	for index, name := range names {
 		param := fmt.Sprintf("__subquery_row_%d", index)
-        params[param] = values[name]
-        carried = append(carried, "$"+param+" AS "+name)
+		params[param] = values[name]
+		carried = append(carried, "$"+param+" AS "+name)
 	}
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
@@ -834,7 +834,9 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
 	store := e.getStorage(ctx)
 	id, selected := nativeNodeLookupID(store, node)
-	if !selected { return 0 }
+	if !selected {
+		return 0
+	}
 	var edges []*storage.Edge
 	if shape.outgoing {
 		edges, _ = store.GetOutgoingEdges(id)

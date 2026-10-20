@@ -120,7 +120,7 @@ func nodeToValue(n *storage.Node) interface{} {
 		props[k] = v
 	}
 	return map[string]interface{}{
-		"elementId":  string(n.ID),
+		"elementId":  nativeEntityOutputID(n),
 		"labels":     labelStringSlice(n.Labels),
 		"properties": props,
 	}

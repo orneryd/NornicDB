@@ -135,6 +135,18 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 			writeCacheKeyValue(h, scratch, item)
 		}
 		return
+	case *storage.Node, storage.Node, *storage.Edge, storage.Edge:
+		kind, identity, snapshot := nativeEntityCacheSnapshot(value)
+		if kind == "" {
+			h.Write([]byte{cacheKeyNull})
+			return
+		}
+		h.Write([]byte{cacheKeyOther})
+		writeCacheKeyString(h, scratch, kind)
+		writeCacheKeyString(h, scratch, fmt.Sprintf("%T", value))
+		writeCacheKeyString(h, scratch, string(identity))
+		writeCacheKeyValue(h, scratch, snapshot)
+		return
 	case storage.RemoteEntityValue:
 		// Graph functions distinguish a transport graph entity from an ordinary
 		// map with identical contents; the result cache must distinguish them too.
@@ -193,7 +205,7 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 			return
 		}
 	}
-	// Any other value (a temporal or spatial value, an entity) is its Go
+	// Any other value (a temporal or spatial value) is its Go
 	// type and its text: values of different types never share a key.
 	h.Write([]byte{cacheKeyOther})
 	writeCacheKeyString(h, scratch, fmt.Sprintf("%T", value))

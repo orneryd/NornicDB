@@ -64,7 +64,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	for _, relationshipType := range sortedStringSet(types) {
 		for _, start := range sortedStringSet(startLabels[relationshipType]) {
 			for _, end := range sortedStringSet(endLabels[relationshipType]) {
-				virtualEdges = append(virtualEdges, nativeSchemaRelationship(e.executionDatabaseName(ctx), storage.EdgeID("-" + strconv.Itoa(len(virtualNodes)+len(virtualEdges)+1)), virtualByLabel[start], virtualByLabel[end], relationshipType))
+				virtualEdges = append(virtualEdges, nativeSchemaRelationship(e.executionDatabaseName(ctx), storage.EdgeID("-"+strconv.Itoa(len(virtualNodes)+len(virtualEdges)+1)), virtualByLabel[start], virtualByLabel[end], relationshipType))
 			}
 		}
 	}

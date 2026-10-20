@@ -141,20 +141,20 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		if v == nil {
 			return false
 		}
-		if native, ok := recorder.(interface { RecordNativeEntityAccess(interface{}) }); ok {
-            native.RecordNativeEntityAccess(v)
-            return true
-        }
-        id = nativeEntityOutputID(v)
+		if native, ok := recorder.(interface{ RecordNativeEntityAccess(interface{}) }); ok {
+			native.RecordNativeEntityAccess(v)
+			return true
+		}
+		id = nativeEntityOutputID(v)
 	case *storage.Edge:
 		if v == nil {
 			return false
 		}
-		if native, ok := recorder.(interface { RecordNativeEntityAccess(interface{}) }); ok {
-            native.RecordNativeEntityAccess(v)
-            return true
-        }
-        id = nativeEntityOutputID(v)
+		if native, ok := recorder.(interface{ RecordNativeEntityAccess(interface{}) }); ok {
+			native.RecordNativeEntityAccess(v)
+			return true
+		}
+		id = nativeEntityOutputID(v)
 	case storage.RemotePathValue:
 		if _, _, valid := v.Parts(); !valid {
 			return false

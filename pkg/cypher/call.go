@@ -676,15 +676,21 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 }
 
 func (e *StorageExecutor) executeCallTailSingleRow(ctx context.Context, seedCols []string, row []interface{}, tail string, usedCols []int, expectedCols []string) (*ExecuteResult, error) {
-    values := make(map[string]interface{}, len(usedCols))
-    for _, index := range usedCols {
-        if index >= 0 && index < len(row) && index < len(seedCols) { values[seedCols[index]] = row[index] }
-    }
-    correlated := e.correlatedSubqueryExecutor(ctx, values)
-    inner, err := correlated.executeInternal(ctx, tail, getParamsFromContext(ctx))
-    if err != nil { return nil, err }
-    if len(expectedCols) > 0 && len(expectedCols) == len(inner.Columns) { inner.Columns = append([]string{}, expectedCols...) }
-    return inner, nil
+	values := make(map[string]interface{}, len(usedCols))
+	for _, index := range usedCols {
+		if index >= 0 && index < len(row) && index < len(seedCols) {
+			values[seedCols[index]] = row[index]
+		}
+	}
+	correlated := e.correlatedSubqueryExecutor(ctx, values)
+	inner, err := correlated.executeInternal(ctx, tail, getParamsFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	if len(expectedCols) > 0 && len(expectedCols) == len(inner.Columns) {
+		inner.Columns = append([]string{}, expectedCols...)
+	}
+	return inner, nil
 }
 
 func isPotentialWriteTail(tail string) bool {
@@ -842,8 +848,10 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 			continue
 		}
 		start, end, selected := nativeEdgeStorageEndpoints(store, relationship)
-        if !selected { continue }
-        startNode, err := getNode(start)
+		if !selected {
+			continue
+		}
+		startNode, err := getNode(start)
 		if err != nil || startNode == nil {
 			continue
 		}
