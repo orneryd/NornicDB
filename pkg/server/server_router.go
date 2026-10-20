@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 )
@@ -246,6 +247,13 @@ func (s *Server) registerMCPRoutes(mux *http.ServeMux) {
 
 	serveMCP := func(w http.ResponseWriter, r *http.Request) {
 		r = s.withBifrostRBAC(r)
+		ctx := s.withRequestIdentity(r.Context(), r, getClaims(r))
+		ctx = cypher.WithAuthToken(ctx, r.Header.Get("Authorization"))
+		ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(r, getClaims(r)))
+		if !s.isRBACEnforced() {
+			ctx = cypher.WithAuthenticationDisabled(ctx)
+		}
+		r = r.WithContext(ctx)
 		s.mcpServer.ServeHTTP(w, r)
 	}
 

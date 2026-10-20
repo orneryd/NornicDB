@@ -59,8 +59,9 @@ type CallToolRequest struct {
 
 // CallToolResponse returns tool execution result
 type CallToolResponse struct {
-	Content []Content `json:"content"`
-	IsError bool      `json:"isError,omitempty"`
+	Content           []Content   `json:"content"`
+	IsError           bool        `json:"isError,omitempty"`
+	StructuredContent interface{} `json:"structuredContent,omitempty"`
 }
 
 // Content represents tool response content

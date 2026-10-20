@@ -10,8 +10,8 @@ func TestGetToolDefinitions(t *testing.T) {
 
 	// Note: index/unindex tools removed - handled by the application layer.
 	// The standalone task tool is folded into tasks.
-	if len(tools) != 5 {
-		t.Errorf("Expected 5 tools, got %d", len(tools))
+	if len(tools) != 6 {
+		t.Errorf("Expected 6 tools, got %d", len(tools))
 	}
 
 	// Check all tools are present
@@ -21,6 +21,7 @@ func TestGetToolDefinitions(t *testing.T) {
 		ToolDiscover: false,
 		ToolLink:     false,
 		ToolTasks:    false,
+		ToolCypher:   false,
 	}
 
 	for _, tool := range tools {

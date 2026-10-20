@@ -472,7 +472,7 @@ func TestServer_DefaultDatabaseName_AllBranches(t *testing.T) {
 func TestIsValidToolAndAllTools(t *testing.T) {
 	tools := AllTools()
 	require.ElementsMatch(t,
-		[]string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTasks},
+		[]string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTasks, ToolCypher},
 		tools)
 	for _, name := range tools {
 		require.True(t, IsValidTool(name), "%s must be valid", name)
@@ -551,7 +551,7 @@ func itoaTest(i int) string {
 
 func TestGetToolDefinitions_ReturnsExpectedSet(t *testing.T) {
 	tools := GetToolDefinitions()
-	require.Len(t, tools, 5)
+	require.Len(t, tools, 6)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)
@@ -559,7 +559,7 @@ func TestGetToolDefinitions_ReturnsExpectedSet(t *testing.T) {
 		require.NotEmpty(t, tool.Description, "%s description must not be empty", tool.Name)
 	}
 	require.ElementsMatch(t,
-		[]string{"store", "recall", "discover", "link", "tasks"}, names)
+		[]string{"store", "recall", "discover", "link", "tasks", "cypher"}, names)
 
 	var tasksTool Tool
 	for _, tool := range tools {

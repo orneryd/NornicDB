@@ -154,10 +154,10 @@ func TestNewServer(t *testing.T) {
 	if server == nil {
 		t.Fatal("NewServer() returned nil")
 	}
-	// 5 handlers: index/unindex removed (application layer) and the standalone
+	// 6 handlers: index/unindex removed (application layer) and the standalone
 	// task tool is folded into tasks.
-	if len(server.handlers) != 5 {
-		t.Errorf("Expected 5 handlers, got %d", len(server.handlers))
+	if len(server.handlers) != 6 {
+		t.Errorf("Expected 6 handlers, got %d", len(server.handlers))
 	}
 	if _, ok := server.handlers[ToolTasks]; !ok {
 		t.Error("tasks handler must be registered")
@@ -262,8 +262,8 @@ func TestHandleListTools(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&resp)
 	// 5 tools: index/unindex removed (application layer) and the standalone
 	// task tool is folded into tasks.
-	if len(resp.Tools) != 5 {
-		t.Errorf("Expected 5 tools, got %d", len(resp.Tools))
+	if len(resp.Tools) != 6 {
+		t.Errorf("Expected 6 tools, got %d", len(resp.Tools))
 	}
 }
 

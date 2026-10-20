@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a parameterized `cypher` MCP tool for native queries and APOC/GDS/retrieval procedures, with existing database permissions, structured results, and explicit output truncation (#1600).
+
 - Regenerating or clearing embeddings can target any databases: `POST /nornicdb/embed/trigger?regenerate=true` and
   `POST /nornicdb/embed/clear` take `{"databases": [...]}` (or `?database=`), defaulting to the default database as
   before. Each named database needs write access, and an unknown, composite or `system` database rejects the request

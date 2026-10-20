@@ -868,6 +868,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err == nil && result != nil {
 		if maxResults := e.maxResults(); maxResults > 0 && int64(len(result.Rows)) > maxResults {
 			result.Rows = result.Rows[:maxResults]
+			if result.Metadata == nil {
+				result.Metadata = make(map[string]interface{})
+			}
+			result.Metadata["result_truncated"] = true
+			result.Metadata["result_limit"] = maxResults
 		}
 	}
 

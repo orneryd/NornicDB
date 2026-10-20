@@ -83,6 +83,7 @@ var toolDatabaseAccessByName = map[string]toolDatabaseAccess{
 	ToolDiscover: toolDatabaseRead,
 	ToolLink:     toolDatabaseWrite,
 	ToolTasks:    toolDatabaseRead,
+	ToolCypher:   toolDatabaseRead, // Native statement authorization decides its permissions.
 }
 
 // taskArgsMutate reports whether the tasks tool arguments request a task
@@ -293,6 +294,7 @@ func (s *Server) registerHandlers() {
 
 	// Task management and listing share one tool surface
 	s.handlers[ToolTasks] = s.handleTasks
+	s.handlers[ToolCypher] = s.handleCypher
 }
 
 // RegisterRoutes registers MCP handlers on an existing http.ServeMux.
@@ -508,6 +510,9 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		s.writeLocalizedJSONRPCError(w, r, nil, -32700, localization.MCPParseError(), err.Error())
 		return
 	}
+	if req.Params["name"] == ToolCypher {
+		req.Params["arguments"] = cypherArgumentsFromJSON(body, true)
+	}
 
 	// A URL-pinned database becomes the tool's database argument; any database
 	// in the JSON-RPC payload is ignored while the pin is active.
@@ -539,7 +544,8 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			// Wrap result in MCP content format (required by MCP spec)
 			resultJSON, _ := json.Marshal(toolResult)
 			result = CallToolResponse{
-				Content: []Content{{Type: "text", Text: string(resultJSON)}},
+				Content:           []Content{{Type: "text", Text: string(resultJSON)}},
+				StructuredContent: cypherStructuredContent(toolResult),
 			}
 		}
 	default:
@@ -612,6 +618,9 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 
 	// A URL-pinned database becomes the tool's database argument; any database
 	// in the payload is ignored while the pin is active.
+	if req.Name == ToolCypher {
+		req.Arguments = cypherArgumentsFromJSON(body, false)
+	}
 	req.Arguments, _ = pinArgumentsFromURL(r.Context(), req.Arguments)
 
 	result, err := s.doCallTool(r.Context(), map[string]interface{}{
@@ -630,7 +639,8 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	// Convert result to JSON string
 	resultJSON, _ := json.Marshal(result)
 	s.writeJSON(w, http.StatusOK, CallToolResponse{
-		Content: []Content{{Type: "text", Text: string(resultJSON)}},
+		Content:           []Content{{Type: "text", Text: string(resultJSON)}},
+		StructuredContent: cypherStructuredContent(result),
 	})
 }
 
@@ -712,15 +722,21 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		if allows == nil {
 			return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 		}
-		requirements := cypher.PermissionRequirements{Read: true, Write: accessRequirement == toolDatabaseWrite}
-		switch cypher.MissingPermission(requirements, func(permission string) bool { return allows(database, auth.Permission(permission)) }, nil) {
-		case string(auth.PermRead):
-			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
-		case string(auth.PermWrite):
-			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
+		if name == ToolCypher {
+			ctx = cypher.WithDatabasePermissionResolver(ctx, database, func(database, permission string) bool {
+				return allows(database, auth.Permission(permission))
+			})
+		} else {
+			requirements := cypher.PermissionRequirements{Read: true, Write: accessRequirement == toolDatabaseWrite}
+			switch cypher.MissingPermission(requirements, func(permission string) bool { return allows(database, auth.Permission(permission)) }, nil) {
+			case string(auth.PermRead):
+				return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
+			case string(auth.PermWrite):
+				return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
+			}
 		}
 		ctx = contextWithAuthorizedDatabase(ctx, database)
-	} else if auth.RequestDatabaseAccessModeFromContext(ctx) != nil {
+	} else if auth.RequestDatabaseAccessModeFromContext(ctx) != nil || name == ToolCypher && auth.RequestEntitlementResolverFromContext(ctx) != nil {
 		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 	} else if databaseSelection != "" {
 		ctx = ContextWithDatabase(ctx, databaseSelection)

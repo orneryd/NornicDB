@@ -111,7 +111,7 @@ func TestHandleListTools_URLPinAdvertisesPinnedDefault(t *testing.T) {
 
 	var resp ListToolsResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
-	require.Len(t, resp.Tools, 5)
+	require.Len(t, resp.Tools, 6)
 
 	var storeTool Tool
 	for _, tool := range resp.Tools {
@@ -147,7 +147,7 @@ func TestHandleMCP_JSONRPCURLPinAdvertisesPinnedDefault(t *testing.T) {
 		Result ListToolsResponse `json:"result"`
 	}
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
-	require.Len(t, response.Result.Tools, 5)
+	require.Len(t, response.Result.Tools, 6)
 	var storeTool Tool
 	for _, tool := range response.Result.Tools {
 		if tool.Name == ToolStore {

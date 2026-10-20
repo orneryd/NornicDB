@@ -45,6 +45,7 @@ func GetToolDefinitionsWithDefaultDatabase(defaultDatabase string) []Tool {
 		getDiscoverTool(defaultDatabase),
 		getLinkTool(defaultDatabase),
 		getTasksTool(defaultDatabase),
+		getCypherTool(defaultDatabase),
 	}
 }
 
@@ -373,6 +374,7 @@ const (
 	ToolDiscover = "discover"
 	ToolLink     = "link"
 	ToolTasks    = "tasks"
+	ToolCypher   = "cypher"
 )
 
 // AllTools returns all tool names
@@ -383,6 +385,7 @@ func AllTools() []string {
 		ToolDiscover,
 		ToolLink,
 		ToolTasks,
+		ToolCypher,
 	}
 }
 
