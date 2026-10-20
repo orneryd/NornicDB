@@ -8,6 +8,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func assertRelationshipAccessStorageCase(t *testing.T, e *StorageExecutor, tc relationshipAccessStorageCase) {
+	t.Helper()
+	ctx := withRelationshipSeekProfile(context.WithValue(context.Background(), profileExecutionKey{}, true))
+	actual, err := e.Execute(ctx, tc.query, tc.params)
+	require.NoError(t, err)
+	require.Equal(t, tc.rows, actual.Rows)
+	profile := ctx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
+	require.Empty(t, profile.unregistered)
+	require.Len(t, profile.templates, 1)
+	for id, site := range profile.templates {
+		access := site.access
+		operator, index, estimate := "Expand", "", int64(100)
+		switch {
+		case access.vector != nil:
+			operator, index, estimate = "RelationshipVectorIndexSeek", access.vector.index, access.vector.estimatedRows
+			require.True(t, e.LastHotPathTrace().CosineVectorIndexFastPath)
+		case access.id != nil:
+			operator, estimate = "RelationshipByIdSeek", access.id.estimatedRows
+			if access.id.kind == "elementId" { operator = "RelationshipByElementIdSeek" }
+		case len(access.alternatives) != 0:
+			require.Len(t, access.alternatives, 1)
+			operator, index, estimate = "RelationshipIndexSeek", access.alternatives[0].name, access.alternatives[0].estimatedRows
+		default:
+			require.Positive(t, profile.fallbacks[id], "runtime must record its scan choice")
+		}
+		require.Equal(t, tc.operator, operator, "runtime operator")
+		require.Equal(t, tc.index, index, "runtime index")
+		require.Equal(t, tc.estimate, estimate, "runtime estimate")
+		for _, mode := range []string{"EXPLAIN", "PROFILE"} {
+			result, err := e.Execute(context.Background(), mode+" "+tc.query, tc.params)
+			require.NoError(t, err, mode)
+			op := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, operator)
+			require.NotNil(t, op, "%s access operator", mode)
+			plannedIndex, _ := op.Arguments["index"].(string)
+			require.Equal(t, index, plannedIndex, "%s index", mode)
+			require.Equal(t, estimate, op.EstimatedRows, "%s estimate", mode)
+			if mode == "PROFILE" { require.Equal(t, actual.Rows, result.Rows) } else { require.Empty(t, result.Rows) }
+		}
+	}
+}
+
 func TestRelationshipAccessProgramOwnsRelationshipVectorRoute(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "relationship_vector_owner"))
 	for _, query := range []string{
@@ -24,49 +65,13 @@ func TestRelationshipAccessProgramOwnsRelationshipVectorRoute(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, probe.Rows)
 
-	queries := []string{
-		"MATCH ()-[e:RELATES_TO]->() WHERE e.uuid='r1' RETURN e.uuid, vector.similarity.cosine(e.fact_embedding,$q) AS score ORDER BY score DESC LIMIT 5",
-		"MATCH ()-[e:RELATES_TO]->() WHERE e.uuid='r1' WITH e, vector.similarity.cosine(e.fact_embedding,$q) AS score RETURN e.uuid, score ORDER BY score DESC LIMIT 5",
-		"MATCH ()-[e:RELATES_TO]->() WHERE e.uuid=$id RETURN e.uuid, vector.similarity.cosine(e.fact_embedding,$q) AS score ORDER BY score DESC LIMIT 5",
-		"MATCH ()-[e:RELATES_TO]->() WHERE e.uuid=$id WITH e, vector.similarity.cosine(e.fact_embedding,$q) AS score RETURN e.uuid, score ORDER BY score DESC LIMIT 5",
-	}
-	params := map[string]interface{}{"id": "r1", "q": []float64{1, 0, 0}}
-	for _, query := range queries {
-		t.Run(query, func(t *testing.T) {
-			runtimeCtx := withRelationshipSeekProfile(context.WithValue(context.Background(), profileExecutionKey{}, true))
-			actual, err := e.Execute(runtimeCtx, query, params)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{"r1", 1.0}}, actual.Rows)
-			require.True(t, e.LastHotPathTrace().CosineVectorIndexFastPath)
-			runtimeProfile := runtimeCtx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
-			require.Empty(t, runtimeProfile.unregistered)
-			require.Len(t, runtimeProfile.templates, 1)
-			for _, site := range runtimeProfile.templates {
-				require.NotNil(t, site.access.vector)
-				require.Equal(t, "relationship_vector_owner", site.access.vector.index)
-			}
-
-			var accessType string
-			for _, mode := range []string{"EXPLAIN", "PROFILE"} {
-				result, err := e.Execute(context.Background(), mode+" "+query, params)
-				require.NoError(t, err)
-				operator := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, "RelationshipVectorIndexSeek")
-				require.NotNil(t, operator, "%s must project the vector access selected by execution", mode)
-				require.Equal(t, int64(10), operator.EstimatedRows)
-				if accessType == "" {
-					accessType = operator.OperatorType
-				}
-				require.Equal(t, accessType, operator.OperatorType)
-				if mode == "PROFILE" {
-					require.Equal(t, actual.Rows, result.Rows)
-				} else {
-					require.Empty(t, result.Rows)
-				}
-			}
-		})
+	queries := relationshipAccessGeneratedVectorCases()
+	params := queries[0].params
+	for _, tc := range queries {
+		t.Run(tc.name, func(t *testing.T) { assertRelationshipAccessStorageCase(t, e, tc) })
 	}
 	t.Run("removed_vector_site", func(t *testing.T) {
-		query := queries[0]
+		query := queries[0].query
 		ctx := context.WithValue(context.Background(), relationshipAccessProgramKey{}, &relationshipAccessProgram{query: query, byID: map[string]*relationshipAccessTemplate{}})
 		ctx = withRelationshipSeekProfile(context.WithValue(ctx, profileExecutionKey{}, true))
 		actual, err := e.Execute(ctx, query, params)
@@ -97,83 +102,9 @@ func TestRelationshipAccessProgramOwnsIDAndSelectedPathRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, idResult.Rows, 1)
 
-	cases := []struct {
-		name, query, operator string
-		estimate              int64
-		params                map[string]interface{}
-		rows                  [][]interface{}
-	}{
-		{
-			name: "element_id_seed",
-			query: "MATCH ()-[r:ROUTE]->() WHERE elementId(r)=$id RETURN r.p",
-			operator: "RelationshipByElementIdSeek", estimate: 1,
-			params: map[string]interface{}{"id": idResult.Rows[0][0]}, rows: [][]interface{}{{"x"}},
-		},
-		{
-			name: "anchored_element_id_exists",
-			query: "MATCH (a:RouteNode {id:'a'}) RETURN EXISTS { MATCH (a)-[r:ROUTE]->() WHERE elementId(r)=$id }",
-			operator: "RelationshipByElementIdSeek", estimate: 1,
-			params: map[string]interface{}{"id": idResult.Rows[0][0]}, rows: [][]interface{}{{true}},
-		},
-		{
-			name: "anchored_element_id_count",
-			query: "MATCH (a:RouteNode {id:'a'}) RETURN COUNT { MATCH (a)-[r:ROUTE]->() WHERE elementId(r)=$id }",
-			operator: "RelationshipByElementIdSeek", estimate: 1,
-			params: map[string]interface{}{"id": idResult.Rows[0][0]}, rows: [][]interface{}{{int64(1)}},
-		},
-		{
-			name: "shortest_path",
-			query: "MATCH p=shortestPath((a:RouteNode {id:'a'})-[r:ROUTE*]->(c:RouteNode {id:'c'})) RETURN length(p)",
-			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
-		},
-		{
-			name: "all_shortest_paths",
-			query: "MATCH p=allShortestPaths((a:RouteNode {id:'a'})-[r:ROUTE*]->(c:RouteNode {id:'c'})) RETURN length(p)",
-			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
-		},
-		{
-			name: "shortest_path_expression",
-			query: "MATCH (a:RouteNode {id:'a'}), (c:RouteNode {id:'c'}) RETURN length(shortestPath((a)-[r:ROUTE*]->(c)))",
-			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
-		},
-		{
-			name: "selected_path",
-			query: "MATCH p = ANY SHORTEST (a:RouteNode {id:'a'})-[r:ROUTE*1..2]->(c:RouteNode {id:'c'}) RETURN length(p)",
-			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
-		},
-		{
-			name: "selected_fixed_inline_property",
-			query: "MATCH p = ANY 1 (a:RouteNode {id:'a'})-[r:ROUTE {p:'x'}]->(b:RouteNode {id:'b'}) RETURN length(p)",
-			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(1)}},
-		},
-		{
-			name: "selected_shortest_group",
-			query: "MATCH p = SHORTEST 1 GROUP (a:RouteNode {id:'a'})-[r:ROUTE*1..2]->(c:RouteNode {id:'c'}) RETURN length(p)",
-			operator: "Expand", estimate: 100, rows: [][]interface{}{{int64(2)}},
-		},
-	}
+	cases := relationshipAccessGeneratedStorageCases(idResult.Rows[0][0])
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			runtimeCtx := withRelationshipSeekProfile(context.WithValue(context.Background(), profileExecutionKey{}, true))
-			actual, err := e.Execute(runtimeCtx, tc.query, tc.params)
-			require.NoError(t, err)
-			require.Equal(t, tc.rows, actual.Rows)
-			runtimeProfile := runtimeCtx.Value(relationshipSeekProfileKey{}).(*relationshipSeekProfile)
-			require.Empty(t, runtimeProfile.unregistered)
-			require.Len(t, runtimeProfile.templates, 1)
-			for _, mode := range []string{"EXPLAIN", "PROFILE"} {
-				result, err := e.Execute(context.Background(), mode+" "+tc.query, tc.params)
-				require.NoError(t, err, mode)
-				operator := relationshipPlanOperator(result.Metadata["plan"].(*ExecutionPlan).Root, tc.operator)
-				require.NotNil(t, operator, "%s access operator", mode)
-				require.Equal(t, tc.estimate, operator.EstimatedRows, mode)
-				if mode == "PROFILE" {
-					require.Equal(t, actual.Rows, result.Rows)
-				} else {
-					require.Empty(t, result.Rows)
-				}
-			}
-		})
+		t.Run(tc.name, func(t *testing.T) { assertRelationshipAccessStorageCase(t, e, tc) })
 	}
 	t.Run("removed_element_id_site", func(t *testing.T) {
 		tc := cases[0]
@@ -193,7 +124,7 @@ func TestRelationshipAccessProgramOwnsIDAndSelectedPathRoutes(t *testing.T) {
 			rows  [][]interface{}
 		}
 		for _, tc := range cases {
-			if tc.name == "selected_path" {
+			if tc.name == "generated_selected_ANY SHORTEST_fixed_false" {
 				selected.query, selected.rows = tc.query, tc.rows
 				break
 			}
