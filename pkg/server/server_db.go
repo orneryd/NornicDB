@@ -1031,9 +1031,6 @@ type QueryStats struct {
 // contains_updates is true when any counter is non-zero.
 func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 	stats := &QueryStats{}
-	if result != nil {
-		stats.QueryType, _ = cypher.ResolvedStatementQueryType(result.Metadata)
-	}
 	if result != nil && result.Stats != nil {
 		stats.NodesCreated = result.Stats.NodesCreated
 		stats.NodesDeleted = result.Stats.NodesDeleted
@@ -1053,6 +1050,9 @@ func queryStatsFromResult(result *cypher.ExecuteResult) *QueryStats {
 		stats.LabelsRemoved > 0 || stats.IndexesAdded > 0 ||
 		stats.IndexesRemoved > 0 || stats.ConstraintsAdded > 0 ||
 		stats.ConstraintsRemoved > 0
+    if result != nil {
+        stats.QueryType = cypher.CompletedStatementQueryType(result.Metadata, stats.ContainsUpdates || stats.ContainsSystemUpdates)
+    }
 	return stats
 }
 

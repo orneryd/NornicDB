@@ -1,8 +1,9 @@
 package nestedstats
 
 // BatchFailureCases exercise errors after an earlier row has written. The
-// shipped periodic implementation returns a statement error; ON ERROR policies
-// are not supported on the release base. Neither may publish a success summary.
+// explicit transaction becomes failed after a periodic action error; autocommit
+// periodic failure rows have a separate contract. Unsupported ON ERROR policies
+// and failed explicit commits may not publish a successful statement summary.
 func BatchFailureCases() []Case {
 	cases := []Case{}
 	for _, policy := range []string{"CONTINUE", "BREAK"} {

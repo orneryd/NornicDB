@@ -1,18 +1,11 @@
 package bolt
 
-import "github.com/orneryd/nornicdb/pkg/cypher"
 
 func (stream *resultStream) resolvedQueryType() string {
-	if stream.result != nil {
-		if mode, ok := cypher.ResolvedStatementQueryType(stream.result.Metadata); ok {
-			return mode
-		}
-	}
-	var stats *QueryStats
-	if stream.result != nil {
-		stats = stream.result.Stats
-	}
-	return boltSummaryQueryType(stream.isWrite, stats)
+    if stream.result != nil {
+        return boltSummaryQueryType(stream.isWrite, stream.result.Stats, stream.result.Metadata)
+    }
+    return boltSummaryQueryType(stream.isWrite, nil)
 }
 
 func (stream *resultStream) resolvedWrite() bool {
