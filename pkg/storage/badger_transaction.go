@@ -968,7 +968,7 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	if err != nil {
 		return nil, err
 	}
-	if tx.engine.sameEmbeddingSource(oldNode, node) {
+	if canCarryManagedEmbeddings(tx.engine, oldNode, node) {
 		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
 		node.EmbedMeta = oldNode.EmbedMeta
 		if !sidecar {
@@ -996,7 +996,7 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	tx.droppedEmbeddings[node.ID] = &Node{ChunkEmbeddings: oldNode.ChunkEmbeddings, EmbedMeta: oldNode.EmbedMeta}
 	node.ChunkEmbeddings = nil
 	node.EmbedMeta = nil
-	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+	if err := tx.scanCommittedEmbeddingKeysLocked(node.ID, func(key []byte) error {
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
@@ -1031,27 +1031,18 @@ func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID
 	return -1
 }
 
-// scanCommittedKeysWithPrefixLocked calls visit with every committed key
-// under prefix, as of the transaction's snapshot. The transaction's own
+// scanCommittedEmbeddingKeysLocked visits the embedding keys of nodeID as of
+// the transaction's snapshot. The transaction's own
 // writes are buffered (pendingWrites / pendingDeletes) and reach badgerTx only
 // at commit, so the snapshot view reads the same keys as an iterator over
 // badgerTx; but a badgerTx iterator also merges badgerTx's pending writes
 // (MVCC history archives written during the transaction), which Badger
 // sorts every time an iterator opens. Deleting N nodes in one transaction
 // opened 2-3 iterators per node over up to N such writes: quadratic (#703).
-// The key passed to visit is only valid during the call.
-func (tx *BadgerTransaction) scanCommittedKeysWithPrefixLocked(prefix []byte, visit func(key []byte) error) error {
+// The callback owns each key and may retain it in the buffered write set.
+func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(nodeID NodeID, visit func(key []byte) error) error {
 	return tx.withSnapshotViewLocked(func(view *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		it := view.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			if err := visit(it.Item().Key()); err != nil {
-				return err
-			}
-		}
-		return nil
+		return visitEmbeddingKeys(view, nodeID, visit)
 	})
 }
 
@@ -1061,7 +1052,7 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 	key := nodeKey(nodeID)
 
 	// Buffer deletion of separately stored embeddings
-	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+	if err := tx.scanCommittedEmbeddingKeysLocked(nodeID, func(key []byte) error {
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
