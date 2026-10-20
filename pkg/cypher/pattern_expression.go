@@ -370,9 +370,6 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	for name, value := range parameterRowValues(ctx) {
 		bind(name, value)
 	}
-	if shape.statementContext {
-		bind(rowStatementContextKey, ctx)
-	}
 	if extended != nil {
 		values = extended
 		// A row variable, or a plain property chain on one (e.uuid),
@@ -380,6 +377,13 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// match it.
 		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 			return cypherfn.RuntimeValue(value), true
+		}
+	}
+	if shape.statementContext {
+		var contextBound bool
+		values, contextBound = rowValuesBindingStatementContext(ctx, values)
+		if contextBound {
+			defer delete(values, rowStatementContextKey)
 		}
 	}
 	if shape.isSubquery {
