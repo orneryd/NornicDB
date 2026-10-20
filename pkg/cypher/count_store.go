@@ -162,7 +162,7 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 		}
 		candidates = edges
 	} else {
-		seen := make(map[storage.EdgeID]struct{})
+		seen := make(map[graphEntityKey]struct{})
 		for _, relationshipType := range types {
 			edges, err := store.GetEdgesByType(relationshipType)
 			if err != nil {
@@ -172,10 +172,11 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 				if edge == nil {
 					continue
 				}
-				if _, exists := seen[edge.ID]; exists {
+				key := nativeGraphEntityKey(edge)
+				if _, exists := seen[key]; exists {
 					continue
 				}
-				seen[edge.ID] = struct{}{}
+				seen[key] = struct{}{}
 				candidates = append(candidates, edge)
 			}
 		}
@@ -185,8 +186,10 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 		if edge == nil {
 			continue
 		}
-		count++
-		if edge.StartNode != edge.EndNode {
+        startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+        if !selected { continue }
+        count++
+        if startID != endID {
 			count++
 		}
 	}

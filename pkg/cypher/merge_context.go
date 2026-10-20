@@ -460,8 +460,8 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		if created {
 			result.Stats.RelationshipsCreated = 1
 			countCreatedEntity(result.Stats, nil, edge.Properties)
-            e.notifyNativeEntityMutated(store, edge)
-            e.notifyNativeRelationshipEndpoints(store, edge)
+			e.notifyNativeEntityMutated(store, edge)
+			e.notifyNativeRelationshipEndpoints(store, edge)
 		}
 	}
 

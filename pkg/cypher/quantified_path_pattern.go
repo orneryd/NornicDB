@@ -277,7 +277,7 @@ type quantifiedPathState struct {
 	row           pipelineRow
 	nodes         []*storage.Node
 	relationships []*storage.Edge
-	used          map[storage.EdgeID]struct{}
+	used          map[graphEntityKey]struct{}
 	// checks are the iterations' deferred WHERE checks.
 	checks []quantifiedDeferredCheck
 }
@@ -294,7 +294,7 @@ type quantifiedDeferredCheck struct {
 func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, rows []pipelineRow, m *quantifiedPathMatch) ([]pipelineRow, error) {
 	var out []pipelineRow
 	for _, row := range rows {
-		state := quantifiedPathState{row: row, used: map[storage.EdgeID]struct{}{}}
+		state := quantifiedPathState{row: row, used: map[graphEntityKey]struct{}{}}
 		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
 			bound := done.row
 			if m.pathVariable != "" {
@@ -436,7 +436,7 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 		}
 		reused := false
 		if !repeatable {
-			next.used = make(map[storage.EdgeID]struct{}, len(state.used)+len(relationships))
+			next.used = make(map[graphEntityKey]struct{}, len(state.used)+len(relationships))
 			for id := range state.used {
 				next.used[id] = struct{}{}
 			}
@@ -444,11 +444,12 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 		for _, item := range relationships {
 			edge := item.(*storage.Edge)
 			if !repeatable {
-				if _, exists := next.used[edge.ID]; exists {
+				key := nativeGraphEntityKey(edge)
+				if _, exists := next.used[key]; exists {
 					reused = true
 					break
 				}
-				next.used[edge.ID] = struct{}{}
+				next.used[key] = struct{}{}
 			}
 			next.relationships = append(next.relationships, edge)
 		}

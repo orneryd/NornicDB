@@ -89,7 +89,7 @@ func TestPatternEdges(t *testing.T) {
 	// A pattern the selected path search can't read fails the step.
 	_, _, err = exec.parseSelectedPathMatch("(a) (b)", "p", nil, &pathSelector{}, "", nil)
 	require.Error(t, err)
-	err = exec.matchQuantifiedChain(ctx, "(a) (b)", "a", "", quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
+	err = exec.matchQuantifiedChain(ctx, "(a) (b)", "a", "", quantifiedPathState{used: map[graphEntityKey]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
 	require.Error(t, err)
 	require.False(t, parenthesisedPathAt("((a)", 0, 3))
 	require.False(t, parenthesisedPathAt("(  )", 0, 3))

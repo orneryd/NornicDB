@@ -333,7 +333,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	orTerms := splitTopLevelOrTerms(clause)
 	if len(orTerms) > 1 {
 		merged := make([]*storage.Node, 0, len(orTerms))
-		seen := make(map[storage.NodeID]struct{}, len(orTerms))
+		seen := make(map[graphEntityKey]struct{}, len(orTerms))
 		for _, raw := range orTerms {
 			term := unwrapOuterParens(strings.TrimSpace(raw))
 			if term == "" {
@@ -360,10 +360,11 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 				if node == nil {
 					continue
 				}
-				if _, ok := seen[node.ID]; ok {
+				key := nativeGraphEntityKey(node)
+				if _, ok := seen[key]; ok {
 					continue
 				}
-				seen[node.ID] = struct{}{}
+				seen[key] = struct{}{}
 				merged = append(merged, node)
 			}
 		}

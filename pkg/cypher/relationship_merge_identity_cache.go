@@ -73,9 +73,11 @@ func (c *relationshipMergeIdentityCache) created(store storage.Engine, edge *sto
 	if c == nil || edge == nil {
 		return
 	}
-    startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
-    if !selected { return }
-    for entryKey, entry := range c.entries {
+	startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+	if !selected {
+		return
+	}
+	for entryKey, entry := range c.entries {
 		if entryKey == relationshipMergeIdentityEntryKey(startID, endID, edge.Type, entry.keys) {
 			entry.add(edge)
 		}

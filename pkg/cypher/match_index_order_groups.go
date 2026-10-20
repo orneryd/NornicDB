@@ -68,7 +68,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		if cmp := e.compareNodeOrderSpecs(a, b, specs); cmp != 0 {
 			return cmp
 		}
-		return strings.Compare(string(a.ID), string(b.ID))
+		return nativeEntityOrder(a, b)
 	}
 	nodes := make([]*storage.Node, 0, limit)
 	var filter func(*storage.Node) bool

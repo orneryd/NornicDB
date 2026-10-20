@@ -319,23 +319,31 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		// The clause's nodes are already written; remove them so the clause
 		// leaves nothing behind on a route without a transaction.
 		if len(plan.nodes) > 0 {
-            ids := make([]storage.NodeID, 0, len(plan.nodes))
-            for _, node := range plan.nodes {
-                if id, selected := nativeNodeLookupID(store, node); selected { ids = append(ids, id) }
-            }
-            if len(ids) > 0 { _ = store.BulkDeleteNodes(ids) }
+			ids := make([]storage.NodeID, 0, len(plan.nodes))
+			for _, node := range plan.nodes {
+				if id, selected := nativeNodeLookupID(store, node); selected {
+					ids = append(ids, id)
+				}
+			}
+			if len(ids) > 0 {
+				_ = store.BulkDeleteNodes(ids)
+			}
 		}
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
 	for _, node := range plan.nodes {
 		e.notifyNativeEntityMutated(store, node)
-		if id, selected := nativeNodeLookupID(store, node); selected { addOptimisticNodeID(result, id) }
+		if id, selected := nativeNodeLookupID(store, node); selected {
+			addOptimisticNodeID(result, id)
+		}
 		countCreatedEntity(result.Stats, node.Labels, node.Properties)
 	}
 	result.Stats.NodesCreated += len(plan.nodes)
 	for _, edge := range plan.edges {
 		e.notifyNativeEntityMutated(store, edge)
-		if id, selected := nativeEdgeLookupID(store, edge); selected { addOptimisticRelationshipID(result, id) }
+		if id, selected := nativeEdgeLookupID(store, edge); selected {
+			addOptimisticRelationshipID(result, id)
+		}
 		countCreatedEntity(result.Stats, nil, edge.Properties)
 	}
 	result.Stats.RelationshipsCreated += len(plan.edges)

@@ -742,7 +742,9 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			if projected == nil || !matches(projected.Properties) {
 				return nil
 			}
-			node, err := e.getQueryNode(store, projected.ID)
+            id, selected := nativeNodeLookupID(store, projected)
+            if !selected { return nil }
+            node, err := e.getQueryNode(store, id)
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil
 			}

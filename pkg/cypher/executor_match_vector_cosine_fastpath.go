@@ -810,7 +810,7 @@ func (h *vectorNodeScoreHeap) Pop() any {
 
 func vectorNodeScoreBetter(left, right vectorNodeScore, orderDesc bool) bool {
 	if left.score == right.score {
-		return string(left.node.ID) < string(right.node.ID)
+		return nativeEntityOrder(left.node, right.node) < 0
 	}
 	if orderDesc {
 		return left.score > right.score
@@ -1075,7 +1075,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].score == out[j].score {
-			return string(out[i].node.ID) < string(out[j].node.ID)
+			return nativeEntityOrder(out[i].node, out[j].node) < 0
 		}
 		if orderDesc {
 			return out[i].score > out[j].score
@@ -1117,7 +1117,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresExactFiltered(ctx context.Context
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].score == out[j].score {
-			return string(out[i].node.ID) < string(out[j].node.ID)
+			return nativeEntityOrder(out[i].node, out[j].node) < 0
 		}
 		if orderDesc {
 			return out[i].score > out[j].score
@@ -1553,8 +1553,8 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 	for k := range edgeCtx {
 		delete(edgeCtx, k)
 	}
-	startID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.StartNode)
-	endID := storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, edge.EndNode)
+    startID, endID, selected := nativeEdgeStorageEndpoints(e.storage, edge)
+    if !selected { return false }
 
 	startNode, err := e.getQueryNode(e.storage, startID)
 	if err != nil || startNode == nil {

@@ -69,6 +69,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 		return nil, false, nil
 	}
 
+	identityReader, _ := e.storageFast()
 	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types[0])
 	if err != nil {
 		return nil, false, err
@@ -80,12 +81,14 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	orderSeen := make(map[storage.NodeID]struct{}, 1024)
 	orderIDs := make([]storage.NodeID, 0, 1024)
 	for _, edge := range edgeList {
-		productID := edge.EndNode
+	    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+	    if !selected { continue }
+		productID := endID
 		if _, ok := productSeen[productID]; !ok {
 			productSeen[productID] = struct{}{}
 			productIDs = append(productIDs, productID)
 		}
-		orderID := edge.StartNode
+		orderID := startID
 		if _, ok := orderSeen[orderID]; ok {
 			continue
 		}
@@ -107,13 +110,15 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 
 	revenueByProduct := make(map[storage.NodeID]float64, len(productIDs))
 	for _, edge := range edgeList {
-		productID := edge.EndNode
+	    startID, endID, selected := nativeEdgeStorageEndpoints(identityReader, edge)
+	    if !selected { continue }
+		productID := endID
 		pNode := products[productID]
 		if pNode == nil || !mergeNodeHasLabels(pNode, requiredProductLabels) {
 			continue
 		}
 		if len(requiredOrderLabels) > 0 {
-			orderNode := orders[edge.StartNode]
+			orderNode := orders[startID]
 			if orderNode == nil || !mergeNodeHasLabels(orderNode, requiredOrderLabels) {
 				continue
 			}

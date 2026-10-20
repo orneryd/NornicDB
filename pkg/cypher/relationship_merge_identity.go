@@ -124,9 +124,11 @@ func createRelationshipForMerge(
 	if err := validatePropertyValues(edge.Properties); err != nil {
 		return nil, false, err
 	}
-    startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
-    if !selected { return nil, false, storage.ErrNotFound }
-    const maxBareCreateAttempts = 3
+	startID, endID, selected := nativeEdgeStorageEndpoints(store, edge)
+	if !selected {
+		return nil, false, storage.ErrNotFound
+	}
+	const maxBareCreateAttempts = 3
 	bareAttempts := 0
 
 	for {
@@ -186,10 +188,12 @@ func selectRelationshipMergeCreateID(
 		return nil, nil
 	}
 
-    edgeID, selected := nativeEdgeLookupID(store, edge)
-    startID, endID, endpoints := nativeEdgeStorageEndpoints(store, edge)
-    if !selected || !endpoints { return nil, storage.ErrNotFound }
-    candidate, err := store.GetEdge(edgeID)
+	edgeID, selected := nativeEdgeLookupID(store, edge)
+	startID, endID, endpoints := nativeEdgeStorageEndpoints(store, edge)
+	if !selected || !endpoints {
+		return nil, storage.ErrNotFound
+	}
+	candidate, err := store.GetEdge(edgeID)
 	if err == nil {
 		if nativeRelationshipEndpointsEqual(store, candidate, edge) &&
 			relationshipMatchesMergePattern(candidate, edge.Type, matchProps) {
@@ -207,12 +211,14 @@ func selectRelationshipMergeCreateID(
 	}
 	firstOrdinal := len(edges)
 	for offset := 0; offset <= len(edges); offset++ {
-        setNativeRelationshipCandidateID(edge, deterministicRelationshipMergeEdgeID(
-            startID, endID, edge.Type, matchProps, firstOrdinal+offset,
-        ))
-        edgeID, selected = nativeEdgeLookupID(store, edge)
-        if !selected { return nil, storage.ErrNotFound }
-        candidate, err = store.GetEdge(edgeID)
+		setNativeRelationshipCandidateID(edge, deterministicRelationshipMergeEdgeID(
+			startID, endID, edge.Type, matchProps, firstOrdinal+offset,
+		))
+		edgeID, selected = nativeEdgeLookupID(store, edge)
+		if !selected {
+			return nil, storage.ErrNotFound
+		}
+		candidate, err = store.GetEdge(edgeID)
 		switch {
 		case err == storage.ErrNotFound:
 			return nil, nil
