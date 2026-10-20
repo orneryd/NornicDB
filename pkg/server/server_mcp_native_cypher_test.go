@@ -30,10 +30,15 @@ func TestMCPNativeCypherTransport(t *testing.T) {
 	require.NoError(t, server.dbManager.CreateAlias("primary", "tenant_a"))
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{"tenant_a"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", true, false))
+	_, err := authenticator.CreateUser("writer", "password123", []auth.Role{auth.RoleEditor})
+	require.NoError(t, err)
+	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "editor", []string{"tenant_a"}))
+	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "editor", "tenant_a", false, true))
 	host := httptest.NewServer(server.buildRouter())
 	t.Cleanup(host.Close)
 	admin := getAuthToken(t, authenticator, "admin")
 	reader := getAuthToken(t, authenticator, "reader")
+	writer := getAuthToken(t, authenticator, "writer")
 
 	call := func(t *testing.T, token, path string, args map[string]interface{}) mcp.CallToolResponse {
 		t.Helper()
@@ -148,13 +153,9 @@ func TestMCPNativeCypherTransport(t *testing.T) {
 	})
 
 	t.Run("write-only database privilege keeps native CREATE semantics", func(t *testing.T) {
-		require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", false, true))
-		defer func() {
-			require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", true, false))
-		}()
-		result := success(t, call(t, reader, "/mcp", map[string]interface{}{"database": "tenant_a", "query": "CREATE (:WriteOnly)"}))
+		result := success(t, call(t, writer, "/mcp", map[string]interface{}{"database": "tenant_a", "query": "CREATE (:WriteOnly)"}))
 		require.Equal(t, float64(1), result["stats"].(map[string]interface{})["nodes_created"])
-		require.True(t, call(t, reader, "/mcp", map[string]interface{}{"database": "tenant_a", "query": "MATCH (n:WriteOnly) RETURN n"}).IsError)
+		require.True(t, call(t, writer, "/mcp", map[string]interface{}{"database": "tenant_a", "query": "MATCH (n:WriteOnly) RETURN n"}).IsError)
 	})
 
 	t.Run("integer precision and numeric types", func(t *testing.T) {

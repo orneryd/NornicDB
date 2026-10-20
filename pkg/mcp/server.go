@@ -749,7 +749,7 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 }
 
 // CallTool runs an MCP tool by name with the given arguments in memory.
-// Use this to execute MCP tools (store, recall, discover, link, task, tasks) without HTTP.
+// Use this to execute MCP tools (store, recall, discover, link, tasks, cypher) without HTTP.
 // If ctx contains a database name (ContextWithDatabase), tools run against that database when
 // DatabaseScopedExecutor is configured.
 func (s *Server) CallTool(ctx context.Context, name string, arguments map[string]interface{}) (interface{}, error) {

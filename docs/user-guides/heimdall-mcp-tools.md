@@ -1,12 +1,12 @@
 # Enabling MCP Tools in the Agentic Loop
 
-When Heimdall is enabled, the Bifrost chat uses an **agentic loop**: the model can call tools (e.g. run Cypher, get status). NornicDB can also expose **MCP (Model Context Protocol) memory tools**—`store`, `recall`, `discover`, `link`, `tasks`—so the LLM can manage graph memory in process (create nodes, link them, run semantic search) without leaving the chat.
+When Heimdall is enabled, the Bifrost chat uses an **agentic loop**: the model can call tools (e.g. run Cypher, get status). NornicDB can also expose **MCP (Model Context Protocol) memory tools**—`store`, `recall`, `discover`, `link`, `tasks`, `cypher`—so the LLM can manage graph memory in process (create nodes, link them, run semantic search) without leaving the chat.
 
 These MCP tools are **disabled by default** to avoid bloating the context and to keep the assistant focused on query/status actions. This guide explains how to enable them and optionally restrict which tools are exposed via an allowlist.
 
 ## Why MCP tools are off by default
 
-- **Context size**: Each tool adds name, description, and input schema to the system prompt. With all five MCP tools plus plugin actions (e.g. `heimdall_watcher_query`), the context grows and leaves less room for conversation.
+- **Context size**: Each tool adds name, description, and input schema to the system prompt. With all six MCP tools plus plugin actions (e.g. `heimdall_watcher_query`), the context grows and leaves less room for conversation.
 - **Intent**: Many users only want “ask questions about my database”; they don’t need the assistant to create nodes or run semantic discovery from the chat.
 
 When you need **in-chat memory** (store facts, link concepts, run `discover`), enable MCP and optionally limit to the tools you use.
@@ -20,7 +20,7 @@ export NORNICDB_HEIMDALL_MCP_ENABLE=true
 ./nornicdb serve
 ```
 
-With this, the agentic loop sees all five MCP tools: `store`, `recall`, `discover`, `link`, `tasks`.
+With this, the agentic loop sees all six MCP tools: `store`, `recall`, `discover`, `link`, `tasks`, `cypher`.
 See [MCP Integration](../features/mcp-integration.md) for tool semantics and parameters.
 
 ### YAML
@@ -50,7 +50,7 @@ To reduce context and limit what the model can do, expose only a subset of tools
   export NORNICDB_HEIMDALL_MCP_TOOLS=store,recall,link
   ```
 
-Valid tool names: `store`, `recall`, `discover`, `link`, `tasks`.
+Valid tool names: `store`, `recall`, `discover`, `link`, `tasks`, `cypher`.
 
 ### YAML
 
@@ -59,7 +59,7 @@ heimdall:
   enabled: true
   mcp_enable: true
   # All tools (default when mcp_enable is true)
-  # mcp_tools: [store, recall, discover, link, tasks]
+  # mcp_tools: [store, recall, discover, link, tasks, cypher]
 
   # No tools (empty list)
   # mcp_tools: []
@@ -84,7 +84,7 @@ Precedence is the same as the rest of NornicDB: environment variables override Y
 ## How the agentic loop uses MCP tools
 
 1. User sends a message in Bifrost (e.g. “Remember that we use Postgres for the main DB and link it to the auth decision”).
-2. The model receives the system prompt plus **plugin actions** (e.g. `heimdall_watcher_query`) and, if enabled, **MCP tool definitions** (store, recall, discover, link, tasks).
+2. The model receives the system prompt plus **plugin actions** (e.g. `heimdall_watcher_query`) and, if enabled, **MCP tool definitions** (store, recall, discover, link, tasks, cypher).
 3. The model may return **tool calls** (e.g. `store`, then `link`) instead of or in addition to text.
 4. The handler executes each tool **in process** (same server, no HTTP to MCP); results are appended to the conversation and the model continues until it responds with content only.
 
