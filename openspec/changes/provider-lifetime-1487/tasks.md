@@ -21,3 +21,5 @@ Resumed at maintainer request after macOS installation work. Mandatory live dupl
 - [x] Preserve both current-release GraphQL cleanup regressions; consolidate subscription available/missing-broker assertions as explicit cases.
 
 - [x] Release held constructor/provider fixtures before DB cleanup on assertion failure, so lifecycle regressions cannot deadlock their own cleanup.
+
+- [x] Move the lifecycle implementation write-up to this OpenSpec change, retain the constructor migration note here, revert the PR's edit to the pre-existing Local GGUF plan and remove the changelog's stray list blank line.
