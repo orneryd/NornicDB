@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bound retained traversal endpoint bodies to the requested fields after canonical visibility checks.
 - Match Neo4j 5.26 vector similarity argument descriptions to their list-only signatures.
+- Reuse bound nodes in MATCH before discovering candidates, preserving bounded WITH/MATCH streaming and avoiding unnecessary scans.
 
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited

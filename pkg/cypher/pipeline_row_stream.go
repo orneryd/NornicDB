@@ -335,9 +335,13 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		valid := true
 		current := make(pipelineRow, len(templates))
 		resolved := make([]nodePatternInfo, len(templates))
-		candidates := make([][]*storage.Node, len(templates))
+		candidates := make([]struct {
+			nodes []*storage.Node
+			ready bool
+		}, len(templates))
 		completed := inputSource(func(input pipelineRow) bool {
 			clear(current)
+			clear(candidates)
 			for name, value := range input {
 				current[name] = value
 			}
@@ -356,57 +360,6 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					return false
 				}
 				resolved[index] = pattern
-				key, keyed := "", false
-				prefetchedPattern := false
-				var prefetchedBatch map[string]*storage.Node
-				if len(pattern.labels) == 1 && len(pattern.properties) == 1 {
-					prefetchedBatch, prefetchedPattern = prefetched[nodeBatchMatchKey{label: pattern.labels[0], prop: template.properties[0].key}]
-				}
-				if !prefetchedPattern {
-					key, keyed = pipelinePropertiesKey(pattern.properties)
-				}
-				cache := &caches[index]
-				nodes, cached := cache.nodes, keyed && cache.initialized && cache.key == key
-				if keyed && !cached && cache.alternatives != nil {
-					nodes, cached = cache.alternatives[key]
-				}
-				if !keyed || !cached {
-					if prefetchedPattern {
-						// The batch prefetch already index-seeked every
-						// distinct value of this UNWIND batch: the row's own
-						// value hits it directly instead of an index seek
-						// per row (see buildRelationshipBatchNodeMatchIndex).
-						value, _ := pattern.properties[template.properties[0].key]
-						if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(value))]; ok {
-							nodes = []*storage.Node{node}
-						} else {
-							nodes = nil
-						}
-					} else {
-						if !candidatesBound && len(input) > 0 {
-							candidateCtx = withValueBindings(ctx, input)
-							candidatesBound = true
-						}
-						var err error
-						nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
-						if err != nil {
-							recordExpressionFailure(ctx, err)
-							valid = false
-							return false
-						}
-						if keyed {
-							if !cache.initialized {
-								cache.key, cache.nodes, cache.initialized = key, nodes, true
-							} else {
-								if cache.alternatives == nil {
-									cache.alternatives = make(map[string][]*storage.Node)
-								}
-								cache.alternatives[key] = nodes
-							}
-						}
-					}
-				}
-				candidates[index] = nodes
 			}
 			var visit func(int) bool
 			visit = func(index int) bool {
@@ -433,7 +386,64 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					}
 					return visit(index + 1)
 				}
-				for _, node := range candidates[index] {
+				// Only unbound visits discover candidates. Earlier patterns may
+				// bind this variable or reject the row before any scan is needed.
+				if !candidates[index].ready {
+					template := templates[index]
+					key, keyed := "", false
+					prefetchedPattern := false
+					var prefetchedBatch map[string]*storage.Node
+					if len(pattern.labels) == 1 && len(pattern.properties) == 1 {
+						prefetchedBatch, prefetchedPattern = prefetched[nodeBatchMatchKey{label: pattern.labels[0], prop: template.properties[0].key}]
+					}
+					if !prefetchedPattern {
+						key, keyed = pipelinePropertiesKey(pattern.properties)
+					}
+					cache := &caches[index]
+					nodes, cached := cache.nodes, keyed && cache.initialized && cache.key == key
+					if keyed && !cached && cache.alternatives != nil {
+						nodes, cached = cache.alternatives[key]
+					}
+					if !keyed || !cached {
+						if prefetchedPattern {
+							// The batch prefetch already index-seeked every
+							// distinct value of this UNWIND batch: the row's own
+							// value hits it directly instead of an index seek
+							// per row (see buildRelationshipBatchNodeMatchIndex).
+							value, _ := pattern.properties[template.properties[0].key]
+							if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(value))]; ok {
+								nodes = []*storage.Node{node}
+							} else {
+								nodes = nil
+							}
+						} else {
+							if !candidatesBound && len(input) > 0 {
+								candidateCtx = withValueBindings(ctx, input)
+								candidatesBound = true
+							}
+							var err error
+							nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
+							if err != nil {
+								recordExpressionFailure(ctx, err)
+								valid = false
+								return false
+							}
+							if keyed {
+								if !cache.initialized {
+									cache.key, cache.nodes, cache.initialized = key, nodes, true
+								} else {
+									if cache.alternatives == nil {
+										cache.alternatives = make(map[string][]*storage.Node)
+									}
+									cache.alternatives[key] = nodes
+								}
+							}
+						}
+					}
+					candidates[index].nodes = nodes
+					candidates[index].ready = true
+				}
+				for _, node := range candidates[index].nodes {
 					if !e.pipelineNodeMatchesPattern(node, pattern) {
 						continue
 					}
