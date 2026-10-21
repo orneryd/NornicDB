@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,6 +123,24 @@ func TestPolicyHonorsAncestorHeadroom(t *testing.T) {
 	}
 	if _, err := policy.Reserve(100); !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("ancestor has only 50 bytes free: %v", err)
+	}
+}
+
+func TestPolicyHugeHeadroomCannotReopenAdmissionAboveLimit(t *testing.T) {
+	policy := NewPolicy(1024, math.MaxInt64, time.Hour, func() (Sample, error) {
+		return Sample{Used: 2048, Ceiling: 4096}, nil
+	}, time.Now)
+	if err := policy.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policy.Reserve(1); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("usage above limit with huge headroom must reject admission: %v", err)
+	}
+	if _, err := policy.ReserveWireRequest(1, 1024); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("request admission must use the same guarded capacity: %v", err)
+	}
+	if got := policy.Reserved(); got != 0 {
+		t.Fatalf("rejected reservation retained %d bytes", got)
 	}
 }
 

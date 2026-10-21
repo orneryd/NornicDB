@@ -173,8 +173,13 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	} else if !p.sample.HasHeadroom && p.sample.Ceiling > 0 && p.sample.Ceiling-observed < available {
 		available = p.sample.Ceiling - observed
 	}
+	// Headroom is nonnegative. Reject before subtraction so a very large
+	// configured reserve cannot wrap negative capacity back into admission.
+	if available <= p.headroom {
+		return nil, ErrLimitExceeded
+	}
 	available -= p.headroom
-	if available < 0 || p.reserved > available || bytes > available-p.reserved {
+	if p.reserved > available || bytes > available-p.reserved {
 		return nil, ErrLimitExceeded
 	}
 	p.reserved += bytes
