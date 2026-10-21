@@ -1538,17 +1538,17 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	// Embed endpoints: deterministic method checks + stats endpoint.
-	req := httptest.NewRequest(http.MethodGet, "/nornicdb/embed/trigger", nil)
+	req := as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/trigger", nil), "admin")
 	rec := httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
+	req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedStats(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError}, rec.Code)
@@ -1558,12 +1558,12 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusServiceUnavailable}, rec.Code)
 
-	req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil)
+	req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedClear(rec, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/clear", nil)
+	req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/clear", nil), "admin")
 	rec = httptest.NewRecorder()
 	server.handleEmbedClear(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
@@ -2192,7 +2192,7 @@ func TestEmbedTriggerAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
-	req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+	req := as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil), "admin")
 	rec := httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
@@ -3150,7 +3150,7 @@ func TestDatabaseInfoAndExecuteInTxAdditionalBranches(t *testing.T) {
 	dbName := server.dbManager.DefaultDatabaseName()
 
 	// handleDatabaseInfo not found.
-	req := httptest.NewRequest(http.MethodGet, "/db/missing", nil)
+	req := as(httptest.NewRequest(http.MethodGet, "/db/missing", nil), "admin")
 	rec := httptest.NewRecorder()
 	server.handleDatabaseInfo(rec, req, "missing")
 	assert.Equal(t, http.StatusNotFound, rec.Code)

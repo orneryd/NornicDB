@@ -2044,6 +2044,21 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextNodeID storage.NodeID) (*storage.Node, bool) {
 	nextNode := ctx.nodeCache[nextNodeID]
 	if nextNode == nil {
+		if ctx.endpointsNeedOnlyExist && !ctx.temporalViewport.Enabled() {
+			if checker, ok := e.storage.(storage.RelationshipEndpointChecker); ok {
+				if visible, answered := checker.RelationshipEndpointVisible(nextNodeID); answered {
+					if !visible {
+						return nil, false
+					}
+					if !shouldHideSystemNodes(e.storage) {
+						// The endpoint body is not exposed by this pattern.
+						nextNode = &storage.Node{ID: nextNodeID}
+						ctx.nodeCache[nextNodeID] = nextNode
+						return nextNode, true
+					}
+				}
+			}
+		}
 		var properties []string
 		if (ctx.endpointsNeedOnlyLabels || ctx.endpointsNeedOnlyExist) && !ctx.temporalViewport.Enabled() {
 			properties = []string{}
