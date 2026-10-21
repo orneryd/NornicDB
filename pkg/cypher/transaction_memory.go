@@ -287,13 +287,20 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 		return
 	}
 	tracker := tx.memory.Load()
+	database := transactionMemory.database(tx.database)
+	// The process-wide active flag also covers limits on other databases.
+	// Do not attach a tracker to a new transaction with no applicable limit;
+	// an existing tracker keeps its retained staged-write charge until it ends.
+	if tracker == nil && transactionMemory.global.limit.Load() == 0 &&
+		database.transactionMax.Load() == 0 && database.pool.limit.Load() == 0 {
+		return
+	}
 	if tracker == nil {
 		// Auto-commit statements return their tracker when they end
 		// (runningStatement.done), so tracking allocates nothing per
 		// statement.
 		tracker = transactionMemoryTrackers.Get().(*transactionMemoryTracker)
 	}
-	database := transactionMemory.database(tx.database)
 	tracker.mu.Lock()
 	tracker.database = database
 	tracker.limit = database.transactionMax.Load()

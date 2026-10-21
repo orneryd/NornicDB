@@ -112,3 +112,21 @@ latencies in microseconds/op:
 Allocation counts were unchanged in these cases. This establishes the scoped
 accounting-overflow guard's performance, not whole-server memory protection.
 The prior overlapping benchmark runs were discarded as noisy.
+
+### Limit configured only on another database
+
+`BenchmarkTransactionMemoryOtherDatabaseLimited` executes `RETURN 1 AS n`
+against the unlimited `nornic` database while `limited` has a 1 MiB
+transaction cap. The baseline uses a Go overlay of the preceding
+`transaction_memory.go`; the current run uses the corrected source. Five
+sequential 300 ms samples on the same Apple M2 Max, with CPU profiles:
+
+| Source | Mean latency | Allocations |
+| --- | ---: | ---: |
+| Prior | 4,118 ns/op | 1,721 B/op, 28 allocs/op |
+| Corrected | 4,066 ns/op | 1,721 B/op, 28 allocs/op |
+
+The 1.3% lower mean is within measurement noise. The functional regression
+test establishes that the unlimited database no longer attaches a tracker;
+this microbenchmark does not establish aggregate throughput or the cost of a
+database with its own limit enabled.
