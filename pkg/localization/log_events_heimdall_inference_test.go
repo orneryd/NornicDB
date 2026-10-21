@@ -19,7 +19,8 @@ func TestHeimdallLogEventsPreserveStableIdentityAndOpaqueFields(t *testing.T) {
 	operatorEvent := HeimdallOperatorEvent("[Bifrost] Request cancelled by %s: %s", "plugin-a", "policy")
 	require.Equal(t, EventHeimdallOperator, operatorEvent.ID)
 	require.Equal(t, "[Bifrost] Request cancelled by plugin-a: policy", operatorEvent.Message.Fallback)
-	require.Equal(t, "plugin-a", operatorEvent.Attrs[2].Value.Resolve().Any())
+	require.Equal(t, 1, len(operatorEvent.Attrs))
+	require.Equal(t, "heimdall", operatorEvent.Attrs[0].Value.String())
 }
 
 func TestInferenceLogEventsPreserveStableIdentityAndExactEnglish(t *testing.T) {
@@ -40,13 +41,14 @@ func TestInferenceLogEventsPreserveStableIdentityAndExactEnglish(t *testing.T) {
 	operatorEvent := InferenceOperatorEvent("[EDGE-DECAY] DRY-RUN: Would delete %d edges", 4)
 	require.Equal(t, EventInferenceOperator, operatorEvent.ID)
 	require.Equal(t, "[EDGE-DECAY] DRY-RUN: Would delete 4 edges", operatorEvent.Message.Fallback)
-	require.Equal(t, int64(4), operatorEvent.Attrs[2].Value.Resolve().Any())
+	require.Equal(t, 1, len(operatorEvent.Attrs))
+	require.Equal(t, "inference", operatorEvent.Attrs[0].Value.String())
 }
 
 func TestObservabilityLogEventsPreserveStableIdentityAndMachineFields(t *testing.T) {
 	event := ObservabilityInstanceIDResolvedEvent("node-7", "config")
 	require.Equal(t, EventObservabilityInstanceIDResolved, event.ID)
-	require.Equal(t, `INFO observability: service.instance.id="node-7" (resolved from config)`, event.Message.Fallback)
+	require.Equal(t, `observability: service.instance.id="node-7" (resolved from config)`, event.Message.Fallback)
 	require.Equal(t, "node-7", event.Attrs[1].Value.String())
 	require.Equal(t, "config", event.Attrs[2].Value.String())
 }

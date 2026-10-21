@@ -3,22 +3,24 @@ package observability
 import (
 	"bytes"
 	"errors"
-	"log"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestBootstrapLogEventPreservesEnglishAndAddsCanonicalAttrs(t *testing.T) {
+func TestSlogBootstrapEventOmitsLevelPrefix(t *testing.T) {
 	var output bytes.Buffer
-	logger := log.New(&output, "", 0)
+	logger := slog.New(slog.NewTextHandler(&output, nil))
 
-	logBootstrapEvent(logger, bootstrapSpanExporterInitFailed, errors.New("dial failed"))
+	logSlogBootstrapEvent(logger, bootstrapSpanExporterInitFailed, errors.New("dial failed"))
 
-	require.Equal(t,
-		"WARN observability: span exporter init failed: dial failed; installing noop tracer provider — process continues event_id=\"observability.tracing.span_exporter_init_failed\" component=\"observability\" error=\"dial failed\"\n",
-		output.String(),
-	)
+	line := output.String()
+	require.Contains(t, line, `msg="observability: span exporter init failed: dial failed; installing noop tracer provider — process continues"`)
+	require.Contains(t, line, `event_id=observability.tracing.span_exporter_init_failed`)
+	require.Contains(t, line, `component=observability`)
+	require.Contains(t, line, `error="dial failed"`)
+	require.NotContains(t, line, `msg="WARN observability`)
 }
 
 func TestBootstrapLogEventsHaveStableDescriptors(t *testing.T) {
@@ -36,7 +38,7 @@ func TestBootstrapLogEventsHaveStableDescriptors(t *testing.T) {
 	for _, test := range tests {
 		require.Equal(t, test.id, test.event.id)
 		require.Equal(t, test.level, test.event.level)
-		require.NotEmpty(t, test.event.format)
+		require.NotNil(t, test.event.message)
 		require.NotEmpty(t, test.event.attrs)
 	}
 }

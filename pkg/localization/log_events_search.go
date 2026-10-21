@@ -71,18 +71,16 @@ func SearchBM25EngineSelectedEvent(engine string) LogEvent {
 
 // SearchOperatorEvent converts a production search format string into a stable,
 // structured event while retaining its exact historical English rendering.
+// The formatted message is the single source of truth; the raw template and
+// positional arguments are intentionally NOT re-emitted as trailing attrs,
+// which previously surfaced as unprocessed "message_template" / "arg_N"
+// key-value pairs at the end of each log line.
 func SearchOperatorEvent(format string, args ...any) LogEvent {
 	message := fmt.Sprintf(format, args...)
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(format))
-	attrs := make([]slog.Attr, 0, len(args)+3)
-	attrs = append(attrs,
-		slog.String("component", "search"),
-		slog.String("message_template", format),
-	)
-	for index, arg := range args {
-		attrs = append(attrs, slog.Any(fmt.Sprintf("arg_%d", index), arg))
-	}
+	attrs := make([]slog.Attr, 0, 3)
+	attrs = append(attrs, slog.String("component", "search"))
 	if match := searchReasonToken.FindStringSubmatch(message); len(match) == 2 {
 		attrs = append(attrs, slog.String("reason", match[1]))
 	}
