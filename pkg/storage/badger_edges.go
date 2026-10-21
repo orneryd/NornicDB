@@ -22,6 +22,23 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 			return err
 		}
 	}
+	err := b.createEdgeDirect(edge)
+	if !errors.Is(err, ErrAlreadyExists) || edge == nil || edge.ID == "" {
+		return err
+	}
+	// Fresh direct creates keep their allocation-free optimized path above.
+	// Only the physical-ID conflict enters the transaction commit owner, the
+	// same owner bulk, explicit, write-behind and Cypher routes use. It alone
+	// may classify an identical stored hidden relationship as a no-op.
+	return b.inBulkTransaction(namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error {
+		return tx.CreateEdge(edge)
+	})
+}
+
+// createEdgeDirect is the optimized fresh-create path. Its only conflict
+// result is routed by CreateEdge through BadgerTransaction's single
+// hidden-edge conflict owner.
+func (b *BadgerEngine) createEdgeDirect(edge *Edge) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	release, barrierErr := b.beginWrite()

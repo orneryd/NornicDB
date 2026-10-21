@@ -728,14 +728,25 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			identities.reset()
 		}
 		patternCreated := false
+		patternNoOp := false
 		if merged != nil && merged.Stats != nil {
 			addQueryStats(stats, merged.Stats)
 			patternCreated = merged.Stats.NodesCreated > 0 || merged.Stats.RelationshipsCreated > 0
+			patternNoOp = merged.Stats.relationshipMergeNoOp
 		}
 		// The MERGE created its pattern (ON CREATE) or found it (ON MATCH).
 		actions := onMatchSet
+		actionStats := stats
 		if patternCreated {
 			actions = onCreateSet
+		} else if patternNoOp {
+			// Storage found a hidden predecessor, so ON CREATE completes the
+			// transaction-visible candidate before the commit owner decides
+			// semantic identity. The candidate stages no publication, and an
+			// identical final image reports no CREATE/SET work; a different
+			// image makes commit return a permanent client error.
+			actions = onCreateSet
+			actionStats = &QueryStats{}
 		}
 		var produced []pipelineRow
 		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext)))
@@ -764,7 +775,11 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				var matches []*storage.Edge
 				if created != nil && relationshipPattern.relVariable != "" {
 					matches = []*storage.Edge{created}
-					if onCreateSet == "" {
+					if patternNoOp {
+						// A hidden candidate is a binding for this MERGE row only,
+						// never a visible relationship match for a later row.
+						identities.reset()
+					} else if onCreateSet == "" {
 						identities.created(created)
 					} else {
 						identities.reset()
@@ -789,7 +804,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			// It can change identity values.
 			identities.reset()
 		}
-		if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
+		if err := e.applyMergeActions(ctx, produced, actions, actionStats); err != nil {
 			return nil, nil, err
 		}
 		out = append(out, produced...)

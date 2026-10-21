@@ -45,9 +45,18 @@ func (tx *BadgerTransaction) StoredEdgeImage(edge *Edge) (*Edge, error) {
 	canonical.ID = namespace.prefixEdgeID(canonical.ID)
 	canonical.StartNode = namespace.prefixNodeID(canonical.StartNode)
 	canonical.EndNode = namespace.prefixNodeID(canonical.EndNode)
-	data, err := tx.engine.encodeEdgeInTxn(tx.staged(), tx.namespace, canonical)
+	return tx.codecEdgeImageLocked(canonical)
+}
+
+// codecEdgeImageLocked returns edge, which carries physical IDs, as the
+// storage codec would commit it. Its property values take their stored
+// representation (a homogeneous list becomes a typed slice, numbers keep their
+// stored width, temporal values their stored instant), so it compares with a
+// body read from storage on equal terms.
+func (tx *BadgerTransaction) codecEdgeImageLocked(edge *Edge) (*Edge, error) {
+	data, err := tx.engine.encodeEdgeInTxn(tx.staged(), tx.namespace, edge)
 	if err != nil {
 		return nil, err
 	}
-	return tx.engine.decodeEdgeBodyByID(data, canonical.ID)
+	return tx.engine.decodeEdgeBodyByID(data, edge.ID)
 }
