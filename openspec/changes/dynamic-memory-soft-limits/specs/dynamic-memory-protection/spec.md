@@ -77,3 +77,25 @@ respect each storage route's irreversible acceptance/commit boundary.
 #### Scenario: Slow disk retains dirty pages
 - **WHEN** slow flush/fsync leaves write buffers or dirty/writeback pages resident
 - **THEN** pressure remains observable, new expensive work is limited and essential storage progress remains possible; fsync completion alone does not reset memory accounting.
+
+### Requirement: Variable feature costs are estimates with observable coverage
+The system SHALL distinguish observed total usage from component estimates and
+SHALL cover transaction work, indexes/builds/inserts, embedding workers, LLM
+inference, reranking and storage working sets without assuming fixed costs or
+attributing shared process deltas to individual operations.
+
+#### Scenario: Indexing and AI work grow while commits are rejected
+- **WHEN** index construction or insertion, embedding, reranking or inference consumes memory while new HTTP commits are rejected
+- **THEN** the same application policy governs new feature work and eligible active work; transaction rejection alone is not claimed to control total growth.
+
+#### Scenario: Fsync overlaps other allocations
+- **WHEN** fsync runs concurrently with writes, inference or GC
+- **THEN** telemetry records scoped usage, dirty/writeback observations and timing without claiming that their delta is the exact fsync allocation or that historical peaks guarantee future capacity.
+
+#### Scenario: HTTP commit endpoint encounters pressure
+- **WHEN** a `/db/{name}/tx/commit` request is rejected before execution because of application pressure
+- **THEN** it receives a structured HTTP 503 memory-pressure response promptly rather than an unbounded wait, and no transaction writes are executed.
+
+#### Scenario: Explicit HTTP commit crosses the storage boundary
+- **WHEN** `/db/{name}/tx/{id}/commit` has irreversibly accepted its writes before a pressure check
+- **THEN** it follows the actual storage/transaction completion outcome instead of reporting a fictitious rollback or applying a blanket admission error after commit.
