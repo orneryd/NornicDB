@@ -438,6 +438,12 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 			dot += next + 1
 		}
 		if endpoint := endpointPropertyNode(strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
+			// A fixed endpoint of a row relationship is stable throughout a
+			// list predicate. Hoist its property read when the loop variable
+			// is unrelated; this also preserves the per-row endpoint cache.
+			if isValidIdentifier(endpoint.argument) {
+				return bound(expr, endpoint, rowValueInfo{pure: true, refs: []string{endpoint.argument}})
+			}
 			return bound(expr, endpoint, impureRowValue())
 		}
 		base, info := c.part(strings.TrimSpace(expr[:dot]))

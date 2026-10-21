@@ -22,11 +22,10 @@ type endpointPropertyCache struct {
 	bytes  int64
 }
 
-// relationshipEndpointReader projects only AFTER the canonical query read.
-// Its transaction view owns pending writes, snapshot visibility, acknowledged
-// write-behind writes and complete policy inputs. A projected storage read is
-// not a substitute for that view. Traversal admission and scalar endpoints use
-// this same owner; only the requested values enter bounded row caches.
+// relationshipEndpointReader owns endpoint visibility and selected properties.
+// Transaction reads use the canonical query snapshot. Read-only auto-commit
+// scalar reads may use storage projection when no embedding metadata is
+// requested; a projected storage read cannot replace the transaction view.
 type relationshipEndpointReader struct {
 	executor *StorageExecutor
 	store    storage.Engine
@@ -37,6 +36,30 @@ func (e *StorageExecutor) newRelationshipEndpointReader(store storage.Engine) re
 }
 
 func (reader relationshipEndpointReader) read(id storage.NodeID, properties []string) (*storage.Node, error) {
+	// Project selected scalar properties only for auto-commit read-only
+	// statements. Transaction snapshots and embedding metadata must use the
+	// canonical query-node read to preserve visibility and sidecar state.
+	if properties != nil && reader.executor.readOnlyQueryNodes {
+		metadata := false
+		for _, property := range properties {
+			if storage.IsEmbeddingMetadataProperty(property) {
+				metadata = true
+				break
+			}
+		}
+		if !metadata {
+			if projected, ok := reader.store.(storage.ProjectedNodeReader); ok {
+				node, err := projected.GetNodeProjected(id, properties)
+				if err != nil || node == nil {
+					return node, err
+				}
+				if shouldHideSystemNodes(reader.store) && isSystemNode(node) {
+					return nil, storage.ErrNotFound
+				}
+				return node, nil
+			}
+		}
+	}
 	node, err := reader.executor.getQueryNode(reader.store, id)
 	if err != nil || node == nil {
 		return node, err
