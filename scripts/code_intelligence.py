@@ -35,6 +35,9 @@ This commit is blocked. Both reuse candidates and refactor targets require resol
    separate, migrate entry points and tests, then delete the old constructors.
    Rewriting a function does not retire its indexed implementation: only code
    actually deleted in this check-in is excluded from duplicate findings.
+   If a deleted owner is still reported, verify its declaration is removed in
+   this staged diff and absent from the staged graph; correct declaration
+   detection with a regression test. Any other live match still requires reuse.
 3. Do not leaf-patch divergent paths, mask failures, delete required behavior,
    suppress findings, lower thresholds, or bypass/disable this hook to commit.
 4. Verify the complete affected behavior with focused regression tests and the

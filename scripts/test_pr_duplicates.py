@@ -294,12 +294,18 @@ class EvaluateTests(unittest.TestCase):
 
     def test_retired_match_is_dropped_and_a_retired_near_copy_is_a_move(self):
         self.assertEqual(self.evaluate([self.hit("r")], retired={"r"}), (None, True))
-        # even with another live match, relocating a function is not a duplicate
-        self.assertEqual(self.evaluate([self.hit("r"), self.hit("a")], retired={"r"}), (None, True))
+        # A relocated function does not hide another live duplicate.
+        finding, moved = self.evaluate([self.hit("r"), self.hit("a")], retired={"r"})
+        self.assertFalse(moved)
+        self.assertEqual(finding.kind, "reuse")
+        self.assertEqual([match.hit.id for match in finding.matches], ["a"])
         # a retired function that is NOT similar is just dropped
         finding, moved = self.evaluate([self.hit("r", body=OTHER), self.hit("a")], retired={"r"})
         self.assertFalse(moved)
         self.assertEqual(finding.kind, "reuse")
+        # A retired behavior-only hit is excluded without claiming a code move.
+        finding, moved = self.evaluate(self.field(0.70), retired={"top"})
+        self.assertEqual((finding, moved), (None, False))
 
     def test_another_rewritten_symbol_is_not_an_existing_match(self):
         finding, _ = self.evaluate([self.hit("other-candidate")])
@@ -385,11 +391,6 @@ class EvaluateTests(unittest.TestCase):
         matches = pd.report_json(report)["findings"][0]["matches"]
         self.assertEqual([m["basis"] for m in matches], ["code", "behavior"])
         self.assertEqual(matches[1]["vector_similarity"], 0.70)
-
-    def test_a_retired_behavior_match_is_not_a_move(self):
-        finding, moved = self.evaluate(self.field(0.70), retired={"top"})
-        self.assertEqual((finding, moved), (None, False))
-
 
 class HttpClientTests(unittest.TestCase):
     def test_ranked_score_floor_must_be_finite_and_positive(self):
@@ -589,7 +590,34 @@ class AnalyzeTests(unittest.TestCase):
             report = self.run_analysis(server)
         finally:
             server.close()
-        self.assertEqual((report.findings, report.moved), ([], 1))
+        self.assertEqual(report.moved, 0)
+        self.assertEqual(len(report.findings), 1)
+        self.assertEqual(report.findings[0].kind, "reuse")
+        self.assertEqual([match.hit.id for match in report.findings[0].matches], ["b"])
+        # The ingested graph may predate the parent commit: the definition's
+        # staged deletion, not its old indexed line, determines retirement.
+        diff = pd.parse_diff("""diff --git a/lib/a.py b/lib/a.py
+--- a/lib/a.py
++++ b/lib/a.py
+@@ -389,2 +389,0 @@
+-def old_owner():
+-    return 1
+""")
+        db = mock.Mock()
+        db.cypher.return_value = [
+            {"id": "old", "file": "lib/a.py", "loc": "L388", "label": "old_owner()"}]
+        retired = pd.retired_ids(db, "o/r", diff, self.graph)
+        self.assertEqual(retired, {"old"})
+        db.cypher.return_value = [
+            {"id": "stale", "file": "lib/a.py", "loc": "L389", "label": "different_owner()"}]
+        self.assertEqual(pd.retired_ids(db, "o/r", diff, self.graph), set())
+        go_diff = pd.parse_diff("""diff --git a/lib/a.go b/lib/a.go
+--- a/lib/a.go
++++ b/lib/a.go
+@@ -2 +2,0 @@
+-func (o *Owner) oldOwner() error {
+""")
+        self.assertEqual(go_diff["lib/a.go"].removed_definitions, {"oldOwner"})
 
     def test_moved_definition_line_does_not_retire_live_owner(self):
         owner = Path(self.root, "app/owner.py")
