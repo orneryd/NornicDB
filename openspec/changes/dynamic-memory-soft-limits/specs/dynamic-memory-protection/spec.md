@@ -28,6 +28,26 @@ async-buffer byte gating.
 - **WHEN** `NORNICDB_MEMORY_LIMIT` is configured and no new limit is configured
 - **THEN** it affects Go GC as before and does not activate application or transaction admission.
 
+### Requirement: Bounded cost of memory protection
+The policy SHALL use cached pressure state at execution checkpoints and SHALL
+sample process/container usage outside query loops. Disabled scopes SHALL add
+no allocation per checkpoint or row. Enabled checks SHALL add no allocation
+per checkpoint or accounted growth event; reservation metadata SHALL grow with
+active owners, not with rows, allocations, or the number of checks. The release
+gate SHALL compare the same workloads and configuration on the unmodified base
+and integrated head, with disabled, permissive and restrictive limits. A
+repeatable regression greater than 5% in throughput or p50/p95 latency, or
+greater than 10% in allocated bytes or retained policy memory, SHALL block
+readiness until corrected or explicitly approved with measured justification.
+
+#### Scenario: Limits disabled
+- **WHEN** no new limit is configured and a query visits many rows or cancellation checkpoints
+- **THEN** memory protection performs no sampling and creates no per-checkpoint or per-row allocation; paired CPU and allocation profiles show no repeatable regression beyond the release gate.
+
+#### Scenario: Limits enabled
+- **WHEN** many concurrent queries repeatedly cross execution checkpoints and grow their estimates
+- **THEN** checks use cached readings, each active owner retains bounded accounting state, and paired CPU/heap profiles and throughput/latency results satisfy the release gate while limits still reject over-budget work.
+
 ### Requirement: Explicit soft-limit contract
 The system SHALL document application and transaction thresholds as cooperative
 soft limits, distinguish them from Go GC targets and container hard limits, and
