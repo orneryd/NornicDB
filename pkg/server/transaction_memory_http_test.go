@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testutil/memorypressure"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/memory"
@@ -193,6 +194,35 @@ func TestHTTPApplicationMemoryAdmissionAndRecovery(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, body.Errors)
 	require.Equal(t, int64(0), policy.Reserved())
+}
+
+func TestHTTPApplicationMemoryReclaimsCompletedWork(t *testing.T) {
+	server, client, _ := startMemoryHTTPServer(t)
+	status, body, _ := client.post("/db/nornic/tx/commit", "RETURN 1 AS ok")
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, body.Errors)
+	policy := memorypressure.New(t)
+	require.NoError(t, policy.Refresh())
+	work, err := policy.Reserve(64 << 10)
+	require.NoError(t, err)
+	memorypressure.Garbage()
+	work.Release()
+	require.NoError(t, policy.Refresh())
+	server.memoryPolicy = policy
+	status, body, _ = client.post("/db/nornic/tx/commit", "RETURN 1 AS ok")
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", body.Errors[0].Code)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ticks := time.NewTicker(25 * time.Millisecond)
+	done := make(chan struct{})
+	go func() { defer close(done); policy.Run(ctx, ticks.C) }()
+	t.Cleanup(func() { cancel(); ticks.Stop(); <-done })
+	require.Eventually(t, func() bool {
+		status, body, _, err := client.do("/db/nornic/tx/commit", "RETURN 1 AS ok")
+		return err == nil && status == http.StatusOK && len(body.Errors) == 0 && len(body.Results) == 1 && len(body.Results[0].Data) == 1
+	}, 3*time.Second, 25*time.Millisecond, "small HTTP queries must recover without manual GC")
+	require.Zero(t, policy.Reserved())
 }
 
 func TestHTTPTransactionMemoryLimit(t *testing.T) {
