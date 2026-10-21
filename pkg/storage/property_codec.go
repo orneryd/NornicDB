@@ -162,24 +162,65 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	return out, nil
 }
 
+// encodeStoredTemporalValue wraps every time.Time reachable through
+// []interface{} and map[string]interface{} values as storedTime.
 func encodeStoredTemporalValue(value any) any {
-	switch value := value.(type) {
+	converted, _ := storedTemporalValue(value)
+	return converted
+}
+
+// storedTemporalValue is encodeStoredTemporalValue that also reports whether
+// anything was wrapped. A list or map is copied only when something inside it
+// changes, so a value without temporal content is returned as it is and the
+// input is never mutated. A nil list or map counts as changed and becomes an
+// empty one: the encoded form has always been an empty collection, not nil.
+func storedTemporalValue(original any) (any, bool) {
+	switch value := original.(type) {
 	case time.Time:
-		return storedTime{value: value}
+		return storedTime{value: value}, true
 	case []interface{}:
-		result := make([]interface{}, len(value))
+		if value == nil {
+			return []interface{}{}, true
+		}
+		var result []interface{}
 		for index, item := range value {
-			result[index] = encodeStoredTemporalValue(item)
+			converted, changed := storedTemporalValue(item)
+			if changed && result == nil {
+				result = make([]interface{}, len(value))
+				copy(result, value[:index])
+			}
+			if result != nil {
+				result[index] = converted
+			}
 		}
-		return result
+		if result == nil {
+			return original, false
+		}
+		return result, true
 	case map[string]interface{}:
-		result := make(map[string]interface{}, len(value))
-		for key, item := range value {
-			result[key] = encodeStoredTemporalValue(item)
+		if value == nil {
+			return map[string]interface{}{}, true
 		}
-		return result
+		var result map[string]interface{}
+		for key, item := range value {
+			converted, changed := storedTemporalValue(item)
+			if !changed {
+				continue
+			}
+			if result == nil {
+				result = make(map[string]interface{}, len(value))
+				for k, v := range value {
+					result[k] = v
+				}
+			}
+			result[key] = converted
+		}
+		if result == nil {
+			return original, false
+		}
+		return result, true
 	default:
-		return value
+		return original, false
 	}
 }
 
