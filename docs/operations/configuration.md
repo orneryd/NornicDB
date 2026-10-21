@@ -632,6 +632,12 @@ rejection, at most once every five seconds and once per completed-work allowance
 It rechecks physical capacity before accepting work; see
 [application pressure and recovery](transaction-memory-limits.md#application-pressure-and-recovery).
 
+For embedded use, a successful `nornicdb.Open` publishes the configured
+process-wide transaction limits and defaults. A failed open leaves the limits
+of already-serving databases unchanged. The registry is process-wide: another
+successful open may configure its process defaults; per-database overrides
+remain separate.
+
 ## Vector Search Configuration
 
 ### Embedding Settings

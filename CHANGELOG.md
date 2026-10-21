@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve serving databases' process-wide transaction-memory settings when a
+  later embedded `Open` fails; publish defaults only after a successful open.
+
 - Bound upgraded GraphQL WebSocket messages by available application-policy
   capacity before JSON decoding, and admit GraphQL GET variables. Use gqlgen's
   supported adapter hook with an unconditional handler lifetime owner, including
