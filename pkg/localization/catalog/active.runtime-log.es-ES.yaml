@@ -18,7 +18,19 @@
   other: se resolvió la activación de etiquetas de inquilino
 - id: runtime.log.observability_instance_id_resolved
   description: Registro tras resolver la identidad de la instancia de servicio.
-  other: 'INFO observability: service.instance.id={{printf "%q" .InstanceID}} (resuelto desde {{.Source}})'
+  other: 'observability: service.instance.id={{printf "%q" .InstanceID}} (resuelto desde {{.Source}})'
+- id: runtime.log.observability_otlp_plaintext_rejected
+  description: Aviso de arranque cuando el endpoint OTLP está en texto plano sin modo inseguro.
+  other: 'observability: el endpoint OTLP {{printf "%q" .Endpoint}} está en texto plano pero NORNICDB_OTLP_INSECURE no está definido; instalando un proveedor de trazas noop (TRC-09)'
+- id: runtime.log.observability_span_exporter_init_failed
+  description: Aviso de arranque cuando falla la inicialización del exportador de spans OTLP.
+  other: 'observability: falló la inicialización del exportador de spans: {{.Error}}; instalando un proveedor de trazas noop — el proceso continúa'
+- id: runtime.log.observability_sampler_mode_invalid
+  description: Aviso de arranque cuando el modo del muestreador de trazas no es válido.
+  other: 'observability: {{.Error}}; volviendo al modo de muestreo predeterminado (TRC-05)'
+- id: runtime.log.observability_parent_strict_unbounded
+  description: Aviso de arranque de que el muestreador parent_strict no está acotado.
+  other: 'observability: el muestreador parent_strict respeta las decisiones previas incondicionalmente; el volumen de trazas no está acotado (TRC-07)'
 - id: runtime.log.observability_operator
   description: Registro dinámico canónico del arranque de observabilidad.
   other: "{{.Message}}"

@@ -45,9 +45,13 @@ func TestSearchOperatorEventStableIdentityAndStructuredArgs(t *testing.T) {
 
 	require.Equal(t, first.ID, second.ID)
 	require.Equal(t, "build failed after 3 batches: backend unavailable reason=backend_error", first.Message.Fallback)
+	require.Equal(t, "search", logEventAttr(first, "component").Value.String())
 	require.Equal(t, "backend_error", logEventAttr(first, "reason").Value.String())
-	require.Equal(t, int64(3), logEventAttr(first, "arg_0").Value.Int64())
-	require.Equal(t, cause, logEventAttr(first, "arg_1").Value.Any())
+	// The raw template and positional arguments must not be re-emitted as
+	// trailing attrs; they previously surfaced unprocessed at the end of lines.
+	require.Equal(t, slog.Attr{}, logEventAttr(first, "message_template"))
+	require.Equal(t, slog.Attr{}, logEventAttr(first, "arg_0"))
+	require.Equal(t, slog.Attr{}, logEventAttr(first, "arg_1"))
 }
 
 func TestSearchLogCatalogsAreComplete(t *testing.T) {
