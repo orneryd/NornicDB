@@ -66,3 +66,29 @@ func TestBoltResultReservationLivesUntilPullOrReset(t *testing.T) {
 	require.NoError(t, session.handleReset(nil))
 	require.Zero(t, policy.Reserved(), "RESET must release an abandoned result")
 }
+
+func TestBoltOutOfOrderExplicitPullReleasesOnlyItsResult(t *testing.T) {
+	policy := memory.NewPolicy(100<<20, 0, time.Second, func() (memory.Sample, error) {
+		return memory.Sample{Used: 1 << 20, Ceiling: 1 << 30}, nil
+	}, time.Now)
+	require.NoError(t, policy.Refresh())
+	first, err := policy.Reserve(100)
+	require.NoError(t, err)
+	second, err := policy.Reserve(200)
+	require.NoError(t, err)
+	session := newTestSession(&mockConn{}, &mockExecutor{})
+	session.inTransaction = true
+	session.latestStatementID = 1
+	session.lastResult = &QueryResult{Rows: [][]any{{int64(2)}}}
+	session.lastResultMemoryLease = second
+	session.resultStreams = map[int64]*resultStream{
+		0: {result: &QueryResult{Rows: [][]any{{int64(1)}}}},
+		1: {result: session.lastResult},
+	}
+	session.resultMemoryLeases = map[int64]*memory.Lease{0: first, 1: second}
+
+	require.NoError(t, session.handlePull(encodePackStreamMap(map[string]any{"qid": int64(0)})))
+	require.EqualValues(t, 200, policy.Reserved(), "newer statement must retain its rows")
+	require.NoError(t, session.handlePull(encodePackStreamMap(map[string]any{"qid": int64(1)})))
+	require.Zero(t, policy.Reserved())
+}
