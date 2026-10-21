@@ -81,3 +81,11 @@ func (r *algorithmRelationshipReader) GetOutgoingEdges(id storage.NodeID) ([]*st
 func (r *algorithmRelationshipReader) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
 	return r.selectEdges(r.Engine.GetIncomingEdges(id))
 }
+
+// SubscribeEvents preserves storage event delivery through the relationship
+// filter. Algorithm reads filter adjacency only; storage events remain intact.
+func (r *algorithmRelationshipReader) SubscribeEvents(handlers storage.EventHandlers) error {
+	return storage.SubscribeEvents(r.Engine, handlers)
+}
+
+var _ storage.EventSubscriber = (*algorithmRelationshipReader)(nil)
