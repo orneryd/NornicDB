@@ -120,6 +120,13 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.labelDeltas = tx.pendingLabelCountDeltas
 	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
 	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
+	// The overlay serves these bodies to every reader until the flush lands
+	// them, so they enter it as the image storage returns (as the synchronous
+	// commit publishes them).
+	if err := tx.engine.storeWrittenBodies(c.writes, c.ops); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 
 	// Durability boundary: write the commit's full payload to the WAL and
 	// push it to the kernel page cache BEFORE acknowledging. If the process

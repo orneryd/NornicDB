@@ -95,11 +95,19 @@ func ToFloat64(v interface{}) (float64, bool) {
 		return float64(val), true
 	case int32:
 		return float64(val), true
+	case int16:
+		return float64(val), true
+	case int8:
+		return float64(val), true
 	case uint:
 		return float64(val), true
 	case uint64:
 		return float64(val), true
 	case uint32:
+		return float64(val), true
+	case uint16:
+		return float64(val), true
+	case uint8:
 		return float64(val), true
 	case string:
 		// Use strconv.ParseFloat - handles scientific notation, NaN, Inf
@@ -115,8 +123,8 @@ func ToFloat64(v interface{}) (float64, bool) {
 //
 // Supported types:
 //   - int64 (returned as-is)
-//   - int, int32 (converted)
-//   - uint, uint32, uint64 (converted, may overflow for large uint64)
+//   - int, int32, int16, int8 (converted)
+//   - uint, uint32, uint16, uint8, uint64 (converted, may overflow for large uint64)
 //   - float64, float32 (truncated toward zero)
 //   - string (parsed as integer)
 //
@@ -139,9 +147,17 @@ func ToInt64(v interface{}) (int64, bool) {
 		return int64(val), true
 	case int32:
 		return int64(val), true
+	case int16:
+		return int64(val), true
+	case int8:
+		return int64(val), true
 	case uint:
 		return int64(val), true
 	case uint32:
+		return int64(val), true
+	case uint16:
+		return int64(val), true
+	case uint8:
 		return int64(val), true
 	case uint64:
 		return int64(val), true

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -244,36 +245,22 @@ func readCollectionMeta(engine storage.Engine) (*CollectionMeta, error) {
 		return nil, ErrInvalidCollection
 	}
 
-	dims := 0
-	switch v := node.Properties["dimensions"].(type) {
-	case float64:
-		dims = int(v)
-	case int:
-		dims = v
-	case int64:
-		dims = int(v)
-	}
-	if dims <= 0 {
+	// Stored numbers come back as whichever integer type fits them (int8 for 4
+	// dimensions) once the node is decoded from disk, so read them as integers
+	// of any type.
+	dims, ok := convert.ToInt64(node.Properties["dimensions"])
+	if !ok || dims <= 0 {
 		return nil, ErrInvalidCollection
 	}
 
-	var distance qpb.Distance
-	switch v := node.Properties["distance"].(type) {
-	case float64:
+	distance := qpb.Distance_Cosine
+	if v, ok := convert.ToInt64(node.Properties["distance"]); ok {
 		distance = qpb.Distance(int32(v))
-	case int:
-		distance = qpb.Distance(int32(v))
-	case int64:
-		distance = qpb.Distance(int32(v))
-	case int32:
-		distance = qpb.Distance(v)
-	default:
-		distance = qpb.Distance_Cosine
 	}
 
 	return &CollectionMeta{
 		Name:       "", // Name is the database name (known by caller); keep empty here.
-		Dimensions: dims,
+		Dimensions: int(dims),
 		Distance:   distance,
 		Status:     qpb.CollectionStatus_Green,
 	}, nil

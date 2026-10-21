@@ -22,6 +22,23 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 			return err
 		}
 	}
+	err := b.createEdgeDirect(edge)
+	if !errors.Is(err, ErrAlreadyExists) || edge == nil || edge.ID == "" {
+		return err
+	}
+	// Fresh direct creates keep their allocation-free optimized path above.
+	// Only the physical-ID conflict enters the transaction commit owner, the
+	// same owner bulk, explicit, write-behind and Cypher routes use. It alone
+	// may classify an identical stored hidden relationship as a no-op.
+	return b.inBulkTransaction(namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error {
+		return tx.CreateEdge(edge)
+	})
+}
+
+// createEdgeDirect is the optimized fresh-create path. Its only conflict
+// result is routed by CreateEdge through BadgerTransaction's single
+// hidden-edge conflict owner.
+func (b *BadgerEngine) createEdgeDirect(edge *Edge) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	notification, release, barrierErr := b.beginNotifyingWrite()
@@ -96,6 +113,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return ErrAlreadyExists
 	}
 
+	var image *Edge
 	err = b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
@@ -115,6 +133,9 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 			return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 		}
 		if err := txn.Set(edgeKey(edge.ID), data); err != nil {
+			return err
+		}
+		if image, err = b.writtenEdgeImage(data, edge); err != nil {
 			return err
 		}
 		outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
@@ -175,10 +196,10 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
-		b.cacheOnEdgeCreated(edge)
+		b.cacheOnEdgeCreated(image)
 
 		// Notify listeners (e.g., graph analyzers) about the new edge
-		notification.ops = []Operation{{Type: OpCreateEdge, Edge: edge}}
+		notification.ops = []Operation{{Type: OpCreateEdge, Edge: image}}
 	}
 
 	return err
@@ -245,9 +266,9 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		edge = nil
 		if w != nil {
-			state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+			state := b.bufferedEntity(w, v, bufferedEdgeEntity, string(id))
 			if state.found {
-				if state.deleted || b.hidesEdge(v, state.edge, DecayScoringTime()) {
+				if state.deleted {
 					return true, ErrNotFound
 				}
 				edge = copyEdge(state.edge)
@@ -258,9 +279,9 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 		// The adjacency body cache cannot establish record presence.
 		return false, nil
 	}
-	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedEdgeEntity, string(id)) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { state = b.bufferedEntity(w, v, bufferedEdgeEntity, string(id)) }, func(txn *badger.Txn) error {
 		if state.found {
-			if state.deleted || b.hidesEdge(v, state.edge, DecayScoringTime()) {
+			if state.deleted {
 				return ErrNotFound
 			}
 			edge = copyEdge(state.edge)
@@ -311,6 +332,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	defer releaseConstraint()
 
 	var oldType string
+	var image *Edge
 	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
@@ -444,6 +466,9 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		if err != nil {
 			return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 		}
+		if image, err = b.writtenEdgeImage(data, edge); err != nil {
+			return err
+		}
 
 		// Positional (label, type) counters move with type or endpoint changes.
 		if existing.Type != edge.Type || existing.StartNode != edge.StartNode || existing.EndNode != edge.EndNode {
@@ -497,8 +522,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 	// Notify listeners on successful update
 	if err == nil {
-		b.cacheOnEdgeUpdated(oldType, edge)
-		notification.ops = []Operation{{Type: OpUpdateEdge, Edge: edge}}
+		b.cacheOnEdgeUpdated(oldType, image)
+		notification.ops = []Operation{{Type: OpUpdateEdge, Edge: image}}
 	}
 
 	return err

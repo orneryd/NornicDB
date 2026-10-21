@@ -45,7 +45,9 @@ import (
 type NamespacedEngine struct {
 	inner     Engine
 	namespace string
-	separator string // Default ":"
+	// scope is the namespace's ID prefix, namespace + ":", fixed at
+	// construction so prefix checks and count reads need not build it.
+	scope string
 
 	// log is the structured *slog.Logger for namespace-scoped emissions.
 	// Resolved lazily: if the inner engine implements StructuredLogger
@@ -101,7 +103,7 @@ func NewNamespacedEngine(inner Engine, namespace string) *NamespacedEngine {
 	return &NamespacedEngine{
 		inner:     inner,
 		namespace: namespace,
-		separator: ":",
+		scope:     namespace + ":",
 	}
 }
 
@@ -122,13 +124,13 @@ func (n *NamespacedEngine) prefixNodeID(id NodeID) NodeID {
 	if n.hasNodePrefix(id) {
 		return id
 	}
-	return NodeID(n.namespace + n.separator + string(id))
+	return NodeID(n.scope + string(id))
 }
 
 // unprefixNodeID removes namespace prefix from a node ID.
 // "tenant_a:123" → "123"
 func (n *NamespacedEngine) unprefixNodeID(id NodeID) NodeID {
-	prefix := n.namespace + n.separator
+	prefix := n.scope
 	s := string(id)
 	if strings.HasPrefix(s, prefix) {
 		return NodeID(s[len(prefix):])
@@ -141,12 +143,12 @@ func (n *NamespacedEngine) prefixEdgeID(id EdgeID) EdgeID {
 	if n.hasEdgePrefix(id) {
 		return id
 	}
-	return EdgeID(n.namespace + n.separator + string(id))
+	return EdgeID(n.scope + string(id))
 }
 
 // unprefixEdgeID removes namespace prefix from an edge ID.
 func (n *NamespacedEngine) unprefixEdgeID(id EdgeID) EdgeID {
-	prefix := n.namespace + n.separator
+	prefix := n.scope
 	s := string(id)
 	if strings.HasPrefix(s, prefix) {
 		return EdgeID(s[len(prefix):])
@@ -157,16 +159,16 @@ func (n *NamespacedEngine) unprefixEdgeID(id EdgeID) EdgeID {
 // nodeScope is this namespace's node ID prefix, the scope of its label reads
 // (ScopedLabelNodeReader).
 func (n *NamespacedEngine) nodeScope() string {
-	return n.namespace + n.separator
+	return n.scope
 }
 
 // hasNodePrefix checks if an ID belongs to this namespace.
 func (n *NamespacedEngine) hasNodePrefix(id NodeID) bool {
-	return strings.HasPrefix(string(id), n.namespace+n.separator)
+	return strings.HasPrefix(string(id), n.scope)
 }
 
 func (n *NamespacedEngine) hasEdgePrefix(id EdgeID) bool {
-	return strings.HasPrefix(string(id), n.namespace+n.separator)
+	return strings.HasPrefix(string(id), n.scope)
 }
 
 // toUserNode returns a node with the namespace prefix stripped from its ID.
@@ -1109,7 +1111,7 @@ func (n *NamespacedEngine) NodeCount() (int64, error) {
 	// Prefer a prefix-scoped count from the inner engine to keep COUNT fast
 	// in multi-database deployments.
 	if stats, ok := n.inner.(PrefixStatsEngine); ok {
-		return stats.NodeCountByPrefix(n.namespace + n.separator)
+		return stats.NodeCountByPrefix(n.scope)
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
@@ -1178,7 +1180,7 @@ func (n *NamespacedEngine) NodeCountByLabel(label string) (int64, error) {
 func (n *NamespacedEngine) EdgeCount() (int64, error) {
 	// Prefer a prefix-scoped count from the inner engine.
 	if stats, ok := n.inner.(PrefixStatsEngine); ok {
-		return stats.EdgeCountByPrefix(n.namespace + n.separator)
+		return stats.EdgeCountByPrefix(n.scope)
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
@@ -1248,7 +1250,7 @@ func (n *NamespacedEngine) StreamNodesWithOptions(ctx context.Context, opts Stre
 		return ErrInvalidData
 	}
 	physicalOpts := opts
-	physicalOpts.Prefix = n.namespace + n.separator + opts.Prefix
+	physicalOpts.Prefix = n.scope + opts.Prefix
 	return n.inner.StreamNodesWithOptions(ctx, physicalOpts, func(node *Node) error {
 		return fn(n.toUserNode(node))
 	})
@@ -1347,7 +1349,7 @@ func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, 
 func (n *NamespacedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	// Scope the deletion to this namespace by translating the user prefix into
 	// the stored namespace-prefixed form, then delegate.
-	return n.inner.DeleteByPrefix(n.namespace + n.separator + prefix)
+	return n.inner.DeleteByPrefix(n.scope + prefix)
 }
 
 // FindNodeNeedingEmbedding finds a node that needs embedding, but only from this namespace.

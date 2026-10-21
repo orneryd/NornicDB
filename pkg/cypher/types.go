@@ -30,6 +30,14 @@ type QueryStats struct {
 	IndexesRemoved     int `json:"indexes_removed"`
 	ConstraintsAdded   int `json:"constraints_added"`
 	ConstraintsRemoved int `json:"constraints_removed"`
+
+	// relationshipMergeNoOp is not a statistic. It carries a stored hidden
+	// relationship's provisional no-op candidate from the relationship MERGE
+	// to the pipeline, which applies ON CREATE to finish the candidate image;
+	// commit alone decides identical no-op versus permanent conflict. It lives
+	// here because QueryStats has room in its size class and ExecuteResult
+	// does not. addQueryStats never merges it and JSON never encodes it.
+	relationshipMergeNoOp bool
 }
 
 // nodePatternInfo holds parsed node pattern information

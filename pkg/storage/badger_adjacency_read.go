@@ -21,13 +21,13 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 		if wantOut {
 			out.ids, out.hit = b.adjCacheLoadOutgoing(nodeID)
 			if w != nil {
-				out.live, out.suppressed, out.deleted = w.edgeAdjacencyOverlayLocked(nodeID, true)
+				out.live, out.suppressed, out.deleted = b.bufferedAdjacency(w, v, nodeID, true)
 			}
 		}
 		if wantIn {
 			in.ids, in.hit = b.adjCacheLoadIncoming(nodeID)
 			if w != nil {
-				in.live, in.suppressed, in.deleted = w.edgeAdjacencyOverlayLocked(nodeID, false)
+				in.live, in.suppressed, in.deleted = b.bufferedAdjacency(w, v, nodeID, false)
 			}
 		}
 	}
@@ -86,9 +86,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 				edges = visible
 			}
 			for _, edge := range d.live {
-				if !b.hidesEdge(v, edge, DecayScoringTime()) {
-					edges = append(edges, copyEdge(edge))
-				}
+				edges = append(edges, copyEdge(edge))
 			}
 			return edges, nil
 		}
@@ -121,7 +119,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	if !outHit || !inHit {
 		return nil, nil, false
 	}
-	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id)).deleted {
+	if w != nil && b.bufferedEntity(w, storedRead, bufferedNodeEntity, string(id)).deleted {
 		return nil, nil, true
 	}
 	b.edgeCacheMu.RLock()
@@ -130,14 +128,14 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
 		var live []*Edge
 		if w != nil {
-			live = w.liveAdjacencyLocked(id, outgoing)
+			live = b.bufferedLiveAdjacency(w, v, id, outgoing)
 		}
 		if len(ids) == 0 && len(live) == 0 {
 			return nil, true
 		}
 		result := make([]*Edge, 0, len(ids)+len(live))
 		for _, edgeID := range ids {
-			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID)).found {
+			if w != nil && b.bufferedEntity(w, storedRead, bufferedEdgeEntity, string(edgeID)).found {
 				continue
 			}
 			edge := b.edgeCache[edgeID]
@@ -149,9 +147,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 			}
 		}
 		for _, edge := range live {
-			if !b.hidesEdge(v, edge, now) {
-				result = append(result, copyEdge(edge))
-			}
+			result = append(result, copyEdge(edge))
 		}
 		return result, true
 	}

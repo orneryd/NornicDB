@@ -287,7 +287,7 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	}
 	var state bufferedEntityState
 	var meta map[string]any
-	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { state = b.bufferedEntity(w, storedRead, bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
 		if state.found {
 			if state.deleted {
 				return ErrNotFound

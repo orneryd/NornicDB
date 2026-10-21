@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -122,23 +121,9 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 		if !ok {
 			continue
 		}
-		var unitPrice float64
-		switch v := unitPriceRaw.(type) {
-		case float64:
-			unitPrice = v
-		case float32:
-			unitPrice = float64(v)
-		case int:
-			unitPrice = float64(v)
-		case int64:
-			unitPrice = float64(v)
-		case string:
-			if f, err := strconv.ParseFloat(v, 64); err == nil {
-				unitPrice = f
-			} else {
-				continue
-			}
-		default:
+		// Any numeric width (stored values keep the codec's), or a numeric string.
+		unitPrice, ok := toFloat64(unitPriceRaw)
+		if !ok {
 			continue
 		}
 
@@ -146,17 +131,11 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 		if !ok {
 			continue
 		}
-		var qty float64
-		switch v := qtyRaw.(type) {
-		case float64:
-			qty = v
-		case float32:
-			qty = float64(v)
-		case int:
-			qty = float64(v)
-		case int64:
-			qty = float64(v)
-		default:
+		if _, text := qtyRaw.(string); text {
+			continue
+		}
+		qty, ok := toFloat64(qtyRaw)
+		if !ok {
 			continue
 		}
 

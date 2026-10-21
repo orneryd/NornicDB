@@ -3,6 +3,7 @@ package cypher
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
@@ -124,8 +125,8 @@ func createRelationshipForMerge(
 	if err := validatePropertyValues(edge.Properties); err != nil {
 		return nil, false, err
 	}
-	const maxBareCreateAttempts = 3
-	bareAttempts := 0
+	const maxCreateAttempts = 3
+	createAttempts := 0
 
 	for {
 		nonReflexiveIdentity := relationshipMergeIdentityContainsNaN(matchProps)
@@ -139,7 +140,11 @@ func createRelationshipForMerge(
 			}
 		}
 		if err := store.CreateEdge(edge); err != nil {
-			if err != storage.ErrAlreadyExists {
+			var hiddenConflict *storage.HiddenEdgeIdentityConflictError
+			if errors.As(err, &hiddenConflict) {
+				return nil, false, err
+			}
+			if !errors.Is(err, storage.ErrAlreadyExists) {
 				return nil, false, err
 			}
 			existing, lookupErr := findRelationshipForMerge(
@@ -155,17 +160,19 @@ func createRelationshipForMerge(
 			if existing != nil {
 				return existing, false, nil
 			}
-
-			if len(matchProps) == 0 || nonReflexiveIdentity {
-				bareAttempts++
-				if bareAttempts >= maxBareCreateAttempts {
-					return nil, false, localizedError(localization.CypherMergeRelationshipCreateCollisions(maxBareCreateAttempts), nil)
-				}
-				edge.ID = storage.EdgeID(e.generateID())
-				continue
+			createAttempts++
+			if createAttempts >= maxCreateAttempts {
+				return nil, false, localizedError(localization.CypherMergeRelationshipCreateCollisions(maxCreateAttempts), nil)
 			}
-
+			if len(matchProps) == 0 || nonReflexiveIdentity {
+				edge.ID = storage.EdgeID(e.generateID())
+			}
 			continue
+		}
+		if reporter, ok := store.(interface {
+			EdgeCreateWasNoOp(storage.EdgeID) bool
+		}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+			return edge, false, nil
 		}
 		return edge, true, nil
 	}
