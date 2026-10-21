@@ -99,3 +99,28 @@ attributing shared process deltas to individual operations.
 #### Scenario: Explicit HTTP commit crosses the storage boundary
 - **WHEN** `/db/{name}/tx/{id}/commit` has irreversibly accepted its writes before a pressure check
 - **THEN** it follows the actual storage/transaction completion outcome instead of reporting a fictitious rollback or applying a blanket admission error after commit.
+
+### Requirement: Budget ownership spans input through final consumption
+The system SHALL apply application admission before expensive request decoding and
+parser work, preserve transaction accounting across statements, and transfer result
+and buffered-write charges without a gap until their actual owner releases them.
+
+#### Scenario: Statement fails while its explicit transaction retains writes
+- **WHEN** memory pressure fails a statement whose session still owns staged writes
+- **THEN** cleanup is serialized with active execution and terminal operations, retained memory stays charged until released, and subsequent transaction control preserves the original failure rather than committing those writes.
+
+#### Scenario: Slow client retains output
+- **WHEN** execution finishes but result rows remain queued or partially consumed
+- **THEN** result ownership retains its charge until consumption/discard/disconnect cleanup; execution completion alone does not release it.
+
+### Requirement: Accepted write completion has protected finite capacity
+The system SHALL obtain bounded completion capacity before entering storage acceptance
+and SHALL preserve replayable WAL and large-commit publication/rollback contracts.
+
+#### Scenario: Pressure after replayable WAL append
+- **WHEN** a buffered commit has successfully appended its replayable WAL record but has not yet published its buffer entry
+- **THEN** the accepted write completes its publication and ownership transfer without a new memory cancellation falsely reporting rollback.
+
+#### Scenario: Completion pool is exhausted
+- **WHEN** a still-abortable transaction cannot reserve completion capacity
+- **THEN** it fails before storage acceptance with the appropriate pool error, without holding locks needed by flush or rollback to release capacity.
