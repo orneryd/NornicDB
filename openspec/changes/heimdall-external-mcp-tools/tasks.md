@@ -10,3 +10,8 @@
 
 The user authorized submitting the PR if validation cannot run. Unexecuted or
 blocked checks must be identified in the PR; they are not passes.
+
+- [x] Move native generators into the host-only `pkg/heimdall/local` adapter.
+- [x] Initialize configured plugins when the harness is disabled or inference startup fails.
+- [x] Compile a real plugin without local native libraries and load it in a nolocalllm host with the harness disabled.
+- [ ] Verify native inference with the local adapter (native library unavailable here).

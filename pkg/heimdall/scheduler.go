@@ -124,7 +124,7 @@ type GeneratorLoader func(modelPath string, gpuLayers, contextSize, batchSize, l
 
 // DefaultGeneratorLoader is the default loader (stub without CGO).
 var DefaultGeneratorLoader GeneratorLoader = func(modelPath string, gpuLayers, contextSize, batchSize, lazyMode int) (Generator, error) {
-	return nil, fmt.Errorf("SLM generation requires CGO build with localllm tag")
+	return nil, fmt.Errorf("local inference backend unavailable; the host must import pkg/heimdall/local and include local inference support")
 }
 
 // generatorLoader is the active loader function.

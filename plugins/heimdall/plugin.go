@@ -33,6 +33,8 @@
 // # Built-in Registration
 //
 // This plugin is also registered as a built-in plugin, so no .so file is needed.
+// Import pkg/heimdall for the plugin contract; local inference is a host adapter.
+// Plugins load with Heimdall disabled and require no localllm dependency.
 // ActionFunc.External is opt-in public MCP exposure (external: true).
 // The default watcher examples remain internal (External defaults to false).
 // External actions keep their HeimdallInvoker and can use SendPrompt for inference.

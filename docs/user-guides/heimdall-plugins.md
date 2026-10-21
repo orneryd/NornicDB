@@ -389,7 +389,7 @@ func (p *MyPlugin) handleDetect(ctx heimdall.ActionContext) (*heimdall.ActionRes
 cd plugins/myplugin
 go build -buildmode=plugin -o myplugin.so .
 
-# Remote-provider-only Heimdall build (no local GGUF/localllm dependency)
+# Optional: same Heimdall-only plugin, also independent of local GGUF/localllm
 go build -tags nolocalllm -buildmode=plugin -o myplugin.so .
 
 # Deploy
@@ -401,10 +401,16 @@ cp myplugin.so $NORNICDB_HEIMDALL_PLUGINS_DIR/
 
 - Must export `var Plugin heimdall.HeimdallPlugin = &YourType{}`
 - Built with same Go version as NornicDB
-- Same CGO settings (important for llama.cpp)
-- Same build tags as the NornicDB binary
+- Same CGO settings and architecture (Go shared-package ABI requirement)
+- Compatible build settings for shared dependencies
 
-If your host binary uses Heimdall only through remote providers like Ollama or OpenAI, you can build both the host binary and Heimdall plugins with `-tags nolocalllm` to avoid linking the local GGUF generator.
+Heimdall-only plugins import `pkg/heimdall`, which has no `localllm` dependency.
+They build without native llama.cpp libraries, and the same plugin can load in a
+host built with or without `-tags nolocalllm`. Plugins that separately import
+`localllm` or other tag-dependent packages still need compatible shared dependencies.
+The host installs its optional local generator by importing
+`pkg/heimdall/local`; NornicDB server does this automatically. Embedded applications
+that use `heimdall.NewManager` for local inference should blank-import that adapter.
 
 For the built-in watcher example:
 
@@ -1173,7 +1179,7 @@ llama.cpp; external tools do not create another model instance. Use `SendPrompt`
 when action routing is desired, or `SendRawPrompt` for direct inference.
 
 When Heimdall initializes its plugins, opted-in actions join the existing MCP
-server's tools. Both MCP and Heimdall must be enabled. The internal model still
+server's tools. MCP must be enabled; Heimdall plugins load from the configured plugin directories even when `NORNICDB_HEIMDALL_ENABLED=false`. The internal model still
 receives all registered actions. `NORNICDB_HEIMDALL_MCP_ENABLE` controls the
 opposite direction (memory tools supplied to internal inference), and does not
 control public plugin exposure. No default watcher examples opt into exposure.
@@ -1198,3 +1204,17 @@ Bifrost. Use the provided database router and request context for graph operatio
 A URL-pinned database is supplied as the `database` argument. Setting `External`
 is an explicit decision to expose the handler to authenticated MCP callers; it
 does not add inference, administrative, or write permissions to the caller.
+
+
+### Plugin-only installation
+
+Set `NORNICDB_HEIMDALL_PLUGINS_DIR` to the directory containing your plugin and
+leave `NORNICDB_HEIMDALL_ENABLED=false`. NornicDB initializes/starts configured
+plugins and publishes their opted-in external tools without creating a model,
+Bifrost chat handler, or agentic inference loop. `Config.Enabled` and
+`Config.BifrostEnabled` are false in this mode. The database router, runtime
+metrics, and direct `InvokeAction` remain available; the Bifrost bridge is a no-op.
+Prompt methods return `Success: false` and `SLM not available` when inference is
+absent. A model initialization failure also leaves plugin tools available without
+inference. Enable Heimdall separately to give plugins access to the configured
+inference provider and agentic chat pipeline.

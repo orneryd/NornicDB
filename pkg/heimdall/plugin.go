@@ -1078,7 +1078,7 @@ func decoratePluginOpenError(err error) error {
 	if !strings.Contains(msg, "different version of package") {
 		return err
 	}
-	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and build tags as the NornicDB binary (for remote-provider-only Heimdall builds, match whether the host binary was built with -tags nolocalllm)", msg, runtime.Version())
+	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and shared dependency build settings as the NornicDB binary; Heimdall-only plugins do not need to match the host nolocalllm tag", msg, runtime.Version())
 }
 
 // reflectHeimdallPlugin wraps a plugin loaded via reflection.

@@ -15,3 +15,16 @@ plugin actions follow successful registration order with sorted keys per plugin.
 WHEN an external action executes THEN its arguments, request context and RBAC
 fields reach its handler, and its initialized HeimdallInvoker remains usable for
 inference through the configured provider, including llama.cpp.
+
+
+### Requirement: Plugins independent of the local inference backend
+WHEN a plugin imports the Heimdall contract THEN its dependency graph excludes
+localllm and it can compile without native inference libraries. The same plugin
+can load in compatible hosts with or without the nolocalllm tag.
+
+### Requirement: Plugin-only installation
+WHEN configured plugin directories exist and Heimdall is disabled THEN the
+server initializes/starts plugins and exposes their external tools without
+loading a model or creating the Bifrost chat handler. Direct action/database
+access remains available; prompt inference reports unavailable. A failed model
+initialization does not prevent this plugin-only path.

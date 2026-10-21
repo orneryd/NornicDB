@@ -1357,6 +1357,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerHeimdallInitializationFailedEvent(err,
 						"check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR"))
+				s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 				return
 			}
 			if baseExec := db.GetCypherExecutor(); baseExec != nil {
@@ -1396,28 +1397,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				Metrics:  metricsReader,
 				Heimdall: heimdallInvoker, // Now plugins can call p.ctx.Heimdall.SendPrompt()
 			}
-			subsystemMgr.SetContext(subsystemCtx)
-
-			// Load plugins from configured directories.
-			if config.PluginsDir != "" {
-				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(config.PluginsDir))
-				if err := nornicdb.LoadPluginsFromDir(config.PluginsDir, &subsystemCtx); err != nil {
-					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(config.PluginsDir, err))
-				}
-			}
-			if config.HeimdallPluginsDir != "" && config.HeimdallPluginsDir != config.PluginsDir {
-				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsLoadingEvent(config.HeimdallPluginsDir))
-				if err := nornicdb.LoadPluginsFromDir(config.HeimdallPluginsDir, &subsystemCtx); err != nil {
-					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(config.HeimdallPluginsDir, err))
-				}
-			} else if config.HeimdallPluginsDir == "" {
-				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryEmptyEvent())
-			} else {
-				s.logEvent(context.Background(), slog.LevelDebug,
-					localization.ServerHeimdallPluginsDirectoryDuplicateEvent(config.HeimdallPluginsDir, config.PluginsDir))
-			}
-
-			registerHeimdallMCPTools(mcpServer, subsystemMgr, dbRouter, metricsReader, handler.Bifrost())
+			s.loadHeimdallPlugins(subsystemCtx, mcpServer)
 
 			s.setHeimdallHandler(handler)
 
@@ -1435,6 +1415,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			}
 		}()
 	} else {
+		s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 		s.logEvent(context.Background(), slog.LevelInfo,
 			localization.ServerHeimdallDisabledEvent("heimdall", "NORNICDB_HEIMDALL_ENABLED"))
 	}
