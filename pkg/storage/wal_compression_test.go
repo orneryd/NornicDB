@@ -75,3 +75,15 @@ func TestWALBufferedCommitCompressionRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, rawBig, rawBigOut)
 }
+
+func TestWALBufferedCommitRejectsCompressedExpansionPastContract(t *testing.T) {
+	raw := bytes.Repeat([]byte{'x'}, maxBufferedWALPayloadBytes+1)
+	compressed := compressWALBufferedCommitPayload(raw)
+	require.Less(t, len(compressed), maxBufferedWALPayloadBytes)
+	decoded, err := decompressWALBufferedCommitPayload(compressed)
+	require.ErrorContains(t, err, "buffered commit")
+	require.Nil(t, decoded)
+	decoded, err = decompressWALBufferedCommitPayload(raw)
+	require.ErrorContains(t, err, "decoded payload limit")
+	require.Nil(t, decoded)
+}

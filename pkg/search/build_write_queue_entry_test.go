@@ -70,7 +70,7 @@ func TestBuildRemoveLastVectorThenNewDimensions(t *testing.T) {
 			}
 			require.NoError(t, <-done)
 			require.Equal(t, 2, svc.VectorIndexDimensions())
-			_, ok := svc.getVectorLookup()("nornic:next-named-v")
+			_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:next", "v"))
 			require.True(t, ok)
 		})
 	}

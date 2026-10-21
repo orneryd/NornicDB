@@ -194,9 +194,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 				}
 			}
 		}
-		if err := running.memoryFailure(); err != nil {
-			result, retErr = nil, err
-		} else if retErr == nil && result != nil && running.memory != nil {
+		if err := running.memoryFailure(); err != nil && !statement.outcome.committed.Load() {
+			if statementErr != nil && (statementErr == context.Canceled || statementErr == context.DeadlineExceeded) {
+				result, retErr = nil, statementErr
+			} else {
+				result, retErr = nil, err
+			}
+		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed.Load() {
 			// A nested execution hands its retained rows to its parent scope.
 			if err := running.memory.handOver(running.memoryMark, result.Rows); err != nil {
 				result, retErr = nil, err

@@ -226,10 +226,16 @@ func estimateNodeBodyCacheBytes(node *Node) int64 {
 	for _, label := range node.Labels {
 		bytes += int64(16 + len(label))
 	}
-	for key, value := range node.Properties {
+	bytes += estimateEntityPropertyBytes(node.Properties)
+	for key, value := range node.EmbedMeta {
 		bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
 	}
-	for key, value := range node.EmbedMeta {
+	return bytes
+}
+
+func estimateEntityPropertyBytes(properties map[string]interface{}) int64 {
+	var bytes int64
+	for key, value := range properties {
 		bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
 	}
 	return bytes
