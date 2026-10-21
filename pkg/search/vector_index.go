@@ -338,8 +338,16 @@ func (v *VectorIndex) Remove(id string) {
 //
 //	Uses read lock during search, allowing concurrent searches.
 func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]indexResult, error) {
+	results, _, err := v.searchWithPopulation(ctx, query, limit, minSimilarity)
+	return results, err
+}
+
+// searchWithPopulation binds coverage evidence to the read-locked scan, rather
+// than a separate Count that can observe a different index generation. The
+// population counts vectors qualifying at minSimilarity, before the top-k cut.
+func (v *VectorIndex) searchWithPopulation(ctx context.Context, query []float32, limit int, minSimilarity float64) ([]indexResult, int, error) {
 	if len(query) != v.dimensions {
-		return nil, ErrDimensionMismatch
+		return nil, 0, ErrDimensionMismatch
 	}
 
 	v.mu.RLock()
@@ -347,7 +355,7 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 
 	n := len(v.vectors)
 	if n == 0 {
-		return []indexResult{}, nil
+		return []indexResult{}, 0, nil
 	}
 	if limit <= 0 || limit > n {
 		limit = n
@@ -361,24 +369,26 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 	// keep their own top limit, merged at the end.
 	workers := min(runtime.GOMAXPROCS(0), n/vectorIndexScanChunk)
 	var top *candidateMinHeap
+	var population int
 	if workers <= 1 {
 		top = newCandidateMinHeap(limit)
 		scanned := 0
 		for id, vec := range v.vectors {
 			if scanned%vectorIndexScanChunk == 0 {
 				if err := ctx.Err(); err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 			}
 			scanned++
 			if sim := float64(vector.DotProductSIMD(normalizedQuery, vec)); sim >= minSimilarity {
+				population++
 				top.push(Candidate{ID: id, Score: sim})
 			}
 		}
 	} else {
 		var err error
-		if top, err = v.scanParallelLocked(ctx, normalizedQuery, limit, minSimilarity, workers); err != nil {
-			return nil, err
+		if top, population, err = v.scanParallelLocked(ctx, normalizedQuery, limit, minSimilarity, workers); err != nil {
+			return nil, 0, err
 		}
 	}
 
@@ -387,7 +397,7 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 	for i, c := range best {
 		output[i] = indexResult{ID: c.ID, Score: c.Score}
 	}
-	return output, nil
+	return output, population, nil
 }
 
 // vectorIndexScanChunk is the number of vectors a scan worker scores per chunk,
@@ -402,23 +412,27 @@ type vectorIndexEntry struct {
 // scanParallelLocked scores every vector against normalizedQuery on workers
 // goroutines and returns the best limit scores at or above minSimilarity.
 // Caller holds v.mu for reading.
-func (v *VectorIndex) scanParallelLocked(ctx context.Context, normalizedQuery []float32, limit int, minSimilarity float64, workers int) (*candidateMinHeap, error) {
+func (v *VectorIndex) scanParallelLocked(ctx context.Context, normalizedQuery []float32, limit int, minSimilarity float64, workers int) (*candidateMinHeap, int, error) {
 	chunks := make(chan []vectorIndexEntry, workers*2)
 	tops := make([]*candidateMinHeap, workers)
+	populations := make([]int, workers)
 	var wg sync.WaitGroup
 	for w := range tops {
 		tops[w] = newCandidateMinHeap(limit)
 		wg.Add(1)
-		go func(top *candidateMinHeap) {
+		go func(w int, top *candidateMinHeap) {
 			defer wg.Done()
+			population := 0
 			for chunk := range chunks {
 				for _, e := range chunk {
 					if sim := float64(vector.DotProductSIMD(normalizedQuery, e.vec)); sim >= minSimilarity {
+						population++
 						top.push(Candidate{ID: e.id, Score: sim})
 					}
 				}
 			}
-		}(tops[w])
+			populations[w] = population
+		}(w, tops[w])
 	}
 	var err error
 	chunk := make([]vectorIndexEntry, 0, vectorIndexScanChunk)
@@ -438,7 +452,7 @@ func (v *VectorIndex) scanParallelLocked(ctx context.Context, normalizedQuery []
 	close(chunks)
 	wg.Wait()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	merged := tops[0]
 	for _, top := range tops[1:] {
@@ -446,7 +460,11 @@ func (v *VectorIndex) scanParallelLocked(ctx context.Context, normalizedQuery []
 			merged.push(c)
 		}
 	}
-	return merged, nil
+	population := 0
+	for _, count := range populations {
+		population += count
+	}
+	return merged, population, nil
 }
 
 // Count returns the number of vectors in the index.

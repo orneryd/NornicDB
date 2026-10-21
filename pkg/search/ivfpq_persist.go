@@ -122,6 +122,7 @@ func loadIVFPQBundle(basePath string) (*IVFPQIndex, annMutationOverlaySnapshot, 
 		residualKnown:      meta.ResidualKnown,
 		maxCoordinateError: meta.MaxCoordinateError,
 	}
+	idx.population() // deduplicate the immutable union before publication
 	idx.initScratchPool()
 	return idx, mutations, nil
 }
