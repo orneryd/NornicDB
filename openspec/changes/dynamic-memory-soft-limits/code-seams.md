@@ -107,9 +107,11 @@ remains a policy review item.
 
 A deployment recipe must specify finite app/aggregate limits, optionally finite
 individual limits, concurrency/batch bounds and headroom below the container limit.
-Keep compatibility defaults unlimited but expose that state plainly. Numeric defaults,
-telemetry loss behavior, result ownership for embedded callers, and exact bounded
-completion estimates must be settled and measured before calling implementation ready.
+Keep compatibility defaults unlimited and the application policy disabled unless
+explicitly configured. Numeric protected-mode sizing, result ownership for embedded
+callers and exact bounded completion estimates must be settled and measured before
+calling implementation ready. Transaction-only limits must not start whole-process
+telemetry rejection; the existing Go GC target does not enable this policy.
 No finite percentage or soft transaction cap guarantees immunity to an OS OOM kill.
 
 ## Required focused evidence
@@ -135,8 +137,9 @@ No finite percentage or soft transaction cap guarantees immunity to an OS OOM ki
 
 ## Async write-buffer admission (explicit requirement)
 
-`WriteBehindBuffer` in `pkg/storage/commit_buffer.go` is inside the same application
-memory policy. Its current `AppendCommit` increments operation counts and signals
+When the application limit is enabled, `WriteBehindBuffer` in
+`pkg/storage/commit_buffer.go` is inside that application memory policy. Without
+it, the existing async write-buffer behavior remains in force. Its current `AppendCommit` increments operation counts and signals
 rotation; rotation is not a byte limit and does not establish freed memory. The
 same file exposes `AppendNode`, `AppendEdge` and `AppendDelete`; source search at
 this review base found no production call sites for those three methods. Inventory

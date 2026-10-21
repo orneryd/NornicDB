@@ -70,3 +70,6 @@
 - [ ] Prove newest-eligible victim selection, one-at-a-time reassessment and exclusion after irreversible acceptance.
 - [ ] Prove periodic current-usage/limit sampling continues when no pressure event fires; event wakes cannot be the only refresh path.
 - [ ] Prove stale/failed readings reject new expensive work and fresh readings resume it, while rollback/flush/accepted commits complete.
+
+- [ ] Verify no-limit and GC-target-only configurations preserve current admission, cancellation and async-buffer behavior with negligible disabled-path overhead.
+- [ ] Verify transaction-only and aggregate-only settings enforce only their configured scope without activating process-pressure telemetry rejection.
