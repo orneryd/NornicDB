@@ -57,6 +57,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}
 
 	buffered := bufio.NewWriter(writer)
+	frames := snapshotFrameWriter{writer: buffered}
 	if err := writeSnapshotHeader(buffered, options.Sequence, time.Now()); err != nil {
 		return err
 	}
@@ -66,7 +67,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	// once the snapshot is written.
 	var nodeCount uint64
 	if err := StreamStoredNodes(ctx, engine, StreamNodesOptions{}, func(node *Node) error {
-		if err := writeSnapshotFrame(buffered, streamSnapshotNode, snapshotNodeVectorMetadata(node), maxRecordBytes); err != nil {
+		if err := frames.write(streamSnapshotNode, snapshotNodeVectorMetadata(node), maxRecordBytes); err != nil {
 			return err
 		}
 		nodeCount++
@@ -76,7 +77,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}
 	var edgeCount uint64
 	if err := StreamStoredEdgesByType(ctx, engine, "", func(edge *Edge) error {
-		if err := writeSnapshotFrame(buffered, streamSnapshotEdge, edge, maxRecordBytes); err != nil {
+		if err := frames.write(streamSnapshotEdge, edge, maxRecordBytes); err != nil {
 			return err
 		}
 		edgeCount++
@@ -88,7 +89,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 		Nodes uint64 `json:"nodes"`
 		Edges uint64 `json:"edges"`
 	}{Nodes: nodeCount, Edges: edgeCount}
-	if err := writeSnapshotFrame(buffered, streamSnapshotFooter, footer, maxRecordBytes); err != nil {
+	if err := frames.write(streamSnapshotFooter, footer, maxRecordBytes); err != nil {
 		return err
 	}
 	return buffered.Flush()
@@ -223,23 +224,37 @@ func readSnapshot(reader io.Reader, visitor SnapshotVisitor, collection *Snapsho
 }
 
 func writeSnapshotFrame(writer io.Writer, frameType byte, value any, maxRecordBytes int64) error {
-	payload, err := encodeRecoveryPayload(value)
+	frames := snapshotFrameWriter{writer: writer}
+	return frames.write(frameType, value, maxRecordBytes)
+}
+
+// A snapshot has one writer and one reusable encoder for all of its frames.
+// Neither output bytes nor scratch escape to the next stream or goroutine.
+type snapshotFrameWriter struct {
+	writer  io.Writer
+	encoder valueEncoder
+	scratch [5]byte
+}
+
+func (w *snapshotFrameWriter) write(frameType byte, value any, maxRecordBytes int64) error {
+	payload, err := w.encoder.recovery(value)
 	if err != nil {
 		return err
 	}
 	if int64(len(payload)) > maxRecordBytes {
 		return fmt.Errorf("snapshot record is %d bytes, exceeds limit %d", len(payload), maxRecordBytes)
 	}
-	if _, err := writer.Write([]byte{frameType}); err != nil {
+	w.scratch[0] = frameType
+	binary.LittleEndian.PutUint32(w.scratch[1:], uint32(len(payload)))
+	if _, err := w.writer.Write(w.scratch[:]); err != nil {
 		return err
 	}
-	if err := binary.Write(writer, binary.LittleEndian, uint32(len(payload))); err != nil {
+	if _, err := w.writer.Write(payload); err != nil {
 		return err
 	}
-	if _, err := writer.Write(payload); err != nil {
-		return err
-	}
-	return binary.Write(writer, binary.LittleEndian, crc32Checksum(payload))
+	binary.LittleEndian.PutUint32(w.scratch[:4], crc32Checksum(payload))
+	_, err = w.writer.Write(w.scratch[:4])
+	return err
 }
 
 func readSnapshotFrame(reader io.Reader) (byte, []byte, error) {

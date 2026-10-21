@@ -346,6 +346,9 @@ func (w *WALEngine) EnableAutoCompaction(snapshotDir string) error {
 	if err := os.MkdirAll(snapshotDir, 0755); err != nil {
 		return fmt.Errorf("wal: failed to create snapshot directory: %w", err)
 	}
+	if err := removeInterruptedSnapshotFiles(snapshotDir); err != nil {
+		return err
+	}
 
 	w.snapshotDir = snapshotDir
 
@@ -430,6 +433,9 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	if w.wal.closed.Load() {
 		return ErrWALClosed
 	}
+	if err := removeInterruptedSnapshotFiles(w.snapshotDir); err != nil {
+		return err
+	}
 	snapshotSequence := w.wal.sequence.Load()
 	if w.hasCompacted.Load() && snapshotSequence == w.compactedSequence.Load() {
 		return nil
@@ -440,8 +446,7 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 
 	// Save snapshot with high-resolution timestamp to avoid filename collisions
 	// when snapshots happen multiple times within the same second.
-	timestamp := time.Now().Format("20060102-150405.000000000")
-	snapshotPath := filepath.Join(w.snapshotDir, fmt.Sprintf("snapshot-%s.json", timestamp))
+	snapshotPath := filepath.Join(w.snapshotDir, time.Now().Format(autoSnapshotNameLayout))
 
 	// Flush any acknowledged write-behind commits into Badger before the
 	// snapshot and WAL truncation. A snapshot must never truncate
