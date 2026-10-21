@@ -408,19 +408,19 @@ type DeferrableExecutor interface {
 
 // QueryResult holds the result of a query.
 type QueryResult struct {
-	Columns     []string
-	Rows        [][]any
-	Metadata    map[string]any
-	Stats       *QueryStats   // Write counters for ResultSummary
-	memoryLease *memory.Lease // Held while Bolt retains rows for PULL/DISCARD.
+	Columns  []string
+	Rows     [][]any
+	Metadata map[string]any
+	Stats    *QueryStats // Write counters for ResultSummary.
 }
 
 type resultStream struct {
-	result   *QueryResult
-	delivery *resultstream.Delivery
-	index    int
-	isWrite  bool
-	database string
+	result      *QueryResult
+	memoryLease *memory.Lease
+	delivery    *resultstream.Delivery
+	index       int
+	isWrite     bool
+	database    string
 	// lazy produces the rows after result's when the statement is still
 	// running (#939); nil once it has finished.
 	lazy *lazyResult
@@ -1567,9 +1567,10 @@ type Session struct {
 	rawTransactionExecutor          bool
 
 	// Query result state (for streaming with PULL)
-	lastResult  *QueryResult
-	resultIndex int
-	lastLazy    *lazyResult
+	lastResult            *QueryResult
+	lastResultMemoryLease *memory.Lease
+	resultIndex           int
+	lastLazy              *lazyResult
 	// pendingMessage and pendingErr are what a lazy result's helper read
 	// and handed back to the message loop (serveLazyResult).
 	pendingMessage    *boltMessage
