@@ -2754,20 +2754,7 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // and nothing is stored. Once the writes are being applied the commit runs to
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	tx.mu.Lock()
-	tx.commitCtx = ctx
-	tx.mu.Unlock()
-	defer func() {
-		tx.mu.Lock()
-		tx.commitCtx = nil
-		tx.mu.Unlock()
-	}()
-	return tx.Commit()
+	return tx.CommitContextWithPublication(ctx, nil)
 }
 
 // commitCancelledLocked reports the commit context's error once it is done.
@@ -2783,11 +2770,18 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 const commitCancelPollEvery = 256
 
 func (tx *BadgerTransaction) Commit() error {
+	return tx.commit(nil)
+}
+
+func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
 	notification := &commitNotification{}
 	defer func() {
 		tx.mu.Unlock()
+		if commitErr == nil && afterPublication != nil {
+			afterPublication()
+		}
 		tx.engine.completeCommitNotification(notification)
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
