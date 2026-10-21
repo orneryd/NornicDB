@@ -265,6 +265,17 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	properties []string,
 	visit func(*Node) error,
 ) error {
+	return b.streamNodesByLabelAtSnapshotWithView(scope, label, version, view, properties, visibleRead, visit)
+}
+
+func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
+	scope, label string,
+	version MVCCVersion,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	v readVisibility,
+	visit func(*Node) error,
+) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -274,33 +285,53 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	}
 	defer deregister()
 
+	// Each closure passes its visibility as a constant: capturing v would move
+	// the closure view retains into the next allocation size class.
+	if v == storedRead {
+		return view(func(txn *badger.Txn) error {
+			return b.visitNodesByLabelAtSnapshotInTxn(txn, scope, label, version, properties, storedRead, visit)
+		})
+	}
 	return view(func(txn *badger.Txn) error {
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
-		defer it.Close()
-		for it.Next() {
-			nodeID := it.NodeID()
-			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version, true)
-			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
-				continue
-			}
-			if getErr != nil {
-				return getErr
-			}
-			matched := false
-			for _, existing := range node.Labels {
-				if existing == label {
-					matched = true
-					break
-				}
-			}
-			if matched {
-				if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
-					return err
-				}
+		return b.visitNodesByLabelAtSnapshotInTxn(txn, scope, label, version, properties, visibleRead, visit)
+	})
+}
+
+// visitNodesByLabelAtSnapshotInTxn is streamNodesByLabelAtSnapshotWithView's
+// label-index scan within one read transaction.
+func (b *BadgerEngine) visitNodesByLabelAtSnapshotInTxn(
+	txn *badger.Txn,
+	scope, label string,
+	version MVCCVersion,
+	properties []string,
+	v readVisibility,
+	visit func(*Node) error,
+) error {
+	it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+	defer it.Close()
+	for it.Next() {
+		nodeID := it.NodeID()
+		node, getErr := b.getNodeAtInTxn(txn, nodeID, version, true, v)
+		if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
+			continue
+		}
+		if getErr != nil {
+			return getErr
+		}
+		matched := false
+		for _, existing := range node.Labels {
+			if existing == label {
+				matched = true
+				break
 			}
 		}
-		return it.Err()
-	})
+		if matched {
+			if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
+				return err
+			}
+		}
+	}
+	return it.Err()
 }
 
 // streamNodesByLabelFromPhysicalSnapshotAfter visits the node bodies of a
@@ -317,9 +348,43 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	afterNodeID NodeID,
 	visit func(*Node) error,
 ) error {
+	return b.streamNodesByLabelFromPhysicalSnapshotAfterRead(scope, label, view, properties, afterNodeID, visibleRead, visit)
+}
+
+func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
+	scope, label string,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	afterNodeID NodeID,
+	v readVisibility,
+	visit func(*Node) error,
+) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
+	// Each closure passes its visibility as a constant: capturing v would move
+	// the closure view retains into a larger allocation size class.
+	if v == storedRead {
+		return view(func(txn *badger.Txn) error {
+			return b.scanNodesByLabelFromPhysicalSnapshotInTxn(txn, scope, label, properties, afterNodeID, storedRead, visit)
+		})
+	}
+	return view(func(txn *badger.Txn) error {
+		return b.scanNodesByLabelFromPhysicalSnapshotInTxn(txn, scope, label, properties, afterNodeID, visibleRead, visit)
+	})
+}
+
+// scanNodesByLabelFromPhysicalSnapshotInTxn is
+// streamNodesByLabelFromPhysicalSnapshotAfterRead's scan within one read
+// transaction.
+func (b *BadgerEngine) scanNodesByLabelFromPhysicalSnapshotInTxn(
+	txn *badger.Txn,
+	scope, label string,
+	properties []string,
+	afterNodeID NodeID,
+	v readVisibility,
+	visit func(*Node) error,
+) error {
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
 	// covers is computed lazily: the label-vs-node count reads that decide
@@ -330,98 +395,96 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	// benchmark).
 	var covers bool
 	coversDecided := false
-	return view(func(txn *badger.Txn) error {
-		// readItem reads one node from its stored record; item.Version keys
-		// the decoded-body cache.
-		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
-			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
+	// readItem reads one node from its stored record; item.Version keys
+	// the decoded-body cache.
+	readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
+		return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
+	}
+	emit := func(node *Node) error {
+		if node == nil || b.hidesNode(v, node, nowNanos) || !hasLabel(node.Labels, label) {
+			return nil
 		}
-		emit := func(node *Node) error {
-			if node == nil || b.filterNodeByDecay(node, nowNanos) || !hasLabel(node.Labels, label) {
-				return nil
-			}
-			return visit(node)
+		return visit(node)
+	}
+	readPoint := func(nodeID NodeID) error {
+		item, err := txn.Get(nodeKey(nodeID))
+		if err == badger.ErrKeyNotFound {
+			return nil
 		}
-		readPoint := func(nodeID NodeID) error {
-			item, err := txn.Get(nodeKey(nodeID))
-			if err == badger.ErrKeyNotFound {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			node, err := readItem(nodeID, item)
-			if err != nil {
-				return err
-			}
-			return emit(node)
+		if err != nil {
+			return err
 		}
+		node, err := readItem(nodeID, item)
+		if err != nil {
+			return err
+		}
+		return emit(node)
+	}
 
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), afterNodeID)
-		defer it.Close()
-		var pending []NodeID
-		lookups := 0
-		for it.Next() {
-			indexKey := it.Item().Key()
-			nodeID := it.NodeID()
-			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
+	it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), afterNodeID)
+	defer it.Close()
+	var pending []NodeID
+	lookups := 0
+	for it.Next() {
+		indexKey := it.Item().Key()
+		nodeID := it.NodeID()
+		if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
+			continue
+		}
+		if !coversDecided && lookups >= labelScanPointLookups {
+			covers = b.labelCoversScope(scope, label)
+			coversDecided = true
+		}
+		if pending != nil || (covers && lookups >= labelScanPointLookups) {
+			if len(pending) < labelScanMaxBuffered {
+				pending = append(pending, nodeID)
 				continue
 			}
-			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
-				coversDecided = true
-			}
-			if pending != nil || (covers && lookups >= labelScanPointLookups) {
-				if len(pending) < labelScanMaxBuffered {
-					pending = append(pending, nodeID)
-					continue
+			for _, pendingID := range pending {
+				if err := readPoint(pendingID); err != nil {
+					return err
 				}
-				for _, pendingID := range pending {
-					if err := readPoint(pendingID); err != nil {
-						return err
-					}
-				}
-				pending = nil
-				covers = false
 			}
-			lookups++
-			if err := readPoint(nodeID); err != nil {
-				return err
-			}
+			pending = nil
+			covers = false
 		}
-		if err := it.Err(); err != nil {
+		lookups++
+		if err := readPoint(nodeID); err != nil {
 			return err
 		}
-		if len(pending) == 0 {
-			return nil
-		}
+	}
+	if err := it.Err(); err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		return nil
+	}
 
-		// The rest are read in one pass over the node records, then visited
-		// in label-index order.
-		nodes := make(map[NodeID]*Node, len(pending))
-		readErrors := make(map[NodeID]error)
-		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
-			node, err := readItem(nodeID, item)
-			nodes[nodeID] = node
-			if err != nil {
-				readErrors[nodeID] = err
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		for _, nodeID := range pending {
-			// Record order differs from visitation order; a later corrupt
-			// record must not override an earlier callback's stop error.
-			if err := readErrors[nodeID]; err != nil {
-				return err
-			}
-			if err := emit(nodes[nodeID]); err != nil {
-				return err
-			}
+	// The rest are read in one pass over the node records, then visited
+	// in label-index order.
+	nodes := make(map[NodeID]*Node, len(pending))
+	readErrors := make(map[NodeID]error)
+	if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
+		node, err := readItem(nodeID, item)
+		nodes[nodeID] = node
+		if err != nil {
+			readErrors[nodeID] = err
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	for _, nodeID := range pending {
+		// Record order differs from visitation order; a later corrupt
+		// record must not override an earlier callback's stop error.
+		if err := readErrors[nodeID]; err != nil {
+			return err
+		}
+		if err := emit(nodes[nodeID]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
