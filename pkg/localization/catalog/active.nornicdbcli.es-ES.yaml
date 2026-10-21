@@ -82,6 +82,8 @@
   other: Tamaño mínimo de lote antes de paralelizar
 - id: nornicdbcli.flag.memory_limit
   other: "Límite de memoria en MB como entero (p. ej., 500), 0 sin límite, o auto (predeterminado: 85 % del límite de memoria del contenedor)"
+- id: nornicdbcli.flag.go_memory_limit
+  other: "Objetivo de memoria del recolector de Go en MiB, 0 sin límite o auto"
 - id: nornicdbcli.flag.gc_percent
   other: Intensidad de GC (100=predeterminada, un valor menor es más intenso)
 - id: nornicdbcli.flag.pool_enabled
@@ -126,6 +128,16 @@
   other: "Umbral de supresión de visibilidad (predeterminado: 0.05)"
 - id: nornicdbcli.validation.invalid_memory_limit
   other: 'valor no válido de --memory-limit {{printf "%q" .Value}}: {{.Cause}}'
+- id: nornicdbcli.validation.go_memory_limit_deprecated
+  other: "--memory-limit está obsoleto; use --go-memory-limit (MiB enteros o auto)"
+- id: nornicdbcli.validation.env_memory_limit_deprecated
+  other: "NORNICDB_MEMORY_LIMIT está obsoleto; use NORNICDB_GO_MEMORY_LIMIT_MIB (MiB enteros o auto)"
+- id: nornicdbcli.validation.yaml_memory_limit_deprecated
+  other: "memory.runtime_limit está obsoleto; use memory.go_runtime_limit (MiB enteros o auto)"
+- id: nornicdbcli.validation.go_memory_limit_conflict
+  other: "--memory-limit entra en conflicto con --go-memory-limit"
+- id: nornicdbcli.validation.invalid_go_memory_limit
+  other: 'valor no válido de --go-memory-limit {{printf "%q" .Value}}: {{.Cause}}'
 - id: nornicdbcli.validation.invalid_stdio_interval
   other: "stdio-log-compact-seconds no válido ({{.Value}}): debe ser >= 0"
 - id: nornicdbcli.config.not_found
