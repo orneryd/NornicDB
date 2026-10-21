@@ -135,3 +135,15 @@ func TestAlgorithmRelationshipFilterMatchesPhysicalSubgraph(t *testing.T) {
 		}
 	}
 }
+
+func TestAlgorithmRelationshipFilterForwardsStorageEvents(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "event")
+	reader := &algorithmRelationshipReader{Engine: store, types: map[string]struct{}{"KEEP": {}}}
+	var created []storage.NodeID
+	require.NoError(t, storage.SubscribeEvents(reader, storage.EventHandlers{
+		NodeCreated: func(node *storage.Node) { created = append(created, node.ID) },
+	}))
+	_, err := store.CreateNode(&storage.Node{ID: "event-node", Labels: []string{"P"}})
+	require.NoError(t, err)
+	require.Equal(t, []storage.NodeID{"event-node"}, created)
+}
