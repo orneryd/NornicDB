@@ -344,7 +344,9 @@ func (s *Session) handleRun(data []byte) error {
 		for _, row := range result.Rows {
 			resultBytes += util.EstimateValueBytes(row)
 		}
-		resultMemoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
+		if resultBytes > 0 {
+			resultMemoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
+		}
 		if err != nil {
 			if s.inTransaction {
 				if cleanupErr := s.rollbackExplicitTransaction(transactionTerminalRollback); cleanupErr != nil {
@@ -391,11 +393,16 @@ func (s *Session) handleRun(data []byte) error {
 			s.resultStreams = make(map[int64]*resultStream)
 		}
 		s.resultStreams[statementID] = &resultStream{
-			result:      result,
-			memoryLease: resultMemoryLease,
-			delivery:    delivery,
-			isWrite:     isWrite,
-			database:    resultDatabase,
+			result:   result,
+			delivery: delivery,
+			isWrite:  isWrite,
+			database: resultDatabase,
+		}
+		if resultMemoryLease != nil {
+			if s.resultMemoryLeases == nil {
+				s.resultMemoryLeases = make(map[int64]*memory.Lease)
+			}
+			s.resultMemoryLeases[statementID] = resultMemoryLease
 		}
 		s.latestStatementID = statementID
 		successMetadata := map[string]any{
@@ -772,20 +779,16 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 		return resultStream{}, -1, false
 	}
 	return resultStream{
-		result:      s.lastResult,
-		memoryLease: s.lastResultMemoryLease,
-		delivery:    s.lastDelivery,
-		index:       s.resultIndex,
-		isWrite:     s.lastQueryIsWrite,
-		database:    s.lastQueryDatabase,
-		lazy:        s.lastLazy,
+		result:   s.lastResult,
+		delivery: s.lastDelivery,
+		index:    s.resultIndex,
+		isWrite:  s.lastQueryIsWrite,
+		database: s.lastQueryDatabase,
+		lazy:     s.lastLazy,
 	}, -1, true
 }
 
 func (s *Session) updateResultStream(statementID int64, stream resultStream, hasMore bool) {
-	if !hasMore {
-		stream.memoryLease.Release()
-	}
 	if s.inTransaction && s.resultStreams != nil {
 		if hasMore {
 			*s.resultStreams[statementID] = stream
@@ -807,6 +810,18 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		s.lastLazy = nil
 		s.lastDelivery = nil
 	}
+}
+
+// finishResultStream performs terminal ownership release outside the hot
+// partial-PULL state update. The lease is idempotent across RESET/disconnect.
+func (s *Session) finishResultStream(statementID int64, stream resultStream) {
+	if statementID >= 0 && s.inTransaction {
+		s.resultMemoryLeases[statementID].Release()
+		delete(s.resultMemoryLeases, statementID)
+	} else {
+		s.lastResultMemoryLease.Release()
+	}
+	s.updateResultStream(statementID, stream, false)
 }
 
 func (s *Session) sendStreamingFailure(message string) error {
@@ -875,7 +890,7 @@ func (s *Session) handlePull(data []byte) error {
 		if stream.delivery != nil {
 			stream.delivery.Fail()
 		}
-		s.updateResultStream(statementID, stream, false)
+		s.finishResultStream(statementID, stream)
 		return s.sendLazyFailure(lazyFailure)
 	}
 
@@ -885,6 +900,7 @@ func (s *Session) handlePull(data []byte) error {
 	// cleanup must still be able to find the final PULL's pending cursors.
 
 	// Clear result if done
+	var metadata map[string]any
 	if !hasMore {
 		resultStats := stream.result.Stats
 
@@ -897,17 +913,10 @@ func (s *Session) handlePull(data []byte) error {
 		// Neo4j sends: type, bookmark, t_last, stats, db (but NOT has_more when false)
 		queryType := boltSummaryQueryType(stream.isWrite, resultStats)
 
-		bookmark := s.currentBookmark()
-		if stream.isWrite {
-			if receiptBookmark, ok := s.bookmarkFromResultReceipt(stream.result); ok {
-				bookmark = receiptBookmark
-			} else {
-				bookmark = s.generateBookmark()
-			}
-		}
+		bookmark := s.resultSummaryBookmark(stream.result, stream.isWrite)
 
 		// Build stats matching Neo4j format (only if there are updates)
-		metadata := map[string]any{
+		metadata = map[string]any{
 			"bookmark": bookmark,
 			"type":     queryType,
 			"t_last":   int64(0), // Streaming time
@@ -942,20 +951,31 @@ func (s *Session) handlePull(data []byte) error {
 			}
 		}
 
-		// Note: Neo4j does NOT send has_more when it's false
-		if err := s.sendSuccessNoFlush(metadata); err != nil {
-			return err
-		}
-		return s.flushResultDelivery(statementID, stream, true)
+		// Neo4j does not send has_more when the stream is complete.
+	} else {
+		metadata = map[string]any{"has_more": true}
 	}
-
-	// When there are more records, send has_more: true
-	if err := s.sendSuccessNoFlush(map[string]any{
-		"has_more": true,
-	}); err != nil {
+	if err := s.sendSuccessNoFlush(metadata); err != nil {
 		return err
 	}
-	return s.flushResultDelivery(statementID, stream, false)
+	if err := s.flushIfPending(); err != nil {
+		if stream.delivery != nil {
+			stream.delivery.Fail()
+		}
+		return err
+	}
+	if stream.delivery != nil && stream.delivery.Pending() {
+		stream.delivery.DeliveredWritten()
+		if !hasMore && stream.delivery.Pending() {
+			stream.delivery.Fail()
+		}
+	}
+	if hasMore {
+		s.updateResultStream(statementID, stream, true)
+	} else {
+		s.finishResultStream(statementID, stream)
+	}
+	return nil
 }
 
 // boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
@@ -1027,7 +1047,7 @@ func (s *Session) handleDiscard(data []byte) error {
 			break
 		}
 		if err := s.fillLazyResult(&stream, options.limit-discarded); err != nil {
-			s.updateResultStream(statementID, stream, false)
+			s.finishResultStream(statementID, stream)
 			return s.sendLazyFailure(err.(*lazyStatementError))
 		}
 	}
@@ -1035,7 +1055,11 @@ func (s *Session) handleDiscard(data []byte) error {
 	if !hasMore && stream.delivery != nil {
 		stream.delivery.Fail()
 	}
-	s.updateResultStream(statementID, stream, hasMore)
+	if hasMore {
+		s.updateResultStream(statementID, stream, true)
+	} else {
+		s.finishResultStream(statementID, stream)
+	}
 	if hasMore {
 		if err := s.sendSuccessNoFlush(map[string]any{"has_more": true}); err != nil {
 			return err
@@ -1052,14 +1076,7 @@ func (s *Session) handleDiscard(data []byte) error {
 
 	// Build completion metadata with stats (same contract as PULL completion).
 	queryType := boltSummaryQueryType(stream.isWrite, resultStats)
-	bookmark := s.currentBookmark()
-	if stream.isWrite {
-		if receiptBookmark, ok := s.bookmarkFromResultReceipt(stream.result); ok {
-			bookmark = receiptBookmark
-		} else {
-			bookmark = s.generateBookmark()
-		}
-	}
+	bookmark := s.resultSummaryBookmark(stream.result, stream.isWrite)
 	metadata := map[string]any{
 		"bookmark": bookmark,
 		"type":     queryType,
@@ -1391,10 +1408,6 @@ func (s *Session) currentBookmark() string {
 	return formatBookmark(uint64(seqNum))
 }
 
-func (s *Session) bookmarkFromReceipt() (string, bool) {
-	return s.bookmarkFromResultReceipt(s.lastResult)
-}
-
 func (s *Session) bookmarkFromResultReceipt(result *QueryResult) (string, bool) {
 	if result == nil || result.Metadata == nil {
 		return "", false
@@ -1429,6 +1442,19 @@ func (s *Session) bookmarkFromResultReceipt(result *QueryResult) (string, bool) 
 
 	s.updateBookmarkSequence(seq)
 	return formatBookmark(seq), true
+}
+
+// resultSummaryBookmark resolves the bookmark semantics shared by PULL and
+// DISCARD. Read results retain the current sequence; writes prefer the durable
+// receipt and allocate a new sequence only when no receipt exists.
+func (s *Session) resultSummaryBookmark(result *QueryResult, isWrite bool) string {
+	if !isWrite {
+		return s.currentBookmark()
+	}
+	if bookmark, ok := s.bookmarkFromResultReceipt(result); ok {
+		return bookmark
+	}
+	return s.generateBookmark()
 }
 
 func (s *Session) updateBookmarkSequence(seq uint64) {

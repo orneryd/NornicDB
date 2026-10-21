@@ -26,28 +26,15 @@ func (s *Session) abandonContinuationResults() {
 		s.lastDelivery.Fail()
 		s.lastDelivery = nil
 	}
+	for _, lease := range s.resultMemoryLeases {
+		lease.Release()
+	}
+	s.resultMemoryLeases = nil
 	for _, stream := range s.resultStreams {
-		stream.memoryLease.Release()
 		if stream.delivery != nil {
 			stream.delivery.Fail()
 		}
 	}
-}
-func (s *Session) flushResultDelivery(statementID int64, stream resultStream, complete bool) error {
-	if err := s.flushIfPending(); err != nil {
-		if stream.delivery != nil {
-			stream.delivery.Fail()
-		}
-		return err
-	}
-	if stream.delivery != nil && stream.delivery.Pending() {
-		stream.delivery.DeliveredWritten()
-		if complete && stream.delivery.Pending() {
-			stream.delivery.Fail()
-		}
-	}
-	s.updateResultStream(statementID, stream, !complete)
-	return nil
 }
 
 // DISCARD selects complete records without writing them. Use the same
