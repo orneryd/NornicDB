@@ -73,6 +73,9 @@
 - [ ] Specify finite protected-deployment sizing separately from unlimited compatibility defaults.
 
 - [x] Specify async buffer admission, all-generation byte accounting and pre-WAL reservation ownership.
+- [x] Reserve accepted implicit write-behind commits before WAL publication and
+      retain the reservation through failed replay until generation retirement;
+      cover rejection, flush and retry with storage/race tests.
 - [ ] Integrate every actual async-buffer producer and bounded recovery replay with the shared application policy.
 - [ ] Prove stalled-flusher backpressure, oversized writes, rotation/read retention and replay failure/recovery without losing accepted writes.
 
