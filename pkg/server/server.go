@@ -1173,11 +1173,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			}
 			return executor, err
 		}, s.bindStatementCacheIndex)
-	if limit := globalConfig.Memory.ApplicationSoftMax; limit > 0 {
-		headroom := max(int64(128<<20), limit/10)
-		s.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now)
-		_ = s.memoryPolicy.Refresh()
-	}
+	s.memoryPolicy = db.MemoryPolicy()
 	// A changed password stops working at once (auth.BasicAuthCache).
 	s.auth.OnPasswordChange(s.basicAuthCache.ForgetUser)
 	// Foreground-first policy: while tx requests are active, background embed work yields.
@@ -1667,24 +1663,13 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// also gets initialized, and keeps doing so without requiring first-search triggers.
 	s.ensureSearchBuildStartedForKnownDatabases()
 	go func() {
-		interval := 2 * time.Second
-		if s.memoryPolicy != nil {
-			interval = 250 * time.Millisecond
-		}
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-		nextSearchReconcile := time.Now().Add(2 * time.Second)
 		for {
 			if s.closed.Load() {
 				return
 			}
-			if s.memoryPolicy != nil {
-				_ = s.memoryPolicy.Refresh()
-			}
-			if !time.Now().Before(nextSearchReconcile) {
-				s.ensureSearchBuildStartedForKnownDatabases()
-				nextSearchReconcile = time.Now().Add(2 * time.Second)
-			}
+			s.ensureSearchBuildStartedForKnownDatabases()
 			<-ticker.C
 		}
 	}()

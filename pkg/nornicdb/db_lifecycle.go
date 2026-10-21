@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -43,6 +44,15 @@ func (db *DB) LifetimeContext() context.Context {
 		return context.Background()
 	}
 	return db.buildCtx
+}
+
+// MemoryPolicy returns the database lifetime's opt-in application admission
+// owner. Nil means no application soft limit was configured.
+func (db *DB) MemoryPolicy() *memory.Policy {
+	if db == nil {
+		return nil
+	}
+	return db.memoryPolicy
 }
 
 // HealthCheck reports whether the underlying storage engine is responsive.
