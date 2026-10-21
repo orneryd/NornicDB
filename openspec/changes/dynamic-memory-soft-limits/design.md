@@ -289,6 +289,16 @@ Reproduce the reported 8 GiB/7168 MiB case with a single oversized query and no
 subsequent requests, then with concurrent queries and deliberately slow writes.
 Use before/after profiles, disabled/permissive/restrictive limits, both parsers,
 all public transport/transaction modes, native/background work and restart checks.
+A performance gate also applies: run at least three paired baseline/current samples
+per representative short read, large read, write/commit and concurrent workload
+under the same machine, corpus, build tags and configuration. Report throughput,
+p50/p95 latency, allocated bytes/op, retained policy memory per active owner and
+CPU/heap profiles. The disabled path must add zero allocations per checkpoint or
+row; the enabled path must sample outside execution loops and add zero allocations
+per checkpoint or accounted growth event. A repeatable greater-than-5% throughput
+or latency regression, or greater-than-10% allocation/retained-memory increase,
+blocks readiness unless the maintainer explicitly accepts the measured tradeoff.
+Investigate noise with more paired samples rather than treating one run as proof.
 A remaining OS-kill window must be documented with overshoot/response timing;
 soft limits are not permission to omit checkpoint coverage or weaken assertions.
 
