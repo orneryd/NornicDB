@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Admit Bolt client payloads while accumulating chunks and before decoding, and
+  admit HTTP metadata before all application middleware through the same policy,
+  including Bolt's HTTP upgrade parser. Preserve bodyless control requests only
+  with an empty raw query; retain credit through timed-out decoder workers.
+  Admit all routed HTTP request bodies through the shared owner.
+  Permit only bodyless h2c upgrades before admission; process body-bearing or
+  chunked upgrade proposals as HTTP/1.1 through normal admission and body limits.
+  Preserve bodyless upgrade, prior-knowledge h2c and TLS h2 request ownership.
+  Release queued/disconnected reservations; preserve default unlimited Bolt
+  framing when the opt-in application policy is disabled.
+
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited
   reclamation and requires a fresh physical reading before reopening admission

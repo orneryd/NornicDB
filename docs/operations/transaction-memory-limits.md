@@ -97,6 +97,58 @@ With no limit configured, nothing is tracked and there is no overhead.
 
 ## Application pressure and recovery
 
+When application admission is enabled, one shared policy owns pre-decode wire
+reservations. Bolt HELLO, BEGIN, RUN, PULL and DISCARD reserve before PackStream
+decoding. Both Bolt readers reserve the accumulated message size as chunks
+arrive, before growing their buffers, and recheck before dispatch. The bound
+comes from currently available policy capacity, using the existing four-times
+wire forecast and 64 KiB minimum, rather than a new fixed Bolt size cap. An
+incomplete message that exceeds capacity receives
+`Neo.TransientError.General.MemoryPoolOutOfMemoryError` and its connection closes;
+the unread remainder is never decoded. Reservations follow queued messages and
+are released after setup/handling, on read failure, or when the connection ends.
+Valid bodyless RESET, ROLLBACK, COMMIT and GOODBYE can still release accepted work.
+
+HTTP metadata admission encloses the complete application middleware chain,
+before tracing header extraction, security query decoding, localization, proxy or authentication parsing.
+The security checks share one parsed query map. HTTP request bodies use that
+same owner before routing to JSON decoders,
+including transaction, authentication, search, configuration, MCP, GraphQL and
+Heimdall handlers. Enabled admission also applies the existing HTTP request-size
+setting to their bodies. The reservation lasts until the handler actually ends,
+including workers that outlive an HTTP timeout. Bodyless health, rollback and
+bare explicit commit requests remain available only when their raw query is
+empty (the exemption cap is **0 bytes**), Content-Length is zero and there is no
+Transfer-Encoding. Classification inspects only method, path and those framing
+fields; it does not parse query parameters or headers. Adding any query or body
+removes the exemption and requires normal admission. The existing security and
+authentication checks still run for exempt requests. Timeout workers retain the
+shared owner before they are started; returning a timeout response cannot release
+credit while a worker still decodes. Bolt-over-WebSocket also reserves its HTTP
+upgrade metadata as it arrives, before header/cookie parsing and upgrade setup.
+With application admission
+disabled, ordinary request admission is unchanged: in particular Bolt has no
+new default aggregate message cap, so existing large parameter maps and bulk
+UNWIND payloads remain accepted by the framing layer. A general configurable
+Bolt cap is outside the 1.4.4 contract.
+
+Only bounded native framing and protocol setup precedes application admission:
+request headers and HTTP2-Settings decoding retain the implicit
+[Go 1 MiB header limit](https://github.com/golang/go/blob/go1.26.9/src/net/http/server.go#L892-L906),
+and HTTP/2 derives its header-list bound from it
+([including 320 bytes of field overhead](https://github.com/golang/net/blob/v0.59.0/http2/config.go#L118-L126)).
+Before the h2c adapter, one outer selector permits only bodyless HTTP/1.1
+Upgrade requests: the upgrade-body cap is **0 bytes**, with no Transfer-Encoding.
+Any nonzero or unknown Content-Length, or any transfer encoding, declines the h2c
+upgrade and processes the request as ordinary HTTP/1.1 through the same admission
+and request-body limits. This protocol-selection rule also applies with the
+application policy disabled; it does not impose a new body-size cap on ordinary
+HTTP/1.1 requests. The adapter cannot buffer a client payload before admission.
+Bodyless h2c upgrades, prior-knowledge h2c and TLS h2 remain supported. Application
+metadata/body credit belongs to each request or HTTP/2 stream, never to an entire
+upgraded connection. See the
+[listener-to-admission audit](../../openspec/changes/dynamic-memory-soft-limits/transport-admission-audit.md).
+
 `NORNICDB_MEMORY_APPLICATION_SOFT_MAX` (`memory.application_soft_max`) enables
 physical cgroup admission separately from the transaction estimates. Its default
 is `0` (disabled), as are both transaction limits. The automatic Go target of
