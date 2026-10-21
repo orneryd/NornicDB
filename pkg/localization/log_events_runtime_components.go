@@ -7,26 +7,30 @@ import (
 )
 
 const (
-	EventHeimdallToolCall                       EventID   = "heimdall.tool.call"
-	EventHeimdallOperator                       EventID   = "heimdall.operator"
-	EventInferenceEdgeDecayStarted              EventID   = "inference.edge_decay.started"
-	EventInferenceHeimdallBatchError            EventID   = "inference.heimdall.batch_error"
-	EventInferenceOperator                      EventID   = "inference.operator"
-	EventObservabilityTenantLabelsResolved      EventID   = "observability.tenant_labels.resolved"
-	EventObservabilityInstanceIDResolved        EventID   = "observability.instance_id.resolved"
-	EventObservabilityOperator                  EventID   = "observability.operator"
-	EventReplicationRaftBecameLeader            EventID   = "replication.raft.became_leader"
-	EventReplicationOperator                    EventID   = "replication.operator"
-	MessageHeimdallLogToolCall                  MessageID = "runtime.log.heimdall_tool_call"
-	MessageHeimdallLogOperator                  MessageID = "runtime.log.heimdall_operator"
-	MessageInferenceLogEdgeDecayStarted         MessageID = "runtime.log.inference_edge_decay_started"
-	MessageInferenceLogHeimdallBatchError       MessageID = "runtime.log.inference_heimdall_batch_error"
-	MessageInferenceLogOperator                 MessageID = "runtime.log.inference_operator"
-	MessageObservabilityLogTenantLabelsResolved MessageID = "runtime.log.observability_tenant_labels_resolved"
-	MessageObservabilityLogInstanceIDResolved   MessageID = "runtime.log.observability_instance_id_resolved"
-	MessageObservabilityLogOperator             MessageID = "runtime.log.observability_operator"
-	MessageReplicationLogRaftBecameLeader       MessageID = "runtime.log.replication_raft_became_leader"
-	MessageReplicationLogOperator               MessageID = "runtime.log.replication_operator"
+	EventHeimdallToolCall                         EventID   = "heimdall.tool.call"
+	EventHeimdallOperator                         EventID   = "heimdall.operator"
+	EventInferenceEdgeDecayStarted                EventID   = "inference.edge_decay.started"
+	EventInferenceHeimdallBatchError              EventID   = "inference.heimdall.batch_error"
+	EventInferenceOperator                        EventID   = "inference.operator"
+	EventObservabilityTenantLabelsResolved        EventID   = "observability.tenant_labels.resolved"
+	EventObservabilityInstanceIDResolved          EventID   = "observability.instance_id.resolved"
+	EventObservabilityOperator                    EventID   = "observability.operator"
+	EventReplicationRaftBecameLeader              EventID   = "replication.raft.became_leader"
+	EventReplicationOperator                      EventID   = "replication.operator"
+	MessageHeimdallLogToolCall                    MessageID = "runtime.log.heimdall_tool_call"
+	MessageHeimdallLogOperator                    MessageID = "runtime.log.heimdall_operator"
+	MessageInferenceLogEdgeDecayStarted           MessageID = "runtime.log.inference_edge_decay_started"
+	MessageInferenceLogHeimdallBatchError         MessageID = "runtime.log.inference_heimdall_batch_error"
+	MessageInferenceLogOperator                   MessageID = "runtime.log.inference_operator"
+	MessageObservabilityLogTenantLabelsResolved   MessageID = "runtime.log.observability_tenant_labels_resolved"
+	MessageObservabilityLogInstanceIDResolved     MessageID = "runtime.log.observability_instance_id_resolved"
+	MessageObservabilityLogOTLPPlaintextRejected  MessageID = "runtime.log.observability_otlp_plaintext_rejected"
+	MessageObservabilityLogSpanExporterInitFailed MessageID = "runtime.log.observability_span_exporter_init_failed"
+	MessageObservabilityLogSamplerModeInvalid     MessageID = "runtime.log.observability_sampler_mode_invalid"
+	MessageObservabilityLogParentStrictUnbounded  MessageID = "runtime.log.observability_parent_strict_unbounded"
+	MessageObservabilityLogOperator               MessageID = "runtime.log.observability_operator"
+	MessageReplicationLogRaftBecameLeader         MessageID = "runtime.log.replication_raft_became_leader"
+	MessageReplicationLogOperator                 MessageID = "runtime.log.replication_operator"
 )
 
 // HeimdallLogOperator preserves dynamically formatted Heimdall operator prose.
@@ -61,7 +65,27 @@ func ObservabilityLogTenantLabelsResolved() Message {
 
 // ObservabilityLogInstanceIDResolved describes service instance identity resolution.
 func ObservabilityLogInstanceIDResolved(instanceID, source string) Message {
-	return Message{ID: MessageObservabilityLogInstanceIDResolved, Fallback: fmt.Sprintf("INFO observability: service.instance.id=%q (resolved from %s)", instanceID, source), Data: map[string]any{"InstanceID": instanceID, "Source": source}}
+	return Message{ID: MessageObservabilityLogInstanceIDResolved, Fallback: fmt.Sprintf("observability: service.instance.id=%q (resolved from %s)", instanceID, source), Data: map[string]any{"InstanceID": instanceID, "Source": source}}
+}
+
+// ObservabilityLogOTLPPlaintextRejected describes rejection of a plaintext OTLP endpoint.
+func ObservabilityLogOTLPPlaintextRejected(endpoint string) Message {
+	return Message{ID: MessageObservabilityLogOTLPPlaintextRejected, Fallback: fmt.Sprintf("observability: OTLP endpoint %q is plaintext but NORNICDB_OTLP_INSECURE is not set; installing noop tracer provider (TRC-09)", endpoint), Data: map[string]any{"Endpoint": endpoint}}
+}
+
+// ObservabilityLogSpanExporterInitFailed describes a failed span exporter initialization.
+func ObservabilityLogSpanExporterInitFailed(err error) Message {
+	return Message{ID: MessageObservabilityLogSpanExporterInitFailed, Fallback: fmt.Sprintf("observability: span exporter init failed: %v; installing noop tracer provider — process continues", err), Data: map[string]any{"Error": err}}
+}
+
+// ObservabilityLogSamplerModeInvalid describes an invalid trace sampler mode.
+func ObservabilityLogSamplerModeInvalid(modeErr error) Message {
+	return Message{ID: MessageObservabilityLogSamplerModeInvalid, Fallback: fmt.Sprintf("observability: %v; falling back to default sampler mode (TRC-05)", modeErr), Data: map[string]any{"Error": modeErr}}
+}
+
+// ObservabilityLogParentStrictUnbounded describes an unbounded parent_strict sampler.
+func ObservabilityLogParentStrictUnbounded() Message {
+	return Message{ID: MessageObservabilityLogParentStrictUnbounded, Fallback: "observability: parent_strict sampler honors upstream decisions unconditionally; trace volume is unbounded (TRC-07)"}
 }
 
 // ObservabilityLogOperator preserves dynamically formatted observability operator prose.
@@ -87,11 +111,7 @@ func HeimdallToolCallEvent(requestID, action string, params any) LogEvent {
 // HeimdallOperatorEvent converts legacy Heimdall prose into a structured event.
 func HeimdallOperatorEvent(format string, args ...any) LogEvent {
 	message := fmt.Sprintf(format, args...)
-	attrs := []slog.Attr{slog.String("component", "heimdall"), slog.String("message_template", format)}
-	for index, arg := range args {
-		attrs = append(attrs, slog.Any(fmt.Sprintf("arg_%d", index), arg))
-	}
-	return LogEvent{ID: EventHeimdallOperator, Message: HeimdallLogOperator(message), Attrs: attrs}
+	return LogEvent{ID: EventHeimdallOperator, Message: HeimdallLogOperator(message), Attrs: []slog.Attr{slog.String("component", "heimdall")}}
 }
 
 // InferenceEdgeDecayStartedEvent describes edge-decay worker startup.
@@ -107,11 +127,7 @@ func InferenceHeimdallBatchErrorEvent(err error) LogEvent {
 // InferenceOperatorEvent converts legacy inference prose into a structured event.
 func InferenceOperatorEvent(format string, args ...any) LogEvent {
 	message := fmt.Sprintf(format, args...)
-	attrs := []slog.Attr{slog.String("component", "inference"), slog.String("message_template", format)}
-	for index, arg := range args {
-		attrs = append(attrs, slog.Any(fmt.Sprintf("arg_%d", index), arg))
-	}
-	return LogEvent{ID: EventInferenceOperator, Message: InferenceLogOperator(message), Attrs: attrs}
+	return LogEvent{ID: EventInferenceOperator, Message: InferenceLogOperator(message), Attrs: []slog.Attr{slog.String("component", "inference")}}
 }
 
 // ObservabilityTenantLabelsResolvedEvent describes tenant-label policy resolution.
@@ -127,11 +143,7 @@ func ObservabilityInstanceIDResolvedEvent(instanceID, source string) LogEvent {
 // ObservabilityOperatorEvent converts legacy observability prose into a structured event.
 func ObservabilityOperatorEvent(format string, args ...any) LogEvent {
 	message := fmt.Sprintf(format, args...)
-	attrs := []slog.Attr{slog.String("component", "observability"), slog.String("message_template", format)}
-	for index, arg := range args {
-		attrs = append(attrs, slog.Any(fmt.Sprintf("arg_%d", index), arg))
-	}
-	return LogEvent{ID: EventObservabilityOperator, Message: ObservabilityLogOperator(message), Attrs: attrs}
+	return LogEvent{ID: EventObservabilityOperator, Message: ObservabilityLogOperator(message), Attrs: []slog.Attr{slog.String("component", "observability")}}
 }
 
 // ReplicationRaftBecameLeaderEvent describes a Raft leader transition.
@@ -142,9 +154,5 @@ func ReplicationRaftBecameLeaderEvent(nodeID string, term uint64) LogEvent {
 // ReplicationOperatorEvent converts legacy replication prose into a structured event.
 func ReplicationOperatorEvent(format string, args ...any) LogEvent {
 	message := fmt.Sprintf(format, args...)
-	attrs := []slog.Attr{slog.String("component", "replication"), slog.String("message_template", format)}
-	for index, arg := range args {
-		attrs = append(attrs, slog.Any(fmt.Sprintf("arg_%d", index), arg))
-	}
-	return LogEvent{ID: EventReplicationOperator, Message: ReplicationLogOperator(message), Attrs: attrs}
+	return LogEvent{ID: EventReplicationOperator, Message: ReplicationLogOperator(message), Attrs: []slog.Attr{slog.String("component", "replication")}}
 }
