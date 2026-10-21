@@ -62,5 +62,7 @@ The new application pressure policy is disabled by default; transaction limits
 remain unlimited by default (`0`) on the release port. `NORNICDB_MEMORY_LIMIT`
 continues to control only Go GC. With no new limits configured, normal admission,
 execution and async-buffer behavior continue without new sampling or rejection.
-Exact application-limit setting names and automatic sizing constants remain
-explicit review decisions in design.md.
+The design proposes explicit canonical names for Go GC, application and
+transaction limits while preserving old Go-target aliases as deprecated.
+Approval of those spellings and automatic sizing constants remains an
+implementation review decision in design.md.
