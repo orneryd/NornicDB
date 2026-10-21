@@ -94,3 +94,21 @@ they do not establish whole-server performance. The bounded algorithm retains
 an estimated 8 MiB batch plus the current decoded record, with an oversized
 single commit applied alone. Neither peak RSS nor a hard allocation bound is
 inferred from these allocation totals.
+
+### Transaction accounting overflow guard
+
+On the Apple M2 Max, `BenchmarkTransactionMemoryTracking` was run sequentially
+against the preceding source through a Go overlay and the corrected source
+(`-tags noui,nolocalllm`, 200 iterations, five samples, `-benchmem`). Median
+latencies in microseconds/op:
+
+| Mode / query | Prior | Corrected | Change |
+| --- | ---: | ---: | ---: |
+| disabled / group | 2,502 | 2,430 | -2.9% |
+| disabled / point | 50.0 | 47.7 | -4.5% |
+| enabled / group | 2,489 | 2,456 | -1.3% |
+| enabled / point | 48.0 | 47.6 | -0.9% |
+
+Allocation counts were unchanged in these cases. This establishes the scoped
+accounting-overflow guard's performance, not whole-server memory protection.
+The prior overlapping benchmark runs were discarded as noisy.

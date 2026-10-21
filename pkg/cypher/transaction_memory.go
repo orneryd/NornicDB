@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -62,7 +63,8 @@ func (p *memoryPool) reserve(n int64) (ok bool, limit, used int64) {
 	for {
 		used = p.used.Load()
 		limit = p.limit.Load()
-		if limit > 0 && used+n > limit {
+		// Check by subtraction: used+n can wrap and falsely admit growth.
+		if n < 0 || used < 0 || n > math.MaxInt64-used || (limit > 0 && n > limit-used) {
 			return false, limit, used
 		}
 		if p.used.CompareAndSwap(used, used+n) {
@@ -491,7 +493,17 @@ func (s *memoryScope) add(n, allocation int64) error {
 	if err := t.err(); err != nil {
 		return err
 	}
-	used := t.used.Add(n)
+	var used int64
+	for {
+		previous := t.used.Load()
+		if n <= 0 || previous < 0 || n > math.MaxInt64-previous {
+			return t.fail(memoryLimitExceededError(transactionMemoryLimitCode, allocation, t.limit, previous, transactionMemoryMaxSetting))
+		}
+		used = previous + n
+		if t.used.CompareAndSwap(previous, used) {
+			break
+		}
+	}
 	if t.limit > 0 && used > t.limit {
 		return t.fail(memoryLimitExceededError(transactionMemoryLimitCode, allocation, t.limit, used-n, transactionMemoryMaxSetting))
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,27 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMemoryPoolReserveCannotOverflow(t *testing.T) {
+	for _, limit := range []int64{0, math.MaxInt64} {
+		pool := memoryPool{setting: globalTransactionMemorySetting}
+		pool.limit.Store(limit)
+		pool.used.Store(math.MaxInt64 - 8)
+		ok, _, used := pool.reserve(16)
+		require.False(t, ok, "reservation must not wrap through a finite or unlimited pool")
+		require.Equal(t, int64(math.MaxInt64-8), used)
+		require.Equal(t, used, pool.used.Load(), "rejection must preserve the prior charge")
+	}
+}
+
+func TestTransactionMemoryScopeCannotOverflow(t *testing.T) {
+	tracker := &transactionMemoryTracker{limit: math.MaxInt64}
+	tracker.used.Store(math.MaxInt64 - 8)
+	scope := memoryScope{tracker: tracker}
+	err := scope.grow(16)
+	requireMemoryError(t, err, transactionMemoryLimitCode, transactionMemoryMaxSetting)
+	require.Equal(t, int64(math.MaxInt64-8), tracker.used.Load())
+}
 
 // Transaction memory limits (#1343).
 
