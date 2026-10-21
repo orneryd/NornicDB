@@ -528,6 +528,8 @@ type SubsystemEvent struct {
 // Aligned with MCP (Model Context Protocol) tool format: name, description, inputSchema.
 // Invocation uses the same shape as MCP tools/call: action name + params (arguments).
 type ActionFunc struct {
+	// External opts this action into the public MCP server. False keeps it internal.
+	External    bool                                           `json:"external,omitempty"`
 	Name        string                                         // Full name: heimdall.{plugin}.{action} (MCP tool "name")
 	Handler     func(ctx ActionContext) (*ActionResult, error) // The action handler
 	Description string                                         // Human-readable description (MCP "description")
@@ -746,6 +748,7 @@ type LoadedHeimdallPlugin struct {
 type SubsystemManager struct {
 	mu              sync.RWMutex
 	plugins         map[string]*LoadedHeimdallPlugin // keyed by plugin name
+	actionOrder     []string                         // successful registrations, FIFO; sorted within each plugin
 	actions         map[string]ActionFunc            // keyed by full name: slm.plugin.action
 	ctx             SubsystemContext                 // shared context for subsystems
 	initialized     bool
@@ -828,10 +831,21 @@ func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin
 	m.plugins[name] = lp
 	m.orderDirty = true
 	m.orderGeneration++
-	for actionName, action := range actions {
+	actionNames := make([]string, 0, len(actions))
+	for actionName := range actions {
+		actionNames = append(actionNames, actionName)
+	}
+	sort.Strings(actionNames)
+	for _, actionName := range actionNames {
+		action := actions[actionName]
 		fullName := fmt.Sprintf("heimdall_%s_%s", name, actionName)
+		if _, exists := m.actions[fullName]; exists {
+			slog.Warn("Heimdall tool registration failed: name collision", "tool", fullName, "plugin", name, "outcome", "kept first registration")
+			continue
+		}
 		action.Name = fullName
 		m.actions[fullName] = action
+		m.actionOrder = append(m.actionOrder, fullName)
 	}
 	m.initialized = true
 	m.mu.Unlock()

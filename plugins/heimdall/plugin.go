@@ -33,6 +33,10 @@
 // # Built-in Registration
 //
 // This plugin is also registered as a built-in plugin, so no .so file is needed.
+// ActionFunc.External is opt-in public MCP exposure (external: true).
+// The default watcher examples remain internal (External defaults to false).
+// External actions keep their HeimdallInvoker and can use SendPrompt for inference.
+// Tool registration is FIFO; duplicate names are logged and the first wins.
 package heimdall
 
 import (

@@ -1417,6 +1417,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					localization.ServerHeimdallPluginsDirectoryDuplicateEvent(config.HeimdallPluginsDir, config.PluginsDir))
 			}
 
+			registerHeimdallMCPTools(mcpServer, subsystemMgr, dbRouter, metricsReader, handler.Bifrost())
+
 			s.setHeimdallHandler(handler)
 
 			plugins := heimdall.ListHeimdallPlugins()

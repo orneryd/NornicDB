@@ -136,7 +136,8 @@ type Server struct {
 	closed     bool
 
 	// Tool handlers
-	handlers map[string]ToolHandler
+	handlers    map[string]ToolHandler
+	pluginTools []Tool
 }
 
 func runCypherMutationWithRetry(ctx context.Context, exec *cypher.StorageExecutor, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
@@ -675,7 +676,7 @@ func (s *Server) doListTools(ctx context.Context) ListToolsResponse {
 		database = s.DefaultDatabaseName()
 	}
 	return ListToolsResponse{
-		Tools: GetToolDefinitionsWithDefaultDatabase(database),
+		Tools: s.toolDefinitions(database),
 	}
 }
 
@@ -686,13 +687,16 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		args = make(map[string]interface{})
 	}
 
+	s.mu.RLock()
 	handler, ok := s.handlers[name]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, localizedError(localization.MCPUnknownTool(name), nil)
 	}
-	accessRequirement, ok := toolDatabaseAccessByName[name]
-	if !ok {
-		return nil, localizedError(localization.MCPUnknownTool(name), nil)
+	accessRequirement, builtin := toolDatabaseAccessByName[name]
+	if !builtin {
+		// Plugin actions receive the principal and enforce operation-specific access.
+		accessRequirement = toolDatabaseRead
 	}
 	// The tasks tool lists by default (read) and mutates when task-management
 	// arguments are present; mutations require write access to the database.
@@ -725,6 +729,16 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 	} else if databaseSelection != "" {
 		ctx = ContextWithDatabase(ctx, databaseSelection)
+	}
+
+	if !builtin {
+		// Native tools consume the routing argument; plugin actions need the
+		// resolved selection in their ActionContext parameters as well.
+		database := DatabaseFromContext(ctx)
+		if database == "" {
+			database = s.DefaultDatabaseName()
+		}
+		args["database"] = database
 	}
 
 	return handler(ctx, args)
@@ -760,7 +774,7 @@ func (s *Server) DefaultDatabaseName() string {
 // ToolDefinitions returns the MCP tool definitions for this server instance.
 // The `database` parameter schema will reflect the configured default database name.
 func (s *Server) ToolDefinitions() []Tool {
-	return GetToolDefinitionsWithDefaultDatabase(s.DefaultDatabaseName())
+	return s.toolDefinitions(s.DefaultDatabaseName())
 }
 
 // getExecutorAndGetNode returns the Cypher executor and node getter for this request.
