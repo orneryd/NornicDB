@@ -1,8 +1,14 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 )
+
+// Recovery retains one batch plus the record currently being decoded, rather
+// than every unflushed commit in the WAL. A single larger commit remains atomic
+// and is applied alone; this is a batching target, not an allocator limit.
+const bufferedRecoveryBatchBytes int64 = 8 << 20
 
 // RecoverBufferedCommits replays write-behind commits that were acknowledged
 // into the WAL but never reached Badger before a crash lost the in-memory
@@ -31,6 +37,21 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
 
 	var pending []bufferedCommit
+	var pendingBytes int64
+	replayed := 0
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := b.applyBufferedCommits(pending); err != nil {
+			return fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
+		}
+		replayed += len(pending)
+		clear(pending)
+		pending = pending[:0]
+		pendingBytes = 0
+		return nil
+	}
 	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
 		if entry.Operation != OpBufferedCommit {
 			return nil
@@ -71,28 +92,36 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 				c.deletes[key] = true
 			}
 		}
+		bytes := estimateBufferedCommitBytes(&c)
+		if len(pending) > 0 && bytes > bufferedRecoveryBatchBytes-pendingBytes {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 		pending = append(pending, c)
+		pendingBytes += bytes
+		if pendingBytes >= bufferedRecoveryBatchBytes {
+			return flush()
+		}
 		return nil
 	})
-	if err != nil {
+	if err == nil {
+		err = flush()
+	}
+	if replayed == 0 {
 		return 0, err
-	}
-	if len(pending) == 0 {
-		return 0, nil
-	}
-
-	if err := b.applyBufferedCommits(pending); err != nil {
-		return 0, fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
 	}
 
 	// The replayed commits carried no count deltas; rebuild the derived
 	// counts from committed entities so readers never observe committed
 	// entities without their counts.
-	if err := b.ensureLabelCounts(); err != nil {
-		return len(pending), fmt.Errorf("wal: rebuild label counts after buffered replay: %w", err)
+	// Completed batches remain durable if a later record fails. Repair their
+	// counts as well, while preserving the original recovery failure.
+	if countErr := b.ensureLabelCounts(); countErr != nil {
+		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
 	}
-	if err := b.ensureEdgeTypeCounts(); err != nil {
-		return len(pending), fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", err)
+	if countErr := b.ensureEdgeTypeCounts(); countErr != nil {
+		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
 	}
-	return len(pending), nil
+	return replayed, err
 }

@@ -96,7 +96,8 @@ func TestEdgeOverwriteKeepsPhysicalCounts(t *testing.T) {
 
 func TestEdgeOverwriteCountsSurviveBufferedReplay(t *testing.T) {
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
 		require.NoError(t, err)
@@ -112,7 +113,8 @@ func TestEdgeOverwriteCountsSurviveBufferedReplay(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	crashClose(t, engine, wal)
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal2 := recovered.bufferedCommitWAL
 	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 	_, err = RecoverBufferedCommits(recovered, wal2)
 	require.NoError(t, err)

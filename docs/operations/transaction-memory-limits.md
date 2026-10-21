@@ -88,6 +88,10 @@ reservation stays with the buffered generation through a replay failure and
 ends after successful retirement. An over-limit commit is rolled back before
 WAL publication. This forecast does not replace the physical cgroup sample;
 the bytes already allocated while staging the write may briefly exceed it.
+Startup WAL recovery applies batches targeting 8 MiB of estimated retained
+payload instead of retaining the whole pending WAL. It may also retain the
+record currently being decoded; a single oversized commit is applied alone.
+This batching target does not bound decoder expansion or total process memory.
 
 With no limit configured, nothing is tracked and there is no overhead.
 
