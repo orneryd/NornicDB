@@ -749,13 +749,16 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Node
 	var touched map[NodeID]bool
+	v := storedRead
+	if opts.ApplyDecayFilter {
+		v = visibleRead
+	}
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = w.allNodesOverlayLocked()
+		overlay, touched = b.bufferedAllNodes(w, v)
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
-	nowNanos := DecayScoringTime()
 	// streamNodesWithOptionsInTxn already applies the projection, decay and
 	// strip filters; this wrapper only shadows rows the overlay replaces.
 	stopped := false
@@ -783,9 +786,6 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	}
 	for _, node := range overlay {
 		if !inScope(node.ID) {
-			continue
-		}
-		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
 			continue
 		}
 		projected := opts.copyResidentNode(node)
@@ -934,7 +934,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = w.allEdgesOverlayLocked()
+		overlay, touched = b.bufferedAllEdges(w, visibleRead)
 	}
 	nowNanos := DecayScoringTime()
 	stopped := false
@@ -998,9 +998,6 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return nil
 	}
 	for _, edge := range overlay {
-		if b.filterEdgeByDecay(edge, nowNanos) {
-			continue
-		}
 		if err := fn(copyEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil

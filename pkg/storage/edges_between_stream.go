@@ -86,7 +86,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID)
+		live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, startID, endID)
 	})
 	if err != nil {
 		return nil, err

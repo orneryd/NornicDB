@@ -66,6 +66,7 @@ const (
 	MessageStorageTransactionIDNamespaceRequired            MessageID = "storage.transaction.id_namespace_required"
 	MessageStorageTransactionStartNodeMissing               MessageID = "storage.transaction.start_node_missing"
 	MessageStorageTransactionEndNodeMissing                 MessageID = "storage.transaction.end_node_missing"
+	MessageStorageTransactionHiddenEdgeIdentityConflict     MessageID = "storage.transaction.hidden_edge_identity_conflict"
 	MessageStorageTransactionConstraintViolation            MessageID = "storage.transaction.constraint_violation"
 	MessageStorageTransactionCommitNamespaceMissing         MessageID = "storage.transaction.commit_namespace_missing"
 	MessageStorageTransactionCommitConflict                 MessageID = "storage.transaction.commit_conflict"
@@ -303,6 +304,9 @@ func StorageTransactionStartNodeMissing(nodeID string) Message {
 }
 func StorageTransactionEndNodeMissing(nodeID string) Message {
 	return storageValidationMessage(MessageStorageTransactionEndNodeMissing, "end node "+nodeID+" does not exist", map[string]any{"NodeID": nodeID})
+}
+func StorageTransactionHiddenEdgeIdentityConflict(edgeID string) Message {
+	return storageValidationMessage(MessageStorageTransactionHiddenEdgeIdentityConflict, "stored hidden relationship "+edgeID+" has a different final image", map[string]any{"EdgeID": edgeID})
 }
 func StorageTransactionConstraintViolation(cause error) Message {
 	return storageValidationMessage(MessageStorageTransactionConstraintViolation, "constraint violation: "+storageErrorText(cause), map[string]any{"Cause": storageErrorText(cause)})

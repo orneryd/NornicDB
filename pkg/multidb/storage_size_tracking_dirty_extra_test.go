@@ -320,7 +320,9 @@ func TestSizeTrackingEngineConnectedEdgeBytesDeduplicatesSelfLoop(t *testing.T) 
 
 	got, err := wrapper.connectedEdgeBytes(nodeID)
 	require.NoError(t, err)
-	want, err := calculateEdgeSize(edge)
+	stored, err := base.GetStoredEdge(edge.ID)
+	require.NoError(t, err)
+	want, err := calculateEdgeSize(stored)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }

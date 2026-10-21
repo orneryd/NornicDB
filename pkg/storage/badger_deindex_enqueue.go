@@ -118,10 +118,11 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 // binding.
 //
 // When decay is disabled at the engine level, this is a no-op so the
-// codepath cost stays zero on operators who don't use the feature.
-func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, namespace string, node *Node) error {
+// codepath cost stays zero on operators who don't use the feature. It
+// returns the body it rewrote, nil when the written one stands.
+func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, namespace string, node *Node) ([]byte, error) {
 	if !b.decayEnabled || node == nil {
-		return nil
+		return nil, nil
 	}
 	wasSuppressed := node.VisibilitySuppressed
 	// Score against the new labels and then persist the current visibility
@@ -133,23 +134,23 @@ func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, 
 	if suppressNow == wasSuppressed {
 		// No state change — the body the caller is about to commit already
 		// has the correct flag set (we restored it above).
-		return nil
+		return nil, nil
 	}
 
 	data, _, err := b.encodeNodeInTxn(txn, namespace, node)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := txn.Set(nodeKey(node.ID), data); err != nil {
-		return err
+		return nil, err
 	}
 
 	if suppressNow {
 		// Newly suppressed — enqueue deindex work.
-		return enqueueWorkItemInTxn(txn, string(node.ID), "NODE")
+		return data, enqueueWorkItemInTxn(txn, string(node.ID), "NODE")
 	}
 	// Newly visible — drop any tombstones from a prior suppression cycle.
-	return clearTombstonesForEntityInTxn(txn, string(node.ID))
+	return data, clearTombstonesForEntityInTxn(txn, string(node.ID))
 }
 
 func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) (bool, *Edge, error) {

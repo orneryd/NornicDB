@@ -52,7 +52,7 @@ func TestWithEmbedding_CreateMutation(t *testing.T) {
 	require.NotNil(t, nodes[0].EmbedMeta)
 	require.Equal(t, true, nodes[0].EmbedMeta["has_embedding"])
 	require.Equal(t, "test-inline", nodes[0].EmbedMeta["embedding_model"])
-	require.Equal(t, 3, nodes[0].EmbedMeta["embedding_dimensions"])
+	require.EqualValues(t, 3, nodes[0].EmbedMeta["embedding_dimensions"])
 	// Where each chunk lies in the node's string properties (#1060).
 	spans, ok := embeddingutil.StoredChunkSpans(nodes[0].EmbedMeta)
 	require.True(t, ok)

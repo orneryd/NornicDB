@@ -71,6 +71,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
+	var image *Node
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -93,6 +94,9 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 		if err := txn.Set(key, data); err != nil {
 			return localizedError(localization.StorageClientNodeWriteFailed(err), err)
+		}
+		if image, err = b.writtenNodeImage(data, node); err != nil {
+			return err
 		}
 		if embeddingsSeparate {
 			persistSeparateEmbeddings = true
@@ -134,9 +138,9 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 
 	// On successful create, register unique constraint values
-	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+	for _, label := range image.Labels {
+		for propName, propValue := range image.Properties {
+			schema.RegisterUniqueValue(label, propName, propValue, image.ID)
 		}
 	}
 	releaseUniqueLocks()
@@ -146,10 +150,10 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 	}
 
-	b.cacheOnNodeCreated(node)
+	b.cacheOnNodeCreated(image)
 
 	// Notify listeners (e.g., search service) to index the new node
-	b.notifyNodeCreated(node)
+	b.notifyNodeCreated(image)
 
 	return node.ID, nil
 }
@@ -181,7 +185,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		node = nil
 		if w != nil {
-			state := w.entityStateLocked(bufferedNodeEntity, string(id))
+			state := b.bufferedEntity(w, v, bufferedNodeEntity, string(id))
 			if state.found {
 				if state.deleted {
 					return true, ErrNotFound
@@ -310,7 +314,7 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	}
 	if b.writeBehind != nil {
 		var state bufferedEntityState
-		err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+		err := b.withReadView(func(w *WriteBehindBuffer) { state = b.bufferedEntity(w, storedRead, bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
 			if state.found {
 				if state.deleted {
 					return ErrNotFound
@@ -425,6 +429,8 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
+	var written []byte
+	var image *Node
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -445,6 +451,10 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 				return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 			}
 			if err := txn.Set(key, data); err != nil {
+				return err
+			}
+			written = data
+			if image, err = b.writtenNodeImage(written, node); err != nil {
 				return err
 			}
 
@@ -536,6 +546,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		if err := txn.Set(key, data); err != nil {
 			return err
 		}
+		written = data
 
 		// If embeddings are stored separately, write them after commit in bounded txns.
 		if embeddingsSeparate {
@@ -597,9 +608,16 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// rebind. Without this, a node previously suppressed under one binding
 		// stays suppressed forever after rotating to an unbound label.
 		if !labelsEqual(node.Labels, existingNode.Labels) {
-			if err := b.rescoreSuppressionAfterLabelChangeInTxn(txn, dbName, node); err != nil {
+			rewritten, err := b.rescoreSuppressionAfterLabelChangeInTxn(txn, dbName, node)
+			if err != nil {
 				return err
 			}
+			if rewritten != nil {
+				written = rewritten
+			}
+		}
+		if image, err = b.writtenNodeImage(written, node); err != nil {
+			return err
 		}
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
@@ -613,15 +631,15 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	if err == nil {
 		if wasInsert {
 			// Register unique constraint values
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+			for _, label := range image.Labels {
+				for propName, propValue := range image.Properties {
+					schema.RegisterUniqueValue(label, propName, propValue, image.ID)
 				}
 			}
 
-			b.cacheOnNodeCreated(node)
+			b.cacheOnNodeCreated(image)
 			// Notify listeners about the new node
-			b.notifyNodeCreated(node)
+			b.notifyNodeCreated(image)
 		} else {
 			if existingNode != nil {
 				for _, label := range existingNode.Labels {
@@ -630,15 +648,15 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 					}
 				}
 			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+			for _, label := range image.Labels {
+				for propName, propValue := range image.Properties {
+					schema.RegisterUniqueValue(label, propName, propValue, image.ID)
 				}
 			}
 
-			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
+			b.cacheOnNodeUpdatedWithOldNode(image, existingNode)
 			// Notify listeners to re-index the updated node
-			b.notifyNodeUpdated(node)
+			b.notifyNodeUpdated(image)
 		}
 	}
 

@@ -102,7 +102,7 @@ func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) 
 	if err != nil {
 		return 0, err
 	}
-	prefix := namespace + n.separator
+	prefix := namespace + ":"
 	var count int64
 	for _, node := range nodes {
 		if node != nil && strings.HasPrefix(string(node.ID), prefix) {

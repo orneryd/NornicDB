@@ -84,7 +84,9 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node) {
 	b.cacheDeleteNodeBody(node.ID)
 }
 
-// putNodeLocked stores a copy of node; the caller holds nodeCacheMu.
+// putNodeLocked stores a copy of node; the caller holds nodeCacheMu. node is
+// a body as storage returns it: decoded by a read, or a write's image
+// (writtenNodeImage), so the cache serves what an uncached read decodes.
 func (b *BadgerEngine) putNodeLocked(node *Node) {
 	// Simple eviction: if cache is too large, clear it.
 	// Keeps behavior consistent with existing code paths.
@@ -92,7 +94,6 @@ func (b *BadgerEngine) putNodeLocked(node *Node) {
 		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
 	}
 	cached := copyNode(node)
-	normalizePropertyMapShapes(cached.Properties)
 	b.nodeCache[node.ID] = cached
 	delete(b.queryNodeCache, node.ID)
 }
@@ -129,7 +130,6 @@ func (b *BadgerEngine) cacheFillQueryNode(gen uint64, node *Node) {
 		b.queryNodeCache = make(map[NodeID]*Node)
 	}
 	cached := copyNodeForCaller(node)
-	normalizePropertyMapShapes(cached.Properties)
 	b.queryNodeCache[node.ID] = cached
 }
 
@@ -166,7 +166,6 @@ func (b *BadgerEngine) cacheStoreNodeBody(id NodeID, itemVersion uint64, node *N
 		return
 	}
 	cached := copyNodeWithoutEmbeddings(node)
-	normalizePropertyMapShapes(cached.Properties)
 	retainedBytes := estimateNodeBodyCacheBytes(cached)
 	if retainedBytes > b.nodeBodyCacheMaxBytes {
 		return
@@ -296,14 +295,14 @@ func (b *BadgerEngine) cacheFillEdgeAtVersion(gen uint64, edge *Edge, version ui
 	b.edgeCacheMu.Unlock()
 }
 
-// putEdgeLocked stores a copy of edge; the caller holds edgeCacheMu.
+// putEdgeLocked stores a copy of edge, a body as storage returns it (see
+// putNodeLocked); the caller holds edgeCacheMu.
 func (b *BadgerEngine) putEdgeLocked(edge *Edge, version uint64) {
 	if b.edgeCacheMaxItems > 0 && len(b.edgeCache) > b.edgeCacheMaxItems {
 		b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
 		b.edgeCacheVersions = nil
 	}
 	cached := copyEdge(edge)
-	normalizePropertyMapShapes(cached.Properties)
 	b.edgeCache[edge.ID] = cached
 	if version == 0 {
 		delete(b.edgeCacheVersions, edge.ID)

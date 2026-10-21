@@ -202,7 +202,7 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	prefix := temporalHistoryPrefix(target.desc)
 	var overlay []*Node
 	var touched map[NodeID]bool
-	err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(c.Label) }, func(txn *badger.Txn) error {
+	err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = b.bufferedLabelNodes(w, storedRead, c.Label) }, func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {

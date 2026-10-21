@@ -50,8 +50,10 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	}
 	snap := &badgerReadSnapshot{b: b}
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		snap.overlayNodes, snap.nodesTouched = w.allNodesOverlayLocked()
-		snap.overlayEdges, snap.edgesTouched = w.allEdgesOverlayLocked()
+		// Nodes are read whatever their visibility, relationships as visible
+		// reads see them, as their stored rows below.
+		snap.overlayNodes, snap.nodesTouched = b.bufferedAllNodes(w, storedRead)
+		snap.overlayEdges, snap.edgesTouched = b.bufferedAllEdges(w, visibleRead)
 	}, readViewOptions{longLived: true})
 	if err != nil {
 		return nil, err
@@ -151,9 +153,6 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 		return err
 	}
 	for _, edge := range s.overlayEdges {
-		if s.b.filterEdgeByDecay(edge, nowNanos) {
-			continue
-		}
 		if err := fn(copyEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil

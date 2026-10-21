@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -228,6 +229,12 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	if msgpcode.IsFixedMap(code) || code == msgpcode.Map16 || code == msgpcode.Map32 {
 		return decodeStrictTypedMap(dec)
 	}
+	// Every integer reads as int64, as Cypher integers are, whatever code
+	// msgpack stored it in (a Go int takes the narrowest that holds it, and
+	// Uint64 above 2^32-1); only a value above MaxInt64 stays uint64.
+	if isIntegerCode(code) {
+		return decodeStoredInteger(dec, code)
+	}
 	// DecodeInterface is the msgpack package's hand-written scalar path.
 	// Decode(&any) routes through reflection and dominates large property
 	// arrays such as Graphiti embedding vectors.
@@ -252,10 +259,10 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 	switch {
 	case firstCode == msgpcode.Double:
 		return decodeFloat64Array(dec, n)
-	case isSignedIntegerCode(firstCode):
+	case firstCode == msgpcode.Float:
+		return decodeFloat32Array(dec, n)
+	case isIntegerCode(firstCode):
 		return decodeInt64Array(dec, n)
-	case isUnsignedIntegerCode(firstCode):
-		return decodeUint64Array(dec, n)
 	case msgpcode.IsString(firstCode):
 		return decodeStringArray(dec, n)
 	case firstCode == msgpcode.False || firstCode == msgpcode.True:
@@ -283,36 +290,6 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
 			}
 			out[i] = f
-		}
-		return out, nil
-	case int64:
-		out := make([]int64, n)
-		out[0] = first.(int64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			v, ok := next.(int64)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = v
-		}
-		return out, nil
-	case uint64:
-		out := make([]uint64, n)
-		out[0] = first.(uint64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			v, ok := next.(uint64)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = v
 		}
 		return out, nil
 	case string:
@@ -384,21 +361,21 @@ func decodeFloat64Array(dec *msgpack.Decoder, n int) (any, error) {
 	return out, nil
 }
 
-func decodeInt64Array(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]int64, n)
+func decodeFloat32Array(dec *msgpack.Decoder, n int) (any, error) {
+	out := make([]float32, n)
 	for i := 0; i < n; i++ {
 		code, err := dec.PeekCode()
 		if err != nil {
 			return nil, err
 		}
-		if !isSignedIntegerCode(code) {
+		if code != msgpcode.Float {
 			next, err := decodeStrictTypedValue(dec)
 			if err != nil {
 				return nil, err
 			}
 			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
 		}
-		v, err := dec.DecodeInt64()
+		v, err := dec.DecodeFloat32()
 		if err != nil {
 			return nil, err
 		}
@@ -407,25 +384,30 @@ func decodeInt64Array(dec *msgpack.Decoder, n int) (any, error) {
 	return out, nil
 }
 
-func decodeUint64Array(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]uint64, n)
+func decodeInt64Array(dec *msgpack.Decoder, n int) (any, error) {
+	out := make([]int64, n)
 	for i := 0; i < n; i++ {
 		code, err := dec.PeekCode()
 		if err != nil {
 			return nil, err
 		}
-		if !isUnsignedIntegerCode(code) {
+		if !isIntegerCode(code) {
 			next, err := decodeStrictTypedValue(dec)
 			if err != nil {
 				return nil, err
 			}
 			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
 		}
-		v, err := dec.DecodeUint64()
+		v, err := decodeStoredInteger(dec, code)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = v
+		signed, fits := v.(int64)
+		if !fits {
+			// A value above MaxInt64 keeps uint64; its neighbours stay int64.
+			return finishMixedArray(dec, sliceToAny(out[:i]), v, n)
+		}
+		out[i] = signed
 	}
 	return out, nil
 }
@@ -478,6 +460,28 @@ func decodeBoolArray(dec *msgpack.Decoder, n int) (any, error) {
 
 func isSignedIntegerCode(code byte) bool {
 	return code == msgpcode.Int8 || code == msgpcode.Int16 || code == msgpcode.Int32 || code == msgpcode.Int64
+}
+
+// isIntegerCode reports whether code holds an integer: a fixnum or any
+// signed or unsigned integer code.
+func isIntegerCode(code byte) bool {
+	return isSignedIntegerCode(code) || isUnsignedIntegerCode(code) || msgpcode.IsFixedNum(code)
+}
+
+// decodeStoredInteger reads the integer at code as int64, or as uint64 when
+// it is a Uint64 above MaxInt64, which no int64 holds.
+func decodeStoredInteger(dec *msgpack.Decoder, code byte) (any, error) {
+	if code != msgpcode.Uint64 {
+		return dec.DecodeInt64()
+	}
+	n, err := dec.DecodeUint64()
+	if err != nil {
+		return nil, err
+	}
+	if n > math.MaxInt64 {
+		return n, nil
+	}
+	return int64(n), nil
 }
 
 func isUnsignedIntegerCode(code byte) bool {
