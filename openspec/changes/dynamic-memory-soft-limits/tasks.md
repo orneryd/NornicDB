@@ -47,7 +47,10 @@
       dirty-page/compaction pressure, native/model work, failures and restart durability checks.
 - [ ] Prove pre-fence cancellation leaves no writes and post-fence pressure cannot report fictitious rollback.
 - [ ] Run race and memory/retention tests, disabled/permissive/restrictive paired benchmarks with CPU/heap
-      profiles across workload sizes; revert regressions or complexity without measured benefit.
+      profiles across workload sizes; prove zero new per-checkpoint/row allocations when disabled,
+      zero per-checkpoint/growth allocations when enabled, bounded retained state per active owner,
+      and the specified 5% throughput/latency and 10% allocation/memory gates. Revert regressions
+      or complexity without measured benefit.
 - [ ] Publish support/limitations documentation explaining soft limits, accounting coverage, residual OOM
       risk and thresholds below container ceilings; do not advertise a hard memory bound.
 - [ ] Run final required make verify against the actual integration base and post exact head/base,
