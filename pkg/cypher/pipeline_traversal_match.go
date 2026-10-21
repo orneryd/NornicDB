@@ -16,7 +16,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		if err != nil {
 			return nil, true, err
 		}
-		out, _ := materializePipelineSource(source)
+		out, _ := materializePipelineSource(ctx, source)
 		return out, true, getExpressionFailure(ctx)
 	}
 	return e.pipelineApplySeededTraversalMatch(ctx, rows, clause, hint)
@@ -80,9 +80,9 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		var handled bool
 		var err error
 		if rowHint.limit > 0 && rowHint.orderExpr != "" {
-			result, handled, err = e.tryExecuteTraversalStartSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+			result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalStartSeed)
 			if err == nil && !handled {
-				result, handled, err = e.tryExecuteTraversalEndSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+				result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalEndSeed)
 			}
 		}
 		if err != nil {

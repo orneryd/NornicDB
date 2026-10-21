@@ -110,11 +110,8 @@ func executorEmitsSlowQueryLog(t *testing.T, te *observability.TestEnv, exec *cy
 
 // TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold
 // covers the second of the 4 construction sites review finding C3 flagged
-// as untested: getExecutorForDatabaseWithAuth's composite/remote-auth
-// branch, which builds its own fresh *cypher.StorageExecutor rather than
-// delegating to newExecutorForDatabase. Verified by mutation: commenting
-// out either SetLogger or SetSlowQueryThreshold call in that function's
-// "inherit from base executor" block fails this test.
+// as untested: authenticated composite executor construction. It verifies
+// logger and threshold inheritance on the fresh remote-auth view.
 func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *testing.T) {
 	server, _ := setupTestServer(t)
 
@@ -127,7 +124,7 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 
 	// A local constituent alongside a remote one: databaseHasRemoteConstituent
 	// only needs ONE remote constituent to route through
-	// getExecutorForDatabaseWithAuth's remote-auth branch (the code under
+	// the remote-auth storage selection (the code under
 	// test), but querying the LOCAL constituent below keeps this test
 	// in-process — no real dial to the remote constituent's URI needed.
 	require.NoError(t, server.dbManager.CreateDatabase("obs_local_shard"))
@@ -143,14 +140,14 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 	}))
 
 	require.True(t, server.databaseHasRemoteConstituent("obs_comp_remote"))
-	exec, err := server.getExecutorForDatabaseWithAuth("obs_comp_remote", "Bearer remote-token")
+	exec, err := server.newDatabaseScopedExecutor("obs_comp_remote", "Bearer remote-token")
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 
 	// Composite databases refuse ungrounded queries; target the local
 	// constituent explicitly, same as TestCompositeExplicitTx_SecondWriteShardErrorCode.
 	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "CALL { USE obs_comp_remote.local1 RETURN 1 AS x } RETURN x"),
-		"getExecutorForDatabaseWithAuth's composite/remote-auth executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
+		"the composite/remote-auth executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
 }
 
 // TestHeimdallRouter_ExecutorForDatabase_InheritsLoggerAndSlowQueryThreshold

@@ -97,3 +97,6 @@
 - id: cyphertransactions.command_not_statement
   description: Comando de transacción enviado como sentencia del cliente. Word es una palabra clave de Cypher y no se traduce.
   other: "Entrada no válida '{{.Word}}': se esperaba una sentencia Cypher (el controlador o la API de transacciones HTTP inician, confirman y revierten una transacción, no una sentencia)"
+- id: cyphertransactions.memory_limit_exceeded
+  description: La memoria estimada de una transacción superaría un límite. Allocation, Limit y Used son tamaños en bytes; Setting es un nombre de ajuste que no se traduce.
+  other: "La asignación de {{.Allocation}} adicionales superaría el límite de {{.Limit}}. En uso actualmente: {{.Used}}. Se alcanzó el umbral de {{.Setting}}"

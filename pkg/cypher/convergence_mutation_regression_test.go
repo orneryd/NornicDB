@@ -35,7 +35,7 @@ func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string
 		scope[name] = struct{}{}
 	}
 	ctx = withExpressionFailureSlot(ctx)
-	result, _, err := e.runPipelineClauses(ctx, []pipelineRow{row}, scope, clauses, clauses)
+	result, _, err := e.runPipelineClauseRows(ctx, []pipelineRow{row}, scope, clauses, clauses, nil)
 	if err == nil {
 		err = getExpressionFailure(ctx)
 	}
@@ -79,7 +79,7 @@ func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, 
 		bindParameterRow(ctx, row)
 		rows = append(rows, row)
 	}
-	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
 	if err == nil {
 		err = getExpressionFailure(ctx)
 	}

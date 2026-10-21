@@ -159,7 +159,7 @@ func TestPipelineQuantifierAcrossRepeatedHorizons(t *testing.T) {
 			require.True(t, handled, "WITH clause %d: %s", index, clause.text)
 		case pipelineClauseUnwind:
 			var handled bool
-			rows, handled = exec.pipelineApplyUnwind(ctx, rows, clause.text)
+			rows, _, handled = exec.pipelineApplyUnwindPrefix(ctx, rows, []pipelineClause{clause})
 			require.True(t, handled, "UNWIND clause %d: %s", index, clause.text)
 		}
 	}

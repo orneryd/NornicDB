@@ -2,6 +2,7 @@ package dbconfig
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/config"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
 	"strings"
@@ -28,6 +29,9 @@ const (
 	HotReloadNone          HotReloadMode = ""
 	HotReloadSearchRebuild HotReloadMode = "search-rebuild"
 	HotReloadSearchCache   HotReloadMode = "search-cache"
+	// HotReloadTransactionMemory applies new transaction memory limits to
+	// the statements that start afterwards (#1343).
+	HotReloadTransactionMemory HotReloadMode = "transaction-memory"
 )
 
 // SettingDefinition is the source of truth for setting validation and metadata.
@@ -115,7 +119,9 @@ var settingsRegistry = []SettingDefinition{
 	{Name: "db.nornic.search_result_cache.max_entries", Type: "number", Category: "Search", DefaultValue: "1000", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchCache, ZeroSemantics: "disabled"},
 	{Name: "db.nornic.search_result_cache.ttl", Type: "duration", Category: "Search", DefaultValue: "5m", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadSearchCache},
 	{Name: "db.nornic.query_lookup_metadata.max_entries", Type: "number", Category: "Query cache", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "existing per-cache bounds"},
-	{Name: "db.memory.transaction.total.max", Type: "bytes", Category: "Transactions", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
+	{Name: "db.memory.transaction.max", EnvironmentVariable: "NORNICDB_MEMORY_TRANSACTION_MAX", Type: "bytes", Category: "Transactions", Description: "Limit the estimated memory, in bytes, that a single transaction can consume (k, m and g suffixes for kibibytes, mebibytes and gibibytes). Zero means unlimited.", DefaultValue: "0", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadTransactionMemory, ZeroSemantics: "unlimited"},
+	{Name: "db.memory.transaction.total.max", Type: "bytes", Category: "Transactions", Description: "Limit the estimated memory, in bytes, that all transactions in one database can consume (k, m and g suffixes for kibibytes, mebibytes and gibibytes). Zero means unlimited.", DefaultValue: "0", Scope: ScopeDatabase, Dynamic: true, RestartLevel: RestartNone, HotReload: HotReloadTransactionMemory, ZeroSemantics: "unlimited"},
+	{Name: "dbms.memory.transaction.total.max", EnvironmentVariable: "NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", Type: "bytes", Category: "Transactions", Description: "Limit the estimated memory, in bytes, that all of the running transactions can consume (k, m and g suffixes for kibibytes, mebibytes and gibibytes). Zero means unlimited and is the default.", Scope: ScopePhysicalEngine, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
 	{Name: "db.nornic.memory.index.bm25.max", Type: "bytes", Category: "Index capacity", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
 	{Name: "db.nornic.memory.index.vector.max", Type: "bytes", Category: "Index capacity", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited"},
 	{Name: "db.nornic.memory.index.metadata.max", Type: "bytes", Category: "Index capacity", DefaultValue: "0", Scope: ScopeDatabase, RestartLevel: RestartProcess, ZeroSemantics: "unlimited per index"},
@@ -183,37 +189,6 @@ func LookupSetting(name string) (SettingDefinition, bool) {
 	return SettingDefinition{}, false
 }
 
-func ParseByteSize(raw string) (int64, error) {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	if value == "" {
-		return 0, fmt.Errorf("byte size is empty")
-	}
-	multiplier := int64(1)
-	if suffix := value[len(value)-1]; suffix < '0' || suffix > '9' {
-		switch suffix {
-		case 'k':
-			multiplier = 1 << 10
-		case 'm':
-			multiplier = 1 << 20
-		case 'g':
-			multiplier = 1 << 30
-		case 't':
-			multiplier = 1 << 40
-		default:
-			return 0, fmt.Errorf("invalid byte-size suffix in %q", raw)
-		}
-		value = strings.TrimSpace(value[:len(value)-1])
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0, fmt.Errorf("invalid byte size %q", raw)
-	}
-	if parsed > math.MaxInt64/multiplier {
-		return 0, fmt.Errorf("byte size overflows int64: %q", raw)
-	}
-	return parsed * multiplier, nil
-}
-
 func NormalizeSettingValue(name, raw string) (string, error) {
 	definition, ok := LookupSetting(name)
 	if !ok {
@@ -222,7 +197,7 @@ func NormalizeSettingValue(name, raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	switch definition.Type {
 	case "bytes":
-		parsed, err := ParseByteSize(value)
+		parsed, err := config.ParseByteSize(value)
 		if err != nil {
 			return "", err
 		}

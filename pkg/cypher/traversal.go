@@ -60,6 +60,10 @@ type TraversalContext struct {
 	cancelParentDone     <-chan struct{}
 	cancelInitialized    bool
 	cancellationObserved bool
+	// memory is the traversal's account in the statement's memory scope,
+	// resolved once from cancelCtx (#1343).
+	memory         memoryAccount
+	memoryResolved bool
 	// endNodeID, when set, is the only node a path may end at (a shortestPath
 	// pair, #863).
 	endNodeID storage.NodeID
@@ -275,6 +279,8 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
+	collector := newTraversalResultCollector(ctx, result)
+	defer collector.close()
 
 	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
 	matches := e.parseTraversalPattern(ctx, pattern)
@@ -319,7 +325,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			if err != nil {
 				return nil, err
 			}
-			result.Rows = [][]interface{}{{count}}
+			if err := collector.appendRow([]interface{}{count}); err != nil {
+				return nil, err
+			}
 			return result, nil
 		}
 	}
@@ -335,7 +343,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			if err != nil {
 				return nil, err
 			}
-			result.Rows = rows
+			if err := collector.appendRows(rows); err != nil {
+				return nil, err
+			}
 			return result, nil
 		}
 	}
@@ -459,7 +469,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			if err != nil {
 				return nil, err
 			}
-			result.Rows = aggregated
+			if err := collector.appendRows(aggregated); err != nil {
+				return nil, err
+			}
 			return result, nil
 		}
 	}
@@ -533,7 +545,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 					}
 				}
 			}
-			result.Rows = append(result.Rows, row)
+			if err := collector.appendRow(row); err != nil {
+				return nil, err
+			}
 			return result, nil
 		}
 
@@ -605,13 +619,17 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 					}
 				}
 			}
-			result.Rows = append(result.Rows, row)
+			if err := collector.appendRow(row); err != nil {
+				return nil, err
+			}
 		}
 		return result, nil
 	}
 
 	// Build result rows (non-aggregation)
-	e.appendTraversalRows(ctx, result, paths, matches, returnItems, earlyLimit)
+	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, earlyLimit); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -650,9 +668,41 @@ func expandTraversalWildcardReturnItems(items []returnItem, match *TraversalMatc
 	return expanded
 }
 
-func (e *StorageExecutor) appendTraversalRows(ctx context.Context, result *ExecuteResult, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) {
+// traversalResultCollector is the one owner for rows returned by every
+// traversal route, including count, grouping and the end-seeded fast path.
+type traversalResultCollector struct {
+	result *ExecuteResult
+	memory memoryAccount
+}
+
+func newTraversalResultCollector(ctx context.Context, result *ExecuteResult) traversalResultCollector {
+	return traversalResultCollector{result: result, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
+}
+
+func (c *traversalResultCollector) close() { c.memory.close() }
+
+func (c *traversalResultCollector) appendRow(row []interface{}) error {
+	if c.memory.scope != nil {
+		if err := c.memory.grow(estimateResultRowBytes(row, c.memory.scope.knownLists())); err != nil {
+			return err
+		}
+	}
+	c.result.Rows = append(c.result.Rows, row)
+	return nil
+}
+
+func (c *traversalResultCollector) appendRows(rows [][]interface{}) error {
+	for _, row := range rows {
+		if err := c.appendRow(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *traversalResultCollector) appendPathRows(e *StorageExecutor, ctx context.Context, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) error {
 	for _, path := range paths {
-		if rowLimit >= 0 && len(result.Rows) >= rowLimit {
+		if rowLimit >= 0 && len(c.result.Rows) >= rowLimit {
 			break
 		}
 		row := make([]interface{}, len(returnItems))
@@ -665,21 +715,49 @@ func (e *StorageExecutor) appendTraversalRows(ctx context.Context, result *Execu
 				row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
 			}
 		}
-		result.Rows = append(result.Rows, row)
+		if err := c.appendRow(row); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int) (*ExecuteResult, bool, error) {
+type traversalSeedSide uint8
+
+const (
+	traversalStartSeed traversalSeedSide = iota
+	traversalEndSeed
+)
+
+func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int, seedSide traversalSeedSide) (*ExecuteResult, bool, error) {
 	if limit <= 0 || strings.TrimSpace(orderExpr) == "" {
 		return nil, false, nil
 	}
 
 	matches := e.parseTraversalPattern(ctx, pattern)
-	if matches == nil || matches.IsChained {
+	if matches == nil || (seedSide == traversalEndSeed && matches.IsChained) {
 		return nil, false, nil
 	}
 	if pathVariable != "" {
 		matches.PathVariable = pathVariable
+	}
+	if seedSide == traversalStartSeed {
+		if !matches.IsChained && strings.TrimSpace(matches.StartNode.variable) == "" {
+			return nil, false, nil
+		}
+		seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, matches.StartNode, whereClause, orderExpr, limit)
+		if err != nil {
+			return nil, true, err
+		}
+		if !used {
+			return nil, false, nil
+		}
+		result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
+		if err != nil {
+			return nil, true, err
+		}
+		e.markTraversalStartSeedTopKUsed()
+		return result, true, nil
 	}
 	if strings.TrimSpace(matches.EndNode.variable) == "" || len(matches.EndNode.labels) == 0 {
 		return nil, false, nil
@@ -733,7 +811,11 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 			}
 			paths = append(paths, path)
 			if len(paths) >= limit {
-				e.appendTraversalRows(ctx, result, paths, matches, returnItems, limit)
+				collector := newTraversalResultCollector(ctx, result)
+				defer collector.close()
+				if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, limit); err != nil {
+					return nil, true, err
+				}
 				e.markTraversalEndSeedTopKUsed()
 				return result, true, nil
 			}
@@ -744,7 +826,11 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 		return nil, false, nil
 	}
 
-	e.appendTraversalRows(ctx, result, paths, matches, returnItems, limit)
+	collector := newTraversalResultCollector(ctx, result)
+	defer collector.close()
+	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, limit); err != nil {
+		return nil, true, err
+	}
 	e.markTraversalEndSeedTopKUsed()
 	return result, true, nil
 }
@@ -886,35 +972,6 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 	}
 
 	return seedNodes, true, nil
-}
-
-func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int) (*ExecuteResult, bool, error) {
-	if limit <= 0 || strings.TrimSpace(orderExpr) == "" {
-		return nil, false, nil
-	}
-
-	matches := e.parseTraversalPattern(ctx, pattern)
-	if matches == nil || matches.IsChained == false && strings.TrimSpace(matches.StartNode.variable) == "" {
-		return nil, false, nil
-	}
-	if pathVariable != "" {
-		matches.PathVariable = pathVariable
-	}
-
-	seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, matches.StartNode, whereClause, orderExpr, limit)
-	if err != nil {
-		return nil, true, err
-	}
-	if !used {
-		return nil, false, nil
-	}
-
-	result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
-	if err != nil {
-		return nil, true, err
-	}
-	e.markTraversalStartSeedTopKUsed()
-	return result, true, nil
 }
 
 // tryCollectNodesFromStartPropertyScan applies start-node predicate pruning for
@@ -1068,6 +1125,9 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 	}
 
 	collected := make([]interface{}, 0, len(paths))
+	// Collected values count against the statement's memory limit (#1343).
+	memory := memoryAccount{scope: memoryScopeFromContext(ctx)}
+	defer memory.close()
 	if distinct {
 		seen := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
@@ -1081,12 +1141,19 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 				continue
 			}
 			seen[key] = struct{}{}
+			if memory.grow(estimateValueBytes(val)+estimateValueBytes(key)) != nil {
+				break
+			}
 			collected = append(collected, val)
 		}
 	} else {
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
-			collected = append(collected, e.evaluateExpressionWithPathContext(ctx, inner, context))
+			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
+			if memory.growValue(val) != nil {
+				break
+			}
+			collected = append(collected, val)
 		}
 	}
 	if suffix == "" {
@@ -1637,6 +1704,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 		}
 
 		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+		traversalCtx.memory.close()
 		results = append(results, paths...)
 		if remaining > 0 {
 			remaining -= len(paths)
@@ -2024,6 +2092,11 @@ func (e *StorageExecutor) findPaths(
 	// Check if current path meets minimum length and endpoint requirements
 	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentNode.ID == ctx.endNodeID) {
 		if e.matchesEndPattern(currentNode, endPattern) {
+			// A path the expansion keeps counts against the statement's
+			// memory limit; going over cancels the statement (#1343).
+			if err := ctx.memoryAccount().grow(estimatePathResultBytes(len(pathNodes), len(pathEdges))); err != nil {
+				return results
+			}
 			results = append(results, PathResult{
 				Nodes:         append([]*storage.Node{}, pathNodes...),
 				Relationships: append([]*storage.Edge{}, pathEdges...),

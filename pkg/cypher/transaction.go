@@ -74,6 +74,10 @@ type TransactionContext struct {
 	// it wrote; any other statement is refused and COMMIT rolls it back, as in
 	// Neo4j (#683).
 	failed error
+	// storageRolledBack records early cleanup after a memory failure. The
+	// protocol transaction stays failed until its owner receives COMMIT or
+	// ROLLBACK, while staged storage and its budget are released immediately.
+	storageRolledBack bool
 
 	// statementKind keeps administration commands apart from data statements.
 	statementKind string
@@ -89,6 +93,16 @@ type TransactionContext struct {
 func (e *StorageExecutor) failTransaction(ctx context.Context, err error) error {
 	if tx := e.txContext; err != nil && tx != nil && tx.active && tx.failed == nil {
 		tx.failed = err
+		if code, _ := nornicerrors.Neo4jStatus(err); code == transactionMemoryLimitCode || code == memoryPoolOutOfMemoryCode {
+			if storageTx, ok := tx.tx.(*storage.BadgerTransaction); ok {
+				if rollbackErr := storageTx.Rollback(); rollbackErr == nil {
+					tx.storageRolledBack = true
+					if tx.running != nil {
+						tx.running.releaseMemory()
+					}
+				}
+			}
+		}
 		// The transaction can no longer commit: the MERGE key locks it holds,
 		// itself or through a participant's sub-transaction, must not keep
 		// other transactions' MERGEs of those keys waiting until the client
@@ -426,7 +440,9 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 	var err error
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
-		err = tx.Rollback()
+		if !e.txContext.storageRolledBack {
+			err = tx.Rollback()
+		}
 	case *fabric.FabricTransaction:
 		// If already rolled back, treat as idempotent rollback success.
 		if tx.State() != "open" {

@@ -1037,13 +1037,13 @@ func TestServerNew_ConfiguresDefaultRemoteEngineFactory(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
+func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	// No-auth and non-remote path delegates to cached executor behavior.
-	execA, err := server.getExecutorForDatabaseWithAuth("nornic", "")
+	// Non-remote requests share the cached executor.
+	execA, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
-	execB, err := server.getExecutorForDatabaseWithAuth("nornic", "Bearer token")
+	execB, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
 	require.Equal(t, execA, execB)
 	require.False(t, server.databaseHasRemoteConstituent("nornic"))
@@ -1080,7 +1080,7 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 	server.executors = make(map[string]*cypher.StorageExecutor)
 
 	require.True(t, server.databaseHasRemoteConstituent("comp_remote_exec"))
-	execRemote, err := server.getExecutorForDatabaseWithAuth("comp_remote_exec", "Bearer remote")
+	execRemote, err := server.newDatabaseScopedExecutor("comp_remote_exec", "Bearer remote")
 	require.NoError(t, err)
 	require.NotNil(t, execRemote)
 	require.Equal(t, "Bearer remote", tokenSeen)
@@ -1104,7 +1104,7 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 		},
 	}))
 	server.dbManager = badManager
-	_, err = server.getExecutorForDatabaseWithAuth("comp_remote_bad", "Bearer token")
+	_, err = server.newDatabaseScopedExecutor("comp_remote_bad", "Bearer token")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "remote dial failed")
 }
