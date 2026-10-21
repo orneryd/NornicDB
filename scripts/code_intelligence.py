@@ -30,6 +30,11 @@ This commit is blocked. Both reuse candidates and refactor targets require resol
    Migrate every caller to the canonical API, then remove the obsolete entry
    points. Do not leave a tiny delegating wrapper as a substitute for completing
    the refactor; preserve required behavior by updating the actual consumers.
+   When two command constructors mix shared root setup with different subcommands,
+   move root setup into one shared owner, keep each binary's command registration
+   separate, migrate entry points and tests, then delete the old constructors.
+   Rewriting a function does not retire its indexed implementation: only code
+   actually deleted in this check-in is excluded from duplicate findings.
 3. Do not leaf-patch divergent paths, mask failures, delete required behavior,
    suppress findings, lower thresholds, or bypass/disable this hook to commit.
 4. Verify the complete affected behavior with focused regression tests and the
