@@ -95,8 +95,12 @@ that a configured GC target itself provides application OOM protection.
   `executor_entry.go` and lane A's loop checkpoints are the execution consumers.
   Context propagation is not proof that every allocation checks its budget.
 - Develop `transaction_memory.go`, `transaction_memory_estimate.go` and
-  `transaction_memory_retention.go` own transaction/database/global estimated
-  pools. Inventory all follow-ups, error mappings and consumers before porting.
+  `transaction_memory_retention.go` are reference implementations only. Their
+  statement-end release contract does not account for an explicit transaction's
+  retained staged writes, and their transaction error code differs from the
+  approved Neo4j contract. The release implementation supersedes these attempts:
+  use a single owner for transaction, database and process reservations, and
+  bring over only individually verified charge sites or tests.
 - `pkg/storage/badger_transaction.go`, Badger write-behind/commit buffers,
   `wal.go` and DB durability configuration own persistence and publication.
   Inventory actual acceptance/commit fences for buffered and direct routes.
