@@ -82,6 +82,8 @@
   other: "[!! Mín bátch sízé béfóré párállélízíng !!]"
 - id: nornicdbcli.flag.memory_limit
   other: "[!! Mémórý límít ín MB ás án íntégér (é.g., 500), 0 únlímítéd, ór áútó (85% óf thé cóntáínér límít) !!]"
+- id: nornicdbcli.flag.go_memory_limit
+  other: "[!! Gó rúntímé GC mémórý tárgét ín MíB, 0 fór únlímítéd, ór áútó !!]"
 - id: nornicdbcli.flag.gc_percent
   other: "[!! GC ággréssívénéss (100= défáúlt, lówér=móré ággréssívé) !!]"
 - id: nornicdbcli.flag.pool_enabled
@@ -126,6 +128,16 @@
   other: "[!! Vísíbílítý súppréssíón thréshóld (défáúlt: 0.05) !!]"
 - id: nornicdbcli.validation.invalid_memory_limit
   other: '[!! Ínválíd --memory-limit válúé {{printf "%q" .Value}}: {{.Cause}} !!]'
+- id: nornicdbcli.validation.go_memory_limit_deprecated
+  other: "[!! --memory-limit ís déprécátéd; úsé --go-memory-limit (íntégér MíB ór áútó) !!]"
+- id: nornicdbcli.validation.env_memory_limit_deprecated
+  other: "[!! NORNICDB_MEMORY_LIMIT ís déprécátéd; úsé NORNICDB_GO_MEMORY_LIMIT_MIB (íntégér MíB ór áútó) !!]"
+- id: nornicdbcli.validation.yaml_memory_limit_deprecated
+  other: "[!! memory.runtime_limit ís déprécátéd; úsé memory.go_runtime_limit (íntégér MíB ór áútó) !!]"
+- id: nornicdbcli.validation.go_memory_limit_conflict
+  other: "[!! --memory-limit cónflícts wíth --go-memory-limit !!]"
+- id: nornicdbcli.validation.invalid_go_memory_limit
+  other: '[!! Ínválíd --go-memory-limit válúé {{printf "%q" .Value}}: {{.Cause}} !!]'
 - id: nornicdbcli.validation.invalid_stdio_interval
   other: "[!! Ínválíd stdio-log-compact-seconds {{.Value}}: múst bé >= 0 !!]"
 - id: nornicdbcli.config.not_found
