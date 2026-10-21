@@ -120,13 +120,17 @@ type Lease struct {
 	once   sync.Once
 }
 
+// disabledLease is immutable: Release returns before touching once when policy
+// is nil. Reusing it avoids an allocation when application limits are off.
+var disabledLease = &Lease{}
+
 // Reserve atomically checks cached physical pressure and all outstanding
 // forecasts. Adding both is conservative while an allocation may already
 // appear in the physical sample, but prevents unrelated growth during active
 // work from silently spending the same headroom twice.
 func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	if p == nil || p.limit <= 0 || bytes <= 0 {
-		return &Lease{}, nil
+		return disabledLease, nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
