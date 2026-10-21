@@ -98,6 +98,7 @@ type catalogContinuationStream struct {
 	policy        *atomic.Uint64
 	policyID      uint64
 	metadata      map[string]any
+	completion    continuationStatus
 	retainedBytes int64
 	closed        bool
 	projection    resultPropertyProjection
@@ -109,7 +110,7 @@ type continuationGroup struct {
 }
 
 func (s *Service) newIDContinuationStream(ctx context.Context, options SearchOptions, request SearchContinuationRequest) (resultstream.Stream, error) {
-	return s.newCompleteContinuationStream(ctx, options, request, nil)
+	return s.newCompleteContinuationStream(ctx, options, request, nil, newContinuationExecution(options, request))
 }
 
 func (s *Service) streamCompleteContinuationNodes(ctx context.Context, options *SearchOptions, request SearchContinuationRequest, visit storage.NodeVisitor) error {
@@ -151,7 +152,7 @@ func (s *Service) completeContinuationProjectionProperties(options *SearchOption
 	return projected
 }
 
-func (s *Service) newCompleteContinuationStream(ctx context.Context, options SearchOptions, request SearchContinuationRequest, ranked *SearchResponse) (resultstream.Stream, error) {
+func (s *Service) newCompleteContinuationStream(ctx context.Context, options SearchOptions, request SearchContinuationRequest, ranked *SearchResponse, execution *continuationExecution) (resultstream.Stream, error) {
 	started := time.Now()
 	policy, policyID, admitted := s.acquireCompleteContinuationBuild()
 	if !admitted {
@@ -175,12 +176,10 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	searchMethod := "id"
 	fallbackTriggered := false
 	fallbackReason := SearchFallbackNone
-	rankedPoolExhausted := true
 	if ranked != nil {
 		searchMethod = ranked.SearchMethod
 		fallbackTriggered = ranked.FallbackTriggered
 		fallbackReason = ranked.FallbackReason
-		rankedPoolExhausted = ranked.RetrievalExhausted
 		for _, result := range ranked.Results {
 			result.Phase = SearchContinuationRankedPhase
 			rankedByID[searchResultID(result)] = result
@@ -341,10 +340,8 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		return results[i].ID < results[j].ID
 	})
 	eligibleCount := len(results)
-	maxResultsReached := request.MaxResults > 0 && eligibleCount > request.MaxResults
-	if maxResultsReached {
-		results = results[:request.MaxResults]
-	}
+	execution.catalog(eligibleCount)
+	results = results[:execution.resultCount]
 	rankedCount := 0
 	for index := range results {
 		if results[index].Phase == SearchContinuationRankedPhase {
@@ -372,10 +369,10 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			"mode":                  request.Mode,
 			"ranked_count":          rankedCount,
 			"eligible_count":        &eligibleCount,
-			"ranked_pool_exhausted": rankedPoolExhausted,
-			"max_results_reached":   maxResultsReached,
+			"ranked_pool_exhausted": execution.status.rankedExhausted,
 		},
 		retainedBytes: retainedBytes,
+		completion:    execution.status,
 		projection:    resultProjection,
 	}, nil
 }
@@ -541,21 +538,13 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 	for key, value := range metadataSource {
 		metadata[key] = value
 	}
-	maxResultsReached, _ := metadata["max_results_reached"].(bool)
+
 	results, err := hydrateContinuationResultsContext(ctx, s.engine, compact, s.authorizeNode, s.projection)
 	if err != nil {
 		return nil, err
 	}
-	if hasMore {
-		metadata["collection_exhausted"] = false
-		metadata["completion"] = SearchContinuationMoreResults
-	} else if maxResultsReached {
-		metadata["collection_exhausted"] = false
-		metadata["completion"] = SearchContinuationMaxResultsComplete
-	} else {
-		metadata["collection_exhausted"] = true
-		metadata["completion"] = SearchContinuationCollectionComplete
-	}
+	_, collectionExhausted, completion := s.completion.page(hasMore)
+	metadata["collection_exhausted"], metadata["completion"] = collectionExhausted, completion
 	return &resultstream.Page{
 		Rows:     continuationRows(results),
 		Position: position,
