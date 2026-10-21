@@ -156,6 +156,24 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	return &Lease{policy: p, bytes: bytes}, nil
 }
 
+// ReserveWireRequest forecasts decode and parser expansion for an incoming
+// message. A transport's independent wire-size bound remains mandatory: this
+// reservation is a soft forecast, not a decoded-size cap.
+func (p *Policy) ReserveWireRequest(wireBytes, wireLimit int64) (*Lease, error) {
+	if p == nil || p.limit <= 0 {
+		return disabledLease, nil
+	}
+	if wireBytes < 0 || wireBytes > wireLimit {
+		wireBytes = wireLimit
+	}
+	// Saturate before multiplication. A malicious length must never wrap into
+	// a small forecast and bypass admission.
+	if wireBytes > (1<<63-1)/4 {
+		wireBytes = (1<<63 - 1) / 4
+	}
+	return p.Reserve(max(int64(64<<10), wireBytes*4))
+}
+
 // Release returns a forecast when its owner has completed cleanup.
 func (l *Lease) Release() {
 	if l == nil || l.policy == nil {

@@ -34,6 +34,29 @@ func TestPolicyDisabledDoesNotSample(t *testing.T) {
 	}
 }
 
+func TestPolicyWireForecastSaturatesAndRespectsTransportBound(t *testing.T) {
+	policy := NewPolicy(1<<20, 0, time.Second, func() (Sample, error) {
+		return Sample{Used: 1, Ceiling: 1 << 30}, nil
+	}, time.Now)
+	if err := policy.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := policy.ReserveWireRequest(1, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := policy.Reserved(); got != 64<<10 {
+		t.Fatalf("minimum decode forecast = %d, want 64 KiB", got)
+	}
+	lease.Release()
+	if _, err := policy.ReserveWireRequest(1<<63-1, 1<<63-1); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("overflowing wire length must not wrap to an accepted forecast: %v", err)
+	}
+	if got := policy.Reserved(); got != 0 {
+		t.Fatalf("failed reserve retained %d bytes", got)
+	}
+}
+
 func TestPolicyRejectsStaleReadingsAndRecovers(t *testing.T) {
 	now := time.Unix(100, 0)
 	sample := Sample{Used: 100, Ceiling: 1000}

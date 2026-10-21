@@ -14,9 +14,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"golang.org/x/text/language"
 )
 
@@ -55,6 +57,24 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
 	s.refreshAuthResult()
+	if s.server != nil && s.server.memoryPolicy != nil {
+		lease, admissionErr := s.server.memoryPolicy.ReserveWireRequest(int64(len(data)), int64(len(data)))
+		if admissionErr != nil {
+			if s.inTransaction {
+				// Admission runs on the session owner, before decoding or further
+				// storage work. Reclaim any staged writes immediately.
+				if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
+					return err
+				}
+			}
+			message := localization.ApplicationMemoryPressure()
+			if errors.Is(admissionErr, memory.ErrStaleSample) {
+				message = localization.ApplicationMemoryUnavailable()
+			}
+			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+		}
+		defer lease.Release()
+	}
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
@@ -313,6 +333,29 @@ func (s *Session) handleRun(data []byte) error {
 			}
 		}
 		result.Rows = filtered
+	}
+	if s.server != nil && s.server.memoryPolicy != nil && result != nil && !isWrite {
+		// RUN can return before PULL. Keep a separate reservation with the
+		// read result; the decode/execution reservation ends with this call.
+		// A completed autocommit write may already be durable, so memory
+		// pressure must never make it appear rolled back after execution.
+		resultBytes := int64(len(result.Rows)) * 24
+		for _, row := range result.Rows {
+			resultBytes += util.EstimateValueBytes(row)
+		}
+		result.memoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
+		if err != nil {
+			if s.inTransaction {
+				if cleanupErr := s.rollbackExplicitTransaction(transactionTerminalRollback); cleanupErr != nil {
+					return cleanupErr
+				}
+			}
+			message := localization.ApplicationMemoryPressure()
+			if errors.Is(err, memory.ErrStaleSample) {
+				message = localization.ApplicationMemoryUnavailable()
+			}
+			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+		}
 	}
 
 	// Track write operation for deferred flush
@@ -736,6 +779,9 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 }
 
 func (s *Session) updateResultStream(statementID int64, stream resultStream, hasMore bool) {
+	if !hasMore && stream.result != nil {
+		stream.result.memoryLease.Release()
+	}
 	if s.inTransaction && s.resultStreams != nil {
 		if hasMore {
 			*s.resultStreams[statementID] = stream
