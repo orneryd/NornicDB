@@ -57,6 +57,7 @@ func (s *Service) clearIndexes(all bool) error {
 	clear(s.nodeNamedVector)
 	clear(s.nodePropVector)
 	clear(s.nodeChunkVectors)
+	s.vectorMembers.clear()
 	clear(s.nodeChunkSpans)
 	clear(s.edgeTypes)
 	clear(s.edgePropVector)
