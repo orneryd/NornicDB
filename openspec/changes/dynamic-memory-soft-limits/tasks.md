@@ -3,8 +3,8 @@
 - [x] Record maintainer decisions, soft-limit boundaries and pending operator choices.
 - [x] Inventory release GC/context/storage owners and develop transaction tracker.
 - [x] Link lane A #1615/#1616 and memory implementation #1368 plus follow-ups.
-- [x] Validate the initial OpenSpec artifacts strictly; revalidate changes before publication.
-- [ ] Complete required final-head PR verification and post exact SHAs/results.
+- [x] Validate the initial OpenSpec artifacts strictly (completed before maintainer stopped docs validation).
+- [x] Record final-head verification cancellation at maintainer request; no further docs validation.
 - [x] Publish draft PR #1618 containing only this proposal and its implementation plan.
 
 ## 2. Before implementation
@@ -49,3 +49,13 @@
       risk and thresholds below container ceilings; do not advertise a hard memory bound.
 - [ ] Run final required make verify against the actual integration base and post exact head/base,
       result, cached evidence, skips and remaining machine-specific tests before implementation readiness.
+
+## 5. Source-review corrections
+
+- [x] Review transaction, transport, buffered/direct storage and result lifetime seams against the draft base.
+- [x] Document findings and concrete functions in code-seams.md; distinguish proposed contracts from proven runtime behavior.
+- [ ] Before implementation, complete route/charge/ownership inventory on the integrated source head, including non-Cypher consumers.
+- [ ] Resolve request decoding/parser budgets and embedded-result release contract.
+- [ ] Integrate failed/idle explicit-transaction reclamation with session serialization and preserved first cause.
+- [ ] Prove WAL acceptance/publication, large-batch abort and completion-pool lock ordering using injected pressure/failures.
+- [ ] Specify finite protected-deployment sizing separately from unlimited compatibility defaults.
