@@ -9,8 +9,9 @@
 
 ## 2. Before implementation
 
-- [ ] Resolve setting/sizing and stale-telemetry admission decisions in design.md;
-      failed-transaction cleanup and newest-eligible victim order are accepted.
+- [ ] Resolve setting/sizing and exact sample-freshness parameters in design.md;
+      failed-transaction cleanup, newest-eligible victim order and stale-telemetry
+      admission rejection are accepted.
 - [ ] Establish lane A's integrated passing cancellation evidence without relaxing deadlines.
 - [ ] Inventory every memory charge site, lifetime, transport and storage acceptance/commit fence,
       including index inserts/builds, embeddings, LLM inference, reranking and both HTTP commit routes.
@@ -68,3 +69,4 @@
 - [ ] Prove memory-failed explicit transactions release staged storage promptly while retaining their first protocol failure.
 - [ ] Prove newest-eligible victim selection, one-at-a-time reassessment and exclusion after irreversible acceptance.
 - [ ] Prove periodic current-usage/limit sampling continues when no pressure event fires; event wakes cannot be the only refresh path.
+- [ ] Prove stale/failed readings reject new expensive work and fresh readings resume it, while rollback/flush/accepted commits complete.
