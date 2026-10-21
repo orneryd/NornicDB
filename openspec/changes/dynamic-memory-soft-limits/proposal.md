@@ -37,7 +37,7 @@ None. This proposal does not silently alter an existing archived specification.
 
 **Draft plan only; no runtime implementation or production fix is delivered.**
 Release-fix planning base: `release/v1.4.4@d854845e9b08e510b56587fddf49694b208e6a3b`.
-The working-directory Graphify documentation changes are excluded.
+The previously local Graphify command corrections are included at the maintainer's request. They update this checkout's UV tool commands without changing graph ingestion behavior.
 
 Merged #1368 is a develop implementation input, not a shipped release feature.
 At inventory time develop has `pkg/cypher/transaction_memory*.go`, including
