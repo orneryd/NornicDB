@@ -79,3 +79,16 @@ func TestWriteBehindMemoryReservationSurvivesReplayFailure(t *testing.T) {
 	require.NoError(t, buffer.LastErr())
 	require.Zero(t, policy.Reserved(), "successful retirement releases the payload")
 }
+
+func TestBufferedCommitForecastIncludesRetainedDictionaryState(t *testing.T) {
+	base := &bufferedCommit{namespace: "test", txID: "tx"}
+	withDictionary := &bufferedCommit{
+		namespace: "test", txID: "tx",
+		idEntries: &txnCounterState{nodes: []NodeID{"test:node"}, edges: []EdgeID{"test:edge"}},
+		propKeyDrain: propKeyTxnDrain{
+			counters: map[string]uint64{"test": 2},
+			pending:  []propKeyPersistEntry{{namespace: "test", name: "payload", id: 2}},
+		},
+	}
+	require.Greater(t, estimateBufferedCommitBytes(withDictionary), estimateBufferedCommitBytes(base))
+}
