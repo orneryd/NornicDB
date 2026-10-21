@@ -22,6 +22,12 @@
 
 ## 3. One integrated implementation
 
+- [x] Move sampled application admission to the database lifetime and share that
+      policy with HTTP and Bolt. Reserve HTTP and Bolt request forecasts before
+      decoding; retain a separate Bolt read-result forecast until PULL, DISCARD,
+      RESET or disconnect. Keep the public query-result layout unchanged when
+      limits are disabled. This is partial transport coverage, not completion of
+      the result/async/background ownership requirements below.
 - [ ] Implement one release-owned transaction/application accounting model with zero/unlimited defaults. Treat develop's tracker and follow-ups only as reference material; import an individual charge site or test only after proving it matches this design, including retained staged writes, result ownership and Neo4j error codes. Remove superseded accounting paths rather than running two trackers.
 - [ ] Add one application policy owner using existing constraint/measurement infrastructure.
 - [ ] Implement provisional startup sizing, resource-transition updates, periodic reconciliation,
