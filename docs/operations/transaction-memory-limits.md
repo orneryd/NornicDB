@@ -1,12 +1,11 @@
 # Transaction Memory Limits
 
-NornicDB can limit how much memory transactions use, with Neo4j's settings
-and errors. A query that would go over a limit fails with a transient error.
-The server stays up, and other transactions keep running.
+NornicDB can reject tracked transaction growth with Neo4j-compatible settings
+and errors. These are cooperative soft limits, not a guarantee that the server
+cannot exhaust its container: allocations outside the tracked paths, native
+memory, storage and index work, and sampling delay can still consume headroom.
 
-Without a limit, several heavy queries at once can push the process past its
-container's memory limit, and the container is OOM-killed. With limits set,
-the queries that go over fail cleanly, and the client can retry them later.
+With no limits configured, admission and transaction tracking remain off.
 
 ## Settings
 
@@ -14,14 +13,14 @@ the queries that go over fail cleanly, and the client can retry them later.
 |---|---|---|---|---|
 | `db.memory.transaction.max` | One transaction of a database | `0` (unlimited) | yes | `NORNICDB_MEMORY_TRANSACTION_MAX`, YAML `memory.transaction_max`, or the database's config override |
 | `db.memory.transaction.total.max` | All transactions of one database together | `0` (unlimited) | yes | The database's config override |
-| `dbms.memory.transaction.total.max` | All transactions of the process together | 70% of the memory limit; unlimited without one | no (restart) | `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX`, YAML `memory.transaction_total_max` |
+| `dbms.memory.transaction.total.max` | All transactions of the process together | `0` (unlimited) | no (restart) | `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX`, YAML `memory.transaction_total_max` |
+| Application soft max | Sampled process/cgroup admission | disabled | no (restart) | `NORNICDB_MEMORY_APPLICATION_SOFT_MAX`, YAML `memory.application_soft_max` |
 
 - **Units:** bytes. Use a `k`, `m`, `g` or `t` suffix for kibibytes,
   mebibytes, gibibytes or tebibytes: `512m`, `2g`. `0` means unlimited.
-- **The global pool's default** follows Neo4j, which defaults it to 70% of
-  the heap. NornicDB's equivalent of the heap is the Go memory limit:
-  `memory.runtime_limit` / `NORNICDB_MEMORY_LIMIT` (in MB), or `GOMEMLIMIT`.
-  When none is set, the pool is unlimited.
+- **Go GC target:** `NORNICDB_GO_MEMORY_LIMIT_MIB` sets Go's soft runtime
+  memory target. The deprecated `NORNICDB_MEMORY_LIMIT` retains this same
+  meaning; neither setting turns on transaction or application admission.
 - **Dynamic settings** apply to the statements that start after the change,
   with no restart. Set a database's own values through the per-database
   config API (`PUT /admin/databases/<db>/config` with
@@ -37,7 +36,8 @@ the queries that go over fail cleanly, and the client can retry them later.
 
 ```yaml
 memory:
-  runtime_limit: "6144"          # Go memory limit, MB
+  go_runtime_limit: "6144"       # Go memory target, MiB
+  application_soft_max: "6g"    # opt-in sampled admission threshold
   transaction_total_max: "4g"    # all transactions together
   transaction_max: "1g"          # any single transaction
 ```
@@ -45,7 +45,8 @@ memory:
 or, as environment variables:
 
 ```bash
-NORNICDB_MEMORY_LIMIT=6144
+NORNICDB_GO_MEMORY_LIMIT_MIB=6144
+NORNICDB_MEMORY_APPLICATION_SOFT_MAX=6g
 NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX=4g
 NORNICDB_MEMORY_TRANSACTION_MAX=1g
 ```
@@ -70,10 +71,12 @@ layer and its caches own the entity. Its properties count when the query
 copies them into values of its own (`n.text`, `properties(n)`, a map
 projection).
 
-A statement's memory is released when it ends, whether it succeeded, failed
-or was rolled back. In an explicit transaction each statement's memory is
-released when that statement ends. A result already handed to the client and
-a transaction's uncommitted writes are not counted.
+A statement's temporary working memory is released when it ends. Staged
+writes in an explicit transaction remain charged until commit or rollback;
+memory failure rolls them back immediately while preserving the failure for
+the client. Materialized result rows are tracked during execution. The
+current implementation does not yet retain an application lease for results
+after they leave execution, including slow Bolt PULL consumers.
 
 With no limit configured, nothing is tracked and there is no overhead.
 
@@ -97,11 +100,9 @@ With no limit configured, nothing is tracked and there is no overhead.
 - **GQL status** (Bolt FAILURE metadata `gql_status`): `50N42`, for all three
   limits. This is what Neo4j 5.26 reports for these errors: its generic
   "general processing exception" status.
-- **Retrying:** all three are `TransientError`s. Drivers' managed
-  transactions (`ExecuteRead` / `ExecuteWrite` / `session.run` with retry)
-  retry them automatically. To surface a clean failure instead, run the
-  query outside a retrying function, or catch the code after the retries
-  run out.
+- **Retrying:** the per-transaction error is a `ClientError`; aggregate pool
+  errors are `TransientError`s. Retry only when the client can safely repeat
+  the transaction and capacity is expected to recover.
 - **Matching the error:** match on the code. The message text is localized
   with the server's locale; the English text above is the default.
 
