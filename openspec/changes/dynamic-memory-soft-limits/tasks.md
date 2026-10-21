@@ -77,6 +77,10 @@
       retain the reservation through failed replay until generation retirement;
       cover rejection, flush and retry with storage/race tests.
 - [ ] Integrate every actual async-buffer producer and bounded recovery replay with the shared application policy.
+- [x] Remove WAL-wide retained recovery accumulation: replay in batches targeting
+      8 MiB of estimated payload, preserve commit ordering and flush markers,
+      and repair counts for completed batches even when later decoding fails.
+      A single oversized record and decoder expansion still need admission.
 - [ ] Prove stalled-flusher backpressure, oversized writes, rotation/read retention and replay failure/recovery without losing accepted writes.
 
 - [ ] Prove memory-failed explicit transactions release staged storage promptly while retaining their first protocol failure.

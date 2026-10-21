@@ -9,7 +9,8 @@ import (
 )
 
 func TestPendingCandidatesBufferedFlush(t *testing.T) {
-	e, wal := newWriteBehindWALTestEngine(t, t.TempDir(), time.Hour)
+	e := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
+	wal := e.bufferedCommitWAL
 	t.Cleanup(func() { _ = e.Close(); _ = wal.Close() })
 	e.SetEmbeddingsEnabled(true)
 	require.Nil(t, e.FindNodeNeedingEmbedding())

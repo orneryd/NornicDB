@@ -1,32 +1,37 @@
 package storage
 
 import (
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
-// newWriteBehindWALTestEngine builds a write-behind BadgerEngine with a WAL
-// wired in (as NewWALEngine does) so buffered commits log OpBufferedCommit
-// payloads before their ACK.
-func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duration) (*BadgerEngine, *WAL) {
-	t.Helper()
-	t.Cleanup(config.WithWALEnabled())
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir:             dir,
-		WriteBehind:         true,
-		WriteBehindInterval: interval,
-	})
+func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.T) {
+	dir := t.TempDir()
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
+	bufferedCreate(t, engine, &Node{ID: "test:bounded", Labels: []string{"L"}, Properties: map[string]any{"payload": strings.Repeat("x", 5<<20)}})
+	require.NoError(t, wal.Append(OpBufferedCommit, "invalid buffered commit"))
+	crashClose(t, engine, wal)
+
+	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+
+	wal = engine.bufferedCommitWAL
+	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
+	replayed, err := RecoverBufferedCommits(engine, wal)
+	require.ErrorContains(t, err, "unmarshal buffered commit")
+	require.Equal(t, 1, replayed, "a completed bounded batch must not remain retained until WAL EOF")
+	node, err := engine.GetNode("test:bounded")
 	require.NoError(t, err)
-	walCfg := DefaultWALConfig()
-	walCfg.Dir = dir + "/wal"
-	walCfg.BatchSyncInterval = time.Hour // do not fsync in the background during tests
-	wal, err := NewWAL(walCfg.Dir, walCfg)
+	require.Len(t, node.Properties["payload"].(string), 5<<20)
+	count, err := engine.NodeCountByLabelInNamespace("test", "L")
 	require.NoError(t, err)
-	engine.SetBufferedCommitWAL(wal)
-	return engine, wal
+	require.EqualValues(t, 1, count)
+	replayed, err = RecoverBufferedCommits(engine, wal)
+	require.ErrorContains(t, err, "unmarshal buffered commit")
+	require.Zero(t, replayed, "retry must skip the durable batch")
 }
 
 // crashClose tears the engine down the way kill -9 does: stop the flusher
@@ -34,7 +39,7 @@ func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duratio
 // mirrors BadgerEngine.Close's teardown minus the write-behind drain. WAL is
 // closed normally because its records already reached the kernel page cache
 // from the forced append flush.
-func crashClose(t *testing.T, engine *BadgerEngine, wal *WAL) {
+func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
 	t.Helper()
 	engine.stopEdgeBetweenIndexBackfill()
 	engine.stopLabelIndexBackfill()
@@ -61,7 +66,8 @@ func crashClose(t *testing.T, engine *BadgerEngine, wal *WAL) {
 
 func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 	// No cleanup for engine/wal: crashClose below tears them down.
 
 	// Buffered, acknowledged create: nothing reaches Badger, the payload
@@ -90,7 +96,8 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	crashClose(t, engine, wal)
 
 	// Reopen a fresh engine + WAL on the same directories.
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal2 := recovered.bufferedCommitWAL
 	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 
 	// Before recovery the node is gone from Badger.
@@ -114,7 +121,8 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 
 func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
 
 	tx, err := engine.BeginTransaction()
@@ -133,7 +141,9 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	require.NoError(t, wal.Close())
 	require.NoError(t, engine.Close())
 
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+
+	wal2 := recovered.bufferedCommitWAL
 	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 
 	// The marker says the commit is already applied: nothing to replay, and
@@ -156,7 +166,8 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	// Produce a buffered commit payload on a throwaway engine, then grab its
 	// serialized form from the WAL.
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
