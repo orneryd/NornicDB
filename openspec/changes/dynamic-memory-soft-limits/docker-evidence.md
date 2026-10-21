@@ -21,3 +21,26 @@ admission. It does not establish cancellation of already-running transactions,
 native/model work, index construction, async-buffer retention, or commit-fence
 behavior. The full OOM reproduction, all transport and storage paths, and the
 performance gate in `tasks.md` remain open before readiness.
+
+## Exact-head retest after Bolt admission and result ownership
+
+Source `70a7760c20159ea5a51b695ece786d7b4f619ebf`, image
+`nornicdb-memory-70a:local` with digest
+`sha256:27fc12a1c21670488c22e50819526c6c97ec147fcddec1f888c9dddb8c75bf8a`.
+The same Go 1.27.1 Linux arm64 Dockerfile and `noui,nolocalllm` tags were used.
+Each case ran in a fresh `--memory=1g --memory-swap=1g` container with no
+authentication and no persisted host data.
+
+| Case | Configuration and action | Observed result |
+|---|---|---|
+| Application admission and recovery | Go target 768 MiB; application soft max 384 MiB. Query `RETURN 1`; write 300 MiB into a file inside the cgroup; query `RETURN 2`; remove the file; query `RETURN 3`. | Cgroup usage was 219,672,576 bytes before pressure, 543,105,024 under pressure, and 219,639,808 after removal. Queries returned HTTP 200, then HTTP 503 with `Neo.TransientError.General.MemoryPoolOutOfMemoryError`, then HTTP 200. Container stayed running; `oom_kill 0`. |
+| Transaction cap and recovery | Go target 768 MiB; application soft max 768 MiB; transaction max 4 MiB. Query `RETURN 1`; run `UNWIND range(1, 1000000) AS x RETURN size(collect(x)) AS n`; query `RETURN 2`. | First and last queries succeeded. The collect query returned a Neo4j error payload with `Neo.ClientError.General.TransactionOutOfMemoryError` at 4.0 MiB (the HTTP transaction endpoint itself returned 200, as it does for Cypher statement errors). Container stayed running; `oom_kill 0`. |
+
+The application headroom rule reserves at least 128 MiB below the configured
+soft max. One earlier 256 MiB trial started with 218 MiB of observed cgroup
+usage and therefore rejected even an ordinary query; a separate 384 MiB trial
+with only 100 MiB of file pressure remained below its effective threshold.
+Those trials show why an operator must size the soft max against the measured
+baseline and expected overlap. They are not evidence of a hard OOM guarantee.
+The original 8 GiB failing workload, async write buffer, long-lived embedded
+results, and full restart/durability scenarios remain unverified.
