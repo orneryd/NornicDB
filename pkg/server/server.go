@@ -194,6 +194,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/mcp"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -746,6 +747,7 @@ type Server struct {
 	heimdallCacheRouter *heimdallDBRouter
 	executorsMu         sync.RWMutex
 	executors           map[string]*cypher.StorageExecutor
+	executorCache       *cypher.DatabaseExecutorCache[*cypher.StorageExecutor]
 
 	// Explicit transaction sessions shared across transports.
 	txSessions *txsession.Manager
@@ -761,6 +763,7 @@ type Server struct {
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
 	processConfig         *nornicConfig.Config
+	memoryPolicy          *memory.Policy
 	dbConfigStateMu       sync.RWMutex
 	dbConfigActive        map[string]map[string]string
 	dbConfigPending       map[string]map[string]struct{}
@@ -867,7 +870,7 @@ func (a *mcpToolRunnerAdapter) CallTool(ctx context.Context, name string, args m
 // Used so MCP tools (store, recall, link, etc.) run against the request's database when invoked from the agentic loop.
 func (s *Server) mcpDatabaseScopedExecutor() func(dbName string) (*cypher.StorageExecutor, func(context.Context, string) (*nornicdb.Node, error), error) {
 	return func(dbName string) (*cypher.StorageExecutor, func(context.Context, string) (*nornicdb.Node, error), error) {
-		exec, err := s.getExecutorForDatabase(dbName)
+		exec, err := s.executorCache.Get(dbName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1161,6 +1164,16 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		dbConfigActive:       make(map[string]map[string]string),
 		dbConfigPending:      make(map[string]map[string]struct{}),
 	}
+	s.executorCache = cypher.NewDatabaseExecutorCache(&s.executorsMu, &s.executors,
+		(*cypher.StorageExecutor).StatementCacheSelectionValid,
+		func(name string) (*cypher.StorageExecutor, error) {
+			executor, err := s.newDatabaseScopedExecutor(name, "")
+			if err == nil {
+				executor.SetSharedExecutor(true)
+			}
+			return executor, err
+		}, s.bindStatementCacheIndex)
+	s.memoryPolicy = db.MemoryPolicy()
 	// A changed password stops working at once (auth.BasicAuthCache).
 	s.auth.OnPasswordChange(s.basicAuthCache.ForgetUser)
 	// Foreground-first policy: while tx requests are active, background embed work yields.
@@ -1747,6 +1760,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				}
 				resolved := dbconfig.Resolve(globalConfig, dbConfigStore.GetOverrides(info.Name))
 				if resolved != nil {
+					s.applyTransactionMemoryLimits(info.Name, resolved)
 					s.dbConfigActive[info.Name] = cloneStringMap(resolved.Effective)
 				}
 			}
@@ -2014,9 +2028,7 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	if s.heimdallCacheRouter != nil {
 		s.heimdallCacheRouter.Close()
 	}
-	s.executorsMu.Lock()
-	s.executors = nil
-	s.executorsMu.Unlock()
+	s.executorCache.Clear()
 	// Cancel the background embedder initialisation now and wait for it
 	// before returning, so it can't install an embedder (or log) after Stop.
 	if s.embedderInitCancel != nil {

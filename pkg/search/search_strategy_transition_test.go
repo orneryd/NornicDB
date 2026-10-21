@@ -163,6 +163,7 @@ func TestRuntimeStrategyTransition_CPUToGPUBruteNoRebuild(t *testing.T) {
 	for i := 0; i < 6000; i++ {
 		indexTestNode(t, svc, fmt.Sprintf("gpu-node-%d", i), testVec4(i))
 	}
+	require.Equal(t, 6000, svc.EmbeddingCount())
 
 	waitForStrategy(t, svc, strategyModeBruteGPU, 45*time.Second)
 	svc.hnswMu.RLock()

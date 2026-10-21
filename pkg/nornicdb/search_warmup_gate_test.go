@@ -72,6 +72,7 @@ func openWarmupGateDB(t *testing.T) *DB {
 	cfg.Memory.AutoLinksEnabled = false
 	cfg.Memory.DecayEnabled = false
 	cfg.Database.AsyncWritesEnabled = false
+	cfg.DeferSearchWarmup = true
 	// Globals say enabled (the DefaultConfig default). The resolver
 	// installed in each test case overrides per-DB, so we're proving
 	// the resolver wins over a permissive global.
@@ -154,7 +155,7 @@ func TestSearchWarmupGate_DefaultDBHonorsResolverOverride_Matrix(t *testing.T) {
 			db.MarkSearchWarmupReady()
 
 			// Reachable end-state by combination:
-			//   off×off:           Ready stays false, both flags off, no lazy trigger
+			//   off×off:           Ready=true without building, both flags off, no lazy trigger
 			//   any startup:       Ready=true once that index finishes building
 			//   any lazy w/o startup pair: Ready=false, LazyTriggerNeeded=true
 			expectBuilds := tc.bm25 == flagStartup || tc.vector == flagStartup
@@ -162,8 +163,7 @@ func TestSearchWarmupGate_DefaultDBHonorsResolverOverride_Matrix(t *testing.T) {
 				(tc.bm25 == flagLazy || tc.vector == flagLazy)
 
 			// Wait for a stable end-state. Any-startup → Ready=true; any
-			// lazy-only → LazyTriggerNeeded=true; off×off → just confirm
-			// the resolver values are mirrored.
+			// lazy-only → LazyTriggerNeeded=true; off×off → a ready no-op service.
 			st := waitForSearchStatus(db, defaultDB, 5*time.Second, func(s DatabaseSearchStatus) bool {
 				if s.BM25Enabled != bm25En || s.VectorEnabled != vecEn {
 					return false
@@ -174,8 +174,8 @@ func TestSearchWarmupGate_DefaultDBHonorsResolverOverride_Matrix(t *testing.T) {
 				if expectLazyTrigger {
 					return s.LazyTriggerNeeded
 				}
-				// off×off — accept any state where the flags settled.
-				return true
+				// Both off is ready without building; await that stable state.
+				return s.Ready
 			})
 
 			// Resolver values must be reflected regardless of build outcome.
@@ -186,7 +186,7 @@ func TestSearchWarmupGate_DefaultDBHonorsResolverOverride_Matrix(t *testing.T) {
 
 			switch {
 			case tc.bm25 == flagOff && tc.vector == flagOff:
-				assert.False(t, st.Ready, "no indexes enabled — Ready must remain false")
+				assert.True(t, st.Ready, "disabled indexes are ready without a build")
 				assert.False(t, st.Building, "no build should be running")
 				assert.False(t, st.LazyTriggerNeeded,
 					"both off — no lazy trigger expected")

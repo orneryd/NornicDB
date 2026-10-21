@@ -610,6 +610,28 @@ The cache size limits prevent unbounded memory growth during bulk operations:
 - **Monitor memory usage** during bulk operations
 - **Adjust based on available RAM** and operation patterns
 
+To keep concurrent heavy queries from exhausting the process's memory, set
+Neo4j's transaction memory limits (`db.memory.transaction.max`,
+`dbms.memory.transaction.total.max`): see
+[Transaction Memory Limits](transaction-memory-limits.md).
+
+The Go runtime target and opt-in physical admission are separate settings:
+
+```yaml
+memory:
+  go_runtime_limit_bytes: "6442450944" # integer bytes; Go soft GC target
+  application_soft_max: "6g"          # sampled cgroup admission; 0 disables
+  transaction_max: "512m"            # estimated bytes per transaction; 0 unlimited
+  transaction_total_max: "2g"         # process transaction pool; 0 unlimited
+```
+
+Only the Go target derives an automatic default from the cgroup (85%). The
+application and transaction settings default to `0`. Application admission can
+reclaim unused Go heap pages through the shared sampler after a pressure
+rejection, at most once every five seconds and once per completed-work allowance.
+It rechecks physical capacity before accepting work; see
+[application pressure and recovery](transaction-memory-limits.md#application-pressure-and-recovery).
+
 ## Vector Search Configuration
 
 ### Embedding Settings

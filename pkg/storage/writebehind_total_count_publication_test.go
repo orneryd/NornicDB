@@ -200,7 +200,8 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	// requires durable ACK capture, independently of test execution order.
 	defer config.WithWALEnabled()()
 	dir := t.TempDir()
-	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal := engine.bufferedCommitWAL
 	_, err := engine.CreateNode(&Node{ID: "test:a"})
 	require.NoError(t, err)
 	// BeginTransaction flushes even an empty buffer, leaving a worker wakeup
@@ -236,7 +237,8 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, flushed, "crash fixture must not be durably replayed")
 	crashClose(t, engine, wal)
-	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
+	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	wal2 := recovered.bufferedCommitWAL
 	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 	observed := make(chan []int64, 2)
 	read := func() {

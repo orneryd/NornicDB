@@ -1752,6 +1752,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator:      separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+	txWrapper.initNamespacePrefix()
 
 	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
 	defer func() {
@@ -1776,6 +1777,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// nothing it wrote is committed.
 	if execErr == nil {
 		execErr = getExpressionFailure(txCtx)
+	}
+	// So is a memory limit it went over, whichever route ignored the
+	// cancellation that caused (#1343).
+	if execErr == nil {
+		execErr = memoryFailureFromContext(txCtx)
 	}
 
 	// Handle result

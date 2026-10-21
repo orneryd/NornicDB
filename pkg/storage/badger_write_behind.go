@@ -10,12 +10,78 @@ package storage
 // transactions and snapshot opens drain the buffer first.
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 )
+
+// bufferedMemoryAdmissionError keeps the shared application-pressure status
+// through storage, Cypher, Bolt and HTTP while retaining the limiting cause.
+type bufferedMemoryAdmissionError struct{ cause error }
+
+func (e *bufferedMemoryAdmissionError) Error() string { return e.StatusMessage() }
+func (e *bufferedMemoryAdmissionError) Unwrap() error { return e.cause }
+func (e *bufferedMemoryAdmissionError) BoltErrorCode() string {
+	return "Neo.TransientError.General.MemoryPoolOutOfMemoryError"
+}
+func (e *bufferedMemoryAdmissionError) StatusMessage() string {
+	if errors.Is(e.cause, memory.ErrStaleSample) {
+		return localization.ApplicationMemoryUnavailable().Fallback
+	}
+	return localization.ApplicationMemoryPressure().Fallback
+}
+
+func bufferedMemoryError(cause error) error {
+	message := localization.ApplicationMemoryPressure()
+	if cause == memory.ErrStaleSample {
+		message = localization.ApplicationMemoryUnavailable()
+	}
+	return &bufferedMemoryAdmissionError{cause: localization.NewLocalizedError(
+		"Neo.TransientError.General.MemoryPoolOutOfMemoryError", message, cause)}
+}
+
+// estimateBufferedCommitBytes forecasts payload plus read-overlay growth
+// before the replayable WAL boundary. The physical cgroup sample remains the
+// final pressure check; this deliberately overestimates shared references.
+func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
+	bytes := int64(256 + len(c.namespace) + len(c.txID) + 256*len(c.ops))
+	for _, op := range c.ops {
+		bytes += int64(len(op.NodeID) + len(op.EdgeID) + 16*len(op.DeletedEdgeIDs))
+		for _, node := range [2]*Node{op.Node, op.OldNode} {
+			bytes += estimateRetainedNodeBytes(node)
+		}
+		for _, edge := range [2]*Edge{op.Edge, op.OldEdge} {
+			bytes += estimateRetainedEdgeBytes(edge)
+		}
+	}
+	for key, value := range c.writes {
+		bytes += int64(64 + len(key) + len(value))
+	}
+	for key := range c.deletes {
+		bytes += int64(48 + len(key))
+	}
+	if c.idEntries != nil {
+		bytes += 64 + int64(16*(len(c.idEntries.nodes)+len(c.idEntries.edges)))
+		for _, id := range c.idEntries.nodes {
+			bytes += int64(len(id))
+		}
+		for _, id := range c.idEntries.edges {
+			bytes += int64(len(id))
+		}
+	}
+	for namespace := range c.propKeyDrain.counters {
+		bytes += int64(32 + len(namespace))
+	}
+	for _, entry := range c.propKeyDrain.pending {
+		bytes += int64(48 + len(entry.namespace) + len(entry.name))
+	}
+	bytes += int64(64*len(c.labelDeltas) + 64*len(c.edgeTypeDeltas) + 80*len(c.edgeTypeLabelDeltas))
+	return bytes
+}
 
 // SetBufferedCommitWAL installs the WAL that receives the durable payload of
 // every acknowledged write-behind commit. It is called once, at construction,
@@ -98,6 +164,24 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
+	// The dictionary no longer owns these entries. A rejected pre-WAL commit
+	// must clear their pending marks, which otherwise retain the whole state.
+	transferred := false
+	defer func() {
+		if transferred {
+			return
+		}
+		tx.engine.idDict.clearPending(c.idEntries)
+		if c.idEntries != nil {
+			clear(c.idEntries.nodes)
+			clear(c.idEntries.edges)
+			c.idEntries.nodes = nil
+			c.idEntries.edges = nil
+		}
+		if c.memoryLease != nil {
+			c.memoryLease.Release()
+		}
+	}()
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
 	// Capture the derived-count deltas the sync path applies after commit;
@@ -108,7 +192,19 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.labelDeltas = tx.pendingLabelCountDeltas
 	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
 	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
-
+	forecast := estimateBufferedCommitBytes(&c)
+	if forecast > maxBufferedWALPayloadBytes {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("wal: buffered commit exceeds decoded payload limit: %w", badger.ErrTxnTooBig)
+	}
+	if policy := tx.engine.memoryPolicy; policy != nil {
+		lease, err := policy.Reserve(forecast)
+		if err != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return bufferedMemoryError(err)
+		}
+		c.memoryLease = lease
+	}
 	// Durability boundary: write the commit's full payload to the WAL and
 	// push it to the kernel page cache BEFORE acknowledging. If the process
 	// is killed before the background flusher lands the generation, the WAL
@@ -129,6 +225,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
 	tx.engine.writeBehind.AppendCommit(c)
+	transferred = true
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,
 	// not at flush. The sync path advances it per-op through the notify*

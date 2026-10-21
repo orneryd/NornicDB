@@ -92,12 +92,17 @@ class AnalysisError(Exception):
 # --------------------------------------------------------------------------------------
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+FUNCTION_DECLARATION = re.compile(
+    r"^\s*(?:(?:async|export|public|private|static)\s+)*"
+    r"(?:def|func|function|fn)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*(?:\[[^]]*\])?\s*\("
+)
 
 
 @dataclass
 class FileDiff:
     added: set = field(default_factory=set)      # new-file line numbers
     removed: set = field(default_factory=set)    # old-file line numbers
+    removed_definitions: set = field(default_factory=set)
     deleted: bool = False
     created: bool = False
 
@@ -115,10 +120,12 @@ def parse_diff(text):
     old_path = new_path = None
     current = None
     binary = False
+    in_hunk = False
     for line in text.splitlines():
         if line.startswith("diff --git "):
             old_path = new_path = current = None
             binary = False
+            in_hunk = False
         elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
             binary = True
             current = None
@@ -136,11 +143,16 @@ def parse_diff(text):
             match = HUNK.match(line)
             if not match:
                 continue
+            in_hunk = True
             old_start, old_count, new_start, new_count = match.groups()
             old_count = 1 if old_count is None else int(old_count)
             new_count = 1 if new_count is None else int(new_count)
             current.removed.update(range(int(old_start), int(old_start) + old_count))
             current.added.update(range(int(new_start), int(new_start) + new_count))
+        elif in_hunk and current is not None and line.startswith("-"):
+            declaration = FUNCTION_DECLARATION.match(line[1:])
+            if declaration:
+                current.removed_definitions.add(declaration.group(1))
     return files
 
 
@@ -252,7 +264,7 @@ def _code_line_numbers(repo_root, data, symbols, docstrings, line_cache, state_c
 
 
 def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_fraction,
-                      max_query_chars, min_tokens=0, ignore=(), touched_ids=None):
+                      max_query_chars, min_tokens=0, ignore=()):
     """Functions and methods of the head graph whose body is mostly added lines, largest first."""
     link_key = gi.graph_link_key(graph_path)
     symbols = gi.collect_symbol_lines(graph_path)
@@ -272,10 +284,6 @@ def select_candidates(graph_path, repo_root, diff, *, min_body_lines, min_added_
         fraction = sum(1 for n in numbers if n in file_diff.added) / len(numbers)
         if fraction <= 0:
             continue
-        # Rewritten owners retire their indexed bodies even when their current
-        # implementation is too small to query (for example, a delegating API).
-        if touched_ids is not None:
-            touched_ids.add(data["id"])
         if len(numbers) < min_body_lines or fraction < min_added_fraction:
             continue
         body = gi.body_for_node(repo_root, data, symbols, line_cache, state_cache, docstrings)
@@ -471,19 +479,25 @@ def resolved_owner_calls(graph_path, candidates):
     return calls
 
 
-def retired_ids(db, repo, diff):
-    """Graphify ids of existing functions the PR deletes: their file is deleted or their definition line is removed."""
+def retired_ids(db, repo, diff, graph_path):
+    """Indexed functions absent from the staged graph after their definition is removed."""
     files = [path for path, d in diff.items() if d.removed]
+    live = {(data.get("source_file"), data.get("label"))
+            for data in gi.graph_items(graph_path, "nodes")
+            if data.get("source_file") in files and gi.symbol_kind(data) == "function"}
     retired = set()
     for start in range(0, len(files), 100):
         chunk = files[start:start + 100]
         rows = db.cypher(
             "MATCH (n:Code {repo: $repo}) WHERE n.source_file IN $files AND n.symbol_kind = 'function' "
-            "RETURN n.id AS id, n.source_file AS file, n.source_location AS loc", repo=repo, files=chunk)
+            "RETURN n.id AS id, n.source_file AS file, n.source_location AS loc, n.label AS label", repo=repo, files=chunk)
         for row in rows:
             file_diff = diff[row["file"]]
-            line = gi.parse_location(row.get("loc"))
-            if file_diff.deleted or (line is not None and line in file_diff.removed):
+            label = row.get("label")
+            symbol = label.split("(", 1)[0].rsplit(".", 1)[-1] if label else None
+            if file_diff.deleted or (symbol in file_diff.removed_definitions
+                                     and label is not None
+                                     and (row["file"], label) not in live):
                 retired.add(row["id"])
     return retired
 
@@ -534,7 +548,7 @@ def behavior_standout(candidate, hits, *, min_gap, min_lead, min_hits):
     return None
 
 
-def evaluate(candidate, hits, *, repo, retired, touched, min_similarity, cross_repo=False, max_matches=5,
+def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False, max_matches=5,
              min_tokens=0, ignore=(), semantic=True, semantic_min_gap=0.15, semantic_min_lead=0.05,
              semantic_min_hits=5, deadline=None, owner_calls=None, existing_owner_calls=None):
     """Apply the match rules to one candidate's search hits. Returns (Finding | None, moved)."""
@@ -560,7 +574,7 @@ def evaluate(candidate, hits, *, repo, retired, touched, min_similarity, cross_r
         if len(tokens(hit.body)) < min_tokens:
             continue
         if hit.id in reused:
-            if existing_owner_calls is not None and hit.id not in retired and hit.id not in touched:
+            if existing_owner_calls is not None and hit.id not in retired:
                 existing_owner_calls.append((candidate, hit, owner_calls[hit.id]))
             seen.add(hit.id)
             continue
@@ -575,16 +589,14 @@ def evaluate(candidate, hits, *, repo, retired, touched, min_similarity, cross_r
             if basis == "code":
                 moved = True  # the code this resembles is deleted by the same PR: a move, not a duplicate
             continue
-        if hit.id in touched:
-            continue  # another symbol this PR rewrites; its old text is going away
         seen.add(hit.id)
         matches.append(Match(hit, sim, basis))
-    if moved:
-        return None, True  # a retired near-copy means the PR relocated this function: no finding
+    # A removed owner only excludes itself. Other surviving owners still
+    # require reuse or refactoring, even when this candidate is also a move.
     matches.sort(key=lambda m: (m.basis != "code", -m.similarity["score"], m.hit.source_file, m.hit.line))
     total = len(matches)
     if not matches:
-        return None, False
+        return None, moved
     return Finding(candidate, matches[:max_matches] if max_matches else matches,
                    "refactor" if total >= 2 else "reuse", total), False
 
@@ -626,17 +638,16 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
         report.warnings.append(
             f"The database was last ingested at {commit[:9]}, not at this PR's merge base {base_sha[:9]}, "
             f"so matches may be stale.")
-    touched = set()
     candidates = select_candidates(
         graph_path, repo_root, diff, min_body_lines=opts["min_body_lines"],
         min_added_fraction=opts["min_added_fraction"], max_query_chars=opts["max_query_chars"],
-        min_tokens=opts["min_tokens"], ignore=ignore, touched_ids=touched)
+        min_tokens=opts["min_tokens"], ignore=ignore)
     if len(candidates) > opts["max_candidates"]:
         report.skipped_by_cap = len(candidates) - opts["max_candidates"]
         candidates = candidates[:opts["max_candidates"]]
         report.warnings.append(f"Only the {opts['max_candidates']} largest added functions were analyzed; "
                                f"{report.skipped_by_cap} were skipped.")
-    retired = retired_ids(db, repo, diff)
+    retired = retired_ids(db, repo, diff, graph_path)
     calls = resolved_owner_calls(graph_path, candidates)
     started = clock()
     for index, candidate in enumerate(candidates):
@@ -648,7 +659,7 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
             break
         hits = db.search(candidate.query, limit=opts["search_limit"])
         report.analyzed += 1
-        finding, moved = evaluate(candidate, hits, repo=repo, retired=retired, touched=touched,
+        finding, moved = evaluate(candidate, hits, repo=repo, retired=retired,
                                   min_similarity=opts["min_similarity"], cross_repo=cross_repo,
                                   max_matches=opts["max_matches"], min_tokens=opts["min_tokens"], ignore=ignore,
                                   semantic=bool(opts["semantic"]), semantic_min_gap=opts["semantic_min_gap"],

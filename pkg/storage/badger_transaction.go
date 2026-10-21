@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
@@ -24,6 +25,7 @@ import (
 )
 
 type snapshotLabelCacheKey struct {
+	queryNodes    bool
 	projectionKey string
 	reveal        bool
 	stored        bool
@@ -968,7 +970,7 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	if err != nil {
 		return nil, err
 	}
-	if tx.engine.sameEmbeddingSource(oldNode, node) {
+	if canCarryManagedEmbeddings(tx.engine, oldNode, node) {
 		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
 		node.EmbedMeta = oldNode.EmbedMeta
 		if !sidecar {
@@ -996,7 +998,7 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	tx.droppedEmbeddings[node.ID] = &Node{ChunkEmbeddings: oldNode.ChunkEmbeddings, EmbedMeta: oldNode.EmbedMeta}
 	node.ChunkEmbeddings = nil
 	node.EmbedMeta = nil
-	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+	if err := tx.scanCommittedEmbeddingKeysLocked(node.ID, func(key []byte) error {
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
@@ -1031,27 +1033,18 @@ func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID
 	return -1
 }
 
-// scanCommittedKeysWithPrefixLocked calls visit with every committed key
-// under prefix, as of the transaction's snapshot. The transaction's own
+// scanCommittedEmbeddingKeysLocked visits the embedding keys of nodeID as of
+// the transaction's snapshot. The transaction's own
 // writes are buffered (pendingWrites / pendingDeletes) and reach badgerTx only
 // at commit, so the snapshot view reads the same keys as an iterator over
 // badgerTx; but a badgerTx iterator also merges badgerTx's pending writes
 // (MVCC history archives written during the transaction), which Badger
 // sorts every time an iterator opens. Deleting N nodes in one transaction
 // opened 2-3 iterators per node over up to N such writes: quadratic (#703).
-// The key passed to visit is only valid during the call.
-func (tx *BadgerTransaction) scanCommittedKeysWithPrefixLocked(prefix []byte, visit func(key []byte) error) error {
+// The callback owns each key and may retain it in the buffered write set.
+func (tx *BadgerTransaction) scanCommittedEmbeddingKeysLocked(nodeID NodeID, visit func(key []byte) error) error {
 	return tx.withSnapshotViewLocked(func(view *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		it := view.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			if err := visit(it.Item().Key()); err != nil {
-				return err
-			}
-		}
-		return nil
+		return visitEmbeddingKeys(view, nodeID, visit)
 	})
 }
 
@@ -1061,7 +1054,7 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 	key := nodeKey(nodeID)
 
 	// Buffer deletion of separately stored embeddings
-	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(nodeID), func(key []byte) error {
+	if err := tx.scanCommittedEmbeddingKeysLocked(nodeID, func(key []byte) error {
 		tx.bufferDelete(key)
 		return nil
 	}); err != nil {
@@ -2334,7 +2327,8 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	return tx.streamNodesByLabelProjected(label, properties, visibleRead, visit)
 }
 
-func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, properties []string, v readVisibility, visit func(*Node) error) error {
+func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
+	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -2373,7 +2367,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 			if !nodeIDInScope(n.ID, scope) || tx.engine.hidesNode(v, n, nowNanos) {
 				continue
 			}
-			if err := invokeVisit(projectCachedNodeForRead(n, properties, false)); err != nil {
+			if err := invokeVisit(projectCachedNodeForRead(n, properties, false, queryNodes)); err != nil {
 				if err == ErrIterationStopped {
 					return nil
 				}
@@ -2416,14 +2410,14 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		if pending, exists := tx.pendingNodes[node.ID]; exists {
 			seen[node.ID] = struct{}{}
 			if pending != nil && slices.Contains(pending.Labels, label) {
-				return invokeVisit(projectCachedNodeForRead(pending, properties, false))
+				return invokeVisit(projectCachedNodeForRead(pending, properties, false, queryNodes))
 			}
 			return nil
 		}
 		return invokeVisit(forCaller(node))
 	}
 
-	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load(), stored: v == storedRead}
+	cacheKey := snapshotLabelCacheKey{queryNodes: queryNodes, projectionKey: label, reveal: tx.engine.revealAll.Load(), stored: v == storedRead}
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
 		cacheKey.projectionKey = snapshotLabelProjectionKey(label, properties)
@@ -2442,7 +2436,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		if err := emitOverlay(); err != nil {
 			return err
 		}
-		return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit)
+		return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit, queryNodes)
 	}
 
 	completed := make([]*Node, 0)
@@ -2463,13 +2457,13 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.streamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, v, streamVisit)
+		err = tx.engine.streamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, v, streamVisit, queryNodes)
 	} else {
 		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
 			tx.labelScanScopeLocked(),
-			label, tx.readTS, tx.withSnapshotViewLocked, properties, v, streamVisit,
+			label, tx.readTS, tx.withSnapshotViewLocked, properties, v, streamVisit, queryNodes,
 		)
 	}
 	if err != nil {
@@ -2485,7 +2479,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		}
 		tx.snapshotLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
-		if !tx.engine.visibilityFiltered() {
+		if !queryNodes && !tx.engine.visibilityFiltered() {
 			if tx.snapshotLabelNodeByID == nil {
 				tx.snapshotLabelNodeByID = make(map[NodeID]*Node, len(completed))
 			}
@@ -2503,7 +2497,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 	if err := emitOverlay(); err != nil {
 		return err
 	}
-	return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit)
+	return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit, queryNodes)
 }
 
 // StreamNodesWithOptions streams the transaction's view of every node (its
@@ -2519,6 +2513,15 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
+	}
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
+		queryVisit := borrowQueryNodeScanVisitor(ctx, opts, visit)
+		defer queryVisit.release()
+		err := tx.streamNodesByLabelProjected(opts.Label, nil, opts.readVisibility(), queryVisit.callback, true)
+		if err == ErrIterationStopped {
+			return nil
+		}
+		return err
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
@@ -2539,7 +2542,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
 	readPending := func(node *Node) *Node {
-		return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
+		return opts.copyResidentNode(node)
 	}
 
 	hasPending := len(tx.pendingNodes) > 0 || len(tx.deletedNodes) > 0
@@ -2571,7 +2574,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
 		})
 	} else {
-		err = tx.streamCommittedNodesLocked(opts, inScope, emitCommitted)
+		err = tx.streamCommittedNodesLocked(ctx, opts, inScope, emitCommitted)
 	}
 	if stopped || err == ErrIterationStopped {
 		return nil
@@ -2598,7 +2601,28 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 // for a transaction built without a pinned physical snapshot: the committed
 // view the transaction's other reads take (getAllCommittedNodesLocked),
 // scoped, projected and filtered after decoding.
-func (tx *BadgerTransaction) streamCommittedNodesLocked(opts StreamNodesOptions, inScope func(NodeID) bool, emit func(*Node) error) error {
+func (tx *BadgerTransaction) streamCommittedNodesLocked(ctx context.Context, opts StreamNodesOptions, inScope func(NodeID) bool, emit func(*Node) error) error {
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+		if tx.readTS.IsZero() {
+			return tx.engine.StreamNodesWithOptions(ctx, opts, emit)
+		}
+		// Reuse the logical MVCC iterator instead of materializing full nodes
+		// before the options-driven scan can choose its read contract.
+		return tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+			return tx.engine.iterateNodesVisibleAtInScopeInTxn(txn, tx.labelScanScopeLocked(), tx.readTS, func(node *Node) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if !inScope(node.ID) {
+					return nil
+				}
+				if opts.StripEmbeddings {
+					node = opts.copyResidentNode(node)
+				}
+				return emit(node)
+			}, opts)
+		})
+	}
 	nodes, err := tx.getAllCommittedNodesLocked()
 	if err != nil {
 		return err
@@ -2644,6 +2668,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 	seen map[NodeID]struct{},
 	properties []string,
 	visit func(*Node) error,
+	queryRead ...bool,
 ) error {
 	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
@@ -2655,7 +2680,7 @@ func (tx *BadgerTransaction) streamPendingLabelNodesLocked(
 		if _, deleted := tx.deletedNodes[id]; deleted || node == nil || !slices.Contains(node.Labels, label) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(node, properties, false)); err != nil {
+		if err := visit(projectCachedNodeForRead(node, properties, false, queryRead...)); err != nil {
 			return err
 		}
 	}
@@ -3207,6 +3232,83 @@ func (tx *BadgerTransaction) Rollback() error {
 
 	tx.closeLocked(TxStatusRolledBack, true, nil)
 	return nil
+}
+
+// StagedMemoryBytes estimates storage-owned data retained by an open
+// transaction. It counts the serialized write copies and pending entity
+// copies once each. Historical operation bodies are distinct from the
+// pending map's current version and remain owned until the transaction ends.
+// The value is sampled at statement boundaries while the
+// transaction session owns the transaction.
+func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	var bytes int64
+	for key, value := range tx.pendingWrites {
+		bytes += int64(len(key) + cap(value) + 64)
+	}
+	for key := range tx.pendingDeletes {
+		bytes += int64(len(key) + 48)
+	}
+	nodes := make(map[*Node]struct{}, len(tx.pendingNodes))
+	for _, node := range tx.pendingNodes {
+		bytes += estimateRetainedNodeBytes(node)
+		nodes[node] = struct{}{}
+	}
+	edges := make(map[*Edge]struct{}, len(tx.pendingEdges))
+	for _, edge := range tx.pendingEdges {
+		bytes += estimateRetainedEdgeBytes(edge)
+		edges[edge] = struct{}{}
+	}
+	for _, op := range tx.operations {
+		for _, node := range [2]*Node{op.Node, op.OldNode} {
+			if node == nil {
+				continue
+			}
+			if _, counted := nodes[node]; !counted {
+				bytes += estimateRetainedNodeBytes(node)
+				nodes[node] = struct{}{}
+			}
+		}
+		for _, edge := range [2]*Edge{op.Edge, op.OldEdge} {
+			if edge == nil {
+				continue
+			}
+			if _, counted := edges[edge]; !counted {
+				bytes += estimateRetainedEdgeBytes(edge)
+				edges[edge] = struct{}{}
+			}
+		}
+		bytes += int64(cap(op.DeletedEdgeIDs)) * int64(unsafe.Sizeof(EdgeID("")))
+		for _, id := range op.DeletedEdgeIDs {
+			bytes += int64(len(id))
+		}
+	}
+	bytes += int64(cap(tx.operations)) * int64(unsafe.Sizeof(Operation{}))
+	return bytes
+}
+
+func estimateRetainedNodeBytes(node *Node) int64 {
+	if node == nil {
+		return 0
+	}
+	bytes := estimateNodeBodyCacheBytes(node)
+	for _, vector := range node.NamedEmbeddings {
+		bytes += int64(32 + 4*len(vector))
+	}
+	for _, vector := range node.ChunkEmbeddings {
+		bytes += int64(24 + 4*len(vector))
+	}
+	return bytes
+}
+
+func estimateRetainedEdgeBytes(edge *Edge) int64 {
+	if edge == nil {
+		return 0
+	}
+	bytes := int64(160 + len(edge.ID) + len(edge.StartNode) + len(edge.EndNode) + len(edge.Type))
+	bytes += estimateEntityPropertyBytes(edge.Properties)
+	return bytes
 }
 
 // SetMetadata sets transaction metadata (same as Transaction).

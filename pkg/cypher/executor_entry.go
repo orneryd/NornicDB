@@ -185,6 +185,28 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	var queryLimitCancel context.CancelFunc
 	defer func() {
 		statementErr := ctx.Err()
+		if retErr == nil && running.tx != nil && !running.autoCommit && e.txContext != nil && e.txContext.active {
+			if tracker := running.tx.memory.Load(); tracker != nil {
+				if storageTx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
+					if err := tracker.settleStaged(storageTx.StagedMemoryBytes()); err != nil {
+						result, retErr = nil, err
+					}
+				}
+			}
+		}
+		if err := running.memoryFailure(); err != nil && !statement.outcome.committed.Load() {
+			if statementErr != nil && (statementErr == context.Canceled || statementErr == context.DeadlineExceeded) {
+				result, retErr = nil, statementErr
+			} else {
+				result, retErr = nil, err
+			}
+		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed.Load() {
+			// A nested execution hands its retained rows to its parent scope.
+			if err := running.memory.handOver(running.memoryMark, result.Rows); err != nil {
+				result, retErr = nil, err
+			}
+			running.memory = nil
+		}
 		terminated := running.done()
 		if !statement.outcome.committed.Load() {
 			if terminated {
@@ -638,7 +660,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// checked write path, the row loop) and whether it read or wrote;
 	// only an auto-commit statement that had already committed keeps its
 	// result (#751).
-
 	registerStatement := func() error {
 		statementCtx, statement, err := e.withRunningStatement(ctx, originalCypher)
 		if err != nil {
@@ -805,7 +826,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return cached, nil
 		}
 	}
-	if running.tx == nil {
+	if running.tx == nil && running.memory == nil {
 		// Registering an auto-commit statement can't fail: only a
 		// terminated explicit transaction refuses a statement, and a
 		// statement of one is registered above.

@@ -6,22 +6,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
-func newWriteBehindTestEngine(t *testing.T, interval time.Duration) *BadgerEngine {
+type writeBehindTestOptions struct {
+	dataDir string
+	wal     bool
+}
+
+func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
 	t.Helper()
+	var opts writeBehindTestOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	if opts.dataDir == "" {
+		opts.dataDir = t.TempDir()
+	}
+	if opts.wal {
+		t.Cleanup(config.WithWALEnabled())
+	}
 	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
-		DataDir:             t.TempDir(),
+		DataDir:             opts.dataDir,
 		WriteBehind:         true,
 		WriteBehindInterval: interval,
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
+	// Register engine cleanup before WAL setup so failures also close storage.
+	// Crash tests already closed Badger and must not attempt a later flush.
+	t.Cleanup(func() {
+		engine.mu.RLock()
+		closed := engine.closed
+		engine.mu.RUnlock()
+		if !closed {
+			require.NoError(t, engine.Close())
+		}
+		if engine.bufferedCommitWAL != nil {
+			require.NoError(t, engine.bufferedCommitWAL.Close())
+		}
+	})
+	if opts.wal {
+		walCfg := DefaultWALConfig()
+		walCfg.Dir = opts.dataDir + "/wal"
+		walCfg.BatchSyncInterval = time.Hour
+		wal, err := NewWAL(walCfg.Dir, walCfg)
+		require.NoError(t, err)
+		engine.SetBufferedCommitWAL(wal)
+	}
 	return engine
 }
 
-func bufferedCreate(t *testing.T, engine *BadgerEngine, node *Node) {
+func bufferedCreate(t testing.TB, engine *BadgerEngine, node *Node) {
 	t.Helper()
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)

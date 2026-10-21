@@ -1037,13 +1037,13 @@ func TestServerNew_ConfiguresDefaultRemoteEngineFactory(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
+func TestDatabaseScopedExecutorAuthBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	// No-auth and non-remote path delegates to cached executor behavior.
-	execA, err := server.getExecutorForDatabaseWithAuth("nornic", "")
+	// Non-remote requests share the cached executor.
+	execA, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
-	execB, err := server.getExecutorForDatabaseWithAuth("nornic", "Bearer token")
+	execB, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
 	require.Equal(t, execA, execB)
 	require.False(t, server.databaseHasRemoteConstituent("nornic"))
@@ -1080,7 +1080,7 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 	server.executors = make(map[string]*cypher.StorageExecutor)
 
 	require.True(t, server.databaseHasRemoteConstituent("comp_remote_exec"))
-	execRemote, err := server.getExecutorForDatabaseWithAuth("comp_remote_exec", "Bearer remote")
+	execRemote, err := server.newDatabaseScopedExecutor("comp_remote_exec", "Bearer remote")
 	require.NoError(t, err)
 	require.NotNil(t, execRemote)
 	require.Equal(t, "Bearer remote", tokenSeen)
@@ -1104,7 +1104,7 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 		},
 	}))
 	server.dbManager = badManager
-	_, err = server.getExecutorForDatabaseWithAuth("comp_remote_bad", "Bearer token")
+	_, err = server.newDatabaseScopedExecutor("comp_remote_bad", "Bearer token")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "remote dial failed")
 }
@@ -2328,19 +2328,19 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 
 	t.Run("embed stats and decay", func(t *testing.T) {
 		// Embed stats when auto-embed is disabled (nil stats branch).
-		req := httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
+		req := as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil), "admin")
 		rec := httptest.NewRecorder()
 		server.handleEmbedStats(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		// Enable embedder then check enabled stats branch.
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
-		req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil)
+		req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/stats", nil), "admin")
 		rec = httptest.NewRecorder()
 		server.handleEmbedStats(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		req = httptest.NewRequest(http.MethodGet, "/nornicdb/decay", nil)
+		req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/decay", nil), "admin")
 		rec = httptest.NewRecorder()
 		server.handleDecay(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -2348,7 +2348,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 
 	t.Run("embed clear and trigger", func(t *testing.T) {
 		// embed clear method not allowed
-		req := httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil)
+		req := as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/clear", nil), "admin")
 		rec := httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
@@ -2359,14 +2359,14 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		// trigger method not allowed
-		req = httptest.NewRequest(http.MethodGet, "/nornicdb/embed/trigger", nil)
+		req = as(httptest.NewRequest(http.MethodGet, "/nornicdb/embed/trigger", nil), "admin")
 		rec = httptest.NewRecorder()
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
 		// trigger with embed queue not enabled
 		serverNoEmbed, _ := setupTestServer(t)
-		req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+		req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil), "admin")
 		rec = httptest.NewRecorder()
 		serverNoEmbed.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
@@ -4756,7 +4756,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusAccepted, rec.Code)
 
-		req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+		req = as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil), "admin")
 		rec = httptest.NewRecorder()
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -4788,7 +4788,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		triggerReq := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil).WithContext(ctx)
+		triggerReq := as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil).WithContext(ctx), "admin")
 		triggerRec := httptest.NewRecorder()
 		server.handleEmbedTrigger(triggerRec, triggerReq)
 		require.Equal(t, http.StatusOK, triggerRec.Code)

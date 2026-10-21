@@ -51,12 +51,20 @@ type pipelineAggregateGroup struct {
 	projections []pipelineAggregateProjection
 }
 
+// pipelineAggregateRun is what pipelineAggregateGroups' row callback updates.
+type pipelineAggregateRun struct {
+	valid  bool
+	memory memoryAccount
+	rows   rowEstimator
+}
+
 // pipelineAggregateGroups aggregates the rows of source into groups. Rows are
 // validated as they stream in, unless rowsValidated says the caller already
 // validated exactly these rows; validating them again doubled the cost of
 // aggregating projections (#823).
 func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
 	templates := make([]pipelineAggregateProjection, len(projections))
+	memory := memoryScopeFromContext(ctx)
 	validationClauses := make([]string, 0)
 	allAggregates := len(projections) > 0
 	groupingCount := 0
@@ -73,7 +81,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			if !ok {
 				return nil, false
 			}
-			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner, distinct: distinct})
+			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner, distinct: distinct, memory: memoryAccount{scope: memory}})
 			needsValidation = needsValidation || strings.ContainsAny(inner, "([") || name == "percentilecont" || name == "percentiledisc"
 			rewritten.WriteString(projection.expr[last:span.start])
 			rewritten.WriteString(traversalAggPlaceholder(offset))
@@ -100,17 +108,20 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		ordered      []*pipelineAggregateGroup
 		stringGroups map[string]*pipelineAggregateGroup
 	}{ordered: make([]*pipelineAggregateGroup, 0)}
-	valid := true
+	// run is the aggregation's state the row callback updates: whether every
+	// row was valid, and the memory its new groups take (#1343).
+	run := pipelineAggregateRun{valid: true, memory: memoryAccount{scope: memory}, rows: rowEstimator{known: memory.knownLists()}}
+	defer run.memory.close()
 	completed := source(func(row pipelineRow) bool {
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
-			valid = false
+			run.valid = false
 			return false
 		}
 		for _, clause := range validationClauses {
 			if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause, "WITH"); err != nil {
 				recordExpressionFailure(ctx, err)
-				valid = false
+				run.valid = false
 				return false
 			}
 		}
@@ -128,7 +139,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
-					valid = false
+					run.valid = false
 					return false
 				}
 				if groupingCount == 1 {
@@ -151,6 +162,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		group := lookup[key]
 		if group == nil {
+			if run.memory.grow(run.rows.bytes(row)+int64(len(key))+int64(len(templates))*aggregateStateBytes) != nil {
+				run.valid = false
+				return false
+			}
 			group = newGroup(row)
 			lookup[key] = group
 			grouping.ordered = append(grouping.ordered, group)
@@ -158,14 +173,14 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		for index := range group.projections {
 			for offset := range group.projections[index].states {
 				if !group.projections[index].states[offset].add(ctx, e, row) {
-					valid = false
+					run.valid = false
 					return false
 				}
 			}
 		}
 		return true
 	})
-	if !completed || !valid {
+	if !completed || !run.valid {
 		return nil, false
 	}
 	if len(grouping.ordered) == 0 && allAggregates {
@@ -449,6 +464,9 @@ type pipelineAggregateState struct {
 	// duration is the running sum of sum() / avg() over durations; numbers
 	// and durations can't be mixed (aggregateMixesNumberAndDuration).
 	duration *CypherDuration
+	// memory is the state's account in the statement's memory scope:
+	// collected values and DISTINCT keys count against its limit (#1343).
+	memory memoryAccount
 }
 
 func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
@@ -478,6 +496,13 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 			}
 			stored[argument] = value
 		}
+		// The percentile evaluator retains every input row until finalization.
+		// Charge the map, its values, and the slice slot before growing it.
+		if state.memory.scope != nil {
+			if state.memory.grow(estimateValueBytes(map[string]interface{}(stored))+valueSlotBytes) != nil {
+				return false
+			}
+		}
 		state.percentileRows = append(state.percentileRows, stored)
 		return true
 	}
@@ -499,12 +524,18 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		if _, exists := state.seen[key]; exists {
 			return true
 		}
+		if state.memory.growValue(value) != nil {
+			return false
+		}
 		state.seen[key] = struct{}{}
 	}
 	switch state.name {
 	case "count":
 		state.count++
 	case "collect":
+		if state.memory.growValue(value) != nil {
+			return false
+		}
 		state.values = append(state.values, value)
 	case "sum", "avg", "stdev", "stdevp":
 		// Neo4j's sum and avg take numbers or durations, never both; stDev and
@@ -628,6 +659,9 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 		if state.values == nil {
 			return []interface{}{}, true
 		}
+		// The rows that keep the list size it from what collect counted,
+		// not by walking it again (#1343).
+		state.memory.noteList(state.values)
 		return state.values, true
 	case "stdev", "stdevp":
 		if state.count == 0 {

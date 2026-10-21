@@ -45,7 +45,7 @@ func (b *BadgerEngine) awaitCommitNotification(n *commitNotification) {
 }
 
 func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotification {
-	if !b.hasCommitListeners() {
+	if !b.hasCommitListeners() && !hasEmbeddingOutcome(ops) {
 		return nil
 	}
 	n := &commitNotification{ops: ops}
@@ -62,28 +62,32 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 }
 
 func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
-	if !b.hasCommitListeners() {
+	if !b.hasCommitListeners() && !hasEmbeddingOutcome([]Operation{op}) {
 		return
 	}
-	if op.Node != nil {
-		op.Node = copyNode(op.Node)
-	}
-	if op.Edge != nil {
-		op.Edge = copyEdge(op.Edge)
-	}
+	op.snapshotForNotification()
 	n := b.reserveCommitOperations([]Operation{op})
 	b.completeCommitNotification(n)
+}
+
+func hasEmbeddingOutcome(ops []Operation) bool {
+	for _, op := range ops {
+		if op.embeddingOutcome {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
 	for i := range ops {
 		op := &ops[i]
+		if snapshot {
+			op.snapshotForNotification()
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
-			if snapshot {
-				op.Node = copyNode(op.Node)
-			}
 		case OpDeleteNode:
 			b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
 			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
@@ -95,9 +99,6 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
-			if snapshot {
-				op.Edge = copyEdge(op.Edge)
-			}
 		case OpDeleteEdge:
 			b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
 			b.forgetManualSuppression(manualSuppressionEdge, string(op.EdgeID))
@@ -159,7 +160,7 @@ func (b *BadgerEngine) dispatchCommitOperations(ops []Operation) {
 		case OpCreateNode:
 			b.dispatchNodeCreated(op.Node)
 		case OpUpdateNode:
-			b.dispatchNodeUpdated(op.Node)
+			b.dispatchNodeUpdatedOutcome(op.Node, op.embeddingOutcome)
 		case OpDeleteNode:
 			for _, id := range op.DeletedEdgeIDs {
 				b.dispatchEdgeDeleted(id)

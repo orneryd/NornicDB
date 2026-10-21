@@ -201,19 +201,19 @@ func TestUpdateKeepsManagedEmbeddingsForUnembeddedProperties(t *testing.T) {
 // TestEnqueueEndsRecentlyProcessedWait: a write to a node ends the worker's
 // recently-processed wait for it, with or without its database prefix, so a
 // changed embedding source is embedded at once (#963).
-func TestEnqueueEndsRecentlyProcessedWait(t *testing.T) {
+func TestEnqueueWithoutBodyChangePreservesProcessedRevision(t *testing.T) {
 	worker := &EmbedWorker{
 		trigger: make(chan struct{}, 1),
-		recentlyProcessed: map[string]time.Time{
-			"nornic:a": time.Now(),
-			"b":        time.Now(),
-			"nornic:c": time.Now(),
+		recentlyProcessed: map[string]recentNodeEmbedding{
+			"nornic:a": {at: time.Now()},
+			"b":        {at: time.Now()},
+			"nornic:c": {at: time.Now()},
 		},
 		loggedSkip: map[string]bool{"nornic:a": true},
 	}
 	worker.Enqueue("a")
 	worker.Enqueue("b")
-	require.False(t, worker.wasRecentlyProcessed("nornic:a"))
-	require.False(t, worker.wasRecentlyProcessed("b"))
+	require.True(t, worker.wasRecentlyProcessed("nornic:a"))
+	require.True(t, worker.wasRecentlyProcessed("b"))
 	require.True(t, worker.wasRecentlyProcessed("nornic:c"))
 }

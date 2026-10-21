@@ -142,6 +142,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -231,6 +232,7 @@ type Server struct {
 	// Auth-scoped executors remain fresh; only their text caches live here.
 	statementCaches     *cypher.StatementCaches
 	statementCachesOnce sync.Once
+	memoryPolicy        *memory.Policy
 
 	// Query executor (injected dependency) - used if dbManager is nil
 	executor QueryExecutor
@@ -409,7 +411,7 @@ type QueryResult struct {
 	Columns  []string
 	Rows     [][]any
 	Metadata map[string]any
-	Stats    *QueryStats // Write counters for ResultSummary
+	Stats    *QueryStats // Write counters for ResultSummary.
 }
 
 type resultStream struct {
@@ -985,6 +987,12 @@ func (s *Server) SetDatabaseConnectionAdmission(resolve func(string) (string, er
 	s.databaseConnectionRelease = release
 }
 
+// SetMemoryPolicy uses the database-owned soft admission policy for Bolt RUN.
+// Configure it before ListenAndServe so all sessions share one budget.
+func (s *Server) SetMemoryPolicy(policy *memory.Policy) {
+	s.memoryPolicy = policy
+}
+
 // ListenAndServe starts the Bolt server and begins accepting connections.
 //
 // The server listens on the configured port and handles incoming Bolt
@@ -1318,6 +1326,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	session.publishConnectionListing()
 	session.connCtx = resultstream.WithDelivery(session.connCtx, &session.continuationDelivery)
 	defer session.continuationDelivery.Fail()
+	defer session.abandonContinuationResults()
 	defer session.removeConnectionListing()
 	_, sourceTransactional := s.executor.(TransactionalExecutor)
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
@@ -1557,9 +1566,11 @@ type Session struct {
 	rawTransactionExecutor          bool
 
 	// Query result state (for streaming with PULL)
-	lastResult  *QueryResult
-	resultIndex int
-	lastLazy    *lazyResult
+	lastResult            *QueryResult
+	lastResultMemoryLease *memory.Lease
+	resultMemoryLeases    map[int64]*memory.Lease
+	resultIndex           int
+	lastLazy              *lazyResult
 	// pendingMessage and pendingErr are what a lazy result's helper read
 	// and handed back to the message loop (serveLazyResult).
 	pendingMessage    *boltMessage
@@ -2360,15 +2371,21 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 	}
 
 	if !useAuthScopedResolver {
-		s.server.executorsMu.RLock()
-		if executor, ok := s.server.executors[dbName]; ok && !boltExecutorCachesDisposed(executor) {
-			s.server.executorsMu.RUnlock()
-			return executor, nil
-		}
-		s.server.executorsMu.RUnlock()
+		return cypher.CachedDatabaseExecutor(&s.server.executorsMu, &s.server.executors, dbName,
+			func(executor QueryExecutor) bool { return !boltExecutorCachesDisposed(executor) },
+			func() (QueryExecutor, error) {
+				executor, err := s.newDatabaseScopedCypherExecutor(dbName, false)
+				if err != nil {
+					return nil, err
+				}
+				// Auto-commit shares this view; explicit transactions build fresh ones.
+				executor.SetSharedExecutor(true)
+				return &boltQueryExecutorAdapter{executor: executor}, nil
+			})
 	}
 
-	executor, err := s.newDatabaseScopedCypherExecutor(dbName, useAuthScopedResolver)
+	// Auth-scoped resolvers cannot be cached under a database-only key.
+	executor, err := s.newDatabaseScopedCypherExecutor(dbName, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2379,27 +2396,7 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 	// builds a fresh per-connection executor.
 	executor.SetSharedExecutor(true)
 
-	dbExecutor := &boltQueryExecutorAdapter{executor: executor}
-	if useAuthScopedResolver {
-		return dbExecutor, nil
-	}
-
-	s.server.executorsMu.Lock()
-	if s.server.executors == nil {
-		s.server.executors = make(map[string]QueryExecutor)
-	}
-	if existing, ok := s.server.executors[dbName]; ok && !boltExecutorCachesDisposed(existing) {
-		s.server.executorsMu.Unlock()
-		return existing, nil
-	}
-	if !executor.StatementCacheSelectionValid() {
-		s.server.executorsMu.Unlock()
-		return nil, multidb.ErrDatabaseNotFound
-	}
-	s.server.executors[dbName] = dbExecutor
-	s.server.executorsMu.Unlock()
-
-	return dbExecutor, nil
+	return &boltQueryExecutorAdapter{executor: executor}, nil
 }
 
 type authAwareStorageResolver interface {
@@ -2440,46 +2437,36 @@ func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecu
 }
 
 func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedResolver bool) (*cypher.StorageExecutor, error) {
-	var (
-		storageEngine storage.Engine
-		err           error
-	)
-	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && useAuthScopedResolver {
-		storageEngine, err = resolver.GetStorageWithAuth(dbName, s.forwardedAuthHeader)
-	} else {
-		storageEngine, err = s.server.dbManager.GetStorage(dbName)
+	options := cypher.DatabaseScopedExecutorOptions{
+		Name: dbName, Storage: s.server.dbManager,
+		AuthToken: s.forwardedAuthHeader, UseAuthenticatedStorage: useAuthScopedResolver,
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	executor := cypher.NewStorageExecutor(storageEngine)
 	if manager, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-		if err := executor.UseDatabaseStatementCaches(manager, dbName); err != nil {
-			return nil, err
-		}
+		options.StatementCacheManager = manager
 	} else {
 		// Injected managers without catalog lifecycle use one bounded server owner.
-		executor.UseStatementCaches(s.server.fallbackStatementCaches())
+		options.FallbackStatementCaches = s.server.fallbackStatementCaches()
 	}
 	if s.server.config != nil {
-		executor.SetLocalizationRenderer(s.server.config.Localizer)
+		options.LocalizationRenderer = s.server.config.Localizer
 	}
 	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
-		executor.ShareEmbedderFrom(baseAdapter.executor)
+		options.BaseExecutor = baseAdapter.executor
 	}
-	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil {
-		cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine)
-	}
-	if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
-		if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
-			executor.ShareEmbedderFrom(baseExec)
+	options.Configure = func(executor *cypher.StorageExecutor, storageEngine storage.Engine) {
+		if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil {
+			cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine)
+		}
+		if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
+			if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
+				executor.ShareEmbedderFrom(baseExec)
+			}
+		}
+		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+			executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
 		}
 	}
-	if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-		executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
-	}
-	return executor, nil
+	return cypher.NewDatabaseScopedExecutor(options)
 }
 
 // boltQueryExecutorAdapter adapts cypher.StorageExecutor to bolt.QueryExecutor interface.

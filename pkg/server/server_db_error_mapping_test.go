@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
 // TestMapTransientTransactionError verifies that HTTP transaction endpoints use
@@ -60,6 +62,30 @@ func TestMapTransientTransactionError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTransactionStatementErrorRendersBufferedMemoryIdentity(t *testing.T) {
+	err := fmt.Errorf("commit failed: %w", testBufferedMemoryError{localization.NewLocalizedError(
+		"Neo.TransientError.General.MemoryPoolOutOfMemoryError",
+		localization.ApplicationMemoryPressure(), memory.ErrLimitExceeded)})
+	failure := statementError(err)
+	localizeStatementError(&failure, err, func(message localization.Message) string {
+		if message.ID != localization.ApplicationMemoryPressure().ID {
+			t.Fatalf("unexpected localization identity: %s", message.ID)
+		}
+		return "translated pressure"
+	})
+	if failure.Message != "translated pressure" {
+		t.Fatalf("localized failure message = %q", failure.Message)
+	}
+}
+
+type testBufferedMemoryError struct{ error }
+
+func (e testBufferedMemoryError) Unwrap() error { return e.error }
+
+func (testBufferedMemoryError) BoltErrorCode() string {
+	return "Neo.TransientError.General.MemoryPoolOutOfMemoryError"
 }
 
 func TestMapSessionExecErrorBranches(t *testing.T) {
