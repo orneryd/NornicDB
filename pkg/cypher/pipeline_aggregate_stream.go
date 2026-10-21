@@ -496,6 +496,13 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 			}
 			stored[argument] = value
 		}
+		// The percentile evaluator retains every input row until finalization.
+		// Charge the map, its values, and the slice slot before growing it.
+		if state.memory.scope != nil {
+			if state.memory.grow(estimateValueBytes(map[string]interface{}(stored))+valueSlotBytes) != nil {
+				return false
+			}
+		}
 		state.percentileRows = append(state.percentileRows, stored)
 		return true
 	}

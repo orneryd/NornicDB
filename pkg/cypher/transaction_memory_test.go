@@ -71,6 +71,85 @@ func TestRemovingLimitKeepsExistingTransactionChargeUntilEnd(t *testing.T) {
 	requirePoolsEmpty(t, "nornic")
 }
 
+func TestRemovingLastLimitStillReleasesExplicitTransaction(t *testing.T) {
+	resetTransactionMemory(t)
+	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	executor := newTransactionMemoryExecutor(t)
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = executor.Execute(ctx, "CREATE (:Retained {name: 'small'})", nil)
+	require.NoError(t, err)
+	global, database := TransactionMemoryPoolUsage("nornic")
+	require.Positive(t, global)
+	require.Positive(t, database)
+	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{})
+	require.False(t, transactionMemoryActive.Load())
+	_, err = executor.Execute(ctx, "RETURN 1 AS n", nil)
+	require.NoError(t, err)
+	_, err = executor.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	requirePoolsEmpty(t, "nornic")
+}
+
+func TestExplicitTransactionRetiresCompletedCollectLists(t *testing.T) {
+	resetTransactionMemory(t)
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 8 << 20})
+	executor := newTransactionMemoryExecutor(t)
+	ctx := context.Background()
+	_, err := executor.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	for i := 0; i < 6; i++ {
+		result, err := executor.Execute(ctx, heavyCollectQuery, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(200000), result.Rows[0][0])
+		tracker := executor.txContext.running.memory.Load()
+		require.NotNil(t, tracker)
+		for _, known := range tracker.known {
+			require.Nil(t, known.data, "completed collect array remains rooted after statement settlement")
+		}
+		used, _ := TransactionMemoryPoolUsage("nornic")
+		require.Less(t, used, int64(8<<20))
+	}
+	_, err = executor.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	requirePoolsEmpty(t, "nornic")
+}
+
+func TestExplicitDeleteCountsRetainedOldBodies(t *testing.T) {
+	resetTransactionMemory(t)
+	executor := newTransactionMemoryExecutor(t)
+	ctx := context.Background()
+	for i := 0; i < 64; i++ {
+		_, err := executor.Execute(ctx, "CREATE (:OldBody {id: $id, body: $body})", map[string]interface{}{
+			"id": int64(i), "body": strings.Repeat("x", 32<<10),
+		})
+		require.NoError(t, err)
+	}
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 20})
+	_, err := executor.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = executor.Execute(ctx, "MATCH (n:OldBody) DETACH DELETE n", nil)
+	requireMemoryError(t, err, transactionMemoryLimitCode, transactionMemoryMaxSetting)
+	requirePoolsEmpty(t, "nornic")
+	_, err = executor.Execute(ctx, "ROLLBACK", nil)
+	require.NoError(t, err)
+	result, err := executor.Execute(ctx, "MATCH (n:OldBody) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(64), result.Rows[0][0])
+}
+
+func TestPercentileInputsSpendTransactionBudget(t *testing.T) {
+	resetTransactionMemory(t)
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1 << 20})
+	executor := newTransactionMemoryExecutor(t)
+	for _, aggregate := range []string{"percentileCont", "percentileDisc"} {
+		_, err := executor.Execute(context.Background(), "UNWIND range(1, 200000) AS x RETURN "+aggregate+"(x, 0.5) AS p", nil)
+		requireMemoryError(t, err, transactionMemoryLimitCode, transactionMemoryMaxSetting)
+	}
+	requirePoolsEmpty(t, "nornic")
+}
+
 // Transaction memory limits (#1343).
 
 // heavyCollectQuery collects 200,000 integers: ~3 MiB of estimated

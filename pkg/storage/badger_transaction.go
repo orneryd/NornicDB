@@ -3212,8 +3212,9 @@ func (tx *BadgerTransaction) Rollback() error {
 
 // StagedMemoryBytes estimates storage-owned data retained by an open
 // transaction. It counts the serialized write copies and pending entity
-// copies once each; operation records refer to those entities and are not
-// charged again. The value is sampled at statement boundaries while the
+// copies once each. Historical operation bodies are distinct from the
+// pending map's current version and remain owned until the transaction ends.
+// The value is sampled at statement boundaries while the
 // transaction session owns the transaction.
 func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 	tx.mu.Lock()
@@ -3225,16 +3226,64 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 	for key := range tx.pendingDeletes {
 		bytes += int64(len(key) + 48)
 	}
+	nodes := make(map[*Node]struct{}, len(tx.pendingNodes))
 	for _, node := range tx.pendingNodes {
-		bytes += estimateNodeBodyCacheBytes(node)
+		bytes += estimateRetainedNodeBytes(node)
+		nodes[node] = struct{}{}
 	}
+	edges := make(map[*Edge]struct{}, len(tx.pendingEdges))
 	for _, edge := range tx.pendingEdges {
-		bytes += int64(128 + len(edge.ID) + len(edge.StartNode) + len(edge.EndNode) + len(edge.Type))
-		for key, value := range edge.Properties {
-			bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
+		bytes += estimateRetainedEdgeBytes(edge)
+		edges[edge] = struct{}{}
+	}
+	for _, op := range tx.operations {
+		for _, node := range [2]*Node{op.Node, op.OldNode} {
+			if node == nil {
+				continue
+			}
+			if _, counted := nodes[node]; !counted {
+				bytes += estimateRetainedNodeBytes(node)
+				nodes[node] = struct{}{}
+			}
+		}
+		for _, edge := range [2]*Edge{op.Edge, op.OldEdge} {
+			if edge == nil {
+				continue
+			}
+			if _, counted := edges[edge]; !counted {
+				bytes += estimateRetainedEdgeBytes(edge)
+				edges[edge] = struct{}{}
+			}
+		}
+		bytes += int64(cap(op.DeletedEdgeIDs)) * int64(unsafe.Sizeof(EdgeID("")))
+		for _, id := range op.DeletedEdgeIDs {
+			bytes += int64(len(id))
 		}
 	}
 	bytes += int64(cap(tx.operations)) * int64(unsafe.Sizeof(Operation{}))
+	return bytes
+}
+
+func estimateRetainedNodeBytes(node *Node) int64 {
+	if node == nil {
+		return 0
+	}
+	bytes := estimateNodeBodyCacheBytes(node)
+	for _, vector := range node.NamedEmbeddings {
+		bytes += int64(32 + 4*len(vector))
+	}
+	for _, vector := range node.ChunkEmbeddings {
+		bytes += int64(24 + 4*len(vector))
+	}
+	return bytes
+}
+
+func estimateRetainedEdgeBytes(edge *Edge) int64 {
+	if edge == nil {
+		return 0
+	}
+	bytes := int64(160 + len(edge.ID) + len(edge.StartNode) + len(edge.EndNode) + len(edge.Type))
+	bytes += estimateEntityPropertyBytes(edge.Properties)
 	return bytes
 }
 

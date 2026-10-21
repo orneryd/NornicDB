@@ -65,7 +65,7 @@ func (fs cgroupFS) memoryLimit() (int64, bool) {
 		if limit, ok := fs.tightestLimit("sys/fs/cgroup", unified, "memory.max"); ok {
 			return limit, true
 		}
-		return fs.tightestV1Limit(cgroupMount{root: "/", point: "/sys/fs/cgroup/memory"}, path.Clean("/"+v1))
+		return fs.tightestLimit("/sys/fs/cgroup/memory", path.Clean("/"+v1), "memory.limit_in_bytes")
 	}
 	// Every mount that contains the process's cgroup, in whatever order
 	// mountinfo lists them: the unified hierarchy (v2) and the memory
@@ -87,26 +87,13 @@ func (fs cgroupFS) memoryLimit() (int64, bool) {
 		if mount.unified {
 			limit, ok = fs.tightestLimit(mount.point, relative, "memory.max")
 		} else {
-			limit, ok = fs.tightestV1Limit(mount, relative)
+			limit, ok = fs.tightestLimit(mount.point, relative, "memory.limit_in_bytes")
 		}
 		if ok && (!found || limit < tightest) {
 			tightest, found = limit, true
 		}
 	}
 	return tightest, found
-}
-
-// tightestV1Limit is the v1 memory controller's limit for the cgroup at
-// relative under mount: the tightest of the visible memory.limit_in_bytes
-// files and the effective hierarchical limit memory.stat reports, which
-// includes the ancestors above the mount (a container sees only its own
-// subtree).
-func (fs cgroupFS) tightestV1Limit(mount cgroupMount, relative string) (int64, bool) {
-	limit, found := fs.tightestLimit(mount.point, relative, "memory.limit_in_bytes")
-	if hierarchical, ok := readHierarchicalLimit(fs.path(path.Join(mount.point, relative, "memory.stat"))); ok && (!found || hierarchical < limit) {
-		limit, found = hierarchical, true
-	}
-	return limit, found
 }
 
 // cgroupMount is a cgroup hierarchy mounted in the process's mount
@@ -274,15 +261,28 @@ func (fs cgroupFS) selfCgroups() (unified, v1 string) {
 func (fs cgroupFS) tightestLimit(mount, cgroup, file string) (int64, bool) {
 	var tightest int64
 	found := false
-	for dir := path.Clean("/" + cgroup); ; dir = path.Dir(dir) {
+	walkCgroupAncestorDirs(cgroup, func(dir string) bool {
 		if limit, ok := readCgroupLimit(fs.path(path.Join(mount, dir, file))); ok && (!found || limit < tightest) {
 			tightest, found = limit, true
 		}
-		if dir == "/" {
-			break
+		return true
+	})
+	// A cgroup v1 container may hide ancestors above its mount. The effective
+	// hierarchy limit reported in memory.stat covers those hidden ancestors.
+	if file == "memory.limit_in_bytes" {
+		if hierarchical, ok := readHierarchicalLimit(fs.path(path.Join(mount, cgroup, "memory.stat"))); ok && (!found || hierarchical < tightest) {
+			tightest, found = hierarchical, true
 		}
 	}
 	return tightest, found
+}
+
+func walkCgroupAncestorDirs(cgroup string, visit func(string) bool) {
+	for dir := path.Clean("/" + cgroup); ; dir = path.Dir(dir) {
+		if !visit(dir) || dir == "/" {
+			return
+		}
+	}
 }
 
 // readCgroupLimit reads a memory limit file: a byte count, or "max" (v2)

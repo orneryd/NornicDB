@@ -64,7 +64,7 @@ Proposed canonical configuration (to approve during implementation review):
 
 | Scope | Canonical name | Units and default |
 | --- | --- | --- |
-| Go runtime GC target | `NORNICDB_GO_MEMORY_LIMIT_MIB`; CLI `--go-memory-limit`; YAML `memory.go_runtime_limit` | Keep current `auto` or integer MiB parser and current automatic resolution. It is a soft Go-runtime target, not an opt-in application gate. |
+| Go runtime GC target | `NORNICDB_GO_MEMORY_LIMIT_BYTES`; CLI `--go-memory-limit-bytes`; YAML `memory.go_runtime_limit_bytes` | Use only a non-negative integer number of bytes. Omission retains automatic resolution. The deprecated legacy alias retains MiB input. This is a soft Go-runtime target, not an opt-in application gate. |
 | Application pressure maximum | `NORNICDB_MEMORY_APPLICATION_SOFT_MAX`; YAML `memory.application_soft_max` | Explicit byte-size parser (`k`, `m`, `g` as binary units); unset/`0` disables the application policy. A finite value must leave measured headroom below effective container limit. |
 | One transaction | `db.memory.transaction.max` / `NORNICDB_MEMORY_TRANSACTION_MAX` | Estimated bytes, `0` unlimited; use develop's established setting and env spelling. |
 | All transactions in one database | `db.memory.transaction.total.max` | Estimated bytes, database-scoped, `0` unlimited. Configure by database setting; no process-wide env alias that ambiguously selects a database. |

@@ -18,7 +18,7 @@ With no limits configured, admission and transaction tracking remain off.
 
 - **Units:** bytes. Use a `k`, `m`, `g` or `t` suffix for kibibytes,
   mebibytes, gibibytes or tebibytes: `512m`, `2g`. `0` means unlimited.
-- **Go GC target:** `NORNICDB_GO_MEMORY_LIMIT_MIB` sets Go's soft runtime
+- **Go GC target:** `NORNICDB_GO_MEMORY_LIMIT_BYTES` accepts an integer number of bytes and sets Go's soft runtime
   memory target. The deprecated `NORNICDB_MEMORY_LIMIT` retains this same
   meaning; neither setting turns on transaction or application admission.
 - **Dynamic settings** apply to the statements that start after the change,
@@ -36,7 +36,7 @@ With no limits configured, admission and transaction tracking remain off.
 
 ```yaml
 memory:
-  go_runtime_limit: "6144"       # Go memory target, MiB
+  go_runtime_limit_bytes: "6442450944" # Go memory target, bytes
   application_soft_max: "6g"    # opt-in sampled admission threshold
   transaction_total_max: "4g"    # all transactions together
   transaction_max: "1g"          # any single transaction
@@ -45,7 +45,7 @@ memory:
 or, as environment variables:
 
 ```bash
-NORNICDB_GO_MEMORY_LIMIT_MIB=6144
+NORNICDB_GO_MEMORY_LIMIT_BYTES=6442450944
 NORNICDB_MEMORY_APPLICATION_SOFT_MAX=6g
 NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX=4g
 NORNICDB_MEMORY_TRANSACTION_MAX=1g

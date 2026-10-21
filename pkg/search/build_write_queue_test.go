@@ -234,10 +234,10 @@ func TestBuildLiveWritesOvertakeTheSnapshot(t *testing.T) {
 				require.Empty(t, buildWriteSearchIDs(t, svc, "oldterm"), "the snapshot's older text replaced the live update")
 				require.Empty(t, buildWriteSearchIDs(t, svc, "goneterm"), "the snapshot resurrected a deleted node")
 				require.Equal(t, []string{"nornic:new"}, buildWriteSearchIDs(t, svc, "freshterm"))
-				requireBuildWriteVector(t, svc, "nornic:upd-named-v", []float32{0, 0, 1})
-				_, ok := svc.getVectorLookup()("nornic:del-named-v")
+				requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:upd", "v"), []float32{0, 0, 1})
+				_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:del", "v"))
 				require.False(t, ok, "the deleted node's vector came back")
-				requireBuildWriteVector(t, svc, "nornic:new-named-v", []float32{0, 1, 0})
+				requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:new", "v"), []float32{0, 1, 0})
 				svc.mu.RLock()
 				got := svc.edgePropVector[string(edge.ID)]["v"]
 				svc.mu.RUnlock()
@@ -291,7 +291,7 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 			require.Equal(t, []string{"nornic:a"}, buildWriteSearchIDs(t, svc, "newterm"))
 			require.Empty(t, buildWriteSearchIDs(t, svc, "oldterm"), "the BM25 reload replaced the live update")
 			require.Equal(t, []string{"nornic:b"}, buildWriteSearchIDs(t, svc, "bterm"))
-			requireBuildWriteVector(t, svc, "nornic:a-named-v", []float32{0, 1, 0})
+			requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:a", "v"), []float32{0, 1, 0})
 			svc.PersistIndexesToDisk()
 			closed = true
 			require.NoError(t, svc.Close())
@@ -373,7 +373,7 @@ func TestBuildQueuedWriteIsRejectedLikeALiveWrite(t *testing.T) {
 			require.NoError(t, <-built)
 			require.Equal(t, []string{"nornic:keep"}, buildWriteSearchIDs(t, svc, "keepterm"), "the build dropped the stored node")
 			require.Empty(t, buildWriteSearchIDs(t, svc, "badterm"))
-			requireBuildWriteVector(t, svc, "nornic:keep-named-v", []float32{1, 0, 0})
+			requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:keep", "v"), []float32{1, 0, 0})
 		})
 	}
 }
@@ -414,9 +414,9 @@ func TestBuildQueuedWriteOwnsItsValues(t *testing.T) {
 	node.Properties["text"] = "reusedterm"
 	engine.open()
 	require.NoError(t, <-built)
-	requireBuildWriteVector(t, svc, "nornic:buf-named-v", []float32{0, 0, 1})
+	requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:buf", "v"), []float32{0, 0, 1})
 	requireBuildWriteVector(t, svc, "nornic:buf", []float32{0, 1, 0})
-	requireBuildWriteVector(t, svc, "nornic:buf-prop-p", []float32{1, 0, 0})
+	requireBuildWriteVector(t, svc, nodePropertyVectorKey("nornic:buf", "p"), []float32{1, 0, 0})
 	require.Equal(t, []string{"nornic:buf"}, buildWriteSearchIDs(t, svc, "bufterm"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "reusedterm"))
 	svc.mu.RLock()
@@ -480,8 +480,8 @@ func TestBuildFirstVectorChoosesTheDimensionInOrder(t *testing.T) {
 		t.Fatal("the write did not finish after the build")
 	}
 	require.Equal(t, 4, svc.VectorIndexDimensions())
-	requireBuildWriteVector(t, svc, "nornic:stored-named-v", []float32{1, 0, 0, 0})
-	_, ok := svc.getVectorLookup()("nornic:live-named-v")
+	requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:stored", "v"), []float32{1, 0, 0, 0})
+	_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:live", "v"))
 	require.False(t, ok)
 }
 
@@ -509,7 +509,7 @@ func TestBuildPropertyIndexRemovalIsOrderedWithQueuedWrites(t *testing.T) {
 	engine.open()
 	require.NoError(t, <-built)
 	require.Zero(t, svc.CountPropertyVectorEntries("p"), "an acknowledged write overtook the property-vector index removal")
-	_, ok := svc.getVectorLookup()("nornic:p-prop-p")
+	_, ok := svc.getVectorLookup()(nodePropertyVectorKey("nornic:p", "p"))
 	require.False(t, ok)
 	require.Equal(t, []string{"nornic:p"}, buildWriteSearchIDs(t, svc, "pterm"))
 }

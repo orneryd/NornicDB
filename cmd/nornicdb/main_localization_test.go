@@ -44,7 +44,7 @@ func TestRootCommandHelpUsesResolvedLanguage(t *testing.T) {
 	require.Contains(t, help, "Ruta al archivo de configuración YAML")
 	serve, _, err := command.Find([]string{"serve"})
 	require.NoError(t, err)
-	require.Equal(t, "Objetivo de memoria del recolector de Go en MiB, 0 sin límite o auto", serve.Flag("go-memory-limit").Usage)
+	require.Equal(t, "Objetivo de memoria del recolector de Go en bytes (entero no negativo)", serve.Flag("go-memory-limit-bytes").Usage)
 }
 
 func TestRootCommandEnglishHelpRemainsExact(t *testing.T) {
@@ -69,7 +69,7 @@ Features:
 	require.Equal(t, "Start NornicDB server", serve.Short)
 	require.Equal(t, "Start NornicDB server with Bolt protocol and HTTP API endpoints", serve.Long)
 	require.Equal(t, "Bolt protocol port (Neo4j compatible)", serve.Flag("bolt-port").Usage)
-	require.Equal(t, "Go runtime GC memory target in MiB, 0 for unlimited, or auto", serve.Flag("go-memory-limit").Usage)
+	require.Equal(t, "Go runtime GC memory target in bytes (non-negative integer)", serve.Flag("go-memory-limit-bytes").Usage)
 	require.Equal(t, "Path to YAML config file (overrides auto-discovery)", command.Flag("config").Usage)
 }
 
