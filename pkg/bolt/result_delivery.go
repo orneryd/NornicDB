@@ -13,25 +13,21 @@ func (s *Session) beginContinuationDelivery(ctx context.Context) context.Context
 		if s.lastDelivery != nil {
 			s.lastDelivery.Fail()
 		}
-		if s.lastResult != nil {
-			s.lastResult.memoryLease.Release()
-		}
+		s.lastResultMemoryLease.Release()
+		s.lastResultMemoryLease = nil
 	}
 	s.lastDelivery = s.continuationDelivery.Fork()
 	return resultstream.WithDelivery(ctx, s.lastDelivery)
 }
 func (s *Session) abandonContinuationResults() {
-	if s.lastResult != nil {
-		s.lastResult.memoryLease.Release()
-	}
+	s.lastResultMemoryLease.Release()
+	s.lastResultMemoryLease = nil
 	if s.lastDelivery != nil {
 		s.lastDelivery.Fail()
 		s.lastDelivery = nil
 	}
 	for _, stream := range s.resultStreams {
-		if stream.result != nil {
-			stream.result.memoryLease.Release()
-		}
+		stream.memoryLease.Release()
 		if stream.delivery != nil {
 			stream.delivery.Fail()
 		}
