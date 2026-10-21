@@ -33,3 +33,24 @@ artifacts, not checked into this PR.
 This is a focused check only. The OpenSpec gate still requires paired
 base/head end-to-end throughput, latency, heap and CPU measurements across
 workload sizes and container configurations before readiness.
+
+## Bolt result-stream state after admission wiring
+
+The pre-Bolt-admission integrated source (`a6a23bfcf`) and the current
+database-owned Bolt admission implementation were each measured with five
+300 ms samples on the same M2 Max using `BenchmarkBoltResultStreamState` and
+`-benchmem`. CPU profiles were captured for both. This benchmark exercises
+stream selection and partial-PULL state updates, including the no-limit path;
+it does not include network round trips or query execution.
+
+| Stream | Pre-admission median | Current median | Change | Allocations |
+|---|---:|---:|---:|---:|
+| Autocommit | 6.279 ns/op | 6.336 ns/op | +0.9% | 0 → 0 |
+| Explicit transaction | 8.177 ns/op | 8.225 ns/op | +0.6% | 0 → 0 |
+
+Result leases are looked up only at terminal PULL/DISCARD or cleanup. The
+shared `QueryResult` and partial-PULL `resultStream` layouts are unchanged;
+the enabled policy stores explicit-result leases in session-owned state.
+The measured changes are within the draft 5% latency gate for this narrow
+state-update workload. Whole-server base/head and varied result-size tests
+remain required.

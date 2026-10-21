@@ -415,12 +415,11 @@ type QueryResult struct {
 }
 
 type resultStream struct {
-	result      *QueryResult
-	memoryLease *memory.Lease
-	delivery    *resultstream.Delivery
-	index       int
-	isWrite     bool
-	database    string
+	result   *QueryResult
+	delivery *resultstream.Delivery
+	index    int
+	isWrite  bool
+	database string
 	// lazy produces the rows after result's when the statement is still
 	// running (#939); nil once it has finished.
 	lazy *lazyResult
@@ -1569,6 +1568,7 @@ type Session struct {
 	// Query result state (for streaming with PULL)
 	lastResult            *QueryResult
 	lastResultMemoryLease *memory.Lease
+	resultMemoryLeases    map[int64]*memory.Lease
 	resultIndex           int
 	lastLazy              *lazyResult
 	// pendingMessage and pendingErr are what a lazy result's helper read
