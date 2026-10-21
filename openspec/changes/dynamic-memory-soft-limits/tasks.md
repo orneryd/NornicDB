@@ -2,6 +2,7 @@
 
 - [x] Record maintainer decisions, soft-limit boundaries and pending operator choices.
 - [x] Inventory release GC/context/storage owners and develop transaction tracker.
+- [x] Reject the develop statement-lifetime tracker as the integrated design: an explicit 2 MiB staged write succeeds under a 1 MiB transaction cap because pending storage writes are released from accounting at statement end. Preserve the failing `TestTransactionMemoryExplicitStagedWriteRetainsBudget` reproduction in the isolated reference worktree until the release-owned replacement passes it.
 - [x] Link lane A #1615/#1616 and memory implementation #1368 plus follow-ups.
 - [x] Validate the initial OpenSpec artifacts strictly (completed before maintainer stopped docs validation).
 - [x] Record final-head verification cancellation at maintainer request; no further docs validation.
@@ -21,7 +22,7 @@
 
 ## 3. One integrated implementation
 
-- [ ] Port/reuse the complete reviewed develop tracker and follow-ups with transaction defaults zero.
+- [ ] Implement one release-owned transaction/application accounting model with zero/unlimited defaults. Treat develop's tracker and follow-ups only as reference material; import an individual charge site or test only after proving it matches this design, including retained staged writes, result ownership and Neo4j error codes. Remove superseded accounting paths rather than running two trackers.
 - [ ] Add one application policy owner using existing constraint/measurement infrastructure.
 - [ ] Implement provisional startup sizing, resource-transition updates, periodic reconciliation,
       separate persistent/active/background attribution and adaptive headroom.
