@@ -10,7 +10,8 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 	for _, mode := range []string{"startup", "replay"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
+			engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+			wal := engine.bufferedCommitWAL
 			require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "unique_v", Type: ConstraintUnique, Label: "L", Properties: []string{"v"}}))
 			_, err := engine.CreateNode(&Node{ID: "test:original", Labels: []string{"L"}, Properties: map[string]interface{}{"v": "old"}})
 			require.NoError(t, err)
@@ -28,7 +29,8 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
 			require.NoError(t, err)
 			crashClose(t, engine, wal)
-			recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
+			recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+			wal2 := recovered.bufferedCommitWAL
 			t.Cleanup(func() { require.NoError(t, wal2.Close()); require.NoError(t, recovered.Close()) })
 			if mode == "startup" {
 				n, err := RecoverBufferedCommits(recovered, wal2)
