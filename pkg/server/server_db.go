@@ -774,14 +774,7 @@ func (s *Server) admitTransactionRequest(w http.ResponseWriter, r *http.Request)
 	if s.memoryPolicy == nil {
 		return nil, true
 	}
-	bytes := r.ContentLength
-	if bytes < 0 || bytes > s.config.MaxRequestSize {
-		bytes = s.config.MaxRequestSize
-	}
-	// Decode expands JSON keys, interface slots and nested maps before query
-	// execution can check its own budget. This is a forecast, not a hard bound.
-	forecast := max(int64(64<<10), bytes*4)
-	lease, err := s.memoryPolicy.Reserve(forecast)
+	lease, err := s.memoryPolicy.ReserveWireRequest(r.ContentLength, s.config.MaxRequestSize)
 	if err == nil {
 		return lease, true
 	}

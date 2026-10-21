@@ -142,6 +142,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -231,6 +232,7 @@ type Server struct {
 	// Auth-scoped executors remain fresh; only their text caches live here.
 	statementCaches     *cypher.StatementCaches
 	statementCachesOnce sync.Once
+	memoryPolicy        *memory.Policy
 
 	// Query executor (injected dependency) - used if dbManager is nil
 	executor QueryExecutor
@@ -406,10 +408,11 @@ type DeferrableExecutor interface {
 
 // QueryResult holds the result of a query.
 type QueryResult struct {
-	Columns  []string
-	Rows     [][]any
-	Metadata map[string]any
-	Stats    *QueryStats // Write counters for ResultSummary
+	Columns     []string
+	Rows        [][]any
+	Metadata    map[string]any
+	Stats       *QueryStats   // Write counters for ResultSummary
+	memoryLease *memory.Lease // Held while Bolt retains rows for PULL/DISCARD.
 }
 
 type resultStream struct {
@@ -985,6 +988,12 @@ func (s *Server) SetDatabaseConnectionAdmission(resolve func(string) (string, er
 	s.databaseConnectionRelease = release
 }
 
+// SetMemoryPolicy uses the database-owned soft admission policy for Bolt RUN.
+// Configure it before ListenAndServe so all sessions share one budget.
+func (s *Server) SetMemoryPolicy(policy *memory.Policy) {
+	s.memoryPolicy = policy
+}
+
 // ListenAndServe starts the Bolt server and begins accepting connections.
 //
 // The server listens on the configured port and handles incoming Bolt
@@ -1318,6 +1327,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	session.publishConnectionListing()
 	session.connCtx = resultstream.WithDelivery(session.connCtx, &session.continuationDelivery)
 	defer session.continuationDelivery.Fail()
+	defer session.abandonContinuationResults()
 	defer session.removeConnectionListing()
 	_, sourceTransactional := s.executor.(TransactionalExecutor)
 	if factory, ok := s.executor.(SessionExecutorFactory); ok {
