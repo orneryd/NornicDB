@@ -628,7 +628,8 @@ memory:
 Only the Go target derives an automatic default from the cgroup (85%). The
 application and transaction settings default to `0`. Application admission can
 reclaim unused Go heap pages through the shared sampler after a pressure
-rejection, at most once every five seconds and once per completed-work allowance.
+rejection, at most once every five seconds after admitted work releases a lease,
+or once every 30 seconds without a lease release.
 It rechecks physical capacity before accepting work; see
 [application pressure and recovery](transaction-memory-limits.md#application-pressure-and-recovery).
 

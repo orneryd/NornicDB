@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-const pressureRecoveryInterval = 5 * time.Second
+const (
+	pressureRecoveryInterval      = 5 * time.Second
+	pressureRecoveryRetryInterval = 30 * time.Second
+)
 
 // pressureRecovery belongs to Policy.mu. Physical admission can otherwise
 // deadlock after rejected work: GC has collected its objects, but Go's
@@ -37,24 +40,28 @@ func (p *Policy) availableLocked() int64 {
 
 // reclaimPressure runs only from the sampler, never in a request or under the
 // admission mutex. At most one attempt runs at once, no more than once in five
-// seconds. After the first attempt, completed admitted work must release a
-// lease before another is eligible. Rejected retries alone cannot cause an
-// endless GC loop under sustained live or external cgroup pressure.
+// seconds when admitted work releases a lease. Without a release, a later
+// attempt requires thirty seconds since the previous start, so unleased
+// allocations cannot permanently exhaust recovery. Rejected requests never
+// collect or shorten either cooldown under sustained physical pressure.
 func (p *Policy) reclaimPressure() bool {
 	if p == nil || p.limit <= 0 {
 		return false
 	}
 	p.mu.Lock()
 	r := &p.recovery
+	now := p.now()
+	elapsed := now.Sub(r.last)
 	if !r.pressure || r.running || p.sampledAt.IsZero() || p.availableLocked() > p.headroom ||
-		(r.attempted && (r.released == r.attempt || p.now().Sub(r.last) < pressureRecoveryInterval)) {
+		(r.attempted && (elapsed < pressureRecoveryInterval ||
+			(r.released == r.attempt && elapsed < pressureRecoveryRetryInterval))) {
 		p.mu.Unlock()
 		return false
 	}
 	r.running = true
 	r.attempted = true
 	r.attempt = r.released
-	r.last = p.now()
+	r.last = now
 	p.mu.Unlock()
 
 	r.reclaim()

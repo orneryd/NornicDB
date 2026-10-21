@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Release queued/disconnected reservations; preserve default unlimited Bolt
   framing when the opt-in application policy is disabled.
 
+- Rearm application memory reclamation after 30 seconds without a released lease,
+  allowing later unleased allocations to recover admission. Collection remains
+  sampler-only, single-flight and conditional on fresh physical pressure.
+
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited
   reclamation and requires a fresh physical reading before reopening admission

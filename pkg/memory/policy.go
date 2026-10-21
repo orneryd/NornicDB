@@ -104,7 +104,7 @@ func (p *Policy) Run(ctx context.Context, ticks <-chan time.Time) {
 // update the persistent baseline; active reservations are never learned into
 // it as though they were persistent resources. After physical pressure rejects
 // work, the sampler may reclaim idle heap pages and remeasure, subject to the
-// recovery cooldown and completed-work allowance.
+// recovery cooldowns for completed admitted work and unleased allocations.
 func (p *Policy) Refresh() error {
 	if err := p.refreshSample(); err != nil {
 		return err

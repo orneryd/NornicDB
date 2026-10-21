@@ -38,8 +38,11 @@ An explicit GC was followed by success on both protocols at five seconds.
 The correction therefore returns unused heap pages from the existing shared
 sampler, then remeasures physical usage. It does not subtract guessed garbage
 from a cgroup reading. Reclamation is single-flight within the policy, at least
-five seconds apart, with one initial allowance and subsequent allowances only
-after an admitted lease is released. Rejected retries cannot create allowances.
+five seconds apart, with one initial allowance. Subsequent attempts require an
+admitted lease release or thirty seconds since the previous attempt started;
+the latter permits progress after unleased allocations. Rejected requests never
+collect or shorten these intervals, and each attempt requires fresh physical
+pressure.
 Real live, external or ancestor pressure continues to reject; failed telemetry
 continues to fail closed. Oversized forecasts alone do not trigger collection.
 

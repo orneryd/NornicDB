@@ -193,8 +193,11 @@ policy; request handlers do not collect or substitute a live-heap estimate for
 physical usage.
 
 Collections never overlap within the policy and are at least five seconds apart.
-After its first attempt, another is allowed only after admitted work releases a
-lease. Rejected client retries cannot repeatedly force GC. Live objects, file
+After its first attempt, another requires an admitted lease release or at least
+30 seconds since the previous attempt started. The longer interval allows
+recovery from allocations that never held a lease. Both paths require a fresh
+physical-pressure reading; rejected client retries never collect or shorten the
+cooldowns. Live objects, file
 cache or other processes can keep admission closed after reclamation; only a
 fresh physical sample with sufficient capacity admits new work. An unavailable
 sample continues to reject. This is a soft limit, with cooperative accounting and

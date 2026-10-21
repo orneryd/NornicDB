@@ -1,6 +1,9 @@
 # Pre-decode application-admission audit
 
-The audited release base is `b8fca9d0dd5a76f5f43d9f5d3e53bbb841c26045`.
+The original audited release base is
+`b8fca9d0dd5a76f5f43d9f5d3e53bbb841c26045`. The follow-up is rebased onto
+`44a40b8628dc8a9f6f7ba0febeb8e67232738195`; the client-decoding inventory is
+cross-checked against the rebased source with the scoped queries below.
 The family boundary is client payload accumulation and decoding in the Bolt and
 HTTP servers, including delegated HTTP handlers and upgraded GraphQL messages.
 Transaction-pool accounting remains a separate execution-stage owner.
@@ -12,10 +15,11 @@ routed body guard was the first application decoder.
 
 ## Graph and source method
 
-Used the shared `graphify` container with one maintained repository worktree
-`/repos/nornic-1625` and one graph root `/graphs/nornic-1625`. The initial
-code-only extraction at the release base used two workers. Subsequent heads use
-checkout/update in that same copy/root; no seeded or per-round copies.
+The original structural audit used the shared `graphify` container and an
+analysis copy/root, with two extraction workers. The host rules now permit only
+shared branch graphs or scoped source searches. The obsolete analysis copy/root
+is no longer used; no PR-specific graph is built or refreshed. Historical graph
+statistics and query receipts below retain their original base provenance.
 
 The base graph contains 4,654 extracted code files, 57,079 nodes and 1,625,479
 edges, including 76,916 `calls` edges. The production Go projection has 26,700
@@ -34,16 +38,18 @@ return direct callees and reverse `calls` layers through depth four:
   `buildRouter`, `wrapWithMiddleware`.
 - GraphQL `NewHandler`, `ServeHTTP`; policy `ReserveWireRequest`, `Reserve`.
 
-The maintained-root audit script and JSON retain the complete query results.
-The final code graph is refreshed in that root; its exact-head receipts and
-additional owner queries are recorded with the PR verification evidence.
+Retained audit-script/JSON receipts record these historical query results.
+The final PR source is checked through scoped searches, including the added
+wire reader, lease growth, HTTP body middleware and GraphQL transport adapter.
+The PR verification evidence pins those receipts to the tested head; it does
+not claim an exact-head PR graph.
 
 Cross-checks use scoped `rg` inside the worktree, excluding test/generated code:
 
 ```text
 rg -n 'decodePackStream|parseRunMessage|parseStreamingOptions|parseHelloAuth|dispatchInner' pkg/bolt -g '*.go' -g '!**/*test.go'
 rg -n 's\.readJSON\(|json.NewDecoder|json.Unmarshal|ReadAll|ParseMultipart|ParseForm' pkg/server pkg/mcp pkg/heimdall pkg/graphql -g '*.go' -g '!**/*test.go' -g '!generated/**'
-rg -n 'r.Body|r.URL.Query|NewDefaultServer|ServeHTTP|ReserveWireRequest|readWireMessage|GrowWireRequest' pkg/bolt pkg/server pkg/graphql pkg/mcp pkg/heimdall pkg/memory -g '*.go' -g '!**/*test.go' -g '!generated/**'
+rg -n 'r.Body|r.URL.Query|NewDefaultServer|ServeHTTP|ReserveWireRequest|readWireMessage|GrowWireRequest|NextReader' pkg/bolt pkg/server pkg/graphql pkg/mcp pkg/heimdall pkg/memory -g '*.go' -g '!**/*test.go' -g '!**/generated/**'
 ```
 
 Graph/source disagreement: the graph resolves `ReserveWireRequest -> Reserve`
