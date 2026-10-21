@@ -52,6 +52,33 @@ func TestDetectCgroupMemoryLimit(t *testing.T) {
 	}
 }
 
+func TestCgroupMemoryHeadroomPairsAncestorUsageWithItsLimit(t *testing.T) {
+	fs := fakeCgroupFS(t, map[string]string{
+		"proc/self/cgroup":                          "0::/parent/child\n",
+		"sys/fs/cgroup/parent/memory.max":           "1000\n",
+		"sys/fs/cgroup/parent/memory.current":       "950\n",
+		"sys/fs/cgroup/parent/child/memory.max":     "max\n",
+		"sys/fs/cgroup/parent/child/memory.current": "100\n",
+	})
+	usage, ok := fs.memoryUsage()
+	require.True(t, ok)
+	require.Equal(t, int64(100), usage)
+	available, ok := fs.memoryHeadroom()
+	require.True(t, ok)
+	require.Equal(t, int64(50), available)
+}
+
+func TestCgroupMemoryHeadroomRejectsHiddenV1AncestorUsage(t *testing.T) {
+	fs := fakeCgroupFS(t, map[string]string{
+		"proc/self/cgroup": "12:memory:/docker/child\n",
+		"sys/fs/cgroup/memory/docker/child/memory.limit_in_bytes": "2000\n",
+		"sys/fs/cgroup/memory/docker/child/memory.usage_in_bytes": "100\n",
+		"sys/fs/cgroup/memory/docker/child/memory.stat":           "hierarchical_memory_limit 1000\n",
+	})
+	_, ok := fs.memoryHeadroom()
+	require.False(t, ok, "hidden ancestor usage cannot be inferred from leaf usage")
+}
+
 func TestResolveRuntimeLimit(t *testing.T) {
 	const gib = int64(1) << 30
 	cgroup := 6 * gib

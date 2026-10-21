@@ -148,21 +148,24 @@ func TestGPUCompressedPipelineDoesNotAllocateUnusedBruteIndex(t *testing.T) {
 	require.Nil(t, gpuIndexOf(svc), "compressed retrieval must not retain an unused GPU brute-force copy")
 }
 
-func TestGPUCompressedFallbackUploadsOnlyAfterSelection(t *testing.T) {
+func TestGPUCompressedCanceledPipelineDoesNotUploadFallback(t *testing.T) {
 	svc := newGPUCompressedPipelineService(t)
 	for i := 0; i < 600; i++ {
 		node, err := svc.engine.GetNode(storage.NodeID(fmt.Sprintf("n-%d", i)))
 		require.NoError(t, err)
 		require.NoError(t, svc.IndexNode(node))
 	}
-	// A canceled first training attempt follows the existing standard fallback.
+	// Cancellation must leave the pipeline unselected and must not upload an
+	// unneeded GPU brute-force copy. A later healthy call can train it.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := svc.getOrCreateVectorPipeline(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, gpuIndexOf(svc))
+	_, err = svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeBruteGPU, svc.currentPipelineStrategy())
-	require.NotNil(t, gpuIndexOf(svc))
-	require.Equal(t, 600, gpuIndexOf(svc).Count())
+	require.IsType(t, &IVFPQCandidateGen{}, svc.vectorPipeline.candidateGen)
+	require.Nil(t, gpuIndexOf(svc))
 	hits, err := svc.VectorQueryNodesWithOptions(context.Background(), testVec4(1), VectorQuerySpec{Limit: 3}, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 3)
