@@ -187,7 +187,7 @@ func TestBoltCoverage_ServerSettersAndBookmarkHelpers(t *testing.T) {
 					s.lastResult = &QueryResult{Metadata: map[string]any{"receipt": tc.receipt}}
 				}
 
-				bookmark, ok := s.bookmarkFromReceipt()
+				bookmark, ok := s.bookmarkFromResultReceipt(s.lastResult)
 				assert.Equal(t, tc.ok, ok)
 				assert.Equal(t, tc.expected, bookmark)
 			})
