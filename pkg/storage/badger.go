@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
@@ -209,6 +210,9 @@ type BadgerEngine struct {
 	// writeBehind buffers implicit autocommit commits for background replay
 	// (see badger_write_behind.go). Nil when disabled.
 	writeBehind *WriteBehindBuffer
+	// memoryPolicy is the database-owned soft admission budget for retained
+	// write-behind generations. Nil preserves the legacy unbounded path.
+	memoryPolicy *memory.Policy
 
 	// bufferedCommitWAL, when set, receives the full payload of every
 	// acknowledged write-behind commit before the ACK (see
@@ -733,6 +737,9 @@ type BadgerOptions struct {
 	// default cap (defaultWriteBehindMaxOps); a positive value is a manual
 	// cap for operators with unusual hardware.
 	WriteBehindMaxOps int
+	// MemoryPolicy is the optional shared application budget. Buffered commit
+	// payloads reserve before their replayable WAL record is written.
+	MemoryPolicy *memory.Policy
 
 	// BadgerInternalLogger is the logger handed to BadgerDB itself for its
 	// own internal logging (compaction, value-log GC, etc.). If nil, BadgerDB's
@@ -1049,6 +1056,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db:              db,
 		inMemory:        opts.InMemory,
 		dataDir:         opts.DataDir,
+		memoryPolicy:    opts.MemoryPolicy,
 		schemas:         make(map[string]*SchemaManager),
 		retentionPolicy: retentionPolicy,
 

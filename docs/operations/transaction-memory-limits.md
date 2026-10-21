@@ -82,6 +82,13 @@ streams. Embedded results and completed autocommit write results do not yet
 retain an application lease after execution. The application policy remains
 a soft admission forecast, not a precise bound on returned row allocations.
 
+When write-behind buffering is enabled, each accepted implicit commit reserves
+an application forecast before its replayable WAL record is written. The
+reservation stays with the buffered generation through a replay failure and
+ends after successful retirement. An over-limit commit is rolled back before
+WAL publication. This forecast does not replace the physical cgroup sample;
+the bytes already allocated while staging the write may briefly exceed it.
+
 With no limit configured, nothing is tracked and there is no overhead.
 
 ## Client-visible contract
