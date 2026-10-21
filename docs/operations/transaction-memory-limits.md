@@ -95,6 +95,40 @@ This batching target does not bound decoder expansion or total process memory.
 
 With no limit configured, nothing is tracked and there is no overhead.
 
+## Application pressure and recovery
+
+`NORNICDB_MEMORY_APPLICATION_SOFT_MAX` (`memory.application_soft_max`) enables
+physical cgroup admission separately from the transaction estimates. Its default
+is `0` (disabled), as are both transaction limits. The automatic Go target of
+85% of a finite cgroup ceiling does not enable any of these admission checks.
+The policy samples every 250 ms; readings older than two seconds are unavailable.
+It keeps the greater of 128 MiB or 10% of the application maximum as headroom
+below both the configured maximum and the tightest measured ancestor ceiling.
+
+Go may finish collecting a rejected query while retaining its idle heap pages.
+Those pages still count against `memory.current`, even though the live heap is
+small. After physical pressure rejects an admission, the shared sampler can run
+one collection with an explicit return of unused heap pages to the OS. It then
+reads the cgroup again. HTTP, Bolt and buffered storage commits all use that
+policy; request handlers do not collect or substitute a live-heap estimate for
+physical usage.
+
+Collections never overlap within the policy and are at least five seconds apart.
+After its first attempt, another is allowed only after admitted work releases a
+lease. Rejected client retries cannot repeatedly force GC. Live objects, file
+cache or other processes can keep admission closed after reclamation; only a
+fresh physical sample with sufficient capacity admits new work. An unavailable
+sample continues to reject. This is a soft limit, with cooperative accounting and
+sampling delay, rather than a guarantee against an OS OOM kill.
+
+No cgroup-derived transaction or application admission default is enabled. In the
+8 GiB concurrency reproduction, a 5 GiB aggregate estimate limit let two copies
+finish but did not prevent the three/four-copy OOM kills. A 2 GiB pool rejected
+even one copy that succeeds with defaults. An application threshold alone also
+failed to stop already admitted concurrent work. See the
+[8 GiB investigation](https://github.com/orneryd/NornicDB/pull/1618#issuecomment-6320191226)
+for the measured compatibility trade-off.
+
 ## Client-visible contract
 
 ### Error codes, messages and GQL status
