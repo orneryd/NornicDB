@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +26,28 @@ import (
 // Neo.ClientError.Transaction.TransactionNotFound.
 
 const httpHeavyCollect = "UNWIND range(1, 200000) AS x RETURN size(collect(x)) AS n"
+
+func TestTransactionMemoryYAMLOverrideActiveBeforeFirstProtocolExecutor(t *testing.T) {
+	cypher.ConfigureTransactionMemory(0, cypher.TransactionMemoryLimits{})
+	t.Cleanup(func() {
+		cypher.SetDatabaseTransactionMemoryLimits("nornic", cypher.TransactionMemoryLimits{})
+		cypher.ConfigureTransactionMemory(0, cypher.TransactionMemoryLimits{})
+	})
+	server, _ := setupTestServerWithConfig(t, func(config *Config) {
+		config.PerDBYAMLOverrides = map[string]map[string]string{
+			"nornic": {"db.memory.transaction.max": "1m"},
+		}
+	})
+	engine, err := server.dbManager.GetStorage("nornic")
+	require.NoError(t, err)
+	// This represents Bolt or another embedded client arriving before HTTP
+	// has built a cached executor for the database.
+	executor := cypher.NewStorageExecutorWithQueryCachePolicy(engine, 0, 0)
+	_, err = executor.Execute(context.Background(), httpHeavyCollect, nil)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.General.TransactionOutOfMemoryError", code)
+}
 
 type memoryHTTPClient struct {
 	t      *testing.T
