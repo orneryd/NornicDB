@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -151,10 +152,14 @@ func startMemoryHTTPServer(t *testing.T) (*Server, memoryHTTPClient, string) {
 func TestHTTPApplicationMemoryAdmissionAndRecovery(t *testing.T) {
 	server, client, _ := startMemoryHTTPServer(t)
 	var used atomic.Int64
+	var sampleFails atomic.Bool
 	used.Store(950 << 10)
 	var clock atomic.Int64
 	clock.Store(time.Now().UnixNano())
 	policy := memory.NewPolicy(1<<20, 128<<10, time.Second, func() (memory.Sample, error) {
+		if sampleFails.Load() {
+			return memory.Sample{}, errors.New("cgroup reading failed")
+		}
 		return memory.Sample{Used: used.Load(), Ceiling: 1 << 20}, nil
 	}, func() time.Time { return time.Unix(0, clock.Load()) })
 	require.NoError(t, policy.Refresh())
@@ -165,6 +170,17 @@ func TestHTTPApplicationMemoryAdmissionAndRecovery(t *testing.T) {
 	require.Len(t, body.Errors, 1)
 	require.Equal(t, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", body.Errors[0].Code)
 	require.Equal(t, int64(0), policy.Reserved())
+
+	// A failed refresh must close admission at once, even though the last
+	// successful sample remains within its freshness deadline.
+	sampleFails.Store(true)
+	require.ErrorIs(t, policy.Refresh(), memory.ErrStaleSample)
+	status, body, _ = client.post("/db/nornic/tx/commit", "RETURN 1")
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	require.Equal(t, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", body.Errors[0].Code)
+	require.Contains(t, body.Errors[0].Message, "readings are unavailable")
+	require.Zero(t, policy.Reserved())
+	sampleFails.Store(false)
 
 	clock.Add(int64(2 * time.Second))
 	status, body, _ = client.post("/db/nornic/tx/commit", "RETURN 1")

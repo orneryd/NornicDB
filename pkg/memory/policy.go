@@ -100,6 +100,11 @@ func (p *Policy) Refresh() error {
 	}
 	sample, err := p.sampleFunc()
 	if err != nil || sample.Used <= 0 {
+		// A failed observation invalidates the cached decision immediately;
+		// otherwise new work can enter for an entire freshness interval.
+		p.mu.Lock()
+		p.sampledAt = time.Time{}
+		p.mu.Unlock()
 		return ErrStaleSample
 	}
 	p.mu.Lock()

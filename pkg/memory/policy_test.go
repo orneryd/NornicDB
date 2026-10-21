@@ -86,6 +86,36 @@ func TestPolicyRejectsStaleReadingsAndRecovers(t *testing.T) {
 	}
 }
 
+func TestPolicyRejectsImmediatelyAfterSamplerFailure(t *testing.T) {
+	now := time.Unix(100, 0)
+	fail := false
+	policy := NewPolicy(800, 100, time.Hour, func() (Sample, error) {
+		if fail {
+			return Sample{}, errors.New("cgroup reading failed")
+		}
+		return Sample{Used: 100, Ceiling: 1000}, nil
+	}, func() time.Time { return now })
+	if err := policy.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if err := policy.Refresh(); !errors.Is(err, ErrStaleSample) {
+		t.Fatalf("failed refresh = %v, want stale sample", err)
+	}
+	if _, err := policy.Reserve(1); !errors.Is(err, ErrStaleSample) {
+		t.Fatalf("admission after failed refresh = %v, want stale sample", err)
+	}
+	fail = false
+	if err := policy.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := policy.Reserve(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Release()
+}
+
 func TestPolicyConcurrentReservationsCannotOverspend(t *testing.T) {
 	policy := NewPolicy(1000, 100, time.Second, func() (Sample, error) {
 		return Sample{Used: 100, Ceiling: 1000}, nil
