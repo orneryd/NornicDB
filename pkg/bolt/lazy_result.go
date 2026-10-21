@@ -156,6 +156,9 @@ func (s *Session) closeLazyResult() {
 		s.lastDelivery = nil
 	}
 	s.lastLazy = nil
+	if s.lastResult != nil {
+		s.lastResult.memoryLease.Release()
+	}
 	s.lastResult = nil
 	s.resultIndex = 0
 	lazy.close()

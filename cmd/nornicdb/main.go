@@ -923,6 +923,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
 	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	boltServer.SetMemoryPolicy(db.MemoryPolicy())
 	httpServer.SetConnectionLister(boltServer.ConnectionListings)
 	connectionTracker := multidb.NewConnectionTracker()
 	boltServer.SetDatabaseConnectionAdmission(httpServer.GetDatabaseManager().ResolveConnectionLimitOwner, func(databaseName string) error {
