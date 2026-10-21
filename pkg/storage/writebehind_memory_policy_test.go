@@ -15,7 +15,8 @@ func TestWriteBehindMemoryAdmissionRejectsBeforeWAL(t *testing.T) {
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, time.Now)
 	require.NoError(t, policy.Refresh())
-	engine, wal := newWriteBehindWALTestEngine(t, t.TempDir(), time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
+	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
 	tx, err := engine.BeginTransaction()
@@ -40,7 +41,8 @@ func TestWriteBehindMemoryReservationEndsAfterFlush(t *testing.T) {
 		return memory.Sample{Used: 1, Ceiling: 1 << 30}, nil
 	}, time.Now)
 	require.NoError(t, policy.Refresh())
-	engine, wal := newWriteBehindWALTestEngine(t, t.TempDir(), time.Hour)
+	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: t.TempDir(), wal: true})
+	wal := engine.bufferedCommitWAL
 	engine.memoryPolicy = policy
 	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
 	tx, err := engine.BeginTransaction()
