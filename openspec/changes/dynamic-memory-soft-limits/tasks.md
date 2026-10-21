@@ -73,3 +73,6 @@
 
 - [ ] Verify no-limit and GC-target-only configurations preserve current admission, cancellation and async-buffer behavior with negligible disabled-path overhead.
 - [ ] Verify transaction-only and aggregate-only settings enforce only their configured scope without activating process-pressure telemetry rejection.
+
+- [ ] Approve canonical Go/application setting names, units and config-source precedence; preserve legacy Go aliases with warnings and conflict errors.
+- [ ] Test old Go env/CLI/YAML values retain their semantics and never activate application admission; test conflicting aliases and new application-only activation.
