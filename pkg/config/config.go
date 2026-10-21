@@ -44,6 +44,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -61,6 +62,22 @@ import (
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"gopkg.in/yaml.v3"
 )
+
+// warnDeprecatedMemorySetting renders startup warnings in the configured
+// process language before a server localizer has been attached to the config.
+func warnDeprecatedMemorySetting(language string, message localization.Message) {
+	preferences, err := localization.ResolveProcessPreferences(language)
+	if err == nil {
+		manager, managerErr := localization.NewManager(preferences.Preferences, nil)
+		if managerErr == nil {
+			if rendered, _, renderErr := manager.Render(context.Background(), message); renderErr == nil {
+				slog.Warn(rendered)
+				return
+			}
+		}
+	}
+	slog.Warn(message.Fallback)
+}
 
 // Configuration is organized into logical sections:
 //   - Auth: Authentication and authorization
@@ -2760,7 +2777,7 @@ func applyEnvVars(config *Config) error {
 		}
 		config.Memory.RuntimeLimitStr = v
 		config.Memory.RuntimeLimit = runtimeLimit
-		slog.Warn("NORNICDB_MEMORY_LIMIT is deprecated; use NORNICDB_GO_MEMORY_LIMIT_MIB (integer MiB or auto)")
+		warnDeprecatedMemorySetting(config.Localization.Language, localization.NornicDBCLIEnvMemoryLimitDeprecated())
 	}
 	if v := getEnv("NORNICDB_GO_MEMORY_LIMIT_MIB", ""); v != "" {
 		runtimeLimit, err := ParseRuntimeLimit(v)
@@ -3777,7 +3794,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		}
 		config.Memory.RuntimeLimitStr = yamlCfg.Memory.RuntimeLimit
 		config.Memory.RuntimeLimit = runtimeLimit
-		slog.Warn("memory.runtime_limit is deprecated; use memory.go_runtime_limit (integer MiB or auto)")
+		warnDeprecatedMemorySetting(yamlCfg.Localization.Language, localization.NornicDBCLIYAMLMemoryLimitDeprecated())
 	}
 	if yamlCfg.Memory.GoRuntimeLimit != "" {
 		runtimeLimit, err := ParseRuntimeLimit(yamlCfg.Memory.GoRuntimeLimit)
