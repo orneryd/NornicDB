@@ -104,6 +104,7 @@ func BuildIVFPQFromVectorStore(ctx context.Context, vfs *VectorFileStore, profil
 		residualKnown:      true,
 		maxCoordinateError: maxCoordinateError,
 	}
+	idx.population() // deduplicate the immutable union before publication
 	idx.initScratchPool()
 	stats := &IVFPQBuildStats{
 		VectorCount:         vectorCount,

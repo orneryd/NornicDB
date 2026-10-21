@@ -85,6 +85,12 @@ type IVFPQIndex struct {
 	formatVersion   int
 	builtAtUnixNano int64
 	scratchPool     sync.Pool
+	// Lists and overflow are immutable after publication. Cache their union
+	// count once so exact overflow copies do not inflate query routing depth.
+	populationOnce  sync.Once
+	populationCount int
+	// Immutable key provenance, established with the population before publication.
+	mainKeysOnly bool
 	// maxResidual is the largest error |r - PQ(r)| of an encoded residual,
 	// so an exact cosine exceeds a list member's PQ score by at most it
 	// (scoreBound); residualKnown is false for a bundle saved without it.
@@ -171,11 +177,29 @@ func (i *IVFPQIndex) listCount() int {
 	return len(i.lists)
 }
 
-// population is every vector SearchApprox can return: the lists' vectors
-// and the overflow vectors it merges into every search.
+// population counts unique vectors SearchApprox can return. Build places each
+// vector in one list and keeps exact overflow copies of some of those IDs.
+// Overflow-only IDs from a loaded index still count once. Only the small
+// overflow set needs deduplication; the immutable union is cached per index.
 func (i *IVFPQIndex) population() int {
 	if i == nil {
 		return 0
 	}
-	return i.Count() + len(i.overflow)
+	i.populationOnce.Do(func() {
+		mainKeysOnly := true
+		overflowOnly := make(map[string]struct{}, len(i.overflow))
+		for _, entry := range i.overflow {
+			overflowOnly[entry.ID] = struct{}{}
+			mainKeysOnly = mainKeysOnly && vectorEntryIsMain(entry.ID)
+		}
+		for _, list := range i.lists {
+			for _, id := range list.IDs {
+				delete(overflowOnly, id)
+				mainKeysOnly = mainKeysOnly && vectorEntryIsMain(id)
+			}
+		}
+		i.populationCount = i.Count() + len(overflowOnly)
+		i.mainKeysOnly = mainKeysOnly
+	})
+	return i.populationCount
 }

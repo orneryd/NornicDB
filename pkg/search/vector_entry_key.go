@@ -159,6 +159,15 @@ func vectorEntryOwner(key string) (string, bool) {
 	return entry.NodeID, ok
 }
 
+// vectorEntryIsMain identifies a valid main entry without suffix guesses.
+func vectorEntryIsMain(key string) bool {
+	if key != "" && key[0] != vectorEntryKeyMarker {
+		return true
+	}
+	entry, ok := decodeVectorEntryKey(key)
+	return ok && entry.Kind == vectorEntryMain
+}
+
 // vectorEntryChunkIndex returns the managed chunk index a key names for
 // nodeID: 0 for the main vector, i for chunk i. Named and property entries,
 // and other nodes' entries, are not chunks of nodeID.

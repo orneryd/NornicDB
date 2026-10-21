@@ -686,6 +686,9 @@ func TestBoundedStageMatchesFullStage(t *testing.T) {
 
 			partial, _, err := pipeline.scoreNodes(ctx, query, some, k, threshold, bound)
 			require.NoError(t, err)
+			partialFull, _, err := pipeline.scoreNodes(ctx, query, some, k, threshold, math.Inf(1))
+			require.NoError(t, err)
+			require.Equal(t, partialFull, partial, "partial members: k=%d threshold=%v", k, threshold)
 			for i, result := range partial {
 				node := mustVectorEntryOwner(t, result.ID)
 				require.InDelta(t, best[node], result.Score, 1e-6, "k=%d threshold=%v %s", k, threshold, node)
