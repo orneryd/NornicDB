@@ -70,3 +70,27 @@ results were:
 The benchmark runs with application admission disabled, so it checks the
 compatibility-default overhead of the changed Bolt path. It is one small-row
 workload on one host, not the full protected-mode or varied-size gate.
+
+## Bounded buffered-WAL recovery
+
+Apple M2 Max, macOS arm64, three `-benchtime=1x` samples per workload with
+CPU profiles. `BenchmarkBufferedRecovery` creates 16 or 1,024 acknowledged
+commits with an 8 KiB string property each, simulates loss of the buffer, and
+measures replay only. Fixture setup, engine open and count assertions are
+outside the timer. Every replay validates commit and label counts.
+The baseline uses `825089c00` recovery source via Go's file overlay; all
+other source and the benchmark fixture are identical.
+
+| Commits | Baseline median | Bounded batches median | Change | Median allocs/op |
+|---|---:|---:|---:|---:|
+| 16 | 5.310 ms | 5.384 ms | +1.4% | 5,641 → 5,645 |
+| 1,024 | 237.581 ms | 236.395 ms | −0.5% | 322,832 → 318,543 |
+
+Command: `go test -tags noui,nolocalllm ./pkg/storage -run '^$' -bench
+'^BenchmarkBufferedRecovery$' -benchtime=1x -count=3 -cpuprofile=<profile>`.
+The baseline adds `-overlay=<mapping to the prior recovery file>`.
+These are small samples, including one 338.854 ms current large-case outlier;
+they do not establish whole-server performance. The bounded algorithm retains
+an estimated 8 MiB batch plus the current decoded record, with an oversized
+single commit applied alone. Neither peak RSS nor a hard allocation bound is
+inferred from these allocation totals.
