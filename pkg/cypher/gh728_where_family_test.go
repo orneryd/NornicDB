@@ -116,7 +116,7 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 	source, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, "MATCH (a:Doc {id: $id}), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
-	retained, completed := materializePipelineSource(source)
+	retained, completed := materializePipelineSource(context.Background(), source)
 	require.True(t, completed)
 	require.Len(t, retained, 6)
 	for _, row := range retained {
@@ -134,7 +134,7 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 	nullSource, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"a": nil}}, "MATCH (a:Doc), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
-	empty, completed := materializePipelineSource(nullSource)
+	empty, completed := materializePipelineSource(context.Background(), nullSource)
 	require.True(t, completed)
 	require.Empty(t, empty)
 	canceled, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))

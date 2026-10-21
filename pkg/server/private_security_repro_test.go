@@ -20,7 +20,7 @@ func TestPrivateReproCachedExecutorsRejectBareTransactionCommands(t *testing.T) 
 	server, _ := setupTestServer(t)
 	ctx := context.Background()
 
-	shared, err := server.getExecutorForDatabase("nornic")
+	shared, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
 	for _, query := range []string{"BEGIN", "COMMIT", "ROLLBACK", "BEGIN TRANSACTION"} {
 		_, err := shared.Execute(ctx, query, nil)
@@ -87,7 +87,7 @@ func TestPrivateReproHTTPBareBeginRollbackOtherRequest(t *testing.T) {
 	script := request("BEGIN CREATE (:PrivateScriptProbe) COMMIT")
 	require.Empty(t, script.Errors)
 	t.Cleanup(func() {
-		executor, err := server.getExecutorForDatabase("nornic")
+		executor, err := server.executorCache.Get("nornic")
 		if err == nil && executor.HasActiveTransaction() {
 			request("ROLLBACK")
 		}

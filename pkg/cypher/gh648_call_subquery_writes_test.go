@@ -290,7 +290,7 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
 	t.Run("independent_return_bindings", func(t *testing.T) {
 		exec := newGh648Executor(t)
-		rows, _, handled, err := exec.pipelineApplyCallSubquery(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }")
+		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }", nil)
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Equal(t, []pipelineRow{{"v": int64(1), "c": int64(2)}}, rows)
@@ -432,13 +432,13 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
 	clauses, split := splitPipelineClausesAllowingProcedureCalls(query)
 	t.Logf("clauses: split=%v values=%+v", split, clauses)
-	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubquery(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS")
+	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS", nil)
 	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
 	runner := newGh648Executor(t)
-	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubquery(ctx, []pipelineRow{{}}, clauses[0].text)
-	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubquery(ctx, firstRows, clauses[1].text)
+	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0].text, nil)
+	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, clauses[1].text, nil)
 	t.Logf("step probes: first=%+v stats=%+v handled=%v err=%v second=%+v stats=%+v handled=%v err=%v", firstRows, firstStats, firstHandled, firstErr, secondRows, secondStats, secondHandled, secondErr)
-	manual, manualHandled, manualErr := runner.runPipelineClauses(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses)
+	manual, manualHandled, manualErr := runner.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
 	t.Logf("runner probe: handled=%v err=%v result=%+v", manualHandled, manualErr, manual)
 	probe := newGh648Executor(t).executePipeline(ctx, query)
 	t.Logf("pipeline probe: handled=%v err=%v result=%+v", probe.terminal(), probe.err, probe.result)

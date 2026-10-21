@@ -423,7 +423,7 @@ func TestMultiDatabase_ComplexQueries(t *testing.T) {
 	assert.True(t, foundBobKeyboard, "should find Bob's Keyboard order")
 }
 
-// TestMultiDatabase_GetExecutorForDatabase tests the getExecutorForDatabase helper.
+// TestMultiDatabase_GetExecutorForDatabase tests the shared database executor cache.
 func TestMultiDatabase_GetExecutorForDatabase(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "nornicdb-test-*")
 	require.NoError(t, err)
@@ -442,12 +442,12 @@ func TestMultiDatabase_GetExecutorForDatabase(t *testing.T) {
 	t.Cleanup(func() { stopTestServer(t, server) })
 
 	// Test with existing database
-	executor, err := server.getExecutorForDatabase("nornic")
+	executor, err := server.executorCache.Get("nornic")
 	require.NoError(t, err)
 	assert.NotNil(t, executor)
 
 	// Test with non-existent database
-	executor, err = server.getExecutorForDatabase("nonexistent")
+	executor, err = server.executorCache.Get("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, executor)
 }

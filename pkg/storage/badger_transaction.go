@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
@@ -3207,6 +3208,34 @@ func (tx *BadgerTransaction) Rollback() error {
 
 	tx.closeLocked(TxStatusRolledBack, true, nil)
 	return nil
+}
+
+// StagedMemoryBytes estimates storage-owned data retained by an open
+// transaction. It counts the serialized write copies and pending entity
+// copies once each; operation records refer to those entities and are not
+// charged again. The value is sampled at statement boundaries while the
+// transaction session owns the transaction.
+func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	var bytes int64
+	for key, value := range tx.pendingWrites {
+		bytes += int64(len(key) + cap(value) + 64)
+	}
+	for key := range tx.pendingDeletes {
+		bytes += int64(len(key) + 48)
+	}
+	for _, node := range tx.pendingNodes {
+		bytes += estimateNodeBodyCacheBytes(node)
+	}
+	for _, edge := range tx.pendingEdges {
+		bytes += int64(128 + len(edge.ID) + len(edge.StartNode) + len(edge.EndNode) + len(edge.Type))
+		for key, value := range edge.Properties {
+			bytes += int64(32+len(key)) + util.EstimateValueBytes(value)
+		}
+	}
+	bytes += int64(cap(tx.operations)) * int64(unsafe.Sizeof(Operation{}))
+	return bytes
 }
 
 // SetMetadata sets transaction metadata (same as Transaction).

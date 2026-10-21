@@ -1777,6 +1777,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if execErr == nil {
 		execErr = getExpressionFailure(txCtx)
 	}
+	// So is a memory limit it went over, whichever route ignored the
+	// cancellation that caused (#1343).
+	if execErr == nil {
+		execErr = memoryFailureFromContext(txCtx)
+	}
 
 	// Handle result
 	if execErr != nil {
