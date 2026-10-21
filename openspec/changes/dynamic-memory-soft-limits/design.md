@@ -38,6 +38,11 @@ transaction owners maintain their estimates and atomic pool reservations.
 Adapters consume the same policy; transports do not implement separate limits.
 Retire superseded memory/deadline decisions after migrating their consumers.
 
+The [implementation seam review](code-seams.md) identifies the concrete owners,
+pre-execution and retained-result gaps, transaction cleanup requirements, and
+WAL/large-commit transitions that this implementation must cover. Its proposed
+contracts supplement this design; unresolved policy choices remain review items.
+
 ## Budgets, measurements and dynamic baseline
 
 Use separate quantities with explicit units and scopes:
