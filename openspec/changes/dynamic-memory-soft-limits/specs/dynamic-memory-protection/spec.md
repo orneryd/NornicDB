@@ -124,3 +124,16 @@ and SHALL preserve replayable WAL and large-commit publication/rollback contract
 #### Scenario: Completion pool is exhausted
 - **WHEN** a still-abortable transaction cannot reserve completion capacity
 - **THEN** it fails before storage acceptance with the appropriate pool error, without holding locks needed by flush or rollback to release capacity.
+
+### Requirement: Async write buffers participate in application limits
+The system SHALL reserve async write-buffer capacity before irreversible acceptance,
+account for all live generations and their auxiliary allocations, and keep accepted
+writes eligible for flush/replay under pressure. Rotation SHALL NOT reset byte usage.
+
+#### Scenario: Producers exceed the stalled flusher's capacity
+- **WHEN** incoming writes exhaust the buffer byte allowance or shared application capacity while disk progress is stalled
+- **THEN** new abortable writes fail with the appropriate resource error before replayable WAL acceptance, existing accepted writes remain accounted and flush can use protected completion capacity.
+
+#### Scenario: A generation rotates or replay fails
+- **WHEN** an active buffer rotates into draining, retains readers or encounters a replay error
+- **THEN** its retained allocations remain charged until actual release; neither rotation nor retry admits unbounded replacement work or discards acknowledged writes.
