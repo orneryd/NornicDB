@@ -46,6 +46,8 @@ type Policy struct {
 	reserved   int64
 	nextSample uint64
 	lastSample uint64
+
+	recovery pressureRecovery
 }
 
 // NewPolicy constructs an opt-in application policy. A nonpositive limit
@@ -58,7 +60,8 @@ func NewPolicy(limit, headroom int64, freshness time.Duration, sampler func() (S
 	if now == nil {
 		now = time.Now
 	}
-	return &Policy{limit: limit, headroom: headroom, freshness: freshness, sampleFunc: sampler, now: now}
+	return &Policy{limit: limit, headroom: headroom, freshness: freshness, sampleFunc: sampler, now: now,
+		recovery: pressureRecovery{reclaim: releaseHeapPages}}
 }
 
 // CgroupSample obtains one Linux cgroup observation. A missing usage file is
@@ -99,8 +102,22 @@ func (p *Policy) Run(ctx context.Context, ticks <-chan time.Time) {
 
 // Refresh publishes a reading after the sampler succeeds. Quiescent readings
 // update the persistent baseline; active reservations are never learned into
-// it as though they were persistent resources.
+// it as though they were persistent resources. After physical pressure rejects
+// work, the sampler may reclaim idle heap pages and remeasure, subject to the
+// recovery cooldown and completed-work allowance.
 func (p *Policy) Refresh() error {
+	if err := p.refreshSample(); err != nil {
+		return err
+	}
+	if p.reclaimPressure() {
+		// A collection is not evidence of capacity. Only a new physical
+		// observation may reopen admission, including ancestor pressure.
+		return p.refreshSample()
+	}
+	return nil
+}
+
+func (p *Policy) refreshSample() error {
 	if p == nil || p.limit <= 0 {
 		return nil
 	}
@@ -163,19 +180,11 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	if p.sampledAt.IsZero() || p.freshness <= 0 || p.now().Sub(p.sampledAt) > p.freshness {
 		return nil, ErrStaleSample
 	}
-	observed := p.sample.Used
-	if p.baseline > observed {
-		observed = p.baseline
-	}
-	available := p.limit - observed
-	if p.sample.HasHeadroom && p.sample.Headroom < available {
-		available = p.sample.Headroom
-	} else if !p.sample.HasHeadroom && p.sample.Ceiling > 0 && p.sample.Ceiling-observed < available {
-		available = p.sample.Ceiling - observed
-	}
+	available := p.availableLocked()
 	// Headroom is nonnegative. Reject before subtraction so a very large
 	// configured reserve cannot wrap negative capacity back into admission.
 	if available <= p.headroom {
+		p.recovery.pressure = true
 		return nil, ErrLimitExceeded
 	}
 	available -= p.headroom
@@ -212,6 +221,7 @@ func (l *Lease) Release() {
 	l.once.Do(func() {
 		l.policy.mu.Lock()
 		l.policy.reserved -= l.bytes
+		l.policy.recovery.released++
 		l.policy.mu.Unlock()
 	})
 }

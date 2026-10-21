@@ -3,13 +3,73 @@ package bolt
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/orneryd/nornicdb/internal/testutil/memorypressure"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/memory"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBoltApplicationMemoryReclaimsCompletedWork(t *testing.T) {
+	store := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = store.Close() })
+	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
+	_, err := executor.Execute(context.Background(), "RETURN 1 AS ok", nil)
+	require.NoError(t, err, "warm the selected parser before measuring the idle baseline")
+	server := New(&Config{Port: 0, MaxConnections: 4, ReadBufferSize: 8192, WriteBufferSize: 8192}, executor)
+	policy := memorypressure.New(t)
+	require.NoError(t, policy.Refresh())
+	work, err := policy.Reserve(64 << 10)
+	require.NoError(t, err)
+	memorypressure.Garbage()
+	work.Release()
+	require.NoError(t, policy.Refresh())
+	server.SetMemoryPolicy(policy)
+	port := serveBoltIntegrationServer(t, server)
+	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = driver.Close(context.Background()) })
+	query := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		session := driver.NewSession(ctx, neo4j.SessionConfig{})
+		defer session.Close(ctx)
+		result, err := session.Run(ctx, "RETURN 1 AS ok", nil)
+		if err != nil {
+			return err
+		}
+		records, err := result.Collect(ctx)
+		if err == nil && (len(records) != 1 || records[0].Values[0] != int64(1)) {
+			return fmt.Errorf("unexpected records: %v", records)
+		}
+		return err
+	}
+	err = query()
+	var neoErr *neo4j.Neo4jError
+	require.ErrorAs(t, err, &neoErr)
+	require.Equal(t, "Neo.TransientError.General.MemoryPoolOutOfMemoryError", neoErr.Code)
+	ctx, cancel := context.WithCancel(context.Background())
+	ticks := time.NewTicker(25 * time.Millisecond)
+	done := make(chan struct{})
+	go func() { defer close(done); policy.Run(ctx, ticks.C) }()
+	t.Cleanup(func() { cancel(); ticks.Stop(); <-done })
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err = query()
+		if err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	require.NoError(t, err, "small Bolt queries must recover without manual GC")
+	require.Zero(t, policy.Reserved())
+}
 
 func TestBoltRunRejectsMemoryPressureBeforeDecodeAndRecoversAfterReset(t *testing.T) {
 	var used atomic.Int64
