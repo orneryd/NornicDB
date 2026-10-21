@@ -59,3 +59,7 @@
 - [ ] Integrate failed/idle explicit-transaction reclamation with session serialization and preserved first cause.
 - [ ] Prove WAL acceptance/publication, large-batch abort and completion-pool lock ordering using injected pressure/failures.
 - [ ] Specify finite protected-deployment sizing separately from unlimited compatibility defaults.
+
+- [x] Specify async buffer admission, all-generation byte accounting and pre-WAL reservation ownership.
+- [ ] Integrate every actual async-buffer producer and bounded recovery replay with the shared application policy.
+- [ ] Prove stalled-flusher backpressure, oversized writes, rotation/read retention and replay failure/recovery without losing accepted writes.
