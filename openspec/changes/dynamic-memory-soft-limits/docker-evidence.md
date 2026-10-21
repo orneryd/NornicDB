@@ -44,3 +44,22 @@ Those trials show why an operator must size the soft max against the measured
 baseline and expected overlap. They are not evidence of a hard OOM guarantee.
 The original 8 GiB failing workload, async write buffer, long-lived embedded
 results, and full restart/durability scenarios remain unverified.
+
+## Exact-head smoke retest after buffered-commit admission
+
+Source `ddd6d5ea30033d8b50941a49ab8206cf958b593d`, Linux arm64 image
+`nornicdb-memory-ddd:local`, digest
+`sha256:9ea0a6d704729107223e403016a10f3d6164b6cd1b2cb8e8c04eaac6ceeeb0e4`.
+The image was built with the same Go 1.27.1 Dockerfile and `noui,nolocalllm`
+tags. Fresh containers used `--memory=1g --memory-swap=1g`.
+
+| Case | Observation |
+|---|---|
+| Application pressure/recovery, 384 MiB soft max | `memory.current` was 42,659,840 bytes, rose to 366,694,400 after writing a 300 MiB file inside the cgroup, and fell to 42,991,616 after deletion. `RETURN 1`, `RETURN 2`, `RETURN 3` returned HTTP 200, HTTP 503 with `Neo.TransientError.General.MemoryPoolOutOfMemoryError`, HTTP 200. Container stayed running; `oom_kill 0`. |
+| Transaction cap, 4 MiB | `RETURN 1` succeeded, a 1,000,000-row `collect` returned `Neo.ClientError.General.TransactionOutOfMemoryError` at 4.0 MiB, and `RETURN 2` succeeded. Container stayed running; `oom_kill 0`. |
+
+These smoke tests cover the previously tested HTTP paths on the new head.
+Buffered-commit admission itself is covered by focused storage tests for
+pre-WAL rejection, reservation release after flush, and retention through a
+failed replay followed by success. Docker write-behind pressure/recovery and
+the original 8 GiB case remain unverified.
