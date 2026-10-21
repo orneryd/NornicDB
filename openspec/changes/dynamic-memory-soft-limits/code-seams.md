@@ -129,3 +129,44 @@ No finite percentage or soft transaction cap guarantees immunity to an OS OOM ki
 - Original container reproduction records peak total usage, headroom, cancellation
   delay, overshoot, exit/restart counters and surviving data. Report measured safety
   for that workload rather than an absolute no-OOM guarantee.
+
+## Async write-buffer admission (explicit requirement)
+
+`WriteBehindBuffer` in `pkg/storage/commit_buffer.go` is inside the same application
+memory policy. Its current `AppendCommit` increments operation counts and signals
+rotation; rotation is not a byte limit and does not establish freed memory. The
+same file exposes `AppendNode`, `AppendEdge` and `AppendDelete`; source search at
+this review base found no production call sites for those three methods. Inventory
+all actual producers on the implementation head rather than assuming they are
+active routes or adding another async engine.
+
+- Reserve estimated retained bytes plus overlay/index growth before accepting a
+  write. For `commitBufferedLocked`, this must happen before the replayable WAL
+  append, not by returning a new pressure error from `AppendCommit` afterward.
+  Carry the reservation across WAL serialization, publication and buffer ownership.
+- Atomically enforce the shared application budget and a finite configured/derived
+  buffer byte allowance. Count active, queued, draining and reader-retained
+  generations together; rotation must not reset the allowance. A single oversized
+  entry must fail while still abortable. Operation-count/adaptive flush thresholds
+  remain scheduling controls, not memory enforcement.
+- Keep original payloads and additional overlay/pending-index allocations accounted
+  for without charging shared backing storage twice. Reserve extra replay/encoding
+  workspace separately from retained payload ownership.
+- Reject new abortable writes promptly with the typed pool/admission error when
+  capacity is unavailable. Do not create unbounded waiting producers or silently
+  switch to synchronous writes to bypass the limit. Preserve existing public
+  protocol mappings and committed outcomes.
+- Continue flush/replay using protected completion capacity under pressure. Slow
+  disk, retries or replay errors retain the charge; successful application releases
+  only objects whose owners/readers have actually let go. Recovery must never drop
+  an accepted write merely to satisfy a memory budget.
+- Apply the same ownership rules to startup WAL replay and direct/non-Cypher
+  producers that reach this path. Recovery batching must fit available working
+  capacity without weakening replay/durability semantics.
+
+Required tests: producers outrun a deliberately stalled flusher; one huge write
+versus many small writes; concurrent reserve at the byte boundary; generation
+rotation and reader retention; WAL failure and replay retry; pressure after WAL
+acceptance; flush resumes and admissions recover without lost acknowledged writes,
+double release or apparent rollback. Measure both estimated buffer bytes and total
+process/container memory; the allowance bounds estimates, not exact physical RSS.
