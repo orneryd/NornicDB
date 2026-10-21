@@ -61,8 +61,8 @@ tags. Fresh containers used `--memory=1g --memory-swap=1g`.
 These smoke tests cover the previously tested HTTP paths on the new head.
 Buffered-commit admission itself is covered by focused storage tests for
 pre-WAL rejection, reservation release after flush, and retention through a
-failed replay followed by success. Docker write-behind pressure rejection,
-large recovery sets and the original 8 GiB case remain unverified.
+failed replay followed by success. Large recovery sets and the original 8 GiB
+case remain unverified.
 
 One additional fresh 1 GiB container used the same image with a 384 MiB
 application soft max, `NORNICDB_ASYNC_WRITES_ENABLED=true`, and a one-hour
@@ -72,3 +72,15 @@ KILL`, a new container opened the same data directory and logged
 `Recovered 1 acknowledged write-behind commits from the WAL`; the node was
 still queryable. Both containers had `oom_kill 0`. This exercises accepted
 commit recovery, not write-behind pressure rejection or a large recovery set.
+
+A separate write-behind container used a 180 MiB application soft max, the
+same one-hour flush interval and a persisted data directory. A request to
+create a node with a 2 MiB string returned a Cypher error payload containing
+`Neo.TransientError.General.MemoryPoolOutOfMemoryError` (the transaction HTTP
+endpoint itself returned 200 for this statement error). Cgroup usage was
+43,233,280 bytes before the request and 63,954,944 afterward; the container
+remained running with `oom_kill 0`. At that pressure, a subsequent read was
+also rejected with HTTP 503. After restarting on the same data directory with
+a 384 MiB soft max, `MATCH (n:MemoryProof) RETURN count(n)` returned 0 and
+`oom_kill` remained 0. The storage regression separately establishes that the
+rejected buffered write did not append an `OpBufferedCommit` WAL record.
