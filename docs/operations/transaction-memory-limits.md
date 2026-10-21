@@ -192,9 +192,12 @@ reads the cgroup again. HTTP, Bolt and buffered storage commits all use that
 policy; request handlers do not collect or substitute a live-heap estimate for
 physical usage.
 
-Collections never overlap within the policy and are at least five seconds apart.
-After its first attempt, another requires an admitted lease release or at least
-30 seconds since the previous attempt started. The longer interval allows
+Collections never overlap within the policy and are spaced by
+`memory.recovery_interval_ms` (`NORNICDB_MEMORY_RECOVERY_INTERVAL_MS`, default
+5000 ms). After its first attempt, another requires an admitted lease release or
+`memory.recovery_rearm_ms` (`NORNICDB_MEMORY_RECOVERY_REARM_MS`, default 30000 ms)
+since the previous attempt started. Both are startup-only integer milliseconds
+>= 1, with rearm >= interval; invalid values fail startup. The longer interval allows
 recovery from allocations that never held a lease. Both paths require a fresh
 physical-pressure reading; rejected client retries never collect or shorten the
 cooldowns. Live objects, file

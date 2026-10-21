@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Configure sampler recovery spacing and unleased rearm with positive-millisecond
+  `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
+  and matching YAML keys; preserve the 5000 / 30000 ms defaults.
+
 - Snapshot transaction-pool ceilings for each statement so hot reload applies
   only to newly starting work. Keep usage counters shared across generations.
 

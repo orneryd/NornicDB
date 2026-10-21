@@ -53,15 +53,35 @@ type Policy struct {
 // NewPolicy constructs an opt-in application policy. A nonpositive limit
 // disables sampling and admission. Headroom is held below both the operator
 // limit and a known container ceiling.
-func NewPolicy(limit, headroom int64, freshness time.Duration, sampler func() (Sample, error), now func() time.Time) *Policy {
+func NewPolicy(limit, headroom int64, freshness time.Duration, sampler func() (Sample, error), now func() time.Time, options ...PolicyOption) *Policy {
 	if headroom < 0 {
 		headroom = 0
 	}
 	if now == nil {
 		now = time.Now
 	}
-	return &Policy{limit: limit, headroom: headroom, freshness: freshness, sampleFunc: sampler, now: now,
-		recovery: pressureRecovery{reclaim: releaseHeapPages}}
+	p := &Policy{limit: limit, headroom: headroom, freshness: freshness, sampleFunc: sampler, now: now,
+		recovery: pressureRecovery{reclaim: releaseHeapPages, interval: pressureRecoveryInterval, rearm: pressureRecoveryRetryInterval}}
+	for _, option := range options {
+		option(p)
+	}
+	return p
+}
+
+// PolicyOption configures one policy at construction, before its sampler starts.
+type PolicyOption func(*Policy)
+
+// WithRecoveryTimings sets the minimum reclamation spacing and unleased rearm.
+// Timings must be at least one millisecond, with rearm >= interval; invalid
+// programmatic options panic. Startup configuration is validated before use.
+func WithRecoveryTimings(interval, rearm time.Duration) PolicyOption {
+	if interval < time.Millisecond || rearm < interval {
+		panic("memory recovery timings require interval >= 1 ms and rearm >= interval")
+	}
+	return func(p *Policy) {
+		p.recovery.interval = interval
+		p.recovery.rearm = rearm
+	}
 }
 
 // CgroupSample obtains one Linux cgroup observation. A missing usage file is

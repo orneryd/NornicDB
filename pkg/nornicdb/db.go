@@ -592,6 +592,15 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	intervalMS, rearmMS := config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS
+	// Literal embedded configurations predate these fields. The all-zero pair
+	// means omitted here; explicit zero in YAML or environment fails parsing.
+	if intervalMS == 0 && rearmMS == 0 {
+		intervalMS, rearmMS = nornicConfig.DefaultMemoryRecoveryIntervalMS, nornicConfig.DefaultMemoryRecoveryRearmMS
+	}
+	if err := nornicConfig.ValidateMemoryRecoveryTimings(intervalMS, rearmMS); err != nil {
+		return nil, err
+	}
 	config.Database.DataDir = dataDir
 	// Defensive defaults for the per-DB search-index master switches.
 	// Two distinct cases to handle correctly:
@@ -630,7 +639,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	}
 	if limit := config.Memory.ApplicationSoftMax; limit > 0 {
 		headroom := max(int64(128<<20), limit/10)
-		db.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now)
+		db.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now,
+			memory.WithRecoveryTimings(time.Duration(intervalMS)*time.Millisecond,
+				time.Duration(rearmMS)*time.Millisecond))
 	}
 
 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing

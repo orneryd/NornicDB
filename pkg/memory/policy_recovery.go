@@ -3,11 +3,13 @@ package memory
 import (
 	"runtime/debug"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
 const (
-	pressureRecoveryInterval      = 5 * time.Second
-	pressureRecoveryRetryInterval = 30 * time.Second
+	pressureRecoveryInterval      = time.Duration(config.DefaultMemoryRecoveryIntervalMS) * time.Millisecond
+	pressureRecoveryRetryInterval = time.Duration(config.DefaultMemoryRecoveryRearmMS) * time.Millisecond
 )
 
 // pressureRecovery belongs to Policy.mu. Physical admission can otherwise
@@ -21,6 +23,8 @@ type pressureRecovery struct {
 	released  uint64
 	attempt   uint64
 	reclaim   func()
+	interval  time.Duration
+	rearm     time.Duration
 }
 
 func releaseHeapPages() { debug.FreeOSMemory() }
@@ -39,9 +43,9 @@ func (p *Policy) availableLocked() int64 {
 }
 
 // reclaimPressure runs only from the sampler, never in a request or under the
-// admission mutex. At most one attempt runs at once, no more than once in five
-// seconds when admitted work releases a lease. Without a release, a later
-// attempt requires thirty seconds since the previous start, so unleased
+// admission mutex. At most one attempt runs at once, spaced by the configured
+// interval when admitted work releases a lease. Without a release, a later
+// attempt requires the configured rearm duration since the previous start, so unleased
 // allocations cannot permanently exhaust recovery. Rejected requests never
 // collect or shorten either cooldown under sustained physical pressure.
 func (p *Policy) reclaimPressure() bool {
@@ -53,8 +57,8 @@ func (p *Policy) reclaimPressure() bool {
 	now := p.now()
 	elapsed := now.Sub(r.last)
 	if !r.pressure || r.running || p.sampledAt.IsZero() || p.availableLocked() > p.headroom ||
-		(r.attempted && (elapsed < pressureRecoveryInterval ||
-			(r.released == r.attempt && elapsed < pressureRecoveryRetryInterval))) {
+		(r.attempted && (elapsed < r.interval ||
+			(r.released == r.attempt && elapsed < r.rearm))) {
 		p.mu.Unlock()
 		return false
 	}

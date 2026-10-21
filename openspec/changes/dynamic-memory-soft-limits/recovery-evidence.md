@@ -38,8 +38,9 @@ An explicit GC was followed by success on both protocols at five seconds.
 The correction therefore returns unused heap pages from the existing shared
 sampler, then remeasures physical usage. It does not subtract guessed garbage
 from a cgroup reading. Reclamation is single-flight within the policy, at least
-five seconds apart, with one initial allowance. Subsequent attempts require an
-admitted lease release or thirty seconds since the previous attempt started;
+`memory.recovery_interval_ms` apart (default 5000 ms), with one initial allowance.
+Subsequent attempts require an admitted lease release or
+`memory.recovery_rearm_ms` since the previous attempt started (default 30000 ms);
 the latter permits progress after unleased allocations. Rejected requests never
 collect or shorten these intervals, and each attempt requires fresh physical
 pressure.
