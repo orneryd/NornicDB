@@ -18,11 +18,14 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	if !b.decayEnabled {
 		return false, nil
 	}
+	revision := b.namespaceLifetimeRevision()
 	var suppressed bool
-	err := b.withNamespaceSideStateWrite(entityID, func() error {
-		var err error
-		suppressed, err = b.enqueueDeindexIfSuppressed(entityID, isEdge)
-		return err
+	err := b.orderBehindBufferedWrites(namespaceForSideStateID(entityID), func() error {
+		return b.withNamespaceSideStateWriteAt(entityID, revision, func() error {
+			var err error
+			suppressed, err = b.enqueueDeindexIfSuppressed(entityID, isEdge)
+			return err
+		})
 	})
 	return suppressed, err
 }
@@ -31,7 +34,23 @@ func (b *BadgerEngine) enqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	becameSuppressed := false
 	nodeChanged := false
 	var edgeChanged *Edge
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	// The rewrite's caches, in commit order (badger_publication_stage.go).
+	publish := func() {
+		if nodeChanged {
+			// Suppression rewrites the persisted body without UpdateNode. Drop
+			// both node caches with their generation guard before indexed reads
+			// reuse it.
+			b.cacheDeleteNode(NodeID(entityID))
+		}
+		if edgeChanged != nil {
+			// A policy transition rewrites the relationship body just like
+			// UpdateEdge. Publish it through the same cache lifecycle so
+			// adjacency/type reads do not retain a suppressed body or an empty
+			// filtered scan after relaxation.
+			b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
+		}
+	}
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		if isEdge {
 			changed, mutation, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
 			edgeChanged = mutation
@@ -46,18 +65,18 @@ func (b *BadgerEngine) enqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			becameSuppressed = true
 		}
 		return err
+	}, publish, func() []any {
+		// The rewrite changes no property, so it frees and takes no
+		// unique value.
+		if isEdge {
+			return []any{EdgeID(entityID)}
+		}
+		return []any{NodeID(entityID)}
 	})
 	if err == nil && nodeChanged {
-		// Suppression rewrites the persisted body without UpdateNode. Drop both
-		// node caches with their generation guard before indexed reads reuse it.
-		b.cacheDeleteNode(NodeID(entityID))
 		b.graphMutationVersions.changed(namespaceForNodeID(NodeID(entityID)))
 	}
 	if err == nil && edgeChanged != nil {
-		// A policy transition rewrites the relationship body just like UpdateEdge.
-		// Publish it through the same cache lifecycle so adjacency/type reads do
-		// not retain a suppressed body or an empty filtered scan after relaxation.
-		b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
 		b.graphMutationVersions.changed(namespaceForEdgeID(edgeChanged.ID))
 	}
 
@@ -126,7 +145,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 //
 // When decay is disabled at the engine level, this is a no-op so the
 // codepath cost stays zero on operators who don't use the feature.
-func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, namespace string, node *Node) error {
+func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn kvWriter, namespace string, node *Node) error {
 	if !b.decayEnabled || node == nil {
 		return nil
 	}
@@ -143,7 +162,7 @@ func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, 
 		return nil
 	}
 
-	data, _, err := b.encodeNodeInTxn(txn, namespace, node)
+	data, _, err := b.encodeNodeInTxn(kvWriterTxn(txn), namespace, node)
 	if err != nil {
 		return err
 	}
@@ -214,7 +233,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 	return false, nil, nil
 }
 
-func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {
+func enqueueWorkItemInTxn(txn kvWriter, entityID, scope string) error {
 	workItem := &DeindexWorkItem{
 		WorkItemID:  fmt.Sprintf("deindex:%s", entityID),
 		TargetID:    entityID,
@@ -225,14 +244,9 @@ func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {
 	return putDeindexWorkItemInTxn(txn, workItem)
 }
 
-func clearTombstonesForEntityInTxn(txn *badger.Txn, entityID string) error {
-	catItem, err := txn.Get(indexEntryCatalogKey(entityID))
-	if err != nil {
-		return nil
-	}
-
+func clearTombstonesForEntityInTxn(txn kvWriter, entityID string) error {
 	var cat IndexEntryCatalog
-	if err := catItem.Value(func(val []byte) error {
+	if err := kvReadValue(txn, indexEntryCatalogKey(entityID), func(val []byte) error {
 		return msgpack.Unmarshal(val, &cat)
 	}); err != nil {
 		return nil

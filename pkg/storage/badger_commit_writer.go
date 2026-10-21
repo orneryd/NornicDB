@@ -30,6 +30,21 @@ type commitWriter struct {
 	engine *BadgerEngine
 	db     *managedBadgerDB
 	large  *largeCommit
+	// notification follows timestamp assignment through ordinary/large commits.
+	notification *commitNotification
+
+	// publish, when set, is the commit's derived-state publication, and
+	// publishKeys the entities and unique values it touches: the writer fills
+	// them before finish, and the ordered stage runs publish after the commit
+	// is visible and after every earlier commit's publication that shares a
+	// key (badger_publication_stage.go).
+	publish     func()
+	publishKeys []any
+	// replay marks the write-behind replay's own commit: the entities it
+	// writes are the buffer's by definition, so it is never held behind them
+	// (admit).
+	replay     bool
+	accounting func() // admitted batch; published in this same ordered stage
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -53,7 +68,7 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit()
+		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -102,18 +117,57 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 // tokens, or a large commit's last batch, publishing it. On error the
 // caller must abort.
 func (cw *commitWriter) finish() error {
+	// admit costs a closure; it can only refuse under write-behind.
+	var admit func() error
+	// Data writers declare publication keys; internal metadata commits do
+	// not. Replay and its counter/sequence bookkeeping cannot wait on the
+	// generation they are applying. The keys' VALUES play no role in admission.
+	if cw.engine.writeBehind != nil && !cw.replay && len(cw.publishKeys) != 0 {
+		admit = cw.admit
+	}
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		return cw.db.commit(cw.txn)
+		return cw.db.commitPublishing(cw.txn, cw.publication(), admit, cw.reserveNotification)
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
-		err = cw.large.finish(&cw.batchWriter)
+		err = cw.large.finish(&cw.batchWriter, cw.publication(), admit)
 	}
 	return err
+}
+
+// publication is what the ordered stage runs for this commit: the writer's
+// publish, ordered on the writer's keys. Nil when there is none.
+func (cw *commitWriter) publication() *commitPublication {
+	if cw.publish == nil {
+		return nil
+	}
+	p := &commitPublication{keys: cw.publishKeys, run: cw.publish}
+	if cw.accounting != nil {
+		publish := p.run
+		p.run = func() { publish(); cw.accounting() }
+	} else if !cw.replay {
+		cw.attachAccounting(p)
+	}
+	return p
+}
+
+// admit runs under the commit gate, where no write-behind acknowledgement can
+// interleave: it refuses a synchronous data commit while ANY acknowledged
+// write is still pending, including dependencies absent from publishKeys.
+// The same fence applies to ordinary commits and large-commit publication.
+func (cw *commitWriter) admit() error {
+	if cw.engine.writeBehind.PendingOps() == 0 {
+		return nil
+	}
+	return errBufferedWritePending
+}
+
+func (cw *commitWriter) reserveNotification() {
+	cw.engine.reserveCommitNotification(cw.notification)
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch

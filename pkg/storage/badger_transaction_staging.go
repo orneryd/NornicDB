@@ -31,6 +31,25 @@ type stagedKV BadgerTransaction
 
 func (tx *BadgerTransaction) staged() *stagedKV { return (*stagedKV)(tx) }
 
+// kvReadValue includes earlier staged writes when a metadata helper is shared
+// by direct engine writes and transaction staging.
+func kvReadValue(w kvWriter, key []byte, read func([]byte) error) error {
+	if s, ok := w.(*stagedKV); ok {
+		tx := (*BadgerTransaction)(s)
+		if _, deleted := tx.pendingDeletes[string(key)]; deleted {
+			return badger.ErrKeyNotFound
+		}
+		if value, found := tx.pendingWrites[string(key)]; found {
+			return read(value)
+		}
+	}
+	item, err := kvWriterTxn(w).Get(key)
+	if err != nil {
+		return err
+	}
+	return item.Value(read)
+}
+
 func (tx *BadgerTransaction) bufferEdgePhysicalWritesLocked(edge *Edge) error {
 	edgeBytes, err := tx.engine.encodeEdgeInTxn(tx.staged(), namespaceForEdgeID(edge.ID), edge)
 	if err != nil {
@@ -236,7 +255,10 @@ func (tx *BadgerTransaction) releaseWriteBarrierLocked() {
 // validation and the write, whether on an ordinary commit or a large
 // commit's first batch) becomes the commit-conflict error.
 func (tx *BadgerTransaction) abortCommitLocked(err error) error {
-	if errors.Is(err, badger.ErrConflict) && !errors.Is(err, ErrConflict) {
+	// A write-behind acknowledgement arrived
+	// during the commit (commitWriter.admit): a concurrent writer committed
+	// it first.
+	if (errors.Is(err, badger.ErrConflict) || errors.Is(err, errBufferedWritePending)) && !errors.Is(err, ErrConflict) {
 		err = commitConflictError(err)
 	}
 	if tx.commitW != nil {

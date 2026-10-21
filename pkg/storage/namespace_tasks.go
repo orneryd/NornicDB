@@ -52,7 +52,21 @@ func (b *BadgerEngine) admitNamespaceTasks(ctx context.Context, namespace string
 }
 
 func (b *BadgerEngine) withNamespaceSideStateWrite(entityID string, write func() error) error {
-	return b.withNamespaceMutation(context.Background(), namespaceForSideStateID(entityID), write)
+	return b.withNamespaceSideStateWriteAt(entityID, b.namespaceLifetimeRevision(), write)
+}
+
+// A synchronous writer captures its lifetime before draining buffered work;
+// retirement during that wait must still refuse a write into its replacement.
+func (b *BadgerEngine) withNamespaceSideStateWriteAt(entityID string, revision uint64, write func() error) error {
+	release, err := b.beginNamespaceMutation(context.Background(), []string{namespaceForSideStateID(entityID)}, &revision, false, namespacePublicationFresh)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := b.checkNamespaceLifetimeRevision(namespaceForSideStateID(entityID), revision); err != nil {
+		return err
+	}
+	return write()
 }
 
 // Raw index APIs have numeric owners, not a caller-supplied namespace hint.

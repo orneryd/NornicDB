@@ -173,6 +173,9 @@ type BadgerEngine struct {
 	db     *managedBadgerDB
 	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed bool
+
+	// Close refuses new ACKs before draining their reserved notifications.
+	closing bool
 	// changes is the change data capture state (change_capture.go, #937).
 	changes changeCapture
 	// notifyWG tracks publication-registered listeners and bulk-delete events.
@@ -213,6 +216,7 @@ type BadgerEngine struct {
 	namespaceJournalGlobal       namespaceJournalState
 	namespaceJournalPreparations map[string]*NamespaceDrop
 	namespaceWALOwner            *WALEngine
+	accountingOwners             sync.Map // namespace -> AccountingOwner
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup
@@ -486,6 +490,11 @@ func (b *BadgerEngine) DB() *badger.DB {
 }
 
 // OnNodeCreated adds a callback to be invoked when nodes are created.
+//
+// Callbacks run after the commit is published, in commit order, on whichever
+// goroutine drains the notification queue: a write, or a flush, can return
+// before its callbacks have run (FlushWriteBehind). The same holds for every
+// On* callback.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {
 	if callback == nil {
@@ -553,12 +562,9 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 
 // notifyNodeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeCreated(node *Node) {
+	b.publishNamespaceCatalog(node)
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.publishNodeCreated(node)
-}
-
-func (b *BadgerEngine) publishNodeCreated(node *Node) {
-	b.enqueueCommitOperation(Operation{Type: OpCreateNode, Node: node})
+	b.dispatchNodeCreated(node)
 }
 
 // dispatchNodeCreated publishes callbacks for an already visible graph mutation.
@@ -574,12 +580,9 @@ func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 
 // notifyNodeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
+	b.publishNamespaceCatalog(node)
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.publishNodeUpdated(node)
-}
-
-func (b *BadgerEngine) publishNodeUpdated(node *Node) {
-	b.enqueueCommitOperation(Operation{Type: OpUpdateNode, Node: node})
+	b.dispatchNodeUpdated(node)
 }
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
@@ -601,9 +604,8 @@ func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 
 // publishNodeDeleted publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
-	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.deleteCleanup.recordDelete()
-	b.enqueueCommitOperation(Operation{Type: OpDeleteNode, NodeID: nodeID})
+	b.dispatchNodeDeleted(nodeID)
 }
 
 func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
@@ -619,11 +621,7 @@ func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 // notifyEdgeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.publishEdgeCreated(edge)
-}
-
-func (b *BadgerEngine) publishEdgeCreated(edge *Edge) {
-	b.enqueueCommitOperation(Operation{Type: OpCreateEdge, Edge: edge})
+	b.dispatchEdgeCreated(edge)
 }
 
 // dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
@@ -640,11 +638,7 @@ func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
 // notifyEdgeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.publishEdgeUpdated(edge)
-}
-
-func (b *BadgerEngine) publishEdgeUpdated(edge *Edge) {
-	b.enqueueCommitOperation(Operation{Type: OpUpdateEdge, Edge: edge})
+	b.dispatchEdgeUpdated(edge)
 }
 
 // dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
@@ -661,13 +655,8 @@ func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 // notifyEdgeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
-	b.publishEdgeDeleted(edgeID)
-}
-
-func (b *BadgerEngine) publishEdgeDeleted(edgeID EdgeID) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.deleteCleanup.recordDelete()
-	b.enqueueCommitOperation(Operation{Type: OpDeleteEdge, EdgeID: edgeID})
+	b.dispatchEdgeDeleted(edgeID)
 }
 
 // dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.

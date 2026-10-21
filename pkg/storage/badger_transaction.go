@@ -111,7 +111,8 @@ type BadgerTransaction struct {
 	badgerReadHeld bool
 
 	// commitW is the commit writer while Commit writes (see commitWriter).
-	commitW *commitWriter
+	commitW           *commitWriter
+	managedAccounting func()
 	// commitReleaseWrite releases the write barrier Commit holds until it
 	// returns. commitCountsHeld and commitEdgeTypeCounts record the count
 	// locks it holds while publishing (acquireCommitPublicationLocked).
@@ -711,6 +712,10 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.createNodeLocked(node, true)
+}
+
+func (tx *BadgerTransaction) createNodeLocked(node *Node, creationTimes bool) (NodeID, error) {
 
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return "", err
@@ -744,7 +749,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// still occupies its ID and must reject every CREATE route, including the
 	// write-behind bulk/implicit paths.
 	if _, deleted := tx.deletedNodes[node.ID]; !deleted {
-		_, err := tx.getCommittedNodeLocked(node.ID)
+		_, err := tx.getCommittedNodeReadLocked(node.ID, true, storedRead)
 		if err == nil {
 			return "", ErrAlreadyExists
 		}
@@ -757,7 +762,9 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
 	// Stamp creation times before encoding, as direct engine creation does (#1228).
-	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	if creationTimes {
+		initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	}
 	// Serialize node (may store embeddings separately if too large)
 	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
@@ -824,6 +831,12 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.updateNodeLocked(node, nil, false)
+}
+
+// Direct staging may already own the prior node read for upsert/timestamps.
+// Consume that same snapshot image rather than fetching and copying it again.
+func (tx *BadgerTransaction) updateNodeLocked(node, prior *Node, owned bool) error {
 
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
@@ -845,9 +858,13 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 
 	// Check if node exists
-	var oldNode *Node
+	oldNode := prior
 	createOpIdx := -1
-	if pending, exists := tx.pendingNodes[node.ID]; exists {
+	if prior != nil {
+		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
+			return err
+		}
+	} else if pending, exists := tx.pendingNodes[node.ID]; exists {
 		oldNode = copyNode(pending)
 		createOpIdx = tx.pendingCreateNodeOperationIndexLocked(node.ID)
 	} else {
@@ -871,6 +888,11 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		}
 	}
 
+	if !labelsEqual(node.Labels, oldNode.Labels) {
+		if err := tx.engine.rescoreSuppressionAfterLabelChangeInTxn(tx.staged(), tx.namespace, node); err != nil {
+			return err
+		}
+	}
 	body, err := tx.reconcileManagedEmbeddingsLocked(oldNode, node)
 	if err != nil {
 		return err
@@ -924,7 +946,10 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 
 	// Track for read-your-writes
-	nodeCopy := copyNode(node)
+	nodeCopy := node
+	if !owned {
+		nodeCopy = copyNode(node)
+	}
 	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
 	if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
@@ -1139,6 +1164,9 @@ func (tx *BadgerTransaction) deleteNodeBuffered(nodeID NodeID, oldNode *Node) (e
 
 	// Buffer pending embeddings index deletion
 	tx.bufferDelete(pendingEmbedKey(nodeID))
+	// Its on-demand suppression goes with it; the commit's publication
+	// updates the mirror (unmarkDeletedManualSuppressions).
+	tx.bufferDelete(manualSuppressionKey(manualSuppressionNode, string(nodeID)))
 
 	// Buffer node deletion. Dict cleanup is deferred to the prune
 	// pipeline — tombstones + MVCC heads reuse the existing numID.
@@ -1265,6 +1293,7 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 // (#741) alike.
 func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, deletedNodeID NodeID, deletedNodeLabels []string) error {
 	tx.bufferDelete(edgeKey(edge.ID))
+	tx.bufferDelete(manualSuppressionKey(manualSuppressionEdge, string(edge.ID)))
 	if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edge.ID); outKey != nil {
 		tx.bufferDelete(outKey)
 	}
@@ -1730,6 +1759,12 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
+	return tx.updateEdgeLocked(edge, false)
+}
+
+// owned permits the private managed adapter to transfer its already-cloned
+// caller input to staging. Public transaction writes retain their copy contract.
+func (tx *BadgerTransaction) updateEdgeLocked(edge *Edge, owned bool) error {
 
 	if edge == nil {
 		return ErrInvalidData
@@ -1852,7 +1887,10 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	}
 
 	// Track for read-your-writes.
-	edgeCopy := copyEdge(edge)
+	edgeCopy := edge
+	if !owned {
+		edgeCopy = copyEdge(edge)
+	}
 	tx.pendingEdges[edge.ID] = edgeCopy
 	if err := tx.bufferEdgeReplacementCountDeltasLocked(oldEdge, edge); err != nil {
 		return err
@@ -1962,6 +2000,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		tx.cancelledEdgeWrites[edgeID] = struct{}{}
 	} else {
 		tx.bufferDelete(edgeKey(edgeID))
+		tx.bufferDelete(manualSuppressionKey(manualSuppressionEdge, string(edgeID)))
 		if outKey := tx.engine.outgoingIndexKeyStringLookup(edge.StartNode, edgeID); outKey != nil {
 			tx.bufferDelete(outKey)
 		}
@@ -2899,7 +2938,7 @@ func (tx *BadgerTransaction) Commit() error { return tx.commit(nil) }
 func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
-	var notification *commitNotification
+	notification := &commitNotification{}
 	defer func() {
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
@@ -2913,6 +2952,10 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	defer tx.releaseWriteBarrierLocked()
 
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return err
+	}
+	if err := tx.drainBufferedWritesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}
 	// The engine's write barrier is held through publication, before listener
@@ -3019,9 +3062,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
 	// A database that captures changes commits through Badger: its change
 	// events are written in the same commit as the data (#937).
-	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
-		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
-		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
+	if tx.bufferableLocked() && len(temporalTargets) == 0 {
 		return tx.commitBufferedLocked()
 	}
 
@@ -3062,6 +3103,8 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.releaseSnapshotReaderLocked()
 
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
+	cw.accounting = tx.managedAccounting
+	cw.notification = notification
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
@@ -3105,6 +3148,10 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// commit acquired them before its first batch.
 	tx.acquireCommitPublicationLocked()
 
+	// The caches, counts, indexes and unique-value registry, in commit order
+	// per entity and unique value (badger_publication_stage.go).
+	cw.publish, cw.publishKeys = tx.publication()
+
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.
 	if err := cw.finish(); err != nil {
@@ -3116,9 +3163,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.commitW = nil
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
-	if len(tx.operations) > 0 {
-		notification = tx.engine.reserveCommitOperations(tx.operations)
-	}
 	runCommitTailHook()
 
 	tx.endChangeCaptureLocked(true)
@@ -3166,91 +3210,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 
-	// Apply cache/count updates and fire callbacks after commit.
-	// This keeps cached stats O(1) and ensures external systems (e.g. search indexes)
-	// observe transactional writes the same way as non-transactional writes.
-	for _, op := range tx.operations {
-		switch op.Type {
-		case OpCreateNode:
-			tx.engine.cacheOnNodeCreated(op.Node)
-		case OpUpdateNode:
-			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-		case OpDeleteNode:
-			if op.OldNode != nil {
-				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
-			} else {
-				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
-			}
-		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreated(op.Edge)
-		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge)
-		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
-		case OpUpdateEmbedding:
-			// Embeddings are regenerable; no-op for cached counts.
-		}
-	}
-
-	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
-
-	// Update derived unique-constraint caches (in-memory) based on committed operations.
-	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
-	//
-	// All committed ops belong to the transaction's pinned namespace, so the
-	// schema lookup is hoisted out of the loop.
-	//
-	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
-	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
-	}
+	notification.ops = append([]Operation(nil), tx.operations...)
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked
@@ -3994,7 +3954,13 @@ func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == nil {
 		if tx.nodeHeadCache == nil {
-			tx.nodeHeadCache = make(map[NodeID]MVCCHead, 64)
+			// A direct relationship write has two endpoints. Retain the
+			// existing bulk allocation without charging every small write for it.
+			capacity := 64
+			if len(tx.operations) < capacity/2 {
+				capacity = len(tx.operations) * 2
+			}
+			tx.nodeHeadCache = make(map[NodeID]MVCCHead, capacity)
 		}
 		tx.nodeHeadCache[nodeID] = head
 	}
@@ -4212,6 +4178,58 @@ func setCommitTailHook(hook func()) func() {
 		commitTailHook = previousHook
 		commitTailHookMu.Unlock()
 	}
+}
+
+// publication is the commit's derived-state publication, which the ordered
+// stage runs once the commit is visible (badger_publication_stage.go): the
+// caches and counts per operation, in operation order, then the unique-value
+// registry; and the keys it is ordered on. All operations belong to the
+// transaction's pinned namespace.
+func (tx *BadgerTransaction) publication() (func(), []any) {
+	engine, ops := tx.engine, tx.operations
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	var schema *SchemaManager
+	if tx.namespace != "" {
+		schema = engine.GetSchemaForNamespace(tx.namespace)
+	}
+	keys := appendOperationPublicationKeys(nil, schema, ops)
+	return func() {
+		for _, op := range ops {
+			switch op.Type {
+			case OpCreateNode:
+				engine.cacheOnNodeCreated(op.Node)
+			case OpUpdateNode:
+				engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+			case OpDeleteNode:
+				engine.unmarkDeletedManualSuppressions(op.NodeID, op.DeletedEdgeIDs)
+				if op.OldNode != nil {
+					engine.cacheOnNodeDeletedWithNode(op.NodeID, op.OldNode, op.EdgesDeleted)
+				} else {
+					engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
+				}
+			case OpCreateEdge:
+				engine.cacheOnEdgeCreatedWithCounts(op.Edge, !op.ReplacesExisting)
+			case OpUpdateEdge:
+				oldType := ""
+				if op.OldEdge != nil {
+					oldType = op.OldEdge.Type
+				}
+				engine.cacheOnEdgeUpdated(oldType, op.Edge)
+			case OpDeleteEdge:
+				oldType := ""
+				if op.OldEdge != nil {
+					oldType = op.OldEdge.Type
+				}
+				engine.unmarkDeletedManualSuppressions("", []EdgeID{op.EdgeID})
+				engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
+			case OpUpdateEmbedding:
+				// Embeddings are regenerable; no-op for cached counts.
+			}
+		}
+		engine.publishUniqueValuesForOps(schema, ops)
+	}, keys
 }
 
 func runCommitTailHook() {

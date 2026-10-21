@@ -44,8 +44,12 @@ type bufferedCommit struct {
 	namespace string
 	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
 	ops       []Operation
-	writes    map[string][]byte
-	deletes   map[string]bool
+
+	// Reserved at ACK; readied after replay retires its overlay.
+	notification *commitNotification
+
+	writes  map[string][]byte
+	deletes map[string]bool
 
 	// version is the MVCC version allocated at ACK time. The DB-local
 	// sequence counter orders the commit's history exactly where it
@@ -125,9 +129,8 @@ type CommitBuffer struct {
 	countsApplied atomic.Bool
 	draining      atomic.Bool // claims the single flusher slot for this generation
 
-	// retired guards the buffer's pending-node index retirement: a
-	// generation that reached the applied state retires its nodes from the
-	// index exactly once, whichever drain path reaches it first.
+	// retired guards the complete retirement under WriteBehindBuffer.mu:
+	// queue, read scopes, pending index and finally the applied flag.
 	retired atomic.Bool
 }
 
@@ -728,7 +731,6 @@ func (w *WriteBehindBuffer) drainOne() {
 		}
 	}
 	w.setLastErr(nil) // this generation applied; a prior failure is resolved
-	buf.markApplied()
 	w.removeDrained(buf)
 }
 
@@ -738,11 +740,18 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 	w.errMu.Unlock()
 }
 
-// removeDrained drops the applied generation from the draining queue and
-// retires its nodes from the pending-node index exactly once: the committed
-// schema index covers them from the replay onward.
+// removeDrained completes the oldest generation after its replay has published.
+// Snapshot capture, queue removal, read epochs and pending-index retirement
+// share mu. Publish applied last, so admission/frontier waiters and listeners
+// cannot pass completion while any reader still selects this generation.
+// Replay calls this before listeners; drainOne also calls it for generic apply
+// callbacks and after replay returns. The whole transition is idempotent.
 func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	if buf.retired.Swap(true) {
+		return
+	}
 	if len(w.draining) > 0 && w.draining[0] == buf {
 		// Release the retired generation before repairing the pending index.
 		// Reslicing alone retains it through the queue's backing array.
@@ -755,7 +764,7 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	// now covers its nodes, so retire them from the pending index exactly
 	// once. A later generation may already have replaced a node's entries;
 	// the repair re-adds the newest still-pending version.
-	if w.pendingIndex != nil && buf.retired.CompareAndSwap(false, true) {
+	if w.pendingIndex != nil {
 		for _, c := range buf.commits {
 			for _, op := range c.ops {
 				switch op.Type {
@@ -782,7 +791,7 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	if w.opCount == 0 && len(w.draining) == 0 {
 		w.readEpoch.Store((w.readEpoch.Load() + 2) &^ 1)
 	}
-	w.mu.Unlock()
+	buf.markApplied()
 }
 
 // nodeLocked resolves the newest buffered version of id across the active
@@ -890,7 +899,9 @@ func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
 
 // Flush rotates the active generation and drains every generation
 // synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
+// for ~2s it returns the last apply error. It returns once every generation
+// is applied and retired, which is when its listener notifications are
+// readied (BadgerEngine.FlushWriteBehind describes the barrier).
 func (w *WriteBehindBuffer) Flush() error {
 	w.rotate()
 	w.signal()
@@ -911,7 +922,12 @@ func (w *WriteBehindBuffer) Flush() error {
 		}
 		lastPending = pending
 		if stalls > 2000 {
-			return w.LastErr()
+			if err := w.LastErr(); err != nil {
+				return err
+			}
+			// A claimed large generation may still be making progress in
+			// Badger. Absence of an apply error is not proof of completion.
+			stalls = 0
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -1412,7 +1428,9 @@ func (w *WriteBehindBuffer) PendingOps() int {
 	total := w.opCount
 	for _, buf := range w.draining {
 		if !buf.IsApplied() {
-			total += len(buf.Mutations())
+			// Rotated generations carry both legacy mutations and captured
+			// transaction commits. AddCommit does not populate Mutations().
+			total += buf.ops
 		}
 	}
 	return total

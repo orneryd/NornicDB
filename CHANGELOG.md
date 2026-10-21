@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - macOS installer/settings: preserve provider/startup configuration, replace old executable payloads safely, enforce one tray instance, and review existing settings after install. Configure independent AI services and Advanced overrides; confirm server stop/restart actions.
 
+- Publish node/relationship caches, indexes and unique values in commit order per entity/value before
+  acknowledging writes, while allowing disjoint publications to run concurrently. Remove deleted index
+  entries from the pre-delete snapshot. Reduce publication-key/scheduler allocations and avoid shifting
+  index postings for first-entry removal; record paired performance results and remaining update costs
+  in [the publication benchmark report](docs/performance/publication-1406/README.md) (#1406).
 - Avoid allocating and filling an unused predicate scope for streaming WITH
   projections without WHERE; preserve ordered WITH scope handling (#1472).
 

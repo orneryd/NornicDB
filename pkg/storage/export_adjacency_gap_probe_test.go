@@ -49,16 +49,30 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 			b.writeBehind.mu.Unlock()
 		}
 	}()
+	// The ordered stage runs after physical publication, before the entity
+	// cache invalidations that wait on adjCacheMu. Count publication is later
+	// than those invalidations, so it cannot be used as this scheduling seam.
+	published := make(chan struct{}, 1)
+	restoreStage := setPublicationStageHook(func(uint64) {
+		select {
+		case published <- struct{}{}:
+		default:
+		}
+	})
+	defer restoreStage()
 	replayed := make(chan error, 1)
 	go func() { replayed <- b.replayWriteBehind(frontier) }()
-	for !frontier.countsApplied.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("replay did not publish committed data")
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-published:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replay did not publish committed data")
 	}
 	b.adjCacheMu.RUnlock()
 	adjHeld = false
+	// Retirement now takes this same capture lock before replay completes.
+	// The reader has already captured its old committed/overlay view.
+	b.writeBehind.mu.Unlock()
+	overlayHeld = false
 	select {
 	case err := <-replayed:
 		require.NoError(t, err)
@@ -66,8 +80,6 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 		t.Fatal("replay did not finish")
 	}
 	require.True(t, frontier.IsApplied())
-	b.writeBehind.mu.Unlock()
-	overlayHeld = false
 	select {
 	case got := <-read:
 		require.NoError(t, got.err)

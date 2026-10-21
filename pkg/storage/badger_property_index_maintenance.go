@@ -107,9 +107,10 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node
 }
 
 // maintainPropertyIndexesOnNodeDeletedWithNode removes index entries for a
-// deleted node using the caller's pre-delete snapshot. The replay path uses
-// it because a buffered node never entered the engine node cache, so the
-// cache-based variant would leave its committed index entries dangling.
+// deleted node using the caller's pre-delete snapshot. It is the one delete
+// maintenance (cacheOnNodeDeletedWithNode): every delete path holds the
+// deleted node, while the node cache is cleared before this runs and never
+// held buffered write-behind nodes.
 func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeID, old *Node) {
 	if old == nil || len(old.Labels) == 0 {
 		return
@@ -121,55 +122,65 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeI
 	b.maintainCompositeIndexesOnNodeDeleted(nodeID, old, sm)
 }
 
-// maintainPropertyIndexesOnNodeDeletedWithLabels removes index entries for
-// every equality index the deleted node touched. The caller provides the
-// labels (via cacheOnNodeDeletedWithLabels) because the node itself is
-// already gone from the cache; the cached copy supplies the property payload.
-func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID, labels []string) {
-	if len(labels) == 0 {
-		return
-	}
-	sm := b.schemaForNodeID(id)
-	if sm == nil {
-		return
-	}
-	// Only read the pre-delete snapshot when at least one indexed label
-	// applies to this node. If none of the labels declare an index, skip
-	// the read entirely.
-	anyIndexed := false
-	for _, label := range labels {
-		if len(sm.GetCompositeIndexesForLabel(label)) > 0 {
-			anyIndexed = true
-			break
-		}
-	}
-	if !anyIndexed {
-		return
-	}
-	// We no longer have the node — take the last-known cached copy, or
-	// skip if neither cache nor MVCC has a pre-delete view. Correctness
-	// note: if the cache was evicted AND the node is gone, a dangling
-	// index entry may persist until the next rebuild. That's a known
-	// limitation; avoid it by calling DeleteNode paths that surface the
-	// old node (UpdateNode equivalents already do).
-	b.nodeCacheMu.RLock()
-	cached, hit := b.nodeCache[id]
-	b.nodeCacheMu.RUnlock()
-	if !hit || cached == nil {
-		return
-	}
-	b.maintainCompositeIndexesOnNodeDeleted(id, cached, sm)
-}
-
 // maintainCompositeIndexesOnNodeDeleted removes the node from every equality
-// index its cached copy could have been filed under.
-func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, cached *Node, sm *SchemaManager) {
-	for _, label := range cached.Labels {
+// index its pre-delete snapshot could have been filed under.
+func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Node, sm *SchemaManager) {
+	for _, label := range old.Labels {
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
 			if idx == nil {
 				continue
 			}
-			idx.RemoveNode(id, cached.Properties)
+			idx.RemoveNode(id, old.Properties)
+		}
+	}
+}
+
+// publishUniqueValues is the one publication of a node write to the
+// unique-value registry, for engine writes, transaction commits and
+// write-behind replay: old's values (the pre-write node, nil for a create)
+// are unregistered, then written's (nil for a delete) are registered, under
+// every unique constraint of their labels. It runs in the ordered stage, so
+// old is what the registry holds for the node (badger_publication_stage.go).
+func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old, written *Node) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	if old != nil {
+		for _, label := range old.Labels {
+			for property, value := range old.Properties {
+				schema.UnregisterUniqueValue(label, property, value)
+			}
+		}
+	}
+	if written != nil {
+		for _, label := range written.Labels {
+			for property, value := range written.Properties {
+				schema.RegisterUniqueValue(label, property, value, id)
+			}
+		}
+	}
+}
+
+// publishUniqueValuesForOps applies publishUniqueValues to a commit's node
+// operations, in order.
+func (b *BadgerEngine) publishUniqueValuesForOps(schema *SchemaManager, ops []Operation) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	for _, op := range ops {
+		switch op.Type {
+		case OpCreateNode:
+			if op.Node != nil {
+				b.publishUniqueValues(schema, op.Node.ID, nil, op.Node)
+			}
+		case OpUpdateNode:
+			if op.Node != nil {
+				b.publishUniqueValues(schema, op.Node.ID, op.OldNode, op.Node)
+			}
+		case OpDeleteNode:
+			if op.OldNode != nil {
+				b.publishUniqueValues(schema, op.NodeID, op.OldNode, nil)
+			}
 		}
 	}
 }
