@@ -7,6 +7,27 @@ sized application and transaction budgets without misrepresenting storage outcom
 
 ## ADDED Requirements
 
+### Requirement: Opt-in memory protection
+The new application pressure policy SHALL remain disabled unless a finite
+application limit is explicitly configured. `NORNICDB_MEMORY_LIMIT` SHALL
+retain its existing Go GC meaning and SHALL NOT enable the new policy. Finite
+transaction or aggregate settings SHALL enable only their own estimate checks;
+zero/unset settings SHALL remain unlimited. Disabled scopes SHALL NOT cause
+new admission failures, stale-telemetry rejection, pressure-victim selection or
+async-buffer byte gating.
+
+#### Scenario: No new limits configured
+- **WHEN** no application, transaction or aggregate limit is configured
+- **THEN** execution and async writes follow their existing behavior, without new memory-policy rejection or cancellation; existing GC, request-size and caller-cancellation behavior continues.
+
+#### Scenario: Transaction limit only
+- **WHEN** an individual transaction limit is configured and no application limit is set
+- **THEN** that transaction's estimated usage is checked, while process telemetry loss does not reject unrelated new work or activate whole-application victims.
+
+#### Scenario: Existing Go GC target only
+- **WHEN** `NORNICDB_MEMORY_LIMIT` is configured and no new limit is configured
+- **THEN** it affects Go GC as before and does not activate application or transaction admission.
+
 ### Requirement: Explicit soft-limit contract
 The system SHALL document application and transaction thresholds as cooperative
 soft limits, distinguish them from Go GC targets and container hard limits, and
@@ -157,8 +178,9 @@ its cleanup rather than canceling every transaction that observes the same sampl
 - **THEN** the policy selects the newest eligible owner first, excludes irreversible commit completion and cleanup, and subsequent selections depend on reconciled pressure.
 
 ### Requirement: Stale telemetry stops new expensive admissions
-The system SHALL reject new expensive work when the current memory observation
-exceeds its configured freshness deadline or is unavailable, until a fresh
+When application pressure protection is enabled, the system SHALL reject new
+expensive work when the current memory observation exceeds its configured
+freshness deadline or is unavailable, until a fresh
 successful observation restores admission. Rollback, flush and accepted commit
 completion SHALL remain able to progress from protected capacity.
 
