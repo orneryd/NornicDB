@@ -25,6 +25,9 @@ var (
 type Sample struct {
 	Used    int64
 	Ceiling int64
+	// Headroom is the tightest limit-minus-usage across the cgroup hierarchy.
+	Headroom    int64
+	HasHeadroom bool
 }
 
 // Policy is the single application admission owner. It does not poll from
@@ -36,11 +39,13 @@ type Policy struct {
 	sampleFunc func() (Sample, error)
 	now        func() time.Time
 
-	mu        sync.Mutex
-	sample    Sample
-	sampledAt time.Time
-	baseline  int64
-	reserved  int64
+	mu         sync.Mutex
+	sample     Sample
+	sampledAt  time.Time
+	baseline   int64
+	reserved   int64
+	nextSample uint64
+	lastSample uint64
 }
 
 // NewPolicy constructs an opt-in application policy. A nonpositive limit
@@ -65,7 +70,11 @@ func CgroupSample() (Sample, error) {
 		return Sample{}, ErrStaleSample
 	}
 	ceiling, _ := config.DetectCgroupMemoryLimit()
-	return Sample{Used: used, Ceiling: ceiling}, nil
+	headroom, paired := config.DetectCgroupMemoryHeadroom()
+	if ceiling > 0 && !paired {
+		return Sample{}, ErrStaleSample
+	}
+	return Sample{Used: used, Ceiling: ceiling, Headroom: headroom, HasHeadroom: paired}, nil
 }
 
 // Run refreshes immediately and after every tick until shutdown. The caller
@@ -98,16 +107,28 @@ func (p *Policy) Refresh() error {
 	if p.sampleFunc == nil {
 		return ErrStaleSample
 	}
+	p.mu.Lock()
+	p.nextSample++
+	generation := p.nextSample
+	p.mu.Unlock()
 	sample, err := p.sampleFunc()
 	if err != nil || sample.Used <= 0 {
 		// A failed observation invalidates the cached decision immediately;
 		// otherwise new work can enter for an entire freshness interval.
 		p.mu.Lock()
-		p.sampledAt = time.Time{}
+		if generation > p.lastSample {
+			p.lastSample = generation
+			p.sampledAt = time.Time{}
+		}
 		p.mu.Unlock()
 		return ErrStaleSample
 	}
 	p.mu.Lock()
+	if generation <= p.lastSample {
+		p.mu.Unlock()
+		return nil
+	}
+	p.lastSample = generation
 	p.sample = sample
 	p.sampledAt = p.now()
 	if p.reserved == 0 {
@@ -142,19 +163,18 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	if p.sampledAt.IsZero() || p.freshness <= 0 || p.now().Sub(p.sampledAt) > p.freshness {
 		return nil, ErrStaleSample
 	}
-	ceiling := p.limit
-	if p.sample.Ceiling > 0 && p.sample.Ceiling < ceiling {
-		ceiling = p.sample.Ceiling
-	}
-	capacity := ceiling - p.headroom
-	if capacity < 0 {
-		capacity = 0
-	}
 	observed := p.sample.Used
 	if p.baseline > observed {
 		observed = p.baseline
 	}
-	if observed > capacity || p.reserved > capacity-observed || bytes > capacity-observed-p.reserved {
+	available := p.limit - observed
+	if p.sample.HasHeadroom && p.sample.Headroom < available {
+		available = p.sample.Headroom
+	} else if !p.sample.HasHeadroom && p.sample.Ceiling > 0 && p.sample.Ceiling-observed < available {
+		available = p.sample.Ceiling - observed
+	}
+	available -= p.headroom
+	if available < 0 || p.reserved > available || bytes > available-p.reserved {
 		return nil, ErrLimitExceeded
 	}
 	p.reserved += bytes

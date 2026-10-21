@@ -10,6 +10,13 @@ import (
 // transaction opened by unwrapping the storage engine. Both explicit and
 // implicit transactions must use this boundary.
 func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *storage.BadgerTransaction) (err error) {
+	// This is the last abortable gate before storage may publish a write.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := memoryFailureFromContext(ctx); err != nil {
+		return err
+	}
 	defer func() {
 		if err == nil {
 			publishStatementCommit(ctx)

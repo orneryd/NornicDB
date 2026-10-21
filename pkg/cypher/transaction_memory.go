@@ -103,6 +103,7 @@ var transactionMemory = &transactionMemoryRegistry{
 // transactionMemoryActive is set while any limit is configured; without one
 // statements track nothing.
 var transactionMemoryActive atomic.Bool
+var transactionMemoryTracked atomic.Int64
 
 // ConfigureTransactionMemory sets dbms.memory.transaction.total.max (global)
 // and the limits of every database that has none of its own.
@@ -208,6 +209,7 @@ type transactionMemoryTracker struct {
 	// statement is cancelled with the failure, so the statement stops.
 	statement *statementContext
 	root      memoryScope
+	tracked   bool // guarded by mu; one active registry owner
 
 	mu      sync.Mutex // serializes pool reservations
 	failure atomic.Pointer[transactionMemoryFailure]
@@ -258,6 +260,15 @@ func (t *transactionMemoryTracker) knownListBytes(values []interface{}) (int64, 
 	return 0, false
 }
 
+// retireStatementLists drops identities of arrays owned only by a completed
+// statement. Any array retained in its result is sized by the result owner.
+func (t *transactionMemoryTracker) retireStatementLists() {
+	t.knownMu.Lock()
+	t.known = [knownLists]knownList{}
+	t.knownNext = 0
+	t.knownMu.Unlock()
+}
+
 // valueBytes is estimateValueBytes, with the lists collect() counted sized
 // from what it counted.
 func (t *transactionMemoryTracker) valueBytes(value interface{}) int64 {
@@ -280,13 +291,10 @@ var transactionMemoryTrackers = sync.Pool{New: func() any {
 // beginTransactionMemory starts tracking the statement tx runs, when a
 // limit is configured.
 func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, statement *statementContext) {
-	if !transactionMemoryActive.Load() {
-		if tx.memory.Load() != nil {
-			tx.memory.Store(nil)
-		}
+	tracker := tx.memory.Load()
+	if !transactionMemoryActive.Load() && tracker == nil {
 		return
 	}
-	tracker := tx.memory.Load()
 	database := transactionMemory.database(tx.database)
 	// The process-wide active flag also covers limits on other databases.
 	// Do not attach a tracker to a new transaction with no applicable limit;
@@ -300,6 +308,8 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 		// (runningStatement.done), so tracking allocates nothing per
 		// statement.
 		tracker = transactionMemoryTrackers.Get().(*transactionMemoryTracker)
+		tracker.tracked = true
+		transactionMemoryTracked.Add(1)
 	}
 	tracker.mu.Lock()
 	tracker.database = database
@@ -327,18 +337,20 @@ func (s runningStatement) memoryFailure() error {
 // end returns the statement's memory to the pools.
 func (t *transactionMemoryTracker) end() {
 	t.mu.Lock()
+	wasTracked := t.tracked
+	t.tracked = false
 	reserved := t.reserved.Swap(0)
 	t.used.Store(0)
 	t.retained = 0
 	t.statement = nil
 	t.mu.Unlock()
-	t.knownMu.Lock()
-	t.known = [knownLists]knownList{}
-	t.knownNext = 0
-	t.knownMu.Unlock()
+	t.retireStatementLists()
 	if reserved != 0 {
 		t.database.pool.release(reserved)
 		transactionMemory.global.release(reserved)
+	}
+	if wasTracked {
+		transactionMemoryTracked.Add(-1)
 	}
 }
 
@@ -468,7 +480,7 @@ type memoryScopeKey struct{}
 // memoryScopeFromContext is the scope a statement's memory grows in, nil
 // when nothing is tracked.
 func memoryScopeFromContext(ctx context.Context) *memoryScope {
-	if !transactionMemoryActive.Load() || ctx == nil {
+	if ctx == nil || (!transactionMemoryActive.Load() && transactionMemoryTracked.Load() == 0) {
 		return nil
 	}
 	scope, _ := ctx.Value(memoryScopeKey{}).(*memoryScope)

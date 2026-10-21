@@ -10,13 +10,13 @@ package storage
 // transactions and snapshot opens drain the buffer first.
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // bufferedMemoryAdmissionError keeps the shared application-pressure status
@@ -29,10 +29,19 @@ func (e *bufferedMemoryAdmissionError) BoltErrorCode() string {
 	return "Neo.TransientError.General.MemoryPoolOutOfMemoryError"
 }
 func (e *bufferedMemoryAdmissionError) StatusMessage() string {
-	if e.cause == memory.ErrStaleSample {
+	if errors.Is(e.cause, memory.ErrStaleSample) {
 		return localization.ApplicationMemoryUnavailable().Fallback
 	}
 	return localization.ApplicationMemoryPressure().Fallback
+}
+
+func bufferedMemoryError(cause error) error {
+	message := localization.ApplicationMemoryPressure()
+	if cause == memory.ErrStaleSample {
+		message = localization.ApplicationMemoryUnavailable()
+	}
+	return &bufferedMemoryAdmissionError{cause: localization.NewLocalizedError(
+		"Neo.TransientError.General.MemoryPoolOutOfMemoryError", message, cause)}
 }
 
 // estimateBufferedCommitBytes forecasts payload plus read-overlay growth
@@ -43,20 +52,10 @@ func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
 	for _, op := range c.ops {
 		bytes += int64(len(op.NodeID) + len(op.EdgeID) + 16*len(op.DeletedEdgeIDs))
 		for _, node := range [2]*Node{op.Node, op.OldNode} {
-			bytes += estimateNodeBodyCacheBytes(node)
-			if node != nil {
-				for _, vector := range node.NamedEmbeddings {
-					bytes += int64(32 + 4*len(vector))
-				}
-				for _, vector := range node.ChunkEmbeddings {
-					bytes += int64(24 + 4*len(vector))
-				}
-			}
+			bytes += estimateRetainedNodeBytes(node)
 		}
 		for _, edge := range [2]*Edge{op.Edge, op.OldEdge} {
-			if edge != nil {
-				bytes += int64(160+len(edge.ID)+len(edge.StartNode)+len(edge.EndNode)+len(edge.Type)) + util.EstimateValueBytes(edge.Properties)
-			}
+			bytes += estimateRetainedEdgeBytes(edge)
 		}
 	}
 	for key, value := range c.writes {
@@ -165,6 +164,24 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
+	// The dictionary no longer owns these entries. A rejected pre-WAL commit
+	// must clear their pending marks, which otherwise retain the whole state.
+	transferred := false
+	defer func() {
+		if transferred {
+			return
+		}
+		tx.engine.idDict.clearPending(c.idEntries)
+		if c.idEntries != nil {
+			clear(c.idEntries.nodes)
+			clear(c.idEntries.edges)
+			c.idEntries.nodes = nil
+			c.idEntries.edges = nil
+		}
+		if c.memoryLease != nil {
+			c.memoryLease.Release()
+		}
+	}()
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
 	// Capture the derived-count deltas the sync path applies after commit;
@@ -175,23 +192,19 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.labelDeltas = tx.pendingLabelCountDeltas
 	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
 	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
+	forecast := estimateBufferedCommitBytes(&c)
+	if forecast > maxBufferedWALPayloadBytes {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("wal: buffered commit exceeds decoded payload limit: %w", badger.ErrTxnTooBig)
+	}
 	if policy := tx.engine.memoryPolicy; policy != nil {
-		lease, err := policy.Reserve(estimateBufferedCommitBytes(&c))
+		lease, err := policy.Reserve(forecast)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
-			return &bufferedMemoryAdmissionError{cause: err}
+			return bufferedMemoryError(err)
 		}
 		c.memoryLease = lease
 	}
-	transferred := false
-	if c.memoryLease != nil {
-		defer func() {
-			if !transferred {
-				c.memoryLease.Release()
-			}
-		}()
-	}
-
 	// Durability boundary: write the commit's full payload to the WAL and
 	// push it to the kernel page cache BEFORE acknowledging. If the process
 	// is killed before the background flusher lands the generation, the WAL

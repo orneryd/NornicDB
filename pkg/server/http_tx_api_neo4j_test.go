@@ -1972,13 +1972,14 @@ func TestGh668_HTTPReturnedPartialResult(t *testing.T) {
 	claims, err := authenticator.ValidateToken(getAuthToken(t, authenticator, "admin"))
 	require.NoError(t, err)
 	response := &TransactionResponse{}
-	queryError := server.runRequestStatement(context.Background(), claims, "nornic", StatementRequest{
+	failed := server.runRequestStatements(context.Background(), "", claims, "nornic", []StatementRequest{{
 		Statement: "UNWIND [1,0] AS d RETURN 1/d AS x",
-	}, func(context.Context, string, string, map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
+	}}, func(context.Context, string, string, map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		return &cypher.ExecuteResult{Columns: []string{"x"}, Rows: [][]interface{}{{int64(1)}}}, nil, errors.New("Neo.ClientError.Statement.ArithmeticError: / by zero")
 	}, func(localization.Message) string { return "unused" }, response)
-	require.NotNil(t, queryError)
-	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", queryError.Code)
+	require.True(t, failed)
+	require.Len(t, response.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", response.Errors[0].Code)
 	require.Len(t, response.Results, 1)
 	require.Equal(t, []string{"x"}, response.Results[0].Columns)
 	require.Equal(t, []interface{}{int64(1)}, response.Results[0].Data[0].Row)

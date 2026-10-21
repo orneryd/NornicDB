@@ -9,9 +9,9 @@ import (
 // statementOutcome belongs to the semantic statement, not a registered Execute
 // frame or a result object. Dispatch, PROFILE, Fabric and batched subqueries can
 // re-enter execution or rebuild results without losing a successful commit.
-// Publication is monotonic: a later execution error still returns that error,
-// but cancellation during deferred logging must not turn success into a failure
-// for writes already stored. No publication occurs for rolled-back, read-only or
+// Publication is monotonic: a later independent execution error still returns
+// that error, but cancellation or accounting during deferred completion must
+// not report rollback for writes already stored. No publication occurs for rolled-back, read-only or
 // still-open explicit writes. Fabric participants may publish concurrently.
 type statementOutcome struct {
 	committed atomic.Bool

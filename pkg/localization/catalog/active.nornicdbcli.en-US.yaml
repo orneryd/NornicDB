@@ -121,7 +121,7 @@
   other: "Memory limit in MB as an integer (e.g., 500), 0 for unlimited, or auto (the default: 85% of the container's memory limit)"
 - id: nornicdbcli.flag.go_memory_limit
   description: Explicit Go runtime GC target flag help.
-  other: "Go runtime GC memory target in MiB, 0 for unlimited, or auto"
+  other: "Go runtime GC memory target in bytes (non-negative integer)"
 - id: nornicdbcli.flag.gc_percent
   description: Garbage collector aggressiveness flag help.
   other: GC aggressiveness (100=default, lower=more aggressive)
@@ -190,17 +190,17 @@
   other: 'invalid --memory-limit value {{printf "%q" .Value}}: {{.Cause}}'
 - id: nornicdbcli.validation.go_memory_limit_deprecated
   description: Legacy Go runtime memory flag migration notice.
-  other: "--memory-limit is deprecated; use --go-memory-limit (integer MiB or auto)"
+  other: "--memory-limit is deprecated; use --go-memory-limit-bytes (integer bytes)"
 - id: nornicdbcli.validation.env_memory_limit_deprecated
-  other: "NORNICDB_MEMORY_LIMIT is deprecated; use NORNICDB_GO_MEMORY_LIMIT_MIB (integer MiB or auto)"
+  other: "NORNICDB_MEMORY_LIMIT is deprecated; use NORNICDB_GO_MEMORY_LIMIT_BYTES (integer bytes)"
 - id: nornicdbcli.validation.yaml_memory_limit_deprecated
-  other: "memory.runtime_limit is deprecated; use memory.go_runtime_limit (integer MiB or auto)"
+  other: "memory.runtime_limit is deprecated; use memory.go_runtime_limit_bytes (integer bytes)"
 - id: nornicdbcli.validation.go_memory_limit_conflict
   description: Conflicting Go runtime memory flag values.
-  other: "--memory-limit conflicts with --go-memory-limit"
+  other: "--memory-limit conflicts with --go-memory-limit-bytes"
 - id: nornicdbcli.validation.invalid_go_memory_limit
   description: Invalid Go runtime memory flag. Value and Cause are untranslated diagnostics.
-  other: 'invalid --go-memory-limit value {{printf "%q" .Value}}: {{.Cause}}'
+  other: 'invalid --go-memory-limit-bytes value {{printf "%q" .Value}}: {{.Cause}}'
 - id: nornicdbcli.validation.invalid_stdio_interval
   other: "invalid stdio-log-compact-seconds {{.Value}}: must be >= 0"
 - id: nornicdbcli.config.not_found

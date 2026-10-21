@@ -195,19 +195,19 @@ func NornicDBCLIFlagMemoryLimit() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagMemoryLimit, "Memory limit in MB as an integer (e.g., 500), 0 for unlimited, or auto (the default: 85% of the container's memory limit)")
 }
 func NornicDBCLIFlagGoMemoryLimit() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagGoMemoryLimit, "Go runtime GC memory target in MiB, 0 for unlimited, or auto")
+	return nornicDBCLIText(MessageNornicDBCLIFlagGoMemoryLimit, "Go runtime GC memory target in bytes (non-negative integer)")
 }
 func NornicDBCLIGoMemoryLimitDeprecated() Message {
-	return nornicDBCLIText(MessageNornicDBCLIGoMemoryLimitDeprecated, "--memory-limit is deprecated; use --go-memory-limit (integer MiB or auto)")
+	return nornicDBCLIText(MessageNornicDBCLIGoMemoryLimitDeprecated, "--memory-limit is deprecated; use --go-memory-limit-bytes (integer bytes)")
 }
 func NornicDBCLIEnvMemoryLimitDeprecated() Message {
-	return nornicDBCLIText(MessageNornicDBCLIEnvMemoryLimitDeprecated, "NORNICDB_MEMORY_LIMIT is deprecated; use NORNICDB_GO_MEMORY_LIMIT_MIB (integer MiB or auto)")
+	return nornicDBCLIText(MessageNornicDBCLIEnvMemoryLimitDeprecated, "NORNICDB_MEMORY_LIMIT is deprecated; use NORNICDB_GO_MEMORY_LIMIT_BYTES (integer bytes)")
 }
 func NornicDBCLIYAMLMemoryLimitDeprecated() Message {
-	return nornicDBCLIText(MessageNornicDBCLIYAMLMemoryLimitDeprecated, "memory.runtime_limit is deprecated; use memory.go_runtime_limit (integer MiB or auto)")
+	return nornicDBCLIText(MessageNornicDBCLIYAMLMemoryLimitDeprecated, "memory.runtime_limit is deprecated; use memory.go_runtime_limit_bytes (integer bytes)")
 }
 func NornicDBCLIGoMemoryLimitConflict() Message {
-	return nornicDBCLIText(MessageNornicDBCLIGoMemoryLimitConflict, "--memory-limit conflicts with --go-memory-limit")
+	return nornicDBCLIText(MessageNornicDBCLIGoMemoryLimitConflict, "--memory-limit conflicts with --go-memory-limit-bytes")
 }
 func NornicDBCLIFlagGCPercent() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagGCPercent, "GC aggressiveness (100=default, lower=more aggressive)")
@@ -278,5 +278,5 @@ func NornicDBCLIInvalidMemoryLimit(value string, cause error) Message {
 	return Message{ID: MessageNornicDBCLIInvalidMemoryLimit, Fallback: fmt.Sprintf("invalid --memory-limit value %q: %s", value, cause), Data: map[string]any{"Value": value, "Cause": cause.Error()}}
 }
 func NornicDBCLIInvalidGoMemoryLimit(value string, cause error) Message {
-	return Message{ID: MessageNornicDBCLIInvalidGoMemoryLimit, Fallback: fmt.Sprintf("invalid --go-memory-limit value %q: %s", value, cause), Data: map[string]any{"Value": value, "Cause": cause.Error()}}
+	return Message{ID: MessageNornicDBCLIInvalidGoMemoryLimit, Fallback: fmt.Sprintf("invalid --go-memory-limit-bytes value %q: %s", value, cause), Data: map[string]any{"Value": value, "Cause": cause.Error()}}
 }
