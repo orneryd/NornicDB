@@ -23,6 +23,9 @@
 9. Under process pressure, choose the newest eligible, pre-acceptance
    transaction first. Exclude commit completion and cleanup; stop one owner
    through the canonical policy and reassess before selecting another.
+10. If current memory telemetry exceeds its freshness deadline or becomes
+    unavailable, reject new expensive work until a fresh successful sample
+    arrives. Continue rollback, flush and accepted commit completion.
 
 ## Current owners and convergence boundary
 
@@ -86,8 +89,10 @@ stop new admissions, then apply safe cancellation; do not erase or reassign debt
 
 Changing live resource ownership, platform coverage or dynamic container limits
 must update this same owner. Invalid settings fail configuration validation.
-Unavailable/stale telemetry must be visible; its operational policy remains an
-operator decision. Linux memory.events and PSI may wake the sampler on pressure
+Unavailable/stale telemetry is visible and stops new expensive admissions until
+a fresh successful sample arrives. Rollback, flush and accepted commit completion
+continue from protected capacity. The precise freshness deadline remains to be
+measured and selected. Linux memory.events and PSI may wake the sampler on pressure
 but do not report every change in memory.current. Periodic reads reconcile actual
 usage and cgroup limits; explicit ownership/reservation updates refresh the
 policy between reads. Record the last successful sample time, source and
@@ -199,9 +204,10 @@ why the application threshold needs headroom and remains soft.
 
 - Application maximum/automatic-sizing setting names and units; relationship to
   the existing MiB-valued NORNICDB_MEMORY_LIMIT without silently reinterpreting it.
-- Sampling interval/freshness deadline, stale-sample admission policy, initial/minimum
-  reserve, growth response, recovery hysteresis and container co-tenancy. Event
-  monitoring remains an optional Linux accelerator, not the only usage source.
+- Sampling interval/freshness deadline, initial/minimum reserve, growth response,
+  recovery hysteresis and container co-tenancy. Stale/unavailable telemetry
+  rejects new expensive work until a fresh sample arrives. Event monitoring
+  remains an optional Linux accelerator, not the only usage source.
 - Newest eligible transaction first is accepted. Define ordering under equal start
   times, bounded selection/reassessment cadence and starvation controls without
   treating the observing transaction as the cause or canceling every observer.

@@ -155,3 +155,13 @@ its cleanup rather than canceling every transaction that observes the same sampl
 #### Scenario: Concurrent transactions observe one pressure event
 - **WHEN** several transactions cross execution checkpoints after one process-pressure observation
 - **THEN** the policy selects the newest eligible owner first, excludes irreversible commit completion and cleanup, and subsequent selections depend on reconciled pressure.
+
+### Requirement: Stale telemetry stops new expensive admissions
+The system SHALL reject new expensive work when the current memory observation
+exceeds its configured freshness deadline or is unavailable, until a fresh
+successful observation restores admission. Rollback, flush and accepted commit
+completion SHALL remain able to progress from protected capacity.
+
+#### Scenario: Sampler stops updating
+- **WHEN** the latest current-usage observation becomes stale or cannot be read
+- **THEN** new expensive admissions fail with a visible resource-unavailable reason; existing cleanup and accepted storage completion remain available, and admission resumes only after a fresh successful sample satisfies the recovery policy.
