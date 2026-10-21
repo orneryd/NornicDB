@@ -74,9 +74,13 @@ projection).
 A statement's temporary working memory is released when it ends. Staged
 writes in an explicit transaction remain charged until commit or rollback;
 memory failure rolls them back immediately while preserving the failure for
-the client. Materialized result rows are tracked during execution. The
-current implementation does not yet retain an application lease for results
-after they leave execution, including slow Bolt PULL consumers.
+the client. Materialized result rows are tracked during execution. HTTP
+transaction requests retain their application forecast until response
+assembly ends. Bolt read results retain an additional forecast through PULL,
+DISCARD, RESET or disconnect, including out-of-order explicit-transaction
+streams. Embedded results and completed autocommit write results do not yet
+retain an application lease after execution. The application policy remains
+a soft admission forecast, not a precise bound on returned row allocations.
 
 With no limit configured, nothing is tracked and there is no overhead.
 
