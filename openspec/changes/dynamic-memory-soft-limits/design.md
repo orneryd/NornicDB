@@ -13,8 +13,10 @@
 5. Reject new expensive work under pressure; terminate eligible active
    transactions at safe checkpoints and release their owned resources.
 6. Transaction accounting/reservations are estimates and soft limits, not exact
-   allocator interception. Reuse and correct develop's accounting rather than
-   creating another tracker. Large allocations can overshoot between checkpoints.
+   allocator interception. Build one release-owned tracker that supersedes older
+   attempts; adopt a develop charge site only after its ownership lifetime and
+   error behavior pass the approved contract. Large allocations can overshoot
+   between checkpoints.
 7. Preserve storage atomicity/durability. Cancellation is not process killing,
    goroutine killing or a mechanism to interrupt arbitrary native/syscall work.
 8. A memory-failed explicit transaction releases abortable storage ownership
