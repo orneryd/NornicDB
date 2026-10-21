@@ -643,6 +643,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
 		badgerOpts, walConfig := resolveDurabilityOptions(dataDir, config)
+		badgerOpts.MemoryPolicy = db.memoryPolicy
 		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
 		if providerMode == "" {
 			providerMode = "password"
