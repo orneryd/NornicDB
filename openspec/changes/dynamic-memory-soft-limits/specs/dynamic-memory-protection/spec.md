@@ -137,3 +137,21 @@ writes eligible for flush/replay under pressure. Rotation SHALL NOT reset byte u
 #### Scenario: A generation rotates or replay fails
 - **WHEN** an active buffer rotates into draining, retains readers or encounters a replay error
 - **THEN** its retained allocations remain charged until actual release; neither rotation nor retry admits unbounded replacement work or discards acknowledged writes.
+
+### Requirement: Memory failure reclaims abortable explicit transactions
+The system SHALL immediately release abortable staged storage resources of an
+explicit transaction failed by a memory limit, using its serialized lifecycle,
+while retaining the original failure in its protocol state.
+
+#### Scenario: Failed session remains idle
+- **WHEN** an explicit transaction hits its memory limit and its client sends no further command
+- **THEN** abortable staged resources are reclaimed without waiting for COMMIT, ROLLBACK or expiry; a later terminal command cannot commit the discarded writes and receives the original failure under the protocol contract.
+
+### Requirement: Shared pressure chooses one eligible owner at a time
+The system SHALL prefer the newest eligible pre-acceptance transaction when
+application pressure requires active work to stop, and reassess pressure after
+its cleanup rather than canceling every transaction that observes the same sample.
+
+#### Scenario: Concurrent transactions observe one pressure event
+- **WHEN** several transactions cross execution checkpoints after one process-pressure observation
+- **THEN** the policy selects the newest eligible owner first, excludes irreversible commit completion and cleanup, and subsequent selections depend on reconciled pressure.
