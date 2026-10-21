@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound retained traversal endpoint bodies to the requested fields after canonical visibility checks.
+- Match Neo4j 5.26 vector similarity argument descriptions to their list-only signatures.
+
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited
   reclamation and requires a fresh physical reading before reopening admission
@@ -40,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   functions and plugin adapters through one shared runtime-list reader.
 
 - Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
-  and read scalar endpoint properties without decoding whole node bodies (#1496, #1497).
+  and preserve canonical query visibility before selecting scalar endpoint properties (#1496, #1497).
 
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
