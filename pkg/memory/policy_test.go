@@ -23,6 +23,15 @@ func TestPolicyDisabledDoesNotSample(t *testing.T) {
 		t.Fatalf("disabled reserve: lease=%v err=%v sampled=%v", lease, err, called)
 	}
 	lease.Release()
+	if allocations := testing.AllocsPerRun(100, func() {
+		lease, err := policy.Reserve(1024)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease.Release()
+	}); allocations != 0 {
+		t.Fatalf("disabled admission allocated %.2f times per call", allocations)
+	}
 }
 
 func TestPolicyRejectsStaleReadingsAndRecovers(t *testing.T) {
