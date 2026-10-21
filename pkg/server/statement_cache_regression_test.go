@@ -28,7 +28,7 @@ func TestStatementHTTPCompositeSelection(t *testing.T) {
 		"CALL { USE r2blockedcmp.source MATCH (n) RETURN count(n) AS c } RETURN c",
 	} {
 		t.Run(query, func(t *testing.T) {
-			executor, err := server.getExecutorForDatabase("nornic")
+			executor, err := server.executorCache.Get("nornic")
 			require.NoError(t, err)
 			_, err = executor.Execute(context.Background(), query, nil)
 			require.NoError(t, err)

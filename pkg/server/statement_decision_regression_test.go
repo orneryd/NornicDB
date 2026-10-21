@@ -79,7 +79,7 @@ func TestStatementHTTPFabricFragmentRequirements(t *testing.T) {
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "r2fabric")
 	query := "CALL { USE r2cmp.source MATCH (n:R2Source) RETURN n.v AS v } CALL { USE r2cmp.target WITH v CREATE (n:R2Loaded {v: v}) RETURN n.v AS loaded } RETURN loaded"
-	exec, err := server.getExecutorForDatabase("r2cmp")
+	exec, err := server.executorCache.Get("r2cmp")
 	require.NoError(t, err)
 	claims := &auth.JWTClaims{Roles: []string{"r2fabric"}}
 	embedded, embeddedErr := exec.Execute(cypher.WithDatabasePermissionResolver(ctx, "r2cmp", server.principalAccess(claims).Allows), query, nil)

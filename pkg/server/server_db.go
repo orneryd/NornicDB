@@ -21,6 +21,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -100,130 +101,6 @@ func transactionOwnerKey(_ *http.Request, claims *auth.JWTClaims) string {
 	return auth.PrincipalID(claims)
 }
 
-// getExecutorForDatabase returns a Cypher executor scoped to the specified database.
-//
-// This method provides database isolation by creating a Cypher executor that operates
-// on a namespaced storage engine. All queries executed through the returned executor
-// will only see data in the specified database.
-//
-// Executors are cached per database and reused across requests for efficiency.
-// This dramatically reduces memory allocations (from 14% to near-zero).
-//
-// Parameters:
-//   - dbName: The name of the database to get an executor for
-//
-// Returns:
-//   - *cypher.StorageExecutor: A Cypher executor scoped to the database
-//   - error: Returns an error if the database doesn't exist or cannot be accessed
-//
-// Example:
-//
-//	executor, err := server.getExecutorForDatabase("tenant_a")
-//	if err != nil {
-//		return err // Database doesn't exist
-//	}
-//	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
-//
-// Thread Safety:
-//   - Safe for concurrent use
-//   - Executors are cached and reused (thread-safe per StorageExecutor design)
-//   - Multiple requests can use the same executor concurrently
-//
-// Performance:
-//   - Executors are created once per database and cached
-//   - Subsequent requests reuse the cached executor (zero allocation overhead)
-//   - Storage engines are cached by DatabaseManager for efficiency
-func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor, error) {
-	s.bindStatementCacheIndex()
-	// Check cache first (read lock for fast path)
-	s.executorsMu.RLock()
-	if executor, ok := s.executors[dbName]; ok && executor.StatementCacheSelectionValid() {
-		s.executorsMu.RUnlock()
-		return executor, nil
-	}
-	s.executorsMu.RUnlock()
-
-	// Get namespaced storage for this database
-	executor, err := s.newDatabaseScopedExecutor(dbName)
-	if err != nil {
-		return nil, err
-	}
-	// The cached executor is shared by every auto-commit request of this
-	// database: a statement must never leave it inside a transaction.
-	// Explicit transactions run on their own per-session executors.
-	executor.SetSharedExecutor(true)
-
-	// Cache the executor (write lock for cache update)
-	s.executorsMu.Lock()
-	// Double-check in case another goroutine created it while we were waiting
-	if existing, ok := s.executors[dbName]; ok && existing.StatementCacheSelectionValid() {
-		s.executorsMu.Unlock()
-		return existing, nil
-	}
-	if !executor.StatementCacheSelectionValid() {
-		s.executorsMu.Unlock()
-		return nil, multidb.ErrDatabaseNotFound
-	}
-	s.executors[dbName] = executor
-	s.executorsMu.Unlock()
-
-	return executor, nil
-}
-
-// getExecutorForDatabaseWithAuth returns an executor for dbName and forwards authToken
-// to remote constituent resolution when a composite database contains remote constituents.
-func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string) (*cypher.StorageExecutor, error) {
-	if authToken == "" || !s.databaseHasRemoteConstituent(dbName) {
-		return s.getExecutorForDatabase(dbName)
-	}
-
-	storageEngine, err := s.dbManager.GetStorageWithAuth(dbName, authToken)
-	if err != nil {
-		return nil, err
-	}
-
-	overrides := s.dbConfigStore.GetOverrides(dbName)
-	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
-	if err := executor.UseDatabaseStatementCaches(s.dbManager, dbName); err != nil {
-		return nil, err
-	}
-	executor.SetLocalizationRenderer(s.localizer)
-	executor.SetSettingsResolver(func() cypher.SettingsSnapshot {
-		overrides := s.dbConfigStore.GetOverrides(dbName)
-		current := dbconfig.Resolve(s.processConfig, overrides)
-		active, _ := s.databaseConfigRuntimeState(dbName, current)
-		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
-	})
-	executor.SetDatabaseManager(s.databaseManager())
-
-	if !s.dbManager.IsCompositeDatabase(dbName) {
-		if _, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-			executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
-		}
-	}
-
-	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
-		executor.ShareQueryStatisticsFrom(baseExec)
-		executor.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			executor.SetInferenceManager(inferMgr)
-		}
-		// NornicDB issue #563 defect 1: without this, every query against a
-		// composite/remote-auth-scoped database executor logs to io.Discard
-		// and never emits a slow_query record, no matter how
-		// NORNICDB_SLOW_QUERY_THRESHOLD is configured.
-		executor.SetLogger(baseExec.Logger())
-		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-	}
-
-	if q := s.db.GetEmbedQueue(); q != nil {
-		executor.SetNodeMutatedCallback(func(nodeID string) { q.Enqueue(nodeID) })
-	}
-
-	return executor, nil
-}
-
 func (s *Server) databaseHasRemoteConstituent(dbName string) bool {
 	info, err := s.dbManager.GetDatabase(dbName)
 	if err != nil || info == nil || info.Type != "composite" {
@@ -238,14 +115,14 @@ func (s *Server) databaseHasRemoteConstituent(dbName string) bool {
 }
 
 // newExecutorForDatabase creates a fresh executor scoped to a single database.
-// Unlike getExecutorForDatabase, this does not cache the executor and is intended
+// Unlike executorCache.Get, this does not cache the executor and is intended
 // for per-transaction session state (explicit HTTP transactions).
 func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor, error) {
-	base, err := s.getExecutorForDatabase(dbName)
+	base, err := s.executorCache.Get(dbName)
 	if err != nil {
 		return nil, err
 	}
-	executor, err := s.newDatabaseScopedExecutor(dbName)
+	executor, err := s.newDatabaseScopedExecutor(dbName, "")
 	if err != nil {
 		return nil, err
 	}
@@ -253,72 +130,68 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	return executor, nil
 }
 
-func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecutor, error) {
-	// This returns a NamespacedEngine that automatically prefixes all keys
-	// with the database name, ensuring complete data isolation.
-	storageEngine, err := s.dbManager.GetStorage(dbName)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *Server) newDatabaseScopedExecutor(dbName, authToken string) (*cypher.StorageExecutor, error) {
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
-	if err := executor.UseDatabaseStatementCaches(s.dbManager, dbName); err != nil {
-		return nil, err
-	}
-	executor.SetLocalizationRenderer(s.localizer)
-	executor.SetDatabaseManager(s.databaseManager())
+	s.applyTransactionMemoryLimits(dbName, resolved)
+	base := s.db.GetCypherExecutor()
+	return cypher.NewDatabaseScopedExecutor(cypher.DatabaseScopedExecutorOptions{
+		Name: dbName, Storage: s.dbManager,
+		AuthToken: authToken, UseAuthenticatedStorage: authToken != "" && s.databaseHasRemoteConstituent(dbName),
+		QueryCachePolicy: true, QueryCacheMaxEntries: resolved.QueryCacheMaxEntries, QueryCacheTTL: resolved.QueryCacheTTL,
+		StatementCacheManager: s.dbManager, LocalizationRenderer: s.localizer, BaseExecutor: base,
+		Configure: func(executor *cypher.StorageExecutor, storageEngine storage.Engine) {
+			executor.SetSettingsResolver(func() cypher.SettingsSnapshot {
+				overrides := s.dbConfigStore.GetOverrides(dbName)
+				current := dbconfig.Resolve(s.processConfig, overrides)
+				active, _ := s.databaseConfigRuntimeState(dbName, current)
+				return cypher.SettingsSnapshot{Configured: overrides, Active: active}
+			})
+			executor.SetDatabaseManager(s.databaseManager())
 
-	// Reuse DB's cached search service instead of creating a new one.
-	// Composite roots do not own a search service; search/index operations must target constituents.
-	if !s.dbManager.IsCompositeDatabase(dbName) {
-		if _, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-			executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
-		}
-	}
+			// Reuse DB's cached search service instead of creating a new one.
+			// Composite roots do not own a search service; search/index operations must target constituents.
+			if !s.dbManager.IsCompositeDatabase(dbName) {
+				if _, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
+					executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
+				}
+			}
 
-	// Copy query embedder from the base DB executor so string-input vector procedures work.
-	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
-		executor.ShareQueryStatisticsFrom(baseExec)
-		executor.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			executor.SetInferenceManager(inferMgr)
-		}
-		// NornicDB issue #563 defect 1: this is the executor behind every
-		// HTTP POST /db/{name}/tx/commit for a non-default database — the
-		// overwhelming majority of this HTTP traffic. Without inheriting
-		// the base executor's logger + threshold here, none of it ever
-		// emits a slow_query record.
-		executor.SetLogger(baseExec.Logger())
-		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-	}
+			// Copy query embedder from the base DB executor so string-input vector procedures work.
+			if base != nil {
+				executor.ShareQueryStatisticsFrom(base)
+				if inferMgr := base.GetInferenceManager(); inferMgr != nil {
+					executor.SetInferenceManager(inferMgr)
+				}
+				// NornicDB issue #563 defect 1: this is the executor behind every
+				// HTTP POST /db/{name}/tx/commit for a non-default database — the
+				// overwhelming majority of this HTTP traffic. Without inheriting
+				// the base executor's logger + threshold here, none of it ever
+				// emits a slow_query record.
+				executor.SetLogger(base.Logger())
+				executor.SetSlowQueryThreshold(base.SlowQueryThreshold())
+			}
 
-	// Wire embed queue callback for per-database executor mutations.
-	if q := s.db.GetEmbedQueue(); q != nil {
-		executor.SetNodeMutatedCallback(func(nodeID string) {
-			q.Enqueue(nodeID)
-		})
-	}
-
-	return executor, nil
+			// Wire embed queue callback for per-database executor mutations.
+			if q := s.db.GetEmbedQueue(); q != nil {
+				executor.SetNodeMutatedCallback(func(nodeID string) {
+					q.Enqueue(nodeID)
+				})
+			}
+		},
+	})
 }
 
 // invalidateExecutor removes a cached executor for a dropped database.
 func (s *Server) invalidateExecutor(dbName string) {
-	s.executorsMu.Lock()
-	defer s.executorsMu.Unlock()
-	delete(s.executors, dbName)
+	s.executorCache.Delete(dbName)
 }
 
 // invalidateAllExecutors clears all cached executors to force fresh database manager references.
 // This is used when database metadata changes (e.g., dropping databases) to ensure
 // all executors see the updated state.
 func (s *Server) invalidateAllExecutors() {
-	s.executorsMu.Lock()
-	defer s.executorsMu.Unlock()
-	// Clear all executors - they will be recreated with fresh database manager references
-	s.executors = make(map[string]*cypher.StorageExecutor)
+	s.executorCache.Clear()
 }
 
 // databaseManagerAdapter wraps multidb.DatabaseManager to implement
@@ -841,6 +714,19 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 
 // handleTransactionEndpoint routes transaction-related requests
 func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Request, dbName string, remaining []string) {
+	if r.Method == http.MethodPost {
+		// A bare explicit COMMIT finishes already accepted work and remains
+		// available during pressure. All other POSTs admit their decode and
+		// response lifetime before reading the request body.
+		bareCommit := len(remaining) == 2 && remaining[1] == "commit" && r.ContentLength == 0
+		if !bareCommit {
+			lease, ok := s.admitTransactionRequest(w, r)
+			if !ok {
+				return
+			}
+			defer lease.Release()
+		}
+	}
 	switch {
 	case len(remaining) == 0:
 		// POST /db/{dbName}/tx - open new transaction
@@ -882,6 +768,30 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 	default:
 		s.writeLocalizedNeo4jError(w, r, http.StatusNotFound, "Neo.ClientError.Request.Invalid", localization.UnknownTransactionEndpoint())
 	}
+}
+
+func (s *Server) admitTransactionRequest(w http.ResponseWriter, r *http.Request) (*memory.Lease, bool) {
+	if s.memoryPolicy == nil {
+		return nil, true
+	}
+	bytes := r.ContentLength
+	if bytes < 0 || bytes > s.config.MaxRequestSize {
+		bytes = s.config.MaxRequestSize
+	}
+	// Decode expands JSON keys, interface slots and nested maps before query
+	// execution can check its own budget. This is a forecast, not a hard bound.
+	forecast := max(int64(64<<10), bytes*4)
+	lease, err := s.memoryPolicy.Reserve(forecast)
+	if err == nil {
+		return lease, true
+	}
+	message := localization.ApplicationMemoryPressure()
+	if errors.Is(err, memory.ErrStaleSample) {
+		message = localization.ApplicationMemoryUnavailable()
+	}
+	s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable,
+		"Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+	return nil, false
 }
 
 // TransactionRequest follows Neo4j HTTP API format exactly.
@@ -1610,7 +1520,13 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
 		// For composite databases with remote constituents, the request's
 		// auth token is forwarded to the remote constituent engines.
-		executor, err := s.getExecutorForDatabaseWithAuth(dbName, authToken)
+		var executor *cypher.StorageExecutor
+		var err error
+		if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
+			executor, err = s.newDatabaseScopedExecutor(dbName, authToken)
+		} else {
+			executor, err = s.executorCache.Get(dbName)
+		}
 		if err != nil {
 			return nil, nil, &requestStatementError{QueryError{
 				Code:    "Neo.ClientError.Database.General",
@@ -1839,7 +1755,7 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 	authToken := r.Header.Get("Authorization")
 	ownerKey := transactionOwnerKey(r, claims)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
-		executor, execErr := s.getExecutorForDatabaseWithAuth(dbName, authToken)
+		executor, execErr := s.newDatabaseScopedExecutor(dbName, authToken)
 		if execErr != nil {
 			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
 		}
@@ -2067,12 +1983,6 @@ func (a *databaseManagerAdapter) StatementCacheScope(name string) (*multidb.Stat
 
 func (s *Server) bindStatementCacheIndex() {
 	s.statementCacheIndex.Bind(s.dbManager, func() {
-		s.executorsMu.Lock()
-		defer s.executorsMu.Unlock()
-		for name, executor := range s.executors {
-			if !executor.StatementCacheSelectionValid() {
-				delete(s.executors, name)
-			}
-		}
+		s.executorCache.EvictInvalid()
 	})
 }
