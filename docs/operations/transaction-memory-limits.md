@@ -27,6 +27,12 @@ With no limits configured, admission and transaction tracking remain off.
   `{"overrides": {"db.memory.transaction.max": "1g"}}`). A database's own
   `db.memory.transaction.max` replaces the process default for that
   database.
+- **Running statements:** each statement snapshots its transaction and pool
+  ceilings at start. A later reload does not revoke or relax those ceilings.
+  Pool usage counters remain shared across statement generations, including
+  retained staged writes, so new statements enforce their new ceiling against
+  all existing charges. An explicit transaction's next statement takes a new
+  snapshot without discarding its retained charge.
 - **Visibility:** `SHOW SETTINGS` and `CALL dbms.listConfig()` list all
   three settings with their current values in bytes. While a limit is set,
   `SHOW TRANSACTIONS YIELD estimatedUsedHeapMemory` shows each running

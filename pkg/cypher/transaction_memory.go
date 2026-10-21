@@ -60,9 +60,14 @@ type memoryPool struct {
 // reserve takes n bytes, or reports the pool's limit and use when n bytes
 // would go over its limit.
 func (p *memoryPool) reserve(n int64) (ok bool, limit, used int64) {
+	return p.reserveAtLimit(n, p.limit.Load())
+}
+
+// reserveAtLimit keeps shared usage while honoring this statement's ceiling.
+// A later configuration generation changes only new statements' ceilings.
+func (p *memoryPool) reserveAtLimit(n, limit int64) (ok bool, ceiling, used int64) {
 	for {
 		used = p.used.Load()
-		limit = p.limit.Load()
 		// Check by subtraction: used+n can wrap and falsely admit growth.
 		if n < 0 || used < 0 || n > math.MaxInt64-used || (limit > 0 && n > limit-used) {
 			return false, limit, used
@@ -201,11 +206,13 @@ func nonNegativeBytes(n int64) int64 {
 // transactionMemoryTracker is a running transaction's estimate: the bytes
 // its running statement holds and the bytes it reserved from its pools.
 type transactionMemoryTracker struct {
-	used     atomic.Int64
-	reserved atomic.Int64
-	retained int64 // storage-owned bytes between explicit statements; session-owned
-	limit    int64
-	database *databaseMemory
+	used          atomic.Int64
+	reserved      atomic.Int64
+	retained      int64 // storage-owned bytes between explicit statements; session-owned
+	limit         int64
+	databaseLimit int64
+	globalLimit   int64
+	database      *databaseMemory
 	// statement is cancelled with the failure, so the statement stops.
 	statement *statementContext
 	root      memoryScope
@@ -295,12 +302,19 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 	if !transactionMemoryActive.Load() && tracker == nil {
 		return
 	}
-	database := transactionMemory.database(tx.database)
+	// Capture all three limits under the configuration owner's lock. Pool
+	// counters stay shared across generations, including retained staged writes.
+	r := transactionMemory
+	r.mu.Lock()
+	database := r.databaseLocked(tx.database)
+	transactionLimit := database.transactionMax.Load()
+	databaseLimit := database.pool.limit.Load()
+	globalLimit := r.global.limit.Load()
+	r.mu.Unlock()
 	// The process-wide active flag also covers limits on other databases.
 	// Do not attach a tracker to a new transaction with no applicable limit;
 	// an existing tracker keeps its retained staged-write charge until it ends.
-	if tracker == nil && transactionMemory.global.limit.Load() == 0 &&
-		database.transactionMax.Load() == 0 && database.pool.limit.Load() == 0 {
+	if tracker == nil && globalLimit == 0 && transactionLimit == 0 && databaseLimit == 0 {
 		return
 	}
 	if tracker == nil {
@@ -313,7 +327,9 @@ func (e *StorageExecutor) beginTransactionMemory(tx *runningTransaction, stateme
 	}
 	tracker.mu.Lock()
 	tracker.database = database
-	tracker.limit = database.transactionMax.Load()
+	tracker.limit = transactionLimit
+	tracker.databaseLimit = databaseLimit
+	tracker.globalLimit = globalLimit
 	tracker.statement = statement
 	tracker.mu.Unlock()
 	tracker.failure.Store(nil)
@@ -429,10 +445,10 @@ func (t *transactionMemoryTracker) reserve(allocation int64) error {
 }
 
 func (t *transactionMemoryTracker) reservePools(n int64) (failed *memoryPool, ok bool, limit, used int64) {
-	if ok, limit, used = t.database.pool.reserve(n); !ok {
+	if ok, limit, used = t.database.pool.reserveAtLimit(n, t.databaseLimit); !ok {
 		return &t.database.pool, false, limit, used
 	}
-	if ok, limit, used = transactionMemory.global.reserve(n); !ok {
+	if ok, limit, used = transactionMemory.global.reserveAtLimit(n, t.globalLimit); !ok {
 		t.database.pool.release(n)
 		return &transactionMemory.global, false, limit, used
 	}
