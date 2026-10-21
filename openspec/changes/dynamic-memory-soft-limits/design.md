@@ -17,6 +17,12 @@
    creating another tracker. Large allocations can overshoot between checkpoints.
 7. Preserve storage atomicity/durability. Cancellation is not process killing,
    goroutine killing or a mechanism to interrupt arbitrary native/syscall work.
+8. A memory-failed explicit transaction releases abortable storage ownership
+   immediately through its existing session lifecycle. The protocol session
+   retains the first failure for its later terminal command.
+9. Under process pressure, choose the newest eligible, pre-acceptance
+   transaction first. Exclude commit completion and cleanup; stop one owner
+   through the canonical policy and reassess before selecting another.
 
 ## Current owners and convergence boundary
 
@@ -80,8 +86,14 @@ stop new admissions, then apply safe cancellation; do not erase or reassign debt
 
 Changing live resource ownership, platform coverage or dynamic container limits
 must update this same owner. Invalid settings fail configuration validation.
-Unavailable/stale telemetry must be visible; its operational policy is an open
-review decision, not an implicit unlimited-mode fallback.
+Unavailable/stale telemetry must be visible; its operational policy remains an
+operator decision. Linux memory.events and PSI may wake the sampler on pressure
+but do not report every change in memory.current. Periodic reads reconcile actual
+usage and cgroup limits; explicit ownership/reservation updates refresh the
+policy between reads. Record the last successful sample time, source and
+coverage. Sampling delays, read errors, a replaced cgroup path and changing
+limits can make a cached observation stale. Event notifications supplement
+periodic reconciliation; they cannot be the sole source of current usage.
 
 ## Variable feature costs and measurement limits
 
@@ -187,11 +199,12 @@ why the application threshold needs headroom and remains soft.
 
 - Application maximum/automatic-sizing setting names and units; relationship to
   the existing MiB-valued NORNICDB_MEMORY_LIMIT without silently reinterpreting it.
-- Sampling interval, stale-sample policy, initial/minimum reserve, growth response,
-  recovery hysteresis and how container co-tenancy affects auto sizing.
-- Deterministic pressure-victim selection and fairness: aborting the transaction
-  that observes pressure is not proof it caused the pressure. Avoid canceling all
-  transactions merely because they saw one over-budget sample.
+- Sampling interval/freshness deadline, stale-sample admission policy, initial/minimum
+  reserve, growth response, recovery hysteresis and container co-tenancy. Event
+  monitoring remains an optional Linux accelerator, not the only usage source.
+- Newest eligible transaction first is accepted. Define ordering under equal start
+  times, bounded selection/reassessment cadence and starvation controls without
+  treating the observing transaction as the cause or canceling every observer.
 - Exact safe commit fences and completion reserves for each storage route; native
   and writeback observation coverage on each supported platform.
 
