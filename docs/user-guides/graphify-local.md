@@ -13,8 +13,7 @@ new copy for every commit.
 Install the same extractor version used by the reference code-intelligence action:
 
 ```sh
-uv venv .venv-code-intelligence
-uv pip install --python .venv-code-intelligence/bin/python -r scripts/requirements-code-intelligence.txt
+uv tool install --with 'ijson>=3.2,<4' --with 'neo4j>=5,<7' 'graphifyy[sql]==0.9.72'
 export NORNICDB_URI=http://localhost:7474/
 export NORNICDB_DATABASE=nornicdbcode
 ```
@@ -36,7 +35,7 @@ configured separately. Set the same variables for your own NornicDB instance.
 ## Update the existing graph
 
 ```sh
-.venv-code-intelligence/bin/python scripts/code_intelligence.py ingest
+"$(uv tool dir)/graphifyy/bin/python" scripts/code_intelligence.py ingest
 ```
 
 This archives the selected commit (`HEAD` by default), extracts its graph with
@@ -59,12 +58,20 @@ The importer follows the reference action's ingestion format:
 - The configured main entry point receives `:Main`. The local default is
   `cmd/nornicdb/main.go:main`; `CODE_INTEL_MAIN=none` disables it.
 
-The original lower-level entry point remains available:
+To extract and ingest this local working directory using the existing `uv tool`
+installation of Graphify, run these commands from the repository root. They do
+not require `graphify` on `PATH` or a repository-local virtual environment:
 
 ```sh
-graphify extract . --code-only --no-cluster
-.venv-code-intelligence/bin/python scripts/graphify_local.py --graph graphify-out/graph.json
+"$(uv tool dir)/graphifyy/bin/graphify" extract . --code-only --no-cluster
+"$(uv tool dir)/graphifyy/bin/python" scripts/graphify_local.py --graph graphify-out/graph.json
 ```
+
+The setup command above installs Graphify and importer dependencies together.
+To repair an existing installation with missing importer dependencies, run
+`uv tool install --force --with 'ijson>=3.2,<4' --with 'neo4j>=5,<7' 'graphifyy[sql]==0.9.72'`.
+Export the connection variables described above before ingestion. Unlike the
+commit-based runner, this extraction reads the current working directory.
 
 Use `--out-graph enriched.json` for an offline enriched export. The `/graphify` UI
 can browse the imported database. Updating the code database does not automatically
@@ -76,7 +83,7 @@ and preserve unrelated graphs and memories.
 From the checkout containing these scripts:
 
 ```sh
-git config --local codeIntelligence.python "$PWD/.venv-code-intelligence/bin/python"
+git config --local codeIntelligence.python "$(uv tool dir)/graphifyy/bin/python"
 bash scripts/install-git-hooks.sh --with-code-intelligence
 ```
 
@@ -137,7 +144,7 @@ the action's candidate-count cap. The time budget covers pagination and comparis
 Run the same public check manually with:
 
 ```sh
-.venv-code-intelligence/bin/python scripts/code_intelligence.py check-staged
+"$(uv tool dir)/graphifyy/bin/python" scripts/code_intelligence.py check-staged
 ```
 
 This is a heuristic against the stored graph, not proof that a change has no
@@ -265,7 +272,7 @@ isolates unrelated user-global Git configuration; global-hook tests install and
 exercise their own real global configuration in temporary repositories:
 
 ```sh
-GIT_CONFIG_GLOBAL=/dev/null .venv-code-intelligence/bin/python -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
+GIT_CONFIG_GLOBAL=/dev/null "$(uv tool dir)/graphifyy/bin/python" -m unittest scripts.test_code_intelligence_hooks scripts.test_pr_duplicates scripts.test_graphify_local scripts.test_graphify_main scripts.test_graphify_comments scripts.test_graphify_errors scripts.test_graphify_embedding_cap scripts.test_graphify_http_auth scripts.test_graphify_divergence
 ```
 
 ### Bounded-search live verification (2026-10-18)
