@@ -415,11 +415,11 @@ memory:
   # Env: NORNICDB_AUTO_LINKS_THRESHOLD
   auto_links_similarity_threshold: 0.82
 
-  # Go runtime GC target in MiB (e.g., "2048", "512", "0", or "auto").
-  # Env: NORNICDB_GO_MEMORY_LIMIT_MIB
+  # Go runtime GC target in integer bytes (e.g., "2147483648", or "0").
+  # Env: NORNICDB_GO_MEMORY_LIMIT_BYTES
   # Deprecated aliases: memory.runtime_limit, NORNICDB_MEMORY_LIMIT
   # Docs: https://github.com/orneryd/nornicdb/docs/operations/memory.md
-  go_runtime_limit: "0"
+  go_runtime_limit_bytes: "0"
 
   # Optional application soft maximum. 0 disables admission and pressure
   # cancellation; this is distinct from the Go runtime GC target above.

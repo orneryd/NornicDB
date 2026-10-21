@@ -101,7 +101,7 @@ var clusterOwnerCallers = map[string][]string{
 	"Service.retireClusterGeneration": {"Service.Close", "Service.clearIndexes", "Service.maybeAutoSetVectorDimensions",
 		"Service.replaceClusterIndex", "Service.resetANNForBuild"},
 	"Service.publishClusterServing": {"Service.Close", "Service.EnableClustering", "Service.maybeAutoSetVectorDimensions",
-		"Service.publishClusterGeneration", "Service.resetANNForBuild"},
+		"Service.publishClusterGeneration"},
 	// Readers: persistence capture, the generation a query holds, strategy.
 	"Service.snapshotClusterGenerationLocked":  {"Service.persistIVFHNSWBackground"},
 	"Service.acquireClusterSnapshot":           {"Service.clusterGenerationFor", "Service.vectorPipelineForQuery"},

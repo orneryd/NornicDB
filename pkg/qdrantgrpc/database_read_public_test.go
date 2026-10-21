@@ -47,7 +47,7 @@ func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 		"write-only":   {"read_default": {Write: true}, "read_named": {Write: true}},
 		"no-access":    {},
 		"reader":       {"read_default": {Read: true}, "read_named": {Read: true}, "nornic": {Read: true}},
-		"admin":        {"read_default": {Read: true, Write: true}, "read_named": {Read: true, Write: true}, "nornic": {Read: true, Write: true}},
+		"admin":        {"read_default": {Read: true, Write: true}, "read_named": {Read: true, Write: true}, "nornic": {Read: true, Write: true}, "system": {Read: true, Write: true}},
 	}
 	authConfig := auth.DefaultAuthConfig()
 	authConfig.SecurityEnabled = true

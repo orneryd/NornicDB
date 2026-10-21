@@ -763,6 +763,9 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
 	}
+	if len(dataBytes) > maxBufferedWALPayloadBytes {
+		return 0, fmt.Errorf("wal: buffered commit exceeds decoded payload limit")
+	}
 	// The buffered-commit payload is the dominant WAL cost (it carries every
 	// write for kill -9 recovery); losslessly compress it so the WAL stays
 	// proportional to the data instead of several times larger.

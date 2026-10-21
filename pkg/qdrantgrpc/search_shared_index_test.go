@@ -501,8 +501,9 @@ func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	var svc *search.Service
-	srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
+	services := make(map[string]*search.Service)
+	srv := startSharedIndexServer(t, dbm, base, func(database string, store storage.Engine) (*search.Service, error) {
+		svc := services[database]
 		if svc == nil {
 			svc = search.NewServiceWithDimensions(store, 8)
 			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
@@ -514,6 +515,7 @@ func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
 			if err := svc.RemoveNode("previous"); err != nil {
 				return nil, err
 			}
+			services[database] = svc
 		}
 		return svc, nil
 	})
@@ -526,9 +528,9 @@ func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
 	count, err := srv.points.Count(ctx, &qpb.CountPoints{CollectionName: "four"})
 	require.NoError(t, err)
 	require.Zero(t, count.GetResult().GetCount(), "a rejected point must not be stored")
-	require.Zero(t, svc.EmbeddingCount())
+	require.Zero(t, services["four"].EmbeddingCount())
 
 	createCosineCollection(t, ctx, srv.collections, "eight", 8)
 	upsertPoint(t, ctx, srv.points, "eight", 1, unitVector(8, 1), nil)
-	require.Equal(t, 1, svc.EmbeddingCount(), "an acknowledged point is indexed")
+	require.Equal(t, 1, services["eight"].EmbeddingCount(), "an acknowledged point is indexed")
 }

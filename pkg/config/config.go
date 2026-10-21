@@ -45,6 +45,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -778,8 +779,9 @@ type MemoryConfig struct {
 	// (the default), ResolveRuntimeLimit derives it from the container's
 	// cgroup memory limit at startup, and clamps an explicit limit above it.
 	RuntimeLimit int64
-	// RuntimeLimitStr is the configured value in megabytes as a string
-	// (e.g., "500"), "0" for unlimited or "auto"
+	// RuntimeLimitStr is the configured byte value, legacy MiB value, or auto.
+	// RuntimeLimit contains the parsed byte count; this field retains the
+	// spelling needed to distinguish explicit zero from automatic sizing.
 	RuntimeLimitStr string
 	// ApplicationSoftMax is the opt-in application memory-pressure threshold in
 	// bytes. Zero leaves application admission and pressure cancellation off.
@@ -1726,7 +1728,7 @@ type YAMLConfig struct {
 		AutoLinksEnabled             bool    `yaml:"auto_links_enabled"`
 		AutoLinksSimilarityThreshold float64 `yaml:"auto_links_similarity_threshold"`
 		RuntimeLimit                 string  `yaml:"runtime_limit"`
-		GoRuntimeLimit               string  `yaml:"go_runtime_limit"`
+		GoRuntimeLimit               string  `yaml:"go_runtime_limit_bytes"`
 		ApplicationSoftMax           string  `yaml:"application_soft_max"`
 		TransactionMax               string  `yaml:"transaction_max"`
 		TransactionTotalMax          string  `yaml:"transaction_total_max"`
@@ -2777,29 +2779,18 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvFloat("NORNICDB_AUTO_LINKS_THRESHOLD", 0); v > 0 {
 		config.Memory.AutoLinksSimilarityThreshold = v
 	}
-	if v := getEnv("NORNICDB_MEMORY_LIMIT", ""); v != "" {
-		if replacement := getEnv("NORNICDB_GO_MEMORY_LIMIT_MIB", ""); replacement != "" {
-			oldLimit, oldErr := ParseRuntimeLimit(v)
-			newLimit, newErr := ParseRuntimeLimit(replacement)
-			if oldErr != nil || newErr != nil || oldLimit != newLimit {
-				return fmt.Errorf("NORNICDB_MEMORY_LIMIT conflicts with NORNICDB_GO_MEMORY_LIMIT_MIB")
-			}
-		}
-		runtimeLimit, err := ParseRuntimeLimit(v)
+	legacyRuntime, canonicalRuntime := getEnv("NORNICDB_MEMORY_LIMIT", ""), getEnv("NORNICDB_GO_MEMORY_LIMIT_BYTES", "")
+	if legacyRuntime != "" || canonicalRuntime != "" {
+		// TODO: Migrate deployments still using the legacy MiB environment variable to bytes.
+		choice, err := ResolveRuntimeLimitAliases(legacyRuntime, canonicalRuntime)
 		if err != nil {
-			return fmt.Errorf("invalid NORNICDB_MEMORY_LIMIT value %q: %w", v, err)
+			return fmt.Errorf("NORNICDB_MEMORY_LIMIT / NORNICDB_GO_MEMORY_LIMIT_BYTES: %w", err)
 		}
-		config.Memory.RuntimeLimitStr = v
-		config.Memory.RuntimeLimit = runtimeLimit
-		warnDeprecatedMemorySetting(config.Localization.Language, localization.NornicDBCLIEnvMemoryLimitDeprecated())
-	}
-	if v := getEnv("NORNICDB_GO_MEMORY_LIMIT_MIB", ""); v != "" {
-		runtimeLimit, err := ParseRuntimeLimit(v)
-		if err != nil {
-			return fmt.Errorf("invalid NORNICDB_GO_MEMORY_LIMIT_MIB value %q: %w", v, err)
+		config.Memory.RuntimeLimitStr = choice.Raw
+		config.Memory.RuntimeLimit = choice.Bytes
+		if legacyRuntime != "" {
+			warnDeprecatedMemorySetting(config.Localization.Language, localization.NornicDBCLIEnvMemoryLimitDeprecated())
 		}
-		config.Memory.RuntimeLimitStr = v
-		config.Memory.RuntimeLimit = runtimeLimit
 	}
 	if v := getEnv("NORNICDB_MEMORY_APPLICATION_SOFT_MAX", ""); v != "" {
 		limit, err := ParseApplicationSoftMax(v)
@@ -3808,29 +3799,17 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Memory.AutoLinksSimilarityThreshold > 0 {
 		config.Memory.AutoLinksSimilarityThreshold = yamlCfg.Memory.AutoLinksSimilarityThreshold
 	}
-	if yamlCfg.Memory.RuntimeLimit != "" && yamlCfg.Memory.GoRuntimeLimit != "" {
-		oldLimit, oldErr := ParseRuntimeLimit(yamlCfg.Memory.RuntimeLimit)
-		newLimit, newErr := ParseRuntimeLimit(yamlCfg.Memory.GoRuntimeLimit)
-		if oldErr != nil || newErr != nil || oldLimit != newLimit {
-			return nil, fmt.Errorf("memory.runtime_limit conflicts with memory.go_runtime_limit")
-		}
-	}
-	if yamlCfg.Memory.RuntimeLimit != "" {
-		runtimeLimit, err := ParseRuntimeLimit(yamlCfg.Memory.RuntimeLimit)
+	if yamlCfg.Memory.RuntimeLimit != "" || yamlCfg.Memory.GoRuntimeLimit != "" {
+		// TODO: Migrate legacy memory.runtime_limit YAML users to integer bytes.
+		choice, err := ResolveRuntimeLimitAliases(yamlCfg.Memory.RuntimeLimit, yamlCfg.Memory.GoRuntimeLimit)
 		if err != nil {
-			return nil, fmt.Errorf("invalid memory.runtime_limit value %q: %w", yamlCfg.Memory.RuntimeLimit, err)
+			return nil, fmt.Errorf("memory.runtime_limit / memory.go_runtime_limit_bytes: %w", err)
 		}
-		config.Memory.RuntimeLimitStr = yamlCfg.Memory.RuntimeLimit
-		config.Memory.RuntimeLimit = runtimeLimit
-		warnDeprecatedMemorySetting(yamlCfg.Localization.Language, localization.NornicDBCLIYAMLMemoryLimitDeprecated())
-	}
-	if yamlCfg.Memory.GoRuntimeLimit != "" {
-		runtimeLimit, err := ParseRuntimeLimit(yamlCfg.Memory.GoRuntimeLimit)
-		if err != nil {
-			return nil, fmt.Errorf("invalid memory.go_runtime_limit value %q: %w", yamlCfg.Memory.GoRuntimeLimit, err)
+		config.Memory.RuntimeLimitStr = choice.Raw
+		config.Memory.RuntimeLimit = choice.Bytes
+		if yamlCfg.Memory.RuntimeLimit != "" {
+			warnDeprecatedMemorySetting(yamlCfg.Localization.Language, localization.NornicDBCLIYAMLMemoryLimitDeprecated())
 		}
-		config.Memory.RuntimeLimitStr = yamlCfg.Memory.GoRuntimeLimit
-		config.Memory.RuntimeLimit = runtimeLimit
 	}
 	if yamlCfg.Memory.ApplicationSoftMax != "" {
 		limit, err := ParseApplicationSoftMax(yamlCfg.Memory.ApplicationSoftMax)
@@ -4453,43 +4432,84 @@ func generateDefaultSecret() string {
 	return "CHANGE_ME_IN_PRODUCTION_" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
-// ParseRuntimeLimit parses memory.runtime_limit: ParseMemoryLimitMB's
-// megabytes, or "auto" (0, resolved later by ResolveRuntimeLimit).
-func ParseRuntimeLimit(s string) (int64, error) {
-	if strings.EqualFold(strings.TrimSpace(s), RuntimeLimitAuto) {
-		return 0, nil
+// RuntimeLimitChoice preserves the difference between automatic sizing and
+// an explicit unlimited zero while comparing legacy/canonical aliases.
+type RuntimeLimitChoice struct {
+	Raw   string
+	Bytes int64
+	Auto  bool
+}
+
+// ErrRuntimeLimitAliasConflict means two simultaneously configured aliases
+// differ in either size or sizing mode.
+var ErrRuntimeLimitAliasConflict = errors.New("runtime memory limit aliases conflict")
+
+// ResolveRuntimeLimitAliases is the single alias and precedence rule used by
+// environment, YAML, and CLI settings. Legacy input is in MiB; canonical input
+// is an integer number of bytes. The canonical spelling wins when equal.
+func ResolveRuntimeLimitAliases(legacy, canonical string) (RuntimeLimitChoice, error) {
+	parseLegacy := func(raw string) (RuntimeLimitChoice, error) {
+		choice := RuntimeLimitChoice{Raw: raw, Auto: strings.EqualFold(strings.TrimSpace(raw), RuntimeLimitAuto)}
+		if choice.Auto {
+			return choice, nil
+		}
+		// TODO: Migrate existing legacy callers to integer bytes; do not add callers.
+		bytes, err := ParseMemoryLimitMB(raw)
+		choice.Bytes = bytes
+		return choice, err
 	}
-	return ParseMemoryLimitMB(s)
+	parseCanonical := func(raw string) (RuntimeLimitChoice, error) {
+		value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err != nil || value < 0 {
+			return RuntimeLimitChoice{}, fmt.Errorf("must be a non-negative integer number of bytes")
+		}
+		return RuntimeLimitChoice{Raw: raw, Bytes: value}, nil
+	}
+	var old, current RuntimeLimitChoice
+	var err error
+	if legacy != "" {
+		old, err = parseLegacy(legacy)
+		if err != nil {
+			return RuntimeLimitChoice{}, err
+		}
+	}
+	if canonical != "" {
+		current, err = parseCanonical(canonical)
+		if err != nil {
+			return RuntimeLimitChoice{}, err
+		}
+	}
+	if legacy != "" && canonical != "" && (old.Auto != current.Auto || old.Bytes != current.Bytes) {
+		return RuntimeLimitChoice{}, ErrRuntimeLimitAliasConflict
+	}
+	if canonical != "" {
+		return current, nil
+	}
+	return old, nil
+}
+
+// ParseRuntimeLimit parses the legacy memory.runtime_limit value in MiB or auto.
+// DEPRECATED: Legacy MiB input only. New settings use integer bytes.
+func ParseRuntimeLimit(s string) (int64, error) {
+	// TODO: Migrate existing legacy callers to integer bytes; do not add callers.
+	if strings.TrimSpace(s) == "" {
+		return ParseMemoryLimitMB(s)
+	}
+	choice, err := ResolveRuntimeLimitAliases(s, "")
+	return choice.Bytes, err
 }
 
 // ParseApplicationSoftMax parses an opt-in application threshold in bytes.
 // k, m, g and t suffixes denote binary units; zero disables the policy.
 func ParseApplicationSoftMax(s string) (int64, error) {
-	v := strings.ToLower(strings.TrimSpace(s))
-	if v == "" {
-		return 0, fmt.Errorf("empty byte size")
-	}
-	multiplier := int64(1)
-	switch v[len(v)-1] {
-	case 'k':
-		multiplier, v = 1<<10, v[:len(v)-1]
-	case 'm':
-		multiplier, v = 1<<20, v[:len(v)-1]
-	case 'g':
-		multiplier, v = 1<<30, v[:len(v)-1]
-	case 't':
-		multiplier, v = 1<<40, v[:len(v)-1]
-	}
-	n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-	if err != nil || n < 0 || n > int64(^uint64(0)>>1)/multiplier {
-		return 0, fmt.Errorf("invalid byte size %q", s)
-	}
-	return n * multiplier, nil
+	return ParseByteSize(s)
 }
 
 // ParseMemoryLimitMB parses a memory limit value expressed in megabytes.
 // Valid examples: "0" (unlimited), "500" (500 MB).
 // Invalid examples: "500MB", "1GB", "unlimited".
+// DEPRECATED: Legacy MiB input only. NEVER use for new settings or features.
+// New memory settings accept integer byte values. Do not add callers.
 func ParseMemoryLimitMB(s string) (int64, error) {
 	const bytesPerMB int64 = 1024 * 1024
 

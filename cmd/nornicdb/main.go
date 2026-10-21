@@ -181,7 +181,7 @@ func registerServerCommands(rootCmd *cobra.Command, localizer *localization.Mana
 	serveCmd.Flags().Int("parallel-batch-size", 1000, text(localization.NornicDBCLIFlagParallelBatchSize()))
 	// Memory management flags
 	serveCmd.Flags().String("memory-limit", "", text(localization.NornicDBCLIFlagMemoryLimit()))
-	serveCmd.Flags().String("go-memory-limit", "", text(localization.NornicDBCLIFlagGoMemoryLimit()))
+	serveCmd.Flags().String("go-memory-limit-bytes", "", text(localization.NornicDBCLIFlagGoMemoryLimit()))
 	serveCmd.Flags().Int("gc-percent", 100, text(localization.NornicDBCLIFlagGCPercent()))
 	serveCmd.Flags().Bool("pool-enabled", true, text(localization.NornicDBCLIFlagPoolEnabled()))
 	serveCmd.Flags().Bool("low-memory", getEnvBool("NORNICDB_LOW_MEMORY", false), text(localization.NornicDBCLIFlagLowMemory()))
@@ -356,7 +356,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	parallelBatchSize, _ := cmd.Flags().GetInt("parallel-batch-size")
 	// Memory management flags
 	memoryLimit, _ := cmd.Flags().GetString("memory-limit")
-	goMemoryLimit, _ := cmd.Flags().GetString("go-memory-limit")
+	goMemoryLimit, _ := cmd.Flags().GetString("go-memory-limit-bytes")
 	gcPercent, _ := cmd.Flags().GetInt("gc-percent")
 	poolEnabled, _ := cmd.Flags().GetBool("pool-enabled")
 	queryCacheSize, _ := cmd.Flags().GetInt("query-cache-size")
@@ -505,29 +505,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Override with CLI flags if provided
-	if memoryLimit != "" && goMemoryLimit != "" {
-		legacy, legacyErr := config.ParseRuntimeLimit(memoryLimit)
-		canonical, canonicalErr := config.ParseRuntimeLimit(goMemoryLimit)
-		if legacyErr != nil || canonicalErr != nil || legacy != canonical {
-			return newCommandError(cmd, localization.NornicDBCLIGoMemoryLimitConflict(), nil)
-		}
+	// TODO: Migrate users of the legacy MiB --memory-limit flag to byte integers.
+	choice, runtimeErr := config.ResolveRuntimeLimitAliases(memoryLimit, goMemoryLimit)
+	if errors.Is(runtimeErr, config.ErrRuntimeLimitAliasConflict) {
+		return newCommandError(cmd, localization.NornicDBCLIGoMemoryLimitConflict(), runtimeErr)
 	}
 	if memoryLimit != "" {
 		cmd.PrintErrln(cli.Render(commandLocalizer(cmd), localization.NornicDBCLIGoMemoryLimitDeprecated()))
 	}
-	if goMemoryLimit != "" {
-		memoryLimit = goMemoryLimit
-	}
-	if memoryLimit != "" {
-		runtimeLimit, err := config.ParseRuntimeLimit(memoryLimit)
-		if err != nil {
+	if choice.Raw != "" || runtimeErr != nil {
+		if runtimeErr != nil {
 			if goMemoryLimit != "" {
-				return newCommandError(cmd, localization.NornicDBCLIInvalidGoMemoryLimit(goMemoryLimit, err), err)
+				return newCommandError(cmd, localization.NornicDBCLIInvalidGoMemoryLimit(goMemoryLimit, runtimeErr), runtimeErr)
 			}
-			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, err), err)
+			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, runtimeErr), runtimeErr)
 		}
-		cfg.Memory.RuntimeLimitStr = memoryLimit
-		cfg.Memory.RuntimeLimit = runtimeLimit
+		cfg.Memory.RuntimeLimitStr = choice.Raw
+		cfg.Memory.RuntimeLimit = choice.Bytes
 	}
 	if gcPercent != 100 {
 		cfg.Memory.GCPercent = gcPercent

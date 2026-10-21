@@ -3,11 +3,16 @@ package bolt
 import (
 	"errors"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 func (s *Session) sendRunQueryFailure(err error, query string) error {
 	code, message := mapBoltQueryErrorForQuery(err, query)
+	var localized *localization.LocalizedError
+	if errors.As(err, &localized) && localized.Code == code {
+		message = s.localize(localized.Message)
+	}
 	var oversized *resultstream.PageSizeExceededError
 	if !errors.As(err, &oversized) {
 		return s.sendRunFailureWithDetail(code, message, boltErrorDetail(err))

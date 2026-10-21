@@ -374,6 +374,7 @@ func (s runningStatement) done() bool {
 			tracker.mu.Lock()
 			tracker.statement = nil
 			tracker.mu.Unlock()
+			tracker.retireStatementLists()
 		}
 	}
 	// Serialize final statement retirement with successful TERMINATE lookup.
@@ -479,6 +480,11 @@ func (c *statementContext) cancel(err error) {
 	if c.err != nil {
 		c.mu.Unlock()
 		return
+	}
+	// A caller whose context was already canceled owns the first cause even
+	// when the memory tracker reaches this checkpoint a moment later.
+	if parentErr := c.parent.Err(); parentErr != nil {
+		err = parentErr
 	}
 	c.err = err
 	if c.done != nil {

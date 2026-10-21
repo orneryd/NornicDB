@@ -25,8 +25,8 @@ func TestBuildSkipsAStoredEmbeddingWithOtherDimensions(t *testing.T) {
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	require.Equal(t, []string{"nornic:good"}, buildWriteSearchIDs(t, svc, "goodterm"))
 	require.Equal(t, []string{"nornic:bad"}, buildWriteSearchIDs(t, svc, "badterm"))
-	_, ok := svc.getVectorLookup()("nornic:good-named-v")
+	_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:good", "v"))
 	require.True(t, ok)
-	_, ok = svc.getVectorLookup()("nornic:bad-named-v")
+	_, ok = svc.getVectorLookup()(nodeNamedVectorKey("nornic:bad", "v"))
 	require.False(t, ok)
 }

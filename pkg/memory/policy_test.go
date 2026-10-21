@@ -86,6 +86,45 @@ func TestPolicyRejectsStaleReadingsAndRecovers(t *testing.T) {
 	}
 }
 
+func TestPolicyOverlappingRefreshKeepsNewestObservation(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	policy := NewPolicy(1000, 0, time.Hour, func() (Sample, error) {
+		if calls.Add(1) == 1 {
+			close(firstStarted)
+			<-releaseFirst
+			return Sample{Used: 100, Ceiling: 1000}, nil
+		}
+		return Sample{Used: 950, Ceiling: 1000}, nil
+	}, time.Now)
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- policy.Refresh() }()
+	<-firstStarted
+	if err := policy.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policy.Reserve(100); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("late permissive observation reopened admission: %v", err)
+	}
+}
+
+func TestPolicyHonorsAncestorHeadroom(t *testing.T) {
+	policy := NewPolicy(1000, 0, time.Hour, func() (Sample, error) {
+		return Sample{Used: 100, Ceiling: 1000, Headroom: 50, HasHeadroom: true}, nil
+	}, time.Now)
+	if err := policy.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policy.Reserve(100); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("ancestor has only 50 bytes free: %v", err)
+	}
+}
+
 func TestPolicyRejectsImmediatelyAfterSamplerFailure(t *testing.T) {
 	now := time.Unix(100, 0)
 	fail := false
