@@ -23,9 +23,30 @@
 9. Under process pressure, choose the newest eligible, pre-acceptance
    transaction first. Exclude commit completion and cleanup; stop one owner
    through the canonical policy and reassess before selecting another.
-10. If current memory telemetry exceeds its freshness deadline or becomes
-    unavailable, reject new expensive work until a fresh successful sample
-    arrives. Continue rollback, flush and accepted commit completion.
+10. When application pressure protection is enabled, stale or unavailable
+    memory telemetry rejects new expensive work until a fresh successful
+    sample arrives. Continue rollback, flush and accepted commit completion.
+
+## Opt-in scope and disabled-path contract
+
+Application pressure protection is enabled only by an explicitly configured
+finite application soft maximum. The existing `NORNICDB_MEMORY_LIMIT` remains a
+Go GC target and does not implicitly enable request admission, process-pressure
+victims, stale-telemetry rejection, dynamic baseline enforcement or async-buffer
+byte gating. A finite individual transaction or aggregate pool setting enables
+only that scope's estimate checks and resulting cleanup; it does not implicitly
+enable an application-wide limit. Zero/unset transaction settings are unlimited.
+The new application limit is unset/disabled by default. No finite container
+limit automatically turns this policy on.
+
+With no application, transaction or aggregate limit enabled, the policy's hot
+path is a cheap disabled check: no reservation/accounting work, sampler-driven
+rejection, additional cancellation, admission errors or behavior changes. Existing
+context cancellation, request-size rules, storage durability and Go GC behavior
+continue normally. A configured application limit enables shared pressure checks,
+including async-buffer admission and stale-telemetry handling. Configuration
+transitions must publish one coherent state and retain outstanding ownership until
+safe completion; disabling a limit cannot erase a pending commit's obligations.
 
 ## Current owners and convergence boundary
 
@@ -89,8 +110,8 @@ stop new admissions, then apply safe cancellation; do not erase or reassign debt
 
 Changing live resource ownership, platform coverage or dynamic container limits
 must update this same owner. Invalid settings fail configuration validation.
-Unavailable/stale telemetry is visible and stops new expensive admissions until
-a fresh successful sample arrives. Rollback, flush and accepted commit completion
+With application pressure protection enabled, unavailable/stale telemetry is
+visible and stops new expensive admissions until a fresh successful sample arrives. Rollback, flush and accepted commit completion
 continue from protected capacity. The precise freshness deadline remains to be
 measured and selected. Linux memory.events and PSI may wake the sampler on pressure
 but do not report every change in memory.current. Periodic reads reconcile actual
@@ -206,7 +227,7 @@ why the application threshold needs headroom and remains soft.
   the existing MiB-valued NORNICDB_MEMORY_LIMIT without silently reinterpreting it.
 - Sampling interval/freshness deadline, initial/minimum reserve, growth response,
   recovery hysteresis and container co-tenancy. Stale/unavailable telemetry
-  rejects new expensive work until a fresh sample arrives. Event monitoring
+  rejects new expensive work only with the application limit enabled. Event monitoring
   remains an optional Linux accelerator, not the only usage source.
 - Newest eligible transaction first is accepted. Define ordering under equal start
   times, bounded selection/reassessment cadence and starvation controls without

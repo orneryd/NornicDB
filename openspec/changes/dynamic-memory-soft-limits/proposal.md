@@ -58,6 +58,9 @@ commit/flush paths. This is a Nornic operational extension plus versioned Neo4j
 error/settings compatibility, not an openCypher language change. No Badger source
 patch, durability-policy change, disk-spill engine, unrelated search refactor,
 forced-GC-on-every-query policy or automatic unbounded transaction retry is proposed.
-Transaction limits remain unlimited by default (`0`) on the release port.
-Exact application-limit setting names, automatic sizing constants and pressure
-victim selection remain explicit review decisions in design.md.
+The new application pressure policy is disabled by default; transaction limits
+remain unlimited by default (`0`) on the release port. `NORNICDB_MEMORY_LIMIT`
+continues to control only Go GC. With no new limits configured, normal admission,
+execution and async-buffer behavior continue without new sampling or rejection.
+Exact application-limit setting names and automatic sizing constants remain
+explicit review decisions in design.md.
