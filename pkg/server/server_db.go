@@ -966,14 +966,22 @@ func statementError(err error) QueryError {
 // compiled and failed while running, its result with its columns and no rows
 // is recorded in response first, as Neo4j's HTTP API reports it (#668); a
 // statement failing at compile time has no result.
-func statementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error) QueryError {
+func statementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
 	failure := statementError(err)
+	localizeStatementError(&failure, err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
 		if columns := executor.StatementColumns(query); len(columns) > 0 {
 			response.Results = append(response.Results, QueryResult{Columns: columns, Data: []ResultRow{}})
 		}
 	}
 	return failure
+}
+
+func localizeStatementError(failure *QueryError, err error, localize func(localization.Message) string) {
+	var localized *localization.LocalizedError
+	if errors.As(err, &localized) && localized.Code == failure.Code && localize != nil {
+		failure.Message = localize(localized.Message)
+	}
 }
 
 // QueryError is an error from a query (Neo4j format).
@@ -1573,105 +1581,97 @@ func (s *Server) runRequestStatements(
 	// read / write are the privileges of the database its data is in: the
 	// principal's one resolver (principalAccess).
 	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccess(claims).Allows)
+	// The request owns the entire statement sequence and its per-statement
+	// handling, including localized failure and partial-result publication.
+	runOne := func(stmt StatementRequest) *QueryError {
+		effectiveDB, queryStatement := defaultDB, stmt.Statement
+
+		// Use ExistsOrIsConstituent to accept dotted composite.alias references.
+		if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
+			return &QueryError{
+				Code:    "Neo.ClientError.Database.DatabaseNotFound",
+				Message: localize(localization.HTTPDatabaseNotFound(effectiveDB)),
+			}
+		}
+
+		// Cypher comments are removed before the statement checks and execution
+		// (the executor's quote-aware rule: // in a string literal is text), and a
+		// UTF-8 BOM (some clients send one; it breaks executor routing, e.g.
+		// CREATE DATABASE).
+		queryStatement = strings.TrimSpace(cypher.StripComments(queryStatement))
+		if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
+			queryStatement = strings.TrimSpace(strings.TrimPrefix(queryStatement, "\xef\xbb\xbf"))
+		}
+		// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
+		// fails its request like any other invalid statement.
+		if queryStatement == "" {
+			return &QueryError{
+				Code:    "Neo.ClientError.Statement.SyntaxError",
+				Message: "Unexpected end of input: expected CYPHER, EXPLAIN, PROFILE or Query",
+			}
+		}
+
+		queryStart := time.Now()
+		result, executor, err := run(ctx, effectiveDB, queryStatement, stmt.Parameters)
+		s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
+		if err != nil {
+			var own *requestStatementError
+			if errors.As(err, &own) {
+				return &own.QueryError
+			}
+			failure := statementError(err)
+			localizeStatementError(&failure, err, localize)
+			// Authorization failures never publish a statement result, even when
+			// the executor supplies column metadata alongside the denial. Keep
+			// runtime partial results for non-security statement failures below.
+			if strings.HasPrefix(failure.Code, "Neo.ClientError.Security.") {
+				return &failure
+			}
+			if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+				s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+				return &failure
+			}
+			queryErr := statementFailure(response, executor, queryStatement, err, localize)
+			return &queryErr
+		}
+
+		// Auto-grant access when a new database is created: admins and the creating principal get full access.
+		if isCreateDatabaseStatement(queryStatement) {
+			if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
+				s.grantAccessToNewDatabase(ctx, createdName, claims)
+				// Ensure CREATE DATABASE always returns a proper result (name + row).
+				if len(result.Columns) == 0 && len(result.Rows) == 0 {
+					s.logEvent(ctx, slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
+					result.Columns = []string{"name"}
+					result.Rows = [][]interface{}{{createdName}}
+				}
+			}
+		}
+
+		// Per-database RBAC: SHOW DATABASES lists only the databases the principal may see.
+		if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
+			mode := s.getDatabaseAccessMode(claims)
+			filtered := make([][]interface{}, 0, len(result.Rows))
+			for _, row := range result.Rows {
+				if len(row) > 0 {
+					if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
+						filtered = append(filtered, row)
+					}
+				}
+			}
+			result.Rows = filtered
+		}
+
+		s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+		return nil
+	}
 	for _, stmt := range statements {
-		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
+		if queryErr := runOne(stmt); queryErr != nil {
 			response.Errors = append(response.Errors, *queryErr)
 			return true
 		}
 	}
 	return false
-}
-
-// runRequestStatement runs one statement of an HTTP /tx request and appends
-// its result; it returns the statement's error.
-func (s *Server) runRequestStatement(
-	ctx context.Context,
-	claims *auth.JWTClaims,
-	defaultDB string,
-	stmt StatementRequest,
-	run statementRunner,
-	localize func(localization.Message) string,
-	response *TransactionResponse,
-) *QueryError {
-	effectiveDB, queryStatement := defaultDB, stmt.Statement
-
-	// Use ExistsOrIsConstituent to accept dotted composite.alias references.
-	if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
-		return &QueryError{
-			Code:    "Neo.ClientError.Database.DatabaseNotFound",
-			Message: localize(localization.HTTPDatabaseNotFound(effectiveDB)),
-		}
-	}
-
-	// Cypher comments are removed before the statement checks and execution
-	// (the executor's quote-aware rule: // in a string literal is text), and a
-	// UTF-8 BOM (some clients send one; it breaks executor routing, e.g.
-	// CREATE DATABASE).
-	queryStatement = strings.TrimSpace(cypher.StripComments(queryStatement))
-	if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
-		queryStatement = strings.TrimSpace(strings.TrimPrefix(queryStatement, "\xef\xbb\xbf"))
-	}
-	// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
-	// fails its request like any other invalid statement.
-	if queryStatement == "" {
-		return &QueryError{
-			Code:    "Neo.ClientError.Statement.SyntaxError",
-			Message: "Unexpected end of input: expected CYPHER, EXPLAIN, PROFILE or Query",
-		}
-	}
-
-	queryStart := time.Now()
-	result, executor, err := run(ctx, effectiveDB, queryStatement, stmt.Parameters)
-	s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
-	if err != nil {
-		var own *requestStatementError
-		if errors.As(err, &own) {
-			return &own.QueryError
-		}
-		failure := statementError(err)
-		// Authorization failures never publish a statement result, even when
-		// the executor supplies column metadata alongside the denial. Keep
-		// runtime partial results for non-security statement failures below.
-		if strings.HasPrefix(failure.Code, "Neo.ClientError.Security.") {
-			return &failure
-		}
-		if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
-			s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
-			return &failure
-		}
-		queryErr := statementFailure(response, executor, queryStatement, err)
-		return &queryErr
-	}
-
-	// Auto-grant access when a new database is created: admins and the creating principal get full access.
-	if isCreateDatabaseStatement(queryStatement) {
-		if createdName, ok := parseCreatedDatabaseName(queryStatement); ok && createdName != "" {
-			s.grantAccessToNewDatabase(ctx, createdName, claims)
-			// Ensure CREATE DATABASE always returns a proper result (name + row).
-			if len(result.Columns) == 0 && len(result.Rows) == 0 {
-				s.logEvent(ctx, slog.LevelWarn, localization.ServerCreateDatabaseDefensiveFixEvent(createdName))
-				result.Columns = []string{"name"}
-				result.Rows = [][]interface{}{{createdName}}
-			}
-		}
-	}
-
-	// Per-database RBAC: SHOW DATABASES lists only the databases the principal may see.
-	if isShowDatabasesQuery(queryStatement) && result.Rows != nil {
-		mode := s.getDatabaseAccessMode(claims)
-		filtered := make([][]interface{}, 0, len(result.Rows))
-		for _, row := range result.Rows {
-			if len(row) > 0 {
-				if name, ok := row[0].(string); ok && mode.CanSeeDatabase(name) {
-					filtered = append(filtered, row)
-				}
-			}
-		}
-		result.Rows = filtered
-	}
-
-	s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
-	return nil
 }
 
 // runOneShotTransaction runs a one-shot /tx/commit request of several

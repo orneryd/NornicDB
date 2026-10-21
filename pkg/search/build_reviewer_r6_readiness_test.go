@@ -43,7 +43,7 @@ func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
 	require.ErrorIs(t, err, injected)
 	require.True(t, reached)
 	require.False(t, svc.IsReady(), "return must revoke readiness")
-	_, found := svc.getVectorLookup()("nornic:good-named-v")
+	_, found := svc.getVectorLookup()(nodeNamedVectorKey("nornic:good", "v"))
 	require.True(t, found, "later write must still apply")
 	require.False(t, published, "IsReady was true while an acknowledged final-drain write was failing")
 }

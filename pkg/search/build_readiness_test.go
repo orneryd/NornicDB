@@ -22,6 +22,7 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 	svc := newTriageService(t, engine)
 	reached, published := false, false
 	svc.SetLogger(slog.New(&triageReplayLog{match: "starting vector pipeline warmup", during: func() {
+		svc.SetPersistenceEnabled(true)
 		svc.vectorFileStore.mu.Lock()
 		svc.vectorFileStore.writeRecord = func(file *os.File, id string, vec []float32) error {
 			if strings.Contains(id, "tail") {
@@ -31,7 +32,6 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 			return writeVectorRecord(file, id, vec)
 		}
 		svc.vectorFileStore.mu.Unlock()
-		svc.SetPersistenceEnabled(true)
 		tail := triageNode("nornic:tail")
 		_, err := engine.CreateNode(tail)
 		require.NoError(t, err)
@@ -41,7 +41,7 @@ func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
 	require.True(t, reached)
 	require.False(t, published, "success must not publish readiness before installing the tail")
 	require.True(t, svc.IsReady(), "successful final replay must publish readiness")
-	_, found := svc.getVectorLookup()("nornic:tail-named-v")
+	_, found := svc.getVectorLookup()(nodeNamedVectorKey("nornic:tail", "v"))
 	require.True(t, found)
 }
 
@@ -112,6 +112,6 @@ func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
 	}
 	require.False(t, readyAtHandoff, "pending final sequence published readiness")
 	require.True(t, svc.IsReady())
-	_, found := svc.getVectorLookup()("nornic:tail-named-v")
+	_, found := svc.getVectorLookup()(nodeNamedVectorKey("nornic:tail", "v"))
 	require.True(t, found)
 }

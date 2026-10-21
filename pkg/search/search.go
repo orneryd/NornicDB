@@ -5994,6 +5994,12 @@ func (s *Service) scheduleStrategyTransitionCheck() {
 	vectorCount, _, _ := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
 	if !current.runtimeManaged() {
+		// Live writes can invalidate a derived pipeline before its first
+		// strategy settles. Rebuild it once writes go quiet; otherwise no
+		// subsequent write can schedule the transition from an unknown mode.
+		if vectorCount > 0 {
+			s.scheduleDebouncedStrategyTransition(s.desiredRuntimeStrategy(vectorCount))
+		}
 		return
 	}
 	desired := s.desiredRuntimeStrategy(vectorCount)
@@ -6056,11 +6062,10 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	if s.lifecycleCtx.Err() != nil {
 		return
 	}
-
 	snapshot := s.captureVectorSnapshot()
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
-	if !current.runtimeManaged() || current == target {
+	if current == target || (current != strategyModeUnknown && !current.runtimeManaged()) {
 		return
 	}
 

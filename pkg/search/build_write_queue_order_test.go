@@ -238,7 +238,7 @@ func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 	require.NoError(t, <-built)
 	require.Equal(t, []string{"nornic:a"}, buildWriteSearchIDs(t, svc, "newterm"))
 	require.Empty(t, buildWriteSearchIDs(t, svc, "oldterm"))
-	requireBuildWriteVector(t, svc, "nornic:a-named-v", []float32{0, 1, 0})
+	requireBuildWriteVector(t, svc, nodeNamedVectorKey("nornic:a", "v"), []float32{0, 1, 0})
 }
 
 // TestBuildPropertyIndexRemovalCoversTheBuildsStoredNodes: a property-vector
@@ -280,38 +280,39 @@ func TestBuildIndexingSettingAppliesAfterTheBuild(t *testing.T) {
 	require.Equal(t, []string{"other"}, svc.FulltextProperties())
 }
 
+// startGatedBuildWithWrite establishes the same acknowledged-write point for
+// each ordering check below. The caller controls when the build may finish.
+func startGatedBuildWithWrite(t *testing.T, dir string) (*nodeSnapshotGateEngine, *Service, chan error) {
+	t.Helper()
+	engine := newNodeSnapshotGateEngine(t)
+	t.Cleanup(engine.open)
+	svc := buildWriteService(t, engine, dir, "v2", nil)
+	built := startGatedBuild(t, engine, svc)
+	node := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
+	_, err := engine.CreateNode(storage.CopyNode(node))
+	require.NoError(t, err)
+	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(node) })
+	return engine, svc, built
+}
+
 // TestBuildCloseClearAndPersistenceToggleKeepTheOrder: Close, ClearVectorIndex
 // and a persistence toggle made after an acknowledged write.
 func TestBuildCloseClearAndPersistenceToggleKeepTheOrder(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 	t.Run("clear", func(t *testing.T) {
-		engine := newNodeSnapshotGateEngine(t)
-		svc := buildWriteService(t, engine, "", "v2", nil)
+		engine, svc, built := startGatedBuildWithWrite(t, "")
 		t.Cleanup(func() { _ = svc.Close() })
-		t.Cleanup(engine.open)
-		built := startGatedBuild(t, engine, svc)
-		a := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
-		_, err := engine.CreateNode(storage.CopyNode(a))
-		require.NoError(t, err)
-		requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(a) })
 		cleared := make(chan struct{})
 		go func() { svc.ClearVectorIndex(); close(cleared) }()
 		engine.open()
 		<-built
 		<-cleared
-		_, ok := svc.getVectorLookup()("nornic:a-named-v")
+		_, ok := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
 		require.False(t, ok, "an acknowledged write survived a later ClearVectorIndex")
 	})
 	t.Run("persistence", func(t *testing.T) {
-		engine := newNodeSnapshotGateEngine(t)
-		svc := buildWriteService(t, engine, t.TempDir(), "v2", nil)
+		engine, svc, built := startGatedBuildWithWrite(t, t.TempDir())
 		t.Cleanup(func() { _ = svc.Close() })
-		t.Cleanup(engine.open)
-		built := startGatedBuild(t, engine, svc)
-		a := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
-		_, err := engine.CreateNode(storage.CopyNode(a))
-		require.NoError(t, err)
-		requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(a) })
 		toggled := make(chan struct{})
 		go func() { svc.SetPersistenceEnabled(false); close(toggled) }()
 		engine.open()
@@ -321,13 +322,7 @@ func TestBuildCloseClearAndPersistenceToggleKeepTheOrder(t *testing.T) {
 	})
 	t.Run("close", func(t *testing.T) {
 		dir := t.TempDir()
-		engine := newNodeSnapshotGateEngine(t)
-		svc := buildWriteService(t, engine, dir, "v2", nil)
-		built := startGatedBuild(t, engine, svc)
-		a := buildWriteNode("nornic:a", "aterm", []float32{1, 0, 0})
-		_, err := engine.CreateNode(storage.CopyNode(a))
-		require.NoError(t, err)
-		requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(a) })
+		engine, svc, built := startGatedBuildWithWrite(t, dir)
 		closed := make(chan error, 1)
 		go func() { closed <- svc.Close() }()
 		engine.open()
@@ -354,10 +349,10 @@ func TestBuildWriteIsVisibleWhenTheBuildInstallsIt(t *testing.T) {
 	_, err := engine.CreateNode(storage.CopyNode(a))
 	require.NoError(t, err)
 	requireReturnsDuringBuild(t, "a write", func() error { return svc.IndexNode(a) })
-	_, visibleDuring := svc.getVectorLookup()("nornic:a-named-v")
+	_, visibleDuring := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
 	engine.open()
 	require.NoError(t, <-built)
-	_, visibleAfter := svc.getVectorLookup()("nornic:a-named-v")
+	_, visibleAfter := svc.getVectorLookup()(nodeNamedVectorKey("nornic:a", "v"))
 	require.False(t, visibleDuring)
 	require.True(t, visibleAfter)
 }
