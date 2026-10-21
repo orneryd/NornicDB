@@ -162,6 +162,7 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
                 self.assertIn("one canonical owner", result.stderr)
                 self.assertIn("Delete redundant forwarding and compatibility wrappers", result.stderr)
                 self.assertIn("only code", result.stderr)
+                self.assertIn("Any other live match still requires reuse", result.stderr)
                 self.assertIn("Migrate every caller to the canonical API", result.stderr)
                 self.assertNotIn("a thin delegating API is valid", result.stderr)
                 self.assertIn("rerun this check", result.stderr)

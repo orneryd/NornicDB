@@ -92,12 +92,17 @@ class AnalysisError(Exception):
 # --------------------------------------------------------------------------------------
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+FUNCTION_DECLARATION = re.compile(
+    r"^\s*(?:(?:async|export|public|private|static)\s+)*"
+    r"(?:def|func|function|fn)\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*(?:\[[^]]*\])?\s*\("
+)
 
 
 @dataclass
 class FileDiff:
     added: set = field(default_factory=set)      # new-file line numbers
     removed: set = field(default_factory=set)    # old-file line numbers
+    removed_definitions: set = field(default_factory=set)
     deleted: bool = False
     created: bool = False
 
@@ -115,10 +120,12 @@ def parse_diff(text):
     old_path = new_path = None
     current = None
     binary = False
+    in_hunk = False
     for line in text.splitlines():
         if line.startswith("diff --git "):
             old_path = new_path = current = None
             binary = False
+            in_hunk = False
         elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
             binary = True
             current = None
@@ -136,11 +143,16 @@ def parse_diff(text):
             match = HUNK.match(line)
             if not match:
                 continue
+            in_hunk = True
             old_start, old_count, new_start, new_count = match.groups()
             old_count = 1 if old_count is None else int(old_count)
             new_count = 1 if new_count is None else int(new_count)
             current.removed.update(range(int(old_start), int(old_start) + old_count))
             current.added.update(range(int(new_start), int(new_start) + new_count))
+        elif in_hunk and current is not None and line.startswith("-"):
+            declaration = FUNCTION_DECLARATION.match(line[1:])
+            if declaration:
+                current.removed_definitions.add(declaration.group(1))
     return files
 
 
@@ -481,10 +493,11 @@ def retired_ids(db, repo, diff, graph_path):
             "RETURN n.id AS id, n.source_file AS file, n.source_location AS loc, n.label AS label", repo=repo, files=chunk)
         for row in rows:
             file_diff = diff[row["file"]]
-            line = gi.parse_location(row.get("loc"))
-            if file_diff.deleted or (line is not None and line in file_diff.removed
-                                     and row.get("label") is not None
-                                     and (row["file"], row["label"]) not in live):
+            label = row.get("label")
+            symbol = label.split("(", 1)[0].rsplit(".", 1)[-1] if label else None
+            if file_diff.deleted or (symbol in file_diff.removed_definitions
+                                     and label is not None
+                                     and (row["file"], label) not in live):
                 retired.add(row["id"])
     return retired
 
@@ -578,12 +591,12 @@ def evaluate(candidate, hits, *, repo, retired, min_similarity, cross_repo=False
             continue
         seen.add(hit.id)
         matches.append(Match(hit, sim, basis))
-    if moved:
-        return None, True  # a retired near-copy means the PR relocated this function: no finding
+    # A removed owner only excludes itself. Other surviving owners still
+    # require reuse or refactoring, even when this candidate is also a move.
     matches.sort(key=lambda m: (m.basis != "code", -m.similarity["score"], m.hit.source_file, m.hit.line))
     total = len(matches)
     if not matches:
-        return None, False
+        return None, moved
     return Finding(candidate, matches[:max_matches] if max_matches else matches,
                    "refactor" if total >= 2 else "reuse", total), False
 
