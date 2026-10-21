@@ -334,6 +334,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		result.Rows = filtered
 	}
+	var resultMemoryLease *memory.Lease
 	if s.server != nil && s.server.memoryPolicy != nil && result != nil && !isWrite {
 		// RUN can return before PULL. Keep a separate reservation with the
 		// read result; the decode/execution reservation ends with this call.
@@ -343,7 +344,7 @@ func (s *Session) handleRun(data []byte) error {
 		for _, row := range result.Rows {
 			resultBytes += util.EstimateValueBytes(row)
 		}
-		result.memoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
+		resultMemoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
 		if err != nil {
 			if s.inTransaction {
 				if cleanupErr := s.rollbackExplicitTransaction(transactionTerminalRollback); cleanupErr != nil {
@@ -376,6 +377,7 @@ func (s *Session) handleRun(data []byte) error {
 
 	// Store result for PULL
 	s.lastResult = result
+	s.lastResultMemoryLease = resultMemoryLease
 	s.resultIndex = 0
 	published = true
 
@@ -389,10 +391,11 @@ func (s *Session) handleRun(data []byte) error {
 			s.resultStreams = make(map[int64]*resultStream)
 		}
 		s.resultStreams[statementID] = &resultStream{
-			result:   result,
-			delivery: delivery,
-			isWrite:  isWrite,
-			database: resultDatabase,
+			result:      result,
+			memoryLease: resultMemoryLease,
+			delivery:    delivery,
+			isWrite:     isWrite,
+			database:    resultDatabase,
 		}
 		s.latestStatementID = statementID
 		successMetadata := map[string]any{
@@ -769,18 +772,19 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 		return resultStream{}, -1, false
 	}
 	return resultStream{
-		result:   s.lastResult,
-		delivery: s.lastDelivery,
-		index:    s.resultIndex,
-		isWrite:  s.lastQueryIsWrite,
-		database: s.lastQueryDatabase,
-		lazy:     s.lastLazy,
+		result:      s.lastResult,
+		memoryLease: s.lastResultMemoryLease,
+		delivery:    s.lastDelivery,
+		index:       s.resultIndex,
+		isWrite:     s.lastQueryIsWrite,
+		database:    s.lastQueryDatabase,
+		lazy:        s.lastLazy,
 	}, -1, true
 }
 
 func (s *Session) updateResultStream(statementID int64, stream resultStream, hasMore bool) {
-	if !hasMore && stream.result != nil {
-		stream.result.memoryLease.Release()
+	if !hasMore {
+		stream.memoryLease.Release()
 	}
 	if s.inTransaction && s.resultStreams != nil {
 		if hasMore {
@@ -798,6 +802,7 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		s.lastLazy = stream.lazy
 	} else {
 		s.lastResult = nil
+		s.lastResultMemoryLease = nil
 		s.resultIndex = 0
 		s.lastLazy = nil
 		s.lastDelivery = nil
