@@ -54,3 +54,19 @@ the enabled policy stores explicit-result leases in session-owned state.
 The measured changes are within the draft 5% latency gate for this narrow
 state-update workload. Whole-server base/head and varied result-size tests
 remain required.
+
+The same pre-admission source and code head `70a7760c2` were also measured
+through an actual local Bolt TCP connection with `BenchmarkBolt_StreamRecords_EndToEnd_SmallRow`:
+2,000 small rows per RUN/PULL, five 200 ms samples for each write-buffer size,
+`-benchmem`, and a CPU profile on each source. Median latency and allocation
+results were:
+
+| Bolt write buffer | Pre-admission | `70a7760c2` | Change | Allocations/op |
+|---|---:|---:|---:|---:|
+| 8 KiB | 167,390 ns/op | 168,846 ns/op | +0.9% | 2,065 → 2,065 |
+| 64 KiB | 197,615 ns/op | 198,061 ns/op | +0.2% | 2,065 → 2,065 |
+| 256 KiB | 202,252 ns/op | 199,534 ns/op | −1.3% | 2,065 → 2,065 |
+
+The benchmark runs with application admission disabled, so it checks the
+compatibility-default overhead of the changed Bolt path. It is one small-row
+workload on one host, not the full protected-mode or varied-size gate.
