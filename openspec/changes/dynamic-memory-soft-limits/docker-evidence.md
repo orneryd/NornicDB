@@ -84,3 +84,22 @@ also rejected with HTTP 503. After restarting on the same data directory with
 a 384 MiB soft max, `MATCH (n:MemoryProof) RETURN count(n)` returned 0 and
 `oom_kill` remained 0. The storage regression separately establishes that the
 rejected buffered write did not append an `OpBufferedCommit` WAL record.
+
+### Bounded WAL recovery smoke — source `1eccf2f9e`
+
+Image `nornicdb-memory-recovery:local`, manifest list
+`sha256:9b7c6b73cc692c5af57130d91a08c2d88a03cfab31db260a2c34a02e944b7d77`.
+Linux arm64, 1 GiB Docker memory/swap limit, Go GC target 768 MiB,
+application soft maximum 768 MiB, async writes enabled, flush interval one hour.
+
+Thirty-two separate HTTP CREATE calls each stored a 256 KiB string and returned
+HTTP 202 without errors (8 MiB total string payload). The process was SIGKILLed
+before scheduled flushing. Restarting with the same volume reported recovery of
+32 acknowledged write-behind commits. `MATCH (n:MemoryProof) RETURN count(n)`
+returned 32 with HTTP 200 and no errors. Both container runs recorded
+`memory.events: oom_kill 0`; the restarted server remained running.
+
+This controlled smoke exercises multiple estimated recovery batches and crash
+replay. It does not reproduce the original 8 GiB workload or prove a hard process
+memory bound. The maintainer requested that original reproduction from @mm0nst3r.
+Local transcript: `/tmp/nornic-memory-recovery-smoke.log`.
