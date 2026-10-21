@@ -873,6 +873,7 @@ type Service struct {
 	nodeNamedVector  map[string]map[string]string // nodeID -> vectorName -> vectorID
 	nodePropVector   map[string]map[string]string // nodeID -> propertyKey -> vectorID
 	nodeChunkVectors map[string][]string          // nodeID -> vectorIDs (main + chunks)
+	vectorMembers    vectorMemberIndex            // node membership published by index writes
 	edgeTypes        map[string]string            // edgeID -> relationship type
 	edgePropVector   map[string]map[string][]float32
 	// nodeChunkSpans is where each indexed node's chunks lie in its string
@@ -3318,6 +3319,9 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	// short-circuit at this top level so we don't even iterate node
 	// properties looking for vector-shaped values.
 	indexVectorState := vectorOn && !skipVectorMutation
+	if indexVectorState {
+		defer s.publishNodeMembersLocked(nodeIDStr)
+	}
 
 	// Create the file store before the first live vector mutation.
 	if indexVectorState && firstVectorDimensions(node) > 0 && s.persistEnabled.Load() && s.vectorIndexPath != "" {
@@ -3497,6 +3501,7 @@ func (s *Service) removeNodeLocked(nodeIDStr string) {
 // removeNodeEntriesLocked removes the node's search entries, keeping its
 // fulltext document when removeFulltext is false. Caller must hold s.indexMu.
 func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool) {
+	defer s.publishNodeMembersLocked(nodeIDStr)
 	if nodeIDStr == "" {
 		return
 	}
@@ -3884,6 +3889,7 @@ func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
 		if len(props) == 0 {
 			delete(s.nodePropVector, nodeID)
 		}
+		s.publishNodeMembersLocked(nodeID)
 		s.endClusterNodeChangeLocked(nodeID, before)
 	}
 }
@@ -4174,6 +4180,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					s.nodeNamedVector = named
 					s.nodePropVector = properties
 					s.nodeChunkVectors = chunks
+					s.rebuildNodeMembersLocked()
 					clear(s.nodeChunkSpans) // read on demand: the snapshot doesn't hold them
 					s.mu.Unlock()
 					s.indexMu.Unlock()
@@ -5433,7 +5440,7 @@ func (s *Service) adaptiveVectorSearch(
 	}
 	// The pipeline's exact stage scores every vector of each node it is
 	// given, from this Service's membership.
-	ctx = withVectorMembers(ctx, s.memoizedVectorMembers())
+	ctx = withVectorMemberIndex(ctx, &s.vectorMembers)
 	var stats vectorOverfetchStats
 	for {
 		if err := ctx.Err(); err != nil {
@@ -5513,70 +5520,6 @@ func requestCoversCandidatePopulation(ctx context.Context, pipeline *VectorSearc
 	return ok && limit >= reporter.candidatePopulation(ctx)
 }
 
-// memoizedVectorMembers is vectorMembersOf remembering, for one query, the
-// nodes it already resolved: the widening passes rescore many of the same
-// nodes. The stage addresses requested IDs in the accumulated query-local
-// cache, so it needs no copied result map. Not safe for concurrent use.
-func (s *Service) memoizedVectorMembers() vectorMemberResolver {
-	var known map[string][]string
-	return func(nodeIDs []string) map[string][]string {
-		if known == nil {
-			known = s.vectorMembersOf(nodeIDs)
-			for _, nodeID := range nodeIDs {
-				if _, ok := known[nodeID]; !ok {
-					known[nodeID] = nil
-				}
-			}
-			return known
-		}
-		var missing []string
-		for _, nodeID := range nodeIDs {
-			if _, ok := known[nodeID]; !ok {
-				missing = append(missing, nodeID)
-			}
-		}
-		if len(missing) > 0 {
-			fetched := s.vectorMembersOf(missing)
-			for _, nodeID := range missing {
-				known[nodeID] = fetched[nodeID]
-			}
-		}
-		return known
-	}
-}
-
-// vectorMembersOf is the exact stage's node membership (withVectorMembers):
-// every vector each node indexed, main and chunk vectors, then named and
-// property vectors. A node's chunk list is shared, not copied: indexing
-// replaces it whole and never changes a published one. Lock order indexMu ->
-// mu, as index writes take them.
-func (s *Service) vectorMembersOf(nodeIDs []string) map[string][]string {
-	members := make(map[string][]string, len(nodeIDs))
-	s.indexMu.RLock()
-	defer s.indexMu.RUnlock()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, nodeID := range nodeIDs {
-		chunks, named, props := s.nodeChunkVectors[nodeID], s.nodeNamedVector[nodeID], s.nodePropVector[nodeID]
-		if len(named)+len(props) == 0 {
-			if len(chunks) > 0 {
-				members[nodeID] = chunks
-			}
-			continue
-		}
-		ids := make([]string, 0, len(chunks)+len(named)+len(props))
-		ids = append(ids, chunks...)
-		for _, vectorID := range named {
-			ids = append(ids, vectorID)
-		}
-		for _, vectorID := range props {
-			ids = append(ids, vectorID)
-		}
-		members[nodeID] = ids
-	}
-	return members
-}
-
 // completeVectorSearch fills a vector page the approximate search's budget
 // left short while it had not covered every vector (#938): the pipeline's
 // exact stage scores the vectors of the nodes the request can return, only
@@ -5594,31 +5537,61 @@ func (s *Service) completeVectorSearch(
 	postProcess func([]indexResult) []indexResult,
 	stats vectorOverfetchStats,
 ) ([]indexResult, vectorOverfetchStats, error) {
-	admit := func(string) bool { return true }
+	work := newSearchBatch(ctx)
 	var candidates []Candidate
-	// Lock order indexMu -> mu, as index writes take them.
-	s.indexMu.RLock()
-	s.mu.RLock()
-	if len(opts.Types) > 0 {
-		admit = s.indexedTypeAdmitter(opts.Types)
+	var vectors *VectorIndex
+	var fileStore *VectorFileStore
+	// The same batch boundary used by scoring also covers pool construction.
+	// The scope releases service readers before propagating cancellation.
+	err := func() error {
+		s.indexMu.RLock()
+		defer s.indexMu.RUnlock()
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		admit := func(string) bool { return true }
+		if len(opts.Types) > 0 {
+			admit = s.indexedTypeAdmitter(opts.Types)
+		}
+		for nodeID := range s.nodeLabels {
+			if work.boundary() {
+				if err := work.check(); err != nil {
+					return err
+				}
+			}
+			if !admit(nodeID) {
+				continue
+			}
+			for _, vectorID := range s.nodeChunkVectors[nodeID] {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return err
+					}
+				}
+				candidates = append(candidates, Candidate{ID: vectorID})
+			}
+			for _, vectorID := range s.nodeNamedVector[nodeID] {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return err
+					}
+				}
+				candidates = append(candidates, Candidate{ID: vectorID})
+			}
+			for _, vectorID := range s.nodePropVector[nodeID] {
+				if work.boundary() {
+					if err := work.check(); err != nil {
+						return err
+					}
+				}
+				candidates = append(candidates, Candidate{ID: vectorID})
+			}
+		}
+		vectors, fileStore = s.vectorIndex, s.vectorFileStore
+		return work.check()
+	}()
+	if err != nil {
+		return nil, stats, err
 	}
-	for nodeID := range s.nodeLabels {
-		if !admit(nodeID) {
-			continue
-		}
-		for _, vectorID := range s.nodeChunkVectors[nodeID] {
-			candidates = append(candidates, Candidate{ID: vectorID})
-		}
-		for _, vectorID := range s.nodeNamedVector[nodeID] {
-			candidates = append(candidates, Candidate{ID: vectorID})
-		}
-		for _, vectorID := range s.nodePropVector[nodeID] {
-			candidates = append(candidates, Candidate{ID: vectorID})
-		}
-	}
-	vectors, fileStore := s.vectorIndex, s.vectorFileStore
-	s.mu.RUnlock()
-	s.indexMu.RUnlock()
 
 	stats.retries++
 	stats.exhausted = true
@@ -5638,6 +5611,11 @@ func (s *Service) completeVectorSearch(
 	stats.rawCandidates = len(scored)
 	ranked := make([]indexResult, 0, len(scored))
 	for _, result := range scored {
+		if work.boundary() {
+			if err := work.check(); err != nil {
+				return nil, stats, err
+			}
+		}
 		nodeID, ok := vectorEntryOwner(result.ID)
 		if !ok {
 			continue
@@ -5646,7 +5624,7 @@ func (s *Service) completeVectorSearch(
 	}
 	results := make([]indexResult, 0, target)
 	for start := 0; start < len(ranked) && len(results) < target; start += target {
-		if err := ctx.Err(); err != nil {
+		if err := work.check(); err != nil {
 			return nil, stats, err
 		}
 		end := min(start+target, len(ranked))
@@ -5654,6 +5632,9 @@ func (s *Service) completeVectorSearch(
 	}
 	if len(results) > target {
 		results = results[:target]
+	}
+	if err := work.check(); err != nil {
+		return nil, stats, err
 	}
 	return results, stats, nil
 }
