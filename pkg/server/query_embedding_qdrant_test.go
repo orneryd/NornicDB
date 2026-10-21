@@ -82,7 +82,7 @@ func TestQdrantRecommendKeepsProviderSnapshot(t *testing.T) {
 					}})
 					return err
 				default:
-					_, err := client.QueryBatch(ctx, &qpb.QueryBatchPoints{QueryPoints: []*qpb.QueryPoints{query("alpha"), query("beta")}})
+					_, err := client.QueryBatch(ctx, &qpb.QueryBatchPoints{CollectionName: collection, QueryPoints: []*qpb.QueryPoints{query("alpha"), query("beta")}})
 					return err
 				}
 			}
