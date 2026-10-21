@@ -187,3 +187,20 @@ completion SHALL remain able to progress from protected capacity.
 #### Scenario: Sampler stops updating
 - **WHEN** the latest current-usage observation becomes stale or cannot be read
 - **THEN** new expensive admissions fail with a visible resource-unavailable reason; existing cleanup and accepted storage completion remain available, and admission resumes only after a fresh successful sample satisfies the recovery policy.
+
+### Requirement: Distinct names for Go and application limits
+The system SHALL offer an explicit canonical name for the Go runtime GC memory
+target and a separate opt-in application pressure maximum. Existing
+`NORNICDB_MEMORY_LIMIT`, `--memory-limit` and `memory.runtime_limit` SHALL
+retain their Go-target semantics as deprecated aliases. Conflicting explicit
+old/new values for the Go target SHALL fail configuration validation with a
+source-specific error; a legacy value SHALL NOT implicitly activate the
+application pressure policy.
+
+#### Scenario: Existing deployment upgrades
+- **WHEN** an existing deployment supplies only `NORNICDB_MEMORY_LIMIT=7168`
+- **THEN** it retains the same 7168 MiB Go target, receives a migration warning, and does not activate application admission or transaction cancellation.
+
+#### Scenario: Explicit new application limit
+- **WHEN** a finite application maximum is configured through its own setting
+- **THEN** the application policy becomes active independently of the Go GC target and validates headroom against the effective finite container ceiling.
