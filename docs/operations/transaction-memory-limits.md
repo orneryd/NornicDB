@@ -115,7 +115,10 @@ The security checks share one parsed query map. HTTP request bodies use that
 same owner before routing to JSON decoders,
 including transaction, authentication, search, configuration, MCP, GraphQL and
 Heimdall handlers. Enabled admission also applies the existing HTTP request-size
-setting to their bodies. The reservation lasts until the handler actually ends,
+setting to their bodies. Request-line/query and header bytes are charged in
+addition to the body; the body limit never clamps those known sizes. Body reads
+grow the same reservation before returning bytes to a decoder. The reservation
+lasts until the handler actually ends,
 including workers that outlive an HTTP timeout. Bodyless health, rollback and
 bare explicit commit requests remain available only when their raw query is
 empty (the exemption cap is **0 bytes**), Content-Length is zero and there is no
@@ -148,6 +151,24 @@ Bodyless h2c upgrades, prior-knowledge h2c and TLS h2 remain supported. Applicat
 metadata/body credit belongs to each request or HTTP/2 stream, never to an entire
 upgraded connection. See the
 [listener-to-admission audit](../../openspec/changes/dynamic-memory-soft-limits/transport-admission-audit.md).
+
+GraphQL GET variables in the query string also pass through request admission.
+Standalone GraphQL handlers use the same body/query/header admission helper;
+delegated handlers borrow the HTTP request's owner. Known byte counts are never
+clamped to the HTTP body limit, including query strings larger than that limit.
+Upgraded GraphQL WebSocket messages use gqlgen's supported transport adapter:
+it reads framing without buffering the payload, reserves through the same
+policy, and grows that lease before accumulating each part of the message.
+The available policy capacity bounds the message before gqlgen decodes its
+envelope, initialization payload or operation variables. The lease lasts through
+synchronous decode/setup and ends before waiting for the next message, or on
+error/disconnect. An enclosing handler scope closes the upgraded connection on
+every transport return, including invalid initialization; cancellation unblocks
+the socket read before the scope ends. Policy rejection closes with code `1013` and reason
+`Neo.TransientError.General.MemoryPoolOutOfMemoryError`. The existing gqlgen
+payload read limit still applies independently. Policy-disabled GraphQL uses
+the unchanged default gqlgen transport. See the
+[pre-decode consumer audit](../../openspec/changes/dynamic-memory-soft-limits/predecode-consumer-audit.md).
 
 `NORNICDB_MEMORY_APPLICATION_SOFT_MAX` (`memory.application_soft_max`) enables
 physical cgroup admission separately from the transaction estimates. Its default

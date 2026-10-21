@@ -49,3 +49,19 @@ func TestHTTPApplicationBodyAdmissionBeforeAllDecoders(t *testing.T) {
 	defer response.Body.Close()
 	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
 }
+
+func TestHTTPGraphQLGETApplicationMemoryAdmission(t *testing.T) {
+	server, client, token := startMemoryHTTPServer(t)
+	policy := memory.NewPolicy(1<<20, 0, time.Minute, func() (memory.Sample, error) {
+		return memory.Sample{Used: 1 << 20}, nil
+	}, time.Now)
+	require.NoError(t, policy.Refresh())
+	server.memoryPolicy = policy
+	r, err := http.NewRequest(http.MethodGet, client.base+"/graphql?query=%7B__typename%7D&variables=%7Binvalid", nil)
+	require.NoError(t, err)
+	r.Header.Set("Authorization", token)
+	response, err := client.client.Do(r)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode, "GET variables JSON must be admitted before decoding")
+}

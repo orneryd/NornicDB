@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound upgraded GraphQL WebSocket messages by available application-policy
+  capacity before JSON decoding, and admit GraphQL GET variables. Use gqlgen's
+  supported adapter hook with an unconditional handler lifetime owner, including
+  invalid initialization and cancellation. Charge full query/header bytes
+  independently of body limits; retain the default transport when admission is off.
+
 - Admit Bolt client payloads while accumulating chunks and before decoding, and
   admit HTTP metadata before all application middleware through the same policy,
   including Bolt's HTTP upgrade parser. Preserve bodyless control requests only
