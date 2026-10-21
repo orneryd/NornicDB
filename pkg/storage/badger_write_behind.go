@@ -65,6 +65,21 @@ func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
 	for key := range c.deletes {
 		bytes += int64(48 + len(key))
 	}
+	if c.idEntries != nil {
+		bytes += 64 + int64(16*(len(c.idEntries.nodes)+len(c.idEntries.edges)))
+		for _, id := range c.idEntries.nodes {
+			bytes += int64(len(id))
+		}
+		for _, id := range c.idEntries.edges {
+			bytes += int64(len(id))
+		}
+	}
+	for namespace := range c.propKeyDrain.counters {
+		bytes += int64(32 + len(namespace))
+	}
+	for _, entry := range c.propKeyDrain.pending {
+		bytes += int64(48 + len(entry.namespace) + len(entry.name))
+	}
 	bytes += int64(64*len(c.labelDeltas) + 64*len(c.edgeTypeDeltas) + 80*len(c.edgeTypeLabelDeltas))
 	return bytes
 }
