@@ -48,6 +48,44 @@ including async-buffer admission and stale-telemetry handling. Configuration
 transitions must publish one coherent state and retain outstanding ownership until
 safe completion; disabling a limit cannot erase a pending commit's obligations.
 
+## Proposed setting names and compatibility migration
+
+The source currently reads `NORNICDB_MEMORY_LIMIT` into
+`Memory.RuntimeLimit`; `--memory-limit` does the same, and
+`memory.runtime_limit` is its YAML key. `ParseRuntimeLimit` accepts `auto` or
+an integer count of MiB (`7168` = 7168 MiB), even though the example YAML
+comment shows unsupported `2GB`/`512MB` forms. `ApplyRuntimeMemory` then calls
+Go `debug.SetMemoryLimit`. These existing values must never become application
+or transaction limits merely because their names look broad.
+
+Proposed canonical configuration (to approve during implementation review):
+
+| Scope | Canonical name | Units and default |
+| --- | --- | --- |
+| Go runtime GC target | `NORNICDB_GO_MEMORY_LIMIT_MIB`; CLI `--go-memory-limit`; YAML `memory.go_runtime_limit` | Keep current `auto` or integer MiB parser and current automatic resolution. It is a soft Go-runtime target, not an opt-in application gate. |
+| Application pressure maximum | `NORNICDB_MEMORY_APPLICATION_SOFT_MAX`; YAML `memory.application_soft_max` | Explicit byte-size parser (`k`, `m`, `g` as binary units); unset/`0` disables the application policy. A finite value must leave measured headroom below effective container limit. |
+| One transaction | `db.memory.transaction.max` / `NORNICDB_MEMORY_TRANSACTION_MAX` | Estimated bytes, `0` unlimited; use develop's established setting and env spelling. |
+| All transactions in one database | `db.memory.transaction.total.max` | Estimated bytes, database-scoped, `0` unlimited. Configure by database setting; no process-wide env alias that ambiguously selects a database. |
+| All transactions in the process | `dbms.memory.transaction.total.max` / `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX` | Estimated bytes, `0` unlimited; use develop's established setting and env spelling. |
+
+Do not add separate user-facing limits for async buffers, index jobs, AI workers,
+commit completion or each query phase in this change. When the application
+limit is enabled, derive bounded sub-budgets/reserves from it and observe their
+usage. An operator can still tune existing feature concurrency and storage
+settings. Extra knobs require measured evidence that this single policy cannot
+handle an ordinary workload.
+
+Deprecation contract: accept `NORNICDB_MEMORY_LIMIT`, `--memory-limit` and
+`memory.runtime_limit` with their exact existing Go-runtime meaning. Emit one
+clear deprecation warning naming the new spelling and retained units. Never
+silently reinterpret a legacy value as the application maximum. If canonical
+and legacy spellings for the same Go target are both explicitly set, reject a
+conflicting configuration with a message naming both sources; identical values
+may be accepted with a warning. Define normal config-source precedence when
+only one spelling is present. Document removal in a later release; this spec
+neither removes aliases nor selects a removal date. No warning should imply
+that a configured GC target itself provides application OOM protection.
+
 ## Current owners and convergence boundary
 
 - Release `pkg/config/config.go` applies `debug.SetMemoryLimit`; existing
@@ -223,8 +261,8 @@ why the application threshold needs headroom and remains soft.
 
 ## Required implementation decisions still open
 
-- Application maximum/automatic-sizing setting names and units; relationship to
-  the existing MiB-valued NORNICDB_MEMORY_LIMIT without silently reinterpreting it.
+- Approve the proposed canonical setting spellings and config precedence above,
+  plus the finite application-limit validation and auto-sizing behavior.
 - Sampling interval/freshness deadline, initial/minimum reserve, growth response,
   recovery hysteresis and container co-tenancy. Stale/unavailable telemetry
   rejects new expensive work only with the application limit enabled. Event monitoring
