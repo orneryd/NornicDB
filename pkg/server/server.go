@@ -194,6 +194,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 	"github.com/orneryd/nornicdb/pkg/mcp"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -746,6 +747,7 @@ type Server struct {
 	heimdallCacheRouter *heimdallDBRouter
 	executorsMu         sync.RWMutex
 	executors           map[string]*cypher.StorageExecutor
+	executorCache       *cypher.DatabaseExecutorCache[*cypher.StorageExecutor]
 
 	// Explicit transaction sessions shared across transports.
 	txSessions *txsession.Manager
@@ -761,6 +763,7 @@ type Server struct {
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
 	processConfig         *nornicConfig.Config
+	memoryPolicy          *memory.Policy
 	dbConfigStateMu       sync.RWMutex
 	dbConfigActive        map[string]map[string]string
 	dbConfigPending       map[string]map[string]struct{}
@@ -867,7 +870,7 @@ func (a *mcpToolRunnerAdapter) CallTool(ctx context.Context, name string, args m
 // Used so MCP tools (store, recall, link, etc.) run against the request's database when invoked from the agentic loop.
 func (s *Server) mcpDatabaseScopedExecutor() func(dbName string) (*cypher.StorageExecutor, func(context.Context, string) (*nornicdb.Node, error), error) {
 	return func(dbName string) (*cypher.StorageExecutor, func(context.Context, string) (*nornicdb.Node, error), error) {
-		exec, err := s.getExecutorForDatabase(dbName)
+		exec, err := s.executorCache.Get(dbName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1160,6 +1163,20 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		processConfig:        globalConfig,
 		dbConfigActive:       make(map[string]map[string]string),
 		dbConfigPending:      make(map[string]map[string]struct{}),
+	}
+	s.executorCache = cypher.NewDatabaseExecutorCache(&s.executorsMu, &s.executors,
+		(*cypher.StorageExecutor).StatementCacheSelectionValid,
+		func(name string) (*cypher.StorageExecutor, error) {
+			executor, err := s.newDatabaseScopedExecutor(name, "")
+			if err == nil {
+				executor.SetSharedExecutor(true)
+			}
+			return executor, err
+		}, s.bindStatementCacheIndex)
+	if limit := globalConfig.Memory.ApplicationSoftMax; limit > 0 {
+		headroom := max(int64(128<<20), limit/10)
+		s.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now)
+		_ = s.memoryPolicy.Refresh()
 	}
 	// A changed password stops working at once (auth.BasicAuthCache).
 	s.auth.OnPasswordChange(s.basicAuthCache.ForgetUser)
@@ -1650,13 +1667,24 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// also gets initialized, and keeps doing so without requiring first-search triggers.
 	s.ensureSearchBuildStartedForKnownDatabases()
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		interval := 2 * time.Second
+		if s.memoryPolicy != nil {
+			interval = 250 * time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		nextSearchReconcile := time.Now().Add(2 * time.Second)
 		for {
 			if s.closed.Load() {
 				return
 			}
-			s.ensureSearchBuildStartedForKnownDatabases()
+			if s.memoryPolicy != nil {
+				_ = s.memoryPolicy.Refresh()
+			}
+			if !time.Now().Before(nextSearchReconcile) {
+				s.ensureSearchBuildStartedForKnownDatabases()
+				nextSearchReconcile = time.Now().Add(2 * time.Second)
+			}
 			<-ticker.C
 		}
 	}()
@@ -2014,9 +2042,7 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	if s.heimdallCacheRouter != nil {
 		s.heimdallCacheRouter.Close()
 	}
-	s.executorsMu.Lock()
-	s.executors = nil
-	s.executorsMu.Unlock()
+	s.executorCache.Clear()
 	// Cancel the background embedder initialisation now and wait for it
 	// before returning, so it can't install an embedder (or log) after Stop.
 	if s.embedderInitCancel != nil {

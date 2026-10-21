@@ -610,6 +610,11 @@ The cache size limits prevent unbounded memory growth during bulk operations:
 - **Monitor memory usage** during bulk operations
 - **Adjust based on available RAM** and operation patterns
 
+To keep concurrent heavy queries from exhausting the process's memory, set
+Neo4j's transaction memory limits (`db.memory.transaction.max`,
+`dbms.memory.transaction.total.max`): see
+[Transaction Memory Limits](transaction-memory-limits.md).
+
 ## Vector Search Configuration
 
 ### Embedding Settings

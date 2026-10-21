@@ -184,7 +184,7 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 	if !ok {
 		return nil, 0, false
 	}
-	out, ok := materializePipelineSource(source)
+	out, ok := materializePipelineSource(ctx, source)
 	return out, consumed, ok
 }
 
@@ -201,17 +201,44 @@ func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projecti
 	return values, true
 }
 
-func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
-	out := make([]pipelineRow, 0)
+// materializePipelineSource collects the rows of source. Each kept row
+// counts against the statement's memory limit; going over stops the
+// collection, and the statement fails with the limit's error (#1343).
+func materializePipelineSource(ctx context.Context, source pipelineRowSource) ([]pipelineRow, bool) {
+	// One variable for what the callback updates: the rows, and the memory
+	// they take (sampled sizes from one account, #1343).
+	collected := struct {
+		out      []pipelineRow
+		memory   memoryAccount
+		estimate rowEstimator
+	}{out: make([]pipelineRow, 0)}
+	collected.memory.scope = memoryScopeFromContext(ctx)
+	collected.estimate.known = collected.memory.scope.knownLists()
 	ok := source(func(row pipelineRow) bool {
 		retained := make(pipelineRow, len(row))
-		for name, value := range row {
-			retained[name] = value
+		if collected.memory.scope == nil {
+			for name, value := range row {
+				retained[name] = value
+			}
+		} else {
+			// The copy's walk sizes the row too.
+			size := int64(pipelineRowExtraBytes + mapHeaderBytes)
+			for name, value := range row {
+				retained[name] = value
+				size += collected.estimate.entry(name, value)
+			}
+			if collected.memory.grow(size) != nil {
+				return false
+			}
 		}
-		out = append(out, retained)
+		collected.out = append(collected.out, retained)
 		return true
 	})
-	return out, ok
+	collected.memory.close()
+	if collected.memory.scope != nil && collected.memory.scope.tracker.err() != nil {
+		return nil, false
+	}
+	return collected.out, ok
 }
 
 func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {

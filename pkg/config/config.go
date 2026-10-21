@@ -784,6 +784,16 @@ type MemoryConfig struct {
 	// ApplicationSoftMax is the opt-in application memory-pressure threshold in
 	// bytes. Zero leaves application admission and pressure cancellation off.
 	ApplicationSoftMax int64
+	// TransactionMax is Neo4j's db.memory.transaction.max: the estimated
+	// memory, in bytes, one transaction may use (0 = unlimited). A
+	// database's own setting overrides it.
+	// Env: NORNICDB_MEMORY_TRANSACTION_MAX (default: 0)
+	TransactionMax int64
+	// TransactionTotalMax is Neo4j's dbms.memory.transaction.total.max: the
+	// estimated memory, in bytes, all transactions together may use.
+	// Zero leaves the aggregate limit disabled, independent of the Go GC target.
+	// Env: NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX (default: 0)
+	TransactionTotalMax int64
 	// GCPercent controls GC aggressiveness (GOGC)
 	// 100 = default, lower = more aggressive (less memory, more CPU)
 	GCPercent int
@@ -1718,6 +1728,8 @@ type YAMLConfig struct {
 		RuntimeLimit                 string  `yaml:"runtime_limit"`
 		GoRuntimeLimit               string  `yaml:"go_runtime_limit"`
 		ApplicationSoftMax           string  `yaml:"application_soft_max"`
+		TransactionMax               string  `yaml:"transaction_max"`
+		TransactionTotalMax          string  `yaml:"transaction_total_max"`
 		GCPercent                    int     `yaml:"gc_percent"`
 		PoolEnabled                  bool    `yaml:"pool_enabled"`
 		PoolMaxSize                  int     `yaml:"pool_max_size"`
@@ -2105,6 +2117,8 @@ func LoadDefaults() *Config {
 	config.Memory.KmeansClusterInterval = 15 * time.Minute // timer-based clustering every 15 min (skips if no changes)
 	config.Memory.RuntimeLimitStr = RuntimeLimitAuto
 	config.Memory.RuntimeLimit = 0
+	config.Memory.TransactionMax = 0
+	config.Memory.TransactionTotalMax = 0
 	config.Memory.GCPercent = 100
 	config.Memory.PoolEnabled = true
 	config.Memory.PoolMaxSize = 1000
@@ -2793,6 +2807,20 @@ func applyEnvVars(config *Config) error {
 			return fmt.Errorf("invalid NORNICDB_MEMORY_APPLICATION_SOFT_MAX value %q: %w", v, err)
 		}
 		config.Memory.ApplicationSoftMax = limit
+	}
+	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_MAX", ""); v != "" {
+		limit, err := ParseByteSize(v)
+		if err != nil {
+			return fmt.Errorf("invalid NORNICDB_MEMORY_TRANSACTION_MAX value %q: %w", v, err)
+		}
+		config.Memory.TransactionMax = limit
+	}
+	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", ""); v != "" {
+		limit, err := ParseByteSize(v)
+		if err != nil {
+			return fmt.Errorf("invalid NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX value %q: %w", v, err)
+		}
+		config.Memory.TransactionTotalMax = limit
 	}
 	if v := getEnvInt("NORNICDB_GC_PERCENT", 0); v != 0 {
 		config.Memory.GCPercent = v
@@ -3811,6 +3839,20 @@ func LoadFromFile(configPath string) (*Config, error) {
 		}
 		config.Memory.ApplicationSoftMax = limit
 	}
+	if yamlCfg.Memory.TransactionMax != "" {
+		limit, err := ParseByteSize(yamlCfg.Memory.TransactionMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.transaction_max value %q: %w", yamlCfg.Memory.TransactionMax, err)
+		}
+		config.Memory.TransactionMax = limit
+	}
+	if yamlCfg.Memory.TransactionTotalMax != "" {
+		limit, err := ParseByteSize(yamlCfg.Memory.TransactionTotalMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.transaction_total_max value %q: %w", yamlCfg.Memory.TransactionTotalMax, err)
+		}
+		config.Memory.TransactionTotalMax = limit
+	}
 	if yamlCfg.Memory.GCPercent > 0 {
 		config.Memory.GCPercent = yamlCfg.Memory.GCPercent
 	}
@@ -4468,6 +4510,40 @@ func ParseMemoryLimitMB(s string) (int64, error) {
 	}
 
 	return mb * bytesPerMB, nil
+}
+
+// ParseByteSize parses a byte size as the memory settings take it: a whole
+// number of bytes, optionally with a k, m, g or t suffix (kibibytes,
+// mebibytes, gibibytes, tebibytes): "0", "512m", "2g".
+func ParseByteSize(raw string) (int64, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return 0, fmt.Errorf("byte size is empty")
+	}
+	multiplier := int64(1)
+	if suffix := value[len(value)-1]; suffix < '0' || suffix > '9' {
+		switch suffix {
+		case 'k':
+			multiplier = 1 << 10
+		case 'm':
+			multiplier = 1 << 20
+		case 'g':
+			multiplier = 1 << 30
+		case 't':
+			multiplier = 1 << 40
+		default:
+			return 0, fmt.Errorf("invalid byte-size suffix in %q", raw)
+		}
+		value = strings.TrimSpace(value[:len(value)-1])
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("invalid byte size %q", raw)
+	}
+	if parsed > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("byte size overflows int64: %q", raw)
+	}
+	return parsed * multiplier, nil
 }
 
 // FormatMemorySize formats bytes as human-readable string.

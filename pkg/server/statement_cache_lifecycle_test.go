@@ -25,7 +25,7 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			first, err := server.getExecutorForDatabaseWithAuth("cache_comp", "Bearer lifecycle-test")
+			first, err := server.newDatabaseScopedExecutor("cache_comp", "Bearer lifecycle-test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -33,7 +33,7 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 			if _, err := first.Execute(context.Background(), query, nil); err != nil {
 				t.Fatal(err)
 			}
-			regular, err := server.getExecutorForDatabase("cache_local")
+			regular, err := server.executorCache.Get("cache_local")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -67,14 +67,14 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 				t.Fatalf("owners=%d, want%d", registry.Len(), expectedOwners)
 			}
 			if removal == "database" {
-				if _, err := server.getExecutorForDatabase("cache_local"); err == nil {
+				if _, err := server.executorCache.Get("cache_local"); err == nil {
 					t.Fatal("cached executor survived database drop")
 				}
 				if err := manager.CreateDatabase("cache_local"); err != nil {
 					t.Fatal(err)
 				}
 			}
-			next, err := server.getExecutorForDatabase("cache_local")
+			next, err := server.executorCache.Get("cache_local")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func TestStatementCacheFamilyHeimdallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := server.getExecutorForDatabase("cache_heimdall")
+	regular, err := server.executorCache.Get("cache_heimdall")
 	if err != nil {
 		t.Fatal(err)
 	}
