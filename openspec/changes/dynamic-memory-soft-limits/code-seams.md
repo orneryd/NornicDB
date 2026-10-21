@@ -15,9 +15,10 @@ Re-inventory the integrated implementation head after lane A and tracker fixes l
 2. **A failed explicit transaction can still own memory.** `failTransaction` records
    the first failure and releases MERGE keys but does not universally discard its
    local pending writes immediately. Do not decrement its charges on statement
-   failure. Memory-triggered cleanup must serialize through the session owner;
-   preserve the failed protocol state/cause even if underlying storage is rolled
-   back early. Otherwise idle failed transactions can prevent recovery indefinitely.
+   failure. Memory-triggered cleanup must immediately release abortable staged storage
+   ownership through the session owner; preserve the failed protocol state/cause
+   after storage rollback so later COMMIT/ROLLBACK reports truthfully. Otherwise
+   idle failed transactions can prevent recovery indefinitely.
 3. **Commit has multiple boundaries.** A buffered commit writes a replayable WAL
    record before publication; a large direct commit writes invisible intermediate
    batches before final publication. A gate just before `cw.finish()` is too late
@@ -96,11 +97,13 @@ large. Adaptive baseline changes must not silently enlarge operator-set transact
 maxima. Sample recovery after canceled work actually releases memory; do not admit
 replacement work just because a victim was signaled.
 
-Proposed pressure sequence: stop new expensive admissions, pause new optional jobs,
-choose an eligible pre-commit owner through one serialized policy decision, then
-reconcile released ownership and total usage before choosing more victims. Exclude
-commit completion and cleanup. Victim ordering/fairness and emergency escalation
-remain operator-review decisions; do not implement a cancel-all reaction in each gate.
+Accepted pressure sequence: stop new expensive admissions, pause new optional jobs,
+choose the newest eligible pre-acceptance transaction through one serialized policy
+decision, then reconcile released ownership and total usage before choosing another.
+Exclude commit completion and cleanup. Define a stable tie-break, minimum interval
+and starvation response during implementation; do not let each checkpoint cancel
+its own transaction on a single shared-pressure observation. Emergency escalation
+remains a policy review item.
 
 A deployment recipe must specify finite app/aggregate limits, optionally finite
 individual limits, concurrency/batch bounds and headroom below the container limit.

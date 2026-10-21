@@ -9,7 +9,8 @@
 
 ## 2. Before implementation
 
-- [ ] Resolve the explicit setting/sizing/telemetry/victim-policy decisions in design.md.
+- [ ] Resolve setting/sizing and stale-telemetry admission decisions in design.md;
+      failed-transaction cleanup and newest-eligible victim order are accepted.
 - [ ] Establish lane A's integrated passing cancellation evidence without relaxing deadlines.
 - [ ] Inventory every memory charge site, lifetime, transport and storage acceptance/commit fence,
       including index inserts/builds, embeddings, LLM inference, reranking and both HTTP commit routes.
@@ -63,3 +64,7 @@
 - [x] Specify async buffer admission, all-generation byte accounting and pre-WAL reservation ownership.
 - [ ] Integrate every actual async-buffer producer and bounded recovery replay with the shared application policy.
 - [ ] Prove stalled-flusher backpressure, oversized writes, rotation/read retention and replay failure/recovery without losing accepted writes.
+
+- [ ] Prove memory-failed explicit transactions release staged storage promptly while retaining their first protocol failure.
+- [ ] Prove newest-eligible victim selection, one-at-a-time reassessment and exclusion after irreversible acceptance.
+- [ ] Prove periodic current-usage/limit sampling continues when no pressure event fires; event wakes cannot be the only refresh path.
