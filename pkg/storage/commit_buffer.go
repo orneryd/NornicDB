@@ -17,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
 // bufferedOpKind identifies one committed mutation kind.
@@ -40,12 +42,13 @@ type bufferedMutation struct {
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
-	recovered bool // WAL operations require authoritative binary-body hydration before publication.
-	namespace string
-	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
-	ops       []Operation
-	writes    map[string][]byte
-	deletes   map[string]bool
+	memoryLease *memory.Lease // Retained until this generation is retired.
+	recovered   bool          // WAL operations require authoritative binary-body hydration before publication.
+	namespace   string
+	txID        string // transaction ID, used for the WAL buffered-commit payload and flush marker
+	ops         []Operation
+	writes      map[string][]byte
+	deletes     map[string]bool
 
 	// version is the MVCC version allocated at ACK time. The DB-local
 	// sequence counter orders the commit's history exactly where it
@@ -740,12 +743,14 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 // schema index covers them from the replay onward.
 func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
+	retired := false
 	if len(w.draining) > 0 && w.draining[0] == buf {
 		// Release the retired generation before repairing the pending index.
 		// Reslicing alone retains it through the queue's backing array.
 		w.draining[0] = nil
 		w.draining = w.draining[1:]
 		w.retireReadScopesLocked(buf)
+		retired = true
 	}
 
 	// The generation's writes are committed: the schema's committed index
@@ -780,6 +785,11 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 		w.readEpoch.Store((w.readEpoch.Load() + 2) &^ 1)
 	}
 	w.mu.Unlock()
+	if retired {
+		for _, commit := range buf.commits {
+			commit.memoryLease.Release()
+		}
+	}
 }
 
 // nodeLocked resolves the newest buffered version of id across the active

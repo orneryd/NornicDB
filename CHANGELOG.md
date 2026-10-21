@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recover application memory admission after rejected queries leave idle Go heap
+  pages resident in the cgroup. The shared sampler performs bounded, rate-limited
+  reclamation and requires a fresh physical reading before reopening admission
+  for HTTP, Bolt and buffered commits. Opt-in transaction/application limits keep
+  their existing unlimited defaults (#1618).
+
 - `recall-bench ingest` enables embedding when an embedding provider is set and
   fails when no corpus vectors were stored. It previously left embedding
   disabled, so hybrid runs silently fell back to BM25. Add OpenAI-compatible
@@ -30,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exceeds a request/search-step deadline, allowing the same position to be
   retried before the fixed expiry. Other producer errors and failed delivery of
   a produced page still retire the stream and release capacity (#1580).
+- Preserve typed-list parameters and stored list properties across collection
+  functions and plugin adapters through one shared runtime-list reader.
 
 - Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
   and read scalar endpoint properties without decoding whole node bodies (#1496, #1497).

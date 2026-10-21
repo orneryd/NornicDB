@@ -10,18 +10,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cli"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/txsession"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
+
+func newTestServerRoot(manager *localization.Manager) *cobra.Command {
+	root := cli.NewRoot("nornicdb", manager, localization.NornicDBCLIRootShort(), localization.NornicDBCLIRootLong())
+	root.SetContext(context.WithValue(context.Background(), commandLocalizerContextKey{}, &commandLocalization{manager: manager}))
+	registerServerCommands(root, manager)
+	return root
+}
 
 func TestRootCommandHelpUsesResolvedLanguage(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
 	require.NoError(t, err)
 
-	command := newRootCommand(manager)
+	command := newTestServerRoot(manager)
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
@@ -33,13 +42,16 @@ func TestRootCommandHelpUsesResolvedLanguage(t *testing.T) {
 	require.Contains(t, help, "base de datos de grafos especializada")
 	require.Contains(t, help, "Inicia el servidor NornicDB")
 	require.Contains(t, help, "Ruta al archivo de configuración YAML")
+	serve, _, err := command.Find([]string{"serve"})
+	require.NoError(t, err)
+	require.Equal(t, "Objetivo de memoria del recolector de Go en bytes (entero no negativo)", serve.Flag("go-memory-limit-bytes").Usage)
 }
 
 func TestRootCommandEnglishHelpRemainsExact(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 
-	command := newRootCommand(manager)
+	command := newTestServerRoot(manager)
 	require.Equal(t, "NornicDB - High-Performance Graph Database for LLM Agents", command.Short)
 	require.Equal(t, `NornicDB is a purpose-built graph database written in Go,
 designed for AI agent memory with Neo4j Bolt/Cypher compatibility.
@@ -57,6 +69,7 @@ Features:
 	require.Equal(t, "Start NornicDB server", serve.Short)
 	require.Equal(t, "Start NornicDB server with Bolt protocol and HTTP API endpoints", serve.Long)
 	require.Equal(t, "Bolt protocol port (Neo4j compatible)", serve.Flag("bolt-port").Usage)
+	require.Equal(t, "Go runtime GC memory target in bytes (non-negative integer)", serve.Flag("go-memory-limit-bytes").Usage)
 	require.Equal(t, "Path to YAML config file (overrides auto-discovery)", command.Flag("config").Usage)
 }
 
@@ -64,7 +77,7 @@ func TestPseudoLocalizedHelpKeepsMultilineLayout(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.MustParse("en-XA")}, nil)
 	require.NoError(t, err)
 
-	command := newRootCommand(manager)
+	command := newTestServerRoot(manager)
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
@@ -87,7 +100,7 @@ func TestLocalizedValidationErrorPreservesCause(t *testing.T) {
 	spanish, err := localization.NewManager([]language.Tag{language.EuropeanSpanish}, nil)
 	require.NoError(t, err)
 	cause := errors.New("sentinel validation cause")
-	command := newRootCommand(english)
+	command := newTestServerRoot(english)
 
 	err = newCommandError(command, localization.NornicDBCLIInvalidMemoryLimit("bad", cause), cause)
 	require.ErrorIs(t, err, cause)
@@ -107,7 +120,7 @@ func TestConfigSelectedLocaleRendersLaterCommandError(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "nornicdb.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("localization:\n  language: es-ES\n"), 0o600))
 
-	command := newRootCommand(english)
+	command := newTestServerRoot(english)
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
@@ -158,14 +171,14 @@ func TestDirectCLIErrorMessagesPreserveIdentityCauseAndLocales(t *testing.T) {
 			} {
 				manager, err := localization.NewManager([]language.Tag{locale.tag}, nil)
 				require.NoError(t, err)
-				require.Equal(t, locale.want, commandText(manager, test.message))
+				require.Equal(t, locale.want, cli.Render(manager, test.message))
 			}
 
 			pseudo, err := localization.NewManager([]language.Tag{language.MustParse("en-XA")}, nil)
 			require.NoError(t, err)
-			require.Contains(t, commandText(pseudo, test.message), "[!!")
+			require.Contains(t, cli.Render(pseudo, test.message), "[!!")
 			if strings.Contains(test.english, cause.Error()) {
-				require.Contains(t, commandText(pseudo, test.message), cause.Error(), "diagnostic causes remain untranslated")
+				require.Contains(t, cli.Render(pseudo, test.message), cause.Error(), "diagnostic causes remain untranslated")
 			}
 		})
 	}
@@ -222,8 +235,8 @@ func TestEnglishEndpointSummaryRemainsExact(t *testing.T) {
   • Cypher:       POST http://localhost:7474/db/nornicdb/tx/commit
   • MCP:          http://localhost:7474/mcp
   • Telemetry:    http://localhost:9464/metrics
-  • pprof:        http://localhost:6060/debug/pprof/`, commandText(manager, message))
+  • pprof:        http://localhost:6060/debug/pprof/`, cli.Render(manager, message))
 
 	message = localization.NornicDBCLIEndpoints("localhost", 7474, 7687, "metrics", "", "", false, false)
-	require.NotContains(t, commandText(manager, message), "Bolt:")
+	require.NotContains(t, cli.Render(manager, message), "Bolt:")
 }

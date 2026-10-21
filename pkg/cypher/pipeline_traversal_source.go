@@ -36,12 +36,34 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	if viewport, _ := TemporalViewportFromContext(ctx); viewport.Enabled() {
 		return nil, false, nil
 	}
-	shape := e.parseTraversalPattern(ctx, pattern)
-	if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
+	// Only inspect syntax before consuming input. Inline properties may refer
+	// to a preceding UNWIND row and must be evaluated with that row's scope.
+	structural := normalizeAnonymousTraversalRelationships(pattern)
+	if hasQuantifiedGroup(pattern) || e.isChainedPattern(structural) {
 		return nil, false, nil
 	}
-	if planPipelineTraversalScan(shape, where, nil).access == traversalSeededAccess {
+	open, close := firstRelationshipBracket(structural)
+	if open < 0 || close < 0 {
 		return nil, false, nil
+	}
+	declaration := relationshipDeclarationHead(structural[open+1 : close])
+	if declaration.hasLength && declaration.length != "1" && declaration.length != "1..1" {
+		return nil, false, nil
+	}
+	// Selected paths have their own dispatcher, even when their text contains
+	// a fixed relationship segment. A preliminary parse of inline properties
+	// would evaluate row-bound expressions before the input row exists.
+	if strings.Contains(where, pathSelectorFunction) || strings.Contains(where, repeatableElementsFunction) {
+		return nil, false, nil
+	}
+	if !strings.Contains(pattern, "{") {
+		shape := e.parseTraversalPattern(ctx, pattern)
+		if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
+			return nil, false, nil
+		}
+		if planPipelineTraversalScan(shape, where, nil).access == traversalSeededAccess {
+			return nil, false, nil
+		}
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
 	predicate := prepareRowPredicate(where)
@@ -59,7 +81,13 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				valid = false
 				return false
 			}
-			plan := planPipelineTraversalScan(shape, where, row)
+			rowCtx := withValueBindings(ctx, row)
+			match := e.parseTraversalPattern(rowCtx, pattern)
+			if match == nil {
+				valid = false
+				return false
+			}
+			plan := planPipelineTraversalScan(match, where, row)
 			if plan.access == traversalSeededAccess {
 				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
 				if err != nil {
@@ -74,8 +102,6 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				}
 				return true
 			}
-			rowCtx := withValueBindings(ctx, row)
-			match := e.parseTraversalPattern(rowCtx, pattern)
 			match.PathVariable = pathVariable
 			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, where, hint.readTail)
 			startProperties := traversalSourceProperties(match.StartNode, where, hint.readTail, pathVariable)
@@ -125,8 +151,28 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				if err != nil || start == nil || !e.matchesEndPattern(start, &match.StartNode) {
 					return nil
 				}
-				end, err := load(endID, endProperties)
-				if err != nil || end == nil || !e.matchesEndPattern(end, &match.EndNode) {
+				var end *storage.Node
+				endpointVisible := false
+				if traversalEndpointsNeedOnlyExist(match) {
+					if checker, ok := store.(storage.RelationshipEndpointChecker); ok {
+						if visible, answered := checker.RelationshipEndpointVisible(endID); answered {
+							endpointVisible = visible
+							if visible && shouldHideSystemNodes(store) {
+								end, err = load(endID, endProperties)
+							}
+						} else {
+							end, err = load(endID, endProperties)
+						}
+					} else {
+						end, err = load(endID, endProperties)
+					}
+				} else {
+					end, err = load(endID, endProperties)
+				}
+				if end != nil {
+					endpointVisible = e.matchesEndPattern(end, &match.EndNode)
+				}
+				if err != nil || !endpointVisible {
 					return nil
 				}
 				if !bind(match.StartNode.variable, start) || !bind(match.EndNode.variable, end) || !bind(match.Relationship.Variable, edge) {

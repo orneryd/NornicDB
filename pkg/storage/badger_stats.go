@@ -701,13 +701,19 @@ func (b *BadgerEngine) IterateNodes(fn func(*Node) bool) error {
 // lines across four engines into one kernel per engine (HARD_CONVERGENCE.md
 // item 4) means future scan fixes land in one place.
 type StreamNodesOptions struct {
+	// Label is an optional index hint. Callers still check label membership.
+	Label string
+	// QueryNodes settles embedding metadata without loading stored vectors,
+	// as QueryNodeReader does. It applies to whole-node reads without
+	// WithEmbeddings; resident vectors may be shared, never copied.
+	QueryNodes bool
 	// Prefix limits the scan to IDs starting with this string ("" scans all).
 	Prefix string
 	// Projection, when non-nil, decodes only these properties.
 	Projection []string
 	// WithEmbeddings loads separately stored chunk vectors.
 	WithEmbeddings bool
-	// ApplyDecayFilter drops nodes failing decay scoring (full scans only).
+	// ApplyDecayFilter drops nodes failing decay scoring, including label scans.
 	ApplyDecayFilter bool
 	// StripEmbeddings removes inline/legacy embedding payloads from results.
 	StripEmbeddings bool
@@ -732,6 +738,22 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return ErrInvalidData
 	}
 	if err := b.ensureOpen(); err != nil {
+		return err
+	}
+	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
+		visit := func(node *Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if opts.StripEmbeddings {
+				node = copyNodeWithoutEmbeddings(node)
+			}
+			return fn(node)
+		}
+		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		if err == ErrIterationStopped {
+			return nil
+		}
 		return err
 	}
 	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
@@ -777,7 +799,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
 			continue
 		}
-		projected := projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings)
+		projected := opts.copyResidentNode(node)
 		if err := fn(projected); err != nil {
 			if err == ErrIterationStopped {
 				return nil
@@ -807,25 +829,30 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		default:
 		}
 		var node *Node
-		err := item.Value(func(val []byte) error {
-			key := item.Key()
-			if len(key) <= 1 {
-				return nil
-			}
-			if projected != nil {
+		var err error
+		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
+			node, err = b.readQueryNodeItemInTxn(txn, item, NodeID(item.Key()[1:]))
+		} else {
+			err = item.Value(func(val []byte) error {
+				key := item.Key()
+				if len(key) <= 1 {
+					return nil
+				}
+				if projected != nil {
+					var decodeErr error
+					node, decodeErr = projected.decode(key, val)
+					return decodeErr
+				}
+				nodeID := NodeID(key[1:])
 				var decodeErr error
-				node, decodeErr = projected.decode(key, val)
+				if opts.WithEmbeddings {
+					node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
+				} else {
+					node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
+				}
 				return decodeErr
-			}
-			nodeID := NodeID(key[1:])
-			var decodeErr error
-			if opts.WithEmbeddings {
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-			} else {
-				node, decodeErr = b.decodeNode(namespaceForNodeID(nodeID), val)
-			}
-			return decodeErr
-		})
+			})
+		}
 		if err != nil || node == nil {
 			return nil // Skip invalid nodes
 		}

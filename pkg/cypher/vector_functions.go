@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"math"
 	"strconv"
 	"strings"
@@ -125,47 +126,35 @@ func vectorCoordinateTypeError(function, got string) error {
 // and, like float64 ones, must be finite.
 func newCypherVector(items []interface{}, coordinateType VectorCoordinateType) (CypherVector, error) {
 	vector := CypherVector{Type: coordinateType}
-	limits := map[VectorCoordinateType]float64{VectorInteger64: math.MaxInt64, VectorInteger32: math.MaxInt32, VectorInteger16: math.MaxInt16, VectorInteger8: math.MaxInt8}
+	widths := map[VectorCoordinateType]int{VectorInteger64: 64, VectorInteger32: 32, VectorInteger16: 16, VectorInteger8: 8}
 	for _, item := range items {
 		if item == nil {
 			return vector, vectorCoordinateTypeError("vector()", "NO_VALUE")
 		}
-		var number float64
-		var integer int64
-		isInteger := false
-		switch typed := item.(type) {
-		case float64:
-			number = typed
-		case float32:
-			number = float64(typed)
-		default:
-			value, ok := cypherIntegerValue(item)
-			if !ok {
-				return vector, &cypherfn.TypeMismatchError{Function: "vector", Expected: "String, List<Float>, List<Integer> or List<Number>", Value: items}
-			}
-			integer, number, isInteger = value, float64(value), true
+		number, ok := valueconvert.ReadNumber(item)
+		if !ok {
+			return vector, &cypherfn.TypeMismatchError{Function: "vector", Expected: "String, List<Float>, List<Integer> or List<Number>", Value: items}
 		}
 		if coordinateType.IsFloat() {
+			floating := number.Float64()
 			if coordinateType == VectorFloat32 {
-				number = float64(float32(number))
+				narrowed, fits := number.Float32()
+				if !fits {
+					return vector, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue", localization.CypherCoreVectorCoordinatesNotFinite())
+				}
+				floating = float64(narrowed)
 			}
-			if math.IsInf(number, 0) || math.IsNaN(number) {
+			if math.IsInf(floating, 0) || math.IsNaN(floating) {
 				return vector, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue", localization.CypherCoreVectorCoordinatesNotFinite())
 			}
-			vector.Floats = append(vector.Floats, number)
-			continue
-		}
-		if !isInteger {
-			truncated := math.Trunc(number)
-			if math.IsNaN(truncated) || truncated > limits[coordinateType] || truncated < -limits[coordinateType]-1 {
+			vector.Floats = append(vector.Floats, floating)
+		} else {
+			integer, fits := number.Int64Bits(widths[coordinateType], valueconvert.IntegerFloat)
+			if !fits {
 				return vector, vectorRangeError()
 			}
-			integer = int64(truncated)
+			vector.Ints = append(vector.Ints, integer)
 		}
-		if limit := int64(limits[coordinateType]); coordinateType != VectorInteger64 && (integer > limit || integer < -limit-1) {
-			return vector, vectorRangeError()
-		}
-		vector.Ints = append(vector.Ints, integer)
 	}
 	return vector, nil
 }

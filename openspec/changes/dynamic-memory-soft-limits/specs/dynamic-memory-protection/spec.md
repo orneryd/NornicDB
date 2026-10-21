@@ -1,0 +1,226 @@
+# Spec Delta
+
+## Purpose
+
+Keep the database available under memory pressure through cooperative, dynamically
+sized application and transaction budgets without misrepresenting storage outcomes.
+
+## ADDED Requirements
+
+### Requirement: Opt-in memory protection
+The new application pressure policy SHALL remain disabled unless a finite
+application limit is explicitly configured. `NORNICDB_MEMORY_LIMIT` SHALL
+retain its existing Go GC meaning and SHALL NOT enable the new policy. Finite
+transaction or aggregate settings SHALL enable only their own estimate checks;
+zero/unset settings SHALL remain unlimited. Disabled scopes SHALL NOT cause
+new admission failures, stale-telemetry rejection, pressure-victim selection or
+async-buffer byte gating.
+
+#### Scenario: No new limits configured
+- **WHEN** no application, transaction or aggregate limit is configured
+- **THEN** execution and async writes follow their existing behavior, without new memory-policy rejection or cancellation; existing GC, request-size and caller-cancellation behavior continues.
+
+#### Scenario: Transaction limit only
+- **WHEN** an individual transaction limit is configured and no application limit is set
+- **THEN** that transaction's estimated usage is checked, while process telemetry loss does not reject unrelated new work or activate whole-application victims.
+
+#### Scenario: Existing Go GC target only
+- **WHEN** `NORNICDB_MEMORY_LIMIT` is configured and no new limit is configured
+- **THEN** it affects Go GC as before and does not activate application or transaction admission.
+
+### Requirement: Bounded cost of memory protection
+The policy SHALL use cached pressure state at execution checkpoints and SHALL
+sample process/container usage outside query loops. Disabled scopes SHALL add
+no allocation per checkpoint or row. Enabled checks SHALL add no allocation
+per checkpoint or accounted growth event; reservation metadata SHALL grow with
+active owners, not with rows, allocations, or the number of checks. The release
+gate SHALL compare the same workloads and configuration on the unmodified base
+and integrated head, with disabled, permissive and restrictive limits. A
+repeatable regression greater than 5% in throughput or p50/p95 latency, or
+greater than 10% in allocated bytes or retained policy memory, SHALL block
+readiness until corrected or explicitly approved with measured justification.
+
+#### Scenario: Limits disabled
+- **WHEN** no new limit is configured and a query visits many rows or cancellation checkpoints
+- **THEN** memory protection performs no sampling and creates no per-checkpoint or per-row allocation; paired CPU and allocation profiles show no repeatable regression beyond the release gate.
+
+#### Scenario: Limits enabled
+- **WHEN** many concurrent queries repeatedly cross execution checkpoints and grow their estimates
+- **THEN** checks use cached readings, each active owner retains bounded accounting state, and paired CPU/heap profiles and throughput/latency results satisfy the release gate while limits still reject over-budget work.
+
+### Requirement: Explicit soft-limit contract
+The system SHALL document application and transaction thresholds as cooperative
+soft limits, distinguish them from Go GC targets and container hard limits, and
+explain that sampling gaps, native calls and single allocations can overshoot.
+
+#### Scenario: One allocation crosses the threshold between checks
+- **WHEN** an allocation exceeds a configured threshold before the next safe checkpoint
+- **THEN** the engine reports the limitation honestly and terminates eligible work at the next safe checkpoint rather than claiming an allocator-enforced ceiling or guaranteed OOM immunity.
+
+### Requirement: Dynamic sizing without attributing queries to baseline
+The system SHALL initialize and reconcile baseline and reserve estimates using
+actual resource ownership and observations, without counting active transaction
+memory as persistent baseline or charging overlapping measurements twice.
+
+#### Scenario: Model loading changes the baseline
+- **WHEN** a model is loaded or unloaded while transactions exist
+- **THEN** the shared query budget adjusts within the application/container constraint, active query estimates remain separately owned, and unavailable headroom blocks new expensive admissions.
+
+#### Scenario: Budget shrinks below outstanding usage
+- **WHEN** updated resource usage or container constraints reduce available capacity below reservations
+- **THEN** existing usage remains accounted, admission stops and the approved safe cancellation policy applies without silently erasing debt or inflating baseline with active queries.
+
+### Requirement: Shared admission and execution policy
+The system SHALL enforce caller cancellation/deadlines, approximate transaction
+budgets and application pressure through one shared policy owner and existing
+execution checkpoints, supplemented by pre-growth reservations where estimable.
+
+#### Scenario: Single oversized query with no later requests
+- **WHEN** one admitted query exceeds a transaction budget or selected application-pressure policy and no other requests arrive
+- **THEN** its eligible execution terminates with the typed reason at a safe checkpoint and releases owned resources; enforcement does not depend on another admission request.
+
+#### Scenario: Concurrent reservations
+- **WHEN** concurrent transactions request capacity from the same finite aggregate budget
+- **THEN** they cannot independently spend the same available budget and physical process growth is not fully charged to each transaction.
+
+#### Scenario: Cancellation competes with memory pressure
+- **WHEN** caller cancellation, deadline expiration and memory pressure overlap
+- **THEN** the established first-failure semantics preserve the recorded cause, Done notification and transport classification without relabeling an unknown error as OOM.
+
+### Requirement: Compatible failures and service recovery
+The system SHALL reject application-pressure admissions with HTTP 503 and expose
+appropriate typed errors through non-HTTP transports. Individual transaction
+exhaustion SHALL use Neo.ClientError.General.TransactionOutOfMemoryError;
+aggregate pool exhaustion SHALL remain distinct. Transaction-limit settings
+SHALL default to zero/unlimited on the release port.
+
+#### Scenario: Transaction exceeds its configured estimate
+- **WHEN** a pre-commit transaction exceeds its memory threshold
+- **THEN** Bolt/HTTP expose the verified transaction-memory error, the transaction follows existing failure/rollback/reset semantics, no pending writes become committed and a fresh session verifies the outcome.
+
+#### Scenario: Admission rejected but cleanup must run
+- **WHEN** application pressure prevents new expensive requests
+- **THEN** cancellation, rollback, essential health and already admitted completion can still use reserved capacity, and expensive admissions resume only under the approved recovery policy.
+
+### Requirement: Storage completion remains truthful under pressure
+The system SHALL account for Badger/WAL/background and kernel writeback pressure
+in observation/headroom, preserve configured durability and make cancellation
+respect each storage route's irreversible acceptance/commit boundary.
+
+#### Scenario: Pressure before irreversible commit
+- **WHEN** a memory failure occurs before the inventoried irreversible boundary
+- **THEN** the transaction can abort without committing its writes and rollback/flush cleanup has capacity to finish.
+
+#### Scenario: Pressure during post-commit fsync
+- **WHEN** memory pressure rises after irreversible commit while storage synchronization is pending
+- **THEN** the engine completes/reports the actual committed and durability outcome without fabricating an OOM rollback or claiming committed writes were undone.
+
+#### Scenario: Slow disk retains dirty pages
+- **WHEN** slow flush/fsync leaves write buffers or dirty/writeback pages resident
+- **THEN** pressure remains observable, new expensive work is limited and essential storage progress remains possible; fsync completion alone does not reset memory accounting.
+
+### Requirement: Variable feature costs are estimates with observable coverage
+The system SHALL distinguish observed total usage from component estimates and
+SHALL cover transaction work, indexes/builds/inserts, embedding workers, LLM
+inference, reranking and storage working sets without assuming fixed costs or
+attributing shared process deltas to individual operations.
+
+#### Scenario: Indexing and AI work grow while commits are rejected
+- **WHEN** index construction or insertion, embedding, reranking or inference consumes memory while new HTTP commits are rejected
+- **THEN** the same application policy governs new feature work and eligible active work; transaction rejection alone is not claimed to control total growth.
+
+#### Scenario: Fsync overlaps other allocations
+- **WHEN** fsync runs concurrently with writes, inference or GC
+- **THEN** telemetry records scoped usage, dirty/writeback observations and timing without claiming that their delta is the exact fsync allocation or that historical peaks guarantee future capacity.
+
+#### Scenario: HTTP commit endpoint encounters pressure
+- **WHEN** a `/db/{name}/tx/commit` request is rejected before execution because of application pressure
+- **THEN** it receives a structured HTTP 503 memory-pressure response promptly rather than an unbounded wait, and no transaction writes are executed.
+
+#### Scenario: Explicit HTTP commit crosses the storage boundary
+- **WHEN** `/db/{name}/tx/{id}/commit` has irreversibly accepted its writes before a pressure check
+- **THEN** it follows the actual storage/transaction completion outcome instead of reporting a fictitious rollback or applying a blanket admission error after commit.
+
+### Requirement: Budget ownership spans input through final consumption
+The system SHALL apply application admission before expensive request decoding and
+parser work, preserve transaction accounting across statements, and transfer result
+and buffered-write charges without a gap until their actual owner releases them.
+
+#### Scenario: Statement fails while its explicit transaction retains writes
+- **WHEN** memory pressure fails a statement whose session still owns staged writes
+- **THEN** cleanup is serialized with active execution and terminal operations, retained memory stays charged until released, and subsequent transaction control preserves the original failure rather than committing those writes.
+
+#### Scenario: Slow client retains output
+- **WHEN** execution finishes but result rows remain queued or partially consumed
+- **THEN** result ownership retains its charge until consumption/discard/disconnect cleanup; execution completion alone does not release it.
+
+### Requirement: Accepted write completion has protected finite capacity
+The system SHALL obtain bounded completion capacity before entering storage acceptance
+and SHALL preserve replayable WAL and large-commit publication/rollback contracts.
+
+#### Scenario: Pressure after replayable WAL append
+- **WHEN** a buffered commit has successfully appended its replayable WAL record but has not yet published its buffer entry
+- **THEN** the accepted write completes its publication and ownership transfer without a new memory cancellation falsely reporting rollback.
+
+#### Scenario: Completion pool is exhausted
+- **WHEN** a still-abortable transaction cannot reserve completion capacity
+- **THEN** it fails before storage acceptance with the appropriate pool error, without holding locks needed by flush or rollback to release capacity.
+
+### Requirement: Async write buffers participate in application limits
+The system SHALL reserve async write-buffer capacity before irreversible acceptance,
+account for all live generations and their auxiliary allocations, and keep accepted
+writes eligible for flush/replay under pressure. Rotation SHALL NOT reset byte usage.
+
+#### Scenario: Producers exceed the stalled flusher's capacity
+- **WHEN** incoming writes exhaust the buffer byte allowance or shared application capacity while disk progress is stalled
+- **THEN** new abortable writes fail with the appropriate resource error before replayable WAL acceptance, existing accepted writes remain accounted and flush can use protected completion capacity.
+
+#### Scenario: A generation rotates or replay fails
+- **WHEN** an active buffer rotates into draining, retains readers or encounters a replay error
+- **THEN** its retained allocations remain charged until actual release; neither rotation nor retry admits unbounded replacement work or discards acknowledged writes.
+
+### Requirement: Memory failure reclaims abortable explicit transactions
+The system SHALL immediately release abortable staged storage resources of an
+explicit transaction failed by a memory limit, using its serialized lifecycle,
+while retaining the original failure in its protocol state.
+
+#### Scenario: Failed session remains idle
+- **WHEN** an explicit transaction hits its memory limit and its client sends no further command
+- **THEN** abortable staged resources are reclaimed without waiting for COMMIT, ROLLBACK or expiry; a later terminal command cannot commit the discarded writes and receives the original failure under the protocol contract.
+
+### Requirement: Shared pressure chooses one eligible owner at a time
+The system SHALL prefer the newest eligible pre-acceptance transaction when
+application pressure requires active work to stop, and reassess pressure after
+its cleanup rather than canceling every transaction that observes the same sample.
+
+#### Scenario: Concurrent transactions observe one pressure event
+- **WHEN** several transactions cross execution checkpoints after one process-pressure observation
+- **THEN** the policy selects the newest eligible owner first, excludes irreversible commit completion and cleanup, and subsequent selections depend on reconciled pressure.
+
+### Requirement: Stale telemetry stops new expensive admissions
+When application pressure protection is enabled, the system SHALL reject new
+expensive work when the current memory observation exceeds its configured
+freshness deadline or is unavailable, until a fresh
+successful observation restores admission. Rollback, flush and accepted commit
+completion SHALL remain able to progress from protected capacity.
+
+#### Scenario: Sampler stops updating
+- **WHEN** the latest current-usage observation becomes stale or cannot be read
+- **THEN** new expensive admissions fail with a visible resource-unavailable reason; existing cleanup and accepted storage completion remain available, and admission resumes only after a fresh successful sample satisfies the recovery policy.
+
+### Requirement: Distinct names for Go and application limits
+The system SHALL offer an explicit canonical name for the Go runtime GC memory
+target and a separate opt-in application pressure maximum. Existing
+`NORNICDB_MEMORY_LIMIT`, `--memory-limit` and `memory.runtime_limit` SHALL
+retain their Go-target semantics as deprecated aliases. Conflicting explicit
+old/new values for the Go target SHALL fail configuration validation with a
+source-specific error; a legacy value SHALL NOT implicitly activate the
+application pressure policy.
+
+#### Scenario: Existing deployment upgrades
+- **WHEN** an existing deployment supplies only `NORNICDB_MEMORY_LIMIT=7168`
+- **THEN** it retains the same 7168 MiB Go target, receives a migration warning, and does not activate application admission or transaction cancellation.
+
+#### Scenario: Explicit new application limit
+- **WHEN** a finite application maximum is configured through its own setting
+- **THEN** the application policy becomes active independently of the Go GC target and validates headroom against the effective finite container ceiling.

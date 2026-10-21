@@ -14,9 +14,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"golang.org/x/text/language"
 )
 
@@ -55,6 +57,24 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
 	s.refreshAuthResult()
+	if s.server != nil && s.server.memoryPolicy != nil {
+		lease, admissionErr := s.server.memoryPolicy.ReserveWireRequest(int64(len(data)), int64(len(data)))
+		if admissionErr != nil {
+			if s.inTransaction {
+				// Admission runs on the session owner, before decoding or further
+				// storage work. Reclaim any staged writes immediately.
+				if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
+					return err
+				}
+			}
+			message := localization.ApplicationMemoryPressure()
+			if errors.Is(admissionErr, memory.ErrStaleSample) {
+				message = localization.ApplicationMemoryUnavailable()
+			}
+			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+		}
+		defer lease.Release()
+	}
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
@@ -314,6 +334,32 @@ func (s *Session) handleRun(data []byte) error {
 		}
 		result.Rows = filtered
 	}
+	var resultMemoryLease *memory.Lease
+	if s.server != nil && s.server.memoryPolicy != nil && result != nil && !isWrite {
+		// RUN can return before PULL. Keep a separate reservation with the
+		// read result; the decode/execution reservation ends with this call.
+		// A completed autocommit write may already be durable, so memory
+		// pressure must never make it appear rolled back after execution.
+		resultBytes := int64(len(result.Rows)) * 24
+		for _, row := range result.Rows {
+			resultBytes += util.EstimateValueBytes(row)
+		}
+		if resultBytes > 0 {
+			resultMemoryLease, err = s.server.memoryPolicy.Reserve(resultBytes)
+		}
+		if err != nil {
+			if s.inTransaction {
+				if cleanupErr := s.rollbackExplicitTransaction(transactionTerminalRollback); cleanupErr != nil {
+					return cleanupErr
+				}
+			}
+			message := localization.ApplicationMemoryPressure()
+			if errors.Is(err, memory.ErrStaleSample) {
+				message = localization.ApplicationMemoryUnavailable()
+			}
+			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
+		}
+	}
 
 	// Track write operation for deferred flush
 	if isWrite {
@@ -333,6 +379,7 @@ func (s *Session) handleRun(data []byte) error {
 
 	// Store result for PULL
 	s.lastResult = result
+	s.lastResultMemoryLease = resultMemoryLease
 	s.resultIndex = 0
 	published = true
 
@@ -350,6 +397,12 @@ func (s *Session) handleRun(data []byte) error {
 			delivery: delivery,
 			isWrite:  isWrite,
 			database: resultDatabase,
+		}
+		if resultMemoryLease != nil {
+			if s.resultMemoryLeases == nil {
+				s.resultMemoryLeases = make(map[int64]*memory.Lease)
+			}
+			s.resultMemoryLeases[statementID] = resultMemoryLease
 		}
 		s.latestStatementID = statementID
 		successMetadata := map[string]any{
@@ -752,10 +805,23 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 		s.lastLazy = stream.lazy
 	} else {
 		s.lastResult = nil
+		s.lastResultMemoryLease = nil
 		s.resultIndex = 0
 		s.lastLazy = nil
 		s.lastDelivery = nil
 	}
+}
+
+// finishResultStream performs terminal ownership release outside the hot
+// partial-PULL state update. The lease is idempotent across RESET/disconnect.
+func (s *Session) finishResultStream(statementID int64, stream resultStream) {
+	if statementID >= 0 && s.inTransaction {
+		s.resultMemoryLeases[statementID].Release()
+		delete(s.resultMemoryLeases, statementID)
+	} else {
+		s.lastResultMemoryLease.Release()
+	}
+	s.updateResultStream(statementID, stream, false)
 }
 
 func (s *Session) sendStreamingFailure(message string) error {
@@ -824,7 +890,7 @@ func (s *Session) handlePull(data []byte) error {
 		if stream.delivery != nil {
 			stream.delivery.Fail()
 		}
-		s.updateResultStream(statementID, stream, false)
+		s.finishResultStream(statementID, stream)
 		return s.sendLazyFailure(lazyFailure)
 	}
 
@@ -834,6 +900,7 @@ func (s *Session) handlePull(data []byte) error {
 	// cleanup must still be able to find the final PULL's pending cursors.
 
 	// Clear result if done
+	var metadata map[string]any
 	if !hasMore {
 		resultStats := stream.result.Stats
 
@@ -846,17 +913,10 @@ func (s *Session) handlePull(data []byte) error {
 		// Neo4j sends: type, bookmark, t_last, stats, db (but NOT has_more when false)
 		queryType := boltSummaryQueryType(stream.isWrite, resultStats)
 
-		bookmark := s.currentBookmark()
-		if stream.isWrite {
-			if receiptBookmark, ok := s.bookmarkFromResultReceipt(stream.result); ok {
-				bookmark = receiptBookmark
-			} else {
-				bookmark = s.generateBookmark()
-			}
-		}
+		bookmark := s.resultSummaryBookmark(stream.result, stream.isWrite)
 
 		// Build stats matching Neo4j format (only if there are updates)
-		metadata := map[string]any{
+		metadata = map[string]any{
 			"bookmark": bookmark,
 			"type":     queryType,
 			"t_last":   int64(0), // Streaming time
@@ -891,20 +951,31 @@ func (s *Session) handlePull(data []byte) error {
 			}
 		}
 
-		// Note: Neo4j does NOT send has_more when it's false
-		if err := s.sendSuccessNoFlush(metadata); err != nil {
-			return err
-		}
-		return s.flushResultDelivery(statementID, stream, true)
+		// Neo4j does not send has_more when the stream is complete.
+	} else {
+		metadata = map[string]any{"has_more": true}
 	}
-
-	// When there are more records, send has_more: true
-	if err := s.sendSuccessNoFlush(map[string]any{
-		"has_more": true,
-	}); err != nil {
+	if err := s.sendSuccessNoFlush(metadata); err != nil {
 		return err
 	}
-	return s.flushResultDelivery(statementID, stream, false)
+	if err := s.flushIfPending(); err != nil {
+		if stream.delivery != nil {
+			stream.delivery.Fail()
+		}
+		return err
+	}
+	if stream.delivery != nil && stream.delivery.Pending() {
+		stream.delivery.DeliveredWritten()
+		if !hasMore && stream.delivery.Pending() {
+			stream.delivery.Fail()
+		}
+	}
+	if hasMore {
+		s.updateResultStream(statementID, stream, true)
+	} else {
+		s.finishResultStream(statementID, stream)
+	}
+	return nil
 }
 
 // boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
@@ -976,7 +1047,7 @@ func (s *Session) handleDiscard(data []byte) error {
 			break
 		}
 		if err := s.fillLazyResult(&stream, options.limit-discarded); err != nil {
-			s.updateResultStream(statementID, stream, false)
+			s.finishResultStream(statementID, stream)
 			return s.sendLazyFailure(err.(*lazyStatementError))
 		}
 	}
@@ -984,7 +1055,11 @@ func (s *Session) handleDiscard(data []byte) error {
 	if !hasMore && stream.delivery != nil {
 		stream.delivery.Fail()
 	}
-	s.updateResultStream(statementID, stream, hasMore)
+	if hasMore {
+		s.updateResultStream(statementID, stream, true)
+	} else {
+		s.finishResultStream(statementID, stream)
+	}
 	if hasMore {
 		if err := s.sendSuccessNoFlush(map[string]any{"has_more": true}); err != nil {
 			return err
@@ -1001,14 +1076,7 @@ func (s *Session) handleDiscard(data []byte) error {
 
 	// Build completion metadata with stats (same contract as PULL completion).
 	queryType := boltSummaryQueryType(stream.isWrite, resultStats)
-	bookmark := s.currentBookmark()
-	if stream.isWrite {
-		if receiptBookmark, ok := s.bookmarkFromResultReceipt(stream.result); ok {
-			bookmark = receiptBookmark
-		} else {
-			bookmark = s.generateBookmark()
-		}
-	}
+	bookmark := s.resultSummaryBookmark(stream.result, stream.isWrite)
 	metadata := map[string]any{
 		"bookmark": bookmark,
 		"type":     queryType,
@@ -1340,10 +1408,6 @@ func (s *Session) currentBookmark() string {
 	return formatBookmark(uint64(seqNum))
 }
 
-func (s *Session) bookmarkFromReceipt() (string, bool) {
-	return s.bookmarkFromResultReceipt(s.lastResult)
-}
-
 func (s *Session) bookmarkFromResultReceipt(result *QueryResult) (string, bool) {
 	if result == nil || result.Metadata == nil {
 		return "", false
@@ -1378,6 +1442,19 @@ func (s *Session) bookmarkFromResultReceipt(result *QueryResult) (string, bool) 
 
 	s.updateBookmarkSequence(seq)
 	return formatBookmark(seq), true
+}
+
+// resultSummaryBookmark resolves the bookmark semantics shared by PULL and
+// DISCARD. Read results retain the current sequence; writes prefer the durable
+// receipt and allocate a new sequence only when no receipt exists.
+func (s *Session) resultSummaryBookmark(result *QueryResult, isWrite bool) string {
+	if !isWrite {
+		return s.currentBookmark()
+	}
+	if bookmark, ok := s.bookmarkFromResultReceipt(result); ok {
+		return bookmark
+	}
+	return s.generateBookmark()
 }
 
 func (s *Session) updateBookmarkSequence(seq uint64) {

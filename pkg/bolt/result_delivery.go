@@ -2,44 +2,39 @@ package bolt
 
 import (
 	"context"
+
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 )
 
 // Each RUN owns a batch until its records are PULLed or DISCARDed. The
 // connection tracker retains failure ownership of every outstanding batch.
 func (s *Session) beginContinuationDelivery(ctx context.Context) context.Context {
-	if !s.inTransaction && s.lastDelivery != nil {
-		s.lastDelivery.Fail()
+	if !s.inTransaction {
+		if s.lastDelivery != nil {
+			s.lastDelivery.Fail()
+		}
+		s.lastResultMemoryLease.Release()
+		s.lastResultMemoryLease = nil
 	}
 	s.lastDelivery = s.continuationDelivery.Fork()
 	return resultstream.WithDelivery(ctx, s.lastDelivery)
 }
 func (s *Session) abandonContinuationResults() {
+	s.lastResultMemoryLease.Release()
+	s.lastResultMemoryLease = nil
 	if s.lastDelivery != nil {
 		s.lastDelivery.Fail()
 		s.lastDelivery = nil
 	}
+	for _, lease := range s.resultMemoryLeases {
+		lease.Release()
+	}
+	s.resultMemoryLeases = nil
 	for _, stream := range s.resultStreams {
 		if stream.delivery != nil {
 			stream.delivery.Fail()
 		}
 	}
-}
-func (s *Session) flushResultDelivery(statementID int64, stream resultStream, complete bool) error {
-	if err := s.flushIfPending(); err != nil {
-		if stream.delivery != nil {
-			stream.delivery.Fail()
-		}
-		return err
-	}
-	if stream.delivery != nil && stream.delivery.Pending() {
-		stream.delivery.DeliveredWritten()
-		if complete && stream.delivery.Pending() {
-			stream.delivery.Fail()
-		}
-	}
-	s.updateResultStream(statementID, stream, !complete)
-	return nil
 }
 
 // DISCARD selects complete records without writing them. Use the same

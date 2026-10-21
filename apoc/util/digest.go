@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"hash"
 	"math"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // hexDigest is the lower-case hex digest of DigestText(value), the one
@@ -33,68 +34,51 @@ func hexDigest(digest hash.Hash, value interface{}) string {
 // their Cypher text (fmt.Stringer), which Java's may differ from.
 func DigestText(value interface{}) string {
 	var out strings.Builder
-	switch values := value.(type) {
-	case nil:
-	case []interface{}:
-		for _, item := range values {
-			if item != nil {
-				writeJavaString(&out, item)
-			}
-		}
-	case []string:
-		for _, item := range values {
-			out.WriteString(item)
-		}
-	default:
-		if list, ok := digestListValue(value); ok {
-			writeJavaList(&out, list, false)
-		} else {
-			writeJavaString(&out, value)
-		}
+	if _, bytes := value.([]byte); bytes {
+		writeJavaString(&out, value)
+	} else if list, ok := valueconvert.ReadList(value); ok {
+		writeJavaList(&out, list, false)
+	} else {
+		writeJavaString(&out, value)
 	}
 	return out.String()
 }
 
 func writeJavaString(out *strings.Builder, value interface{}) {
-	switch v := value.(type) {
-	case nil:
-	case string:
-		out.WriteString(v)
-	case bool:
-		out.WriteString(strconv.FormatBool(v))
-	case int:
-		out.WriteString(strconv.FormatInt(int64(v), 10))
-	case int32:
-		out.WriteString(strconv.FormatInt(int64(v), 10))
-	case int64:
-		out.WriteString(strconv.FormatInt(v, 10))
-	case float32:
-		out.WriteString(JavaDoubleString(float64(v)))
-	case float64:
-		out.WriteString(JavaDoubleString(v))
-	case []byte:
-		// APOC's Utils.toHashString uses Arrays.toString(byte[]): Java
-		// bytes are signed, unlike Go's byte. Keep binary values as bytes.
+	if number, numeric := valueconvert.ReadNumber(value); numeric {
+		if integer, signed := number.Signed(); signed {
+			out.WriteString(strconv.FormatInt(integer, 10))
+		} else if integer, unsigned := number.Unsigned(); unsigned {
+			out.WriteString(strconv.FormatUint(integer, 10))
+		} else {
+			out.WriteString(JavaDoubleString(number.Float64()))
+		}
+		return
+	}
+	if bytes, binary := value.([]byte); binary {
+		// APOC uses Arrays.toString(byte[]): binary bytes have signed Java
+		// text, rather than the numeric-list text of other unsigned widths.
 		out.WriteByte('[')
-		var text [4]byte // -128 is the longest signed byte.
-		for index, item := range v {
+		var text [4]byte
+		for index, item := range bytes {
 			if index > 0 {
 				out.WriteString(", ")
 			}
 			out.Write(strconv.AppendInt(text[:0], int64(int8(item)), 10))
 		}
 		out.WriteByte(']')
-	case []interface{}:
-		out.WriteByte('[')
-		for index, item := range v {
-			if index > 0 {
-				out.WriteString(", ")
-			}
-			writeJavaString(out, item)
-		}
-		out.WriteByte(']')
-	case []string:
-		out.WriteString("[" + strings.Join(v, ", ") + "]")
+		return
+	}
+	if list, ok := valueconvert.ReadList(value); ok {
+		writeJavaList(out, list, true)
+		return
+	}
+	switch v := value.(type) {
+	case nil:
+	case string:
+		out.WriteString(v)
+	case bool:
+		out.WriteString(strconv.FormatBool(v))
 	case map[string]interface{}:
 		keys := make([]string, 0, len(v))
 		for key := range v {
@@ -112,25 +96,11 @@ func writeJavaString(out *strings.Builder, value interface{}) {
 		}
 		out.WriteByte('}')
 	default:
-		if list, ok := digestListValue(v); ok {
-			writeJavaList(out, list, true)
-		} else {
-			out.WriteString(fmt.Sprint(v))
-		}
+		out.WriteString(fmt.Sprint(v))
 	}
 }
 
-// Cypher lists retain their Go slice/array type across parameter and plugin
-// boundaries. Their Java text is independent of that representation.
-func digestListValue(value interface{}) (reflect.Value, bool) {
-	if _, bytes := value.([]byte); bytes || value == nil {
-		return reflect.Value{}, false
-	}
-	list := reflect.ValueOf(value)
-	return list, list.Kind() == reflect.Slice || list.Kind() == reflect.Array
-}
-
-func writeJavaList(out *strings.Builder, list reflect.Value, nested bool) {
+func writeJavaList(out *strings.Builder, list valueconvert.List, nested bool) {
 	if nested {
 		out.WriteByte('[')
 	}
@@ -138,7 +108,7 @@ func writeJavaList(out *strings.Builder, list reflect.Value, nested bool) {
 		if nested && index > 0 {
 			out.WriteString(", ")
 		}
-		writeJavaString(out, list.Index(index).Interface())
+		writeJavaString(out, list.At(index))
 	}
 	if nested {
 		out.WriteByte(']')

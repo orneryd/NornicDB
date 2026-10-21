@@ -22,6 +22,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/bolt"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/cli"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
@@ -53,7 +54,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := newRootCommand(localizer).Execute(); err != nil {
+	root := cli.NewRoot("nornicdb", localizer, localization.NornicDBCLIRootShort(), localization.NornicDBCLIRootLong())
+	root.SetContext(context.WithValue(context.Background(), commandLocalizerContextKey{}, &commandLocalization{manager: localizer}))
+	registerServerCommands(root, localizer)
+	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
@@ -77,20 +81,9 @@ func (e *commandError) Error() string {
 	if e.cmd != nil {
 		manager = commandLocalizer(e.cmd)
 	}
-	return commandText(manager, e.message)
+	return cli.Render(manager, e.message)
 }
 func (e *commandError) Unwrap() error { return e.cause }
-
-func commandText(manager *localization.Manager, message localization.Message) string {
-	if manager == nil {
-		return message.Fallback
-	}
-	text, _, err := manager.Render(context.Background(), message)
-	if err != nil {
-		return message.Fallback
-	}
-	return text
-}
 
 func newCommandError(cmd *cobra.Command, message localization.Message, cause error) error {
 	return &commandError{cmd: cmd, message: message, cause: cause}
@@ -128,18 +121,13 @@ func setCommandLocalizer(cmd *cobra.Command, manager *localization.Manager) {
 }
 
 func commandPrintln(cmd *cobra.Command, message localization.Message) {
-	cmd.Println(commandText(commandLocalizer(cmd), message))
+	cmd.Println(cli.Render(commandLocalizer(cmd), message))
 }
 
-func newRootCommand(localizer *localization.Manager) *cobra.Command {
-	text := func(message localization.Message) string { return commandText(localizer, message) }
-
-	rootCmd := &cobra.Command{
-		Use:   "nornicdb",
-		Short: text(localization.NornicDBCLIRootShort()),
-		Long:  text(localization.NornicDBCLIRootLong()),
-	}
-	rootCmd.SetContext(context.WithValue(context.Background(), commandLocalizerContextKey{}, &commandLocalization{manager: localizer}))
+// registerServerCommands owns the server binary's commands. Root identity and
+// localized rendering are shared with the admin binary through pkg/cli.
+func registerServerCommands(rootCmd *cobra.Command, localizer *localization.Manager) {
+	text := func(message localization.Message) string { return cli.Render(localizer, message) }
 
 	// Global config flag (applies to all subcommands that load config).
 	// This is the primary configuration mechanism for Docker/K8s where the config
@@ -193,6 +181,7 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	serveCmd.Flags().Int("parallel-batch-size", 1000, text(localization.NornicDBCLIFlagParallelBatchSize()))
 	// Memory management flags
 	serveCmd.Flags().String("memory-limit", "", text(localization.NornicDBCLIFlagMemoryLimit()))
+	serveCmd.Flags().String("go-memory-limit-bytes", "", text(localization.NornicDBCLIFlagGoMemoryLimit()))
 	serveCmd.Flags().Int("gc-percent", 100, text(localization.NornicDBCLIFlagGCPercent()))
 	serveCmd.Flags().Bool("pool-enabled", true, text(localization.NornicDBCLIFlagPoolEnabled()))
 	serveCmd.Flags().Bool("low-memory", getEnvBool("NORNICDB_LOW_MEMORY", false), text(localization.NornicDBCLIFlagLowMemory()))
@@ -265,7 +254,6 @@ func newRootCommand(localizer *localization.Manager) *cobra.Command {
 	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
 	rootCmd.AddCommand(newStemmerCommand(text))
-	return rootCmd
 }
 
 // setCLIOverride stamps a single canonical NORNICDB_* key into
@@ -368,6 +356,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	parallelBatchSize, _ := cmd.Flags().GetInt("parallel-batch-size")
 	// Memory management flags
 	memoryLimit, _ := cmd.Flags().GetString("memory-limit")
+	goMemoryLimit, _ := cmd.Flags().GetString("go-memory-limit-bytes")
 	gcPercent, _ := cmd.Flags().GetInt("gc-percent")
 	poolEnabled, _ := cmd.Flags().GetBool("pool-enabled")
 	queryCacheSize, _ := cmd.Flags().GetInt("query-cache-size")
@@ -516,13 +505,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Override with CLI flags if provided
+	// TODO: Migrate users of the legacy MiB --memory-limit flag to byte integers.
+	choice, runtimeErr := config.ResolveRuntimeLimitAliases(memoryLimit, goMemoryLimit)
+	if errors.Is(runtimeErr, config.ErrRuntimeLimitAliasConflict) {
+		return newCommandError(cmd, localization.NornicDBCLIGoMemoryLimitConflict(), runtimeErr)
+	}
 	if memoryLimit != "" {
-		runtimeLimit, err := config.ParseRuntimeLimit(memoryLimit)
-		if err != nil {
-			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, err), err)
+		cmd.PrintErrln(cli.Render(commandLocalizer(cmd), localization.NornicDBCLIGoMemoryLimitDeprecated()))
+	}
+	if choice.Raw != "" || runtimeErr != nil {
+		if runtimeErr != nil {
+			if goMemoryLimit != "" {
+				return newCommandError(cmd, localization.NornicDBCLIInvalidGoMemoryLimit(goMemoryLimit, runtimeErr), runtimeErr)
+			}
+			return newCommandError(cmd, localization.NornicDBCLIInvalidMemoryLimit(memoryLimit, runtimeErr), runtimeErr)
 		}
-		cfg.Memory.RuntimeLimitStr = memoryLimit
-		cfg.Memory.RuntimeLimit = runtimeLimit
+		cfg.Memory.RuntimeLimitStr = choice.Raw
+		cfg.Memory.RuntimeLimit = choice.Bytes
 	}
 	if gcPercent != 100 {
 		cfg.Memory.GCPercent = gcPercent
@@ -918,6 +917,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	queryExecutor := NewDBQueryExecutor(db)
 	queryExecutor.localizer = localizer
 	boltServer := bolt.NewWithDatabaseManager(boltConfig, queryExecutor, httpServer.GetDatabaseManager())
+	boltServer.SetMemoryPolicy(db.MemoryPolicy())
 	httpServer.SetConnectionLister(boltServer.ConnectionListings)
 	connectionTracker := multidb.NewConnectionTracker()
 	boltServer.SetDatabaseConnectionAdmission(httpServer.GetDatabaseManager().ResolveConnectionLimitOwner, func(databaseName string) error {

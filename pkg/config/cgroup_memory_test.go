@@ -52,6 +52,33 @@ func TestDetectCgroupMemoryLimit(t *testing.T) {
 	}
 }
 
+func TestCgroupMemoryHeadroomPairsAncestorUsageWithItsLimit(t *testing.T) {
+	fs := fakeCgroupFS(t, map[string]string{
+		"proc/self/cgroup":                          "0::/parent/child\n",
+		"sys/fs/cgroup/parent/memory.max":           "1000\n",
+		"sys/fs/cgroup/parent/memory.current":       "950\n",
+		"sys/fs/cgroup/parent/child/memory.max":     "max\n",
+		"sys/fs/cgroup/parent/child/memory.current": "100\n",
+	})
+	usage, ok := fs.memoryUsage()
+	require.True(t, ok)
+	require.Equal(t, int64(100), usage)
+	available, ok := fs.memoryHeadroom()
+	require.True(t, ok)
+	require.Equal(t, int64(50), available)
+}
+
+func TestCgroupMemoryHeadroomRejectsHiddenV1AncestorUsage(t *testing.T) {
+	fs := fakeCgroupFS(t, map[string]string{
+		"proc/self/cgroup": "12:memory:/docker/child\n",
+		"sys/fs/cgroup/memory/docker/child/memory.limit_in_bytes": "2000\n",
+		"sys/fs/cgroup/memory/docker/child/memory.usage_in_bytes": "100\n",
+		"sys/fs/cgroup/memory/docker/child/memory.stat":           "hierarchical_memory_limit 1000\n",
+	})
+	_, ok := fs.memoryHeadroom()
+	require.False(t, ok, "hidden ancestor usage cannot be inferred from leaf usage")
+}
+
 func TestResolveRuntimeLimit(t *testing.T) {
 	const gib = int64(1) << 30
 	cgroup := 6 * gib
@@ -196,7 +223,7 @@ func TestDetectCgroupMemoryLimitFromMountinfo(t *testing.T) {
 // A mount exposing another part of the hierarchy doesn't hold the process's
 // limit, wherever mountinfo lists it: detection reads the mounts that
 // contain the process's cgroup and takes the tightest limit among them.
-func TestDetectCgroupMemoryLimitSkipsMountsOfOtherCgroups(t *testing.T) {
+func TestCgroupMemoryMountSelection(t *testing.T) {
 	const gib = int64(1) << 30
 	type files = map[string]string
 	v2Other := "31 25 0:26 /other /run/other-cg rw,relatime - cgroup2 cgroup2 rw\n"
@@ -273,6 +300,34 @@ func TestDetectCgroupMemoryLimitSkipsMountsOfOtherCgroups(t *testing.T) {
 			limit, found := fakeCgroupFS(t, test.files).memoryLimit()
 			require.Equal(t, test.found, found)
 			require.Equal(t, test.limit, limit)
+		})
+	}
+	for _, test := range []struct {
+		name  string
+		files files
+		usage int64
+		found bool
+	}{
+		{"v2 usage ignores unrelated mount", files{
+			"proc/self/cgroup": "0::/tenant/app\n", "proc/self/mountinfo": v2Other + v2Root,
+			"run/other-cg/memory.current": "9999\n", "sys/fs/cgroup/tenant/app/memory.current": "2048\n",
+		}, 2048, true},
+		{"v1 usage follows memory controller", files{
+			"proc/self/cgroup": "9:memory:/docker/abc\n", "proc/self/mountinfo": v1Root,
+			"sys/fs/cgroup/memory/docker/abc/memory.usage_in_bytes": "4096\n",
+		}, 4096, true},
+		{"zero usage is unavailable", files{
+			"proc/self/cgroup": "0::/\n", "sys/fs/cgroup/memory.current": "0\n",
+		}, 0, false},
+		{"malformed usage is unavailable", files{
+			"proc/self/cgroup": "0::/\n", "sys/fs/cgroup/memory.current": "unknown\n",
+		}, 0, false},
+		{"no cgroup usage files", nil, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			usage, found := fakeCgroupFS(t, test.files).memoryUsage()
+			require.Equal(t, test.found, found)
+			require.Equal(t, test.usage, usage)
 		})
 	}
 }

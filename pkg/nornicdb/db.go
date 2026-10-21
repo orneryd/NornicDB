@@ -50,6 +50,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/replication"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -166,6 +167,7 @@ type DB struct {
 	accessAccumulator *knowledgepolicy.AccessAccumulator
 	accessFlusher     *knowledgepolicy.AccessFlusher
 	cypherExecutor    *cypher.StorageExecutor
+	memoryPolicy      *memory.Policy
 	gpuManagerMu      sync.RWMutex
 	gpuManager        interface{} // *gpu.Manager - interface to avoid circular import
 
@@ -591,6 +593,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config = DefaultConfig()
 	}
 	config.Database.DataDir = dataDir
+	// Transaction memory limits (#1343): the process-wide pool
+	// (dbms.memory.transaction.total.max) and the default limit of one
+	// transaction (db.memory.transaction.max); a database's own settings
+	// override the latter.
+	cypher.ConfigureTransactionMemory(config.Memory.TransactionTotalMax, cypher.TransactionMemoryLimits{TransactionMax: config.Memory.TransactionMax})
 	// Defensive defaults for the per-DB search-index master switches.
 	// Two distinct cases to handle correctly:
 	//
@@ -626,12 +633,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config:            config,
 		searchWarmupReady: make(chan struct{}),
 	}
+	if limit := config.Memory.ApplicationSoftMax; limit > 0 {
+		headroom := max(int64(128<<20), limit/10)
+		db.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now)
+	}
 
 	// Initialize storage - use BadgerEngine for persistence, MemoryEngine for testing
 	if dataDir != "" {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
 		badgerOpts, walConfig := resolveDurabilityOptions(dataDir, config)
+		badgerOpts.MemoryPolicy = db.memoryPolicy
 		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
 		if providerMode == "" {
 			providerMode = "password"
@@ -1398,6 +1410,16 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// their wiring is complete.
 	if !config.DeferSearchWarmup {
 		db.MarkSearchWarmupReady()
+	}
+	if db.memoryPolicy != nil {
+		_ = db.memoryPolicy.Refresh()
+		ticks := time.NewTicker(250 * time.Millisecond)
+		db.bgWg.Add(1)
+		go func() {
+			defer db.bgWg.Done()
+			defer ticks.Stop()
+			db.memoryPolicy.Run(db.buildCtx, ticks.C)
+		}()
 	}
 
 	return db, nil

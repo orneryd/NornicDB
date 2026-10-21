@@ -258,6 +258,7 @@ nav:
           - Reverse Proxy & TLS: operations/reverse-proxy.md
           - Scaling: operations/scaling.md
           - Low-Memory Mode: operations/low-memory-mode.md
+          - Transaction Memory Limits: operations/transaction-memory-limits.md
           - Troubleshooting: operations/troubleshooting.md
           - CLI Commands: operations/cli-commands.md
       - Storage & Durability:
