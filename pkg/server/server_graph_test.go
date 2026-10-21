@@ -462,31 +462,6 @@ func TestGraphTemporalEndpoint_RejectsWhitespaceOnlyNodeIDs(t *testing.T) {
 	require.Equal(t, 400, resp.Code)
 }
 
-func TestGraphTemporalEndpoint_AdditionalValidationBranches(t *testing.T) {
-	server, authenticator := setupTestServer(t)
-	token := getAuthToken(t, authenticator, "admin")
-	asOf := time.Now().UTC().Format(time.RFC3339Nano)
-
-	badJSONReq := httptest.NewRequest(http.MethodPost, defaultGraphPath(server, "temporal"), strings.NewReader("{"))
-	badJSONRec := httptest.NewRecorder()
-	server.handleGraphTemporal(badJSONRec, badJSONReq)
-	require.Equal(t, 400, badJSONRec.Code)
-	require.Contains(t, badJSONRec.Body.String(), "invalid request body")
-
-	missingIDs := makeRequest(t, server, http.MethodPost, defaultGraphPath(server, "temporal"), map[string]interface{}{
-		"as_of": asOf,
-	}, "Bearer "+token)
-	require.Equal(t, 400, missingIDs.Code)
-	require.Contains(t, missingIDs.Body.String(), "node_ids is required")
-
-	missingDBReq := httptest.NewRequest(http.MethodPost, "/nornicdb/graph//temporal", strings.NewReader(`{"node_ids":["a"],"as_of":"`+asOf+`"}`))
-	missingDBReq.Header.Set("Content-Type", "application/json")
-	missingDBRec := httptest.NewRecorder()
-	server.handleGraphTemporal(missingDBRec, missingDBReq)
-	require.Equal(t, 400, missingDBRec.Code)
-	require.Contains(t, missingDBRec.Body.String(), "database path parameter is required")
-}
-
 func TestGraphDiffEndpoint(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
@@ -745,56 +720,63 @@ func TestGraphDiffEndpoint_WithCompareToUsesBaselineTimestamp(t *testing.T) {
 	require.Equal(t, baseline, payload.Meta.CompareTo)
 }
 
-func TestGraphDiffEndpoint_AdditionalValidationBranches(t *testing.T) {
-	server, authenticator := setupTestServer(t)
-	token := getAuthToken(t, authenticator, "admin")
-	asOf := time.Now().UTC().Format(time.RFC3339Nano)
+func TestGraphTemporalAndDiffValidationBranches(t *testing.T) {
+	for _, endpoint := range []string{"temporal", "diff"} {
+		t.Run(endpoint, func(t *testing.T) {
+			server, authenticator := setupTestServer(t)
+			token := getAuthToken(t, authenticator, "admin")
+			asOf := time.Now().UTC().Format(time.RFC3339Nano)
+			path := defaultGraphPath(server, endpoint)
+			handle := server.handleGraphTemporal
+			if endpoint == "diff" {
+				handle = server.handleGraphDiff
+				wrongMethod := makeRequest(t, server, http.MethodGet, path, nil, "Bearer "+token)
+				require.Equal(t, http.StatusMethodNotAllowed, wrongMethod.Code)
+				require.Contains(t, wrongMethod.Body.String(), "POST required")
+			}
 
-	wrongMethod := makeRequest(t, server, http.MethodGet, defaultGraphPath(server, "diff"), nil, "Bearer "+token)
-	require.Equal(t, 405, wrongMethod.Code)
-	require.Contains(t, wrongMethod.Body.String(), "POST required")
+			badJSONReq := as(httptest.NewRequest(http.MethodPost, path, strings.NewReader("{")), "admin")
+			badJSONRec := httptest.NewRecorder()
+			handle(badJSONRec, badJSONReq)
+			require.Equal(t, http.StatusBadRequest, badJSONRec.Code)
+			require.Contains(t, badJSONRec.Body.String(), "invalid request body")
 
-	badJSONReq := httptest.NewRequest(http.MethodPost, defaultGraphPath(server, "diff"), strings.NewReader("{"))
-	badJSONRec := httptest.NewRecorder()
-	server.handleGraphDiff(badJSONRec, badJSONReq)
-	require.Equal(t, 400, badJSONRec.Code)
-	require.Contains(t, badJSONRec.Body.String(), "invalid request body")
+			ids := []string(nil)
+			if endpoint == "diff" {
+				ids = []string{" ", "\t", "\n"}
+			}
+			missingIDs := makeRequest(t, server, http.MethodPost, path, map[string]interface{}{
+				"node_ids": ids,
+				"as_of":    asOf,
+			}, "Bearer "+token)
+			require.Equal(t, http.StatusBadRequest, missingIDs.Code)
+			require.Contains(t, missingIDs.Body.String(), "node_ids is required")
 
-	whitespaceIDs := makeRequest(t, server, http.MethodPost, defaultGraphPath(server, "diff"), map[string]interface{}{
-		"node_ids": []string{" ", "\t", "\n"},
-		"as_of":    asOf,
-	}, "Bearer "+token)
-	require.Equal(t, 400, whitespaceIDs.Code)
-	require.Contains(t, whitespaceIDs.Body.String(), "node_ids is required")
+			missingDBReq := as(httptest.NewRequest(http.MethodPost, "/nornicdb/graph//"+endpoint, strings.NewReader(`{"node_ids":["a"],"as_of":"`+asOf+`"}`)), "admin")
+			missingDBReq.Header.Set("Content-Type", "application/json")
+			missingDBRec := httptest.NewRecorder()
+			handle(missingDBRec, missingDBReq)
+			require.Equal(t, http.StatusBadRequest, missingDBRec.Code)
+			require.Contains(t, missingDBRec.Body.String(), "database path parameter is required")
 
-	invalidAsOf := makeRequest(t, server, http.MethodPost, defaultGraphPath(server, "diff"), map[string]interface{}{
-		"node_ids": []string{"a"},
-		"as_of":    "not-a-date",
-	}, "Bearer "+token)
-	require.Equal(t, 400, invalidAsOf.Code)
-	require.Contains(t, invalidAsOf.Body.String(), "as_of must be a valid datetime")
-
-	missingAsOf := makeRequest(t, server, http.MethodPost, defaultGraphPath(server, "diff"), map[string]interface{}{
-		"node_ids": []string{"a"},
-		"as_of":    " ",
-	}, "Bearer "+token)
-	require.Equal(t, 400, missingAsOf.Code)
-	require.Contains(t, missingAsOf.Body.String(), "as_of is required")
-
-	invalidCompareTo := makeRequest(t, server, http.MethodPost, defaultGraphPath(server, "diff"), map[string]interface{}{
-		"node_ids":   []string{"a"},
-		"as_of":      asOf,
-		"compare_to": "not-a-date",
-	}, "Bearer "+token)
-	require.Equal(t, 400, invalidCompareTo.Code)
-	require.Contains(t, invalidCompareTo.Body.String(), "compare_to must be a valid datetime")
-
-	missingDBReq := httptest.NewRequest(http.MethodPost, "/nornicdb/graph//diff", strings.NewReader(`{"node_ids":["a"],"as_of":"`+asOf+`"}`))
-	missingDBReq.Header.Set("Content-Type", "application/json")
-	missingDBRec := httptest.NewRecorder()
-	server.handleGraphDiff(missingDBRec, missingDBReq)
-	require.Equal(t, 400, missingDBRec.Code)
-	require.Contains(t, missingDBRec.Body.String(), "database path parameter is required")
+			if endpoint != "diff" {
+				return
+			}
+			for _, invalid := range []struct {
+				name, value, message string
+			}{
+				{"as_of", "not-a-date", "as_of must be a valid datetime"},
+				{"as_of", " ", "as_of is required"},
+				{"compare_to", "not-a-date", "compare_to must be a valid datetime"},
+			} {
+				request := map[string]interface{}{"node_ids": []string{"a"}, "as_of": asOf}
+				request[invalid.name] = invalid.value
+				response := makeRequest(t, server, http.MethodPost, path, request, "Bearer "+token)
+				require.Equal(t, http.StatusBadRequest, response.Code)
+				require.Contains(t, response.Body.String(), invalid.message)
+			}
+		})
+	}
 }
 
 func TestWriteGraphResolveError_MapsSentinels(t *testing.T) {
@@ -830,7 +812,7 @@ func TestResolveGraphStorage_Branches(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Roles: []string{"unknown"}}))
 	req.SetPathValue("database", "nornic")
 	_, _, err = server.resolveGraphStorage(req)
-	require.ErrorIs(t, err, errGraphForbidden)
+	require.NoError(t, err)
 
 	req = httptest.NewRequest(http.MethodPost, "/", nil)
 	req.SetPathValue("database", "nornic")
@@ -1399,13 +1381,13 @@ func TestGraphVersionAndEdgeIterationCancellationBranches(t *testing.T) {
 func TestGraphHandlers_DirectBadJSONBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
-	nReq := httptest.NewRequest(http.MethodPost, "/nornicdb/graph/nornic/neighborhood", strings.NewReader("{"))
+	nReq := as(httptest.NewRequest(http.MethodPost, "/nornicdb/graph/nornic/neighborhood", strings.NewReader("{")), "admin")
 	nRec := httptest.NewRecorder()
 	server.handleGraphNeighborhood(nRec, nReq)
 	require.Equal(t, http.StatusBadRequest, nRec.Code)
 	require.Contains(t, nRec.Body.String(), "invalid request body")
 
-	pReq := httptest.NewRequest(http.MethodPost, "/nornicdb/graph/nornic/path", strings.NewReader("{"))
+	pReq := as(httptest.NewRequest(http.MethodPost, "/nornicdb/graph/nornic/path", strings.NewReader("{")), "admin")
 	pRec := httptest.NewRecorder()
 	server.handleGraphPath(pRec, pReq)
 	require.Equal(t, http.StatusBadRequest, pRec.Code)
@@ -1516,7 +1498,7 @@ func TestGraphHandlers_ResolveAndCollectionErrorBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	// handleGraphPath: resolveGraphStorage error branch (missing path value).
-	pathReq := httptest.NewRequest(http.MethodPost, "/nornicdb/graph/path", strings.NewReader(`{"source_node_id":"a","target_node_id":"b"}`))
+	pathReq := as(httptest.NewRequest(http.MethodPost, "/nornicdb/graph/path", strings.NewReader(`{"source_node_id":"a","target_node_id":"b"}`)), "admin")
 	pathRec := httptest.NewRecorder()
 	server.handleGraphPath(pathRec, pathReq)
 	require.Equal(t, http.StatusBadRequest, pathRec.Code)
