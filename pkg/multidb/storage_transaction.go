@@ -104,9 +104,13 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	}
 	nodes, nodeBytes, err := transactionEntityDelta(changes.Nodes,
 		func(id storage.NodeID) (*storage.Node, error) {
-			return t.Engine.GetNode(storage.NodeID(strings.TrimPrefix(string(id), t.dbName+":")))
+			return storage.GetStoredNode(t.Engine, storage.NodeID(strings.TrimPrefix(string(id), t.dbName+":")))
 		},
 		func(node *storage.Node) (int64, error) {
+			node, err := tx.StoredNodeImage(node)
+			if err != nil {
+				return 0, err
+			}
 			node.ID = storage.NodeID(strings.TrimPrefix(string(node.ID), t.dbName+":"))
 			return calculateNodeSize(node)
 		}, trackBytes)
@@ -115,9 +119,13 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	}
 	edges, edgeBytes, err := transactionEntityDelta(changes.Edges,
 		func(id storage.EdgeID) (*storage.Edge, error) {
-			return t.Engine.GetEdge(storage.EdgeID(strings.TrimPrefix(string(id), t.dbName+":")))
+			return storage.GetStoredEdge(t.Engine, storage.EdgeID(strings.TrimPrefix(string(id), t.dbName+":")))
 		},
 		func(edge *storage.Edge) (int64, error) {
+			edge, err := tx.StoredEdgeImage(edge)
+			if err != nil {
+				return 0, err
+			}
 			edge.ID = storage.EdgeID(strings.TrimPrefix(string(edge.ID), t.dbName+":"))
 			edge.StartNode = storage.NodeID(strings.TrimPrefix(string(edge.StartNode), t.dbName+":"))
 			edge.EndNode = storage.NodeID(strings.TrimPrefix(string(edge.EndNode), t.dbName+":"))
