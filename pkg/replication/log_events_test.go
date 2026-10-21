@@ -25,7 +25,7 @@ func TestConfigLogEventPreservesCanonicalEnglishAndFields(t *testing.T) {
 	require.Equal(t, float64(7), record["term"])
 }
 
-func TestConfigLogPrintfPreservesCanonicalEnglishAndOpaqueArguments(t *testing.T) {
+func TestConfigLogPrintfPreservesCanonicalEnglishAndComponent(t *testing.T) {
 	var output bytes.Buffer
 	config := &Config{Logger: slog.New(slog.NewJSONHandler(&output, nil))}
 
@@ -35,5 +35,7 @@ func TestConfigLogPrintfPreservesCanonicalEnglishAndOpaqueArguments(t *testing.T
 	require.NoError(t, json.Unmarshal(output.Bytes(), &record))
 	require.Equal(t, "[HA Primary] Failed to connect to standby: offline", record["msg"])
 	require.Equal(t, "replication.operator", record["event_id"])
-	require.Equal(t, "offline", record["arg_0"])
+	require.Equal(t, "replication", record["component"])
+	require.NotContains(t, record, "arg_0")
+	require.NotContains(t, record, "message_template")
 }

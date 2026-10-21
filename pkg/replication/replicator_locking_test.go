@@ -219,7 +219,7 @@ func TestHAStandbyReplicator_ConcurrentPromotePromotesOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if n := strings.Count(logs.String(), `message_template="[HA] Promoted to primary"`); n != 1 {
+		if n := strings.Count(logs.String(), `msg="[HA] Promoted to primary"`); n != 1 {
 			t.Fatalf("iteration %d: promoted %d times, want 1", i, n)
 		}
 	}
