@@ -192,6 +192,10 @@ type distinctRowIterator struct {
 	seen map[uint64]struct{}
 	row  []interface{}
 	err  error
+
+	// added, when set, owns row identity: it reports whether an equivalent
+	// row was already added.
+	added func([]interface{}) bool
 }
 
 // NewPrefetchRowIterator creates a bounded prefetch iterator with backpressure.
@@ -371,11 +375,17 @@ func (it *distinctRowIterator) Next() bool {
 	}
 	for it.base.Next() {
 		row := it.base.Row()
-		key := hashRow(row)
-		if _, exists := it.seen[key]; exists {
-			continue
+		if it.added != nil {
+			if it.added(row) {
+				continue
+			}
+		} else {
+			key := hashRow(row)
+			if _, exists := it.seen[key]; exists {
+				continue
+			}
+			it.seen[key] = struct{}{}
 		}
-		it.seen[key] = struct{}{}
 		it.row = row
 		return true
 	}

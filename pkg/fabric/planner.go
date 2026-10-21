@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -12,44 +13,43 @@ import (
 // This mirrors Neo4j's FabricPlanner.scala.
 type FabricPlanner struct {
 	catalog *Catalog
+	// keywordIsName is the Cypher executor's reader of a clause keyword that is
+	// a name where it stands; nil reads every keyword as a clause.
+	keywordIsName ClauseKeywordNameReader
 }
 
-func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
+// ClauseKeywordNameReader reports whether the clause keyword at text[pos:end]
+// is a name there: a variable, parameter, property key or label spelled like
+// the keyword (WITH 1 AS union, $union, n.optional).
+type ClauseKeywordNameReader func(text string, pos, end int, keyword string) bool
+
+// SetClauseKeywordNameReader installs the reader the Cypher executor uses for
+// its own statements, so Fabric reads UNION and OPTIONAL CALL where they do.
+func (p *FabricPlanner) SetClauseKeywordNameReader(read ClauseKeywordNameReader) {
+	p.keywordIsName = read
+}
+
+// clauseKeywordAt reports whether keyword starts a clause at text[idx].
+func clauseKeywordAt(text string, idx int, keyword string, isName ClauseKeywordNameReader) bool {
+	return keywordAt(text, idx, keyword) && (isName == nil || !isName(text, idx, idx+len(keyword), keyword))
+}
+
+func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string, []bool, bool, error) {
 	parts := make([]string, 0, 2)
 	ops := make([]bool, 0, 1)
 	start := 0
-	inSingleQuote := false
-	inDoubleQuote := false
 	braceDepth := 0
 	parenDepth := 0
+	bracketDepth := 0
 
 	for i := 0; i < len(query); i++ {
 		ch := query[i]
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				if i+1 < len(query) && query[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
+		if ch == '\'' || ch == '"' || ch == '`' {
+			i = skipQuoted(query, i)
 			continue
 		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(query) && query[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-		if inSingleQuote || inDoubleQuote {
+		if ch == '/' && i+1 < len(query) && (query[i+1] == '/' || query[i+1] == '*') {
+			i = skipSpacesAndComments(query, i) - 1
 			continue
 		}
 
@@ -66,12 +66,18 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 			if parenDepth > 0 {
 				parenDepth--
 			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
 		}
-		if braceDepth != 0 || parenDepth != 0 {
+		if braceDepth != 0 || parenDepth != 0 || bracketDepth != 0 {
 			continue
 		}
 
-		if !keywordAt(query, i, "UNION") {
+		if !clauseKeywordAt(query, i, "UNION", isName) {
 			continue
 		}
 
@@ -82,9 +88,7 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 		parts = append(parts, part)
 
 		i += len("UNION")
-		for i < len(query) && isWhitespace(query[i]) {
-			i++
-		}
+		i = skipSpacesAndComments(query, i)
 		distinct := true
 		if keywordAt(query, i, "ALL") {
 			distinct = false
@@ -102,9 +106,18 @@ func splitTopLevelUnion(query string) ([]string, []bool, bool, error) {
 	if last == "" {
 		return nil, nil, false, fmt.Errorf("invalid UNION: empty trailing branch")
 	}
+	for _, distinct := range ops[1:] {
+		if distinct != ops[0] {
+			return nil, nil, false, ErrMixedUnion
+		}
+	}
 	parts = append(parts, last)
 	return parts, ops, true, nil
 }
+
+// ErrMixedUnion is returned for a query that combines UNION and UNION ALL at
+// one level. Cypher rejects it before any branch is planned or runs.
+var ErrMixedUnion = errors.New("UNION and UNION ALL cannot be combined in the same query")
 
 func keywordAt(s string, idx int, keyword string) bool {
 	if idx < 0 || idx+len(keyword) > len(s) {
@@ -142,20 +155,25 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 	}
 	session := planTarget{name: sessionDB}
 	scope := compositeScopeRoot(sessionDB)
+	return p.planQuery(trimmed, session, scope, false)
+}
 
-	// Handle top-level UNION / UNION ALL by planning each branch independently.
-	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed)
+// planQuery is the entry for every statement and CALL body. Split UNION before
+// selecting a branch's USE target so one branch cannot absorb another's text or
+// graph scope. CALL import binding remains a per-branch responsibility.
+func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
+	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed, p.keywordIsName)
 	if err != nil {
 		return nil, err
 	}
 	if hasUnion {
-		lhs, err := p.planSingleQuery(parts[0], session, scope, false)
+		lhs, err := p.planQuery(parts[0], current, scope, inSubquery)
 		if err != nil {
 			return nil, err
 		}
 		root := lhs
 		for i := 1; i < len(parts); i++ {
-			rhs, err := p.planSingleQuery(parts[i], session, scope, false)
+			rhs, err := p.planQuery(parts[i], current, scope, inSubquery)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +188,10 @@ func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
 		return root, nil
 	}
 
-	return p.planSingleQuery(trimmed, session, scope, false)
+	if inSubquery {
+		return p.planCallBranch(trimmed, current, scope)
+	}
+	return p.planSingleQuery(trimmed, current, scope, false)
 }
 
 // planSingleQuery plans one query (no top-level UNION) that runs on
@@ -197,7 +218,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 	}
 
 	// Check whether the remaining query contains top-level CALL {} subqueries.
-	callBlocks, err := extractTopLevelCallBlocks(remaining)
+	callBlocks, err := extractTopLevelCallBlocks(remaining, p.keywordIsName)
 	if err != nil {
 		return nil, err
 	}
@@ -592,41 +613,17 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Projection: true, Columns: nil}
 		}
 
-		subUse, subBody, hasUse, err := parseLeadingUse(block.body, true)
-		if err == nil && !hasUse {
-			subUse, subBody, hasUse, err = parseLeadingWithUse(block.body)
-		}
+		subqueryFragment, err := p.planQuery(block.body, top, scope, true)
 		if err != nil {
-			return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
+			return nil, err
 		}
-
-		var (
-			subqueryFragment Fragment
-			importCols       []string
-		)
-		if hasUse {
-			sub := useTarget(subUse)
-			if err := p.validatePlanTarget(scope, sub); err != nil {
-				return nil, err
-			}
-			subqueryFragment, err = p.planSingleQuery(subBody, sub, scope, true)
-			if err != nil {
-				return nil, err
-			}
-			importCols = extractWithImports(subBody)
-		} else {
-			subqueryFragment, err = p.planSingleQuery(block.body, top, scope, true)
-			if err != nil {
-				return nil, err
-			}
-			importCols = extractWithImports(block.body)
-		}
-		subqueryFragment = bindLeadingImportColumns(subqueryFragment, importCols)
 
 		currentInput = &FragmentApply{
-			Input:   currentInput,
-			Inner:   subqueryFragment,
-			Columns: nil, // determined at execution time
+			Input:    currentInput,
+			Inner:    subqueryFragment,
+			Optional: block.optional,
+			Unit:     !callBodyReturns(block.body, p.keywordIsName),
+			Columns:  nil, // determined at execution time
 		}
 		lastPos = block.endPos
 	}
@@ -643,6 +640,34 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 	}
 
 	return currentInput, nil
+}
+
+// planCallBranch preserves the existing USE and import handling for one CALL
+// branch. planQuery has already separated any sibling UNION branches.
+func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string) (Fragment, error) {
+	subUse, subBody, hasUse, err := parseLeadingUse(body, true)
+	if err == nil && !hasUse {
+		subUse, subBody, hasUse, err = parseLeadingWithUse(body)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
+	}
+	if hasUse {
+		sub := useTarget(subUse)
+		if err := p.validatePlanTarget(scope, sub); err != nil {
+			return nil, err
+		}
+		fragment, err := p.planSingleQuery(subBody, sub, scope, true)
+		if err != nil {
+			return nil, err
+		}
+		return bindLeadingImportColumns(fragment, extractWithImports(subBody)), nil
+	}
+	fragment, err := p.planSingleQuery(body, top, scope, true)
+	if err != nil {
+		return nil, err
+	}
+	return bindLeadingImportColumns(fragment, extractWithImports(body)), nil
 }
 
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
@@ -685,6 +710,9 @@ type callSubqueryBlock struct {
 
 	// endPos is the byte offset after the closing }.
 	endPos int
+
+	// optional is true for OPTIONAL CALL { }; startPos is then OPTIONAL's.
+	optional bool
 }
 
 func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
@@ -795,8 +823,9 @@ func newExec(query string, target planTarget, scope string) *FragmentExec {
 	return exec
 }
 
-// extractTopLevelCallBlocks finds CALL { ... } blocks in the current query scope.
-func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
+// extractTopLevelCallBlocks finds CALL { ... } and OPTIONAL CALL { ... }
+// blocks in the current query scope.
+func extractTopLevelCallBlocks(query string, isName ClauseKeywordNameReader) ([]callSubqueryBlock, error) {
 	var blocks []callSubqueryBlock
 	inSingleQuote := false
 	inDoubleQuote := false
@@ -868,7 +897,13 @@ func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
 		if braceDepth != 0 || parenDepth != 0 {
 			continue
 		}
+		start, optional := i, false
+		if clauseKeywordAt(query, i, "OPTIONAL", isName) {
+			i = skipSpacesAndComments(query, i+len("OPTIONAL"))
+			optional = true
+		}
 		if !keywordAt(query, i, "CALL") {
+			i = start
 			continue
 		}
 
@@ -877,6 +912,7 @@ func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
 			j++
 		}
 		if j >= len(query) || query[j] != '{' {
+			i = start
 			continue
 		}
 
@@ -887,13 +923,43 @@ func extractTopLevelCallBlocks(query string) ([]callSubqueryBlock, error) {
 		body := strings.TrimSpace(query[j+1 : closePos])
 		blocks = append(blocks, callSubqueryBlock{
 			body:     body,
-			startPos: i,
+			startPos: start,
 			endPos:   closePos + 1,
+			optional: optional,
 		})
 		i = closePos
 	}
 
 	return blocks, nil
+}
+
+// callBodyReturns reports whether a CALL body has a top-level RETURN; one
+// without is a unit subquery (it ends in an update or FINISH).
+func callBodyReturns(body string, isName ClauseKeywordNameReader) bool {
+	depth := 0
+	for i := 0; i < len(body); i++ {
+		if ch := body[i]; ch == '\'' || ch == '"' || ch == '`' {
+			i = skipQuoted(body, i)
+			continue
+		}
+		if body[i] == '/' && i+1 < len(body) && (body[i+1] == '/' || body[i+1] == '*') {
+			i = skipSpacesAndComments(body, i) - 1
+			continue
+		}
+		switch body[i] {
+		case '{', '(', '[':
+			depth++
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 && clauseKeywordAt(body, i, "RETURN", isName) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func callBlockContainsFabricUse(body string) (bool, error) {
@@ -915,7 +981,7 @@ func callBlockContainsFabricUse(body string) (bool, error) {
 		return true, nil
 	}
 
-	nested, err := extractTopLevelCallBlocks(body)
+	nested, err := extractTopLevelCallBlocks(body, nil)
 	if err != nil {
 		return false, err
 	}

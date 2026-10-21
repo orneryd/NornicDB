@@ -1805,11 +1805,7 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 	if mixed {
-		return nil, newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidClauseComposition",
-			"UNION and UNION ALL cannot be combined in the same query",
-		)
+		return nil, unionMixedError()
 	}
 	if unionAll != splitAll {
 		if unionAll {
@@ -1858,19 +1854,7 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 				result.Rows = reorderUnionRows(result.Rows, order)
 			}
 		} else {
-			message := fmt.Sprintf(
-				"UNION queries must return the same columns (got %v and %v)",
-				combinedResult.Columns,
-				result.Columns,
-			)
-			if len(combinedResult.Columns) != len(result.Columns) {
-				message = localization.CypherResidualUnionColumnCountMismatch(len(combinedResult.Columns), len(result.Columns)).Fallback
-			}
-			return nil, newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"DifferentColumnsInUnion",
-				message,
-			)
+			return nil, unionColumnsError(combinedResult.Columns, result.Columns)
 		}
 
 		addQueryStats(combinedResult.Stats, result.Stats)
@@ -1899,6 +1883,25 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 	}
 
 	return combinedResult, nil
+}
+
+// unionMixedError is the error for a query that combines UNION and UNION ALL.
+func unionMixedError() error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"InvalidClauseComposition",
+		"UNION and UNION ALL cannot be combined in the same query",
+	)
+}
+
+// unionColumnsError is the error for a UNION branch whose column names differ
+// from the first branch's.
+func unionColumnsError(columns, branch []string) error {
+	message := fmt.Sprintf("UNION queries must return the same columns (got %v and %v)", columns, branch)
+	if len(columns) != len(branch) {
+		message = localization.CypherResidualUnionColumnCountMismatch(len(columns), len(branch)).Fallback
+	}
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "DifferentColumnsInUnion", message)
 }
 
 // unionColumnOrder reports whether a UNION branch returns the same column
