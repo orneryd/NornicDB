@@ -15,6 +15,8 @@ This is explicitly a soft-limit contract, not a guarantee against OS OOM kills.
   limits, effective container constraints, measured baseline and reserved headroom.
 - Reuse approximate transaction accounting and coarse reservations from develop;
   do not infer individual transaction usage from process-wide memory deltas.
+- Explicitly cover indexes/builds/inserts, embedding workers, LLM/Heimdall inference,
+  reranking and variable batches; no fixed or exactly measured per-feature cost is assumed.
 - Reserve room for Badger/WAL buffers, dirty/writeback pages, flush/compaction,
   native/model work, response completion and transaction cleanup. Fsync does not
   mean this memory has been released.

@@ -78,6 +78,39 @@ must update this same owner. Invalid settings fail configuration validation.
 Unavailable/stale telemetry must be visible; its operational policy is an open
 review decision, not an implicit unlimited-mode fallback.
 
+## Variable feature costs and measurement limits
+
+There is no fixed memory price per feature or reliable exact per-operation
+measurement derived from process/container deltas. Concurrent allocation, GC,
+native allocators, file cache and asynchronous completion overlap. Correlate
+observations with work, but do not present correlation as causal byte accounting.
+
+| Work | Measurements/estimates to reconcile |
+| --- | --- |
+| Query/explicit transaction | Owned retained rows, groups, paths, writes and output; shared pool estimates |
+| Index build and insertion | Persistent index representation plus temporary construction, insertion, rebuild and compression buffers |
+| Badger/WAL/flush/compaction | Available storage statistics, queued/in-flight bytes and total container file/dirty/writeback observations |
+| Embedding workers | Loaded model baseline, worker concurrency, batch shape, input/output buffers and provider-owned native allocations |
+| LLM/Heimdall inference | Shared weights separately from variable context/KV cache, token batches and simultaneous inference |
+| Reranking | Shared model baseline separately from candidate batches, input lengths and working/output buffers |
+| Remote AI providers | Local request/response queues, serialization and retained outputs; remote model RAM is not local usage |
+
+An fsync duration is measurable, but its byte cost is not a constant: dirty data
+may predate the call, other writes can proceed concurrently, and completion may
+allow later reclamation without evicting clean cache. Do not create a synthetic
+per-fsync allocation charge or sum dirty/writeback subsets into total usage again.
+Observe these values over time, retaining scope, timestamp, coverage and sample
+age. Use owned estimates and bounded representative peak measurements to adapt
+working reserves, then cross-check current total pressure. Past peaks do not
+bound the next batch, insertion or inference request.
+
+Pressure policy must cover the whole application: new embedding/inference/
+reranking/index jobs cannot continue admitting unbounded work merely because
+HTTP commits have stopped. Active work cooperates at its safe boundaries;
+non-interruptible native calls remain live until they actually return. Flush,
+rollback and accepted commit completion retain their recovery reserve. Sampling
+and estimates cannot guarantee a transaction error before every possible OOM.
+
 ## Shared execution gate and transaction lifetime
 
 The conceptual interfaces are `Check(ctx)` and `Reserve(ctx, estimatedBytes)`;
@@ -98,7 +131,10 @@ process-usage increase to each concurrent transaction. Release accounting exactl
 once; garbage collection and native frees may make physical recovery lag behind.
 
 Admission uses HTTP 503 for new expensive requests rejected by application
-pressure. Existing sessions and Bolt use their proper resource/transaction error
+pressure. In particular, `/db/{name}/tx/commit` must return a structured failure
+instead of hanging or starting new query work. `/db/{name}/tx/{id}/commit` must
+respect its existing transaction state and the irreversible storage boundary;
+never unconditionally replace a completed commit outcome with HTTP 503. Existing sessions and Bolt use their proper resource/transaction error
 contracts; they are not arbitrary HTTP responses. Preserve essential health,
 cancel, rollback and completion paths within reserved capacity. Background
 embedding/index/compaction consumers must participate without preventing the

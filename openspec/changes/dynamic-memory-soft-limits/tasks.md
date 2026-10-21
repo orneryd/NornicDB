@@ -3,14 +3,16 @@
 - [x] Record maintainer decisions, soft-limit boundaries and pending operator choices.
 - [x] Inventory release GC/context/storage owners and develop transaction tracker.
 - [x] Link lane A #1615/#1616 and memory implementation #1368 plus follow-ups.
-- [ ] Validate OpenSpec artifacts and run required PR verification; post exact SHAs/results.
-- [ ] Publish a draft PR containing only this proposal and its implementation plan.
+- [x] Validate the initial OpenSpec artifacts strictly; revalidate changes before publication.
+- [ ] Complete required final-head PR verification and post exact SHAs/results.
+- [x] Publish draft PR #1618 containing only this proposal and its implementation plan.
 
 ## 2. Before implementation
 
 - [ ] Resolve the explicit setting/sizing/telemetry/victim-policy decisions in design.md.
 - [ ] Establish lane A's integrated passing cancellation evidence without relaxing deadlines.
-- [ ] Inventory every memory charge site, lifetime, transport and storage acceptance/commit fence.
+- [ ] Inventory every memory charge site, lifetime, transport and storage acceptance/commit fence,
+      including index inserts/builds, embeddings, LLM inference, reranking and both HTTP commit routes.
 - [ ] Reproduce the 8 GiB container / 7168 MiB GC-target OOM with immutable baseline,
       actual peak memory, query, server survival, cgroup events and restart evidence.
 - [ ] Reproduce current compatibility errors against pinned Neo4j 5.26 and preserve results.
