@@ -44,6 +44,11 @@ type ResolvedDbConfig struct {
 	MetadataMemoryMaxBytes      int64
 	BM25StorageMode             string
 	VectorStorageMode           string
+	// TransactionMemoryMaxBytes is db.memory.transaction.max and
+	// TransactionMemoryTotalMaxBytes db.memory.transaction.total.max, in
+	// bytes (0 = unlimited, #1343).
+	TransactionMemoryMaxBytes      int64
+	TransactionMemoryTotalMaxBytes int64
 	// Effective is the full effective value for every allowed key (string form for API).
 	Effective map[string]string
 }
@@ -73,6 +78,7 @@ func Resolve(global *config.Config, overrides map[string]string) *ResolvedDbConf
 		QueryCacheTTL:               global.Memory.QueryCacheTTL,
 		SearchResultCacheMaxEntries: 1000,
 		SearchResultCacheTTL:        5 * time.Minute,
+		TransactionMemoryMaxBytes:   global.Memory.TransactionMax,
 		BM25StorageMode:             "memory",
 		VectorStorageMode:           "auto",
 		Effective:                   make(map[string]string),
@@ -244,6 +250,10 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_MVCC_LIFECYCLE_INTERVAL", c.Database.MVCCLifecycleCycleInterval.String())
 	setEffective("NORNICDB_QUERY_CACHE_SIZE", strconv.Itoa(c.Memory.QueryCacheSize))
 	setEffective("NORNICDB_QUERY_CACHE_TTL", strconv.FormatInt(c.Memory.QueryCacheTTL.Milliseconds(), 10))
+	// Transaction memory (#1343): the process default of one transaction's
+	// limit, and the process-wide pool, Neo4j's 70% default resolved.
+	setEffective("NORNICDB_MEMORY_TRANSACTION_MAX", strconv.FormatInt(c.Memory.TransactionMax, 10))
+	setEffective("NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", strconv.FormatInt(c.Memory.TransactionTotalMax, 10))
 	// Feature flags for Auto-TLP (from Features; K-means clustering is env-only in feature_flags)
 	setEffective("NORNICDB_AUTO_TLP_ENABLED", boolStr(c.Features.TopologyAutoIntegrationEnabled))
 }
@@ -336,12 +346,16 @@ func applyOverride(r *ResolvedDbConfig, key, value string) {
 		}
 	}
 	switch key {
+	case "db.memory.transaction.max":
+		r.TransactionMemoryMaxBytes, _ = config.ParseByteSize(value)
+	case "db.memory.transaction.total.max":
+		r.TransactionMemoryTotalMaxBytes, _ = config.ParseByteSize(value)
 	case "db.nornic.memory.index.bm25.max":
-		r.BM25MemoryMaxBytes, _ = ParseByteSize(value)
+		r.BM25MemoryMaxBytes, _ = config.ParseByteSize(value)
 	case "db.nornic.memory.index.vector.max":
-		r.VectorMemoryMaxBytes, _ = ParseByteSize(value)
+		r.VectorMemoryMaxBytes, _ = config.ParseByteSize(value)
 	case "db.nornic.memory.index.metadata.max":
-		r.MetadataMemoryMaxBytes, _ = ParseByteSize(value)
+		r.MetadataMemoryMaxBytes, _ = config.ParseByteSize(value)
 	case "db.nornic.index.bm25.storage":
 		r.BM25StorageMode = strings.ToLower(value)
 	case "db.nornic.index.vector.storage":

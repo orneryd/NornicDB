@@ -1,3 +1,9 @@
+- id: server.application_memory_pressure
+  description: Respuesta HTTP cuando se alcanza el límite flexible de memoria de la aplicación.
+  other: Se alcanzó el límite flexible de memoria de la aplicación; inténtelo de nuevo cuando se libere memoria.
+- id: server.application_memory_unavailable
+  description: Respuesta HTTP cuando no hay una lectura reciente de memoria.
+  other: Las lecturas de uso de memoria no están disponibles; inténtelo de nuevo cuando se recupere la supervisión.
 - id: server.role_entitlements_unavailable
   description: Respuesta cuando no se pueden configurar derechos de rol.
   other: Los derechos de rol no están configurados (autenticación deshabilitada o base de datos del sistema no disponible).

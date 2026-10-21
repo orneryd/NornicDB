@@ -2002,7 +2002,7 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 		rows = append(rows, row)
 	}
 	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: afterCall}}
-	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
 	if err != nil {
 		return nil, err
 	}
