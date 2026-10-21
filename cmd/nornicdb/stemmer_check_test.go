@@ -29,7 +29,7 @@ func runStemmerCheckCommand(t *testing.T, args ...string) (string, string, error
 
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
-	root := newRootCommand(manager)
+	root := newTestServerRoot(manager)
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&output)
@@ -101,7 +101,7 @@ var Plugin suffix
 func TestStemmerCheckEnglishHelp(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
-	check, _, err := newRootCommand(manager).Find([]string{"stemmer", "check"})
+	check, _, err := newTestServerRoot(manager).Find([]string{"stemmer", "check"})
 	require.NoError(t, err)
 	require.Equal(t, "Check that a stemmer plugin loads into this binary, as it would at startup", check.Short)
 	require.Equal(t, "Maximum time to load the plugin", check.Flag("timeout").Usage)
