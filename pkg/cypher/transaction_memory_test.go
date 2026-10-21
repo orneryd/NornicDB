@@ -36,6 +36,41 @@ func TestTransactionMemoryScopeCannotOverflow(t *testing.T) {
 	require.Equal(t, int64(math.MaxInt64-8), tracker.used.Load())
 }
 
+func TestUnrelatedDatabaseLimitDoesNotTrackUnlimitedTransaction(t *testing.T) {
+	resetTransactionMemory(t)
+	SetDatabaseTransactionMemoryLimits("limited", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	require.True(t, transactionMemoryActive.Load())
+
+	tx := &runningTransaction{database: "nornic"}
+	(&StorageExecutor{}).beginTransactionMemory(tx, nil)
+	require.Nil(t, tx.memory.Load(), "a limit on another database must not activate this transaction's accounting")
+}
+
+func TestRemovingLimitKeepsExistingTransactionChargeUntilEnd(t *testing.T) {
+	resetTransactionMemory(t)
+	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	tx := &runningTransaction{database: "nornic"}
+	executor := &StorageExecutor{}
+	executor.beginTransactionMemory(tx, nil)
+	tracker := tx.memory.Load()
+	require.NotNil(t, tracker)
+	require.NoError(t, tracker.root.grow(64))
+	require.NoError(t, tracker.settleStaged(64))
+
+	SetDatabaseTransactionMemoryLimits("nornic", TransactionMemoryLimits{})
+	SetDatabaseTransactionMemoryLimits("limited", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	executor.beginTransactionMemory(tx, nil)
+	require.Same(t, tracker, tx.memory.Load(), "the existing staged-write owner must retain its charge")
+	global, database := TransactionMemoryPoolUsage("nornic")
+	require.Equal(t, int64(64), global)
+	require.Equal(t, int64(64), database)
+
+	tracker.end()
+	tx.memory.Store(nil)
+	transactionMemoryTrackers.Put(tracker)
+	requirePoolsEmpty(t, "nornic")
+}
+
 // Transaction memory limits (#1343).
 
 // heavyCollectQuery collects 200,000 integers: ~3 MiB of estimated
@@ -502,6 +537,21 @@ func BenchmarkTransactionMemoryTracking(b *testing.B) {
 					}
 				})
 			}
+		}
+	}
+}
+
+// An unrelated database's configured cap must not charge an unlimited query.
+func BenchmarkTransactionMemoryOtherDatabaseLimited(b *testing.B) {
+	resetTransactionMemory(b)
+	SetDatabaseTransactionMemoryLimits("limited", TransactionMemoryLimits{TransactionMax: 1 << 20})
+	executor := newTransactionMemoryExecutor(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := executor.Execute(context.Background(), "RETURN 1 AS n", nil)
+		if err != nil || len(result.Rows) != 1 || result.Rows[0][0] != int64(1) {
+			b.Fatalf("unexpected unlimited database result: %v, %v", result, err)
 		}
 	}
 }
