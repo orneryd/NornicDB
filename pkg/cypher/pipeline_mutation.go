@@ -887,7 +887,7 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 			for name := range child {
 				scope[name] = struct{}{}
 			}
-			result, handled, err := e.runPipelineClauses(ctx, []pipelineRow{child}, scope, updates, updates)
+			result, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{child}, scope, updates, updates, nil)
 			if err != nil {
 				return nil, err
 			}

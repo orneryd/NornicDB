@@ -203,7 +203,7 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 		row[variable] = item
 		rows = append(rows, row)
 	}
-	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, originalClauses)
+	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, nil)
 	if failure := getExpressionFailure(ctx); failure != nil && err == nil {
 		return nil, true, failure
 	}

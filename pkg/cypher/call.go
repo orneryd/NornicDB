@@ -406,7 +406,7 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 	for _, column := range seed.Columns {
 		scope[column] = struct{}{}
 	}
-	result, ok, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, ok, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
 	if ok {
 		e.markCallTailPipelineUsed()
 	}

@@ -38,6 +38,16 @@ func (state *TraversalContext) traversalCancelled() bool {
 	}
 }
 
+// memoryAccount is the traversal's account in the statement's memory
+// scope; it tracks nothing when no limit is configured.
+func (state *TraversalContext) memoryAccount() *memoryAccount {
+	if !state.memoryResolved {
+		state.memoryResolved = true
+		state.memory.scope = memoryScopeFromContext(state.cancelCtx)
+	}
+	return &state.memory
+}
+
 // Cancellation is an expression failure, so a partially built path set never
 // becomes a successful statement result on either evaluator/transaction route.
 func (state *TraversalContext) observeTraversalCancellation() bool {

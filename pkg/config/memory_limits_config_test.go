@@ -8,6 +8,9 @@ import (
 )
 
 func TestMemoryLimitNamesKeepGoAndApplicationScopesDistinct(t *testing.T) {
+	if got := LoadDefaults().Memory.TransactionTotalMax; got != 0 {
+		t.Fatalf("unconfigured aggregate transaction limit = %d, want unlimited", got)
+	}
 	for _, name := range []string{
 		"NORNICDB_MEMORY_LIMIT",
 		"NORNICDB_GO_MEMORY_LIMIT_MIB",
