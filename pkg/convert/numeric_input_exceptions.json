@@ -72,8 +72,8 @@
     "sha256": "400b56ff355412fb8666d1165eb51d57a5baa17dd692e50c7637cf1fae32ed16"
   },
   "pkg/cypher/executor_mutations.go:collectDeleteWithLimitCandidates": {
-    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "4aabf97f1554c9c0c6e4d9490982630839f010e5a2ab1c3d367e61572a7cb392"
+    "reason": "DELETE fast-route admission accepts its fixed native list shapes and otherwise declines to the shared pipeline. #1594 adds structural property inspection before row evaluation; no numeric/list conversion is implemented here.",
+    "sha256": "c48c98bea914784351535bfe91211e7d0df5ecdbe88d9af3b5ee0e6eb77fac1a"
   },
   "pkg/cypher/executor_mutations_delete_guard.go:collectDeleteTargetValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -264,8 +264,8 @@
     "sha256": "c9b0f4987a0b88f9b895d553bfaf9e5104bc48f3f78aae2b693981d45b02023f"
   },
   "pkg/cypher/row_value_program.go:compileValue": {
-    "reason": "Compiler/index specialization handles a fixed native fast shape and falls back to the generic owner for other representations.",
-    "sha256": "3286986c891e3c9f35d9e0ad95b79050726ec83c1733ae00a18bf70460de87ed"
+    "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting, without changing the raw input dispatch.",
+    "sha256": "287c259f47b4c74226b7270c12fde2287b1b1a00f5fbc234911e72ee750a555d"
   },
   "pkg/cypher/fn/runtime_value.go:RuntimeValue": {
     "reason": "Runtime null normalization at the producer boundary; numeric scalars and primitive lists pass through unchanged, with no narrowing or numeric interpretation.",
@@ -274,6 +274,18 @@
   "pkg/cypher/fn/runtime_value.go:functionResult": {
     "reason": "Runtime null normalization at the producer boundary; numeric scalars and primitive lists pass through unchanged, with no narrowing or numeric interpretation.",
     "sha256": "8f68f3a810e140fcbb6f7f7b50bd61bce9a2f8488230676671673ba173d76a64"
+  },
+  "pkg/cypher/transaction_memory.go:growValue": {
+    "reason": "#1618 retained-memory accounting specializes fixed-width scalar footprints, then delegates other carriers to the shared estimator. It sizes representations without interpreting or converting numeric values.",
+    "sha256": "e19ffe8709605980eb0a9a07653c9281b358947a8e386674913c7186849b03e7"
+  },
+  "pkg/cypher/transaction_memory_estimate.go:estimateValueBytesAt": {
+    "reason": "#1618 retained-memory layout counts scalar slots, container capacities and entity references. Native slice element widths are physical memory sizes, not generic list or numeric conversions.",
+    "sha256": "a093cb44807fedb430000195545a320cf9982c2d9cd12226f887b77f274a77a3"
+  },
+  "pkg/cypher/transaction_memory_estimate.go:value": {
+    "reason": "#1618 row accounting identifies shared native slice/map backing storage so retained memory is counted once per column. It preserves carriers and reads their identity, not their numeric/list values.",
+    "sha256": "1fdfcded1375829cb2a18a49787d3d5a21232dd0d15d3dd7510b1cbd1dbc3185"
   },
   "pkg/cypher/executor_mutations.go:normalizedCypherValue": {
     "reason": "Runtime/property admission shares temporal/null/container traversal; numeric classification and checked property coercion use ReadNumber/Number.Int64, while runtime numeric carriers stay exact.",
