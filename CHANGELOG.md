@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve local variable bindings inside correlated subqueries in quantified
+  path predicates, so nested list predicates count only qualifying paths.
+
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited
   reclamation and requires a fresh physical reading before reopening admission
