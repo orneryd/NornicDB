@@ -53,15 +53,35 @@ type Policy struct {
 // NewPolicy constructs an opt-in application policy. A nonpositive limit
 // disables sampling and admission. Headroom is held below both the operator
 // limit and a known container ceiling.
-func NewPolicy(limit, headroom int64, freshness time.Duration, sampler func() (Sample, error), now func() time.Time) *Policy {
+func NewPolicy(limit, headroom int64, freshness time.Duration, sampler func() (Sample, error), now func() time.Time, options ...PolicyOption) *Policy {
 	if headroom < 0 {
 		headroom = 0
 	}
 	if now == nil {
 		now = time.Now
 	}
-	return &Policy{limit: limit, headroom: headroom, freshness: freshness, sampleFunc: sampler, now: now,
-		recovery: pressureRecovery{reclaim: releaseHeapPages}}
+	p := &Policy{limit: limit, headroom: headroom, freshness: freshness, sampleFunc: sampler, now: now,
+		recovery: pressureRecovery{reclaim: releaseHeapPages, interval: pressureRecoveryInterval, rearm: pressureRecoveryRetryInterval}}
+	for _, option := range options {
+		option(p)
+	}
+	return p
+}
+
+// PolicyOption configures one policy at construction, before its sampler starts.
+type PolicyOption func(*Policy)
+
+// WithRecoveryTimings sets the minimum reclamation spacing and unleased rearm.
+// Timings must be at least one millisecond, with rearm >= interval; invalid
+// programmatic options panic. Startup configuration is validated before use.
+func WithRecoveryTimings(interval, rearm time.Duration) PolicyOption {
+	if interval < time.Millisecond || rearm < interval {
+		panic("memory recovery timings require interval >= 1 ms and rearm >= interval")
+	}
+	return func(p *Policy) {
+		p.recovery.interval = interval
+		p.recovery.rearm = rearm
+	}
 }
 
 // CgroupSample obtains one Linux cgroup observation. A missing usage file is
@@ -104,7 +124,7 @@ func (p *Policy) Run(ctx context.Context, ticks <-chan time.Time) {
 // update the persistent baseline; active reservations are never learned into
 // it as though they were persistent resources. After physical pressure rejects
 // work, the sampler may reclaim idle heap pages and remeasure, subject to the
-// recovery cooldown and completed-work allowance.
+// recovery cooldowns for completed admitted work and unleased allocations.
 func (p *Policy) Refresh() error {
 	if err := p.refreshSample(); err != nil {
 		return err
@@ -158,9 +178,10 @@ func (p *Policy) refreshSample() error {
 // Lease owns one atomic forecast reservation. Release is idempotent because
 // failure, cancellation and normal cleanup can converge at a session owner.
 type Lease struct {
-	policy *Policy
-	bytes  int64
-	once   sync.Once
+	policy   *Policy
+	bytes    int64
+	once     sync.Once
+	released bool // guarded by policy.mu
 }
 
 // disabledLease is immutable: Release returns before touching once when policy
@@ -177,40 +198,109 @@ func (p *Policy) Reserve(bytes int64) (*Lease, error) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.reserveLocked(bytes); err != nil {
+		return nil, err
+	}
+	return &Lease{policy: p, bytes: bytes}, nil
+}
+
+// reservationCapacityLocked is the one admission arithmetic owner for new
+// requests and incremental wire growth. All callers hold p.mu.
+func (p *Policy) reservationCapacityLocked() (int64, error) {
 	if p.sampledAt.IsZero() || p.freshness <= 0 || p.now().Sub(p.sampledAt) > p.freshness {
-		return nil, ErrStaleSample
+		return 0, ErrStaleSample
 	}
 	available := p.availableLocked()
 	// Headroom is nonnegative. Reject before subtraction so a very large
 	// configured reserve cannot wrap negative capacity back into admission.
 	if available <= p.headroom {
 		p.recovery.pressure = true
-		return nil, ErrLimitExceeded
+		return 0, ErrLimitExceeded
 	}
 	available -= p.headroom
-	if p.reserved > available || bytes > available-p.reserved {
-		return nil, ErrLimitExceeded
+	if p.reserved > available {
+		return 0, ErrLimitExceeded
+	}
+	return available - p.reserved, nil
+}
+
+func (p *Policy) reserveLocked(bytes int64) error {
+	available, err := p.reservationCapacityLocked()
+	if err != nil {
+		return err
+	}
+	if bytes < 0 || bytes > available {
+		return ErrLimitExceeded
 	}
 	p.reserved += bytes
-	return &Lease{policy: p, bytes: bytes}, nil
+	return nil
 }
 
 // ReserveWireRequest forecasts decode and parser expansion for an incoming
-// message. A transport's independent wire-size bound remains mandatory: this
-// reservation is a soft forecast, not a decoded-size cap.
+// message. Unknown-size streams grow this same reservation before accumulating
+// bytes. A transport may also impose its own size bound. This forecast is not
+// a precise bound on allocations made by a decoder.
 func (p *Policy) ReserveWireRequest(wireBytes, wireLimit int64) (*Lease, error) {
 	if p == nil || p.limit <= 0 {
 		return disabledLease, nil
 	}
-	if wireBytes < 0 || wireBytes > wireLimit {
-		wireBytes = wireLimit
+	return p.Reserve(wireRequestForecast(wireBytes, wireLimit))
+}
+
+func wireRequestForecast(wireBytes, wireLimit int64) int64 {
+	if wireBytes < 0 {
+		wireBytes = max(int64(0), wireLimit)
 	}
 	// Saturate before multiplication. A malicious length must never wrap into
 	// a small forecast and bypass admission.
 	if wireBytes > (1<<63-1)/4 {
-		wireBytes = (1<<63 - 1) / 4
+		return 1<<63 - 1
 	}
-	return p.Reserve(max(int64(64<<10), wireBytes*4))
+	return max(int64(64<<10), wireBytes*4)
+}
+
+// GrowWireRequest extends a ReserveWireRequest lease to cover the accumulated
+// wire size, before a transport grows its input buffer. It charges only the
+// increase and rechecks fresh physical capacity even within the minimum
+// forecast. The caller keeps this lease through decode/setup and releases it
+// on success, rejection, disconnect or cancellation.
+func (l *Lease) GrowWireRequest(wireBytes, wireLimit int64) error {
+	if l == nil || l.policy == nil {
+		return nil
+	}
+	p := l.policy
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if l.released {
+		return ErrLimitExceeded
+	}
+	forecast := max(l.bytes, wireRequestForecast(wireBytes, wireLimit))
+	if err := p.reserveLocked(forecast - l.bytes); err != nil {
+		return err
+	}
+	l.bytes = forecast
+	return nil
+}
+
+// WireLimit returns the largest accumulated wire size this lease can currently
+// cover, including its existing charge. Streaming transports use this as a
+// read-limit snapshot and still grow/recheck the lease before accumulating
+// bytes. Zero means the application policy is disabled.
+func (l *Lease) WireLimit() (int64, error) {
+	if l == nil || l.policy == nil {
+		return 0, nil
+	}
+	p := l.policy
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if l.released {
+		return 0, ErrLimitExceeded
+	}
+	available, err := p.reservationCapacityLocked()
+	if err != nil {
+		return 0, err
+	}
+	return (available + l.bytes) / 4, nil
 }
 
 // Release returns a forecast when its owner has completed cleanup.
@@ -221,6 +311,7 @@ func (l *Lease) Release() {
 	l.once.Do(func() {
 		l.policy.mu.Lock()
 		l.policy.reserved -= l.bytes
+		l.released = true
 		l.policy.recovery.released++
 		l.policy.mu.Unlock()
 	})

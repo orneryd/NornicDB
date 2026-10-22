@@ -20,6 +20,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Configure sampler recovery spacing and unleased rearm with positive-millisecond
+  `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
+  and matching YAML keys; preserve the 5000 / 30000 ms defaults.
+
+- Snapshot transaction-pool ceilings for each statement so hot reload applies
+  only to newly starting work. Keep usage counters shared across generations.
+
+- Preserve serving databases' process-wide transaction-memory settings when a
+  later embedded `Open` fails; publish defaults only after a successful open.
+
+- Bound upgraded GraphQL WebSocket messages by available application-policy
+  capacity before JSON decoding, and admit GraphQL GET variables. Use gqlgen's
+  supported adapter hook with an unconditional handler lifetime owner, including
+  invalid initialization and cancellation. Charge full query/header bytes
+  independently of body limits; retain the default transport when admission is off.
+
+- Admit Bolt client payloads while accumulating chunks and before decoding, and
+  admit HTTP metadata before all application middleware through the same policy,
+  including Bolt's HTTP upgrade parser. Preserve bodyless control requests only
+  with an empty raw query; retain credit through timed-out decoder workers.
+  Admit all routed HTTP request bodies through the shared owner.
+  Permit only bodyless h2c upgrades before admission; process body-bearing or
+  chunked upgrade proposals as HTTP/1.1 through normal admission and body limits.
+  Preserve bodyless upgrade, prior-knowledge h2c and TLS h2 request ownership.
+  Release queued/disconnected reservations; preserve default unlimited Bolt
+  framing when the opt-in application policy is disabled.
+
+- Rearm application memory reclamation after 30 seconds without a released lease,
+  allowing later unleased allocations to recover admission. Collection remains
+  sampler-only, single-flight and conditional on fresh physical pressure.
 - Preserve local variable bindings inside correlated subqueries in quantified
   path predicates, so nested list predicates count only qualifying paths.
 - Bound retained traversal endpoint bodies to the requested fields after canonical visibility checks.
