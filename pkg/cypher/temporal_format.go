@@ -367,7 +367,7 @@ func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{
 		return nil, formatTemplateVerbInvalid(spec)
 	}
 	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(value)))
+		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(nil, value)))
 }
 
 func formatTemplateVerbInvalid(spec string) error {

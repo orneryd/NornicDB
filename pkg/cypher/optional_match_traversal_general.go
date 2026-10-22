@@ -270,68 +270,78 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		matchClause += " WHERE " + clause.where
 	}
 	out := make([]traversalOptRow, 0, len(rows))
-	for _, row := range rows {
-		scope := pipelineRowFromTraversalOptionalRow(row)
-		var matched []pipelineRow
-		// A pattern that reuses a variable bound to null (an earlier OPTIONAL
-		// MATCH found nothing) cannot match; enumerating it as if the variable
-		// were unbound would scan every node for nothing.
-		if !patternVariableBoundToNull(scope, allVars) {
-			var handled bool
-			var err error
-			matched, handled, err = e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
-			if err != nil {
-				return nil, err
-			}
-			if !handled {
-				return nil, unsupportedOptionalMatchShapeError(matchClause)
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		for _, binding := range matched {
-			candidate := extendTraversalRowMulti(row, nil, nil, nil)
-			if candidate.values == nil {
-				candidate.values = make(map[string]interface{})
-			}
-			for _, name := range allVars {
-				switch value := binding[name].(type) {
-				case *storage.Node:
-					candidate.nodes[name] = value
-				case *storage.Edge:
-					candidate.rels[name] = value
-				default:
-					candidate.values[name] = value
+		for _, row := range rows[batch.start:batch.end] {
+			scope := pipelineRowFromTraversalOptionalRow(row)
+			var matched []pipelineRow
+			// A pattern that reuses a variable bound to null (an earlier OPTIONAL
+			// MATCH found nothing) cannot match; enumerating it as if the variable
+			// were unbound would scan every node for nothing.
+			if !patternVariableBoundToNull(scope, allVars) {
+				var handled bool
+				var err error
+				matched, handled, err = e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
+				if err != nil {
+					return nil, err
+				}
+				if !handled {
+					return nil, unsupportedOptionalMatchShapeError(matchClause)
 				}
 			}
-			candidate.optionalMatched = true
-			if err := retention.reserveTraversalRow(candidate); err != nil {
-				return nil, err
-			}
-			out = append(out, candidate)
-		}
-		if len(matched) == 0 {
-			candidate := extendTraversalRowMulti(row, nil, nil, nil)
-			if candidate.values == nil {
-				candidate.values = make(map[string]interface{})
-			}
-			variableLength := variableLengthRelationshipVariableSet(pattern)
-			for _, name := range allVars {
-				if _, bound := scope[name]; bound {
-					continue
+			for innerBatch, innerErr := range materializedBatches(ctx, len(matched)) {
+				if innerErr != nil {
+					return nil, innerErr
 				}
-				if name == pathVar {
-					candidate.values[name] = nil
-				} else if containsString(nodeVars, name) {
-					candidate.nodes[name] = nil
-				} else if _, list := variableLength[name]; list {
-					candidate.values[name] = nil
-				} else {
-					candidate.rels[name] = nil
+				for _, binding := range matched[innerBatch.start:innerBatch.end] {
+					candidate := extendTraversalRowMulti(row, nil, nil, nil)
+					if candidate.values == nil {
+						candidate.values = make(map[string]interface{})
+					}
+					for _, name := range allVars {
+						switch value := binding[name].(type) {
+						case *storage.Node:
+							candidate.nodes[name] = value
+						case *storage.Edge:
+							candidate.rels[name] = value
+						default:
+							candidate.values[name] = value
+						}
+					}
+					candidate.optionalMatched = true
+					if err := retention.reserveTraversalRow(candidate); err != nil {
+						return nil, err
+					}
+					out = append(out, candidate)
 				}
 			}
-			if err := retention.reserveTraversalRow(candidate); err != nil {
-				return nil, err
+			if len(matched) == 0 {
+				candidate := extendTraversalRowMulti(row, nil, nil, nil)
+				if candidate.values == nil {
+					candidate.values = make(map[string]interface{})
+				}
+				variableLength := variableLengthRelationshipVariableSet(pattern)
+				for _, name := range allVars {
+					if _, bound := scope[name]; bound {
+						continue
+					}
+					if name == pathVar {
+						candidate.values[name] = nil
+					} else if containsString(nodeVars, name) {
+						candidate.nodes[name] = nil
+					} else if _, list := variableLength[name]; list {
+						candidate.values[name] = nil
+					} else {
+						candidate.rels[name] = nil
+					}
+				}
+				if err := retention.reserveTraversalRow(candidate); err != nil {
+					return nil, err
+				}
+				out = append(out, candidate)
 			}
-			out = append(out, candidate)
 		}
 	}
 	return out, nil

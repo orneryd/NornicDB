@@ -185,10 +185,10 @@ func TestApocPathEdgeCases(t *testing.T) {
 
 	t.Run("arguments", func(t *testing.T) {
 		exec, _ := newApocPathFixture(t)
-		nodes, err := exec.apocNodes("the start node", (*storage.Node)(nil))
+		nodes, err := exec.apocNodes(context.Background(), "the start node", (*storage.Node)(nil))
 		require.NoError(t, err)
 		require.Empty(t, nodes)
-		_, err = exec.apocExpansionFromArguments([]interface{}{nil, int64(5)}, apocPathSubgraphNodesProcedure)
+		_, err = exec.apocExpansionFromArguments(context.Background(), []interface{}{nil, int64(5)}, apocPathSubgraphNodesProcedure)
 		require.ErrorContains(t, err, "must be a map")
 		// APOC's reading of a boolean setting, checked on Neo4j 5.26.30.
 		for value, want := range map[interface{}]bool{

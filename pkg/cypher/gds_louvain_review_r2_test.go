@@ -63,7 +63,7 @@ func TestReviewR2Differential(t *testing.T) {
 					c.Config[k] = int64(v)
 				}
 			}
-			result, err := exec.callGdsLouvainStream([]interface{}{"review", c.Config})
+			result, err := exec.callGdsLouvainStream(context.Background(), []interface{}{"review", c.Config})
 			require.NoError(t, err)
 			var got [][]interface{}
 			for i, r := range result.Rows {
@@ -105,7 +105,7 @@ func TestReviewR2SeedTypes(t *testing.T) {
 			require.NoError(t, err)
 			_, err = run("CALL gds.graph.project('review',{N:{properties:'seed'}},{R:{orientation:'UNDIRECTED'}})")
 			require.NoError(t, err)
-			result, err := exec.callGdsLouvainStream([]interface{}{"review", map[string]interface{}{"seedProperty": "seed"}})
+			result, err := exec.callGdsLouvainStream(context.Background(), []interface{}{"review", map[string]interface{}{"seedProperty": "seed"}})
 			t.Logf("rows=%+v error=%v", result, err)
 			if tc.wantError {
 				require.Error(t, err)
@@ -137,7 +137,7 @@ func TestReviewR2DirectedCycle(t *testing.T) {
 			}
 			_, err := run(fmt.Sprintf("CALL gds.graph.project('review','N',{R:{orientation:'%s'}})", tc.orientation))
 			require.NoError(t, err)
-			result, err := exec.callGdsLouvainStream([]interface{}{"review", map[string]interface{}{"consecutiveIds": true, "concurrency": int64(1)}})
+			result, err := exec.callGdsLouvainStream(context.Background(), []interface{}{"review", map[string]interface{}{"consecutiveIds": true, "concurrency": int64(1)}})
 			require.NoError(t, err)
 			var got []int64
 			for _, row := range result.Rows {

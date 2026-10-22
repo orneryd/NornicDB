@@ -87,7 +87,7 @@ func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
 		text, ok := item.(string)
 		if !ok {
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCoreStringJoinElementType(neo4jValueRepr(item)))
+				localization.CypherCoreStringJoinElementType(neo4jValueRepr(valueWalk(ctx.StatementContext()), item)))
 		}
 		parts = append(parts, text)
 	}

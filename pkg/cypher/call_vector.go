@@ -173,7 +173,12 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		managed := e.searchService != nil && e.searchService.EmbeddingCount() > 0
 		if !managed {
 			stop := errors.New("managed vector found")
-			err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+			scan := newStorageScan(ctx)
+			defer scan.close()
+			err := streamNodesWithOptions(scan, e.storage, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+				if err := scan.observe(); err != nil {
+					return err
+				}
 				for _, vector := range node.NamedEmbeddings {
 					if len(vector) > 0 {
 						return stop
@@ -223,8 +228,13 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		if !ok {
 			return nil, localizedError(localization.CypherSpecializedCallsVectorQueryFailed(), nil)
 		}
-		for _, hit := range nodeScores {
-			result.Rows = append(result.Rows, []interface{}{hit.node, hit.score})
+		for batch, batchErr := range materializedBatches(ctx, len(nodeScores)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, hit := range nodeScores[batch.start:batch.end] {
+				result.Rows = append(result.Rows, []interface{}{hit.node, hit.score})
+			}
 		}
 		return result, nil
 	}
@@ -248,24 +258,29 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	}
 
 	seenOrphans := make(map[string]bool)
-	for _, hit := range hits {
-		node, err := e.storage.GetNode(storage.NodeID(hit.ID))
-		if err != nil || node == nil {
-			if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil {
-				if !seenOrphans[hit.ID] {
-					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
-					if removeErr := e.searchService.RemoveNode(storage.NodeID(hit.ID)); removeErr != nil {
-						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
-					}
-					seenOrphans[hit.ID] = true
-				}
-			}
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(hits)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, []interface{}{
-			node,
-			hit.Score,
-		})
+		for _, hit := range hits[batch.start:batch.end] {
+			node, err := e.storage.GetNode(storage.NodeID(hit.ID))
+			if err != nil || node == nil {
+				if err != nil && errors.Is(err, storage.ErrNotFound) && e.searchService != nil {
+					if !seenOrphans[hit.ID] {
+						e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
+						if removeErr := e.searchService.RemoveNode(storage.NodeID(hit.ID)); removeErr != nil {
+							e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
+						}
+						seenOrphans[hit.ID] = true
+					}
+				}
+				continue
+			}
+			result.Rows = append(result.Rows, []interface{}{
+				node,
+				hit.Score,
+			})
+		}
 	}
 
 	return result, nil

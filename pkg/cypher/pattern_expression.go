@@ -195,9 +195,14 @@ func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, 
 		return nil, false
 	}
 	matches := expanded[:0]
-	for _, row := range expanded {
-		if row.optionalMatched {
-			matches = append(matches, row)
+	for batch, batchErr := range materializedBatches(ctx, len(expanded)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		for _, row := range expanded[batch.start:batch.end] {
+			if row.optionalMatched {
+				matches = append(matches, row)
+			}
 		}
 	}
 	return matches, true
@@ -223,7 +228,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
-	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+	if err := validateBoundPatternNodes(ctx, []pipelineRow{outer}, pattern); err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
@@ -249,38 +254,43 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	}
 	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels, outer)
 	values := make([]interface{}, 0, len(rows))
-	for _, row := range rows {
-		scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
-		for variable, value := range outer {
-			scope[variable] = value
-		}
-		for variable, node := range row.nodes {
-			if node == nil {
-				scope[variable] = nil
-			} else {
-				scope[variable] = node
-			}
-		}
-		for variable, relationship := range row.rels {
-			if relationship == nil {
-				scope[variable] = nil
-			} else {
-				scope[variable] = relationship
-			}
-		}
-		for variable, value := range row.values {
-			scope[variable] = value
-		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
 			return nil
 		}
-		if evaluated {
-			values = append(values, value)
-			continue
+		for _, row := range rows[batch.start:batch.end] {
+			scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
+			for variable, value := range outer {
+				scope[variable] = value
+			}
+			for variable, node := range row.nodes {
+				if node == nil {
+					scope[variable] = nil
+				} else {
+					scope[variable] = node
+				}
+			}
+			for variable, relationship := range row.rels {
+				if relationship == nil {
+					scope[variable] = nil
+				} else {
+					scope[variable] = relationship
+				}
+			}
+			for variable, value := range row.values {
+				scope[variable] = value
+			}
+			value, evaluated, err := e.evaluateRowValue(projection, scope)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			if evaluated {
+				values = append(values, value)
+				continue
+			}
+			values = append(values, e.evaluateExpressionWithContext(ctx, projection, row.nodes, row.rels))
 		}
-		values = append(values, e.evaluateExpressionWithContext(ctx, projection, row.nodes, row.rels))
 	}
 	return values
 }
@@ -393,11 +403,15 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 			bind(name, value)
 		}
 	}
-	if shape.statementContext || (shape.buildsValues && transactionMemoryTracking()) {
-		bind(rowStatementContextKey, ctx)
-	}
 	if extended != nil {
 		values = extended
+	}
+	if shape.statementContext || (shape.buildsValues && transactionMemoryTracking()) {
+		var contextBound bool
+		values, contextBound = rowValuesBindingStatementContext(ctx, values)
+		if contextBound {
+			defer delete(values, rowStatementContextKey)
+		}
 	}
 	if extended != nil || prepared {
 		// A row variable, or a plain property chain on one (e.uuid),

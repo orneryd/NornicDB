@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"math"
 	"sort"
 	"strconv"
@@ -38,7 +39,7 @@ type similarityRowsConfig struct {
 
 // callNornicSimilarityStream implements
 // nornicdb.similarity.stream(rows, configuration).
-func callNornicSimilarityStream(args []interface{}) (*ExecuteResult, error) {
+func callNornicSimilarityStream(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "nornicdb.similarity.stream"
 	value := procedureArgument(args, 0)
 	if value == nil {
@@ -56,11 +57,11 @@ func callNornicSimilarityStream(args []interface{}) (*ExecuteResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	incidence, err := readSimilarityIncidence(items)
+	incidence, err := readSimilarityIncidence(ctx, items)
 	if err != nil {
 		return nil, err
 	}
-	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: similarityRowsScores(incidence, config)}, nil
+	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: similarityRowsScores(ctx, incidence, config)}, nil
 }
 
 func readSimilarityRowsConfig(options map[string]interface{}) (similarityRowsConfig, error) {
@@ -167,7 +168,7 @@ func (w *similarityWeight) resolve(fallback float64) float64 {
 // A weight that is null, NaN or infinite (1.0 / 0 for a thing nobody holds)
 // drops its row's thing; its source stays a source. Repeated (source, thing)
 // rows are one, with the largest weight given.
-func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) {
+func readSimilarityIncidence(ctx context.Context, items []interface{}) (*similarityIncidence, error) {
 	incidence := &similarityIncidence{things: make(map[string]map[string]*similarityWeight), nodes: make(map[string]interface{})}
 	remember := func(id string, value interface{}) {
 		if _, isID := value.(string); !isID && !isIntegerProcedureValue(value) {
@@ -235,7 +236,7 @@ func readSimilarityIncidence(items []interface{}) (*similarityIncidence, error) 
 			weight.explicit, weight.hasExplicit = number, true
 		}
 	}
-	sort.Strings(incidence.sources)
+	_ = sortStrings(ctx, incidence.sources)
 	return incidence, nil
 }
 
@@ -254,7 +255,7 @@ func (incidence *similarityIncidence) tieKey(id, property string) interface{} {
 // left after the maxHolders cutoff, sorted by thing, and each thing's
 // holders (the distinct sources whose rows give it). A thing's default weight
 // is 1/holders for RESOURCE_ALLOCATION and 1 for the GDS metrics.
-func similarityVectors(incidence *similarityIncidence, config similarityRowsConfig) ([][]gdsEdge, [][]int, []string) {
+func similarityVectors(ctx context.Context, incidence *similarityIncidence, config similarityRowsConfig) ([][]gdsEdge, [][]int, []string) {
 	holders := make(map[string]int)
 	for _, things := range incidence.things {
 		for thing := range things {
@@ -267,7 +268,7 @@ func similarityVectors(incidence *similarityIncidence, config similarityRowsConf
 			kept = append(kept, thing)
 		}
 	}
-	sort.Strings(kept)
+	_ = sortStrings(ctx, kept)
 	thingIndex := make(map[string]int, len(kept))
 	for i, thing := range kept {
 		thingIndex[thing] = i
@@ -287,14 +288,14 @@ func similarityVectors(incidence *similarityIncidence, config similarityRowsConf
 			neighbors[s] = append(neighbors[s], gdsEdge{target: t, weight: given.resolve(fallback)})
 			incoming[t] = append(incoming[t], s)
 		}
-		sort.Slice(neighbors[s], func(i, j int) bool { return neighbors[s][i].target < neighbors[s][j].target })
+		_ = sortPopulation(ctx, neighbors[s], func(i, j int) bool { return neighbors[s][i].target < neighbors[s][j].target })
 	}
 	return neighbors, incoming, kept
 }
 
 // similaritySourceVector is the source's neighbour vector: the union of its
 // nodes' vectors, a thing two of them have once with the larger weight.
-func similaritySourceVector(neighbors [][]gdsEdge, members []int) []gdsEdge {
+func similaritySourceVector(ctx context.Context, neighbors [][]gdsEdge, members []int) []gdsEdge {
 	if len(members) == 1 {
 		return neighbors[members[0]]
 	}
@@ -310,7 +311,7 @@ func similaritySourceVector(neighbors [][]gdsEdge, members []int) []gdsEdge {
 	for target, weight := range weights {
 		vector = append(vector, gdsEdge{target: target, weight: weight})
 	}
-	sort.Slice(vector, func(i, j int) bool { return vector[i].target < vector[j].target })
+	_ = sortPopulation(ctx, vector, func(i, j int) bool { return vector[i].target < vector[j].target })
 	return vector
 }
 
@@ -318,7 +319,7 @@ func similaritySourceVector(neighbors [][]gdsEdge, members []int) []gdsEdge {
 // the node-similarity kernel gds.nodeSimilarity uses: most similar first,
 // ties by the tieBreakProperty, then by id; zero rows when no source node is
 // in the rows. Only the returned rows' shared lists are built.
-func similarityRowsScores(incidence *similarityIncidence, config similarityRowsConfig) [][]interface{} {
+func similarityRowsScores(ctx context.Context, incidence *similarityIncidence, config similarityRowsConfig) [][]interface{} {
 	excluded := make(map[int]bool, len(config.sources))
 	var members []int
 	for i, id := range config.sources {
@@ -337,8 +338,8 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	if len(members) == 0 {
 		return [][]interface{}{}
 	}
-	neighbors, incoming, things := similarityVectors(incidence, config)
-	source := similaritySourceVector(neighbors, members)
+	neighbors, incoming, things := similarityVectors(ctx, incidence, config)
+	source := similaritySourceVector(ctx, neighbors, members)
 	candidates := make(map[int]bool)
 	if config.includeZero {
 		for other := range incidence.sources {
@@ -356,7 +357,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 		if excluded[target] {
 			continue
 		}
-		similarity, _ := nodeSimilarity(source, neighbors[target], config.metric, true, things, false)
+		similarity, _ := nodeSimilarity(ctx, source, neighbors[target], config.metric, true, things, false)
 		// An undefined score (0/0) is dropped, as gds.nodeSimilarity drops it.
 		if math.IsNaN(similarity) || similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 			continue
@@ -371,7 +372,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 		}
 		return similarityShownBefore(a, b)
 	}
-	sort.Slice(scored, func(i, j int) bool {
+	_ = sortPopulation(ctx, scored, func(i, j int) bool {
 		if scored[i].similarity != scored[j].similarity {
 			return scored[i].similarity > scored[j].similarity
 		}
@@ -383,7 +384,7 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	var node1 interface{} = similarityDisplayID(config.sources[0])
 	if config.group {
 		ids := append([]string(nil), config.sources...)
-		sort.Slice(ids, func(i, j int) bool { return similarityShownBefore(ids[i], ids[j]) })
+		_ = sortPopulation(ctx, ids, func(i, j int) bool { return similarityShownBefore(ids[i], ids[j]) })
 		list := make([]interface{}, len(ids))
 		for i, id := range ids {
 			list[i] = similarityDisplayID(id)
@@ -392,10 +393,10 @@ func similarityRowsScores(incidence *similarityIncidence, config similarityRowsC
 	}
 	rows := make([][]interface{}, len(scored))
 	for i, pair := range scored {
-		_, shared := nodeSimilarity(source, neighbors[pair.target], config.metric, true, things, true)
+		_, shared := nodeSimilarity(ctx, source, neighbors[pair.target], config.metric, true, things, true)
 		// Most weight first, as the kernel orders them; equal weights
 		// by the tieBreakProperty, then by id.
-		sort.Slice(shared, func(i, j int) bool {
+		_ = sortPopulation(ctx, shared, func(i, j int) bool {
 			left, right := shared[i].(map[string]interface{}), shared[j].(map[string]interface{})
 			if lw, rw := left["weight"].(float64), right["weight"].(float64); lw != rw {
 				return lw > rw

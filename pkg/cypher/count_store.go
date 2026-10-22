@@ -131,7 +131,7 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 	}
 
 	if direction == "both" {
-		return countUndirectedRelationshipMatches(store, types)
+		return countUndirectedRelationshipMatches(ctx, store, types)
 	}
 	if len(types) == 0 {
 		n, err := store.EdgeCount()
@@ -153,7 +153,7 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 // countUndirectedRelationshipMatches is an undirected pattern's cardinality,
 // not the number of relationships: a relationship matches once from each
 // endpoint, a self-loop once.
-func countUndirectedRelationshipMatches(store storage.Engine, types []string) (int64, bool, error) {
+func countUndirectedRelationshipMatches(ctx context.Context, store storage.Engine, types []string) (int64, bool, error) {
 	var candidates []*storage.Edge
 	if len(types) == 0 {
 		edges, err := store.AllEdges()
@@ -168,26 +168,36 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 			if err != nil {
 				return 0, true, err
 			}
-			for _, edge := range edges {
-				if edge == nil {
-					continue
+			for innerBatch, innerErr := range materializedBatches(ctx, len(edges)) {
+				if innerErr != nil {
+					return 0, true, innerErr
 				}
-				if _, exists := seen[edge.ID]; exists {
-					continue
+				for _, edge := range edges[innerBatch.start:innerBatch.end] {
+					if edge == nil {
+						continue
+					}
+					if _, exists := seen[edge.ID]; exists {
+						continue
+					}
+					seen[edge.ID] = struct{}{}
+					candidates = append(candidates, edge)
 				}
-				seen[edge.ID] = struct{}{}
-				candidates = append(candidates, edge)
 			}
 		}
 	}
 	var count int64
-	for _, edge := range candidates {
-		if edge == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(candidates)) {
+		if batchErr != nil {
+			return 0, true, batchErr
 		}
-		count++
-		if edge.StartNode != edge.EndNode {
+		for _, edge := range candidates[batch.start:batch.end] {
+			if edge == nil {
+				continue
+			}
 			count++
+			if edge.StartNode != edge.EndNode {
+				count++
+			}
 		}
 	}
 	return count, true, nil

@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -95,7 +94,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		}
 		for _, node := range all {
 			labels := append([]string(nil), node.Labels...)
-			sort.Strings(labels)
+			_ = sortStrings(ctx, labels)
 			category(schemaTypeKey(labels), labels).add(node.Properties, cypher25)
 		}
 	} else {
@@ -112,7 +111,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 	for key := range categories {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	_ = sortStrings(ctx, keys)
 	result := &ExecuteResult{Columns: []string{"relType", "propertyName", "propertyTypes", "mandatory"}, Rows: [][]interface{}{}}
 	if nodes {
 		result.Columns = []string{"nodeType", "nodeLabels", "propertyName", "propertyTypes", "mandatory"}
@@ -131,7 +130,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		for name := range found.properties {
 			names = append(names, name)
 		}
-		sort.Strings(names)
+		_ = sortStrings(ctx, names)
 		for _, name := range names {
 			property := found.properties[name]
 			row := append(append([]interface{}(nil), head...), name, sortedStringSet(property.types), property.members == found.members)

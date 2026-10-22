@@ -66,10 +66,16 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	for _, node := range nodes {
-		rows = append(rows, []interface{}{node})
-		if len(rows) >= limit {
-			break
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		for _, node := range nodes[batch.start:batch.end] {
+			rows = append(rows, []interface{}{node})
+			if len(rows) >= limit {
+				break population
+			}
 		}
 	}
 

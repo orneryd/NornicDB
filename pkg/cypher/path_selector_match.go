@@ -105,24 +105,34 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 		return nil, err
 	}
 	out := make([]pipelineRow, 0, len(rows))
-	for _, row := range rows {
-		selected, err := e.selectPaths(ctx, m, row, count)
-		if err != nil {
-			return nil, err
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		found := 0
-		for _, bound := range selected {
-			if m.postWhere != "" && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
-				if err := getExpressionFailure(ctx); err != nil {
-					return nil, err
-				}
-				continue
+		for _, row := range rows[batch.start:batch.end] {
+			selected, err := e.selectPaths(ctx, m, row, count)
+			if err != nil {
+				return nil, err
 			}
-			out = append(out, bound)
-			found++
-		}
-		if optional && found == 0 {
-			out = append(out, m.unmatchedRow(row))
+			found := 0
+			for innerBatch, innerErr := range materializedBatches(ctx, len(selected)) {
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				for _, bound := range selected[innerBatch.start:innerBatch.end] {
+					if m.postWhere != "" && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
+						if err := getExpressionFailure(ctx); err != nil {
+							return nil, err
+						}
+						continue
+					}
+					out = append(out, bound)
+					found++
+				}
+			}
+			if optional && found == 0 {
+				out = append(out, m.unmatchedRow(row))
+			}
 		}
 	}
 	return out, nil

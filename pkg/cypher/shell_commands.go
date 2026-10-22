@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -575,7 +574,7 @@ func (e *StorageExecutor) listShellParams(ctx context.Context) *ExecuteResult {
 	for key := range params {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	_ = sortStrings(ctx, keys)
 	rows := make([][]interface{}, 0, len(keys))
 	for _, key := range keys {
 		rows = append(rows, []interface{}{key, params[key]})

@@ -98,11 +98,7 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool, uses 
 			for i, item := range items {
 				if _, text := item.(string); text {
 					if relationship {
-						texts := make([]string, len(items))
-						for j, element := range items {
-							texts[j], _ = element.(string)
-						}
-						return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", gdsJavaValueText(texts, true)), nil)
+						return nil, "", false, gdsTextArrayValueError(items)
 					}
 					return nil, "", false, localizedError(localization.CypherGraphProceduresUnsupportedArrayType("StringArray"), nil)
 				}
@@ -253,4 +249,14 @@ func gdsPropertyReadType(kind string) string {
 		return "DOUBLE_ARRAY"
 	}
 	return "UNKNOWN"
+}
+
+// gdsTextArrayValueError is GDS's refusal of a relationship's text array,
+// with the array's text.
+func gdsTextArrayValueError(items []interface{}) error {
+	texts := make([]string, len(items))
+	for j, element := range items {
+		texts[j], _ = element.(string)
+	}
+	return localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", gdsJavaValueText(texts, true)), nil)
 }

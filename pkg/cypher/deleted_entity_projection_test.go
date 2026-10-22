@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -14,10 +15,10 @@ func TestDeletedEntityProjectionRejectsPropertyAndLabelAccess(t *testing.T) {
 	deleted := &deletedEntities{}
 	deleted.add([]storage.NodeID{node.ID}, nil)
 
-	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN node.value", deleted))
-	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN labels(node)", deleted))
-	require.NoError(t, validateDeletedEntityReads(rows, "RETURN keys(node)", deleted))
-	require.NoError(t, validateDeletedEntityReads(rows, "RETURN node.value", nil))
+	requireDeletedEntityError(t, validateDeletedEntityReads(context.Background(), rows, "RETURN node.value", deleted))
+	requireDeletedEntityError(t, validateDeletedEntityReads(context.Background(), rows, "RETURN labels(node)", deleted))
+	require.NoError(t, validateDeletedEntityReads(context.Background(), rows, "RETURN keys(node)", deleted))
+	require.NoError(t, validateDeletedEntityReads(context.Background(), rows, "RETURN node.value", nil))
 }
 
 func TestDeletedRelationshipProjectionAllowsTypeButRejectsProperties(t *testing.T) {
@@ -26,11 +27,11 @@ func TestDeletedRelationshipProjectionAllowsTypeButRejectsProperties(t *testing.
 	deleted := &deletedEntities{}
 	deleted.add(nil, map[storage.EdgeID]struct{}{edge.ID: {}})
 
-	if err := validateDeletedEntityReads(rows, "RETURN type(relationship)", deleted); err != nil {
+	if err := validateDeletedEntityReads(context.Background(), rows, "RETURN type(relationship)", deleted); err != nil {
 		t.Fatalf("type() must remain available after deletion: %v", err)
 	}
-	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN relationship.value", deleted))
-	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN keys(relationship)", deleted))
+	requireDeletedEntityError(t, validateDeletedEntityReads(context.Background(), rows, "RETURN relationship.value", deleted))
+	requireDeletedEntityError(t, validateDeletedEntityReads(context.Background(), rows, "RETURN keys(relationship)", deleted))
 }
 
 func requireDeletedEntityError(t *testing.T, err error) {

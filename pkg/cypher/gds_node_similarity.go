@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -92,7 +91,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := nodeSimilarityRows(projection, graph, config)
+	rows, err := nodeSimilarityRows(ctx, projection, graph, config)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +200,7 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 		if strings.TrimSpace(value) == "" {
 			return config, localizedError(localization.CypherGraphProceduresInvalidComponentProperty(), nil)
 		}
-		selected, available := proj.nodePropertyAvailability(config.nodeLabels)
+		selected, available := proj.nodePropertyAvailability(ctx, config.nodeLabels)
 		if !containsString(selected, value) {
 			return config, localizedError(localization.CypherGraphProceduresComponentPropertyNotFound(value, "["+strings.Join(available, ", ")+"]"), nil)
 		}
@@ -305,8 +304,8 @@ type nodeSimilarityPair struct {
 // targets ordered within that type. Only consecutive duplicate targets are
 // dropped, including at a type boundary, before sorting the resulting vector.
 // Repeated targets separated by another target remain distinct entries in GDS.
-func nodeSimilarityNeighbors(graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
-	graph.orderOutgoing()
+func nodeSimilarityNeighbors(ctx context.Context, graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
+	graph.orderOutgoing(ctx)
 	neighbors := make([][]gdsEdge, len(graph.nodes))
 	incoming := make([][]int, len(graph.nodes))
 	for source, outgoing := range graph.outgoing {
@@ -318,16 +317,16 @@ func nodeSimilarityNeighbors(graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
 			}
 			lastTarget = edge.target
 		}
-		sort.SliceStable(neighbors[source], func(i, j int) bool {
+		_ = sortPopulationStable(ctx, neighbors[source], func(i, j int) bool {
 			return neighbors[source][i].target < neighbors[source][j].target
 		})
 	}
 	return neighbors, incoming
 }
 
-func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) ([][]interface{}, error) {
+func nodeSimilarityRows(ctx context.Context, proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) ([][]interface{}, error) {
 	size := len(graph.nodes)
-	neighbors, incoming := nodeSimilarityNeighbors(graph)
+	neighbors, incoming := nodeSimilarityNeighbors(ctx, graph)
 	eligible := func(node int) bool {
 		degree := len(neighbors[node])
 		return degree >= config.degreeCutoff && degree <= config.upperDegreeCutoff
@@ -367,21 +366,21 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 			if component != nil && component[source] != component[target] {
 				continue
 			}
-			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes, true)
+			similarity, shared := nodeSimilarity(ctx, neighbors[source], neighbors[target], config.metric, weighted, graph.nodes, true)
 			// An undefined score (0/0) is dropped, as GDS drops it.
 			if math.IsNaN(similarity) || similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 				continue
 			}
 			scored = append(scored, nodeSimilarityPair{source: source, target: target, similarity: similarity, shared: shared})
 		}
-		sort.Slice(scored, func(i, j int) bool { return nodeSimilarityBefore(scored[i], scored[j], config.bottomK) })
+		_ = sortPopulation(ctx, scored, func(i, j int) bool { return nodeSimilarityBefore(scored[i], scored[j], config.bottomK) })
 		if len(scored) > config.topK {
 			scored = scored[:config.topK]
 		}
 		pairs = append(pairs, scored...)
 	}
 	if config.topN > 0 {
-		sort.SliceStable(pairs, func(i, j int) bool {
+		_ = sortPopulationStable(ctx, pairs, func(i, j int) bool {
 			if pairs[i].similarity != pairs[j].similarity {
 				return (pairs[i].similarity > pairs[j].similarity) != config.bottomN
 			}
@@ -459,7 +458,7 @@ func nodeSimilarityBefore(a, b nodeSimilarityPair, bottom bool) bool {
 // weights, 1 unweighted), most weight first; without explain, only the
 // similarity. A GDS stream's ids are rendered on the way out
 // (gdsStreamHandler).
-func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string, explain bool) (float64, []interface{}) {
+func nodeSimilarity(ctx context.Context, a, b []gdsEdge, metric string, weighted bool, nodes []string, explain bool) (float64, []interface{}) {
 	weightOf := func(edge gdsEdge) float64 {
 		if weighted {
 			return edge.weight
@@ -523,7 +522,7 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 	if !explain && !resourceAllocation {
 		return similarity, nil
 	}
-	sort.Slice(shared, func(i, j int) bool {
+	_ = sortPopulation(ctx, shared, func(i, j int) bool {
 		if shared[i].weight != shared[j].weight {
 			return shared[i].weight > shared[j].weight
 		}

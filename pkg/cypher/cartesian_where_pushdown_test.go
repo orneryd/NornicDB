@@ -624,7 +624,8 @@ func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
 	require.Equal(t, "o-1", string(filtered[0].nodes[0].ID))
 	require.Len(t, filtered[1].nodes, 1)
 	require.Equal(t, "t-1", string(filtered[1].nodes[0].ID))
-	joined, ok := exec.buildCombinationsUsingWhereJoin(filtered, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	joined, ok, err := exec.buildCombinationsUsingWhereJoin(context.Background(), filtered, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, joined, 1)
 	require.Equal(t, "o-1", string(joined[0]["o"].ID))
@@ -758,10 +759,12 @@ func TestBuildCombinationsUsingWhereJoin_TwoVarEquality(t *testing.T) {
 		{variable: "t", nodes: []*storage.Node{t1, t2, t3}},
 	}
 
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok, err := exec.buildCombinationsUsingWhereJoin(
+		context.Background(),
 		patternMatches,
 		"o.joinKey IN ['k1','k2'] AND t.joinKey IN ['k1','k2'] AND o.joinKey = t.joinKey",
 	)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, joined, 2)
 
@@ -795,10 +798,12 @@ func TestBuildCombinationsUsingWhereJoin_ThreeVarEqualityChain(t *testing.T) {
 		{variable: "a", nodes: []*storage.Node{a1, a2, a3}},
 	}
 
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok, err := exec.buildCombinationsUsingWhereJoin(
+		context.Background(),
 		patternMatches,
 		"o.joinKey IN ['k1','k2'] AND t.joinKey = o.joinKey AND a.joinKey = t.joinKey",
 	)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, joined, 2)
 	for _, row := range joined {

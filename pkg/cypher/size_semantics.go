@@ -34,7 +34,7 @@ func sizeArgumentError(value interface{}) error {
 	// Static validation owns known type mismatches; rejected runtime values
 	// retain release's TypeError classification.
 	return &classifiedCypherError{
-		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(value)), nil),
+		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(nil, value)), nil),
 		code:   "Neo.ClientError.Statement.TypeError",
 		detail: "InvalidArgumentType",
 	}
@@ -54,7 +54,7 @@ func typeMismatchFromFunctionError(err error) error {
 			return sizeArgumentError(mismatch.Value)
 		}
 		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(mismatch.Value)))
+			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(nil, mismatch.Value)))
 	}
 	return err
 }

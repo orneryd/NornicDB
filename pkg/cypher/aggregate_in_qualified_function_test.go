@@ -17,18 +17,18 @@ func TestAggregateInsideQualifiedFunction(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggfn"))
 	ctx := context.Background()
 	for query, want := range map[string]interface{}{
-		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(x)) AS s":                 []interface{}{int64(1), int64(2)},
-		"UNWIND ['b', 'a'] AS x RETURN apoc.text.join(collect(x), ',') AS s":        "b,a",
-		"UNWIND [2, 1] AS x RETURN apoc.coll.sort([y IN collect(x) | y]) AS s":      []interface{}{int64(1), int64(2)},
-		"UNWIND ['b', 'a'] AS x RETURN apoc.coll.sum([count(x)]) AS s":              float64(2),
-		"UNWIND [2, 1] AS x WITH apoc.coll.sort(collect(x)) AS s RETURN s":          []interface{}{int64(1), int64(2)},
-		"UNWIND [1, 2] AS x RETURN apoc.coll.sum(collect(x)) + count(*) AS s":       float64(5),
-		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(x))[0] AS s":              int64(1),
-		"UNWIND ['b', 'a'] AS x RETURN size(apoc.coll.toSet(collect(x))) AS s":      int64(2),
-		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(DISTINCT x)) AS s":        []interface{}{int64(1), int64(2)},
-		"UNWIND [2, 1] AS x RETURN apoc.coll.sort( collect( x ) ) AS s":             []interface{}{int64(1), int64(2)},
-		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(x)) AS s ORDER BY s":      []interface{}{int64(1), int64(2)},
-		"UNWIND [2, 1] AS x RETURN toString(size(apoc.coll.sort(collect(x)))) AS s": "2",
+		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(x)) AS s":                                  []interface{}{int64(1), int64(2)},
+		"UNWIND ['b', 'a'] AS x RETURN apoc.text.join(collect(x), ',') AS s":                         "b,a",
+		"UNWIND [2, 1] AS x RETURN apoc.coll.sort([y IN collect(x) | y]) AS s":                       []interface{}{int64(1), int64(2)},
+		"UNWIND ['b', 'a'] AS x RETURN apoc.coll.sum([count(x)]) AS s":                               float64(2),
+		"UNWIND [2, 1] AS x WITH apoc.coll.sort(collect(x)) AS s RETURN s":                           []interface{}{int64(1), int64(2)},
+		"UNWIND [1, 2] AS x RETURN apoc.coll.sum(collect(x)) + count(*) AS s":                        float64(5),
+		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(x))[0] AS s":                               int64(1),
+		"UNWIND ['b', 'a'] AS x RETURN size(apoc.coll.toSet(context.Background(), collect(x))) AS s": int64(2),
+		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(DISTINCT x)) AS s":                         []interface{}{int64(1), int64(2)},
+		"UNWIND [2, 1] AS x RETURN apoc.coll.sort( collect( x ) ) AS s":                              []interface{}{int64(1), int64(2)},
+		"UNWIND [2, 1] AS x RETURN apoc.coll.sort(collect(x)) AS s ORDER BY s":                       []interface{}{int64(1), int64(2)},
+		"UNWIND [2, 1] AS x RETURN toString(size(apoc.coll.sort(collect(x)))) AS s":                  "2",
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)

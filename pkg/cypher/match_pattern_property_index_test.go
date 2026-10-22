@@ -811,7 +811,7 @@ func TestMatchPatternProperty_BoundRelationshipDeleteReturnsCandidateLookupError
 			lookupErr := errors.New(tt.name + " edge lookup failed")
 			tt.configure(wrapped, lookupErr)
 
-			_, err := exec.boundRelationshipDeleteCandidateEdges(wrapped, "source", tt.direction)
+			_, err := exec.boundRelationshipDeleteCandidateEdges(context.Background(), wrapped, "source", tt.direction)
 			require.ErrorIs(t, err, lookupErr)
 		})
 	}

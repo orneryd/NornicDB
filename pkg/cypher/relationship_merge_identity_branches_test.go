@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -78,7 +79,7 @@ func TestCreateRelationshipForMergeBareRetriesIDCollisions(t *testing.T) {
 		getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 	}
 
-	created, didCreate, err := createRelationshipForMerge(exec, store, edge, nil)
+	created, didCreate, err := createRelationshipForMerge(context.Background(), exec, store, edge, nil)
 	require.NoError(t, err)
 	require.True(t, didCreate)
 	require.Same(t, edge, created)
@@ -99,7 +100,7 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 			},
 			getEdge: unexpectedRelationshipMergeEdgeRead(t),
 		}
-		got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
+		got, created, err := createRelationshipForMerge(context.Background(), &StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
 		require.NoError(t, err)
 		require.False(t, created)
 		require.Same(t, existing, got)
@@ -113,7 +114,7 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 		}
-		got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
+		got, created, err := createRelationshipForMerge(context.Background(), &StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
 		require.Nil(t, got)
 		require.False(t, created)
 		require.ErrorIs(t, err, wantErr)
@@ -126,7 +127,7 @@ func TestCreateRelationshipForMergeBareReturnsExistingAndErrors(t *testing.T) {
 			getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) { return nil, nil },
 			getEdge:         unexpectedRelationshipMergeEdgeRead(t),
 		}
-		got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
+		got, created, err := createRelationshipForMerge(context.Background(), &StorageExecutor{}, store, relationshipMergeTestEdge("new", nil), nil)
 		require.Nil(t, got)
 		require.False(t, created)
 		require.ErrorContains(t, err, "after 3 edge ID collisions")
@@ -153,7 +154,7 @@ func TestCreateRelationshipForMergePropertyRaceReturnsWinner(t *testing.T) {
 		},
 	}
 
-	got, created, err := createRelationshipForMerge(&StorageExecutor{}, store, edge, matchProps)
+	got, created, err := createRelationshipForMerge(context.Background(), &StorageExecutor{}, store, edge, matchProps)
 	require.NoError(t, err)
 	require.False(t, created)
 	require.Same(t, existing, got)
@@ -168,6 +169,7 @@ func TestCreateRelationshipForMergePropertyPropagatesLookupErrors(t *testing.T) 
 			return nil, wantErr
 		}, unexpectedRelationshipMergePairScan(t))
 		got, created, err := createRelationshipForMerge(
+			context.Background(),
 			&StorageExecutor{},
 			store,
 			relationshipMergeTestEdge("candidate", matchProps),
@@ -190,6 +192,7 @@ func TestCreateRelationshipForMergePropertyPropagatesLookupErrors(t *testing.T) 
 			},
 		}
 		got, created, err := createRelationshipForMerge(
+			context.Background(),
 			&StorageExecutor{},
 			store,
 			relationshipMergeTestEdge("candidate", matchProps),
@@ -207,7 +210,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 	stale := relationshipMergeTestEdge("candidate", map[string]interface{}{"scope_id": "retired"})
 
 	t.Run("bare", func(t *testing.T) {
-		got, err := selectRelationshipMergeCreateID(nil, relationshipMergeTestEdge("candidate", nil), nil)
+		got, err := selectRelationshipMergeCreateID(context.Background(), nil, relationshipMergeTestEdge("candidate", nil), nil)
 		require.NoError(t, err)
 		require.Nil(t, got)
 	})
@@ -216,7 +219,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		store := relationshipMergeSelectEngine(t, func(storage.EdgeID) (*storage.Edge, error) {
 			return exact, nil
 		}, unexpectedRelationshipMergePairScan(t))
-		got, err := selectRelationshipMergeCreateID(store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.NoError(t, err)
 		require.Same(t, exact, got)
 	})
@@ -226,7 +229,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		store := relationshipMergeSelectEngine(t, func(storage.EdgeID) (*storage.Edge, error) {
 			return nil, wantErr
 		}, unexpectedRelationshipMergePairScan(t))
-		got, err := selectRelationshipMergeCreateID(store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.Nil(t, got)
 		require.ErrorIs(t, err, wantErr)
 	})
@@ -238,7 +241,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		}, func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 			return nil, wantErr
 		})
-		got, err := selectRelationshipMergeCreateID(store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.Nil(t, got)
 		require.ErrorIs(t, err, wantErr)
 	})
@@ -255,7 +258,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 			return []*storage.Edge{stale}, nil
 		})
 		edge := relationshipMergeTestEdge("candidate", matchProps)
-		got, err := selectRelationshipMergeCreateID(store, edge, matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, edge, matchProps)
 		require.NoError(t, err)
 		require.Nil(t, got)
 		require.Equal(t, deterministicRelationshipMergeEdgeID("source", "target", "ASSERTS", matchProps, 1), edge.ID)
@@ -273,7 +276,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		}, func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 			return []*storage.Edge{stale}, nil
 		})
-		got, err := selectRelationshipMergeCreateID(store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.Nil(t, got)
 		require.ErrorIs(t, err, wantErr)
 	})
@@ -289,7 +292,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		}, func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 			return []*storage.Edge{stale}, nil
 		})
-		got, err := selectRelationshipMergeCreateID(store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.NoError(t, err)
 		require.Same(t, exact, got)
 	})
@@ -300,7 +303,7 @@ func TestSelectRelationshipMergeCreateIDBranches(t *testing.T) {
 		}, func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
 			return []*storage.Edge{stale}, nil
 		})
-		got, err := selectRelationshipMergeCreateID(store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
+		got, err := selectRelationshipMergeCreateID(context.Background(), store, relationshipMergeTestEdge("candidate", matchProps), matchProps)
 		require.Nil(t, got)
 		require.ErrorContains(t, err, "no free storage key")
 	})

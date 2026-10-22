@@ -15,6 +15,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	deleteVars string,
 	detach bool,
 ) (*ExecuteResult, bool, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	matchSegment = strings.TrimSpace(matchSegment)
 	_, inTransactionWrapper := e.getStorage(ctx).(*transactionStorageWrapper)
 	if detach || strings.Contains(deleteVars, ",") {
@@ -91,11 +92,14 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if source == nil {
 			continue
 		}
-		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, source.ID, relMatch.Relationship.Direction)
+		candidates, err := e.boundRelationshipDeleteCandidateEdges(ctx, store, source.ID, relMatch.Relationship.Direction)
 		if err != nil {
 			return nil, true, err
 		}
 		for _, edge := range candidates {
+			if work.due() && work.canceled() {
+				return nil, true, ctx.Err()
+			}
 			if edge == nil || !relationshipTypeAllowed(edge.Type, relMatch.Relationship.Types, typeSet) {
 				continue
 			}
@@ -173,25 +177,30 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 
 	filtered := make([]*storage.Node, 0, len(nodes))
 	hideSystemNodes := shouldHideSystemNodes(store)
-	for _, node := range nodes {
-		if node == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		if hideSystemNodes && isSystemNode(node) {
-			continue
+		for _, node := range nodes[batch.start:batch.end] {
+			if node == nil {
+				continue
+			}
+			if hideSystemNodes && isSystemNode(node) {
+				continue
+			}
+			if len(sourcePattern.labels) > 0 && !mergeNodeHasLabels(node, sourcePattern.labels) {
+				continue
+			}
+			if len(sourcePattern.properties) > 0 && !e.nodeMatchesProps(node, sourcePattern.properties) {
+				continue
+			}
+			filtered = append(filtered, node)
 		}
-		if len(sourcePattern.labels) > 0 && !mergeNodeHasLabels(node, sourcePattern.labels) {
-			continue
-		}
-		if len(sourcePattern.properties) > 0 && !e.nodeMatchesProps(node, sourcePattern.properties) {
-			continue
-		}
-		filtered = append(filtered, node)
 	}
 	return filtered, nil
 }
 
-func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	var edges []*storage.Edge
 	switch direction {
 	case "outgoing":
@@ -199,13 +208,17 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, outgoing...)
+		if edges, err = appendPopulation(ctx, edges, outgoing); err != nil {
+			return nil, err
+		}
 	case "incoming":
 		incoming, err := store.GetIncomingEdges(nodeID)
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, incoming...)
+		if edges, err = appendPopulation(ctx, edges, incoming); err != nil {
+			return nil, err
+		}
 	case "both":
 		outgoing, err := store.GetOutgoingEdges(nodeID)
 		if err != nil {
@@ -215,8 +228,12 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, outgoing...)
-		edges = append(edges, incoming...)
+		if edges, err = appendPopulation(ctx, edges, outgoing); err != nil {
+			return nil, err
+		}
+		if edges, err = appendPopulation(ctx, edges, incoming); err != nil {
+			return nil, err
+		}
 	}
 	return edges, nil
 }

@@ -57,23 +57,28 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 // graphSearchResult is a graph search's rows (db.retrieveGraph's columns),
 // each hit with its matches and, as db.retrieve's rows, how many chunks of a
 // query split into chunks were searched (0 and 0 for a query searched whole).
-func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) graphSearchResult(ctx context.Context, response *search.SearchResponse) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
-	for index := range response.Results {
-		r := &response.Results[index]
-		kind, node, relationship, start, end := e.graphSearchEntity(r)
-		result.Rows = append(result.Rows, []interface{}{
-			kind, node, relationship, start, end,
-			r.Score, r.RRFScore, r.VectorRank, r.BM25Rank,
-			response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason),
-			chunksSearched, chunksTotal, search.SearchMatchValues(r.Matches),
-		})
+	for batch, batchErr := range materializedBatches(ctx, len(response.Results)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for index := batch.start; index < batch.end; index++ {
+			r := &response.Results[index]
+			kind, node, relationship, start, end := e.graphSearchEntity(r)
+			result.Rows = append(result.Rows, []interface{}{
+				kind, node, relationship, start, end,
+				r.Score, r.RRFScore, r.VectorRank, r.BM25Rank,
+				response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason),
+				chunksSearched, chunksTotal, search.SearchMatchValues(r.Matches),
+			})
+		}
 	}
-	return result
+	return result, nil
 }
 
 // graphSearchPage is a graph search as one terminal page, the form
@@ -81,16 +86,21 @@ func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *Ex
 // start and end, scores and matches; the page carries the search method,
 // fallback and, for a query split into chunks, how many were searched. It has
 // no qid: there is nothing to continue.
-func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) graphSearchPage(ctx context.Context, response *search.SearchResponse) (*ExecuteResult, error) {
 	results := make([]interface{}, 0, len(response.Results))
-	for index := range response.Results {
-		r := &response.Results[index]
-		kind, node, relationship, start, end := e.graphSearchEntity(r)
-		results = append(results, map[string]interface{}{
-			"kind": kind, "node": node, "relationship": relationship, "start": start, "end": end,
-			"score": r.Score, "rrf_score": r.RRFScore,
-			"vector_rank": int64(r.VectorRank), "bm25_rank": int64(r.BM25Rank), "matches": search.SearchMatchValues(r.Matches),
-		})
+	for batch, batchErr := range materializedBatches(ctx, len(response.Results)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for index := batch.start; index < batch.end; index++ {
+			r := &response.Results[index]
+			kind, node, relationship, start, end := e.graphSearchEntity(r)
+			results = append(results, map[string]interface{}{
+				"kind": kind, "node": node, "relationship": relationship, "start": start, "end": end,
+				"score": r.Score, "rrf_score": r.RRFScore,
+				"vector_rank": int64(r.VectorRank), "bm25_rank": int64(r.BM25Rank), "matches": search.SearchMatchValues(r.Matches),
+			})
+		}
 	}
 	page := map[string]interface{}{
 		"results": results, "qid": "", "has_more": false,
@@ -102,5 +112,5 @@ func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *Exec
 		page["query_chunks_searched"] = int64(response.QueryChunksSearched)
 		page["query_chunks_total"] = int64(response.QueryChunksTotal)
 	}
-	return &ExecuteResult{Columns: []string{"page"}, Rows: [][]interface{}{{page}}}
+	return &ExecuteResult{Columns: []string{"page"}, Rows: [][]interface{}{{page}}}, nil
 }

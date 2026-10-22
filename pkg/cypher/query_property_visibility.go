@@ -1,6 +1,10 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 func (e *StorageExecutor) propertyViewEngine() *storage.BadgerEngine {
 	if e.storedPropertyIdentity {
@@ -120,19 +124,34 @@ func (e *StorageExecutor) queryEntityProperties(value interface{}) map[string]in
 	return nil
 }
 
-func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
+func (e *StorageExecutor) projectQueryResultProperties(ctx context.Context, result *ExecuteResult) {
 	be := e.propertyViewEngine()
 	if result == nil || be == nil || !be.IsDecayEnabled() {
 		return
 	}
-	for i, row := range result.Rows {
-		result.Rows[i] = e.projectVisibleQueryValue(row).([]interface{})
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return
+		}
+		for offset, row := range result.Rows[batch.start:batch.end] {
+			i := batch.start + offset
+			result.Rows[i] = e.projectVisibleQueryValue(row).([]interface{})
+		}
 	}
 }
 
-func (e *StorageExecutor) projectVisiblePipelineNodeRead(nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
+func (e *StorageExecutor) projectVisiblePipelineNodeRead(ctx context.Context, nodes []*storage.Node, items []returnItem, variable string) (*ExecuteResult, error) {
 	if e.queryPropertyDecayEnabled() {
-		nodes = e.projectVisibleQueryValue(nodes).([]*storage.Node)
+		visible := make([]*storage.Node, len(nodes))
+		for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for offset, node := range nodes[batch.start:batch.end] {
+				visible[batch.start+offset] = e.projectVisibleQueryValue(node).(*storage.Node)
+			}
+		}
+		nodes = visible
 	}
-	return projectPipelineSimpleNodeRead(nodes, items, variable)
+	return projectPipelineSimpleNodeRead(ctx, nodes, items, variable)
 }

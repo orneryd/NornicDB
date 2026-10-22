@@ -23,9 +23,9 @@ func TestApocCollections_AvgMinMax(t *testing.T) {
 
 func TestApocCollections_SortAndReverse(t *testing.T) {
 	vals := []interface{}{int64(3), int64(1), int64(2)}
-	assert.Equal(t, []interface{}{int64(1), int64(2), int64(3)}, apocCollSort(vals))
+	assert.Equal(t, []interface{}{int64(1), int64(2), int64(3)}, apocCollSort(context.Background(), vals))
 	assert.Equal(t, []interface{}{int64(2), int64(1), int64(3)}, apocCollReverse([]interface{}{int64(3), int64(1), int64(2)}))
-	assert.Nil(t, apocCollSort("x"))
+	assert.Nil(t, apocCollSort(context.Background(), "x"))
 	assert.Nil(t, apocCollReverse("x"))
 }
 
@@ -34,12 +34,12 @@ func TestApocCollections_SortNodesAndProperty(t *testing.T) {
 	n2 := &storage.Node{Properties: map[string]interface{}{"age": int64(20)}}
 	n3 := storage.RemoteEntityValue{"properties": map[string]interface{}{"age": int64(30)}}
 
-	sorted := apocCollSortNodes([]interface{}{n1, n2, n3}, "age")
+	sorted := apocCollSortNodes(context.Background(), []interface{}{n1, n2, n3}, "age")
 	assert.Len(t, sorted, 3)
 	assert.Equal(t, int64(20), getNodeProperty(sorted[0], "age"))
 	assert.Equal(t, int64(30), getNodeProperty(sorted[1], "age"))
 	assert.Equal(t, int64(40), getNodeProperty(sorted[2], "age"))
-	assert.Nil(t, apocCollSortNodes("x", "age"))
+	assert.Nil(t, apocCollSortNodes(context.Background(), "x", "age"))
 	assert.Nil(t, getNodeProperty("x", "age"))
 }
 
@@ -48,26 +48,26 @@ func TestApocCollections_UnionIntersectSubtract(t *testing.T) {
 	b := []interface{}{int64(2), int64(3)}
 
 	assert.Equal(t, []interface{}{int64(1), int64(2), int64(2), int64(2), int64(3)}, apocCollUnionAll(a, b))
-	assert.Equal(t, []interface{}{int64(1), int64(2), int64(3)}, apocCollUnion(a, b))
-	assert.Equal(t, []interface{}{int64(2)}, apocCollIntersection(a, b))
-	assert.Equal(t, []interface{}{int64(1)}, apocCollSubtract(a, b))
-	assert.Empty(t, apocCollIntersection("x", b))
-	assert.Empty(t, apocCollSubtract(a, "x"))
+	assert.Equal(t, []interface{}{int64(1), int64(2), int64(3)}, apocCollUnion(context.Background(), a, b))
+	assert.Equal(t, []interface{}{int64(2)}, apocCollIntersection(context.Background(), a, b))
+	assert.Equal(t, []interface{}{int64(1)}, apocCollSubtract(context.Background(), a, b))
+	assert.Empty(t, apocCollIntersection(context.Background(), "x", b))
+	assert.Empty(t, apocCollSubtract(context.Background(), a, "x"))
 }
 
 func TestApocCollections_ContainsAndIndex(t *testing.T) {
 	list := []interface{}{"a", "b", "c", "b"}
 	assert.True(t, apocCollContains(list, "b"))
 	assert.False(t, apocCollContains(list, "z"))
-	assert.True(t, apocCollContainsAll(list, []interface{}{"a", "b"}))
-	assert.False(t, apocCollContainsAll(list, []interface{}{"a", "z"}))
-	assert.True(t, apocCollContainsAny(list, []interface{}{"z", "b"}))
-	assert.False(t, apocCollContainsAny(list, []interface{}{"z", "y"}))
+	assert.True(t, apocCollContainsAll(context.Background(), list, []interface{}{"a", "b"}))
+	assert.False(t, apocCollContainsAll(context.Background(), list, []interface{}{"a", "z"}))
+	assert.True(t, apocCollContainsAny(context.Background(), list, []interface{}{"z", "b"}))
+	assert.False(t, apocCollContainsAny(context.Background(), list, []interface{}{"z", "y"}))
 	assert.EqualValues(t, 1, apocCollIndexOf(list, "b"))
 	assert.EqualValues(t, -1, apocCollIndexOf(list, "z"))
 	assert.False(t, apocCollContains("x", "y"))
-	assert.False(t, apocCollContainsAll("x", list))
-	assert.False(t, apocCollContainsAny(list, "x"))
+	assert.False(t, apocCollContainsAll(context.Background(), "x", list))
+	assert.False(t, apocCollContainsAny(context.Background(), list, "x"))
 	assert.EqualValues(t, -1, apocCollIndexOf("x", "y"))
 }
 
@@ -97,8 +97,8 @@ func TestApocCollections_FrequenciesAndOccurrences(t *testing.T) {
 		map[string]interface{}{"item": "a", "count": int64(2)},
 		map[string]interface{}{"item": "b", "count": int64(1)},
 		map[string]interface{}{"item": int64(1), "count": int64(2)},
-	}, apocCollFrequencies(vals))
-	assert.Empty(t, apocCollFrequencies("x"))
+	}, apocCollFrequencies(context.Background(), vals))
+	assert.Empty(t, apocCollFrequencies(context.Background(), "x"))
 
 	assert.EqualValues(t, 2, apocCollOccurrences(vals, "a"))
 	assert.EqualValues(t, 0, apocCollOccurrences(vals, "z"))

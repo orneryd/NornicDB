@@ -3,6 +3,7 @@ package cypher
 
 import (
 	"container/list"
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -410,7 +411,9 @@ func (qc *QueryCache) Stats() (hits, misses int64, size int) {
 // cacheKey is the query and its parameters encoded in full
 // (statementCacheKey): entries are keyed by the whole key, never a hash.
 func (qc *QueryCache) cacheKey(cypher string, params map[string]interface{}) string {
-	return statementCacheKey(cypher, params)
+	// The public cache runs outside any statement.
+	key, _ := statementCacheKey(nil, cypher, params)
+	return key
 }
 
 // moveToFront moves key to front of LRU list.
@@ -617,11 +620,19 @@ func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl 
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
-	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0)
+	sc.putWithLabelsAndTraceForEmbedding(context.Background(), key, result, ttl, labels, trace, 0)
 }
 
-func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
-	entities := resultHasMaterializedEntities(result)
+// putWithLabelsAndTraceForEmbedding walks a statement's result for entities
+// within the statement's ctx: a statement canceled meanwhile stores nothing.
+func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(ctx context.Context, key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+	var entities bool
+	if result != nil {
+		var err error
+		if entities, err = materializedRowsWithCancellation(ctx, nil, result.Rows); err != nil {
+			return
+		}
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -874,7 +885,19 @@ func extractLabelsFromQuery(cypher string) []string {
 // text and the same parameter values (#729). Normalizing the text keeps
 // formatting, whitespace and a trailing semicolon from defeating a hit.
 func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
-	return statementCacheKey(normalizeQuery(trimTrailingStatementDelimiters(cypher)), params)
+	key, _ := statementResultCacheKey(nil, cypher, params)
+	return key
+}
+
+// statementResultCacheKey is resultCacheEntryKey for a statement: its walk
+// over the parameters observes the statement, and a canceled statement has
+// no key (ok false), so it neither reads nor fills the cache.
+func statementResultCacheKey(ctx context.Context, cypher string, params map[string]interface{}) (string, bool) {
+	var work *materializedRowCheckpoint
+	if ctx != nil {
+		work = valueWalk(ctx)
+	}
+	return statementCacheKey(work, normalizeQuery(trimTrailingStatementDelimiters(cypher)), params)
 }
 
 // =============================================================================

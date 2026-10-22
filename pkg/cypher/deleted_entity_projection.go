@@ -75,15 +75,20 @@ func (d *deletedEntities) empty() bool {
 // and endpoints (type(r) still answers). Paths and lists holding a deleted
 // entity are rebuilt with its view (#907). Reading a deleted entity's
 // property or labels is an error instead (validateDeletedEntityReads).
-func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted *deletedEntities) {
+func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []pipelineRow, deleted *deletedEntities) {
 	if deleted.empty() {
 		return
 	}
 	views := deletedEntityViews{executor: e, nodes: deleted.nodes, edges: deleted.edges}
-	for _, row := range rows {
-		for name, value := range row {
-			if replaced, changed := views.replace(value); changed {
-				row[name] = replaced
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for name, value := range row {
+				if replaced, changed := views.replace(value); changed {
+					row[name] = replaced
+				}
 			}
 		}
 	}
@@ -189,24 +194,29 @@ func mayBeDeletedRelationshipView(edge *storage.Edge) bool {
 // properties of a deleted node, and n {.*}, are empty instead
 // (replaceDeletedEntityViews); n.p IS NULL is true and SET n.p = 1 writes
 // nothing, without an error (deletedEntityReadsIn, deletedEntityReadText).
-func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *deletedEntities) error {
+func validateDeletedEntityReads(ctx context.Context, rows []pipelineRow, clause string, deleted *deletedEntities) error {
 	if deleted.empty() {
 		return nil
 	}
 	reads := deletedEntityReadsIn(clause)
-	for _, row := range rows {
-		for _, read := range reads {
-			variable := read.variable
-			if _, bound := row[variable]; !bound {
-				// A list iteration variable (x IN xs) reads the list's items.
-				variable = iterationSourceVariable(clause, variable)
-			}
-			if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
-				return newSemanticError(
-					"Neo.ClientError.Statement.EntityNotFound",
-					"DeletedEntityAccess",
-					"cannot access properties or labels of a deleted entity",
-				)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for _, read := range reads {
+				variable := read.variable
+				if _, bound := row[variable]; !bound {
+					// A list iteration variable (x IN xs) reads the list's items.
+					variable = iterationSourceVariable(clause, variable)
+				}
+				if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
+					return newSemanticError(
+						"Neo.ClientError.Statement.EntityNotFound",
+						"DeletedEntityAccess",
+						"cannot access properties or labels of a deleted entity",
+					)
+				}
 			}
 		}
 	}

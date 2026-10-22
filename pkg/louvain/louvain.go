@@ -15,7 +15,15 @@ type Options struct {
 	Seed                     []int
 	// Resolution scales observed community weight; zero uses one.
 	Resolution float64
+	// Stop, when set, is polled once per stopStride node visits and input
+	// relationships; once it reports true the run ends early and its result
+	// is incomplete (the caller's statement was canceled).
+	Stop func() bool
 }
+
+// stopStride is the node visits, or input relationships, between two polls
+// of Options.Stop.
+const stopStride = 1024
 
 // DefaultOptions returns the GDS and apoc.algo.louvain defaults.
 func DefaultOptions() Options {
@@ -50,12 +58,16 @@ func Run(graph *Graph, options Options) Result {
 	}
 	var run Result
 	size := len(graph.arcs)
+	poll := &stopPoll{stop: options.Stop}
 	membership := identityCommunities(size)
 	representative := identityCommunities(size)
 	initial := options.Seed
 	previous := 0.0
 	for level := 0; level < options.MaxLevels; level++ {
-		communities := graph.moveNodes(options.MaxIterations, options.Tolerance, initial, options.Resolution)
+		communities := graph.moveNodes(options.MaxIterations, options.Tolerance, initial, options.Resolution, poll)
+		if poll.stopped {
+			return Result{}
+		}
 		initial = nil
 		modularity := graph.modularity(communities, options.Resolution)
 		var representatives []int
@@ -86,6 +98,26 @@ func Run(graph *Graph, options Options) Result {
 		representative = representatives
 	}
 	return run
+}
+
+// stopPoll is Options.Stop, polled once per stopStride node visits
+// (visits); stopped records that it reported true.
+type stopPoll struct {
+	stop    func() bool
+	visits  int
+	stopped bool
+}
+
+// halt polls stop at the stride and reports whether the run must end.
+func (poll *stopPoll) halt() bool {
+	if poll.stop == nil {
+		return false
+	}
+	poll.visits++
+	if poll.visits&(stopStride-1) == 0 && poll.stop() {
+		poll.stopped = true
+	}
+	return poll.stopped
 }
 
 // Final is each node's community after the run's last level (a run
@@ -187,7 +219,7 @@ func (g *Graph) Link(i, j int, w float64) {
 // more modularity than the Tolerance, or MaxIterations have run. Nodes
 // start in initial's communities (nil: each its own). It reports each
 // node's community.
-func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, resolution float64) []int {
+func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, resolution float64, poll *stopPoll) []int {
 	size := len(g.arcs)
 	community := make([]int, size)
 	communityDegree := make([]float64, size)
@@ -226,6 +258,9 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 		moves := 0
 		for _, class := range classes {
 			for _, i := range class {
+				if poll.halt() {
+					return community
+				}
 				current := community[i]
 				// The weight from i to each neighbouring community (its own
 				// self-loops apart).

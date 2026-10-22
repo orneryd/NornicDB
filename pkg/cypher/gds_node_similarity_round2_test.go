@@ -29,7 +29,7 @@ func reviewGraph(t *testing.T, props []map[string]interface{}, edges []reviewEdg
 	}
 	exec := NewStorageExecutor(engine)
 	t.Cleanup(func() {
-		for _, graph := range databaseProjections(exec.databaseName()) {
+		for _, graph := range databaseProjections(context.Background(), exec.databaseName()) {
 			_, err := exec.Execute(context.Background(), "CALL gds.graph.drop($name)", map[string]interface{}{"name": graph.Name})
 			require.NoError(t, err)
 		}
@@ -432,9 +432,9 @@ func TestReviewRound2ProjectionReaderEquivalence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, selected, cached)
 	originalIDs := append([]string(nil), projection.NodeIDs...)
-	nodeSimilarityNeighbors(cached)
+	nodeSimilarityNeighbors(context.Background(), cached)
 	require.Equal(t, originalIDs, projection.NodeIDs)
-	distribution := gdsDegreeDistribution(projection)
+	distribution := gdsDegreeDistribution(context.Background(), projection)
 	require.Equal(t, int64(0), distribution["min"])
 	require.Equal(t, int64(3), distribution["max"])
 	require.Equal(t, 1.75, distribution["mean"])

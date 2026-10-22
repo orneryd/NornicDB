@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -75,12 +76,18 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 // (budget, #1343): checked after each step, so a step that takes it over
 // the limit fails the statement before the next step; given back at the end,
 // where the row or list that keeps the result counts it.
-func runReduceForm(budget *expressionBudget, form reduceForm, accumulator interface{}, items []interface{},
+//
+// The fold walks the query's list: it observes ctx once per stride of items.
+func runReduceForm(ctx context.Context, budget *expressionBudget, form reduceForm, accumulator interface{}, items []interface{},
 	step func(accumulator, item interface{}) (interface{}, error),
 	predicate func(accumulator, item interface{}) (interface{}, error)) (interface{}, error) {
 	defer budget.release()
 	var result interface{} = true
+	work := materializedRowCheckpoint{ctx: ctx}
 	for _, item := range items {
+		if work.due() && work.canceled() {
+			return nil, ctx.Err()
+		}
 		var err error
 		if accumulator, err = step(accumulator, item); err != nil {
 			return nil, err
@@ -111,7 +118,7 @@ func runReduceForm(budget *expressionBudget, form reduceForm, accumulator interf
 				return nil, operandMismatch(operand, "Boolean")
 			}
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(holds)))
+				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(valueWalk(ctx), holds)))
 		}
 	}
 	if form.all {

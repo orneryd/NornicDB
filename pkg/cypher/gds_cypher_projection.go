@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -125,7 +124,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		for key := range values {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		_ = sortStrings(ctx, keys)
 		for _, key := range keys {
 			for _, label := range projection.NodeLabels[id] {
 				projection.NodePropertyKeys[label] = appendUnique(projection.NodePropertyKeys[label], key)
@@ -221,7 +220,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 			}
 		}
 		if !typed {
-			sort.Strings(keys)
+			_ = sortStrings(ctx, keys)
 			relationshipKeys[relType] = keys
 			projection.RelationshipPropertyKeys[relType] = append([]string(nil), keys...)
 		}
@@ -259,13 +258,13 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 			}
 		}
 	}
-	projection.indexNodes(false)
+	projection.indexNodes(ctx, false)
 	for _, id := range projection.NodeIDs {
 		for _, label := range projection.NodeLabels[id] {
 			projection.Labels = appendUnique(projection.Labels, label)
 		}
 	}
-	projection.finishCounts()
+	projection.finishCounts(ctx)
 	projection.schema = gdsAggregationSchema(projection, undirected)
 
 	query := statementTextFromContext(ctx)

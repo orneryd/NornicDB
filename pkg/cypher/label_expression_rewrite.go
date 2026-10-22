@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -334,7 +335,7 @@ func isGeneratedVariable(name string) bool {
 // withoutGeneratedColumns returns result without the columns of generated
 // variables, which a * projection over every binding lists; a copy when it
 // has any, so a cached result is never changed.
-func withoutGeneratedColumns(result *ExecuteResult) *ExecuteResult {
+func withoutGeneratedColumns(ctx context.Context, result *ExecuteResult) *ExecuteResult {
 	if result == nil {
 		return nil
 	}
@@ -353,14 +354,20 @@ func withoutGeneratedColumns(result *ExecuteResult) *ExecuteResult {
 		trimmed.Columns[i] = result.Columns[index]
 	}
 	trimmed.Rows = make([][]interface{}, len(result.Rows))
-	for r, row := range result.Rows {
-		out := make([]interface{}, 0, len(keep))
-		for _, index := range keep {
-			if index < len(row) {
-				out = append(out, row[index])
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return result
 		}
-		trimmed.Rows[r] = out
+		for offset, row := range result.Rows[batch.start:batch.end] {
+			r := batch.start + offset
+			out := make([]interface{}, 0, len(keep))
+			for _, index := range keep {
+				if index < len(row) {
+					out = append(out, row[index])
+				}
+			}
+			trimmed.Rows[r] = out
+		}
 	}
 	return &trimmed
 }

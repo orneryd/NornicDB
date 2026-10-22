@@ -6,7 +6,6 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"reflect"
-	"sort"
 	"time"
 )
 
@@ -44,122 +43,138 @@ func (k *cacheKeyBuilder) Write(p []byte) (int, error) {
 }
 
 // statementCacheKey is the key of text run with params: the text
-// length-prefixed, then the parameters (writeCacheKeyParams).
-func statementCacheKey(text string, params map[string]interface{}) string {
-	key := cacheKeyBuilder{buf: make([]byte, 0, len(text)+16+16*len(params))}
+// length-prefixed, then the parameters (writeCacheKeyParams). The walk
+// observes the statement over the parameters' values: ok is false when it
+// was canceled, and there is no key.
+func statementCacheKey(work *materializedRowCheckpoint, text string, params map[string]interface{}) (key string, ok bool) {
+	builder := cacheKeyBuilder{buf: make([]byte, 0, len(text)+16+16*len(params))}
 	var scratch [binary.MaxVarintLen64 + 1]byte
-	writeCacheKeyString(&key, &scratch, text)
-	if len(params) > 0 {
-		writeCacheKeyParams(&key, &scratch, params)
+	writeCacheKeyString(&builder, &scratch, text)
+	if len(params) > 0 && !writeCacheKeyParams(work, &builder, &scratch, params) {
+		return "", false
 	}
-	return string(key.buf)
+	return string(builder.buf), true
 }
 
 // writeCacheKeyParams writes the parameters in sorted name order, each name
 // length-prefixed and each value type-tagged (writeCacheKeyValue): 1, 1.0,
 // "1" and true / "true" are different keys, as are a list and its text.
-func writeCacheKeyParams(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, params map[string]interface{}) {
+func writeCacheKeyParams(work *materializedRowCheckpoint, h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, params map[string]interface{}) bool {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	if work.sortKeys(keys) {
+		return false
+	}
 	for _, k := range keys {
 		writeCacheKeyString(h, scratch, k)
-		writeCacheKeyValue(h, scratch, params[k])
+		if !writeCacheKeyValue(work, h, scratch, params[k]) {
+			return false
+		}
 	}
+	return true
 }
 
-// writeCacheKeyValue writes value's tag and payload.
-func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, value interface{}) {
+// writeCacheKeyValue writes value's tag and payload; false means the
+// statement was canceled (its walk stopped).
+func writeCacheKeyValue(work *materializedRowCheckpoint, h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]byte, value interface{}) bool {
+	if work.visit() {
+		return false
+	}
 	switch typed := value.(type) {
 	case nil:
 		h.Write([]byte{cacheKeyNull})
-		return
+		return true
 	case bool:
 		payload := byte(0)
 		if typed {
 			payload = 1
 		}
 		h.Write([]byte{cacheKeyBoolean, payload})
-		return
+		return true
 	case int:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case int8:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case int16:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case int32:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case int64:
 		writeCacheKeyInteger(h, typed)
-		return
+		return true
 	case uint8:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case uint16:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case uint32:
 		writeCacheKeyInteger(h, int64(typed))
-		return
+		return true
 	case uint:
 		writeCacheKeyUnsigned(h, uint64(typed))
-		return
+		return true
 	case uint64:
 		writeCacheKeyUnsigned(h, typed)
-		return
+		return true
 	case float32:
 		writeCacheKeyFloat(h, float64(typed))
-		return
+		return true
 	case float64:
 		writeCacheKeyFloat(h, typed)
-		return
+		return true
 	case string:
 		h.Write([]byte{cacheKeyString})
 		writeCacheKeyString(h, scratch, typed)
-		return
+		return true
 	case []byte:
 		h.Write([]byte{cacheKeyBytes})
 		writeCacheKeyLength(h, scratch, len(typed))
 		h.Write(typed)
-		return
+		return true
 	case []interface{}:
 		h.Write([]byte{cacheKeyList})
 		writeCacheKeyLength(h, scratch, len(typed))
 		for _, item := range typed {
-			writeCacheKeyValue(h, scratch, item)
+			if !writeCacheKeyValue(work, h, scratch, item) {
+				return false
+			}
 		}
-		return
+		return true
 	case storage.RemoteEntityValue:
 		// Graph functions distinguish a transport graph entity from an ordinary
 		// map with identical contents; the result cache must distinguish them too.
 		h.Write([]byte{cacheKeyRemoteEntity})
-		writeCacheKeyValue(h, scratch, map[string]interface{}(typed))
-		return
+		return writeCacheKeyValue(work, h, scratch, map[string]interface{}(typed))
 	case map[string]interface{}:
 		keys := make([]string, 0, len(typed))
 		for key := range typed {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		if work.sortKeys(keys) {
+			return false
+		}
 		h.Write([]byte{cacheKeyMap})
 		writeCacheKeyLength(h, scratch, len(keys))
 		for _, key := range keys {
 			writeCacheKeyString(h, scratch, key)
-			writeCacheKeyValue(h, scratch, typed[key])
+			if !writeCacheKeyValue(work, h, scratch, typed[key]) {
+				return false
+			}
 		}
-		return
+		return true
 	case time.Time:
 		h.Write([]byte{cacheKeyTime})
 		binary.BigEndian.PutUint64(scratch[:8], uint64(typed.UnixNano()))
 		h.Write(scratch[:8])
 		writeCacheKeyString(h, scratch, typed.Location().String())
-		return
+		return true
 	}
 	// Typed lists and maps ([]string, []int64, map[string]string, …) are the
 	// Cypher list or map they hold.
@@ -169,28 +184,34 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 		h.Write([]byte{cacheKeyList})
 		writeCacheKeyLength(h, scratch, reflected.Len())
 		for index := 0; index < reflected.Len(); index++ {
-			writeCacheKeyValue(h, scratch, reflected.Index(index).Interface())
+			if !writeCacheKeyValue(work, h, scratch, reflected.Index(index).Interface()) {
+				return false
+			}
 		}
-		return
+		return true
 	case reflect.Map:
 		if reflected.Type().Key().Kind() == reflect.String {
 			keys := make([]string, 0, reflected.Len())
 			for _, key := range reflected.MapKeys() {
 				keys = append(keys, key.String())
 			}
-			sort.Strings(keys)
+			if work.sortKeys(keys) {
+				return false
+			}
 			h.Write([]byte{cacheKeyMap})
 			writeCacheKeyLength(h, scratch, len(keys))
 			for _, key := range keys {
 				writeCacheKeyString(h, scratch, key)
-				writeCacheKeyValue(h, scratch, reflected.MapIndex(reflect.ValueOf(key).Convert(reflected.Type().Key())).Interface())
+				if !writeCacheKeyValue(work, h, scratch, reflected.MapIndex(reflect.ValueOf(key).Convert(reflected.Type().Key())).Interface()) {
+					return false
+				}
 			}
-			return
+			return true
 		}
 	case reflect.Pointer:
 		if reflected.IsNil() {
 			h.Write([]byte{cacheKeyNull})
-			return
+			return true
 		}
 	}
 	// Any other value (a temporal or spatial value, an entity) is its Go
@@ -198,6 +219,7 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 	h.Write([]byte{cacheKeyOther})
 	writeCacheKeyString(h, scratch, fmt.Sprintf("%T", value))
 	writeCacheKeyString(h, scratch, fmt.Sprintf("%v", value))
+	return true
 }
 
 func writeCacheKeyInteger(h *cacheKeyBuilder, value int64) {

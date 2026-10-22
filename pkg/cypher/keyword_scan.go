@@ -6,6 +6,7 @@ package cypher
 // comments and bracket nesting tracked inline instead of by a lexer.
 
 import (
+	"context"
 	"hash/maphash"
 	"strconv"
 	"strings"
@@ -1927,7 +1928,10 @@ func (e *restoredQueryError) Unwrap() error { return e.cause }
 // text it sent. result is copied only when something differs, never
 // changed, so a cached result stays canonical. Row values are data and are
 // kept, except in a plan.
-func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult, error) {
+//
+// ctx is the statement's completion budget: the rows of a PROFILE result are
+// copied through the bulk owner under it.
+func (r *queryRewrite) restore(ctx context.Context, result *ExecuteResult, err error) (*ExecuteResult, error) {
 	if r == nil {
 		return result, err
 	}
@@ -1942,10 +1946,13 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 			}
 		}
 		metadata, metadataRestored := r.restoreValue(result.Metadata)
-		var rows interface{}
+		var rows [][]interface{}
 		rowsRestored := false
 		if len(result.Rows) > 0 && isExplainOrProfileText(r.canonical) {
-			rows, rowsRestored = r.restoreValue(result.Rows)
+			var rowsErr error
+			if rows, rowsRestored, rowsErr = r.restoreRows(ctx, result.Rows); rowsErr != nil {
+				return nil, rowsErr
+			}
 		}
 		if columns != nil || metadataRestored || rowsRestored {
 			restored := *result
@@ -1956,7 +1963,7 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 				restored.Metadata = metadata.(map[string]interface{})
 			}
 			if rowsRestored {
-				restored.Rows = rows.([][]interface{})
+				restored.Rows = rows
 			}
 			result = &restored
 		}
@@ -1967,6 +1974,26 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 		}
 	}
 	return result, err
+}
+
+// restoreRows restores the statement text in a result's rows, copying the
+// rows once, through the bulk owner, when one changes.
+func (r *queryRewrite) restoreRows(ctx context.Context, rows [][]interface{}) ([][]interface{}, bool, error) {
+	var copied [][]interface{}
+	for i, row := range rows {
+		restored, changed := r.restoreValue(row)
+		if !changed {
+			continue
+		}
+		if copied == nil {
+			var err error
+			if copied, err = clonePopulation(ctx, rows); err != nil {
+				return nil, false, err
+			}
+		}
+		copied[i] = restored.([]interface{})
+	}
+	return copied, copied != nil, nil
 }
 
 // isExplainOrProfileText reports whether a canonical statement starts with
@@ -2011,20 +2038,6 @@ func (r *queryRewrite) restoreValue(value interface{}) (interface{}, bool) {
 					copied = append([]interface{}(nil), typed...)
 				}
 				copied[i] = restored
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	case [][]interface{}:
-		var copied [][]interface{}
-		for i, row := range typed {
-			if restored, changed := r.restoreValue(row); changed {
-				if copied == nil {
-					copied = append([][]interface{}(nil), typed...)
-				}
-				copied[i] = restored.([]interface{})
 			}
 		}
 		if copied == nil {

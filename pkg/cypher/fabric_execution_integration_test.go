@@ -297,7 +297,7 @@ CALL {
 RETURN textKey, textKey128, texts
 `
 
-	catalog, err := exec.buildFabricCatalog()
+	catalog, err := exec.buildFabricCatalog(context.Background())
 	require.NoError(t, err)
 	frag, err := fabric.NewFabricPlanner(catalog).Plan(query, "nornic")
 	require.NoError(t, err)
@@ -558,7 +558,7 @@ func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 		},
 	}
 
-	exec.normalizeFabricRowWrapper(query, stream)
+	exec.normalizeFabricRowWrapper(context.Background(), query, stream)
 	require.Equal(t, []string{"sourceId", "textKey", "originalText", "language", "translatedText"}, stream.Columns)
 	require.Len(t, stream.Rows, 1)
 	require.Equal(t, []interface{}{"s1", "k1", "o1", "es", "t1"}, stream.Rows[0])

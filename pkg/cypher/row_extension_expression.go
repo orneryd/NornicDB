@@ -138,7 +138,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		switch name {
 		case "apoc.coll.toset":
-			return toSet(value), true, true, nil
+			return toSet(rowStatementContextOrBackground(values), value), true, true, nil
 		case "apoc.coll.sum":
 			return apocCollSum(value), true, true, nil
 		case "apoc.coll.avg":

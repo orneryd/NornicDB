@@ -89,7 +89,7 @@ func TestApocCollToSet(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("remove duplicates", func(t *testing.T) {
-		result, err := executor.Execute(ctx, "RETURN apoc.coll.toSet([1, 2, 2, 3, 3, 3]) AS result", nil)
+		result, err := executor.Execute(ctx, "RETURN apoc.coll.toSet(context.Background(), [1, 2, 2, 3, 3, 3]) AS result", nil)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -384,7 +384,7 @@ func TestFlattenList(t *testing.T) {
 
 func TestToSet(t *testing.T) {
 	input := []interface{}{1, 2, 2, 3, 3, 3, 1}
-	result := toSet(input)
+	result := toSet(context.Background(), input)
 	if len(result) != 3 {
 		t.Errorf("Expected 3 unique elements, got %d", len(result))
 	}

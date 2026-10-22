@@ -31,6 +31,7 @@
 package cypher
 
 import (
+	"context"
 	"runtime"
 	"sync"
 
@@ -96,10 +97,10 @@ type FilterFunc func(node *storage.Node) bool
 //
 // Returns:
 //   - Slice of nodes that passed the filter
-func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.Node {
+func parallelFilterNodes(ctx context.Context, nodes []*storage.Node, filterFn FilterFunc) ([]*storage.Node, error) {
 	if !parallelConfig.Enabled || len(nodes) < parallelConfig.MinBatchSize || len(nodes) < 4*parallelConfig.MinBatchSize {
 		// Sequential fallback for small datasets
-		return sequentialFilterNodes(nodes, filterFn)
+		return sequentialFilterNodes(ctx, nodes, filterFn)
 	}
 
 	numWorkers := parallelConfig.MaxWorkers
@@ -112,7 +113,7 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 		numWorkers = len(nodes)
 	}
 	if numWorkers <= 1 {
-		return sequentialFilterNodes(nodes, filterFn)
+		return sequentialFilterNodes(ctx, nodes, filterFn)
 	}
 
 	chunkSize := (len(nodes) + numWorkers - 1) / numWorkers
@@ -134,9 +135,14 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 		go func(workerID int, chunk []*storage.Node) {
 			defer wg.Done()
 			filtered := make([]*storage.Node, 0, len(chunk)/4) // Estimate 25% pass rate
-			for _, node := range chunk {
-				if filterFn(node) {
-					filtered = append(filtered, node)
+			for batch, batchErr := range materializedBatches(ctx, len(chunk)) {
+				if batchErr != nil {
+					return
+				}
+				for _, node := range chunk[batch.start:batch.end] {
+					if filterFn(node) {
+						filtered = append(filtered, node)
+					}
 				}
 			}
 			results[workerID] = filtered
@@ -144,6 +150,11 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 	}
 
 	wg.Wait()
+	// A worker that observed the cancellation stopped early: its chunk is
+	// incomplete.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Merge results
 	totalSize := 0
@@ -153,21 +164,29 @@ func parallelFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.
 
 	merged := make([]*storage.Node, 0, totalSize)
 	for _, r := range results {
-		merged = append(merged, r...)
+		var err error
+		if merged, err = appendPopulation(ctx, merged, r); err != nil {
+			return nil, err
+		}
 	}
 
-	return merged
+	return merged, nil
 }
 
 // sequentialFilterNodes filters nodes sequentially (fallback for small datasets).
-func sequentialFilterNodes(nodes []*storage.Node, filterFn FilterFunc) []*storage.Node {
+func sequentialFilterNodes(ctx context.Context, nodes []*storage.Node, filterFn FilterFunc) ([]*storage.Node, error) {
 	result := make([]*storage.Node, 0, len(nodes)/4)
-	for _, node := range nodes {
-		if filterFn(node) {
-			result = append(result, node)
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, node := range nodes[batch.start:batch.end] {
+			if filterFn(node) {
+				result = append(result, node)
+			}
 		}
 	}
-	return result
+	return result, nil
 }
 
 // =============================================================================
@@ -406,63 +425,6 @@ func parallelMap(nodes []*storage.Node, mapFn MapFunc) []interface{} {
 
 // EdgeFilterFunc tests whether an edge matches filter criteria.
 type EdgeFilterFunc func(edge *storage.Edge) bool
-
-// parallelFilterEdges filters edges in parallel.
-func parallelFilterEdges(edges []*storage.Edge, filterFn EdgeFilterFunc) []*storage.Edge {
-	if !parallelConfig.Enabled || len(edges) < parallelConfig.MinBatchSize {
-		result := make([]*storage.Edge, 0, len(edges)/4)
-		for _, edge := range edges {
-			if filterFn(edge) {
-				result = append(result, edge)
-			}
-		}
-		return result
-	}
-
-	numWorkers := parallelConfig.MaxWorkers
-	chunkSize := (len(edges) + numWorkers - 1) / numWorkers
-
-	var wg sync.WaitGroup
-	results := make([][]*storage.Edge, numWorkers)
-
-	for i := 0; i < numWorkers; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
-		if start >= len(edges) {
-			break
-		}
-		if end > len(edges) {
-			end = len(edges)
-		}
-
-		wg.Add(1)
-		go func(workerID int, chunk []*storage.Edge) {
-			defer wg.Done()
-			filtered := make([]*storage.Edge, 0, len(chunk)/4)
-			for _, edge := range chunk {
-				if filterFn(edge) {
-					filtered = append(filtered, edge)
-				}
-			}
-			results[workerID] = filtered
-		}(i, edges[start:end])
-	}
-
-	wg.Wait()
-
-	// Merge results
-	totalSize := 0
-	for _, r := range results {
-		totalSize += len(r)
-	}
-
-	merged := make([]*storage.Edge, 0, totalSize)
-	for _, r := range results {
-		merged = append(merged, r...)
-	}
-
-	return merged
-}
 
 // =============================================================================
 // Worker Pool for Complex Operations

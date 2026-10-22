@@ -146,24 +146,29 @@ func prepareMergeKeys(ctx context.Context, store storage.Engine, labels []string
 	return nil
 }
 
-func (e *StorageExecutor) loadMergeCandidateNodes(store storage.Engine, ids []storage.NodeID) []*storage.Node {
+func (e *StorageExecutor) loadMergeCandidateNodes(ctx context.Context, store storage.Engine, ids []storage.NodeID) ([]*storage.Node, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make([]*storage.Node, 0, len(ids))
 	seen := make(map[storage.NodeID]struct{}, len(ids))
-	for _, id := range ids {
-		if _, exists := seen[id]; exists {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		seen[id] = struct{}{}
-		n, err := e.getQueryNode(store, id)
-		if err != nil || n == nil {
-			continue
+		for _, id := range ids[batch.start:batch.end] {
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			n, err := e.getQueryNode(store, id)
+			if err != nil || n == nil {
+				continue
+			}
+			out = append(out, n)
 		}
-		out = append(out, n)
 	}
-	return out
+	return out, nil
 }
 
 func mergePropertyNamesSorted(props map[string]interface{}) []string {
@@ -195,7 +200,7 @@ func compositeLookupValues(idx *storage.CompositeIndex, props map[string]interfa
 	return values
 }
 
-func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
+func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
 	if len(props) == 0 {
 		var candidates []*storage.Node
 		var err error
@@ -207,9 +212,14 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 		if err != nil {
 			return nil, err
 		}
-		for _, node := range candidates {
-			if mergeNodeMatches(node, labels, props) {
-				return node, nil
+		for batch, batchErr := range materializedBatches(ctx, len(candidates)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, node := range candidates[batch.start:batch.end] {
+				if mergeNodeMatches(node, labels, props) {
+					return node, nil
+				}
 			}
 		}
 		return nil, nil
@@ -219,9 +229,14 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 		if err != nil {
 			return nil, err
 		}
-		for _, node := range candidates {
-			if mergeNodeMatches(node, labels, props) {
-				return node, nil
+		for batch, batchErr := range materializedBatches(ctx, len(candidates)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, node := range candidates[batch.start:batch.end] {
+				if mergeNodeMatches(node, labels, props) {
+					return node, nil
+				}
 			}
 		}
 		return nil, nil
@@ -245,11 +260,19 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			candidateNodes := e.loadMergeCandidateNodes(store, compositeIndexLookup(store, idx, compositeLookupValues(idx, props), true))
-			for _, n := range candidateNodes {
-				if mergeNodeMatches(n, labels, props) {
-					e.cacheMergeNode(labels, props, n)
-					return n, nil
+			candidateNodes, loadErr := e.loadMergeCandidateNodes(ctx, store, compositeIndexLookup(store, idx, compositeLookupValues(idx, props), true))
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			for batch, batchErr := range materializedBatches(ctx, len(candidateNodes)) {
+				if batchErr != nil {
+					return nil, batchErr
+				}
+				for _, n := range candidateNodes[batch.start:batch.end] {
+					if mergeNodeMatches(n, labels, props) {
+						e.cacheMergeNode(labels, props, n)
+						return n, nil
+					}
 				}
 			}
 		}
@@ -267,10 +290,19 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 				}
 				continue
 			}
-			for _, n := range e.loadMergeCandidateNodes(store, []storage.NodeID{nodeID}) {
-				if mergeNodeMatches(n, labels, props) {
-					e.cacheMergeNode(labels, props, n)
-					return n, nil
+			loaded, loadErr := e.loadMergeCandidateNodes(ctx, store, []storage.NodeID{nodeID})
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			for batch, batchErr := range materializedBatches(ctx, len(loaded)) {
+				if batchErr != nil {
+					return nil, batchErr
+				}
+				for _, n := range loaded[batch.start:batch.end] {
+					if mergeNodeMatches(n, labels, props) {
+						e.cacheMergeNode(labels, props, n)
+						return n, nil
+					}
 				}
 			}
 			if cacheComplete {
@@ -297,10 +329,19 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 				}
 			}
 		}
-		for _, n := range e.loadMergeCandidateNodes(store, bestIDs) {
-			if mergeNodeMatches(n, labels, props) {
-				e.cacheMergeNode(labels, props, n)
-				return n, nil
+		best, loadErr := e.loadMergeCandidateNodes(ctx, store, bestIDs)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		for batch, batchErr := range materializedBatches(ctx, len(best)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, n := range best[batch.start:batch.end] {
+				if mergeNodeMatches(n, labels, props) {
+					e.cacheMergeNode(labels, props, n)
+					return n, nil
+				}
 			}
 		}
 	}
@@ -313,10 +354,15 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 	if err != nil {
 		return nil, err
 	}
-	for _, node := range nodes {
-		if mergeNodeMatches(node, labels, props) {
-			e.cacheMergeNode(labels, props, node)
-			return node, nil
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, node := range nodes[batch.start:batch.end] {
+			if mergeNodeMatches(node, labels, props) {
+				e.cacheMergeNode(labels, props, node)
+				return node, nil
+			}
 		}
 	}
 
@@ -335,12 +381,21 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 // index) could return carries the label, so a scan that found none means
 // there is none. An index answer is not; findMergeNode tries further
 // sources after it.
-func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
+func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}) (matches []*storage.Node, scanned bool, err error) {
 	if ids, indexed := e.mergeNodeIndexedCandidateIDs(store, labels, props); indexed {
 		matches = make([]*storage.Node, 0, len(ids))
-		for _, n := range e.loadMergeCandidateNodes(store, ids) {
-			if mergeNodeMatches(n, labels, props) {
-				matches = append(matches, n)
+		loaded, loadErr := e.loadMergeCandidateNodes(ctx, store, ids)
+		if loadErr != nil {
+			return nil, false, loadErr
+		}
+		for batch, batchErr := range materializedBatches(ctx, len(loaded)) {
+			if batchErr != nil {
+				return nil, false, batchErr
+			}
+			for _, n := range loaded[batch.start:batch.end] {
+				if mergeNodeMatches(n, labels, props) {
+					matches = append(matches, n)
+				}
 			}
 		}
 		return matches, false, nil
@@ -359,9 +414,14 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 	}
 
 	matches = make([]*storage.Node, 0, len(candidates))
-	for _, candidate := range candidates {
-		if mergeNodeMatches(candidate, labels, props) {
-			matches = append(matches, candidate)
+	for batch, batchErr := range materializedBatches(ctx, len(candidates)) {
+		if batchErr != nil {
+			return nil, false, batchErr
+		}
+		for _, candidate := range candidates[batch.start:batch.end] {
+			if mergeNodeMatches(candidate, labels, props) {
+				matches = append(matches, candidate)
+			}
 		}
 	}
 	return matches, true, nil

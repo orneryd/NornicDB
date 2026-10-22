@@ -8,8 +8,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
-	return parallelFilterNodes(nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
+func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) ([]*storage.Node, error) {
+	return parallelFilterNodes(ctx, nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
 }
 
 func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {

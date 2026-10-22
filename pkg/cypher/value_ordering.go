@@ -1,8 +1,8 @@
 package cypher
 
 import (
+	"context"
 	"math"
-	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -199,36 +199,63 @@ func cypherEntityOrderingKey(value interface{}) (cypherEntityOrderKey, bool) {
 
 // compareCypherMaps orders two maps: fewer keys first, then the sorted key
 // names compared in order, then the values in key order by compareValue.
+// It finds that first difference in one pass over each map, without sorting
+// either: with as many keys, the smallest key in only one map decides the
+// names (the map holding it is first), and with the same keys the smallest
+// key whose values differ or don't compare decides the values.
 func compareCypherMaps(left, right map[string]interface{}, compareValue func(a, b interface{}) (int, bool)) (int, bool) {
 	if order := compareOrderedInts(len(left), len(right)); order != 0 {
 		return order, true
 	}
-	// Small maps sort their keys on the stack.
-	var leftBuffer, rightBuffer [8]string
-	leftKeys, rightKeys := appendSortedMapKeys(leftBuffer[:0], left), appendSortedMapKeys(rightBuffer[:0], right)
-	for index := range leftKeys {
-		if order := compareStrings(leftKeys[index], rightKeys[index]); order != 0 {
-			return order, true
+	unshared, order := "", 0
+	for key := range left {
+		if _, shared := right[key]; !shared && (order == 0 || key < unshared) {
+			unshared, order = key, -1
 		}
 	}
-	for _, key := range leftKeys {
-		order, comparable := compareValue(left[key], right[key])
-		if !comparable {
-			return 0, false
-		}
-		if order != 0 {
-			return order, true
+	for key := range right {
+		if _, shared := left[key]; !shared && (order == 0 || key < unshared) {
+			unshared, order = key, 1
 		}
 	}
-	return 0, true
+	if order != 0 {
+		return order, true
+	}
+	deciding, decided, comparable := "", false, true
+	for key, value := range left {
+		if decided && key > deciding {
+			continue
+		}
+		if valueOrder, valueComparable := compareValue(value, right[key]); !valueComparable || valueOrder != 0 {
+			deciding, decided, order, comparable = key, true, valueOrder, valueComparable
+		}
+	}
+	if !comparable {
+		return 0, false
+	}
+	return order, true
 }
 
-func appendSortedMapKeys(keys []string, object map[string]interface{}) []string {
+// sortedMapKeys is object's keys in order, sorted through the bulk owner
+// under the statement (ctx; nil: none).
+func sortedMapKeys(ctx context.Context, object map[string]interface{}) []string {
+	keys := make([]string, 0, len(object))
 	for key := range object {
 		keys = append(keys, key)
 	}
-	slices.Sort(keys)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = sortStrings(ctx, keys)
 	return keys
+}
+
+// statementOfContexts is the statement among a call's optional contexts.
+func statementOfContexts(contexts []context.Context) context.Context {
+	if len(contexts) > 0 {
+		return contexts[0]
+	}
+	return nil
 }
 
 func compareStrings(left, right string) int {

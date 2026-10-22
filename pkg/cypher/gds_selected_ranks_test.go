@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,8 +19,8 @@ func TestGDSSelectedConstituentRanks(t *testing.T) {
 		{Source: "a", Target: "b", Type: "S", Properties: map[string]float64{"w": 5}},
 	}
 	projection.RelationshipPropertyKeys = map[string][]string{"R": {"w"}, "S": {"w"}}
-	projection.indexNodes(true)
-	projection.finishCounts()
+	projection.indexNodes(context.Background(), true)
+	projection.finishCounts(context.Background())
 	for _, tc := range []struct {
 		name     string
 		types    []string
@@ -44,7 +45,7 @@ func TestGDSSelectedConstituentRanks(t *testing.T) {
 			graph, err := selectGDSSubgraph(projection, nil, tc.types, weightProperty, tc.options)
 			require.NoError(t, err)
 			require.Equal(t, tc.ranks, graph.outgoingTypes != nil)
-			graph.orderOutgoing()
+			graph.orderOutgoing(context.Background())
 			if tc.options.omitAdjacency {
 				require.Nil(t, graph.outgoing)
 			} else {

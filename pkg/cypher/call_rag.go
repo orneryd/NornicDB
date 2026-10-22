@@ -324,7 +324,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page), nil
+		return executeSearchContinuationPage(ctx, page)
 	}
 	if mode == search.SearchContinuationID {
 		page, continuationErr := ensureSearchService(nil).SearchTextContinuation(
@@ -333,7 +333,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		if continuationErr != nil {
 			return nil, continuationErr
 		}
-		return executeSearchContinuationPage(page), nil
+		return executeSearchContinuationPage(ctx, page)
 	}
 	if useConfiguredRerank && svc != nil {
 		opts.RerankEnabled = svc.RerankerAvailable(ctx)
@@ -356,7 +356,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page), nil
+			return executeSearchContinuationPage(ctx, page)
 		}
 		response, err = service.Search(ctx, query, embedding, opts)
 	} else {
@@ -413,7 +413,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if continuationErr != nil {
 				return nil, continuationErr
 			}
-			return executeSearchContinuationPage(page), nil
+			return executeSearchContinuationPage(ctx, page)
 		}
 		response, err = search.SearchTextChunksWithErrorPolicy(
 			ctx,
@@ -430,12 +430,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 	if opts.Graph {
 		if graphPage {
-			return e.graphSearchPage(response), nil
+			return e.graphSearchPage(ctx, response)
 		}
-		return e.graphSearchResult(response), nil
+		return e.graphSearchResult(ctx, response)
 	}
 	if opts.Relationships {
-		return e.relationshipSearchResult(response), nil
+		return e.relationshipSearchResult(ctx, response)
 	}
 
 	result := &ExecuteResult{
@@ -446,62 +446,62 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	// query searched whole. Reported whatever the fallback reason (#907).
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 
-	for _, r := range response.Results {
-		node := &storage.Node{
-			ID:         storage.NodeID(r.ID),
-			Labels:     r.Labels,
-			Properties: r.Properties,
+	for batch, batchErr := range materializedBatches(ctx, len(response.Results)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, []interface{}{
-			node,
-			r.Score,
-			r.RRFScore,
-			r.VectorRank,
-			r.BM25Rank,
-			response.SearchMethod,
-			response.FallbackTriggered,
-			string(response.FallbackReason),
-			chunksSearched,
-			chunksTotal,
-			search.SearchMatchValues(r.Matches),
-		})
+		for _, r := range response.Results[batch.start:batch.end] {
+			node := &storage.Node{
+				ID:         storage.NodeID(r.ID),
+				Labels:     r.Labels,
+				Properties: r.Properties,
+			}
+			result.Rows = append(result.Rows, []interface{}{
+				node,
+				r.Score,
+				r.RRFScore,
+				r.VectorRank,
+				r.BM25Rank,
+				response.SearchMethod,
+				response.FallbackTriggered,
+				string(response.FallbackReason),
+				chunksSearched,
+				chunksTotal,
+				search.SearchMatchValues(r.Matches),
+			})
+		}
 	}
 
 	return result, nil
 }
 
-func executeSearchContinuationPage(page *search.SearchContinuationPage) *ExecuteResult {
+func executeSearchContinuationPage(ctx context.Context, page *search.SearchContinuationPage) (*ExecuteResult, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	results := make([]interface{}, 0, len(page.Results))
-	for index := range page.Results {
-		result := page.Results[index]
-		mapped := map[string]interface{}{
-			"node":  &storage.Node{ID: storage.NodeID(result.ID), Labels: result.Labels, Properties: result.Properties},
-			"score": result.Score, "rrf_score": result.RRFScore,
-			"vector_rank": int64(result.VectorRank), "bm25_rank": int64(result.BM25Rank),
-			"group_key": result.GroupKey, "phase": result.Phase,
-			"matches": search.SearchMatchValues(result.Matches),
+	for batch, batchErr := range materializedBatches(ctx, len(page.Results)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		for key, value := range continuationResultMetadata(result) {
-			mapped[key] = value
-		}
-		if len(result.Passages) > 0 {
-			passages := make([]interface{}, len(result.Passages))
-			for passageIndex := range result.Passages {
-				passage := result.Passages[passageIndex]
-				passages[passageIndex] = map[string]interface{}{
-					"node":  &storage.Node{ID: storage.NodeID(passage.ID), Labels: passage.Labels, Properties: passage.Properties},
-					"score": passage.Score, "rrf_score": passage.RRFScore,
-					"vector_rank": int64(passage.VectorRank), "bm25_rank": int64(passage.BM25Rank),
-					"phase":   passage.Phase,
-					"matches": search.SearchMatchValues(passage.Matches),
-				}
-				for key, value := range continuationResultMetadata(passage) {
-					passages[passageIndex].(map[string]interface{})[key] = value
-				}
+		for index := batch.start; index < batch.end; index++ {
+			result := page.Results[index]
+			mapped := map[string]interface{}{
+				"node":  &storage.Node{ID: storage.NodeID(result.ID), Labels: result.Labels, Properties: result.Properties},
+				"score": result.Score, "rrf_score": result.RRFScore,
+				"vector_rank": int64(result.VectorRank), "bm25_rank": int64(result.BM25Rank),
+				"group_key": result.GroupKey, "phase": result.Phase,
+				"matches": search.SearchMatchValues(result.Matches),
 			}
-			mapped["passages"] = passages
+			for key, value := range continuationResultMetadata(result) {
+				if work.due() && work.canceled() {
+					return nil, ctx.Err()
+				}
+				mapped[key] = value
+			}
+			if len(result.Passages) > 0 {
+				mapped["passages"] = continuationPassages(result.Passages)
+			}
+			results = append(results, mapped)
 		}
-		results = append(results, mapped)
 	}
 	var total interface{}
 	if page.Total != nil {
@@ -542,7 +542,26 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 		}
 		result.Metadata["durable_qid"] = page.QID
 	}
-	return result
+	return result, nil
+}
+
+// continuationPassages is one search result's passages as Cypher values.
+func continuationPassages(passages []search.SearchPassage) []interface{} {
+	values := make([]interface{}, len(passages))
+	for index := range passages {
+		passage := passages[index]
+		values[index] = map[string]interface{}{
+			"node":  &storage.Node{ID: storage.NodeID(passage.ID), Labels: passage.Labels, Properties: passage.Properties},
+			"score": passage.Score, "rrf_score": passage.RRFScore,
+			"vector_rank": int64(passage.VectorRank), "bm25_rank": int64(passage.BM25Rank),
+			"phase":   passage.Phase,
+			"matches": search.SearchMatchValues(passage.Matches),
+		}
+		for key, value := range continuationResultMetadata(passage) {
+			values[index].(map[string]interface{})[key] = value
+		}
+	}
+	return values
 }
 
 func searchContinuationOwner(ctx context.Context) string {

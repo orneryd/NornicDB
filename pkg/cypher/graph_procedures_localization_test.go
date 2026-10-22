@@ -30,7 +30,7 @@ func TestCypherGraphProcedureErrorsHaveTypedIdentityAndExactEnglish(t *testing.T
 	})
 
 	t.Run("graph must be projected first", func(t *testing.T) {
-		_, err := exec.callGdsFastRPStream([]interface{}{"missing", map[string]interface{}{"embeddingDimension": int64(4)}})
+		_, err := exec.callGdsFastRPStream(context.Background(), []interface{}{"missing", map[string]interface{}{"embeddingDimension": int64(4)}})
 		requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphNotFound, "Graph with name `missing` does not exist on database `"+exec.databaseName()+"`. It might exist on another database.")
 	})
 

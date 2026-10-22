@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"hash/fnv"
@@ -106,7 +107,7 @@ func changeBounds(capture storage.ChangeCaptureEngine, database string) (earlies
 
 // callDbCdcCurrent is db.cdc.current(): the identifier just after the last
 // committed change, which db.cdc.query takes to return later changes.
-func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcCurrent(ctx context.Context) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -120,7 +121,7 @@ func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
 
 // callDbCdcEarliest is db.cdc.earliest(): the identifier just before the
 // earliest retained change.
-func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcEarliest(ctx context.Context) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -139,7 +140,8 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 // last id as the next from). An identifier older than the earliest retained
 // change is Neo4j's InvalidIdentifier error, one past the last committed
 // change its FutureIdentifier error.
-func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -160,7 +162,7 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 		return nil, err
 	}
 	if hasLimit && limit < 0 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("limit", "a non-negative INTEGER", neo4jProvidedValue(args[2])), nil)
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("limit", "a non-negative INTEGER", neo4jProvidedValue(valueWalk(ctx), args[2])), nil)
 	}
 	earliest, current, err := changeBounds(capture, database)
 	if err != nil {
@@ -196,6 +198,9 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 				localization.CypherSpecializedCallsCDCScanFailed(err))
 		}
 		for index := range events {
+			if work.due() && work.canceled() {
+				return nil, ctx.Err()
+			}
 			event := &events[index]
 			if !matchesAnyChangeSelector(selectors, database, event) {
 				continue

@@ -312,15 +312,7 @@ func TestCypherHelpers_CreatePipelineAndCreateHelpers(t *testing.T) {
 	assert.True(t, containsString([]string{"a", "b"}, "a"))
 	assert.False(t, containsString([]string{"a", "b"}, "c"))
 
-	nodes := []*storage.Node{
-		{ID: "2", Properties: map[string]interface{}{"orderId": 2}},
-		{ID: "1", Properties: map[string]interface{}{"orderId": 1}},
-		{ID: "3", Properties: map[string]interface{}{"other": 9}},
-		nil,
-	}
-	sortNodesByProperty(nodes, "orderId")
-	assert.Equal(t, "1", string(nodes[0].ID))
-	assert.Equal(t, 1, getNodeProp(nodes[0], "orderId"))
+	assert.Equal(t, 1, getNodeProp(&storage.Node{ID: "1", Properties: map[string]interface{}{"orderId": 1}}, "orderId"))
 	assert.Nil(t, getNodeProp(nil, "orderId"))
 	assert.Nil(t, getNodeProp(&storage.Node{}, "orderId"))
 
@@ -1586,7 +1578,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
 
 	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
+	edges, prefix, err := exec.getEdgesByTypeFast(context.Background(), "REL")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_fast_cov:", prefix)
 	for _, e := range edges {
@@ -1611,7 +1603,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
+	_, _, err = failExec.getEdgesByTypeFast(context.Background(), "REL")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "edges fail")
 }
@@ -1766,9 +1758,11 @@ func TestCypherHelpers_MatchRowsHelpers_Branches(t *testing.T) {
 
 	ctx := context.Background()
 	// filterNodesByWhereClause branches.
-	all := exec.filterNodesByWhereClause(ctx, nodes, "", "n")
+	all, err := exec.filterNodesByWhereClause(ctx, nodes, "", "n")
+	require.NoError(t, err)
 	require.Len(t, all, 2)
-	filtered := exec.filterNodesByWhereClause(ctx, nodes, "n.a >= 3", "n")
+	filtered, err := exec.filterNodesByWhereClause(ctx, nodes, "n.a >= 3", "n")
+	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, storage.NodeID("n1"), filtered[0].ID)
 }
@@ -2351,15 +2345,15 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	n3, err := eng.GetNode("n3")
 	require.NoError(t, err)
 
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(x)-[:KNOWS]->()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:KNOWS]->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:LIKES]->()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n2, "n", "(n)<-[:KNOWS]-()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n2, "n", "(n)-[:ANY]-()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
 
-	assert.False(t, exec.checkChainedPattern(n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
+	assert.False(t, exec.checkChainedPattern(context.Background(), n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
+	assert.True(t, exec.checkChainedPattern(context.Background(), n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
 
 	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
 	require.Len(t, hops, 2)
@@ -2376,26 +2370,26 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	assert.Empty(t, incomingHops[1].relTypes)
 	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
 
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
+	assert.True(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
 		{relTypes: []string{"LIKES"}, outgoing: true},
 	}, 0))
-	assert.False(t, exec.traverseChain(n1, []relationshipHop{
+	assert.False(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
 		{relTypes: []string{"MISSING"}, outgoing: true},
 	}, 0))
 
 	// Incoming traversal branch.
-	assert.True(t, exec.traverseChain(n3, []relationshipHop{
+	assert.True(t, exec.traverseChain(context.Background(), n3, []relationshipHop{
 		{relTypes: []string{"LIKES"}, outgoing: false},
 		{relTypes: []string{"KNOWS"}, outgoing: false},
 	}, 0))
-	assert.False(t, exec.traverseChain(n3, []relationshipHop{
+	assert.False(t, exec.traverseChain(context.Background(), n3, []relationshipHop{
 		{relTypes: []string{"MISSING"}, outgoing: false},
 	}, 0))
 
 	// No type filter branch.
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
+	assert.True(t, exec.traverseChain(context.Background(), n1, []relationshipHop{
 		{relTypes: nil, outgoing: true},
 	}, 0))
 }
@@ -2787,7 +2781,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 	}
 	for _, tc := range rejectCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
+			res, ok, err := exec.tryFastRevenueByProduct(context.Background(), tc.matches, tc.with, tc.ret, "", 0, 0)
 			require.NoError(t, err)
 			assert.False(t, ok)
 			assert.Nil(t, res)
@@ -2815,7 +2809,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 			MaxHops:   1,
 		},
 	}
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.tryFastRevenueByProduct(context.Background(),
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2878,7 +2872,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 		},
 	}
 
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := exec.tryFastRevenueByProduct(context.Background(),
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2900,7 +2894,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	}
 
 	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
+	res, ok, err = exec.tryFastRevenueByProduct(context.Background(),
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -3243,7 +3237,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 			map[string]interface{}{"_nodeId": ""}, // empty node ID branch
 		}},
 	}
-	exec.normalizeSetMatchRowsToNodes(mr, store)
+	require.NoError(t, exec.normalizeSetMatchRowsToNodes(context.Background(), mr, store))
 	require.Len(t, mr.Rows, 2)
 	require.Len(t, mr.Rows[0], 3)
 	n, ok := mr.Rows[0][0].(*storage.Node)

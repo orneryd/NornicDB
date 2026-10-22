@@ -30,7 +30,7 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 // relationshipSearchResult is a relationship search's rows: each matching
 // relationship with its start and end nodes (null when not visible), then
 // the same scores and search metadata as node results (#1065).
-func (e *StorageExecutor) relationshipSearchResult(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) relationshipSearchResult(ctx context.Context, response *search.SearchResponse) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
@@ -41,20 +41,25 @@ func (e *StorageExecutor) relationshipSearchResult(response *search.SearchRespon
 		}
 		return nil
 	}
-	for _, r := range response.Results {
-		relationship := r.Relationship
-		result.Rows = append(result.Rows, []interface{}{
-			relationship,
-			endpoint(relationship.StartNode),
-			endpoint(relationship.EndNode),
-			r.Score,
-			r.RRFScore,
-			r.VectorRank,
-			r.BM25Rank,
-			response.SearchMethod,
-			response.FallbackTriggered,
-			string(response.FallbackReason),
-		})
+	for batch, batchErr := range materializedBatches(ctx, len(response.Results)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, r := range response.Results[batch.start:batch.end] {
+			relationship := r.Relationship
+			result.Rows = append(result.Rows, []interface{}{
+				relationship,
+				endpoint(relationship.StartNode),
+				endpoint(relationship.EndNode),
+				r.Score,
+				r.RRFScore,
+				r.VectorRank,
+				r.BM25Rank,
+				response.SearchMethod,
+				response.FallbackTriggered,
+				string(response.FallbackReason),
+			})
+		}
 	}
-	return result
+	return result, nil
 }

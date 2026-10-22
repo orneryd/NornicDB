@@ -159,7 +159,7 @@ func TestFindRelationshipForMergeSupportsBareLookupAndPropagatesScanError(t *tes
 		EndNode:   "target",
 	}))
 
-	found, err := findRelationshipForMerge(store, "source", "target", "ASSERTS", nil)
+	found, err := findRelationshipForMerge(context.Background(), store, "source", "target", "ASSERTS", nil)
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, storage.EdgeID("edge"), found.ID)
@@ -167,6 +167,7 @@ func TestFindRelationshipForMergeSupportsBareLookupAndPropagatesScanError(t *tes
 	wantErr := errors.New("relationship scan failed")
 	errorStore := &relationshipLookupErrorEngine{Engine: store, err: wantErr, failMatch: true}
 	found, err = findRelationshipForMerge(
+		context.Background(),
 		errorStore,
 		"source",
 		"target",
@@ -199,7 +200,7 @@ func TestFindRelationshipsForMergeReadsTypedCandidates(t *testing.T) {
 	}
 
 	noScanStore := &relationshipLookupErrorEngine{Engine: store, err: errors.New("untyped pair scan must not run")}
-	found, err := findRelationshipsForMerge(noScanStore, "source", "target", "ASSERTS", matchProps)
+	found, err := findRelationshipsForMerge(context.Background(), noScanStore, "source", "target", "ASSERTS", matchProps)
 	require.NoError(t, err)
 	ids := make([]storage.EdgeID, 0, len(found))
 	for _, edge := range found {

@@ -64,6 +64,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"math"
 )
@@ -117,7 +118,8 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 //
 //	toSet([1, 2, 2, 3, 1])  // [1, 2, 3]
 //	toSet(["a", "b", "a"]) // ["a", "b"]
-func toSet(val interface{}) []interface{} {
+func toSet(ctx context.Context, val interface{}) []interface{} {
+	work := valueWalk(ctx)
 	var result []interface{}
 	seen := make(map[string]bool)
 
@@ -132,6 +134,9 @@ func toSet(val interface{}) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		for _, item := range v {
+			if work.visit() {
+				return nil
+			}
 			addUnique(item)
 		}
 	case []string:
@@ -291,12 +296,16 @@ func apocCollMax(val interface{}) interface{} {
 // # Example
 //
 //	apocCollSort([3, 1, 4, 1, 5])  // [1, 1, 3, 4, 5]
-func apocCollSort(val interface{}) []interface{} {
+func apocCollSort(ctx context.Context, val interface{}) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		// In Cypher's order, as coll.sort and ORDER BY sort (strings too;
-		// null last).
-		return sortedCypherValues(v)
+		// null last). A canceled statement's failure is recorded.
+		sorted, err := sortedCypherValues(ctx, v)
+		if err != nil {
+			return nil
+		}
+		return sorted
 	}
 	return nil
 }
@@ -315,20 +324,29 @@ func apocCollSort(val interface{}) []interface{} {
 // # Example
 //
 //	apocCollSortNodes(nodes, "age")  // Nodes sorted by age property
-func apocCollSortNodes(val interface{}, propName string) []interface{} {
-	return apocCollSortNodesByProperty(val, propName, getNodeProperty)
+func apocCollSortNodes(ctx context.Context, val interface{}, propName string) []interface{} {
+	return apocCollSortNodesByProperty(ctx, val, propName, getNodeProperty)
 }
 
 // The query route supplies its visible property reader while sorting the raw
 // entity bindings, so later mutations cannot persist a filtered property map.
-func apocCollSortNodesByProperty(val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
+// The exchange sort's order (ties included) is the function's result, so it
+// stays, with its comparisons observing the statement: a canceled statement
+// stops it within a stride and records its failure.
+func apocCollSortNodesByProperty(ctx context.Context, val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		result := make([]interface{}, len(v))
-		copy(result, v)
+		if _, err := copyPopulation(ctx, result, v); err != nil {
+			return nil
+		}
+		comparisons := materializedRowCheckpoint{ctx: ctx}
 		// Sort by property value
 		for i := 0; i < len(result)-1; i++ {
 			for j := i + 1; j < len(result); j++ {
+				if comparisons.due() && comparisons.canceled() {
+					return nil
+				}
 				vi := property(result[i], propName)
 				vj := property(result[j], propName)
 				fj, _ := toFloat64(vj)
@@ -401,9 +419,9 @@ func apocCollReverse(val interface{}) []interface{} {
 // # Example
 //
 //	apocCollUnion([1, 2], [2, 3])  // [1, 2, 3]
-func apocCollUnion(list1, list2 interface{}) []interface{} {
+func apocCollUnion(ctx context.Context, list1, list2 interface{}) []interface{} {
 	combined := apocCollUnionAll(list1, list2)
-	return toSet(combined)
+	return toSet(ctx, combined)
 }
 
 // apocCollUnionAll returns union of two lists (including duplicates).
@@ -445,7 +463,8 @@ func apocCollUnionAll(list1, list2 interface{}) []interface{} {
 // # Example
 //
 //	apocCollIntersection([1, 2, 3], [2, 3, 4])  // [2, 3]
-func apocCollIntersection(list1, list2 interface{}) []interface{} {
+func apocCollIntersection(ctx context.Context, list1, list2 interface{}) []interface{} {
+	work := valueWalk(ctx)
 	var result []interface{}
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
@@ -456,6 +475,9 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 	// Create lookup set from list2
 	set2 := make(map[string]bool)
 	for _, item := range l2 {
+		if work.visit() {
+			return nil
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		set2[key] = true
 	}
@@ -463,6 +485,9 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 	// Find elements in list1 that are also in list2
 	seen := make(map[string]bool)
 	for _, item := range l1 {
+		if work.visit() {
+			return nil
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		if set2[key] && !seen[key] {
 			result = append(result, item)
@@ -486,7 +511,8 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 // # Example
 //
 //	apocCollSubtract([1, 2, 3], [2])  // [1, 3]
-func apocCollSubtract(list1, list2 interface{}) []interface{} {
+func apocCollSubtract(ctx context.Context, list1, list2 interface{}) []interface{} {
+	work := valueWalk(ctx)
 	var result []interface{}
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
@@ -497,12 +523,18 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 	// Create lookup set from list2
 	set2 := make(map[string]bool)
 	for _, item := range l2 {
+		if work.visit() {
+			return nil
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		set2[key] = true
 	}
 
 	// Find elements in list1 that are NOT in list2
 	for _, item := range l1 {
+		if work.visit() {
+			return nil
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		if !set2[key] {
 			result = append(result, item)
@@ -560,7 +592,8 @@ func apocCollContains(listVal, value interface{}) bool {
 //
 //	apocCollContainsAll([1, 2, 3, 4], [2, 3])  // true
 //	apocCollContainsAll([1, 2, 3], [2, 5])    // false
-func apocCollContainsAll(list1, list2 interface{}) bool {
+func apocCollContainsAll(ctx context.Context, list1, list2 interface{}) bool {
+	work := valueWalk(ctx)
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
 	if !ok1 || !ok2 {
@@ -570,12 +603,18 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 	// Create lookup set from list1
 	set1 := make(map[string]bool)
 	for _, item := range l1 {
+		if work.visit() {
+			return false
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		set1[key] = true
 	}
 
 	// Check all items in list2 are in set1
 	for _, item := range l2 {
+		if work.visit() {
+			return false
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		if !set1[key] {
 			return false
@@ -599,7 +638,8 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 //
 //	apocCollContainsAny([1, 2, 3], [5, 2])  // true
 //	apocCollContainsAny([1, 2, 3], [5, 6]) // false
-func apocCollContainsAny(list1, list2 interface{}) bool {
+func apocCollContainsAny(ctx context.Context, list1, list2 interface{}) bool {
+	work := valueWalk(ctx)
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
 	if !ok1 || !ok2 {
@@ -609,12 +649,18 @@ func apocCollContainsAny(list1, list2 interface{}) bool {
 	// Create lookup set from list1
 	set1 := make(map[string]bool)
 	for _, item := range l1 {
+		if work.visit() {
+			return false
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		set1[key] = true
 	}
 
 	// Check if any item in list2 is in set1
 	for _, item := range l2 {
+		if work.visit() {
+			return false
+		}
 		key := fmt.Sprintf("%T:%v", item, item)
 		if set1[key] {
 			return true
@@ -820,11 +866,15 @@ func apocSameValue(value, listed interface{}) bool {
 // # Example
 //
 //	apocCollFrequencies([3, 1, 3])  // [{item: 3, count: 2}, {item: 1, count: 1}]
-func apocCollFrequencies(val interface{}) []interface{} {
+func apocCollFrequencies(ctx context.Context, val interface{}) []interface{} {
+	work := valueWalk(ctx)
 	list, _ := val.([]interface{})
 	result := make([]interface{}, 0, len(list))
 	var positions cypherValueIndex
 	for _, item := range list {
+		if work.visit() {
+			return nil
+		}
 		if position, seen := positions.add(item); seen {
 			entry := result[position].(map[string]interface{})
 			entry["count"] = entry["count"].(int64) + 1

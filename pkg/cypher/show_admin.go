@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,10 +177,10 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 			continue
 		}
 		roles := append(make([]string, 0, len(user.Roles)), user.Roles...)
-		sort.Strings(roles)
+		_ = sortStrings(ctx, roles)
 		rows = append(rows, []interface{}{user.Name, roles, user.PasswordChangeRequired, user.Suspended, nil})
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i][0].(string) < rows[j][0].(string) })
+	_ = sortPopulationStable(ctx, rows, func(i, j int) bool { return rows[i][0].(string) < rows[j][0].(string) })
 	return &ExecuteResult{Columns: append([]string(nil), showUsersColumns...), Rows: rows}, nil
 }
 
@@ -370,7 +369,15 @@ func (s runningStatement) done() {
 	} else {
 		s.tx.endQuery()
 	}
-	s.statement.cancel(context.Canceled)
+}
+
+// release ends the statement's context. Execute calls it last, once the
+// statement's result is final: done retires the statement before its result
+// is restored and recorded, which must still run within its deadlines.
+func (s runningStatement) release() {
+	if s.tx != nil {
+		s.statement.cancel(context.Canceled)
+	}
 }
 
 // statementContext is a running statement's context: TERMINATE and the
@@ -392,6 +399,9 @@ type statementContext struct {
 	// no allocation of its own for it.
 	failure       expressionFailure
 	failureActive atomic.Bool
+	// canceled is set once err is: Err reads it without the lock. It packs
+	// beside failureActive, so the statement context is no larger for it.
+	canceled atomic.Bool
 
 	mu   sync.Mutex
 	done chan struct{} // made by Done
@@ -428,10 +438,10 @@ type statementContextKey struct{}
 // Err is the statement's cancellation, or the parent's (which then cancels
 // the statement, so Done is closed whenever Err is not nil).
 func (c *statementContext) Err() error {
-	c.mu.Lock()
-	err := c.err
-	c.mu.Unlock()
-	if err != nil {
+	if c.canceled.Load() {
+		c.mu.Lock()
+		err := c.err
+		c.mu.Unlock()
 		return err
 	}
 	if err := c.parent.Err(); err != nil {
@@ -464,6 +474,7 @@ func (c *statementContext) cancel(err error) {
 		return
 	}
 	c.err = err
+	c.canceled.Store(true)
 	if c.done != nil {
 		close(c.done)
 	}
@@ -586,7 +597,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	items, isList := cypherListValue(value)
 	if !isList {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value)))
+			localization.CypherAdminTransactionIDsType(neo4jValueRepr(valueWalk(ctx), value)))
 	}
 	if len(items) == 0 {
 		return nil, false, nil
@@ -600,7 +611,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 		id, isString := item.(string)
 		if !isString {
 			return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherAdminTransactionIDType(neo4jValueRepr(item)))
+				localization.CypherAdminTransactionIDType(neo4jValueRepr(valueWalk(ctx), item)))
 		}
 		ids = append(ids, id)
 	}
@@ -632,7 +643,7 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 	}
 	now := time.Now()
 	transactions := runningTransactions.snapshot()
-	sort.Slice(transactions, func(i, j int) bool { return transactions[i].started.Before(transactions[j].started) })
+	_ = sortPopulation(ctx, transactions, func(i, j int) bool { return transactions[i].started.Before(transactions[j].started) })
 	rows := make([][]interface{}, 0, len(transactions))
 	for _, tx := range transactions {
 		id := tx.id()

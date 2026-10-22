@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -26,14 +27,14 @@ func TestGDSLouvainSingleTypeStreamAllocationBound(t *testing.T) {
 				for i := 0; i < size; i++ {
 					p.NodeIDs = append(p.NodeIDs, fmt.Sprintf("n%06d", i))
 				}
-				p.indexNodes(true)
+				p.indexNodes(context.Background(), true)
 				weight := map[string]float64{"w": 1}
 				for i := 0; i < size; i++ {
 					for j := 1; j <= degree; j++ {
 						p.Relationships = append(p.Relationships, ProjectedRelationship{Source: p.NodeIDs[i], Target: p.NodeIDs[(i+j)%size], Type: "R", Properties: weight})
 					}
 				}
-				p.finishCounts()
+				p.finishCounts(context.Background())
 				require.NoError(t, registerGraphProjection(p, false))
 				selectAllocs := func(typed bool) float64 {
 					return testing.AllocsPerRun(3, func() {
@@ -47,7 +48,7 @@ func TestGDSLouvainSingleTypeStreamAllocationBound(t *testing.T) {
 				plain, typed := selectAllocs(false), selectAllocs(true)
 				stream := testing.AllocsPerRun(3, func() {
 					var err error
-					gdsLouvainAllocationStream, err = e.callGdsLouvainStream([]interface{}{"alloc", map[string]interface{}{"concurrency": int64(1), "relationshipWeightProperty": "w", "maxLevels": int64(1), "maxIterations": int64(1), "consecutiveIds": true}})
+					gdsLouvainAllocationStream, err = e.callGdsLouvainStream(context.Background(), []interface{}{"alloc", map[string]interface{}{"concurrency": int64(1), "relationshipWeightProperty": "w", "maxLevels": int64(1), "maxIterations": int64(1), "consecutiveIds": true}})
 					if err != nil {
 						t.Fatal(err)
 					}

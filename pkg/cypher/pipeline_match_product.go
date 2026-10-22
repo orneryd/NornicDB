@@ -39,10 +39,17 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 				continue
 			}
 			bound := false
-			for _, row := range rows {
-				if _, exists := row[name]; exists {
-					bound = true
-					break
+		population:
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					// The parts loop below returns the cancellation.
+					return name
+				}
+				for _, row := range rows[batch.start:batch.end] {
+					if _, exists := row[name]; exists {
+						bound = true
+						break population
+					}
 				}
 			}
 			if !bound {
@@ -78,23 +85,33 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 		rows = expanded
 		if len(paths) > 1 {
 			filtered := rows[:0]
-			for _, row := range rows {
-				if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
-					filtered = append(filtered, row)
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					return nil, true, batchErr
+				}
+				for _, row := range rows[batch.start:batch.end] {
+					if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
+						filtered = append(filtered, row)
+					}
 				}
 			}
 			rows = filtered
 		}
 	}
 	filtered := rows[:0]
-	for _, row := range rows {
-		if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		for _, name := range hidden {
-			delete(row, name)
+		for _, row := range rows[batch.start:batch.end] {
+			if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
+				continue
+			}
+			for _, name := range hidden {
+				delete(row, name)
+			}
+			filtered = append(filtered, row)
 		}
-		filtered = append(filtered, row)
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, true, failure
@@ -177,13 +194,24 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 					return nil, true, err
 				}
 				if own != "" && !whereApplied {
-					nodes = e.filterNodes(rowCtx, nodes, pattern.variable, own)
+					if nodes, err = e.filterNodes(rowCtx, nodes, pattern.variable, own); err != nil {
+						return nil, true, err
+					}
 				}
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
 		}
-		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
+		combinations, _, err := e.buildCombinationsUsingWhereJoin(ctx, matches, where)
+		if err != nil {
+			return nil, true, err
+		}
+		// A checkpoint, not a nested batch iterator: this pass runs once per
+		// input row.
+		joins := materializedRowCheckpoint{ctx: ctx, rows: len(combinations)}
 		for _, combination := range combinations {
+			if joins.due() && joins.canceled() {
+				return nil, true, ctx.Err()
+			}
 			joined := make(pipelineRow, len(row)+len(combination))
 			for name, value := range row {
 				joined[name] = value

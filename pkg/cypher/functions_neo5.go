@@ -303,7 +303,7 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(items) < 2 {
 		return []interface{}{}, nil
 	}
-	return append([]interface{}{}, items[1:]...), nil
+	return appendPopulation(ctx.StatementContext(), make([]interface{}, 0, len(items)-1), items[1:])
 }
 
 func fnStringOperation(name string) cypherfn.Func {
@@ -391,11 +391,12 @@ func fnStringOperation(name string) cypherfn.Func {
 // versionedConversion is a conversion function's value of value in a
 // statement of the version (cypher25): toString differs in Cypher 25
 // (convertToStringInVersion); the others are the same in every version.
-type versionedConversion func(value interface{}, cypher25 bool) interface{}
+// The walk observes the statement over a list's or map's items.
+type versionedConversion func(work *materializedRowCheckpoint, value interface{}, cypher25 bool) interface{}
 
 // sameInEveryVersion is a conversion that doesn't depend on the version.
 func sameInEveryVersion(convert func(interface{}) interface{}) versionedConversion {
-	return func(value interface{}, _ bool) interface{} { return convert(value) }
+	return func(_ *materializedRowCheckpoint, value interface{}, _ bool) interface{} { return convert(value) }
 }
 
 func fnScalarConversion(name string, convert versionedConversion, orNull bool) cypherfn.Func {
@@ -407,11 +408,12 @@ func fnScalarConversion(name string, convert versionedConversion, orNull bool) c
 		if err != nil || value == nil {
 			return nil, err
 		}
-		if !orNull && !validConversionArgument(name, value, ctx.Cypher25) {
+		work := valueWalk(ctx.StatementContext())
+		if !orNull && !validConversionArgument(work, name, value, ctx.Cypher25) {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
-				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value)))
+				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(work, value)))
 		}
-		return convert(value, ctx.Cypher25), nil
+		return convert(work, value, ctx.Cypher25), nil
 	}
 }
 
@@ -662,7 +664,7 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, er
 	specification, isString := values[0].(string)
 	if !isString {
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid("trim", "a String", neo4jValueRepr(values[0])))
+			localization.CypherCoreFunctionArgumentInvalid("trim", "a String", neo4jValueRepr(nil, values[0])))
 	}
 	text, _, err := stringArgument("trim", values, len(values)-1)
 	if err != nil {
@@ -809,8 +811,12 @@ func fnListConversion(name string, convert versionedConversion) cypherfn.Func {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "List<T>", Value: values[0]}
 		}
 		converted := make([]interface{}, len(items))
+		work := valueWalk(ctx.StatementContext())
 		for i, item := range items {
-			converted[i] = convert(item, ctx.Cypher25)
+			if work.visit() {
+				return nil, ctx.StatementContext().Err()
+			}
+			converted[i] = convert(work, item, ctx.Cypher25)
 		}
 		return converted, nil
 	}

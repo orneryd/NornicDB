@@ -220,10 +220,10 @@ func isTemporalInstant(value interface{}) bool {
 // temporalProcedureCallError is Neo4j's ProcedureCallFailed for a temporal
 // function (Truncate, Between, FromEpoch, FromEpochMillis) called with values
 // of types it doesn't take.
-func temporalProcedureCallError(procedure string, provided ...interface{}) error {
+func temporalProcedureCallError(work *materializedRowCheckpoint, procedure string, provided ...interface{}) error {
 	parts := make([]string, len(provided))
 	for index, value := range provided {
-		parts[index] = neo4jProvidedValue(value)
+		parts[index] = neo4jProvidedValue(work, value)
 	}
 	return localizedStatusError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument",
 		localization.CypherCoreTemporalProcedureCallSignature(procedure, strings.Join(parts, ", ")))

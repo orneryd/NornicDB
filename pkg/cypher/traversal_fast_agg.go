@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 //
 // This is primarily a performance optimization for patterns that can be answered in a single pass
 // over typed edge indexes (GetEdgesByType) with minimal node lookups.
-func (e *StorageExecutor) tryFastRelationshipAggregations(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastRelationshipAggregations(ctx context.Context, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle fixed 1-hop segments (no variable-length expansions).
 	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
 		return nil, false, nil
@@ -22,10 +23,10 @@ func (e *StorageExecutor) tryFastRelationshipAggregations(matches *TraversalMatc
 	}
 
 	if matches.IsChained {
-		return e.tryFastChainedRelationshipAggregation(matches, returnItems)
+		return e.tryFastChainedRelationshipAggregation(ctx, matches, returnItems)
 	}
 
-	return e.tryFastSingleHopAgg(matches, returnItems)
+	return e.tryFastSingleHopAgg(ctx, matches, returnItems)
 }
 
 type exprMatcher struct{}
@@ -47,7 +48,7 @@ func (exprMatcher) key(expr string) string {
 	return string(b)
 }
 
-func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastSingleHopAgg(ctx context.Context, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle typed 1-hop patterns with no properties/filters.
 	if len(matches.Relationship.Types) != 1 {
 		return nil, false, nil
@@ -88,7 +89,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 		return nil, false, nil
 	}
 
-	edgeList, idPrefix, err := e.getEdgesByTypeFast(relType)
+	edgeList, idPrefix, err := e.getEdgesByTypeFast(ctx, relType)
 	if err != nil {
 		return nil, false, err
 	}
@@ -200,28 +201,33 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	groupIDsForLabel := make([]storage.NodeID, 0, 64)
 	groupSeenForLabel := make(map[storage.NodeID]struct{}, 64)
 
-	for _, edge := range edgeList {
-		var groupID, otherID storage.NodeID
-		switch matches.Relationship.Direction {
-		case "incoming":
-			groupID = edge.EndNode
-			otherID = edge.StartNode
-		case "outgoing":
-			groupID = edge.StartNode
-			otherID = edge.EndNode
+	for batch, batchErr := range materializedBatches(ctx, len(edgeList)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-
-		if len(requiredGroupLabels) > 0 {
-			if _, ok := groupSeenForLabel[groupID]; !ok {
-				groupSeenForLabel[groupID] = struct{}{}
-				groupIDsForLabel = append(groupIDsForLabel, groupID)
+		for _, edge := range edgeList[batch.start:batch.end] {
+			var groupID, otherID storage.NodeID
+			switch matches.Relationship.Direction {
+			case "incoming":
+				groupID = edge.EndNode
+				otherID = edge.StartNode
+			case "outgoing":
+				groupID = edge.StartNode
+				otherID = edge.EndNode
 			}
-		}
 
-		if needOtherNodes || needOtherLabelOnly {
-			if _, ok := otherSeen[otherID]; !ok {
-				otherSeen[otherID] = struct{}{}
-				otherIDs = append(otherIDs, otherID)
+			if len(requiredGroupLabels) > 0 {
+				if _, ok := groupSeenForLabel[groupID]; !ok {
+					groupSeenForLabel[groupID] = struct{}{}
+					groupIDsForLabel = append(groupIDsForLabel, groupID)
+				}
+			}
+
+			if needOtherNodes || needOtherLabelOnly {
+				if _, ok := otherSeen[otherID]; !ok {
+					otherSeen[otherID] = struct{}{}
+					otherIDs = append(otherIDs, otherID)
+				}
 			}
 		}
 	}
@@ -276,78 +282,83 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	}
 
 	// Aggregate in a single pass, using pre-fetched nodes for label/prop filtering.
-	for _, edge := range edgeList {
-		var groupID, otherID storage.NodeID
-		switch matches.Relationship.Direction {
-		case "incoming":
-			groupID = edge.EndNode
-			otherID = edge.StartNode
-		case "outgoing":
-			groupID = edge.StartNode
-			otherID = edge.EndNode
+	for batch, batchErr := range materializedBatches(ctx, len(edgeList)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
+		for _, edge := range edgeList[batch.start:batch.end] {
+			var groupID, otherID storage.NodeID
+			switch matches.Relationship.Direction {
+			case "incoming":
+				groupID = edge.EndNode
+				otherID = edge.StartNode
+			case "outgoing":
+				groupID = edge.StartNode
+				otherID = edge.EndNode
+			}
 
-		if !groupLabelOK(groupID) {
-			continue
-		}
-		if !otherLabelOK(otherID) {
-			continue
-		}
+			if !groupLabelOK(groupID) {
+				continue
+			}
+			if !otherLabelOK(otherID) {
+				continue
+			}
 
-		for _, s := range specs {
-			switch s.kind {
-			case "count":
-				groupCounts[groupID]++
-			case "sumEdgeProp":
-				v, ok := edge.Properties[s.propName]
-				if !ok {
-					continue
+			for _, s := range specs {
+				switch s.kind {
+				case "count":
+					groupCounts[groupID]++
+				case "sumEdgeProp":
+					v, ok := edge.Properties[s.propName]
+					if !ok {
+						continue
+					}
+					switch n := v.(type) {
+					case int:
+						groupSum[groupID] += float64(n)
+					case int64:
+						groupSum[groupID] += float64(n)
+					case float64:
+						groupSum[groupID] += n
+					case float32:
+						groupSum[groupID] += float64(n)
+					default:
+					}
+				case "avgNodeProp":
+					otherNode := otherNodes[otherID]
+					if otherNode == nil {
+						continue
+					}
+					v, ok := otherNode.Properties[s.propName]
+					if !ok {
+						continue
+					}
+					var num float64
+					switch n := v.(type) {
+					case int:
+						num = float64(n)
+					case int64:
+						num = float64(n)
+					case float64:
+						num = n
+					case float32:
+						num = float64(n)
+					default:
+						continue
+					}
+					groupSum[groupID] += num
+					groupAvgCount[groupID]++
+				case "collectNodeProp":
+					otherNode := otherNodes[otherID]
+					if otherNode == nil {
+						continue
+					}
+					v, ok := otherNode.Properties[s.propName]
+					if !ok {
+						continue
+					}
+					groupCollect[groupID] = append(groupCollect[groupID], v)
 				}
-				switch n := v.(type) {
-				case int:
-					groupSum[groupID] += float64(n)
-				case int64:
-					groupSum[groupID] += float64(n)
-				case float64:
-					groupSum[groupID] += n
-				case float32:
-					groupSum[groupID] += float64(n)
-				default:
-				}
-			case "avgNodeProp":
-				otherNode := otherNodes[otherID]
-				if otherNode == nil {
-					continue
-				}
-				v, ok := otherNode.Properties[s.propName]
-				if !ok {
-					continue
-				}
-				var num float64
-				switch n := v.(type) {
-				case int:
-					num = float64(n)
-				case int64:
-					num = float64(n)
-				case float64:
-					num = n
-				case float32:
-					num = float64(n)
-				default:
-					continue
-				}
-				groupSum[groupID] += num
-				groupAvgCount[groupID]++
-			case "collectNodeProp":
-				otherNode := otherNodes[otherID]
-				if otherNode == nil {
-					continue
-				}
-				v, ok := otherNode.Properties[s.propName]
-				if !ok {
-					continue
-				}
-				groupCollect[groupID] = append(groupCollect[groupID], v)
 			}
 		}
 	}
@@ -355,23 +366,36 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	// Build result rows.
 	groupIDs := make([]storage.NodeID, 0, len(groupCounts)+len(groupSum)+len(groupCollect))
 	groupSeen := make(map[storage.NodeID]struct{})
+	groups := materializedRowCheckpoint{ctx: ctx, rows: len(groupCounts) + len(groupSum) + len(groupAvgCount) + len(groupCollect)}
 	for id := range groupCounts {
+		if groups.due() && groups.canceled() {
+			return nil, true, ctx.Err()
+		}
 		groupSeen[id] = struct{}{}
 		groupIDs = append(groupIDs, id)
 	}
 	for id := range groupSum {
+		if groups.due() && groups.canceled() {
+			return nil, true, ctx.Err()
+		}
 		if _, ok := groupSeen[id]; !ok {
 			groupSeen[id] = struct{}{}
 			groupIDs = append(groupIDs, id)
 		}
 	}
 	for id := range groupAvgCount {
+		if groups.due() && groups.canceled() {
+			return nil, true, ctx.Err()
+		}
 		if _, ok := groupSeen[id]; !ok {
 			groupSeen[id] = struct{}{}
 			groupIDs = append(groupIDs, id)
 		}
 	}
 	for id := range groupCollect {
+		if groups.due() && groups.canceled() {
+			return nil, true, ctx.Err()
+		}
 		if _, ok := groupSeen[id]; !ok {
 			groupSeen[id] = struct{}{}
 			groupIDs = append(groupIDs, id)
@@ -386,38 +410,43 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	}
 
 	rows = make([][]interface{}, 0, len(groupIDs))
-	for _, groupID := range groupIDs {
-		groupNode := groupNodes[groupID]
-		if groupNode == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(groupIDs)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		groupVal := groupNode.Properties[groupPropName]
-
-		row := make([]interface{}, 0, 1+len(specs))
-		row = append(row, groupVal)
-
-		for _, s := range specs {
-			switch s.kind {
-			case "count":
-				row = append(row, groupCounts[groupID])
-			case "sumEdgeProp":
-				row = append(row, groupSum[groupID])
-			case "avgNodeProp":
-				cnt := groupAvgCount[groupID]
-				if cnt == 0 {
-					row = append(row, nil)
-				} else {
-					row = append(row, groupSum[groupID]/float64(cnt))
-				}
-			case "collectNodeProp":
-				row = append(row, groupCollect[groupID])
-			default:
-				// Invariant guard: specs are constructed above from the closed set of
-				// supported kinds, so this cannot escape a query operation.
-				return nil, false, fmt.Errorf("unsupported aggregation spec: %s", s.kind)
+		for _, groupID := range groupIDs[batch.start:batch.end] {
+			groupNode := groupNodes[groupID]
+			if groupNode == nil {
+				continue
 			}
+			groupVal := groupNode.Properties[groupPropName]
+
+			row := make([]interface{}, 0, 1+len(specs))
+			row = append(row, groupVal)
+
+			for _, s := range specs {
+				switch s.kind {
+				case "count":
+					row = append(row, groupCounts[groupID])
+				case "sumEdgeProp":
+					row = append(row, groupSum[groupID])
+				case "avgNodeProp":
+					cnt := groupAvgCount[groupID]
+					if cnt == 0 {
+						row = append(row, nil)
+					} else {
+						row = append(row, groupSum[groupID]/float64(cnt))
+					}
+				case "collectNodeProp":
+					row = append(row, groupCollect[groupID])
+				default:
+					// Invariant guard: specs are constructed above from the closed set of
+					// supported kinds, so this cannot escape a query operation.
+					return nil, false, fmt.Errorf("unsupported aggregation spec: %s", s.kind)
+				}
+			}
+			rows = append(rows, row)
 		}
-		rows = append(rows, row)
 	}
 
 	_ = idPrefix // reserved for future use; ensures we keep prefix context for caller-specific mapping if needed.
@@ -542,7 +571,7 @@ func appendUniqueNodeID(ids []storage.NodeID, seen map[storage.NodeID]struct{}, 
 	return append(ids, id)
 }
 
-func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
+func (e *StorageExecutor) tryFastChainedRelationshipAggregation(ctx context.Context, matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	plan, ok := buildChainedAggregationPlan(matches, returnItems)
 	if !ok {
 		return nil, false, nil
@@ -569,11 +598,11 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 
 	switch plan.kind {
 	case "two-hop-boundary-count":
-		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types[0])
+		edges0, _, err := e.getEdgesByTypeFast(ctx, seg0.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
-		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types[0])
+		edges1, _, err := e.getEdgesByTypeFast(ctx, seg1.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
@@ -583,10 +612,15 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		countSeen := make(map[storage.NodeID]struct{}, len(edges1))
 		rightIDs := make([]storage.NodeID, 0, len(edges1))
 		rightSeen := make(map[storage.NodeID]struct{}, len(edges1))
-		for _, edge := range edges1 {
-			countNodeToRight[edge.StartNode] = append(countNodeToRight[edge.StartNode], edge.EndNode)
-			countIDs = appendUniqueNodeID(countIDs, countSeen, edge.StartNode)
-			rightIDs = appendUniqueNodeID(rightIDs, rightSeen, edge.EndNode)
+		for batch, batchErr := range materializedBatches(ctx, len(edges1)) {
+			if batchErr != nil {
+				return nil, true, batchErr
+			}
+			for _, edge := range edges1[batch.start:batch.end] {
+				countNodeToRight[edge.StartNode] = append(countNodeToRight[edge.StartNode], edge.EndNode)
+				countIDs = appendUniqueNodeID(countIDs, countSeen, edge.StartNode)
+				rightIDs = appendUniqueNodeID(rightIDs, rightSeen, edge.EndNode)
+			}
 		}
 		countNodes, _, err := e.batchGetNodesFast(countIDs)
 		if err != nil {
@@ -599,31 +633,42 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 
 		leftIDs := make([]storage.NodeID, 0, len(edges0))
 		leftSeen := make(map[storage.NodeID]struct{}, len(edges0))
-		for _, edge := range edges0 {
-			leftIDs = appendUniqueNodeID(leftIDs, leftSeen, edge.StartNode)
-			if !chainedNodeHasLabels(countNodes[edge.EndNode], requiredCountLabels) {
-				continue
+		for batch, batchErr := range materializedBatches(ctx, len(edges0)) {
+			if batchErr != nil {
+				return nil, true, batchErr
 			}
-			for _, rightID := range countNodeToRight[edge.EndNode] {
-				if !chainedNodeHasLabels(rightNodes[rightID], requiredJoinLabels) {
+			for _, edge := range edges0[batch.start:batch.end] {
+				leftIDs = appendUniqueNodeID(leftIDs, leftSeen, edge.StartNode)
+				if !chainedNodeHasLabels(countNodes[edge.EndNode], requiredCountLabels) {
 					continue
 				}
-				leftToRightCounts[pairKey{left: edge.StartNode, right: rightID}]++
+				rights := countNodeToRight[edge.EndNode]
+				for innerBatch, innerErr := range materializedBatches(ctx, len(rights)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, rightID := range rights[innerBatch.start:innerBatch.end] {
+						if !chainedNodeHasLabels(rightNodes[rightID], requiredJoinLabels) {
+							continue
+						}
+						leftToRightCounts[pairKey{left: edge.StartNode, right: rightID}]++
+					}
+				}
 			}
 		}
 	case "three-hop-linear-distinct", "three-hop-converging-distinct":
 		seg2 := matches.Segments[2]
 		requiredRightLabels := append([]string(nil), seg2.ToNode.labels...)
 
-		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types[0])
+		edges0, _, err := e.getEdgesByTypeFast(ctx, seg0.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
-		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types[0])
+		edges1, _, err := e.getEdgesByTypeFast(ctx, seg1.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
-		edges2, _, err := e.getEdgesByTypeFast(seg2.Relationship.Types[0])
+		edges2, _, err := e.getEdgesByTypeFast(ctx, seg2.Relationship.Types[0])
 		if err != nil {
 			return nil, false, err
 		}
@@ -631,9 +676,14 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		countNodeToLeft := make(map[storage.NodeID]storage.NodeID, len(edges0))
 		countIDs := make([]storage.NodeID, 0, len(edges0))
 		countSeen := make(map[storage.NodeID]struct{}, len(edges0))
-		for _, edge := range edges0 {
-			countNodeToLeft[edge.EndNode] = edge.StartNode
-			countIDs = appendUniqueNodeID(countIDs, countSeen, edge.EndNode)
+		for batch, batchErr := range materializedBatches(ctx, len(edges0)) {
+			if batchErr != nil {
+				return nil, true, batchErr
+			}
+			for _, edge := range edges0[batch.start:batch.end] {
+				countNodeToLeft[edge.EndNode] = edge.StartNode
+				countIDs = appendUniqueNodeID(countIDs, countSeen, edge.EndNode)
+			}
 		}
 
 		joinNodeToRight := make(map[storage.NodeID][]storage.NodeID, len(edges2))
@@ -641,16 +691,21 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		joinSeen := make(map[storage.NodeID]struct{}, len(edges2))
 		rightIDs := make([]storage.NodeID, 0, len(edges2))
 		rightSeen := make(map[storage.NodeID]struct{}, len(edges2))
-		for _, edge := range edges2 {
-			joinID := edge.StartNode
-			rightID := edge.EndNode
-			if plan.kind == "three-hop-converging-distinct" {
-				joinID = edge.EndNode
-				rightID = edge.StartNode
+		for batch, batchErr := range materializedBatches(ctx, len(edges2)) {
+			if batchErr != nil {
+				return nil, true, batchErr
 			}
-			joinNodeToRight[joinID] = append(joinNodeToRight[joinID], rightID)
-			joinIDs = appendUniqueNodeID(joinIDs, joinSeen, joinID)
-			rightIDs = appendUniqueNodeID(rightIDs, rightSeen, rightID)
+			for _, edge := range edges2[batch.start:batch.end] {
+				joinID := edge.StartNode
+				rightID := edge.EndNode
+				if plan.kind == "three-hop-converging-distinct" {
+					joinID = edge.EndNode
+					rightID = edge.StartNode
+				}
+				joinNodeToRight[joinID] = append(joinNodeToRight[joinID], rightID)
+				joinIDs = appendUniqueNodeID(joinIDs, joinSeen, joinID)
+				rightIDs = appendUniqueNodeID(rightIDs, rightSeen, rightID)
+			}
 		}
 
 		countNodes, _, err := e.batchGetNodesFast(countIDs)
@@ -667,26 +722,37 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		}
 
 		seen := make(map[tripKey]struct{}, 4096)
-		for _, edge := range edges1 {
-			countID := edge.StartNode
-			joinID := edge.EndNode
-			leftID, found := countNodeToLeft[countID]
-			if !found {
-				continue
+		for batch, batchErr := range materializedBatches(ctx, len(edges1)) {
+			if batchErr != nil {
+				return nil, true, batchErr
 			}
-			if !chainedNodeHasLabels(countNodes[countID], requiredCountLabels) || !chainedNodeHasLabels(joinNodes[joinID], requiredJoinLabels) {
-				continue
-			}
-			for _, rightID := range joinNodeToRight[joinID] {
-				if !chainedNodeHasLabels(rightNodes[rightID], requiredRightLabels) {
+			for _, edge := range edges1[batch.start:batch.end] {
+				countID := edge.StartNode
+				joinID := edge.EndNode
+				leftID, found := countNodeToLeft[countID]
+				if !found {
 					continue
 				}
-				trip := tripKey{left: leftID, right: rightID, counted: countID}
-				if _, exists := seen[trip]; exists {
+				if !chainedNodeHasLabels(countNodes[countID], requiredCountLabels) || !chainedNodeHasLabels(joinNodes[joinID], requiredJoinLabels) {
 					continue
 				}
-				seen[trip] = struct{}{}
-				leftToRightCounts[pairKey{left: leftID, right: rightID}]++
+				rights := joinNodeToRight[joinID]
+				for innerBatch, innerErr := range materializedBatches(ctx, len(rights)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, rightID := range rights[innerBatch.start:innerBatch.end] {
+						if !chainedNodeHasLabels(rightNodes[rightID], requiredRightLabels) {
+							continue
+						}
+						trip := tripKey{left: leftID, right: rightID, counted: countID}
+						if _, exists := seen[trip]; exists {
+							continue
+						}
+						seen[trip] = struct{}{}
+						leftToRightCounts[pairKey{left: leftID, right: rightID}]++
+					}
+				}
 			}
 		}
 	default:
@@ -697,7 +763,11 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 	rightIDs := make([]storage.NodeID, 0, len(leftToRightCounts))
 	leftSeen := make(map[storage.NodeID]struct{}, len(leftToRightCounts))
 	rightSeen := make(map[storage.NodeID]struct{}, len(leftToRightCounts))
+	pairs := materializedRowCheckpoint{ctx: ctx, rows: len(leftToRightCounts)}
 	for key := range leftToRightCounts {
+		if pairs.due() && pairs.canceled() {
+			return nil, true, ctx.Err()
+		}
 		leftIDs = appendUniqueNodeID(leftIDs, leftSeen, key.left)
 		rightIDs = appendUniqueNodeID(rightIDs, rightSeen, key.right)
 	}
@@ -714,6 +784,9 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 
 	rows = make([][]interface{}, 0, len(leftToRightCounts))
 	for key, count := range leftToRightCounts {
+		if pairs.due() && pairs.canceled() {
+			return nil, true, ctx.Err()
+		}
 		leftNode := leftNodes[key.left]
 		rightNode := rightNodes[key.right]
 		if !chainedNodeHasLabels(leftNode, requiredLeftLabels) || rightNode == nil {

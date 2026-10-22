@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -116,6 +117,7 @@ func (e *StorageExecutor) newRelationshipMergeEdgeID(
 }
 
 func createRelationshipForMerge(
+	ctx context.Context,
 	e *StorageExecutor,
 	store storage.Engine,
 	edge *storage.Edge,
@@ -130,7 +132,7 @@ func createRelationshipForMerge(
 	for {
 		nonReflexiveIdentity := relationshipMergeIdentityContainsNaN(matchProps)
 		if len(matchProps) > 0 && !nonReflexiveIdentity {
-			existing, err := selectRelationshipMergeCreateID(store, edge, matchProps)
+			existing, err := selectRelationshipMergeCreateID(ctx, store, edge, matchProps)
 			if err != nil {
 				return nil, false, err
 			}
@@ -143,6 +145,7 @@ func createRelationshipForMerge(
 				return nil, false, err
 			}
 			existing, lookupErr := findRelationshipForMerge(
+				ctx,
 				store,
 				edge.StartNode,
 				edge.EndNode,
@@ -176,6 +179,7 @@ func createRelationshipForMerge(
 // is required before transactional CreateEdge because a transaction can buffer
 // a snapshot-visible committed ID without returning ErrAlreadyExists.
 func selectRelationshipMergeCreateID(
+	ctx context.Context,
 	store storage.Engine,
 	edge *storage.Edge,
 	matchProps map[string]interface{},
@@ -202,7 +206,12 @@ func selectRelationshipMergeCreateID(
 		return nil, err
 	}
 	firstOrdinal := len(edges)
+	// One probe per relationship between the pair, which can be many.
+	probes := materializedRowCheckpoint{ctx: ctx, rows: len(edges) + 1}
 	for offset := 0; offset <= len(edges); offset++ {
+		if probes.due() && probes.canceled() {
+			return nil, ctx.Err()
+		}
 		edge.ID = deterministicRelationshipMergeEdgeID(
 			edge.StartNode,
 			edge.EndNode,
@@ -261,7 +270,7 @@ func relationshipMergeValuesEqualGeneral(got, want interface{}) bool {
 	if reflect.DeepEqual(got, want) {
 		return true
 	}
-	return reflect.DeepEqual(canonicalUnwindMergeValue(got), canonicalUnwindMergeValue(want))
+	return reflect.DeepEqual(canonicalUnwindMergeValue(nil, got), canonicalUnwindMergeValue(nil, want))
 }
 
 // relationshipMergeScalarsEqual is relationshipMergeValuesEqualGeneral for
@@ -296,13 +305,14 @@ func relationshipMergeScalarsEqual(got, want interface{}) (equal bool, decided b
 // findRelationshipsForMerge finds, or nil: for callers that bind one
 // relationship per row.
 func findRelationshipForMerge(
+	ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,
 	matchProps map[string]interface{},
 ) (*storage.Edge, error) {
-	matches, err := findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+	matches, err := findRelationshipsForMerge(ctx, store, startID, endID, relType, matchProps)
 	if err != nil || len(matches) == 0 {
 		return nil, err
 	}
@@ -315,6 +325,7 @@ func findRelationshipForMerge(
 // reads only the relationships of that type between the two nodes, and of
 // each only the identity properties; a match is read whole.
 func findRelationshipsForMerge(
+	ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -328,7 +339,12 @@ func findRelationshipsForMerge(
 	for key := range matchProps {
 		keys = append(keys, key)
 	}
-	return storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	return matchEdgesBetween(scan, store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+		if scan.canceled() {
+			return false
+		}
 		return relationshipMatchesMergePattern(edge, relType, matchProps)
 	})
 }

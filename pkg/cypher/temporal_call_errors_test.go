@@ -63,12 +63,12 @@ func TestTemporalFunctionCallErrors(t *testing.T) {
 	require.Nil(t, exec.evaluateExpressionWithContext(failureCtx, "date.truncate('day', 'x')", nil, nil))
 	require.Contains(t, statusText(getExpressionFailure(failureCtx)), "Neo.ClientError.Procedure.ProcedureCallFailed")
 
-	require.Equal(t, "NO_VALUE", neo4jProvidedValue(nil))
-	require.Equal(t, `String("x")`, neo4jProvidedValue("x"))
-	require.Equal(t, "Boolean('true')", neo4jProvidedValue(true))
-	require.Equal(t, "Double(1.5)", neo4jProvidedValue(1.5))
-	require.Equal(t, "Long(7)", neo4jProvidedValue(int64(7)))
-	require.Equal(t, "P1D", neo4jProvidedValue(stringerValue("P1D")))
+	require.Equal(t, "NO_VALUE", neo4jProvidedValue(nil, nil))
+	require.Equal(t, `String("x")`, neo4jProvidedValue(nil, "x"))
+	require.Equal(t, "Boolean('true')", neo4jProvidedValue(nil, true))
+	require.Equal(t, "Double(1.5)", neo4jProvidedValue(nil, 1.5))
+	require.Equal(t, "Long(7)", neo4jProvidedValue(nil, int64(7)))
+	require.Equal(t, "P1D", neo4jProvidedValue(nil, stringerValue("P1D")))
 	require.True(t, isTemporalInstant(time.Now()))
 	require.False(t, isTemporalInstant("2020-01-02"))
 }

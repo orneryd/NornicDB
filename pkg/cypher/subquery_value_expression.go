@@ -356,9 +356,14 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			localization.CypherSubqueriesCollectSingleColumn(len(result.Columns)))
 	}
 	collected := make([]interface{}, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		if len(row) > 0 {
-			collected = append(collected, row[0])
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return nil, false, batchErr
+		}
+		for _, row := range result.Rows[batch.start:batch.end] {
+			if len(row) > 0 {
+				collected = append(collected, row[0])
+			}
 		}
 	}
 	return collected, true, nil
@@ -520,34 +525,39 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 	seen := make(map[storage.NodeID]struct{}, len(nodes))
 	var row map[string]interface{}
 	var count int64
-	for _, node := range nodes {
-		if node == nil || (hideSystemNodes && isSystemNode(node)) {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return 0, true
 		}
-		if _, duplicate := seen[node.ID]; duplicate {
-			continue
-		}
-		seen[node.ID] = struct{}{}
-		if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties) {
-			continue
-		}
-		if shape.where != "" {
-			if row == nil {
-				row = make(map[string]interface{}, len(values)+1)
-				for name, value := range values {
-					row[name] = value
-				}
-			}
-			if shape.variable != "" {
-				row[shape.variable] = node
-			}
-			if !e.evaluateRowPredicate(ctx, shape.where, row) {
+		for _, node := range nodes[batch.start:batch.end] {
+			if node == nil || (hideSystemNodes && isSystemNode(node)) {
 				continue
 			}
-		}
-		count++
-		if first {
-			return count, true
+			if _, duplicate := seen[node.ID]; duplicate {
+				continue
+			}
+			seen[node.ID] = struct{}{}
+			if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties) {
+				continue
+			}
+			if shape.where != "" {
+				if row == nil {
+					row = make(map[string]interface{}, len(values)+1)
+					for name, value := range values {
+						row[name] = value
+					}
+				}
+				if shape.variable != "" {
+					row[shape.variable] = node
+				}
+				if !e.evaluateRowPredicate(ctx, shape.where, row) {
+					continue
+				}
+			}
+			count++
+			if first {
+				return count, true
+			}
 		}
 	}
 	return count, true
@@ -626,46 +636,51 @@ func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *Trav
 		paths = e.traverseFromNode(ctx, seed, matches)
 	}
 	var count int64
-	for _, path := range paths {
-		inner := e.buildPathContext(path, matches)
-		correlated := true
-		for name, node := range inner.nodes {
-			if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || bound.ID != node.ID) {
-				correlated = false
-				break
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(paths)) {
+		if batchErr != nil {
+			return 0
 		}
-		for name, relationship := range inner.rels {
-			if !correlated {
-				break
-			}
-			if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || bound.ID != relationship.ID) {
-				correlated = false
-				break
-			}
-		}
-		if !correlated {
-			continue
-		}
-		if where != "" {
-			// The WHERE sees the row's values with the path's bindings.
-			row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
-			for name, value := range values {
-				row[name] = value
-			}
+		for _, path := range paths[batch.start:batch.end] {
+			inner := e.buildPathContext(ctx, path, matches)
+			correlated := true
 			for name, node := range inner.nodes {
-				row[name] = node
+				if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || bound.ID != node.ID) {
+					correlated = false
+					break
+				}
 			}
 			for name, relationship := range inner.rels {
-				row[name] = relationship
+				if !correlated {
+					break
+				}
+				if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || bound.ID != relationship.ID) {
+					correlated = false
+					break
+				}
 			}
-			if !e.evaluateRowPredicate(ctx, where, row) {
+			if !correlated {
 				continue
 			}
-		}
-		count++
-		if first {
-			return count
+			if where != "" {
+				// The WHERE sees the row's values with the path's bindings.
+				row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
+				for name, value := range values {
+					row[name] = value
+				}
+				for name, node := range inner.nodes {
+					row[name] = node
+				}
+				for name, relationship := range inner.rels {
+					row[name] = relationship
+				}
+				if !e.evaluateRowPredicate(ctx, where, row) {
+					continue
+				}
+			}
+			count++
+			if first {
+				return count
+			}
 		}
 	}
 	return count
@@ -1204,9 +1219,15 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 		return int64(len(edges))
 	}
 	var count int64
-	for _, edge := range edges {
-		if e.edgeTypeMatches(edge.Type, shape.types) {
-			count++
+	for batch, batchErr := range materializedBatches(ctx, len(edges)) {
+		if batchErr != nil {
+			// The owner recorded the cancellation: the statement fails.
+			return 0
+		}
+		for _, edge := range edges[batch.start:batch.end] {
+			if e.edgeTypeMatches(edge.Type, shape.types) {
+				count++
+			}
 		}
 	}
 	return count

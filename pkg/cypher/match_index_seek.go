@@ -333,15 +333,20 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 				return nil, false, nil
 			}
 
-			for _, node := range nodes {
-				if node == nil {
-					continue
+			for innerBatch, innerErr := range materializedBatches(ctx, len(nodes)) {
+				if innerErr != nil {
+					return nil, true, innerErr
 				}
-				if _, ok := seen[node.ID]; ok {
-					continue
+				for _, node := range nodes[innerBatch.start:innerBatch.end] {
+					if node == nil {
+						continue
+					}
+					if _, ok := seen[node.ID]; ok {
+						continue
+					}
+					seen[node.ID] = struct{}{}
+					merged = append(merged, node)
 				}
-				seen[node.ID] = struct{}{}
-				merged = append(merged, node)
 			}
 		}
 		return merged, true, nil
@@ -382,8 +387,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 
 	idSet := make(map[storage.NodeID]struct{})
 	for _, label := range labels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
-			idSet[id] = struct{}{}
+		found := propertyIndexLookup(e.storage, schema, label, property, value)
+		for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+			if innerErr != nil {
+				return nil, true, innerErr
+			}
+			for _, id := range found[innerBatch.start:innerBatch.end] {
+				idSet[id] = struct{}{}
+			}
 		}
 	}
 
@@ -393,27 +404,36 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
+	keys := materializedRowCheckpoint{ctx: ctx, rows: len(idSet)}
 	for id := range idSet {
+		if keys.due() && keys.canceled() {
+			return nil, true, ctx.Err()
+		}
 		ids = append(ids, string(id))
 	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
+	_ = sortStrings(ctx, ids)
+	for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
+		for _, id := range ids[batch.start:batch.end] {
+			node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+			if err != nil || node == nil {
+				continue
+			}
+			if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+				continue
+			}
+			actual, exists := node.Properties[property]
+			if !exists {
+				continue
+			}
+			equal := cypherEquality(actual, value)
+			if matched, known := equal.(bool); !known || !matched {
+				continue
+			}
+			nodes = append(nodes, node)
 		}
-		actual, exists := node.Properties[property]
-		if !exists {
-			continue
-		}
-		equal := cypherEquality(actual, value)
-		if matched, known := equal.(bool); !known || !matched {
-			continue
-		}
-		nodes = append(nodes, node)
 	}
 
 	return nodes, true, nil
@@ -426,16 +446,18 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 // where $param is a list value from params. This path is used heavily by Fabric
 // batched correlated APPLY lookups.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	return e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, whereClause, params, nil)
+	return e.tryCollectNodesFromPropertyIndexInAnyOf(ctx, nodePattern, whereClause, params, nil)
 }
 
 // tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
 // for a node that must carry one of anyOf (see seekCandidateLabels).
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -457,9 +479,20 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range labels {
-		for _, value := range listValues {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
-				idSet[id] = struct{}{}
+		for valueBatch, valueErr := range materializedBatches(ctx, len(listValues)) {
+			if valueErr != nil {
+				return nil, true, valueErr
+			}
+			for _, value := range listValues[valueBatch.start:valueBatch.end] {
+				found := propertyIndexLookup(e.storage, schema, label, property, value)
+				for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, id := range found[innerBatch.start:innerBatch.end] {
+						idSet[id] = struct{}{}
+					}
+				}
 			}
 		}
 	}
@@ -469,19 +502,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
+	keys := materializedRowCheckpoint{ctx: ctx, rows: len(idSet)}
 	for id := range idSet {
+		if keys.due() && keys.canceled() {
+			return nil, true, ctx.Err()
+		}
 		ids = append(ids, string(id))
 	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
+	_ = sortStrings(ctx, ids)
+	for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
+		for _, id := range ids[batch.start:batch.end] {
+			node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+			if err != nil || node == nil {
+				continue
+			}
+			if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+				continue
+			}
+			nodes = append(nodes, node)
 		}
-		nodes = append(nodes, node)
 	}
 	return nodes, true, nil
 }
@@ -523,9 +565,20 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range labels {
-		for _, value := range listValues {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
-				idSet[id] = struct{}{}
+		for valueBatch, valueErr := range materializedBatches(ctx, len(listValues)) {
+			if valueErr != nil {
+				return nil, true, valueErr
+			}
+			for _, value := range listValues[valueBatch.start:valueBatch.end] {
+				found := propertyIndexLookup(e.storage, schema, label, property, value)
+				for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, id := range found[innerBatch.start:innerBatch.end] {
+						idSet[id] = struct{}{}
+					}
+				}
 			}
 		}
 	}
@@ -535,19 +588,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
+	keys := materializedRowCheckpoint{ctx: ctx, rows: len(idSet)}
 	for id := range idSet {
+		if keys.due() && keys.canceled() {
+			return nil, true, ctx.Err()
+		}
 		ids = append(ids, string(id))
 	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
+	_ = sortStrings(ctx, ids)
+	for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
-			continue
+		for _, id := range ids[batch.start:batch.end] {
+			node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+			if err != nil || node == nil {
+				continue
+			}
+			if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+				continue
+			}
+			nodes = append(nodes, node)
 		}
-		nodes = append(nodes, node)
 	}
 	return nodes, true, nil
 }
@@ -580,7 +642,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	}
 
 	// 1) Simple clause (param or literal list).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, clause, params); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(ctx, nodePattern, clause, params); used || err != nil {
 		return nodes, used, err
 	}
 	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clause); used || err != nil {
@@ -599,7 +661,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, term, params, anyOf); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(ctx, nodePattern, term, params, anyOf); used || err != nil {
 				return nodes, used, err
 			}
 			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
@@ -723,16 +785,38 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range leftLabels {
-		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, v) {
-				idSet[id] = struct{}{}
+		for valueBatch, valueErr := range materializedBatches(ctx, len(merged)) {
+			if valueErr != nil {
+				return nil, true, valueErr
+			}
+			for _, v := range merged[valueBatch.start:valueBatch.end] {
+				found := propertyIndexLookup(e.storage, schema, label, lprop, v)
+				for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, id := range found[innerBatch.start:innerBatch.end] {
+						idSet[id] = struct{}{}
+					}
+				}
 			}
 		}
 	}
 	for _, label := range rightLabels {
-		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, v) {
-				idSet[id] = struct{}{}
+		for valueBatch, valueErr := range materializedBatches(ctx, len(merged)) {
+			if valueErr != nil {
+				return nil, true, valueErr
+			}
+			for _, v := range merged[valueBatch.start:valueBatch.end] {
+				found := propertyIndexLookup(e.storage, schema, label, rprop, v)
+				for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, id := range found[innerBatch.start:innerBatch.end] {
+						idSet[id] = struct{}{}
+					}
+				}
 			}
 		}
 	}
@@ -742,19 +826,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
+	keys := materializedRowCheckpoint{ctx: ctx, rows: len(idSet)}
 	for id := range idSet {
+		if keys.due() && keys.canceled() {
+			return nil, true, ctx.Err()
+		}
 		ids = append(ids, string(id))
 	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
+	_ = sortStrings(ctx, ids)
+	for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
+		for _, id := range ids[batch.start:batch.end] {
+			node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+			if err != nil || node == nil {
+				continue
+			}
+			if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+				continue
+			}
+			nodes = append(nodes, node)
 		}
-		nodes = append(nodes, node)
 	}
 	return nodes, true, nil
 }
@@ -808,13 +901,25 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 
 	idSet := make(map[storage.NodeID]struct{}, 64)
 	for _, label := range leftLabels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, lval) {
-			idSet[id] = struct{}{}
+		found := propertyIndexLookup(e.storage, schema, label, lprop, lval)
+		for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+			if innerErr != nil {
+				return nil, true, innerErr
+			}
+			for _, id := range found[innerBatch.start:innerBatch.end] {
+				idSet[id] = struct{}{}
+			}
 		}
 	}
 	for _, label := range rightLabels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, rval) {
-			idSet[id] = struct{}{}
+		found := propertyIndexLookup(e.storage, schema, label, rprop, rval)
+		for innerBatch, innerErr := range materializedBatches(ctx, len(found)) {
+			if innerErr != nil {
+				return nil, true, innerErr
+			}
+			for _, id := range found[innerBatch.start:innerBatch.end] {
+				idSet[id] = struct{}{}
+			}
 		}
 	}
 	if len(idSet) == 0 {
@@ -823,19 +928,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
+	keys := materializedRowCheckpoint{ctx: ctx, rows: len(idSet)}
 	for id := range idSet {
+		if keys.due() && keys.canceled() {
+			return nil, true, ctx.Err()
+		}
 		ids = append(ids, string(id))
 	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
-			continue
+	_ = sortStrings(ctx, ids)
+	for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
+		for _, id := range ids[batch.start:batch.end] {
+			node, err := e.getQueryNode(e.storage, storage.NodeID(id))
+			if err != nil || node == nil {
+				continue
+			}
+			if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+				continue
+			}
+			nodes = append(nodes, node)
 		}
-		nodes = append(nodes, node)
 	}
 	return nodes, true, nil
 }
@@ -1077,6 +1191,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 //
 // from schema index entries, avoiding label scans.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
+	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
@@ -1092,10 +1207,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	if schema == nil {
 		return nil, false, nil
 	}
-	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
+	return e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
 		return schema.PropertyIndexAllNonNil(label, property, false), true
 	})
-	return nodes, used, nil
 }
 
 func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, queryLabels []string, property string) []string {
@@ -1931,39 +2045,50 @@ found:
 // IDs in lookup order, and loads the nodes that carry all pattern labels.
 // used is false when no candidate label indexes property.
 func (e *StorageExecutor) collectNodesFromIndexedProperty(
+	ctx context.Context,
 	schema *storage.SchemaManager,
 	nodePattern nodePatternInfo,
 	property string,
 	lookup func(label string) ([]storage.NodeID, bool),
-) (nodes []*storage.Node, used bool) {
+) (nodes []*storage.Node, used bool, err error) {
 	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
 	if len(labels) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	idSet := make(map[storage.NodeID]struct{})
 	ordered := make([]storage.NodeID, 0)
 	for _, label := range labels {
 		ids, ok := lookup(label)
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
-		for _, id := range ids {
-			if _, exists := idSet[id]; exists {
-				continue
+		for innerBatch, innerErr := range materializedBatches(ctx, len(ids)) {
+			if innerErr != nil {
+				return nil, true, innerErr
 			}
-			idSet[id] = struct{}{}
-			ordered = append(ordered, id)
+			for _, id := range ids[innerBatch.start:innerBatch.end] {
+				if _, exists := idSet[id]; exists {
+					continue
+				}
+				idSet[id] = struct{}{}
+				ordered = append(ordered, id)
+			}
 		}
 	}
 	nodes = make([]*storage.Node, 0, len(ordered))
-	for _, id := range ordered {
-		// An ID the index still lists for a node that is gone or lost a
-		// pattern label is skipped.
-		if node, err := e.getQueryNode(e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
-			nodes = append(nodes, node)
+	for batch, batchErr := range materializedBatches(ctx, len(ordered)) {
+		if batchErr != nil {
+			return nil, true, batchErr
+		}
+		for _, id := range ordered[batch.start:batch.end] {
+			// An ID the index still lists for a node that is gone or lost a
+			// pattern label is skipped.
+			if node, err := e.getQueryNode(e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
+				nodes = append(nodes, node)
+			}
 		}
 	}
-	return nodes, true
+	return nodes, true, nil
 }
 
 // tryCollectNodesFromPropertyIndexRange seeds a MATCH from a property index
@@ -1971,7 +2096,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 // number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
 // p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
 // caller still evaluates the whole WHERE on every candidate (#820).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(ctx context.Context, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -1983,10 +2108,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern node
 	if schema == nil {
 		return nil, false, nil
 	}
-	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
+	return e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
 		return schema.PropertyIndexRange(label, property, bounds)
 	})
-	return nodes, used, nil
 }
 
 // parseIndexedRangeBounds finds, among the top-level AND conjuncts of a
@@ -2135,7 +2259,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			// Inline pattern properties ({id: $id}) on an indexed property.
-			nodes, used := e.lookupPatternCandidatesUsingPropertyIndex(nodePattern, e.getStorage(ctx))
+			nodes, used, err := e.lookupPatternCandidatesUsingPropertyIndex(ctx, nodePattern, e.getStorage(ctx))
+			if err != nil {
+				return nil, true, err
+			}
 			if used {
 				e.markMergeSchemaLookupUsed()
 			}
@@ -2143,18 +2270,23 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 				return nodes, used, nil
 			}
 			labelled := nodes[:0]
-			for _, node := range nodes {
-				if mergeNodeHasLabels(node, nodePattern.labels) {
-					labelled = append(labelled, node)
+			for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+				if batchErr != nil {
+					return nil, true, batchErr
+				}
+				for _, node := range nodes[batch.start:batch.end] {
+					if mergeNodeHasLabels(node, nodePattern.labels) {
+						labelled = append(labelled, node)
+					}
 				}
 			}
 			return labelled, true, nil
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexRange(ctx, nodePattern, whereClause, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
+			return e.tryCollectNodesFromPropertyIndexNotNull(ctx, nodePattern, whereClause)
 		}},
 	}
 	for _, plan := range indexedPlans {
@@ -2164,7 +2296,9 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		}
 		if used {
 			if len(nodePattern.properties) > 0 {
-				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
+				if nodes, err = e.filterNodesByProperties(ctx, nodes, nodePattern.properties); err != nil {
+					return nil, false, false, err
+				}
 			}
 			// A WHERE that is exactly <variable>.<property> IN <list> on an
 			// indexed property is answered by the index: one lookup per list

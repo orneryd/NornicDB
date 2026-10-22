@@ -28,6 +28,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
@@ -54,7 +55,7 @@ const (
 
 // callGdsVersion implements CALL gds.version(), with GDS's column name,
 // gdsVersion (#1161); RETURN gds.version() is the same value.
-func (e *StorageExecutor) callGdsVersion() (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsVersion(ctx context.Context) (*ExecuteResult, error) {
 	return &ExecuteResult{
 		Columns: []string{"gdsVersion"},
 		Rows:    [][]any{{gdsVersion}},
@@ -91,7 +92,7 @@ var fastRPConfigKeys = []string{
 }
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsFastRPStream(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	embeddings, _, projection, err := e.runGdsFastRP("gds.fastRP.stream", args)
 	if err != nil {
 		return nil, err
@@ -106,7 +107,7 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it
 // runs FastRP and reports, as GDS does, the node count, the time taken and
 // the configuration (#1191).
-func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsFastRPStats(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	started := time.Now()
 	embeddings, config, _, err := e.runGdsFastRP("gds.fastRP.stats", args)
 	if err != nil {

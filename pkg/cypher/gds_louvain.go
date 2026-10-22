@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ var louvainConfigKeys = []string{
 // the largest seed + its numeric original ID (string IDs use 1 + their
 // projection position). This can collide with a seed, as in GDS.
 // consecutiveIds numbers them 0, 1, … by first node.
-func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsLouvainStream(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
@@ -109,7 +110,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 	}
 	if seedProperty != "" {
-		selected, available := projection.nodePropertyAvailability(nodeLabels)
+		selected, available := projection.nodePropertyAvailability(ctx, nodeLabels)
 		if !containsString(selected, seedProperty) {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
 		}
@@ -126,7 +127,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		return nil, err
 	}
 	size := len(graph.nodes)
-	graph.orderOutgoing()
+	graph.orderOutgoing(ctx)
 	// The relationships as projected, as GDS reads them: outgoing (an
 	// UNDIRECTED projection holds each both ways), a missing weight NaN.
 	arcCounts := make([]int, size)
@@ -199,7 +200,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	for _, community := range final {
 		sizes[community]++
 	}
-	rows := make([][]interface{}, 0, size)
+	rows := make([][]interface{}, 0, len(graph.nodes))
 	for i, id := range graph.nodes {
 		if int64(sizes[final[i]]) < minSize {
 			continue

@@ -32,13 +32,13 @@ func TestCanonicalUnwindMergeValue_CoversTypeBranches(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, ok := canonicalUnwindMergeValue(tc.in).(map[string]interface{})
+			out, ok := canonicalUnwindMergeValue(nil, tc.in).(map[string]interface{})
 			require.True(t, ok)
 			require.Equal(t, tc.typ, out["type"])
 		})
 	}
 
-	mapOut, ok := canonicalUnwindMergeValue(map[string]interface{}{"b": 2, "a": 1}).(map[string]interface{})
+	mapOut, ok := canonicalUnwindMergeValue(nil, map[string]interface{}{"b": 2, "a": 1}).(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "map", mapOut["type"])
 	entries, ok := mapOut["entries"].([]interface{})
@@ -48,7 +48,7 @@ func TestCanonicalUnwindMergeValue_CoversTypeBranches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "a", firstKV[0])
 
-	listOut, ok := canonicalUnwindMergeValue([]interface{}{1, "x"}).(map[string]interface{})
+	listOut, ok := canonicalUnwindMergeValue(nil, []interface{}{1, "x"}).(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "list", listOut["type"])
 }

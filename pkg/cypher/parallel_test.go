@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,7 +41,8 @@ func TestParallelFilterNodes(t *testing.T) {
 			MinBatchSize: 100,
 		})
 
-		result := parallelFilterNodes(nodes, filterFn)
+		result, err := parallelFilterNodes(context.Background(), nodes, filterFn)
+		require.NoError(t, err)
 
 		// Should have roughly half the nodes (50-99 from each 100)
 		if len(result) < 900 || len(result) > 1100 {
@@ -64,7 +66,8 @@ func TestParallelFilterNodes(t *testing.T) {
 			MinBatchSize: 5000, // Higher than our dataset
 		})
 
-		result := parallelFilterNodes(nodes, filterFn)
+		result, err := parallelFilterNodes(context.Background(), nodes, filterFn)
+		require.NoError(t, err)
 
 		if len(result) < 900 || len(result) > 1100 {
 			t.Errorf("expected ~1000 filtered nodes, got %d", len(result))
@@ -78,7 +81,8 @@ func TestParallelFilterNodes(t *testing.T) {
 			MinBatchSize: 100,
 		})
 
-		result := parallelFilterNodes(nodes, filterFn)
+		result, err := parallelFilterNodes(context.Background(), nodes, filterFn)
+		require.NoError(t, err)
 
 		if len(result) < 900 || len(result) > 1100 {
 			t.Errorf("expected ~1000 filtered nodes, got %d", len(result))
@@ -295,28 +299,6 @@ func TestWorkerPool(t *testing.T) {
 	}
 }
 
-func TestParallelFilterEdges(t *testing.T) {
-	keepParallelConfig(t)
-	edges := []*storage.Edge{
-		{ID: "e1", Type: "KNOWS"},
-		{ID: "e2", Type: "LIKES"},
-		{ID: "e3", Type: "KNOWS"},
-	}
-	filter := func(edge *storage.Edge) bool { return edge.Type == "KNOWS" }
-
-	SetParallelConfig(ParallelConfig{Enabled: false, MaxWorkers: 4, MinBatchSize: 100})
-	out := parallelFilterEdges(edges, filter)
-	if len(out) != 2 {
-		t.Fatalf("expected 2 edges, got %d", len(out))
-	}
-
-	SetParallelConfig(ParallelConfig{Enabled: true, MaxWorkers: 2, MinBatchSize: 1})
-	out = parallelFilterEdges(edges, filter)
-	if len(out) != 2 {
-		t.Fatalf("expected 2 edges, got %d", len(out))
-	}
-}
-
 // =============================================================================
 // Benchmarks
 // =============================================================================
@@ -347,7 +329,7 @@ func BenchmarkFilterNodes(b *testing.B) {
 		SetParallelConfig(ParallelConfig{Enabled: false})
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			sequentialFilterNodes(nodes, filterFn)
+			_, _ = sequentialFilterNodes(context.Background(), nodes, filterFn)
 		}
 	})
 
@@ -355,7 +337,7 @@ func BenchmarkFilterNodes(b *testing.B) {
 		SetParallelConfig(ParallelConfig{Enabled: true, MaxWorkers: 2, MinBatchSize: 1000})
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			parallelFilterNodes(nodes, filterFn)
+			_, _ = parallelFilterNodes(context.Background(), nodes, filterFn)
 		}
 	})
 
@@ -363,7 +345,7 @@ func BenchmarkFilterNodes(b *testing.B) {
 		SetParallelConfig(ParallelConfig{Enabled: true, MaxWorkers: 4, MinBatchSize: 1000})
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			parallelFilterNodes(nodes, filterFn)
+			_, _ = parallelFilterNodes(context.Background(), nodes, filterFn)
 		}
 	})
 
@@ -371,7 +353,7 @@ func BenchmarkFilterNodes(b *testing.B) {
 		SetParallelConfig(ParallelConfig{Enabled: true, MaxWorkers: 8, MinBatchSize: 1000})
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			parallelFilterNodes(nodes, filterFn)
+			_, _ = parallelFilterNodes(context.Background(), nodes, filterFn)
 		}
 	})
 }
@@ -482,7 +464,7 @@ func TestSetParallelConfig(t *testing.T) {
 func TestParallelFilterNodesEmpty(t *testing.T) {
 	nodes := []*storage.Node{}
 
-	result := parallelFilterNodes(nodes, func(node *storage.Node) bool {
+	result, _ := parallelFilterNodes(context.Background(), nodes, func(node *storage.Node) bool {
 		return true
 	})
 
@@ -512,7 +494,7 @@ func TestParallelExecutionCorrectness(t *testing.T) {
 	})
 
 	// Filter to get even indices
-	result := parallelFilterNodes(nodes, func(node *storage.Node) bool {
+	result, _ := parallelFilterNodes(context.Background(), nodes, func(node *storage.Node) bool {
 		if idx, ok := node.Properties["index"].(int); ok {
 			return idx%2 == 0
 		}

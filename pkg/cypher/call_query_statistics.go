@@ -315,7 +315,7 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 		if err != nil {
 			return nil, err
 		}
-		result.Rows = append(result.Rows, queries.Rows...)
+		result.Rows, _ = appendPopulation(ctx, result.Rows, queries.Rows)
 	}
 	return result, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -173,6 +172,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
 		}
+		publishStatementCommit(ctx)
 	}
 	if stream == nil {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -182,7 +182,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 			stream.Columns = inferred
 		}
 	}
-	e.normalizeFabricRowWrapper(cypher, stream)
+	e.normalizeFabricRowWrapper(ctx, cypher, stream)
 	s := statsAcc.snapshot()
 	return &ExecuteResult{
 		Columns: stream.Columns,
@@ -215,7 +215,10 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 			return "", false
 		}
 	}
-	key := resultCacheEntryKey(cypher, params)
+	key, keyed := statementResultCacheKey(ctx, cypher, params)
+	if !keyed {
+		return "", false
+	}
 	if version, supported := e.fabricGraphMutationVersion(databases, GetAuthTokenFromContext(ctx)); supported {
 		key += ":graph:" + strconv.FormatUint(version, 10)
 	}
@@ -267,7 +270,7 @@ func (e *StorageExecutor) fabricLocalDatabases(ctx context.Context, prepared *fa
 	if !collect(prepared.fragment) {
 		return nil, false
 	}
-	sort.Strings(databases)
+	_ = sortStrings(ctx, databases)
 	return databases, true
 }
 
@@ -297,7 +300,7 @@ func (e *StorageExecutor) fabricGraphMutationVersion(databases []string, authTok
 }
 
 func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher string) (*fabricPreparedExec, error) {
-	catalog, err := e.buildFabricCatalog()
+	catalog, err := e.buildFabricCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +378,7 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	return fragment, nil
 }
 
-func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) {
+func (e *StorageExecutor) normalizeFabricRowWrapper(ctx context.Context, cypher string, stream *fabric.ResultStream) {
 	if stream == nil || len(stream.Columns) != 1 || stream.Columns[0] != "__fabric_row" || len(stream.Rows) == 0 {
 		return
 	}
@@ -384,28 +387,33 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabri
 		return
 	}
 	projectedRows := make([][]interface{}, 0, len(stream.Rows))
-	for _, row := range stream.Rows {
-		if len(row) == 0 {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(stream.Rows)) {
+		if batchErr != nil {
+			return
 		}
-		m, ok := normalizeFabricRowMap(row[0])
-		if !ok {
-			continue
-		}
-		out := make([]interface{}, len(inferred))
-		sourceID, _ := m["sourceId"]
-		for i, col := range inferred {
-			if v, ok := m[col]; ok {
-				out[i] = v
+		for _, row := range stream.Rows[batch.start:batch.end] {
+			if len(row) == 0 {
 				continue
 			}
-			if sourceID != nil {
-				if v, ok := lookupColumnBySourceIDInRows(m["rows"], sourceID, col); ok {
+			m, ok := normalizeFabricRowMap(row[0])
+			if !ok {
+				continue
+			}
+			out := make([]interface{}, len(inferred))
+			sourceID, _ := m["sourceId"]
+			for i, col := range inferred {
+				if v, ok := m[col]; ok {
 					out[i] = v
+					continue
+				}
+				if sourceID != nil {
+					if v, ok := lookupColumnBySourceIDInRows(m["rows"], sourceID, col); ok {
+						out[i] = v
+					}
 				}
 			}
+			projectedRows = append(projectedRows, out)
 		}
-		projectedRows = append(projectedRows, out)
 	}
 	if len(projectedRows) == 0 {
 		return
@@ -521,7 +529,8 @@ func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
 	return e.buildColumnsFromReturnItems(items)
 }
 
-func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
+func (e *StorageExecutor) buildFabricCatalog(ctx context.Context) (*fabric.Catalog, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	catalog := fabric.NewCatalog()
 	for _, db := range e.dbManager.ListDatabases() {
 		dbName := strings.TrimSpace(db.Name())
@@ -544,6 +553,9 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 			return nil, localizedError(localization.CypherCommandRoutingFabricConstituentsFailed(dbName, err), err)
 		}
 		for _, raw := range constituents {
+			if work.due() && work.canceled() {
+				return nil, ctx.Err()
+			}
 			ref, ok := toConstituentRef(raw)
 			if !ok || strings.TrimSpace(ref.Alias) == "" {
 				continue

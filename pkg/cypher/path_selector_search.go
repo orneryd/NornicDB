@@ -970,8 +970,11 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 		return nil, nil
 	}
 	var rows []pipelineRow
+	var appendErr error
 	search := func(a *pathSearchAutomaton, reversed bool, source, target *storage.Node, ends []*storage.Node) {
-		rows = append(rows, e.searchSelectedPaths(ctx, plan, a, reversed, row, maxLength, source, target, ends, count, m.selector.groups)...)
+		if appendErr == nil {
+			rows, appendErr = appendPopulation(ctx, rows, e.searchSelectedPaths(ctx, plan, a, reversed, row, maxLength, source, target, ends, count, m.selector.groups))
+		}
 	}
 	switch {
 	case startBound && endBound:
@@ -1001,18 +1004,33 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 			if starts == nil {
 				starts = ends
 			}
-			for _, source := range starts {
-				search(plan.forward, false, source, source, nil)
+			for batch, batchErr := range materializedBatches(ctx, len(starts)) {
+				if batchErr != nil {
+					return nil, batchErr
+				}
+				for _, source := range starts[batch.start:batch.end] {
+					search(plan.forward, false, source, source, nil)
+				}
 			}
 		case len(starts) == 1 && len(ends) == 1:
 			search(plan.forward, false, starts[0], ends[0], nil)
 		case ends != nil && (starts == nil || len(ends) < len(starts)):
-			for _, source := range ends {
-				search(plan.backward, true, source, nil, starts)
+			for batch, batchErr := range materializedBatches(ctx, len(ends)) {
+				if batchErr != nil {
+					return nil, batchErr
+				}
+				for _, source := range ends[batch.start:batch.end] {
+					search(plan.backward, true, source, nil, starts)
+				}
 			}
 		default:
-			for _, source := range starts {
-				search(plan.forward, false, source, nil, ends)
+			for batch, batchErr := range materializedBatches(ctx, len(starts)) {
+				if batchErr != nil {
+					return nil, batchErr
+				}
+				for _, source := range starts[batch.start:batch.end] {
+					search(plan.forward, false, source, nil, ends)
+				}
 			}
 		}
 	}
@@ -1068,8 +1086,14 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 		if ends != nil {
 			s.ends = make(map[storage.NodeID]bool, len(ends))
 			s.retain(int64(len(ends)) * searchEntryBytes)
-			for _, node := range ends {
-				s.ends[node.ID] = true
+			for batch, batchErr := range materializedBatches(ctx, len(ends)) {
+				if batchErr != nil {
+					s.releaseMemory()
+					return nil
+				}
+				for _, node := range ends[batch.start:batch.end] {
+					s.ends[node.ID] = true
+				}
 			}
 		}
 		rows = s.run(source, count, groups, bind)
@@ -1079,9 +1103,14 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 	s.releaseMemory()
 	if retention := trackedRetention(ctx); retention != nil {
 		defer retention.close()
-		for _, found := range rows {
-			if retention.reserveRow(found) != nil {
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
 				return nil
+			}
+			for _, found := range rows[batch.start:batch.end] {
+				if retention.reserveRow(found) != nil {
+					return nil
+				}
 			}
 		}
 		retention.owned(rows)
@@ -1150,9 +1179,14 @@ func (e *StorageExecutor) selectedPathEndpoints(ctx context.Context, row pipelin
 		return nil, err
 	}
 	nodes := make([]*storage.Node, 0, len(matched))
-	for _, bound := range matched {
-		if node, ok := bound[item.variable].(*storage.Node); ok && node != nil {
-			nodes = append(nodes, node)
+	for batch, batchErr := range materializedBatches(ctx, len(matched)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, bound := range matched[batch.start:batch.end] {
+			if node, ok := bound[item.variable].(*storage.Node); ok && node != nil {
+				nodes = append(nodes, node)
+			}
 		}
 	}
 	return nodes, nil

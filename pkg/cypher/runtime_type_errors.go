@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -115,7 +114,10 @@ func predicateValueHolds(ctx context.Context, value interface{}, arithmetic bool
 // Long(1), Double(1.500000e+00), String("x"), Boolean('true'),
 // LongArray[1, 2], List{Long(1), String("a")}; a temporal value or a point
 // as its text (2020-01-02, P1D, point({x: 1.0, y: 2.0, crs: 'cartesian'})).
-func neo4jValueRepr(value interface{}) string {
+func neo4jValueRepr(work *materializedRowCheckpoint, value interface{}) string {
+	if work.visit() {
+		return ""
+	}
 	switch v := value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return fmt.Sprintf("Long(%d)", v)
@@ -142,10 +144,12 @@ func neo4jValueRepr(value interface{}) string {
 		for key := range m {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		if work.sortKeys(keys) {
+			return ""
+		}
 		parts := make([]string, len(keys))
 		for index, key := range keys {
-			parts[index] = key + " -> " + neo4jValueRepr(m[key])
+			parts[index] = key + " -> " + neo4jValueRepr(work, m[key])
 		}
 		return "Map{" + strings.Join(parts, ", ") + "}"
 	}
@@ -155,7 +159,7 @@ func neo4jValueRepr(value interface{}) string {
 		parts := make([]string, len(items))
 		for index, item := range items {
 			if typeName == "List" {
-				parts[index] = neo4jValueRepr(item)
+				parts[index] = neo4jValueRepr(work, item)
 			} else {
 				parts[index] = fmt.Sprint(item)
 			}
@@ -297,7 +301,7 @@ func propertyAccessTypeError(value interface{}) error {
 	if _, isMap := toStringAnyMap(value); isMap {
 		return nil
 	}
-	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(value)))
+	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(nil, value)))
 }
 
 // temporalNoSuchFieldError is the TypeError of reading a field a temporal
@@ -310,8 +314,8 @@ func temporalNoSuchFieldError(field string) error {
 // subscriptReceiverError is the TypeError of base[index] for a base that is
 // neither a list nor a map.
 func subscriptReceiverError(base, index interface{}) error {
-	repr := neo4jValueRepr(base)
-	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index)))
+	repr := neo4jValueRepr(nil, base)
+	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(nil, index)))
 }
 
 // isOperatorExpressionText reports whether text can be an expression whose

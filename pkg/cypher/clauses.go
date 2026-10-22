@@ -1002,23 +1002,28 @@ func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
 	return plan
 }
 
-func canonicalUnwindMergeValue(v interface{}) interface{} {
+func canonicalUnwindMergeValue(work *materializedRowCheckpoint, v interface{}) interface{} {
+	if work.visit() {
+		return nil
+	}
 	switch val := v.(type) {
 	case map[string]interface{}:
 		keys := make([]string, 0, len(val))
 		for k := range val {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		if work.sortKeys(keys) {
+			return nil
+		}
 		out := make([]interface{}, 0, len(keys))
 		for _, k := range keys {
-			out = append(out, []interface{}{k, canonicalUnwindMergeValue(val[k])})
+			out = append(out, []interface{}{k, canonicalUnwindMergeValue(work, val[k])})
 		}
 		return map[string]interface{}{"type": "map", "entries": out}
 	case []interface{}:
 		out := make([]interface{}, len(val))
 		for i, item := range val {
-			out[i] = canonicalUnwindMergeValue(item)
+			out[i] = canonicalUnwindMergeValue(work, item)
 		}
 		return map[string]interface{}{"type": "list", "items": out}
 	case string:
@@ -1056,7 +1061,7 @@ func canonicalUnwindMergeValue(v interface{}) interface{} {
 		if rv.IsValid() && rv.Kind() == reflect.Slice {
 			out := make([]interface{}, rv.Len())
 			for i := 0; i < rv.Len(); i++ {
-				out[i] = canonicalUnwindMergeValue(rv.Index(i).Interface())
+				out[i] = canonicalUnwindMergeValue(work, rv.Index(i).Interface())
 			}
 			return map[string]interface{}{"type": rv.Type().String(), "items": out}
 		}
@@ -1068,7 +1073,7 @@ func unwindMergeKey(label string, props map[string]interface{}) string {
 	propNames := mergePropertyNamesSorted(props)
 	entries := make([]interface{}, 0, len(propNames))
 	for _, prop := range propNames {
-		entries = append(entries, []interface{}{prop, canonicalUnwindMergeValue(props[prop])})
+		entries = append(entries, []interface{}{prop, canonicalUnwindMergeValue(nil, props[prop])})
 	}
 	encoded, err := json.Marshal(map[string]interface{}{
 		"label":   label,
@@ -1855,7 +1860,9 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 			// The same names in another order: the branch's rows are
 			// reordered into the first branch's columns, as in Neo4j 5.26.
 			if order != nil {
-				result.Rows = reorderUnionRows(result.Rows, order)
+				if result.Rows, err = reorderUnionRows(ctx, result.Rows, order); err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			message := fmt.Sprintf(
@@ -1880,16 +1887,14 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 			if err := retention.reserveSlots(len(result.Rows), sliceHeaderBytes); err != nil {
 				return nil, err
 			}
-			combinedResult.Rows = append(combinedResult.Rows, result.Rows...)
+			var appendErr error
+			if combinedResult.Rows, appendErr = appendPopulation(ctx, combinedResult.Rows, result.Rows); appendErr != nil {
+				return nil, appendErr
+			}
 		} else {
 			// UNION (distinct) - deduplicate rows
-			for _, row := range result.Rows {
-				if _, exists := seen.addTuple(row); !exists {
-					if err := retention.reserveBytes(sliceHeaderBytes + mapEntryBytes + int64(len(row))*valueSlotBytes); err != nil {
-						return nil, err
-					}
-					combinedResult.Rows = append(combinedResult.Rows, row)
-				}
+			if err := appendDistinctUnionRows(ctx, &seen, &retention, combinedResult, result.Rows); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -1899,6 +1904,35 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 	}
 
 	return combinedResult, nil
+}
+
+// appendDistinctUnionRows appends the rows of one UNION branch that equal no
+// row before them. Their keys observe cancellation as DISTINCT's do
+// (rowKeyCancellation), so a large nested value stops as well as many rows.
+func appendDistinctUnionRows(ctx context.Context, seen *cypherValueIndex, retention *memoryRetention, combined *ExecuteResult, rows [][]interface{}) (err error) {
+	keyCheckpoint := materializedRowCheckpoint{ctx: ctx}
+	defer func() {
+		if failure := recover(); failure != nil {
+			if _, canceled := failure.(rowKeyCancellation); !canceled {
+				panic(failure)
+			}
+			err = ctx.Err()
+		}
+	}()
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			if _, exists := seen.addTupleWithCheckpoint(row, &keyCheckpoint); !exists {
+				if err := retention.reserveBytes(sliceHeaderBytes + mapEntryBytes + int64(len(row))*valueSlotBytes); err != nil {
+					return err
+				}
+				combined.Rows = append(combined.Rows, row)
+			}
+		}
+	}
+	return nil
 }
 
 // unionColumnOrder reports whether a UNION branch returns the same column
@@ -1935,18 +1969,24 @@ func unionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
 }
 
 // reorderUnionRows rewrites rows into the column order unionColumnOrder gave.
-func reorderUnionRows(rows [][]interface{}, order []int) [][]interface{} {
+func reorderUnionRows(ctx context.Context, rows [][]interface{}, order []int) ([][]interface{}, error) {
 	reordered := make([][]interface{}, len(rows))
-	for index, row := range rows {
-		values := make([]interface{}, len(order))
-		for column, position := range order {
-			if position < len(row) {
-				values[column] = row[position]
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		reordered[index] = values
+		for offset, row := range rows[batch.start:batch.end] {
+			index := batch.start + offset
+			values := make([]interface{}, len(order))
+			for column, position := range order {
+				if position < len(row) {
+					values[column] = row[position]
+				}
+			}
+			reordered[index] = values
+		}
 	}
-	return reordered
+	return reordered, nil
 }
 
 // ========================================

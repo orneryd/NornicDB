@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,15 +15,18 @@ import (
 // in path order, each relationship pointing the way it is stored:
 // (:A)-[:T]->(:B), (:B)<-[:T]-(:A). ok is false for a value of no Cypher
 // type and for null.
-func cypher25ValueText(value interface{}) (string, bool) {
+func cypher25ValueText(work *materializedRowCheckpoint, value interface{}) (string, bool) {
 	var out strings.Builder
-	if value == nil || !writeCypher25ValueText(&out, value) {
+	if value == nil || !writeCypher25ValueText(work, &out, value) {
 		return "", false
 	}
 	return out.String(), true
 }
 
-func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
+func writeCypher25ValueText(work *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
+	if work.visit() {
+		return false
+	}
 	switch cypherValueKindOf(value) {
 	case valueKindNull:
 		out.WriteString("null")
@@ -34,7 +36,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 			if index > 0 {
 				out.WriteString(", ")
 			}
-			if !writeCypher25ValueText(out, item) {
+			if !writeCypher25ValueText(work, out, item) {
 				return false
 			}
 		}
@@ -48,7 +50,9 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 		for key := range entries {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		if work.sortKeys(keys) {
+			return false
+		}
 		out.WriteByte('{')
 		for index, key := range keys {
 			if index > 0 {
@@ -56,7 +60,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 			}
 			out.WriteString(cypher25NameText(key))
 			out.WriteString(": ")
-			if !writeCypher25ValueText(out, entries[key]) {
+			if !writeCypher25ValueText(work, out, entries[key]) {
 				return false
 			}
 		}
@@ -144,12 +148,12 @@ func writeCypher25PathText(out *strings.Builder, value interface{}) bool {
 // graph entities have text too (cypher25ValueText) and a null element is
 // 'null' (toString(null) is null before it gets here); in Cypher 5 they are
 // null (convertToStringOrNull).
-func convertToStringInVersion(value interface{}, cypher25 bool) interface{} {
+func convertToStringInVersion(work *materializedRowCheckpoint, value interface{}, cypher25 bool) interface{} {
 	if !cypher25 {
 		return convertToStringOrNull(value)
 	}
 	var out strings.Builder
-	if !writeCypher25ValueText(&out, value) {
+	if !writeCypher25ValueText(work, &out, value) {
 		return nil
 	}
 	return out.String()

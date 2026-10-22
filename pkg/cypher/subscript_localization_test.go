@@ -26,7 +26,7 @@ func TestListSubscriptIndexErrorsUseLocalization(t *testing.T) {
 			require.ErrorAs(t, err, &localized)
 			require.Equal(t, localization.MessageID(tc.messageID), localized.Message.ID)
 			require.Equal(t, tc.messageID, localized.Code)
-			require.Equal(t, neo4jValueRepr(tc.index), localized.Message.Data["Value"])
+			require.Equal(t, neo4jValueRepr(nil, tc.index), localized.Message.Data["Value"])
 			if tc.messageID != "cyphercore.list_index_non_integer" {
 				require.Equal(t, "List{Long(1), Long(2)}", localized.Message.Data["List"])
 			}

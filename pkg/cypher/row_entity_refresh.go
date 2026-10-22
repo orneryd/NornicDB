@@ -24,38 +24,43 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 	var edgeCopies map[storage.EdgeID]*storage.Edge
 	var staleNodes map[storage.NodeID]*storage.Node
 	var staleEdges map[storage.EdgeID]*storage.Edge
-	for _, row := range rows {
-		for _, value := range row {
-			switch entity := value.(type) {
-			case *storage.Node:
-				if entity == nil {
-					continue
-				}
-				if nodeCopies == nil {
-					nodeCopies = make(map[storage.NodeID]*storage.Node)
-				}
-				if first, seen := nodeCopies[entity.ID]; !seen {
-					nodeCopies[entity.ID] = entity
-				} else if first != entity {
-					if staleNodes == nil {
-						staleNodes = make(map[storage.NodeID]*storage.Node)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for _, value := range row {
+				switch entity := value.(type) {
+				case *storage.Node:
+					if entity == nil {
+						continue
 					}
-					staleNodes[entity.ID] = nil
-				}
-			case *storage.Edge:
-				if entity == nil {
-					continue
-				}
-				if edgeCopies == nil {
-					edgeCopies = make(map[storage.EdgeID]*storage.Edge)
-				}
-				if first, seen := edgeCopies[entity.ID]; !seen {
-					edgeCopies[entity.ID] = entity
-				} else if first != entity {
-					if staleEdges == nil {
-						staleEdges = make(map[storage.EdgeID]*storage.Edge)
+					if nodeCopies == nil {
+						nodeCopies = make(map[storage.NodeID]*storage.Node)
 					}
-					staleEdges[entity.ID] = nil
+					if first, seen := nodeCopies[entity.ID]; !seen {
+						nodeCopies[entity.ID] = entity
+					} else if first != entity {
+						if staleNodes == nil {
+							staleNodes = make(map[storage.NodeID]*storage.Node)
+						}
+						staleNodes[entity.ID] = nil
+					}
+				case *storage.Edge:
+					if entity == nil {
+						continue
+					}
+					if edgeCopies == nil {
+						edgeCopies = make(map[storage.EdgeID]*storage.Edge)
+					}
+					if first, seen := edgeCopies[entity.ID]; !seen {
+						edgeCopies[entity.ID] = entity
+					} else if first != entity {
+						if staleEdges == nil {
+							staleEdges = make(map[storage.EdgeID]*storage.Edge)
+						}
+						staleEdges[entity.ID] = nil
+					}
 				}
 			}
 		}
@@ -64,7 +69,13 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 		return
 	}
 	store := e.getStorage(ctx)
+	// The derived entity sets are data-sized too: one observation per batch
+	// of lookups.
+	lookups := materializedRowCheckpoint{ctx: ctx, rows: len(staleNodes) + len(staleEdges)}
 	for id := range staleNodes {
+		if lookups.due() && lookups.canceled() {
+			return
+		}
 		if current, err := e.getQueryNode(store, id); err == nil && current != nil {
 			staleNodes[id] = current
 		} else {
@@ -72,25 +83,33 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 		}
 	}
 	for id := range staleEdges {
+		if lookups.due() && lookups.canceled() {
+			return
+		}
 		if current, err := store.GetEdge(id); err == nil && current != nil {
 			staleEdges[id] = current
 		} else {
 			delete(staleEdges, id)
 		}
 	}
-	for _, row := range rows {
-		for name, value := range row {
-			switch entity := value.(type) {
-			case *storage.Node:
-				if entity != nil {
-					if current := staleNodes[entity.ID]; current != nil {
-						row[name] = current
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for name, value := range row {
+				switch entity := value.(type) {
+				case *storage.Node:
+					if entity != nil {
+						if current := staleNodes[entity.ID]; current != nil {
+							row[name] = current
+						}
 					}
-				}
-			case *storage.Edge:
-				if entity != nil {
-					if current := staleEdges[entity.ID]; current != nil {
-						row[name] = current
+				case *storage.Edge:
+					if entity != nil {
+						if current := staleEdges[entity.ID]; current != nil {
+							row[name] = current
+						}
 					}
 				}
 			}

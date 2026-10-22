@@ -95,7 +95,9 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		return nil, "", err
 	}
 	if whereClause != "" {
-		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable)
+		if nodes, err = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable); err != nil {
+			return nil, "", err
+		}
 	}
 	return nodes, pattern.variable, nil
 }

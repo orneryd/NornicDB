@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"sort"
+	"context"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 
@@ -43,7 +43,7 @@ func collArguments(ctx cypherfn.Context, function string, args []string, minimum
 	items, isList := cypherListValue(values[0])
 	if !isList {
 		return nil, nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid(function, "a List", neo4jValueRepr(values[0])))
+			localization.CypherCoreFunctionArgumentInvalid(function, "a List", neo4jValueRepr(nil, values[0])))
 	}
 	return items, values[1:], false, nil
 }
@@ -63,7 +63,7 @@ func collIndex(function string, value interface{}) (index int64, null bool, err 
 	index, ok := cypherIntegerValue(value)
 	if !ok {
 		return 0, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid(function, "an Integer", neo4jValueRepr(value)))
+			localization.CypherCoreFunctionArgumentInvalid(function, "an Integer", neo4jValueRepr(nil, value)))
 	}
 	return index, false, nil
 }
@@ -155,10 +155,13 @@ func fnCollInsert(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if index < 0 || index > int64(len(list)) {
 		return nil, functionArgumentOutOfRange("coll.insert")
 	}
-	out := make([]interface{}, 0, len(list)+1)
-	out = append(out, list[:index]...)
+	statement := ctx.StatementContext()
+	out, err := appendPopulation(statement, make([]interface{}, 0, len(list)+1), list[:index])
+	if err != nil {
+		return nil, err
+	}
 	out = append(out, rest[1])
-	return append(out, list[index:]...), nil
+	return appendPopulation(statement, out, list[index:])
 }
 
 // fnCollRemove is coll.remove(list, index): the list without list[index];
@@ -180,9 +183,12 @@ func fnCollRemove(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if index < 0 || index >= int64(len(list)) {
 		return nil, functionArgumentOutOfRange("coll.remove")
 	}
-	out := make([]interface{}, 0, len(list)-1)
-	out = append(out, list[:index]...)
-	return append(out, list[index+1:]...), nil
+	statement := ctx.StatementContext()
+	out, err := appendPopulation(statement, make([]interface{}, 0, len(list)-1), list[:index])
+	if err != nil {
+		return nil, err
+	}
+	return appendPopulation(statement, out, list[index+1:])
 }
 
 // fnCollExtreme is coll.max (sign 1) or coll.min (sign -1): the greatest or
@@ -212,14 +218,19 @@ func fnCollSort(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null {
 		return nil, err
 	}
-	return sortedCypherValues(list), nil
+	return sortedCypherValues(ctx.StatementContext(), list)
 }
 
 // sortedCypherValues returns a copy of list in ORDER BY order, equal items
-// kept in their order: coll.sort and apoc.coll.sort.
-func sortedCypherValues(list []interface{}) []interface{} {
+// kept in their order: coll.sort and apoc.coll.sort. The copy and the sort
+// observe the statement (the bulk owner).
+func sortedCypherValues(ctx context.Context, list []interface{}) ([]interface{}, error) {
 	out := make([]interface{}, len(list))
-	copy(out, list)
-	sort.SliceStable(out, func(i, j int) bool { return compareValuesForSort(out[i], out[j]) < 0 })
-	return out
+	if _, err := copyPopulation(ctx, out, list); err != nil {
+		return nil, err
+	}
+	if err := sortPopulationStable(ctx, out, func(i, j int) bool { return compareValuesForSort(out[i], out[j]) < 0 }); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

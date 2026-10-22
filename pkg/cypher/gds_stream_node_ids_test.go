@@ -77,7 +77,7 @@ func TestGDSStreamRendersWithTheProjectionItRead(t *testing.T) {
 		_, err := run(project)
 		require.NoError(t, err)
 		handler := gdsStreamHandler("gds.louvain.stream", func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-			result, err := e.callGdsLouvainStream(args)
+			result, err := e.callGdsLouvainStream(context.Background(), args)
 			_, dropErr := run("CALL gds.graph.drop('ints')")
 			require.NoError(t, dropErr)
 			if replace {

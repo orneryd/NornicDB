@@ -103,8 +103,13 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 	}
 	if findAll {
 		values := make([]interface{}, 0, len(rows))
-		for _, bound := range rows {
-			values = append(values, bound[pathVariable])
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return nil, true, batchErr
+			}
+			for _, bound := range rows[batch.start:batch.end] {
+				values = append(values, bound[pathVariable])
+			}
 		}
 		return values, true, nil
 	}

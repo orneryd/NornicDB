@@ -292,6 +292,7 @@ type quantifiedDeferredCheck struct {
 // pipelineApplyQuantifiedPathMatch runs a pattern part with quantified
 // groups for each row; an OPTIONAL MATCH is handled by its caller.
 func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, rows []pipelineRow, m *quantifiedPathMatch) ([]pipelineRow, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	var out []pipelineRow
 	// Each match it keeps, with its path, counts against the statement's
 	// memory limit before it is kept: what it binds in full, what it carries
@@ -299,38 +300,46 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 	// it keeps only its current path (#1343).
 	retention := trackedRetention(ctx)
 	defer retention.close()
-	for _, row := range rows {
-		state := quantifiedPathState{row: row, used: map[storage.EdgeID]struct{}{}}
-		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
-			bound := done.row
-			if m.pathVariable != "" {
-				bound[m.pathVariable] = e.pathToMap(PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
-			}
-			for name := range bound {
-				if strings.HasPrefix(name, generatedVariablePrefix+"qpp") {
-					delete(bound, name)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			state := quantifiedPathState{row: row, used: map[storage.EdgeID]struct{}{}}
+			err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
+				bound := done.row
+				if m.pathVariable != "" {
+					bound[m.pathVariable] = e.pathToMap(PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
 				}
-			}
-			for _, check := range done.checks {
-				iteration := copyPipelineRow(bound)
-				for name, value := range check.values {
-					iteration[name] = value
+				for name := range bound {
+					if strings.HasPrefix(name, generatedVariablePrefix+"qpp") {
+						delete(bound, name)
+					}
 				}
-				if !e.evaluateWithWhereCondition(ctx, check.where, map[string]interface{}(iteration)) {
+				for _, check := range done.checks {
+					if work.due() && work.canceled() {
+						return ctx.Err()
+					}
+					iteration := copyPipelineRow(bound)
+					for name, value := range check.values {
+						iteration[name] = value
+					}
+					if !e.evaluateWithWhereCondition(ctx, check.where, map[string]interface{}(iteration)) {
+						return getExpressionFailure(ctx)
+					}
+				}
+				if m.where != "" && !e.evaluateWithWhereCondition(ctx, m.where, map[string]interface{}(bound)) {
 					return getExpressionFailure(ctx)
 				}
+				if err := retention.reserveDerivedRow(row, bound); err != nil {
+					return err
+				}
+				out = append(out, bound)
+				return nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			if m.where != "" && !e.evaluateWithWhereCondition(ctx, m.where, map[string]interface{}(bound)) {
-				return getExpressionFailure(ctx)
-			}
-			if err := retention.reserveDerivedRow(row, bound); err != nil {
-				return err
-			}
-			out = append(out, bound)
-			return nil
-		})
-		if err != nil {
-			return nil, err
 		}
 	}
 	// Not owned: what the rows carry counts with the input rows, which stay.
@@ -401,7 +410,11 @@ func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quan
 			for _, variable := range piece.variables {
 				values[variable] = matched[variable]
 			}
-			next.checks = append(append([]quantifiedDeferredCheck(nil), state.checks...), quantifiedDeferredCheck{where: piece.deferred, values: values})
+			checks, err := appendPopulation(ctx, make([]quantifiedDeferredCheck, 0, len(state.checks)+1), state.checks)
+			if err != nil {
+				return err
+			}
+			next.checks = append(checks, quantifiedDeferredCheck{where: piece.deferred, values: values})
 		}
 		return e.matchQuantifiedIterations(ctx, m, index, piece, iterations+1, next, extended, emit)
 	})
@@ -411,6 +424,7 @@ func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quan
 // state: its first node is the path's end node, when the path has one. For
 // each match, then gets the extended state and the chain's bindings.
 func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first, where string, state quantifiedPathState, then func(quantifiedPathState, pipelineRow) error) error {
+	work := materializedRowCheckpoint{ctx: ctx}
 	row := copyPipelineRow(state.row)
 	if len(state.nodes) > 0 {
 		end := state.nodes[len(state.nodes)-1]
@@ -431,43 +445,59 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 		return err
 	}
 	repeatable := repeatableElements(ctx)
-	for _, result := range matched {
-		// The chain's path value carries its PathResult (pathToMap), whose
-		// nodes and relationships are storage entities.
-		value, _ := result[pathVariable].(map[string]interface{})
-		nodes, relationships, _, _ := pathValueParts(value)
-		next := quantifiedPathState{row: result, used: state.used, checks: state.checks}
-		next.nodes = append([]*storage.Node(nil), state.nodes...)
-		next.relationships = append([]*storage.Edge(nil), state.relationships...)
-		for i, item := range nodes {
-			if i > 0 || len(state.nodes) == 0 {
-				next.nodes = append(next.nodes, item.(*storage.Node))
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(matched)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		reused := false
-		if !repeatable {
-			next.used = make(map[storage.EdgeID]struct{}, len(state.used)+len(relationships))
-			for id := range state.used {
-				next.used[id] = struct{}{}
+		for _, result := range matched[batch.start:batch.end] {
+			// The chain's path value carries its PathResult (pathToMap), whose
+			// nodes and relationships are storage entities.
+			value, _ := result[pathVariable].(map[string]interface{})
+			nodes, relationships, _, _ := pathValueParts(value)
+			next := quantifiedPathState{row: result, used: state.used, checks: state.checks}
+			var err error
+			if next.nodes, err = clonePopulation(ctx, state.nodes); err != nil {
+				return err
 			}
-		}
-		for _, item := range relationships {
-			edge := item.(*storage.Edge)
-			if !repeatable {
-				if _, exists := next.used[edge.ID]; exists {
-					reused = true
-					break
+			if next.relationships, err = clonePopulation(ctx, state.relationships); err != nil {
+				return err
+			}
+			for i, item := range nodes {
+				if work.due() && work.canceled() {
+					return ctx.Err()
 				}
-				next.used[edge.ID] = struct{}{}
+				if i > 0 || len(state.nodes) == 0 {
+					next.nodes = append(next.nodes, item.(*storage.Node))
+				}
 			}
-			next.relationships = append(next.relationships, edge)
-		}
-		if reused {
-			continue
-		}
-		delete(next.row, pathVariable)
-		if err := then(next, result); err != nil {
-			return err
+			reused := false
+			if !repeatable {
+				next.used = make(map[storage.EdgeID]struct{}, len(state.used)+len(relationships))
+				for id := range state.used {
+					next.used[id] = struct{}{}
+				}
+			}
+			for _, item := range relationships {
+				if work.due() && work.canceled() {
+					return ctx.Err()
+				}
+				edge := item.(*storage.Edge)
+				if !repeatable {
+					if _, exists := next.used[edge.ID]; exists {
+						reused = true
+						break
+					}
+					next.used[edge.ID] = struct{}{}
+				}
+				next.relationships = append(next.relationships, edge)
+			}
+			if reused {
+				continue
+			}
+			delete(next.row, pathVariable)
+			if err := then(next, result); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

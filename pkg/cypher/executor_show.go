@@ -286,7 +286,7 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 		for index := range typed {
 			all = append(all, listed{name: typed[index].Name, typed: &typed[index]})
 		}
-		sort.SliceStable(all, func(i, j int) bool { return all[i].name < all[j].name })
+		_ = sortPopulationStable(ctx, all, func(i, j int) bool { return all[i].name < all[j].name })
 		for index, entry := range all {
 			if constraint := entry.typed; constraint != nil {
 				if kind.lists(storage.ConstraintPropertyType, constraint.EffectiveEntityType()) {
@@ -390,14 +390,14 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 	if err != nil {
 		return nil, err
 	}
-	sortShowRowsByName(result)
+	sortShowRowsByName(ctx, result)
 	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
 }
 
 // sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
 // every SHOW command (indexes and constraints by name, not creation order).
 // A listing without a string name column keeps its order.
-func sortShowRowsByName(result *ExecuteResult) {
+func sortShowRowsByName(ctx context.Context, result *ExecuteResult) {
 	column := -1
 	for i, name := range result.Columns {
 		if name == "name" {
@@ -428,7 +428,7 @@ func sortShowRowsByName(result *ExecuteResult) {
 		}
 	}
 	if !sorted {
-		sort.SliceStable(result.Rows, func(i, j int) bool {
+		_ = sortPopulationStable(ctx, result.Rows, func(i, j int) bool {
 			left, _ := name(result.Rows[i])
 			right, _ := name(result.Rows[j])
 			return left < right
@@ -636,14 +636,20 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		if len(sources) > 0 {
 			projected.Rows = make([][]interface{}, len(result.Rows))
-			for r, row := range result.Rows {
-				extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
-				for s, source := range sources {
-					if source < len(row) {
-						extended[len(row)+s] = row[source]
-					}
+			for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+				if batchErr != nil {
+					return nil, batchErr
 				}
-				projected.Rows[r] = extended
+				for offset, row := range result.Rows[batch.start:batch.end] {
+					r := batch.start + offset
+					extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
+					for s, source := range sources {
+						if source < len(row) {
+							extended[len(row)+s] = row[source]
+						}
+					}
+					projected.Rows[r] = extended
+				}
 			}
 		}
 	}
@@ -830,7 +836,7 @@ var (
 // showFunctionRows returns SHOW FUNCTIONS' full rows, built once from the
 // listed entries of cypherFunctionCatalog. Callers copy the rows they hand
 // out.
-func showFunctionRows() [][]interface{} {
+func showFunctionRows(ctx context.Context) [][]interface{} {
 	showFunctionRowsOnce.Do(func() {
 		rows := make([][]interface{}, 0, len(cypherFunctionCatalog))
 		for _, function := range cypherFunctionCatalog {
@@ -860,7 +866,7 @@ func showFunctionRows() [][]interface{} {
 			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, !function.userDefined, arguments, returns, function.aggregating, nil, nil, function.isDeprecated, deprecatedBy})
 		}
 		// Listed by name (sortShowRowsByName then finds them in order).
-		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+		_ = sortPopulationStable(ctx, rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
 		showFunctionRowsCache = rows
 	})
 	return showFunctionRowsCache
@@ -870,7 +876,7 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 	// The listing is static: its rows (with the argument and return
 	// descriptions parsed from each signature) are built once, and each call
 	// gets its own copy of them.
-	cached := showFunctionRows()
+	cached := showFunctionRows(ctx)
 	rows := make([][]interface{}, len(cached))
 	var cells []interface{}
 	for i, row := range cached {
@@ -882,8 +888,8 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 		cells = cells[len(row):]
 	}
 	if plugin := pluginFunctionRows(); len(plugin) > 0 {
-		rows = append(rows, plugin...)
-		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+		rows, _ = appendPopulation(ctx, rows, plugin)
+		_ = sortPopulationStable(ctx, rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
 	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
@@ -995,7 +1001,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: showDatabasesColumns,
-		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
+		Rows:    [][]interface{}{showDatabaseRow(ctx, e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
 		Stats: &QueryStats{
 			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
@@ -1043,7 +1049,7 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	rows := make([][]interface{}, 0, len(databases))
 
 	for _, db := range databases {
-		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
+		rows = append(rows, showDatabaseRow(ctx, e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{
@@ -1065,13 +1071,13 @@ var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databa
 // store format, so store is null, as are
 // lastStopTime and lastCommittedTxn (Neo4j reports null for both on a
 // running standalone server).
-func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
+func showDatabaseRow(ctx context.Context, manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
 	aliases := []string{}
 	if manager != nil {
 		for alias := range manager.ListAliases(name) {
 			aliases = append(aliases, alias)
 		}
-		sort.Strings(aliases)
+		_ = sortStrings(ctx, aliases)
 	}
 	var databaseID, serverID interface{}
 	if provider, ok := manager.(DatabaseIdentityProvider); ok {

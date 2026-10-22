@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -109,20 +108,6 @@ func extractCreateVariableRefs(createPart string) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-func sortNodesByProperty(nodes []*storage.Node, prop string) {
-	// Simple sort by property value (string comparison)
-	// OrderStatus by orderId, Pharmacy by id
-	for i := 0; i < len(nodes); i++ {
-		for j := i + 1; j < len(nodes); j++ {
-			vi := fmt.Sprint(getNodeProp(nodes[i], prop))
-			vj := fmt.Sprint(getNodeProp(nodes[j], prop))
-			if vi > vj {
-				nodes[i], nodes[j] = nodes[j], nodes[i]
-			}
-		}
-	}
 }
 
 type createPatternSplit struct {

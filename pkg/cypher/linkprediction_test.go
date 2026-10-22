@@ -306,7 +306,10 @@ func TestFormatLinkPredictionResults(t *testing.T) {
 		},
 	}
 
-	result := executor.formatLinkPredictionResults(predictions, "source")
+	result, err := executor.formatLinkPredictionResults(context.Background(), predictions, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if result == nil {
 		t.Error("formatLinkPredictionResults returned nil")

@@ -178,6 +178,13 @@ func (e *StorageExecutor) parseTransactionStatement(cypher string) (*ExecuteResu
 	}
 }
 
+// transactionStatementCommits reports a COMMIT: once parseTransactionStatement
+// ran it successfully, its transaction's writes are committed.
+func transactionStatementCommits(cypher string) bool {
+	upper := upperASCII(strings.TrimSpace(cypher))
+	return upper == "COMMIT" || upper == "COMMIT TRANSACTION"
+}
+
 // handleBegin starts a new explicit transaction.
 func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	if e.txContext != nil && e.txContext.active {

@@ -73,7 +73,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, plan.matches)
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -390,7 +390,7 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
@@ -403,22 +403,36 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 		idx := make(map[string]*storage.Node, len(rows))
 		distinct := make(map[string]interface{}, len(rows))
 		for _, match := range group {
-			for _, row := range rows {
-				if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
-					distinct[propEqKeyBatch(value)] = value
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					return nil, false, batchErr
+				}
+				for _, row := range rows[batch.start:batch.end] {
+					if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
+						distinct[propEqKeyBatch(value)] = value
+					}
 				}
 			}
 		}
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
+			lookups := materializedRowCheckpoint{ctx: ctx, rows: len(distinct)}
 			for valueKey, value := range distinct {
+				if lookups.due() && lookups.canceled() {
+					return nil, false, ctx.Err()
+				}
 				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
 				matched := 0
-				for _, id := range ids {
-					node, err := e.getQueryNode(store, id)
-					if err == nil && nodeBatchMatchesValue(node, key, value) {
-						matched++
-						idx[valueKey] = node
+				for innerBatch, innerErr := range materializedBatches(ctx, len(ids)) {
+					if innerErr != nil {
+						return nil, false, innerErr
+					}
+					for _, id := range ids[innerBatch.start:innerBatch.end] {
+						node, err := e.getQueryNode(store, id)
+						if err == nil && nodeBatchMatchesValue(node, key, value) {
+							matched++
+							idx[valueKey] = node
+						}
 					}
 				}
 				if matched != 1 {
@@ -427,7 +441,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 				}
 			}
 			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, unresolved)
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
 				if err != nil {
 					return nil, false, err
 				}
@@ -442,7 +456,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 			continue
 		}
 
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, distinct)
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
 		if err != nil {
 			return nil, false, err
 		}
@@ -454,31 +468,36 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
 	idx := make(map[string]*storage.Node, len(distinct))
 	nodes, err := store.GetNodesByLabel(key.label)
 	if err != nil {
 		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}
 	unique := true
-	for _, node := range nodes {
-		if node == nil || node.Properties == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, false, batchErr
 		}
-		value, ok := node.Properties[key.prop]
-		if !ok {
-			continue
+		for _, node := range nodes[batch.start:batch.end] {
+			if node == nil || node.Properties == nil {
+				continue
+			}
+			value, ok := node.Properties[key.prop]
+			if !ok {
+				continue
+			}
+			valueKey := propEqKeyBatch(value)
+			wantedValue, wanted := distinct[valueKey]
+			if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
+				continue
+			}
+			if _, exists := idx[valueKey]; exists {
+				unique = false
+				continue
+			}
+			idx[valueKey] = node
 		}
-		valueKey := propEqKeyBatch(value)
-		wantedValue, wanted := distinct[valueKey]
-		if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
-			continue
-		}
-		if _, exists := idx[valueKey]; exists {
-			unique = false
-			continue
-		}
-		idx[valueKey] = node
 	}
 	return idx, unique, nil
 }

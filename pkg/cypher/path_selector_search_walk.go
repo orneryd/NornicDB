@@ -279,7 +279,7 @@ func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, gro
 	}
 	hops := []pathSearchWalkHop{known.hop}
 	if groups {
-		hops = append(hops, side.more[node]...)
+		hops, _ = appendPopulation(s.ctx, hops, side.more[node])
 	}
 	var walks [][]pathSearchWalkHop
 	for _, hop := range hops {

@@ -545,7 +545,7 @@ func isCypherKeyword(name string) bool {
 
 // restore maps an Execute result and error of the canonical statement back
 // to the statement the client sent.
-func (names *quotedVariableNames) restore(result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
+func (names *quotedVariableNames) restore(ctx context.Context, result *ExecuteResult, err error, parseItems func(string) []returnItem) (*ExecuteResult, error) {
 	if names == nil {
 		return result, err
 	}
@@ -571,7 +571,7 @@ func (names *quotedVariableNames) restore(result *ExecuteResult, err error, pars
 		if isExplainOrProfile(names.original) {
 			restored.Rows = names.restoreValue(result.Rows).([][]interface{})
 		} else if len(restored.Columns) > 0 {
-			names.restoreProjection(&restored, parseItems)
+			names.restoreProjection(ctx, &restored, parseItems)
 		}
 		result = &restored
 	}
@@ -795,7 +795,7 @@ func finalReturnBody(text string) (int, int, bool) {
 // item its text as written (x + 1 and `x` + 1 are different columns). For
 // RETURN * the columns are sorted by name, as Neo4j lists them, with the
 // rows reordered to match.
-func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parseItems func(string) []returnItem) {
+func (names *quotedVariableNames) restoreProjection(ctx context.Context, result *ExecuteResult, parseItems func(string) []returnItem) {
 	start, end, ok := finalReturnBody(names.canonical)
 	if !ok {
 		return
@@ -803,7 +803,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 	body := strings.TrimSpace(names.canonical[start:end])
 	body, _ = cutDistinct(body)
 	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
-		sortColumnsByName(result)
+		sortColumnsByName(ctx, result)
 		return
 	}
 	items := parseItems(names.originalText(start, end))
@@ -826,7 +826,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 	}
 }
 
-func sortColumnsByName(result *ExecuteResult) {
+func sortColumnsByName(ctx context.Context, result *ExecuteResult) {
 	order := make([]int, len(result.Columns))
 	for i := range order {
 		order[i] = i
@@ -837,13 +837,19 @@ func sortColumnsByName(result *ExecuteResult) {
 		columns[i] = result.Columns[from]
 	}
 	rows := make([][]interface{}, len(result.Rows))
-	for r, row := range result.Rows {
-		if len(row) != len(order) {
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
 			return
 		}
-		rows[r] = make([]interface{}, len(order))
-		for i, from := range order {
-			rows[r][i] = row[from]
+		for offset, row := range result.Rows[batch.start:batch.end] {
+			r := batch.start + offset
+			if len(row) != len(order) {
+				return
+			}
+			rows[r] = make([]interface{}, len(order))
+			for i, from := range order {
+				rows[r][i] = row[from]
+			}
 		}
 	}
 	result.Columns, result.Rows = columns, rows

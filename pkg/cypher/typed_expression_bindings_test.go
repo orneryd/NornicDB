@@ -63,11 +63,11 @@ func TestInvalidDateTimeTextShapes(t *testing.T) {
 }
 
 func TestNormalizeNilPointerOfOtherTypes(t *testing.T) {
-	value, changed := normalizeParameterValue((*int)(nil))
+	value, changed := normalizeParameterValue(nil, (*int)(nil))
 	require.True(t, changed)
 	require.Nil(t, value)
 	v := int64(1)
-	value, changed = normalizeParameterValue(&v)
+	value, changed = normalizeParameterValue(nil, &v)
 	require.False(t, changed)
 	require.Same(t, &v, value)
 }

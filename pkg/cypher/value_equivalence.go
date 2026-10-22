@@ -4,7 +4,6 @@ import (
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/big"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -31,6 +30,10 @@ import (
 //   - paths are equivalent by their ordered entity identities;
 //   - any other value (temporal, spatial) keeps its Go type and value.
 func cypherEquivalenceKey(value interface{}) string {
+	return cypherEquivalenceKeyWithCheckpoint(value, nil)
+}
+
+func cypherEquivalenceKeyWithCheckpoint(value interface{}, checkpoint *materializedRowCheckpoint) string {
 	// The common single values get their key in one allocation; the rest are
 	// written by appendEquivalenceKey.
 	switch typed := value.(type) {
@@ -65,14 +68,14 @@ func cypherEquivalenceKey(value interface{}) string {
 		return "I" + strconv.FormatInt(typed, 10)
 	}
 	var key strings.Builder
-	appendEquivalenceKey(&key, value)
+	appendEquivalenceKey(&key, value, checkpoint)
 	return key.String()
 }
 
 // appendEquivalenceKey writes value's equivalence key (cypherEquivalenceKey).
 // A key starts with one letter naming its kind; a list or map element's key
 // is preceded by its length, so a composite key has one reading.
-func appendEquivalenceKey(key *strings.Builder, value interface{}) {
+func appendEquivalenceKey(key *strings.Builder, value interface{}, checkpoint *materializedRowCheckpoint) {
 	switch typed := value.(type) {
 	case bool:
 		if typed {
@@ -105,7 +108,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 			key.WriteByte('P')
 			key.WriteString(strconv.Itoa(len(elements)))
 			for _, entity := range elements {
-				appendNestedEquivalenceKey(key, entity)
+				appendNestedEquivalenceKey(key, entity, checkpoint)
 			}
 			return
 		}
@@ -114,16 +117,22 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		key.WriteByte('L')
 		key.WriteString(strconv.Itoa(len(list)))
 		for _, item := range list {
-			appendNestedEquivalenceKey(key, item)
+			appendNestedEquivalenceKey(key, item, checkpoint)
 		}
 		return
 	}
 	if fields, ok := toStringAnyMap(value); ok {
 		names := make([]string, 0, len(fields))
 		for name := range fields {
+			if checkpoint != nil && checkpoint.due() && checkpoint.canceled() {
+				panic(rowKeyCancellation{})
+			}
+
 			names = append(names, name)
 		}
-		sort.Strings(names)
+		if checkpoint.sortKeys(names) {
+			panic(rowKeyCancellation{})
+		}
 		key.WriteByte('M')
 		key.WriteString(strconv.Itoa(len(names)))
 		for _, name := range names {
@@ -131,7 +140,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 			key.WriteString(strconv.Itoa(len(name)))
 			key.WriteByte(':')
 			key.WriteString(name)
-			appendNestedEquivalenceKey(key, fields[name])
+			appendNestedEquivalenceKey(key, fields[name], checkpoint)
 		}
 		return
 	}
@@ -141,8 +150,12 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 
 // appendNestedEquivalenceKey writes a list or map element's key preceded by
 // its length.
-func appendNestedEquivalenceKey(key *strings.Builder, value interface{}) {
-	nested := cypherEquivalenceKey(value)
+func appendNestedEquivalenceKey(key *strings.Builder, value interface{}, checkpoint *materializedRowCheckpoint) {
+
+	if checkpoint != nil && checkpoint.due() && checkpoint.canceled() {
+		panic(rowKeyCancellation{})
+	}
+	nested := cypherEquivalenceKeyWithCheckpoint(value, checkpoint)
 	key.WriteByte('|')
 	key.WriteString(strconv.Itoa(len(nested)))
 	key.WriteByte(':')

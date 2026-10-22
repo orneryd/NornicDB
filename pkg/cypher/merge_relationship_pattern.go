@@ -134,6 +134,7 @@ func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content
 }
 
 func findParsedMergeRelationships(
+	ctx context.Context,
 	store storage.Engine,
 	cache *relationshipMergeIdentityCache,
 	pattern *mergeRelationshipPattern,
@@ -144,22 +145,31 @@ func findParsedMergeRelationships(
 	if pattern.direction == mergeRelationshipIncoming {
 		lookupStart, lookupEnd = endNode, startNode
 	}
-	matches, err := cache.relationships(store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
+	matches, err := cache.relationships(ctx, store, lookupStart.ID, lookupEnd.ID, pattern.relType, pattern.properties)
 	if err != nil || pattern.direction != mergeRelationshipUndirected {
 		return matches, err
 	}
-	reverse, err := cache.relationships(store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
+	reverse, err := cache.relationships(ctx, store, lookupEnd.ID, lookupStart.ID, pattern.relType, pattern.properties)
 	if err != nil {
 		return nil, err
 	}
 	seen := make(map[storage.EdgeID]struct{}, len(matches)+len(reverse))
 	combined := make([]*storage.Edge, 0, len(matches)+len(reverse))
-	for _, edge := range append(matches, reverse...) {
-		if _, exists := seen[edge.ID]; exists {
-			continue
+	both, err := appendPopulation(ctx, matches, reverse)
+	if err != nil {
+		return nil, err
+	}
+	for batch, batchErr := range materializedBatches(ctx, len(both)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		seen[edge.ID] = struct{}{}
-		combined = append(combined, edge)
+		for _, edge := range both[batch.start:batch.end] {
+			if _, exists := seen[edge.ID]; exists {
+				continue
+			}
+			seen[edge.ID] = struct{}{}
+			combined = append(combined, edge)
+		}
 	}
 	return combined, nil
 }

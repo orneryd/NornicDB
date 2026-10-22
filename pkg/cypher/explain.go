@@ -131,7 +131,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
-	result, execErr := e.Execute(ctx, query, nil)
+	result, execErr := e.executeRouted(ctx, query, nil)
 	totalTime := time.Since(startTime)
 
 	// A statement that fails fails its PROFILE too, as in Neo4j: the error

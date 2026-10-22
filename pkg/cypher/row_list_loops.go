@@ -138,7 +138,7 @@ func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope ma
 		}
 	}
 	budget := rowExpressionBudget(scope)
-	result, err := runReduceForm(&budget, form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate))
+	result, err := runReduceForm(rowStatementContextOrBackground(scope), &budget, form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate))
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}

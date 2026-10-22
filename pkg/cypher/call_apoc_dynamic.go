@@ -41,15 +41,20 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		Stats:   innerResult.Stats,
 	}
 
-	for _, row := range innerResult.Rows {
-		// Convert row to a map with column names as keys
-		valueMap := make(map[string]interface{})
-		for i, col := range innerResult.Columns {
-			if i < len(row) {
-				valueMap[col] = row[i]
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(innerResult.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, []interface{}{valueMap})
+		for _, row := range innerResult.Rows[batch.start:batch.end] {
+			// Convert row to a map with column names as keys
+			valueMap := make(map[string]interface{})
+			for i, col := range innerResult.Columns {
+				if i < len(row) {
+					valueMap[col] = row[i]
+				}
+			}
+			result.Rows = append(result.Rows, []interface{}{valueMap})
+		}
 	}
 
 	return result, nil
@@ -128,17 +133,23 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 		}
 
 		// Add each row from the inner result
-		for i, row := range innerResult.Rows {
-			valueMap := make(map[string]interface{})
-			for j, col := range innerResult.Columns {
-				if j < len(row) {
-					valueMap[col] = row[j]
-				}
+		for batch, batchErr := range materializedBatches(ctx, len(innerResult.Rows)) {
+			if batchErr != nil {
+				return nil, batchErr
 			}
-			result.Rows = append(result.Rows, []interface{}{
-				int64(i),
-				valueMap,
-			})
+			for offset, row := range innerResult.Rows[batch.start:batch.end] {
+				i := batch.start + offset
+				valueMap := make(map[string]interface{})
+				for j, col := range innerResult.Columns {
+					if j < len(row) {
+						valueMap[col] = row[j]
+					}
+				}
+				result.Rows = append(result.Rows, []interface{}{
+					int64(i),
+					valueMap,
+				})
+			}
 		}
 		if statistics {
 			result.Rows = append(result.Rows, []interface{}{int64(-1), runManyStatistics(innerResult, time.Since(started))})

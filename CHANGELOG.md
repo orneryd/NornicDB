@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `POST /nornicdb/embed/trigger?regenerate=true` requires the admin role, like `/nornicdb/embed/clear`. The route only
   required write, so any writer could clear and rebuild every embedding.
 
+- Stop materialized projections, ORDER BY, aggregation and DISTINCT key traversal
+  promptly when a query is canceled or its deadline expires, retaining stable
+  ordering and the existing value-validation rules. Functions and procedures
+  (list and map functions such as `coll.sort`, APOC collection, map and path
+  functions, APOC and GDS graph algorithms, full-text queries) now stop too.
+
 ## [1.4.3] - 2026-10-15
 
 ### Fixed

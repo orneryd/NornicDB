@@ -42,12 +42,12 @@ func TestEvaluatorReadsAPOCArguments(t *testing.T) {
 	e := setupTestExecutor(t)
 	ctx := context.Background()
 	for expression, want := range map[string]interface{}{
-		"apoc.coll.flatten([[1, 2], [3]])": []interface{}{int64(1), int64(2), int64(3)},
-		"apoc.coll.toSet([1, 1, 2])":       []interface{}{int64(1), int64(2)},
-		"apoc.coll.sum([1, 2, 3])":         float64(6),
-		"apoc.coll.reverse([1, 2])":        []interface{}{int64(2), int64(1)},
-		"apoc.map.merge({a: 1}, {b: 2})":   map[string]interface{}{"a": int64(1), "b": int64(2)},
-		"apoc.map.fromPairs([['a', 1]])":   map[string]interface{}{"a": int64(1)},
+		"apoc.coll.flatten([[1, 2], [3]])":                                               []interface{}{int64(1), int64(2), int64(3)},
+		"apoc.coll.toSet(context.Background(), [1, 1, 2])":                               []interface{}{int64(1), int64(2)},
+		"apoc.coll.sum([1, 2, 3])":                                                       float64(6),
+		"apoc.coll.reverse([1, 2])":                                                      []interface{}{int64(2), int64(1)},
+		"apoc.map.merge({a: 1}, {b: 2})":                                                 map[string]interface{}{"a": int64(1), "b": int64(2)},
+		"apoc.map.fromPairs([['a', 1]])":                                                 map[string]interface{}{"a": int64(1)},
 		"apoc.convert.fromJsonList('[1.5, [2], {\"a\": 3}, 1e2, 99999999999999999999]')": []interface{}{1.5, []interface{}{int64(2)}, map[string]interface{}{"a": int64(3)}, float64(100), float64(1e20)},
 	} {
 		require.Equal(t, want, e.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)

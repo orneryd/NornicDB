@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -356,14 +355,14 @@ func withWhereValueContext(values map[string]interface{}) (map[string]*storage.N
 
 // filterNodesByWhereClause filters nodes based on a WHERE clause condition.
 // Uses evaluateWhere for consistent condition evaluation.
-func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []*storage.Node, whereClause, variable string) []*storage.Node {
+func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []*storage.Node, whereClause, variable string) ([]*storage.Node, error) {
 	if whereClause == "" {
-		return nodes
+		return nodes, nil
 	}
 
 	filterFn := e.compileNodeWhereFilter(ctx, variable, whereClause)
 
-	return parallelFilterNodes(nodes, filterFn)
+	return parallelFilterNodes(ctx, nodes, filterFn)
 }
 
 // orderSpec represents a single ORDER BY column specification
@@ -375,20 +374,20 @@ type orderSpec struct {
 
 // orderResultRows sorts result rows by the specified ORDER BY expression.
 // Supports multiple columns: "col1 ASC, col2 DESC"
-func (e *StorageExecutor) orderResultRows(rows [][]interface{}, columns []string, orderExpr string) [][]interface{} {
+func (e *StorageExecutor) orderResultRows(ctx context.Context, rows [][]interface{}, columns []string, orderExpr string) ([][]interface{}, error) {
 	if len(rows) <= 1 {
-		return rows
+		return rows, nil
 	}
 
-	return e.orderRowsBySpecs(rows, e.parseOrderBySpecs(orderExpr, columns))
+	return e.orderRowsBySpecs(ctx, rows, e.parseOrderBySpecs(orderExpr, columns))
 }
 
-func (e *StorageExecutor) orderResultRowsForReturnItems(rows [][]interface{}, columns []string, returnItems []returnItem, orderExpr string) [][]interface{} {
+func (e *StorageExecutor) orderResultRowsForReturnItems(ctx context.Context, rows [][]interface{}, columns []string, returnItems []returnItem, orderExpr string) ([][]interface{}, error) {
 	if len(rows) <= 1 {
-		return rows
+		return rows, nil
 	}
 
-	return e.orderRowsBySpecs(rows, e.parseOrderBySpecsWithResolver(orderExpr, columns, func(colName string) int {
+	return e.orderRowsBySpecs(ctx, rows, e.parseOrderBySpecsWithResolver(orderExpr, columns, func(colName string) int {
 		for _, item := range returnItems {
 			if item.alias == "" || !strings.EqualFold(strings.TrimSpace(item.expr), colName) {
 				continue
@@ -399,12 +398,12 @@ func (e *StorageExecutor) orderResultRowsForReturnItems(rows [][]interface{}, co
 	}))
 }
 
-func (e *StorageExecutor) orderRowsBySpecs(rows [][]interface{}, orderSpecs []orderSpec) [][]interface{} {
+func (e *StorageExecutor) orderRowsBySpecs(ctx context.Context, rows [][]interface{}, orderSpecs []orderSpec) ([][]interface{}, error) {
 	if len(orderSpecs) == 0 {
-		return rows
+		return rows, nil
 	}
 
-	sort.Slice(rows, func(i, j int) bool {
+	err := sortPopulation(ctx, rows, func(i, j int) bool {
 		for _, spec := range orderSpecs {
 			left := rows[i][spec.colIdx]
 			right := rows[j][spec.colIdx]
@@ -422,8 +421,11 @@ func (e *StorageExecutor) orderRowsBySpecs(rows [][]interface{}, orderSpecs []or
 		}
 		return false
 	})
+	if err != nil {
+		return nil, err
+	}
 
-	return rows
+	return rows, nil
 }
 
 // parseOrderBySpecs parses "col1 ASC, col2 DESC" into orderSpec slice
@@ -635,9 +637,9 @@ func splitOutsideParens(s string, delim rune) []string {
 // filterNodesByProperties filters nodes to only include those matching ALL specified properties.
 // This is used for MATCH pattern property filtering like MATCH (n:Label {prop: value}).
 // Uses parallel execution for large datasets (>1000 nodes) for improved performance.
-func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props map[string]interface{}) []*storage.Node {
+func (e *StorageExecutor) filterNodesByProperties(ctx context.Context, nodes []*storage.Node, props map[string]interface{}) ([]*storage.Node, error) {
 	if len(props) == 0 {
-		return nodes
+		return nodes, nil
 	}
 
 	// The node-pattern property test (nodePropertiesMatch) is the one owner
@@ -647,7 +649,7 @@ func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props m
 	}
 
 	// Use parallel filtering for large datasets
-	return parallelFilterNodes(nodes, filterFn)
+	return parallelFilterNodes(ctx, nodes, filterFn)
 }
 
 // executeMatchWithUnwind handles MATCH ... WITH ... UNWIND ... RETURN queries

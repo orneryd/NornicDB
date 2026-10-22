@@ -467,10 +467,13 @@ func resolveContextPathRef(ctx context.Context, expr string) (interface{}, bool)
 // is a Cypher list ([]interface{}), recursively. Typed lists of scalars
 // ([]string, []int64, []float64, …) stay typed: storage keeps their element
 // type. The map is copied only when a value changes.
-func normalizeQueryParameters(params map[string]interface{}) map[string]interface{} {
+//
+// The statement (ctx) is observed over the parameters' values (a walk).
+func normalizeQueryParameters(ctx context.Context, params map[string]interface{}) map[string]interface{} {
 	var normalized map[string]interface{}
+	work := valueWalk(ctx)
 	for name, value := range params {
-		converted, changed := normalizeParameterValue(value)
+		converted, changed := normalizeParameterValue(work, value)
 		if !changed {
 			continue
 		}
@@ -492,12 +495,15 @@ func normalizeQueryParameters(params map[string]interface{}) map[string]interfac
 // or list's typed lists (map[string][]string) are Cypher lists, as when the
 // value is read through a WITH, while a typed list parameter itself keeps
 // its type (normalizeParameterValue).
-func parameterRowValue(value interface{}) interface{} {
+func parameterRowValue(work *materializedRowCheckpoint, value interface{}) interface{} {
+	if work.visit() {
+		return value
+	}
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		var converted map[string]interface{}
 		for key, element := range typed {
-			if nested := nestedParameterValue(element); !sameParameterValue(nested, element) {
+			if nested := nestedParameterValue(work, element); !sameParameterValue(nested, element) {
 				if converted == nil {
 					converted = make(map[string]interface{}, len(typed))
 					for k, v := range typed {
@@ -513,7 +519,7 @@ func parameterRowValue(value interface{}) interface{} {
 	case []interface{}:
 		var converted []interface{}
 		for index, element := range typed {
-			if nested := nestedParameterValue(element); !sameParameterValue(nested, element) {
+			if nested := nestedParameterValue(work, element); !sameParameterValue(nested, element) {
 				if converted == nil {
 					converted = append([]interface{}(nil), typed...)
 				}
@@ -529,12 +535,12 @@ func parameterRowValue(value interface{}) interface{} {
 
 // nestedParameterValue is a value inside a parameter's map or list: a
 // typed list is a Cypher list of its elements.
-func nestedParameterValue(value interface{}) interface{} {
+func nestedParameterValue(work *materializedRowCheckpoint, value interface{}) interface{} {
 	switch value.(type) {
 	case []string, []int, []int64, []float32, []float64, []bool:
 		return toAnySlice(value)
 	case map[string]interface{}, []interface{}:
-		return parameterRowValue(value)
+		return parameterRowValue(work, value)
 	}
 	return value
 }
@@ -551,7 +557,10 @@ func sameParameterValue(converted, original interface{}) bool {
 }
 
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
-func normalizeParameterValue(value interface{}) (interface{}, bool) {
+func normalizeParameterValue(work *materializedRowCheckpoint, value interface{}) (interface{}, bool) {
+	if work.visit() {
+		return value, false
+	}
 	switch typed := value.(type) {
 	case storage.RemotePathValue:
 		if typed == nil {
@@ -577,13 +586,13 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	case map[string]interface{}:
 		public := storage.PublicRemoteMap(typed)
 		if len(public) != len(typed) {
-			normalized, _ := normalizeParameterValue(public)
+			normalized, _ := normalizeParameterValue(work, public)
 			return normalized, true
 		}
 
 		var converted map[string]interface{}
 		for key, element := range typed {
-			normalized, changed := normalizeParameterValue(element)
+			normalized, changed := normalizeParameterValue(work, element)
 			if !changed {
 				continue
 			}
@@ -602,7 +611,7 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	case []interface{}:
 		var converted []interface{}
 		for index, element := range typed {
-			normalized, changed := normalizeParameterValue(element)
+			normalized, changed := normalizeParameterValue(work, element)
 			if !changed {
 				continue
 			}
@@ -627,7 +636,7 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 			converted := make(map[interface{}]interface{}, reflected.Len())
 			iterator := reflected.MapRange()
 			for iterator.Next() {
-				element, _ := normalizeParameterValue(iterator.Value().Interface())
+				element, _ := normalizeParameterValue(work, iterator.Value().Interface())
 				converted[iterator.Key().Interface()] = element
 			}
 			return converted, true
@@ -635,14 +644,14 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 		converted := make(map[string]interface{}, reflected.Len())
 		iterator := reflected.MapRange()
 		for iterator.Next() {
-			element, _ := normalizeParameterValue(iterator.Value().Interface())
+			element, _ := normalizeParameterValue(work, iterator.Value().Interface())
 			converted[iterator.Key().String()] = element
 		}
 		return converted, true
 	case reflect.Slice, reflect.Array:
 		converted := make([]interface{}, reflected.Len())
 		for index := range converted {
-			element, _ := normalizeParameterValue(reflected.Index(index).Interface())
+			element, _ := normalizeParameterValue(work, reflected.Index(index).Interface())
 			converted[index] = element
 		}
 		return converted, true
@@ -732,20 +741,21 @@ func parameterRowValues(ctx context.Context) map[string]interface{} {
 		return nil
 	}
 	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
-		cache.once.Do(func() { cache.rows = parameterRowsOf(params, cypher25) })
+		cache.once.Do(func() { cache.rows = parameterRowsOf(ctx, params, cypher25) })
 		return cache.rows
 	}
-	return parameterRowsOf(params, cypher25)
+	return parameterRowsOf(ctx, params, cypher25)
 }
 
 // cypher25RowValues are the row values of a Cypher 25 statement without
 // parameters (shared; never modified).
 var cypher25RowValues = map[string]interface{}{cypher25RowKey: true}
 
-func parameterRowsOf(params map[string]interface{}, cypher25 bool) map[string]interface{} {
+func parameterRowsOf(ctx context.Context, params map[string]interface{}, cypher25 bool) map[string]interface{} {
 	rows := make(map[string]interface{}, len(params)+1)
+	work := valueWalk(ctx)
 	for name, value := range params {
-		rows["$"+name] = parameterRowValue(value)
+		rows["$"+name] = parameterRowValue(work, value)
 	}
 	if cypher25 {
 		rows[cypher25RowKey] = true

@@ -1,10 +1,11 @@
 package fn
 
 import (
+	"context"
 	"reflect"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"golang.org/x/text/cases"
@@ -208,17 +209,18 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
+	statement := ctx.StatementContext()
 	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		keys, _ := PropertyKeys(node)
-		return keys, nil
+		keys, _, err := PropertyKeys(statement, node)
+		return keys, err
 	}
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		keys, _ := PropertyKeys(rel)
-		return keys, nil
+		keys, _, err := PropertyKeys(statement, rel)
+		return keys, err
 	}
 	value, _ := ctx.Eval(inner)
-	if keys, ok := PropertyKeys(value); ok {
-		return keys, nil
+	if keys, ok, err := PropertyKeys(statement, value); ok || err != nil {
+		return keys, err
 	}
 	return nil, nil
 }
@@ -232,17 +234,20 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 //   - any other map: all of its keys.
 //
 // It returns false for any other value.
-func PropertyKeys(value interface{}) ([]interface{}, bool) {
+//
+// The keys are the value's data, so they sort through the bulk owner: a
+// canceled statement stops the sort and gets its error.
+func PropertyKeys(ctx context.Context, value interface{}) ([]interface{}, bool, error) {
 	var properties map[string]interface{}
 	switch v := value.(type) {
 	case *storage.Node:
 		if v == nil {
-			return nil, false
+			return nil, false, nil
 		}
 		properties = v.Properties
 	case *storage.Edge:
 		if v == nil {
-			return nil, false
+			return nil, false, nil
 		}
 		properties = v.Properties
 	case storage.RemoteEntityValue:
@@ -250,18 +255,20 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	case map[string]interface{}:
 		properties = storage.PublicRemoteMap(v)
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 	names := make([]string, 0, len(properties))
 	for key := range properties {
 		names = append(names, key)
 	}
-	sort.Strings(names)
+	if err := bulk.Strings(ctx, names); err != nil {
+		return nil, false, err
+	}
 	keys := make([]interface{}, len(names))
 	for i, name := range names {
 		keys[i] = name
 	}
-	return keys, true
+	return keys, true, nil
 }
 
 func evalProperties(ctx Context, args []string) (interface{}, error) {

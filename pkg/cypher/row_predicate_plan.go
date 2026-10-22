@@ -770,7 +770,10 @@ func (e *StorageExecutor) rowPredicatePartTextTruth(ctx context.Context, part *r
 // reads) whether it holds. As an operand of an AND / OR it runs with its own
 // error slot where the policy asks for one (part.isolation).
 func (e *StorageExecutor) rowPredicatePartText(ctx context.Context, part *rowPredicatePart, scope compiledRowScope) (interface{}, error) {
-	values := rowValuesWithStatementContext(ctx, part.text, scope.materialize())
+	values, contextBound := rowValuesWithStatementContext(ctx, part.text, scope.materialize())
+	if contextBound {
+		defer delete(values, rowStatementContextKey)
+	}
 	var resolve func(context.Context, map[string]interface{}) (interface{}, bool, error)
 	if !part.predicateOnly {
 		resolve = func(_ context.Context, values map[string]interface{}) (interface{}, bool, error) {

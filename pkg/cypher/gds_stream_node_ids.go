@@ -39,15 +39,18 @@ func gdsStreamHandler(procedure string, handler ProcedureHandler) ProcedureHandl
 		// stream read the stored graph.
 		if projection := result.gdsProjection; projection != nil {
 			result.gdsProjection = nil
-			projection.renderNodeIDs(result, columns)
+			if err := projection.renderNodeIDs(ctx, result, columns); err != nil {
+				return nil, err
+			}
 		}
 		return result, nil
 	}
 }
 
 // renderNodeIDs renders the result's node-id columns, and the nodeId of the
-// maps a list column holds, through nodeIDValue.
-func (p *GraphProjection) renderNodeIDs(result *ExecuteResult, columns []string) {
+// maps a list column holds, through nodeIDValue: a pass over the stream's
+// materialized rows, owned like every other.
+func (p *GraphProjection) renderNodeIDs(ctx context.Context, result *ExecuteResult, columns []string) error {
 	var indexes []int
 	for i, column := range result.Columns {
 		for _, name := range columns {
@@ -62,20 +65,26 @@ func (p *GraphProjection) renderNodeIDs(result *ExecuteResult, columns []string)
 		}
 		return value
 	}
-	for _, row := range result.Rows {
-		for _, i := range indexes {
-			if i >= len(row) {
-				continue
-			}
-			if list, ok := row[i].([]interface{}); ok {
-				for _, item := range list {
-					if entry, ok := item.(map[string]interface{}); ok {
-						entry["nodeId"] = render(entry["nodeId"])
-					}
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, row := range result.Rows[batch.start:batch.end] {
+			for _, i := range indexes {
+				if i >= len(row) {
+					continue
 				}
-				continue
+				if list, ok := row[i].([]interface{}); ok {
+					for _, item := range list {
+						if entry, ok := item.(map[string]interface{}); ok {
+							entry["nodeId"] = render(entry["nodeId"])
+						}
+					}
+					continue
+				}
+				row[i] = render(row[i])
 			}
-			row[i] = render(row[i])
 		}
 	}
+	return nil
 }

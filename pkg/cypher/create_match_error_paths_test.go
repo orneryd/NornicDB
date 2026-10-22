@@ -129,7 +129,8 @@ func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	// Single-variable component path (unconstrained `c` component).
-	single, ok := exec.buildCombinationsUsingWhereJoin(
+	single, ok, err := exec.buildCombinationsUsingWhereJoin(
+		context.Background(),
 		[]struct {
 			variable string
 			nodes    []*storage.Node
@@ -140,6 +141,7 @@ func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {
 		},
 		"a.id = b.id",
 	)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, single, 1)
 	require.Equal(t, storage.NodeID("a1"), single[0]["a"].ID)
@@ -147,7 +149,8 @@ func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {
 	require.Equal(t, storage.NodeID("c1"), single[0]["c"].ID)
 
 	// Multi-variable path with rows that trigger nil/missing branches before producing one valid join.
-	joined, ok := exec.buildCombinationsUsingWhereJoin(
+	joined, ok, err := exec.buildCombinationsUsingWhereJoin(
+		context.Background(),
 		[]struct {
 			variable string
 			nodes    []*storage.Node
@@ -173,6 +176,7 @@ func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {
 		},
 		"a.id = b.id",
 	)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, joined, 1)
 	require.Equal(t, storage.NodeID("a_ok"), joined[0]["a"].ID)

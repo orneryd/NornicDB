@@ -1,13 +1,11 @@
 package cypher
 
 import (
-	"container/heap"
 	"context"
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -315,7 +313,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				}
 				// Indexed IN-list path for batched correlated lookups.
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(ctx, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}
@@ -340,7 +338,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if err != nil {
 					return nil, err
 				}
-				return e.extractSeedNodesFromResult(outerRes, variable)
+				return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 			}
 			filtered := make([]*storage.Node, 0, len(nodes))
 			for _, n := range nodes {
@@ -358,7 +356,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				if err != nil {
 					return nil, err
 				}
-				return e.extractSeedNodesFromResult(outerRes, variable)
+				return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 			}
 			return filtered, nil
 		}
@@ -372,10 +370,10 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	if err != nil {
 		return nil, err
 	}
-	return e.extractSeedNodesFromResult(outerRes, variable)
+	return e.extractSeedNodesFromResult(ctx, outerRes, variable)
 }
 
-func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, variable string) ([]*storage.Node, error) {
+func (e *StorageExecutor) extractSeedNodesFromResult(ctx context.Context, outerRes *ExecuteResult, variable string) ([]*storage.Node, error) {
 	if outerRes == nil || len(outerRes.Rows) == 0 {
 		return []*storage.Node{}, nil
 	}
@@ -392,39 +390,44 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 	}
 
 	seedNodes := make([]*storage.Node, 0, len(outerRes.Rows))
-	for _, row := range outerRes.Rows {
-		if colIdx >= len(row) {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(outerRes.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		val := row[colIdx]
-		switch v := val.(type) {
-		case *storage.Node:
-			if v != nil {
-				seedNodes = append(seedNodes, v)
+		for _, row := range outerRes.Rows[batch.start:batch.end] {
+			if colIdx >= len(row) {
+				continue
 			}
-		case map[string]interface{}:
-			if n := e.seedNodeFromMap(v); n != nil {
-				seedNodes = append(seedNodes, n)
-			}
-		case string:
-			if n := e.seedNodeFromIDString(v); n != nil {
-				seedNodes = append(seedNodes, n)
-			}
-		case []interface{}:
-			// Defensive: some execution paths can wrap a single projected value.
-			if len(v) == 1 {
-				switch wrapped := v[0].(type) {
-				case *storage.Node:
-					if wrapped != nil {
-						seedNodes = append(seedNodes, wrapped)
-					}
-				case map[string]interface{}:
-					if n := e.seedNodeFromMap(wrapped); n != nil {
-						seedNodes = append(seedNodes, n)
-					}
-				case string:
-					if n := e.seedNodeFromIDString(wrapped); n != nil {
-						seedNodes = append(seedNodes, n)
+			val := row[colIdx]
+			switch v := val.(type) {
+			case *storage.Node:
+				if v != nil {
+					seedNodes = append(seedNodes, v)
+				}
+			case map[string]interface{}:
+				if n := e.seedNodeFromMap(v); n != nil {
+					seedNodes = append(seedNodes, n)
+				}
+			case string:
+				if n := e.seedNodeFromIDString(v); n != nil {
+					seedNodes = append(seedNodes, n)
+				}
+			case []interface{}:
+				// Defensive: some execution paths can wrap a single projected value.
+				if len(v) == 1 {
+					switch wrapped := v[0].(type) {
+					case *storage.Node:
+						if wrapped != nil {
+							seedNodes = append(seedNodes, wrapped)
+						}
+					case map[string]interface{}:
+						if n := e.seedNodeFromMap(wrapped); n != nil {
+							seedNodes = append(seedNodes, n)
+						}
+					case string:
+						if n := e.seedNodeFromIDString(wrapped); n != nil {
+							seedNodes = append(seedNodes, n)
+						}
 					}
 				}
 			}
@@ -1477,6 +1480,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	importVars []string,
 	colMap map[string]int,
 ) (*ExecuteResult, bool, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	if seedResult == nil || len(seedResult.Rows) == 0 || len(importVars) != 1 {
 		return nil, false, nil
 	}
@@ -1642,6 +1646,9 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 			continue
 		}
 		for _, m := range matches {
+			if work.due() && work.canceled() {
+				return nil, true, ctx.Err()
+			}
 			joined := append([]interface{}{}, seedRow...)
 			joined = append(joined, m...)
 			combinedRows = append(combinedRows, joined)
@@ -2017,45 +2024,6 @@ func containsStandaloneIdentifier(expr, ident string) bool {
 	return false
 }
 
-func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
-	if left == nil {
-		return right
-	}
-	if right == nil {
-		return left
-	}
-
-	colMap := make(map[string]struct{}, len(left.Columns))
-	for _, col := range left.Columns {
-		colMap[col] = struct{}{}
-	}
-	combinedCols := append([]string{}, left.Columns...)
-	innerUniqueIdx := make([]int, 0, len(right.Columns))
-	for i, col := range right.Columns {
-		if _, exists := colMap[col]; !exists {
-			combinedCols = append(combinedCols, col)
-			innerUniqueIdx = append(innerUniqueIdx, i)
-		}
-	}
-
-	rows := make([][]interface{}, 0, util.SafePreallocProduct(len(left.Rows), len(right.Rows)))
-	for _, lrow := range left.Rows {
-		for _, rrow := range right.Rows {
-			joined := append([]interface{}{}, lrow...)
-			for _, idx := range innerUniqueIdx {
-				if idx >= 0 && idx < len(rrow) {
-					joined = append(joined, rrow[idx])
-				} else {
-					joined = append(joined, nil)
-				}
-			}
-			rows = append(rows, joined)
-		}
-	}
-
-	return &ExecuteResult{Columns: combinedCols, Rows: rows}
-}
-
 // processCallSubqueryReturn processes the RETURN clause after CALL {}
 func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
 	if findKeywordIndex(afterCall, "RETURN") == -1 {
@@ -2066,16 +2034,21 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 	for _, column := range innerResult.Columns {
 		scope[column] = struct{}{}
 	}
-	for _, values := range innerResult.Rows {
-		row := make(pipelineRow, len(innerResult.Columns))
-		for index, column := range innerResult.Columns {
-			if index < len(values) {
-				row[column] = values[index]
-			} else {
-				row[column] = nil
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(innerResult.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		rows = append(rows, row)
+		for _, values := range innerResult.Rows[batch.start:batch.end] {
+			row := make(pipelineRow, len(innerResult.Columns))
+			for index, column := range innerResult.Columns {
+				if index < len(values) {
+					row[column] = values[index]
+				} else {
+					row[column] = nil
+				}
+			}
+			rows = append(rows, row)
+		}
 	}
 	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: afterCall}}
 	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
@@ -2114,27 +2087,32 @@ func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByCla
 
 func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(result.Rows))
-	for _, values := range result.Rows {
-		row := make(pipelineRow, len(result.Columns))
-		for index, column := range result.Columns {
-			if index < len(values) {
-				row[column] = values[index]
-			} else {
-				row[column] = nil
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return nil, getExpressionFailure(ctx)
 		}
-		for _, term := range terms {
-			parts := strings.SplitN(term.column, ".", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			if value, ok := row[parts[0]].(map[string]interface{}); ok {
-				if _, nested := value["properties"].(map[string]interface{}); nested {
-					row[term.column] = extractPropertyFromValue(value, parts[1])
+		for _, values := range result.Rows[batch.start:batch.end] {
+			row := make(pipelineRow, len(result.Columns))
+			for index, column := range result.Columns {
+				if index < len(values) {
+					row[column] = values[index]
+				} else {
+					row[column] = nil
 				}
 			}
+			for _, term := range terms {
+				parts := strings.SplitN(term.column, ".", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				if value, ok := row[parts[0]].(map[string]interface{}); ok {
+					if _, nested := value["properties"].(map[string]interface{}); nested {
+						row[term.column] = extractPropertyFromValue(value, parts[1])
+					}
+				}
+			}
+			rows = append(rows, row)
 		}
-		rows = append(rows, row)
 	}
 	if !e.orderPipelineRows(ctx, rows, terms) {
 		if err := getExpressionFailure(ctx); err != nil {
@@ -2143,12 +2121,17 @@ func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result
 	}
 	rows = applyPipelineWindow(rows, skip, limit)
 	result.Rows = make([][]interface{}, 0, len(rows))
-	for _, row := range rows {
-		values := make([]interface{}, len(result.Columns))
-		for index, column := range result.Columns {
-			values[index] = row[column]
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, getExpressionFailure(ctx)
 		}
-		result.Rows = append(result.Rows, values)
+		for _, row := range rows[batch.start:batch.end] {
+			values := make([]interface{}, len(result.Columns))
+			for index, column := range result.Columns {
+				values[index] = row[column]
+			}
+			result.Rows = append(result.Rows, values)
+		}
 	}
 	return result, nil
 }
@@ -2339,52 +2322,6 @@ func (h *topKRowsHeap) Pop() interface{} {
 	it := h.items[n-1]
 	h.items = h.items[:n-1]
 	return it
-}
-
-func selectTopKRowsForOrder(rows [][]interface{}, colIdx int, descending bool, k int) [][]interface{} {
-	if k <= 0 || len(rows) == 0 {
-		return [][]interface{}{}
-	}
-	if k >= len(rows) {
-		out := make([][]interface{}, len(rows))
-		copy(out, rows)
-		sort.SliceStable(out, func(i, j int) bool {
-			ri := rowRefForOrder{row: out[i], idx: i}
-			rj := rowRefForOrder{row: out[j], idx: j}
-			return compareRowRefsForOrder(ri, rj, colIdx, descending) < 0
-		})
-		return out
-	}
-
-	h := &topKRowsHeap{
-		items:      make([]rowRefForOrder, 0, k),
-		colIdx:     colIdx,
-		descending: descending,
-	}
-	for i, row := range rows {
-		ref := rowRefForOrder{row: row, idx: i}
-		if h.Len() < k {
-			heap.Push(h, ref)
-			continue
-		}
-		// Replace current worst when new row is better.
-		if compareRowRefsForOrder(ref, h.items[0], colIdx, descending) < 0 {
-			h.items[0] = ref
-			heap.Fix(h, 0)
-		}
-	}
-
-	selected := make([]rowRefForOrder, len(h.items))
-	copy(selected, h.items)
-	sort.SliceStable(selected, func(i, j int) bool {
-		return compareRowRefsForOrder(selected[i], selected[j], colIdx, descending) < 0
-	})
-
-	out := make([][]interface{}, 0, len(selected))
-	for _, it := range selected {
-		out = append(out, it.row)
-	}
-	return out
 }
 
 // Patterns compiled once (#591).

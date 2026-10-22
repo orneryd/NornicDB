@@ -1,8 +1,8 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -54,7 +54,7 @@ var nativeAPOCNamedPatterns = map[string]string{
 	"year_month_day":                    "yyyy-MM-dd",
 }
 
-func nativeAPOCTemporalFormat(args []interface{}) (interface{}, error) {
+func nativeAPOCTemporalFormat(ctx context.Context, args []interface{}) (interface{}, error) {
 	const name = "apoc.temporal.format"
 	value := args[0]
 	pattern := "yyyy-MM-dd"
@@ -105,7 +105,7 @@ func nativeAPOCTemporalFormat(args []interface{}) (interface{}, error) {
 		}
 		return nativeAPOCDurationFormat(duration, pattern), nil
 	}
-	return nativeAPOCJavaText(value), nil
+	return nativeAPOCJavaText(valueWalk(ctx), value), nil
 }
 
 func nativeAPOCISOBasePattern(name string) (string, bool) {
@@ -293,7 +293,10 @@ func nativeAPOCDurationFormat(duration *CypherDuration, pattern string) string {
 	return out.String()
 }
 
-func nativeAPOCJavaText(value interface{}) string {
+func nativeAPOCJavaText(work *materializedRowCheckpoint, value interface{}) string {
+	if work.visit() {
+		return ""
+	}
 	if value == nil {
 		return "null"
 	}
@@ -302,17 +305,19 @@ func nativeAPOCJavaText(value interface{}) string {
 		for key := range object {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		if work.sortKeys(keys) {
+			return ""
+		}
 		parts := make([]string, len(keys))
 		for i, key := range keys {
-			parts[i] = key + "=" + nativeAPOCJavaText(object[key])
+			parts[i] = key + "=" + nativeAPOCJavaText(work, object[key])
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	}
 	if list, ok := toInterfaceSlice(value); ok {
 		parts := make([]string, len(list))
 		for i, v := range list {
-			parts[i] = nativeAPOCJavaText(v)
+			parts[i] = nativeAPOCJavaText(work, v)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	}

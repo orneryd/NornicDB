@@ -105,18 +105,20 @@ func newApocExpansion(uniqueness string) *apocExpansion {
 // apocNodes reads an apoc.path node argument (the start, or a config node
 // list): a node, an element id, or a list of them; null is none. An id that
 // matches no node fails, as in APOC.
-func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*storage.Node, error) {
+func (e *StorageExecutor) apocNodes(ctx context.Context, argument string, value interface{}) ([]*storage.Node, error) {
 	switch typed := value.(type) {
 	case nil:
 		return nil, nil
 	case []interface{}:
 		var nodes []*storage.Node
 		for _, item := range typed {
-			more, err := e.apocNodes(argument, item)
+			more, err := e.apocNodes(ctx, argument, item)
 			if err != nil {
 				return nil, err
 			}
-			nodes = append(nodes, more...)
+			if nodes, err = appendPopulation(ctx, nodes, more); err != nil {
+				return nil, err
+			}
 		}
 		return nodes, nil
 	case *storage.Node:
@@ -131,7 +133,7 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 		}
 		return []*storage.Node{node}, nil
 	}
-	return nil, localizedError(localization.CypherCoreApocPathNodeArgument(argument, neo4jProvidedValue(value)), nil)
+	return nil, localizedError(localization.CypherCoreApocPathNodeArgument(argument, neo4jProvidedValue(valueWalk(ctx), value)), nil)
 }
 
 // apocInteger reads an apoc.path integer setting as APOC does: a number,
@@ -148,7 +150,7 @@ func apocInteger(key string, value interface{}) (int, error) {
 			return int(number), nil
 		}
 	}
-	return 0, localizedError(localization.CypherCoreApocPathConfigNumber(key, neo4jProvidedValue(value)), nil)
+	return 0, localizedError(localization.CypherCoreApocPathConfigNumber(key, neo4jProvidedValue(nil, value)), nil)
 }
 
 // apocString reads an apoc.path string setting; a value of another type
@@ -156,7 +158,7 @@ func apocInteger(key string, value interface{}) (int, error) {
 func apocString(key string, value interface{}) (string, error) {
 	text, ok := value.(string)
 	if !ok {
-		return "", localizedError(localization.CypherCoreApocPathConfigString(key, neo4jProvidedValue(value)), nil)
+		return "", localizedError(localization.CypherCoreApocPathConfigString(key, neo4jProvidedValue(nil, value)), nil)
 	}
 	return text, nil
 }
@@ -189,7 +191,7 @@ func apocBoolean(value interface{}) bool {
 // a boolean setting, fails for minLevel, maxLevel and limit, and leaves any
 // other setting at its default; uniqueness is read only when readUniqueness
 // (expandConfig), and a limit below -1 fails.
-func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interface{}, readUniqueness bool) error {
+func (x *apocExpansion) configure(ctx context.Context, e *StorageExecutor, config map[string]interface{}, readUniqueness bool) error {
 	sequence, beginAtStart := "", true
 	for key, value := range config {
 		switch key {
@@ -247,7 +249,7 @@ func (x *apocExpansion) configure(e *StorageExecutor, config map[string]interfac
 				x.uniqueness = strings.ToUpper(text)
 			}
 		case "endNodes", "terminatorNodes", "allowlistNodes", "whitelistNodes", "denylistNodes", "blacklistNodes":
-			nodes, err := e.apocNodes(key, value)
+			nodes, err := e.apocNodes(ctx, key, value)
 			if err != nil {
 				return err
 			}
@@ -529,6 +531,7 @@ func (step *apocStep) path() PathResult {
 // runApocExpansion expands every start node and returns the ends of the
 // paths the filters include, in BFS or DFS order, at most limit of them.
 func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion) ([]*apocStep, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	var results []*apocStep
 	if x.limit == 0 {
 		return results, nil
@@ -569,6 +572,9 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			edges := e.apocSteps(step.node.ID, filter)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
+				if work.due() && work.canceled() {
+					return nil, ctx.Err()
+				}
 				// A path never turns straight back along the relationship
 				// it arrived by, whatever the uniqueness, as in Neo4j.
 				if step.edge != nil && step.edge.ID == edge.ID {
@@ -594,7 +600,10 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 				next = append(next, &apocStep{node: other, edge: edge, parent: step, depth: step.depth + 1})
 			}
 			if x.bfs {
-				frontier = append(frontier, next...)
+				var err error
+				if frontier, err = appendPopulation(ctx, frontier, next); err != nil {
+					return nil, err
+				}
 			} else {
 				for index := len(next) - 1; index >= 0; index-- {
 					frontier = append(frontier, next[index])
@@ -654,10 +663,10 @@ var (
 
 // apocExpansionFromArguments builds the expansion of a (start, config)
 // procedure call from its evaluated arguments.
-func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedure apocPathProcedure) (*apocExpansion, error) {
+func (e *StorageExecutor) apocExpansionFromArguments(ctx context.Context, args []interface{}, procedure apocPathProcedure) (*apocExpansion, error) {
 	x := newApocExpansion(procedure.uniqueness)
 	if len(args) > 0 {
-		starts, err := e.apocNodes("the start node", args[0])
+		starts, err := e.apocNodes(ctx, "the start node", args[0])
 		if err != nil {
 			return nil, err
 		}
@@ -666,7 +675,7 @@ func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedu
 	if len(args) > 1 && args[1] != nil {
 		config, ok := args[1].(map[string]interface{})
 		if !ok {
-			return nil, localizedError(localization.CypherCoreApocPathConfigNotMap(neo4jProvidedValue(args[1])), nil)
+			return nil, localizedError(localization.CypherCoreApocPathConfigNotMap(neo4jProvidedValue(valueWalk(ctx), args[1])), nil)
 		}
 		// These take an integer minLevel of 0 or 1 only: 1.0 and '1' fail.
 		if value, given := config["minLevel"]; given && procedure.oneVisitPerNode {
@@ -674,7 +683,7 @@ func (e *StorageExecutor) apocExpansionFromArguments(args []interface{}, procedu
 				return nil, localizedError(localization.CypherCoreApocPathMinLevel(procedure.name), nil)
 			}
 		}
-		if err := x.configure(e, config, procedure.configurable); err != nil {
+		if err := x.configure(ctx, e, config, procedure.configurable); err != nil {
 			return nil, err
 		}
 	}
@@ -687,8 +696,13 @@ func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, ro
 		return nil, err
 	}
 	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(ends))}
-	for _, end := range ends {
-		result.Rows = append(result.Rows, row(end))
+	for batch, batchErr := range materializedBatches(ctx, len(ends)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, end := range ends[batch.start:batch.end] {
+			result.Rows = append(result.Rows, row(end))
+		}
 	}
 	if len(result.Rows) == 0 && x.optional {
 		nulls := make([]interface{}, len(columns))
@@ -700,7 +714,7 @@ func (e *StorageExecutor) apocPathRows(ctx context.Context, x *apocExpansion, ro
 // callApocPathExpandConfig implements apoc.path.expandConfig(start, config)
 // :: (path).
 func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathExpandConfigProcedure)
+	x, err := e.apocExpansionFromArguments(ctx, args, apocPathExpandConfigProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -721,7 +735,7 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 	if len(args) > 0 {
 		start[0] = args[0]
 	}
-	x, err := e.apocExpansionFromArguments(start, apocPathExpandProcedure)
+	x, err := e.apocExpansionFromArguments(ctx, start, apocPathExpandProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -731,7 +745,7 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 // callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
 // config) :: (node).
 func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphNodesProcedure)
+	x, err := e.apocExpansionFromArguments(ctx, args, apocPathSubgraphNodesProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +755,7 @@ func (e *StorageExecutor) callApocPathSubgraphNodes(ctx context.Context, args []
 // callApocPathSpanningTree implements apoc.path.spanningTree(start, config)
 // :: (path): a path from the start to every node reached once.
 func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathSpanningTreeProcedure)
+	x, err := e.apocExpansionFromArguments(ctx, args, apocPathSpanningTreeProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +766,8 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 // (nodes, relationships): the nodes subgraphNodes returns and every
 // relationship between two of them.
 func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure)
+	work := materializedRowCheckpoint{ctx: ctx}
+	x, err := e.apocExpansionFromArguments(ctx, args, apocPathSubgraphAllProcedure)
 	if err != nil {
 		return nil, err
 	}
@@ -762,17 +777,25 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	}
 	nodes := make([]interface{}, 0, len(ends))
 	members := make(map[storage.NodeID]bool, len(ends))
-	for _, end := range ends {
-		node := end.node
-		if !members[node.ID] {
-			members[node.ID] = true
-			nodes = append(nodes, node)
+	for batch, batchErr := range materializedBatches(ctx, len(ends)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, end := range ends[batch.start:batch.end] {
+			node := end.node
+			if !members[node.ID] {
+				members[node.ID] = true
+				nodes = append(nodes, node)
+			}
 		}
 	}
 	relationships := make([]interface{}, 0)
 	for _, value := range nodes {
 		edges, _ := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
 		for _, edge := range edges {
+			if work.due() && work.canceled() {
+				return nil, ctx.Err()
+			}
 			if members[edge.EndNode] {
 				relationships = append(relationships, edge)
 			}

@@ -352,7 +352,7 @@ func (r *memoryRetention) owned(rows []pipelineRow) []pipelineRow {
 // LIMIT reslice, and WHERE filters in place, so the array they came in still
 // holds the rows dropped, which would stay live past their charge. Either
 // way they are declared owned. false: the charge went over a limit.
-func (r *memoryRetention) keep(rows []pipelineRow, reserved int) ([]pipelineRow, bool) {
+func (r *memoryRetention) keep(ctx context.Context, rows []pipelineRow, reserved int) ([]pipelineRow, bool) {
 	if r == nil || r.account.scope == nil {
 		return rows, true
 	}
@@ -363,7 +363,11 @@ func (r *memoryRetention) keep(rows []pipelineRow, reserved int) ([]pipelineRow,
 				return nil, false
 			}
 		}
-		rows = append(make([]pipelineRow, 0, len(rows)), rows...)
+		// A canceled copy keeps the rows: the statement fails with the
+		// cancellation it recorded, not as over a limit.
+		if owned, err := appendPopulation(ctx, make([]pipelineRow, 0, len(rows)), rows); err == nil {
+			rows = owned
+		}
 	}
 	return r.owned(rows), true
 }

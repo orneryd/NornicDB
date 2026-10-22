@@ -1277,7 +1277,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 		}
 	}
 	budget := expressionBudgetOf(ctx)
-	result, err := runReduceForm(&budget, form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	result, err := runReduceForm(ctx, &budget, form, acc, items, evaluate(form.step), evaluate(form.predicate))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

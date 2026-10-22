@@ -257,32 +257,51 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 		return e.pipelineApplySelectedPathMatch(ctx, rows, m, optional)
 	}
 	out := make([]pipelineRow, 0, len(rows))
-	for _, row := range rows {
-		bases, err := e.shortestPathBases(ctx, m, row)
-		if err != nil {
-			return nil, err
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		var pairs []pipelineRow
-		for _, base := range bases {
-			found, err := e.shortestPathEndpointPairs(ctx, m, base)
+		for _, row := range rows[batch.start:batch.end] {
+			bases, err := e.shortestPathBases(ctx, m, row)
 			if err != nil {
 				return nil, err
 			}
-			pairs = append(pairs, found...)
-		}
-		found := 0
-		for _, pair := range pairs {
-			start, _ := pair[m.startVariable].(*storage.Node)
-			end, _ := pair[m.endVariable].(*storage.Node)
-			paths, err := e.shortestPathsBetween(ctx, m, start, end, pair)
-			if err != nil {
-				return nil, err
+			var pairs []pipelineRow
+			for innerBatch, innerErr := range materializedBatches(ctx, len(bases)) {
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				for _, base := range bases[innerBatch.start:innerBatch.end] {
+					found, err := e.shortestPathEndpointPairs(ctx, m, base)
+					if err != nil {
+						return nil, err
+					}
+					if pairs, err = appendPopulation(ctx, pairs, found); err != nil {
+						return nil, err
+					}
+				}
 			}
-			out = append(out, paths...)
-			found += len(paths)
-		}
-		if optional && found == 0 {
-			out = append(out, m.unmatchedRow(row))
+			found := 0
+			for innerBatch, innerErr := range materializedBatches(ctx, len(pairs)) {
+				if innerErr != nil {
+					return nil, innerErr
+				}
+				for _, pair := range pairs[innerBatch.start:innerBatch.end] {
+					start, _ := pair[m.startVariable].(*storage.Node)
+					end, _ := pair[m.endVariable].(*storage.Node)
+					paths, err := e.shortestPathsBetween(ctx, m, start, end, pair)
+					if err != nil {
+						return nil, err
+					}
+					if out, err = appendPopulation(ctx, out, paths); err != nil {
+						return nil, err
+					}
+					found += len(paths)
+				}
+			}
+			if optional && found == 0 {
+				out = append(out, m.unmatchedRow(row))
+			}
 		}
 	}
 	return out, nil
@@ -294,12 +313,19 @@ func (e *StorageExecutor) shortestPathBases(ctx context.Context, m *shortestPath
 	bases := []pipelineRow{row}
 	for _, part := range m.others {
 		var next []pipelineRow
-		for _, base := range bases {
-			matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
-			if err != nil {
-				return nil, err
+		for batch, batchErr := range materializedBatches(ctx, len(bases)) {
+			if batchErr != nil {
+				return nil, batchErr
 			}
-			next = append(next, matched...)
+			for _, base := range bases[batch.start:batch.end] {
+				matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
+				if err != nil {
+					return nil, err
+				}
+				if next, err = appendPopulation(ctx, next, matched); err != nil {
+					return nil, err
+				}
+			}
 		}
 		bases = next
 	}

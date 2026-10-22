@@ -91,7 +91,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		if name == "apoc.rel.type" {
 			builtin = "type"
 		}
-		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, cypherfn.Context{Eval: func(string) (interface{}, error) { return value, nil }, Storage: e.storage, Database: e.executionDatabaseName(ctx)})
+		v, _, err := cypherfn.EvaluateFunction(builtin, []string{"value"}, cypherfn.Context{Statement: ctx, Eval: func(string) (interface{}, error) { return value, nil }, Storage: e.storage, Database: e.executionDatabaseName(ctx)})
 		if err != nil {
 			err = functionEvaluationError(err)
 		}
@@ -115,7 +115,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		v, err := e.nativeAPOCPath(name, args)
 		return v, true, err
 	case "apoc.temporal.format":
-		v, err := nativeAPOCTemporalFormat(args)
+		v, err := nativeAPOCTemporalFormat(ctx, args)
 		return v, true, err
 	}
 	return nil, false, nil

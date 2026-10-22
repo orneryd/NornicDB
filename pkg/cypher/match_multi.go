@@ -149,80 +149,96 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 		}
 	}
 
-	for idx, existing := range existingBindings {
-		var existingRels relationshipBinding
-		if idx < len(existingRelBindings) {
-			existingRels = existingRelBindings[idx]
+	for batch, batchErr := range materializedBatches(ctx, len(existingBindings)) {
+		if batchErr != nil {
+			return nil, nil
 		}
+		for idxOffset, existing := range existingBindings[batch.start:batch.end] {
+			idx := batch.start + idxOffset
+			var existingRels relationshipBinding
+			if idx < len(existingRelBindings) {
+				existingRels = existingRelBindings[idx]
+			}
 
-		// Check for relationship pattern
-		if isRelationshipPattern {
-			// Check if any bound variables are referenced
-			boundStartNode := existing[matches.StartNode.variable]
-			boundEndNode := existing[matches.EndNode.variable]
+			// Check for relationship pattern
+			if isRelationshipPattern {
+				// Check if any bound variables are referenced
+				boundStartNode := existing[matches.StartNode.variable]
+				boundEndNode := existing[matches.EndNode.variable]
 
-			var paths []PathResult
-			if boundStartNode != nil {
-				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
+				var paths []PathResult
+				if boundStartNode != nil {
+					if matches.IsChained && len(matches.Segments) > 1 {
+						paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{boundStartNode})
+					} else {
+						paths = e.traverseFromNode(ctx, boundStartNode, matches)
+					}
 				} else {
-					paths = e.traverseFromNode(ctx, boundStartNode, matches)
+					paths = e.traverseGraph(ctx, matches)
+				}
+				for innerBatch, innerErr := range materializedBatches(ctx, len(paths)) {
+					if innerErr != nil {
+						return nil, nil
+					}
+					for _, path := range paths[innerBatch.start:innerBatch.end] {
+						if len(path.Nodes) == 0 {
+							continue
+						}
+						startNode := path.Nodes[0]
+						endNode := path.Nodes[len(path.Nodes)-1]
+
+						// Check if path matches any bound variables
+						startMatches := boundStartNode == nil || startNode.ID == boundStartNode.ID
+						endMatches := boundEndNode == nil || endNode.ID == boundEndNode.ID
+
+						if startMatches && endMatches {
+							pathContext := e.buildPathContext(ctx, path, matches)
+							b, ok := mergeNodeBindingsChecked(existing, pathContext.nodes)
+							if !ok {
+								continue
+							}
+							mergedRels, ok := mergeRelationshipBindingsChecked(existingRels, relationshipBindingsFromPathContext(pathContext))
+							if !ok {
+								continue
+							}
+							newBindings = append(newBindings, b)
+							// Carry forward any relationship bound by an earlier
+							// clause plus the relationship variable (if any) bound
+							// by this clause's pattern, rejecting rows that would
+							// rebind an already-bound relationship variable to a
+							// different edge.
+							newRelBindings = append(newRelBindings, mergedRels)
+						}
+					}
 				}
 			} else {
-				paths = e.traverseGraph(ctx, matches)
-			}
-			for _, path := range paths {
-				if len(path.Nodes) == 0 {
+				// Simple node pattern
+				nodePattern := e.parseNodePattern(ctx, pattern)
+
+				// Check if variable is already bound
+				if boundNode := existing[nodePattern.variable]; boundNode != nil {
+					// Variable is bound, just propagate
+					newBindings = append(newBindings, existing)
+					newRelBindings = append(newRelBindings, existingRels)
 					continue
 				}
-				startNode := path.Nodes[0]
-				endNode := path.Nodes[len(path.Nodes)-1]
 
-				// Check if path matches any bound variables
-				startMatches := boundStartNode == nil || startNode.ID == boundStartNode.ID
-				endMatches := boundEndNode == nil || endNode.ID == boundEndNode.ID
+				nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
 
-				if startMatches && endMatches {
-					pathContext := e.buildPathContext(path, matches)
-					b, ok := mergeNodeBindingsChecked(existing, pathContext.nodes)
-					if !ok {
-						continue
+				for innerBatch, innerErr := range materializedBatches(ctx, len(nodes)) {
+					if innerErr != nil {
+						return nil, nil
 					}
-					mergedRels, ok := mergeRelationshipBindingsChecked(existingRels, relationshipBindingsFromPathContext(pathContext))
-					if !ok {
-						continue
+					for _, node := range nodes[innerBatch.start:innerBatch.end] {
+						b := make(binding)
+						for k, v := range existing {
+							b[k] = v
+						}
+						b[nodePattern.variable] = node
+						newBindings = append(newBindings, b)
+						newRelBindings = append(newRelBindings, existingRels)
 					}
-					newBindings = append(newBindings, b)
-					// Carry forward any relationship bound by an earlier
-					// clause plus the relationship variable (if any) bound
-					// by this clause's pattern, rejecting rows that would
-					// rebind an already-bound relationship variable to a
-					// different edge.
-					newRelBindings = append(newRelBindings, mergedRels)
 				}
-			}
-		} else {
-			// Simple node pattern
-			nodePattern := e.parseNodePattern(ctx, pattern)
-
-			// Check if variable is already bound
-			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				// Variable is bound, just propagate
-				newBindings = append(newBindings, existing)
-				newRelBindings = append(newRelBindings, existingRels)
-				continue
-			}
-
-			nodes, _ := e.loadPatternNodes(ctx, nodePattern.labels, nodePattern.properties)
-
-			for _, node := range nodes {
-				b := make(binding)
-				for k, v := range existing {
-					b[k] = v
-				}
-				b[nodePattern.variable] = node
-				newBindings = append(newBindings, b)
-				newRelBindings = append(newRelBindings, existingRels)
 			}
 		}
 	}
@@ -572,11 +588,9 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	limit int,
 	projection []string,
 ) ([]*storage.Node, error) {
-	capacity := 0
-	if limit > 0 {
-		capacity = limit
-	}
-	collected := make([]*storage.Node, 0, capacity)
+	// LIMIT is the client's bound, not the population's: the scan grows the
+	// list from a bounded hint as it yields nodes.
+	collected := make([]*storage.Node, 0, util.SafePreallocCap(limit, rowCancellationInterval))
 	if err := e.visitNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, projection, &collected, nil); err != nil {
 		return nil, err
 	}
@@ -603,12 +617,17 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
 	hideSystemNodes := shouldHideSystemNodes(store)
+	scan := newStorageScan(ctx)
+	defer scan.close()
 	visited := 0
 	var whereFilter FilterFunc
 	if strings.TrimSpace(whereClause) != "" {
 		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
 	}
 	collect := func(node *storage.Node) error {
+		if err := scan.observe(); err != nil {
+			return err
+		}
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
@@ -644,10 +663,11 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// A materialized fallback's nodes go to visit as a list.
 	visitAll := func(nodes []*storage.Node) error {
 		if visit == nil {
-			*collected = append(*collected, nodes...)
-			return nil
+			var err error
+			*collected, err = appendPopulation(ctx, *collected, nodes)
+			return err
 		}
-		return visitNodeList(nodes, visit)
+		return visitNodeList(ctx, nodes, visit)
 	}
 
 	// A label-indexed stream is the primary physical scan for every labelled
@@ -656,7 +676,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
-			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
+			err := streamNodesByLabelProjected(scan, reader, labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return nil
 			}
@@ -672,29 +692,35 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			return err
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
-		for _, id := range ids {
-			node, getErr := e.getQueryNode(store, id)
-			if getErr != nil {
-				return getErr
+	population:
+		for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+			if batchErr != nil {
+				return batchErr
 			}
-			if node == nil {
-				continue
-			}
-			if hideSystemNodes && isSystemNode(node) {
-				continue
-			}
-			if hasViewport && canCheckViewport {
-				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-				if err != nil {
-					return err
+			for _, id := range ids[batch.start:batch.end] {
+				node, getErr := e.getQueryNode(store, id)
+				if getErr != nil {
+					return getErr
 				}
-				if !visible {
+				if node == nil {
 					continue
 				}
-			}
-			filtered = append(filtered, node)
-			if len(filtered) >= limit {
-				break
+				if hideSystemNodes && isSystemNode(node) {
+					continue
+				}
+				if hasViewport && canCheckViewport {
+					visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+					if err != nil {
+						return err
+					}
+					if !visible {
+						continue
+					}
+				}
+				filtered = append(filtered, node)
+				if len(filtered) >= limit {
+					break population
+				}
 			}
 		}
 		return visitAll(filtered)
@@ -730,7 +756,10 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		matches := func(props map[string]interface{}) bool {
 			return nodePropertiesMatch(&storage.Node{Properties: props}, required)
 		}
-		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
+		err := streamNodesWithOptions(scan, store, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
+			if err := scan.observe(); err != nil {
+				return err
+			}
 			if projected == nil || !matches(projected.Properties) {
 				return nil
 			}
@@ -755,7 +784,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// LIMIT additionally stops storage iteration as soon as enough qualifying
 	// nodes have been produced.
 	if streamer, ok := store.(storage.StreamingEngine); ok {
-		err = streamer.StreamNodes(ctx, collect)
+		err = streamNodes(scan, streamer, collect)
 		if err == storage.ErrIterationStopped {
 			err = nil
 		}
@@ -774,17 +803,22 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Filter out system nodes (labels starting with _)
 	filteredNodes := make([]*storage.Node, 0, len(nodes))
-	for _, node := range nodes {
-		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		if !hideSystemNodes || !isSystemNode(node) {
-			filteredNodes = append(filteredNodes, node)
+		for _, node := range nodes[batch.start:batch.end] {
+			if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
+				continue
+			}
+			if !hideSystemNodes || !isSystemNode(node) {
+				filteredNodes = append(filteredNodes, node)
+			}
 		}
 	}
 	nodes = filteredNodes
 	if hasViewport && canCheckViewport {
-		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
+		nodes, err = filterNodesByTemporalViewport(ctx, nodes, viewport, checker)
 		if err != nil {
 			return err
 		}
@@ -792,10 +826,14 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Apply property filters
 	if len(properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, properties)
+		if nodes, err = e.filterNodesByProperties(ctx, nodes, properties); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(whereClause) != "" {
-		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
+		if nodes, err = e.filterNodes(ctx, nodes, whereVariable, whereClause); err != nil {
+			return err
+		}
 	}
 	if limit > 0 && len(nodes) > limit {
 		nodes = nodes[:limit]
@@ -807,13 +845,18 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 // visitNodeList hands nodes to visit in order. visit returning
 // storage.ErrIterationStopped ends the visit without error; any other error
 // ends it with that error.
-func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error {
-	for _, node := range nodes {
-		if err := visit(node); err != nil {
-			if err == storage.ErrIterationStopped {
-				return nil
+func visitNodeList(ctx context.Context, nodes []*storage.Node, visit func(*storage.Node) error) error {
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, node := range nodes[batch.start:batch.end] {
+			if err := visit(node); err != nil {
+				if err == storage.ErrIterationStopped {
+					return nil
+				}
+				return err
 			}
-			return err
 		}
 	}
 	return nil

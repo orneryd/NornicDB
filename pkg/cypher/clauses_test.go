@@ -1022,7 +1022,7 @@ func TestApocPathConfig(t *testing.T) {
 	}
 
 	x := newApocExpansion("NODE_GLOBAL")
-	if err := x.configure(nil, map[string]interface{}{"maxLevel": int64(5), "minLevel": int64(-3), "limit": int64(-1), "labelFilter": "+A|-B|/C|>D|E"}, true); err != nil {
+	if err := x.configure(context.Background(), nil, map[string]interface{}{"maxLevel": int64(5), "minLevel": int64(-3), "limit": int64(-1), "labelFilter": "+A|-B|/C|>D|E"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if x.maxLevel != 5 || x.minLevel != 0 || x.limit != -1 {

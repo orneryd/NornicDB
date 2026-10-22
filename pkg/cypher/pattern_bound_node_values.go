@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -16,7 +17,7 @@ var patternNodeVariables = newBoundedCache[string, []string](1024, boundedCacheS
 // relationship position bound to another value only matches nothing, as in
 // Neo4j. Ordinary maps remain maps even when their keys resemble metadata;
 // typed graph values and values of no Cypher type retain their own handling.
-func validateBoundPatternNodes(rows []pipelineRow, body string) error {
+func validateBoundPatternNodes(ctx context.Context, rows []pipelineRow, body string) error {
 	if len(rows) == 0 || len(rows) == 1 && len(rows[0]) == 0 {
 		return nil
 	}
@@ -25,11 +26,16 @@ func validateBoundPatternNodes(rows []pipelineRow, body string) error {
 		variables = extractNodeVariables(matchPatternStructure(body))
 		patternNodeVariables.put(body, variables)
 	}
-	for _, row := range rows {
-		for _, variable := range variables {
-			if value, bound := row[variable]; bound {
-				if err := boundPatternNodeValueError(variable, value); err != nil {
-					return err
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for _, variable := range variables {
+				if value, bound := row[variable]; bound {
+					if err := boundPatternNodeValueError(variable, value); err != nil {
+						return err
+					}
 				}
 			}
 		}

@@ -19,7 +19,8 @@ type cypherEntityKey struct {
 // cypherComparableKey normalizes scalars without formatting numbers or
 // copying strings. Containers use structural hashing below. Uncommon scalar
 // values retain the canonical type/value encoding.
-func cypherComparableKey(value interface{}) (interface{}, bool) {
+
+func cypherComparableKey(value interface{}, checkpoint *materializedRowCheckpoint) (interface{}, bool) {
 	switch value := value.(type) {
 	case nil, string, bool, int64:
 		return value, true
@@ -37,18 +38,18 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 		if value == nil {
 			return nil, true
 		}
-		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		return cypherEncodedKey(cypherEquivalenceKeyWithCheckpoint(value, checkpoint)), true
 	case storage.RemotePathValue:
 		if value == nil {
 			return nil, true
 		}
-		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		return cypherEncodedKey(cypherEquivalenceKeyWithCheckpoint(value, checkpoint)), true
 	case map[string]interface{}:
 		// A genuine path wrapper keys by its ordered entities, as a native
 		// path does; any other map, including a forged _pathResult, is
 		// structural.
 		if cypherValueKindOf(value) == valueKindPath {
-			return cypherEncodedKey(cypherEquivalenceKey(value)), true
+			return cypherEncodedKey(cypherEquivalenceKeyWithCheckpoint(value, checkpoint)), true
 		}
 		return nil, false
 	case []byte, []interface{}:
@@ -80,7 +81,7 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 		return number, true
 	}
 	if cypherValueKindOf(value) == valueKindPath {
-		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		return cypherEncodedKey(cypherEquivalenceKeyWithCheckpoint(value, checkpoint)), true
 	}
 	if _, list := cypherListValue(value); list {
 		return nil, false
@@ -88,7 +89,7 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 	if _, fields := toStringAnyMap(value); fields {
 		return nil, false
 	}
-	return cypherEncodedKey(cypherEquivalenceKey(value)), true
+	return cypherEncodedKey(cypherEquivalenceKeyWithCheckpoint(value, checkpoint)), true
 }
 
 var cypherTupleHashSeed = maphash.MakeSeed()
@@ -101,7 +102,14 @@ func mixCypherHash(hash, value uint64) uint64 {
 // combined commutatively, independently of insertion/iteration order. A hash
 // only selects a bucket; cypherValuesEquivalent checks collisions.
 func cypherEquivalenceHash(value interface{}) uint64 {
-	if key, scalar := cypherComparableKey(value); scalar {
+	return cypherEquivalenceHashWithCheckpoint(value, nil)
+}
+
+func cypherEquivalenceHashWithCheckpoint(value interface{}, checkpoint *materializedRowCheckpoint) uint64 {
+	if checkpoint != nil && checkpoint.due() && checkpoint.canceled() {
+		panic(rowKeyCancellation{})
+	}
+	if key, scalar := cypherComparableKey(value, checkpoint); scalar {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
 	if value, bytes := value.([]byte); bytes {
@@ -110,23 +118,27 @@ func cypherEquivalenceHash(value interface{}) uint64 {
 	if list, ok := cypherListValue(value); ok {
 		hash := mixCypherHash('L', uint64(len(list)))
 		for _, item := range list {
-			hash = mixCypherHash(hash, cypherEquivalenceHash(item))
+			hash = mixCypherHash(hash, cypherEquivalenceHashWithCheckpoint(item, checkpoint))
 		}
 		return hash
 	}
 	fields, _ := toStringAnyMap(value)
 	hash := mixCypherHash('M', uint64(len(fields)))
 	for name, item := range fields {
-		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherEquivalenceHash(item))
+		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherEquivalenceHashWithCheckpoint(item, checkpoint))
 	}
 	return hash
 }
 
 // cypherValuesEquivalent is DISTINCT's structural equality: null equals
 // null, numbers compare exactly across types, and each NaN remains separate.
-func cypherValuesEquivalent(left, right interface{}) bool {
-	leftKey, leftScalar := cypherComparableKey(left)
-	rightKey, rightScalar := cypherComparableKey(right)
+
+func cypherValuesEquivalent(left, right interface{}, checkpoint *materializedRowCheckpoint) bool {
+	if checkpoint != nil && checkpoint.due() && checkpoint.canceled() {
+		panic(rowKeyCancellation{})
+	}
+	leftKey, leftScalar := cypherComparableKey(left, checkpoint)
+	rightKey, rightScalar := cypherComparableKey(right, checkpoint)
 	if leftScalar || rightScalar {
 		return leftScalar && rightScalar && leftKey == rightKey
 	}
@@ -142,7 +154,7 @@ func cypherValuesEquivalent(left, right interface{}) bool {
 			return false
 		}
 		for i, item := range leftList {
-			if !cypherValuesEquivalent(item, rightList[i]) {
+			if !cypherValuesEquivalent(item, rightList[i], checkpoint) {
 				return false
 			}
 		}
@@ -155,7 +167,7 @@ func cypherValuesEquivalent(left, right interface{}) bool {
 	}
 	for name, item := range leftMap {
 		other, exists := rightMap[name]
-		if !exists || !cypherValuesEquivalent(item, other) {
+		if !exists || !cypherValuesEquivalent(item, other, checkpoint) {
 			return false
 		}
 	}
@@ -177,9 +189,13 @@ type cypherValueIndex struct {
 }
 
 func (index *cypherValueIndex) add(value interface{}) (position int, existed bool) {
-	key, scalar := cypherComparableKey(value)
+	return index.addWithCheckpoint(value, nil)
+}
+
+func (index *cypherValueIndex) addWithCheckpoint(value interface{}, checkpoint *materializedRowCheckpoint) (position int, existed bool) {
+	key, scalar := cypherComparableKey(value, checkpoint)
 	if !scalar {
-		return index.addTupleValues(cypherEquivalenceHash(value), []interface{}{value})
+		return index.addTupleValuesWithCheckpoint(cypherEquivalenceHashWithCheckpoint(value, checkpoint), []interface{}{value}, checkpoint)
 	}
 	return index.addComparable(key)
 }
@@ -198,27 +214,38 @@ func (index *cypherValueIndex) addComparable(key interface{}) (position int, exi
 }
 
 func (index *cypherValueIndex) addTuple(values []interface{}) (int, bool) {
+	return index.addTupleWithCheckpoint(values, nil)
+}
+
+func (index *cypherValueIndex) addTupleWithCheckpoint(values []interface{}, checkpoint *materializedRowCheckpoint) (int, bool) {
 	if len(values) == 0 {
 		return index.addComparable(cypherEmptyTupleKey{})
 	}
 	if len(values) == 1 {
-		return index.add(values[0])
+		return index.addWithCheckpoint(values[0], checkpoint)
 	}
 	hash := uint64(len(values))
 	for _, value := range values {
-		hash = mixCypherHash(hash, cypherEquivalenceHash(value))
+		hash = mixCypherHash(hash, cypherEquivalenceHashWithCheckpoint(value, checkpoint))
 	}
-	return index.addTupleValues(hash, values)
+	return index.addTupleValuesWithCheckpoint(hash, values, checkpoint)
 }
 
 func (index *cypherValueIndex) addTupleValues(hash uint64, values []interface{}) (int, bool) {
+	return index.addTupleValuesWithCheckpoint(hash, values, nil)
+}
+
+func (index *cypherValueIndex) addTupleValuesWithCheckpoint(hash uint64, values []interface{}, checkpoint *materializedRowCheckpoint) (int, bool) {
 	for _, candidate := range index.tuples[hash] {
+		if checkpoint != nil && checkpoint.due() && checkpoint.canceled() {
+			panic(rowKeyCancellation{})
+		}
 		if len(candidate.values) != len(values) {
 			continue
 		}
 		equal := true
 		for i, value := range values {
-			if !cypherValuesEquivalent(value, candidate.values[i]) {
+			if !cypherValuesEquivalent(value, candidate.values[i], checkpoint) {
 				equal = false
 				break
 			}

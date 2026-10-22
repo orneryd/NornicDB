@@ -30,7 +30,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	virtualNodes := make([]*storage.Node, 0, len(labels))
 	virtualByLabel := make(map[string]*storage.Node, len(labels))
 	for _, label := range sortedStringSet(labels) {
-		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label)
+		indexes, constraints := schemaVisualizationLabelMetadata(ctx, store.GetSchema(), label)
 		node := &storage.Node{
 			ID:         storage.NodeID("-" + strconv.Itoa(len(virtualNodes)+1)),
 			Labels:     []string{label},
@@ -79,7 +79,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}, nil
 }
 
-func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label string) ([]string, []string) {
+func schemaVisualizationLabelMetadata(ctx context.Context, schema *storage.SchemaManager, label string) ([]string, []string) {
 	indexes := []string{}
 	constraints := []string{}
 	ownedIndexes := make(map[string]bool)
@@ -113,7 +113,7 @@ func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label strin
 			indexes = append(indexes, strings.Join(properties, ","))
 		}
 	}
-	slices.Sort(indexes)
-	slices.Sort(constraints)
+	_ = sortStrings(ctx, indexes)
+	_ = sortStrings(ctx, constraints)
 	return indexes, constraints
 }

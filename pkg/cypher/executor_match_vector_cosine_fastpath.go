@@ -121,7 +121,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	if !hasIndex {
 		return nil, false
 	}
@@ -156,33 +156,39 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	if preWhereClause != "" && preWhereNotNullProp == "" {
 		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
 	}
-	for _, hit := range nodeScores {
-		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
-			continue
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(nodeScores)) {
+		if batchErr != nil {
+			return nil, false
 		}
-		if preWhereClause != "" {
-			if preWhereNotNullProp != "" {
-				if preWhereNotNullProp != vectorProp {
-					if value, exists := hit.node.Properties[preWhereNotNullProp]; !exists || value == nil {
-						continue
+		for _, hit := range nodeScores[batch.start:batch.end] {
+			if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
+				continue
+			}
+			if preWhereClause != "" {
+				if preWhereNotNullProp != "" {
+					if preWhereNotNullProp != vectorProp {
+						if value, exists := hit.node.Properties[preWhereNotNullProp]; !exists || value == nil {
+							continue
+						}
 					}
+				} else if !preWhereFilter(hit.node) {
+					continue
 				}
-			} else if !preWhereFilter(hit.node) {
-				continue
 			}
-		}
-		nodeCtx[varName] = hit.node
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if i == cosineIdx {
-				row[i] = hit.score
-				continue
+			nodeCtx[varName] = hit.node
+			row := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				if i == cosineIdx {
+					row[i] = hit.score
+					continue
+				}
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, nil)
 			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, nil)
-		}
-		rows = append(rows, row)
-		if len(rows) >= limit {
-			break
+			rows = append(rows, row)
+			if len(rows) >= limit {
+				break population
+			}
 		}
 	}
 
@@ -356,7 +362,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if !projectionOK {
 		projectedProps = nil
 	}
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), label, vectorProp, storage.ConstraintEntityNode)
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
 		if preWhereClause != "" && preWhereNotNullProp == "" {
@@ -384,38 +390,44 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if preWhereClause != "" && preWhereNotNullProp == "" {
 		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
 	}
-	for _, hit := range nodeScores {
-		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
-			continue
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(nodeScores)) {
+		if batchErr != nil {
+			return nil, false
 		}
-		if preWhereClause != "" {
-			if preWhereNotNullProp != "" {
-				if preWhereNotNullProp == vectorProp {
-					// The vector index only returns nodes that have an indexed
-					// value for vectorProp, so this predicate does not require
-					// materializing the vector property itself.
-				} else if val, exists := hit.node.Properties[preWhereNotNullProp]; !exists || val == nil {
+		for _, hit := range nodeScores[batch.start:batch.end] {
+			if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
+				continue
+			}
+			if preWhereClause != "" {
+				if preWhereNotNullProp != "" {
+					if preWhereNotNullProp == vectorProp {
+						// The vector index only returns nodes that have an indexed
+						// value for vectorProp, so this predicate does not require
+						// materializing the vector property itself.
+					} else if val, exists := hit.node.Properties[preWhereNotNullProp]; !exists || val == nil {
+						continue
+					}
+				} else if !preWhereFilter(hit.node) {
 					continue
 				}
-			} else if !preWhereFilter(hit.node) {
+			}
+			if scoreOp != "" && !compareScore(hit.score, scoreOp, scoreCmp) {
 				continue
 			}
-		}
-		if scoreOp != "" && !compareScore(hit.score, scoreOp, scoreCmp) {
-			continue
-		}
-		nodeCtx[varName] = hit.node
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if scoreExprIsAlias[i] {
-				row[i] = hit.score
-				continue
+			nodeCtx[varName] = hit.node
+			row := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				if scoreExprIsAlias[i] {
+					row[i] = hit.score
+					continue
+				}
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, nil)
 			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, nil)
-		}
-		rows = append(rows, row)
-		if len(rows) >= limit {
-			break
+			rows = append(rows, row)
+			if len(rows) >= limit {
+				break population
+			}
 		}
 	}
 
@@ -448,11 +460,11 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 	}
 	candidates := vectorNodeScoreHeap{orderDesc: orderDesc}
 	heap.Init(&candidates)
-	err := reader.StreamNodesByLabelProjected(label, projectedProps, func(node *storage.Node) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	err := streamNodesByLabelProjected(scan, reader, label, projectedProps, func(node *storage.Node) error {
+		if err := scan.observe(); err != nil {
+			return err
 		}
 		if !filter(node) {
 			return nil
@@ -471,7 +483,9 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 		return nil, false
 	}
 	out := candidates.scores
-	sort.Slice(out, func(i, j int) bool { return vectorNodeScoreBetter(out[i], out[j], orderDesc) })
+	if err := sortPopulation(ctx, out, func(i, j int) bool { return vectorNodeScoreBetter(out[i], out[j], orderDesc) }); err != nil {
+		return nil, false
+	}
 	return out, true
 }
 
@@ -549,7 +563,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
 	if !hasIndex {
 		return nil, false
 	}
@@ -563,33 +577,39 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
 	nodeCtx := make(map[string]*storage.Node, 2)
 	edgeCtx := make(map[string]*storage.Edge, 1)
-	for _, hit := range edgeScores {
-		edge := hit.edge
-		if edge == nil && hit.edgeID != "" {
-			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
-			if err != nil || edge == nil {
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(edgeScores)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		for _, hit := range edgeScores[batch.start:batch.end] {
+			edge := hit.edge
+			if edge == nil && hit.edgeID != "" {
+				var err error
+				edge, err = e.storage.GetEdge(hit.edgeID)
+				if err != nil || edge == nil {
+					continue
+				}
+			}
+			if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
 				continue
 			}
-		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
-			continue
-		}
-		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
-			continue
-		}
+			if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
+				continue
+			}
 
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if i == cosineIdx {
-				row[i] = hit.score
-				continue
+			row := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				if i == cosineIdx {
+					row[i] = hit.score
+					continue
+				}
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, edgeCtx)
 			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, edgeCtx)
-		}
-		rows = append(rows, row)
-		if len(rows) >= limit {
-			break
+			rows = append(rows, row)
+			if len(rows) >= limit {
+				break population
+			}
 		}
 	}
 
@@ -702,7 +722,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexName(ctx, e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
 	if !hasIndex {
 		return nil, false
 	}
@@ -720,36 +740,42 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	for i := range returnItems {
 		scoreExprIsAlias[i] = strings.EqualFold(strings.TrimSpace(returnItems[i].expr), scoreRef)
 	}
-	for _, hit := range edgeScores {
-		edge := hit.edge
-		if edge == nil && hit.edgeID != "" {
-			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
-			if err != nil || edge == nil {
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(edgeScores)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		for _, hit := range edgeScores[batch.start:batch.end] {
+			edge := hit.edge
+			if edge == nil && hit.edgeID != "" {
+				var err error
+				edge, err = e.storage.GetEdge(hit.edgeID)
+				if err != nil || edge == nil {
+					continue
+				}
+			}
+			if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
 				continue
 			}
-		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
-			continue
-		}
-		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
-			continue
-		}
-		if scoreOp != "" && !compareScore(hit.score, scoreOp, scoreCmp) {
-			continue
-		}
+			if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
+				continue
+			}
+			if scoreOp != "" && !compareScore(hit.score, scoreOp, scoreCmp) {
+				continue
+			}
 
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if scoreExprIsAlias[i] {
-				row[i] = hit.score
-				continue
+			row := make([]interface{}, len(returnItems))
+			for i, item := range returnItems {
+				if scoreExprIsAlias[i] {
+					row[i] = hit.score
+					continue
+				}
+				row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, edgeCtx)
 			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, edgeCtx)
-		}
-		rows = append(rows, row)
-		if len(rows) >= limit {
-			break
+			rows = append(rows, row)
+			if len(rows) >= limit {
+				break population
+			}
 		}
 	}
 
@@ -868,18 +894,23 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 	}
 
 	out := make([]vectorNodeScore, 0, len(hits))
-	for _, hit := range hits {
-		node, err := e.getNodeForVectorHit(storage.NodeID(hit.ID), projectedProps)
-		if err != nil || node == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(hits)) {
+		if batchErr != nil {
+			return nil, false
 		}
-		// The index's score is on Neo4j's scale; the node's own vector gives
-		// the exact value vector.similarity.* returns for it.
-		score := hit.Score
-		if exact, ok := scoreNodeVectorForFastPath(node, targetProperty, similarityFunc, queryVector); ok {
-			score = exact
+		for _, hit := range hits[batch.start:batch.end] {
+			node, err := e.getNodeForVectorHit(storage.NodeID(hit.ID), projectedProps)
+			if err != nil || node == nil {
+				continue
+			}
+			// The index's score is on Neo4j's scale; the node's own vector gives
+			// the exact value vector.similarity.* returns for it.
+			score := hit.Score
+			if exact, ok := scoreNodeVectorForFastPath(node, targetProperty, similarityFunc, queryVector); ok {
+				score = exact
+			}
+			out = append(out, vectorNodeScore{node: node, score: score})
 		}
-		out = append(out, vectorNodeScore{node: node, score: score})
 	}
 	return out, true
 }
@@ -1052,7 +1083,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 		}
 		out = append(out, vectorNodeScore{node: node, score: score})
 	}
-	sort.Slice(out, func(i, j int) bool {
+	if err := sortPopulation(ctx, out, func(i, j int) bool {
 		if out[i].score == out[j].score {
 			return string(out[i].node.ID) < string(out[j].node.ID)
 		}
@@ -1060,7 +1091,9 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 			return out[i].score > out[j].score
 		}
 		return out[i].score < out[j].score
-	})
+	}); err != nil {
+		return nil, false
+	}
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -1094,7 +1127,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresExactFiltered(ctx context.Context
 		}
 		out = append(out, vectorNodeScore{node: node, score: score})
 	}
-	sort.Slice(out, func(i, j int) bool {
+	if err := sortPopulation(ctx, out, func(i, j int) bool {
 		if out[i].score == out[j].score {
 			return string(out[i].node.ID) < string(out[j].node.ID)
 		}
@@ -1102,7 +1135,9 @@ func (e *StorageExecutor) fetchCosineNodeScoresExactFiltered(ctx context.Context
 			return out[i].score > out[j].score
 		}
 		return out[i].score < out[j].score
-	})
+	}); err != nil {
+		return nil, false
+	}
 	return out, true
 }
 
@@ -1193,8 +1228,13 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 		})
 		if err == nil {
 			out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(hits)))
-			for _, hit := range hits {
-				out = append(out, vectorEdgeScore{edgeID: storage.EdgeID(hit.ID), score: hit.Score})
+			for batch, batchErr := range materializedBatches(ctx, len(hits)) {
+				if batchErr != nil {
+					return nil, false
+				}
+				for _, hit := range hits[batch.start:batch.end] {
+					out = append(out, vectorEdgeScore{edgeID: storage.EdgeID(hit.ID), score: hit.Score})
+				}
 			}
 			return out, true
 		}
@@ -1204,25 +1244,32 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 		return nil, false
 	}
 	out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(edges)))
-	for _, edge := range edges {
-		if targetRelType != "" && edge.Type != targetRelType {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(edges)) {
+		if batchErr != nil {
+			return nil, false
 		}
-		if targetProperty == "" {
-			continue
+		for _, edge := range edges[batch.start:batch.end] {
+			if targetRelType != "" && edge.Type != targetRelType {
+				continue
+			}
+			if targetProperty == "" {
+				continue
+			}
+			score, ok := scoreVectorForFastPath(vec, toFloat32Slice(edge.Properties[targetProperty]), similarityFunc)
+			if !ok {
+				continue
+			}
+			out = append(out, vectorEdgeScore{edge: edge, score: score})
 		}
-		score, ok := scoreVectorForFastPath(vec, toFloat32Slice(edge.Properties[targetProperty]), similarityFunc)
-		if !ok {
-			continue
-		}
-		out = append(out, vectorEdgeScore{edge: edge, score: score})
 	}
-	sort.Slice(out, func(i, j int) bool {
+	if err := sortPopulation(ctx, out, func(i, j int) bool {
 		if orderDesc {
 			return out[i].score > out[j].score
 		}
 		return out[i].score < out[j].score
-	})
+	}); err != nil {
+		return nil, false
+	}
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -1354,7 +1401,7 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 	return limit, true
 }
 
-func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
+func findCosineVectorIndexName(ctx context.Context, schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
 	if schema == nil {
 		return "", false
 	}
@@ -1403,7 +1450,7 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 	if len(matches) == 0 {
 		return "", false
 	}
-	sort.Strings(matches)
+	_ = sortStrings(ctx, matches)
 	return matches[0], true
 }
 

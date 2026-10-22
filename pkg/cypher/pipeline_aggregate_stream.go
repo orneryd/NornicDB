@@ -4,7 +4,6 @@ import (
 	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +76,7 @@ type pipelineAggregateRun struct {
 // validated exactly these rows; validating them again doubled the cost of
 // aggregating projections (#823).
 func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
+	defer recoverRowKeyCancellation()
 	templates := make([]pipelineAggregateProjection, len(projections))
 	memory := memoryScopeFromContext(ctx)
 	validationClauses := make([]string, 0)
@@ -138,6 +138,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			run.valid = false
 			return false
 		}
+		// Keep the traversal counter on this row callback's stack. The row
+		// check above already observed its first boundary. Capturing a
+		// separate counter outside the callback allocates it on the heap.
+		keyCheckpoint := materializedRowCheckpoint{ctx: ctx, index: 1}
 		validated[0] = row
 		for _, clause := range validationClauses {
 			if err := e.validatePipelineProjectionValues(validated, clause, "WITH"); err != nil {
@@ -162,7 +166,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				values = append(values, value)
 			}
 		}
-		position, exists := grouping.addTuple(values)
+		position, exists := grouping.addTupleWithCheckpoint(values, &keyCheckpoint)
 		if !exists {
 			// A group keeps its first row, its key and its states (#1343).
 			if run.memory.reserveGroup(row, values, len(templates)) != nil {
@@ -424,7 +428,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			}
 		}
 	}
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
+	_ = sortPopulation(ctx, ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
 	result := make([]*pipelineAggregateGroup, len(ordered))
 	for index, merged := range ordered {
 		result[index] = merged.group
@@ -551,10 +555,11 @@ func (state *pipelineAggregateState) addInScope(ctx context.Context, executor *S
 		return true
 	}
 	if state.distinct {
+		keyCheckpoint := materializedRowCheckpoint{ctx: ctx}
 		if state.seen == nil {
 			state.seen = &cypherValueIndex{}
 		}
-		if _, exists := state.seen.add(value); exists {
+		if _, exists := state.seen.addWithCheckpoint(value, &keyCheckpoint); exists {
 			return true
 		}
 		// The value counts once: collect's list keeps the same value and

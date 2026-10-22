@@ -115,6 +115,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 		if _, err := e.handleCommit(); err != nil {
 			return nil, err
 		}
+		publishStatementCommit(ctx)
 		return result, nil
 	case "ROLLBACK":
 		return e.handleRollback()
@@ -150,15 +151,21 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	}
 
 	rollbackRequired := false
-	for _, row := range callResult.Rows {
-		nodes, rels := buildRowGraphContext(callResult.Columns, row)
-		shouldRollback, err := e.evaluateConditionExpression(ctx, conditionExpr, nodes, rels)
-		if err != nil {
-			return nil, e.abortTransaction(ctx, err)
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(callResult.Rows)) {
+		if batchErr != nil {
+			return nil, e.abortTransaction(ctx, batchErr)
 		}
-		if shouldRollback {
-			rollbackRequired = true
-			break
+		for _, row := range callResult.Rows[batch.start:batch.end] {
+			nodes, rels := buildRowGraphContext(callResult.Columns, row)
+			shouldRollback, err := e.evaluateConditionExpression(ctx, conditionExpr, nodes, rels)
+			if err != nil {
+				return nil, e.abortTransaction(ctx, err)
+			}
+			if shouldRollback {
+				rollbackRequired = true
+				break population
+			}
 		}
 	}
 	if rollbackRequired {
@@ -173,13 +180,19 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	if _, err := e.handleCommit(); err != nil {
 		return nil, err
 	}
+	publishStatementCommit(ctx)
 	return projected, nil
 }
 
 func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(input.Rows))
-	for _, row := range input.Rows {
-		rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
+	for batch, batchErr := range materializedBatches(ctx, len(input.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, row := range input.Rows[batch.start:batch.end] {
+			rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
+		}
 	}
 	if strings.TrimSpace(returnExpr) == "" {
 		returnExpr = "*"

@@ -422,15 +422,21 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					}
 					return visit(index + 1)
 				}
-				for _, node := range candidates[index] {
-					if !e.pipelineNodeMatchesPattern(node, pattern) {
-						continue
-					}
-					current[pattern.variable] = node
-					accepted := visit(index + 1)
-					delete(current, pattern.variable)
-					if !accepted {
+				for batch, batchErr := range materializedBatches(ctx, len(candidates[index])) {
+					if batchErr != nil {
+						valid = false
 						return false
+					}
+					for _, node := range candidates[index][batch.start:batch.end] {
+						if !e.pipelineNodeMatchesPattern(node, pattern) {
+							continue
+						}
+						current[pattern.variable] = node
+						accepted := visit(index + 1)
+						delete(current, pattern.variable)
+						if !accepted {
+							return false
+						}
 					}
 				}
 				return true
@@ -588,7 +594,14 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		plans = append(plans, plan)
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {
+		// A checkpoint, not a batch iterator: this source is itself an
+		// iterator body, where a nested batch iterator would not inline and
+		// would allocate on every pass.
+		inputs := materializedRowCheckpoint{ctx: ctx, rows: len(rows)}
 		for _, input := range rows {
+			if inputs.due() && inputs.canceled() {
+				return false
+			}
 			values, ok := e.pipelineUnwindValues(ctx, expression, input)
 			if !ok {
 				return false

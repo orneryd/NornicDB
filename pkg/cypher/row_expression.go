@@ -225,7 +225,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 					return nil, false, err
 				}
 				if resolved && input != nil {
-					return nil, false, temporalConstructorError(function, input)
+					return nil, false, temporalConstructorError(nil, function, input)
 				}
 			}
 			return value, true, nil
@@ -300,7 +300,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return int64(path.Length), true, nil
 			}
 			return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
+				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(valueWalk(rowStatementContextOrBackground(values)), value)))
 		case "range":
 			parts := e.splitFunctionArgs(argument)
 			arguments := make([]interface{}, len(parts))
@@ -418,7 +418,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if _, isPath := cypherPathResultOf(value, object, isMap); isPath {
 				return nil, false, invalidFunctionArgument("keys", value)
 			}
-			keys, ok := cypherfn.PropertyKeys(e.queryVisibleValue(value))
+			keys, ok, err := cypherfn.PropertyKeys(rowStatementContextOrBackground(values), e.queryVisibleValue(value))
+			if err != nil {
+				recordExpressionFailure(rowStatementContextOrBackground(values), err)
+				return nil, false, err
+			}
 			if !ok {
 				return nil, false, invalidFunctionArgument("keys", value)
 			}
@@ -1453,7 +1457,10 @@ func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression s
 // (Apply), then the fold, with the plan's local operands evaluated in a
 // local subquery scope.
 func (e *StorageExecutor) evaluateWherePredicatePlan(ctx context.Context, plan *wherePredicatePlan, expression string, values map[string]interface{}) bool {
-	values = rowValuesWithStatementContext(ctx, expression, values)
+	values, contextBound := rowValuesWithStatementContext(ctx, expression, values)
+	if contextBound {
+		defer delete(values, rowStatementContextKey)
+	}
 	position := logicalFoldPosition(plan.logical.kind)
 	value, ok, err := plan.logical.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
 		operand := plan.logical.operands[index]
@@ -1495,7 +1502,10 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 		rowPredicatePrograms.put(expression, program)
 		return program.holds(e, ctx, values)
 	}
-	values = rowValuesWithStatementContext(ctx, expression, values)
+	values, contextBound := rowValuesWithStatementContext(ctx, expression, values)
+	if contextBound {
+		defer delete(values, rowStatementContextKey)
+	}
 	return e.evaluateRowPredicateParts(ctx, expression, values)
 }
 
@@ -1503,32 +1513,34 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 // statement context bound (rowStatementContextKey) when the predicate reads the
 // statement's clock, as evaluateRowExpressionWithContext binds it for a
 // projection: every clock call of one statement then reads one instant
-// (#872). values itself is not modified.
-func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) map[string]interface{} {
+// (#872). The caller removes a newly bound context on return.
+func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) (map[string]interface{}, bool) {
 	if _, bound := values[rowStatementContextKey]; bound {
-		return values
+		return values, false
 	}
 	// A predicate that builds values (range(), reduce, a comprehension)
 	// carries the context too while a memory limit is configured: its
 	// builds count against the limit (#1343).
 	if !rowPredicateNeedsStatementContext(expression) && !(transactionMemoryTracking() && rowContextShapeOf(expression).buildsValues) {
-		return values
+		return values, false
 	}
 	return rowValuesBindingStatementContext(ctx, values)
 }
 
 // rowValuesBindingStatementContext is values with the statement context
-// bound, for a predicate that needs it (rowValuesWithStatementContext).
-func rowValuesBindingStatementContext(ctx context.Context, values map[string]interface{}) map[string]interface{} {
+// bound for this synchronous evaluation. Rows belong to their evaluator; bind
+// the private key in place rather than copying every row. The caller must defer
+// deleting a newly bound key, including on errors or panics. An enclosing
+// evaluation's existing binding is preserved and remains its owner's to remove.
+func rowValuesBindingStatementContext(ctx context.Context, values map[string]interface{}) (map[string]interface{}, bool) {
 	if _, bound := values[rowStatementContextKey]; bound {
-		return values
+		return values, false
 	}
-	extended := make(map[string]interface{}, len(values)+1)
-	for key, value := range values {
-		extended[key] = value
+	if values == nil {
+		values = make(map[string]interface{}, 1)
 	}
-	extended[rowStatementContextKey] = ctx
-	return extended
+	values[rowStatementContextKey] = ctx
+	return values, true
 }
 
 // rowPredicateStatementContextNeeds caches rowPredicateNeedsStatementContext
@@ -1650,7 +1662,11 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 // stands; evaluated is false when the row evaluator doesn't handle the
 // predicate. An error is recorded on ctx and the predicate doesn't hold.
 func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
-	value, evaluated, err := e.evaluateRowValue(expression, rowValuesWithStatementContext(ctx, expression, values))
+	values, contextBound := rowValuesWithStatementContext(ctx, expression, values)
+	if contextBound {
+		defer delete(values, rowStatementContextKey)
+	}
+	value, evaluated, err := e.evaluateRowValue(expression, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true

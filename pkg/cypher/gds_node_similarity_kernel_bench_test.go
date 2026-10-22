@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"testing"
 )
@@ -24,7 +25,7 @@ func BenchmarkNodeSimilarityKernel(b *testing.B) {
 			b.Run(metric+"/explain="+strconv.FormatBool(explain), func(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
-					nodeSimilarity(left, right, metric, true, nodes, explain)
+					nodeSimilarity(context.Background(), left, right, metric, true, nodes, explain)
 				}
 			})
 		}

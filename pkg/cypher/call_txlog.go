@@ -57,7 +57,7 @@ func txlogInteger(args []interface{}, index int, name string) (int64, bool, erro
 	}
 	value, ok := coerceInt64(args[index])
 	if !ok {
-		return 0, false, localizedError(localization.CypherSpecializedCallsTxlogArgumentType(name, "INTEGER", neo4jProvidedValue(args[index])), nil)
+		return 0, false, localizedError(localization.CypherSpecializedCallsTxlogArgumentType(name, "INTEGER", neo4jProvidedValue(nil, args[index])), nil)
 	}
 	return value, true, nil
 }
@@ -106,8 +106,10 @@ func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, args []interfa
 
 	recent := !hasFrom && !hasTo
 	var rows [][]interface{}
-	err = storage.VisitWALEntriesAfterFromDir(walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
-		if err := ctx.Err(); err != nil {
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	err = visitWALEntriesAfterFromDir(scan, walDir, uint64(fromSeq-1), func(entry storage.WALEntry) error {
+		if err := scan.observe(); err != nil {
 			return err
 		}
 		if (toSeq > 0 && entry.Sequence > uint64(toSeq)) || (database != "" && entry.Database != database) {
@@ -116,7 +118,7 @@ func (e *StorageExecutor) callDbTxlogEntries(ctx context.Context, args []interfa
 		rows = append(rows, txlogRow(entry))
 		// Keep only the most recent window, so memory stays bounded.
 		if recent && len(rows) > 2*txlogRecentEntries {
-			rows = append(rows[:0], rows[len(rows)-txlogRecentEntries:]...)
+			rows, _ = appendPopulation(ctx, rows[:0], rows[len(rows)-txlogRecentEntries:])
 		}
 		return nil
 	})
@@ -140,7 +142,7 @@ func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, args []interfac
 	if len(args) > 0 && args[0] != nil {
 		text, ok := args[0].(string)
 		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("txId", "STRING", neo4jProvidedValue(args[0])), nil)
+			return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("txId", "STRING", neo4jProvidedValue(valueWalk(ctx), args[0])), nil)
 		}
 		txID = text
 	}
@@ -157,8 +159,10 @@ func (e *StorageExecutor) callDbTxlogByTxID(ctx context.Context, args []interfac
 	}
 
 	var rows [][]interface{}
-	err = storage.VisitWALEntriesAfterFromDir(walDir, 0, func(entry storage.WALEntry) error {
-		if err := ctx.Err(); err != nil {
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	err = visitWALEntriesAfterFromDir(scan, walDir, 0, func(entry storage.WALEntry) error {
+		if err := scan.observe(); err != nil {
 			return err
 		}
 		if (database != "" && entry.Database != database) || storage.GetEntryTxID(entry) != txID {

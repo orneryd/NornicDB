@@ -174,11 +174,20 @@ type temporalStatementTimeKey struct{}
 const rowStatementContextKey = "\x00statement_context"
 
 // needsRowStatementContext reports an expression whose row evaluation reads
-// the statement context: a clock call, a subquery expression, or a
-// relationship pattern, which reads the graph of the statement's transaction.
+// the statement context: a clock call, a subquery expression, a relationship
+// pattern, which reads the graph of the statement's transaction, or any
+// function call, whose implementation observes the statement over its input.
 func needsRowStatementContext(expression string) bool {
-	return containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression) || containsContextPluginCall(expression)
+	if containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
+		containsRelationshipPattern(expression) || containsContextPluginCall(expression) {
+		return true
+	}
+	called := false
+	_ = forEachFunctionCall(expression, func(string, string) error {
+		called = true
+		return nil
+	})
+	return called
 }
 
 // rowStatementContextOrBackground is the statement context a row carries, or
@@ -253,10 +262,22 @@ func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) t
 			return wrapper.tx.StartTime.UTC()
 		}
 	}
-	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(time.Time); ok {
+	if instant, ok := statementInstant(ctx); ok {
 		return instant
 	}
 	return time.Now().UTC()
+}
+
+// statementInstant is the statement clock ctx carries: a statement context's
+// (by address) or one bound as a value.
+func statementInstant(ctx context.Context) (time.Time, bool) {
+	switch instant := ctx.Value(temporalStatementTimeKey{}).(type) {
+	case *time.Time:
+		return *instant, true
+	case time.Time:
+		return instant, true
+	}
+	return time.Time{}, false
 }
 
 func temporalClockValue(kind string, instant time.Time, zoneID string) (interface{}, bool) {
@@ -304,7 +325,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 			return nil, true, nil
 		}
 		if !isTemporalInstant(left) || !isTemporalInstant(right) {
-			return nil, true, temporalProcedureCallError("Between", left, right)
+			return nil, true, temporalProcedureCallError(valueWalk(ctx), "Between", left, right)
 		}
 		if leftExpression == rightExpression {
 			return &CypherDuration{}, true, nil
@@ -341,7 +362,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 			}
 		}
 		if !unitOK || !isTemporalInstant(value) {
-			return nil, true, temporalProcedureCallError("Truncate", unitValue, value, fieldsValue)
+			return nil, true, temporalProcedureCallError(valueWalk(ctx), "Truncate", unitValue, value, fieldsValue)
 		}
 		return truncateTemporalValue(kind, unit, value, fields)
 	}
@@ -415,7 +436,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		seconds, secondsOK := cypherIntegerValue(secondsValue)
 		nanos, nanosOK := cypherIntegerValue(nanosValue)
 		if !secondsOK || !nanosOK {
-			return nil, true, temporalProcedureCallError("FromEpoch", secondsValue, nanosValue)
+			return nil, true, temporalProcedureCallError(valueWalk(ctx), "FromEpoch", secondsValue, nanosValue)
 		}
 		if nanos < 0 || nanos > 999_999_999 {
 			return nil, true, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
@@ -426,7 +447,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		millisValue := ctxEval(strings.TrimSpace(argument))
 		millis, valid := cypherIntegerValue(millisValue)
 		if !valid {
-			return nil, true, temporalProcedureCallError("FromEpochMillis", millisValue)
+			return nil, true, temporalProcedureCallError(valueWalk(ctx), "FromEpochMillis", millisValue)
 		}
 		return CypherDateTime{Time: time.UnixMilli(millis).UTC()}, true, nil
 	default:
@@ -466,7 +487,7 @@ func temporalEpochBase(kind string, fields map[string]interface{}) (map[string]i
 	}
 	epoch, isInteger := cypherIntegerValue(value)
 	if !isInteger {
-		return nil, temporalArgumentError(localization.CypherCoreTemporalEpochInvalid(neo4jProvidedValue(value)))
+		return nil, temporalArgumentError(localization.CypherCoreTemporalEpochInvalid(neo4jProvidedValue(nil, value)))
 	}
 	instant := time.Unix(epoch, 0).UTC()
 	if key == "epochMillis" {
@@ -984,7 +1005,7 @@ func isTemporalConstructor(function string) bool {
 // SyntaxError for text it can't parse, ExecutionFailed for a map with
 // invalid fields, and ProcedureCallFailed for a value of another type. It is
 // nil for a null input, which gives null.
-func temporalConstructorError(function string, input interface{}) error {
+func temporalConstructorError(work *materializedRowCheckpoint, function string, input interface{}) error {
 	typeName := temporalConstructorTypes[lowerASCII(function)]
 	switch value := input.(type) {
 	case nil:
@@ -1003,13 +1024,13 @@ func temporalConstructorError(function string, input interface{}) error {
 		return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument",
 			localization.CypherCoreTemporalMapInvalid(typeName, fmt.Sprintf("%v", value)))
 	}
-	return temporalCallSignatureError(typeName, neo4jProvidedValue(input))
+	return temporalCallSignatureError(typeName, neo4jProvidedValue(work, input))
 }
 
 // neo4jProvidedValue writes a value as Neo4j lists the input of a call with
 // an invalid signature: NO_VALUE, String("x"), Boolean('true'), Double(1.5),
 // Long(1), and any other value as itself.
-func neo4jProvidedValue(value interface{}) string {
+func neo4jProvidedValue(work *materializedRowCheckpoint, value interface{}) string {
 	switch typed := value.(type) {
 	case nil:
 		return "NO_VALUE"
@@ -1023,7 +1044,54 @@ func neo4jProvidedValue(value interface{}) string {
 	if integer, ok := cypherIntegerValue(value); ok {
 		return fmt.Sprintf("Long(%d)", integer)
 	}
-	return fmt.Sprintf("%v", value)
+	return formatValueText(work, value)
+}
+
+// formatValueText is fmt's %v text of a value: a map's entries in key order,
+// as fmt sorts them, and a list's items, recursively; any other value is
+// fmt's own text. fmt sorts a large map's keys with no observation, so the
+// walk observes the statement and sorts them through the bulk owner.
+func formatValueText(work *materializedRowCheckpoint, value interface{}) string {
+	var out strings.Builder
+	writeFormatValueText(work, &out, value)
+	return out.String()
+}
+
+func writeFormatValueText(work *materializedRowCheckpoint, out *strings.Builder, value interface{}) {
+	if work.visit() {
+		return
+	}
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		if work.sortKeys(keys) {
+			return
+		}
+		out.WriteString("map[")
+		for index, key := range keys {
+			if index > 0 {
+				out.WriteByte(' ')
+			}
+			out.WriteString(key)
+			out.WriteByte(':')
+			writeFormatValueText(work, out, typed[key])
+		}
+		out.WriteByte(']')
+	case []interface{}:
+		out.WriteByte('[')
+		for index, item := range typed {
+			if index > 0 {
+				out.WriteByte(' ')
+			}
+			writeFormatValueText(work, out, item)
+		}
+		out.WriteByte(']')
+	default:
+		fmt.Fprint(out, value)
+	}
 }
 
 // temporalCallSignatureError is Neo4j's error for a temporal constructor

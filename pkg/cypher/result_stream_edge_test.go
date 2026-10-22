@@ -28,13 +28,13 @@ func TestResultStreamStopsOnCancelledContext(t *testing.T) {
 func TestVisitNodeListStopsAndFails(t *testing.T) {
 	nodes := []*storage.Node{{ID: "a"}, {ID: "b"}}
 	visited := 0
-	require.NoError(t, visitNodeList(nodes, func(*storage.Node) error {
+	require.NoError(t, visitNodeList(context.Background(), nodes, func(*storage.Node) error {
 		visited++
 		return storage.ErrIterationStopped
 	}))
 	require.Equal(t, 1, visited)
 	failure := errors.New("visit failed")
-	require.ErrorIs(t, visitNodeList(nodes, func(*storage.Node) error { return failure }), failure)
+	require.ErrorIs(t, visitNodeList(context.Background(), nodes, func(*storage.Node) error { return failure }), failure)
 }
 
 // A streamed MATCH reads an indexed seed or a property-filtered label scan

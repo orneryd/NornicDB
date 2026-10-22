@@ -33,7 +33,7 @@ func gdsJavaValueText(value interface{}, propertyValue bool, contexts ...context
 	case map[string]interface{}:
 		keys, literalOrder := gdsMapLiteralKeys(typed, contexts...)
 		if !literalOrder {
-			keys = appendSortedMapKeys(nil, typed)
+			keys = sortedMapKeys(statementOfContexts(contexts), typed)
 		}
 		keys = gdsNativeProjectionMapOrder(keys)
 		parts := make([]string, len(keys))

@@ -3,10 +3,10 @@ package cypher
 import (
 	"container/heap"
 	"context"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 func (e *StorageExecutor) parseIndexedNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
@@ -70,14 +70,19 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		}
 		return strings.Compare(string(a.ID), string(b.ID))
 	}
-	nodes := make([]*storage.Node, 0, limit)
+	nodes := make([]*storage.Node, 0, util.SafePreallocCap(limit, rowCancellationInterval))
 	var filter func(*storage.Node) bool
 	if strings.TrimSpace(where) != "" {
 		filter = e.compileNodeWhereFilter(ctx, pattern.variable, where)
 	}
 	var visitErr error
 	visited := false
-	found := schema.VisitPropertyIndexGroupsInRange(label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	found, scanErr := visitPropertyIndexGroupsInRange(scan, schema, label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
+		if scan.canceled() {
+			return false
+		}
 		visited = true
 		remaining := limit - len(nodes)
 		groupTop := &indexedOrderHeap{
@@ -106,10 +111,17 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 				heap.Fix(groupTop, 0)
 			}
 		}
-		sort.Slice(groupTop.nodes, func(i, j int) bool {
+		if err := sortPopulation(ctx, groupTop.nodes, func(i, j int) bool {
 			return compareWithinGroup(groupTop.nodes[i], groupTop.nodes[j]) < 0
-		})
-		nodes = append(nodes, groupTop.nodes...)
+		}); err != nil {
+			visitErr = err
+			return false
+		}
+		var appendErr error
+		if nodes, appendErr = appendPopulation(ctx, nodes, groupTop.nodes); appendErr != nil {
+			visitErr = appendErr
+			return false
+		}
 		if len(nodes) == limit {
 			return false
 		}
@@ -117,6 +129,9 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	})
 	if visitErr != nil {
 		return nil, false, visitErr
+	}
+	if scanErr != nil {
+		return nil, false, scanErr
 	}
 	if !found || !visited {
 		return nil, false, nil

@@ -15,19 +15,24 @@ import (
 // pipeline (see validateNoResidualRelationships), which must complete
 // before any validation or mutation so a multi-row, multi-variable DELETE
 // (e.g. "DELETE a, r") can be judged as a whole statement.
-func collectDeleteMutationTargets(matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
+func collectDeleteMutationTargets(ctx context.Context, matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID, err error) {
 	seenNodes := make(map[string]struct{}, len(matchResult.Rows))
 	seenEdges := make(map[string]struct{}, len(matchResult.Rows))
 	nodeIDs = make([]storage.NodeID, 0, len(matchResult.Rows))
 	edgeIDs = make([]storage.EdgeID, 0, len(matchResult.Rows))
 
-	for _, row := range matchResult.Rows {
-		for _, val := range row {
-			collectDeleteTargetValue(val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
+	for batch, batchErr := range materializedBatches(ctx, len(matchResult.Rows)) {
+		if batchErr != nil {
+			return nil, nil, batchErr
+		}
+		for _, row := range matchResult.Rows[batch.start:batch.end] {
+			for _, val := range row {
+				collectDeleteTargetValue(val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
+			}
 		}
 	}
 
-	return nodeIDs, edgeIDs
+	return nodeIDs, edgeIDs, nil
 }
 
 func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
@@ -339,15 +344,23 @@ func pipelineUnwindAlias(clause string) string {
 // same statement is also deleting that edge (e.g.
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
-func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
-	beingDeleted := deletingEdgeSet(edgeIDs)
-	for _, nodeID := range nodeIDs {
-		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
-		if err != nil {
-			return err
+func validateNoResidualRelationships(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
+	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	if err := addDeletingEdges(ctx, beingDeleted, edgeIDs); err != nil {
+		return err
+	}
+	for batch, batchErr := range materializedBatches(ctx, len(nodeIDs)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		if connected {
-			return residualRelationshipDeleteError(nodeID)
+		for _, nodeID := range nodeIDs[batch.start:batch.end] {
+			connected, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
+			if err != nil {
+				return err
+			}
+			if connected {
+				return residualRelationshipDeleteError(nodeID)
+			}
 		}
 	}
 	return nil
@@ -358,51 +371,74 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // deletes them for now, and the transaction's commit fails unless a later
 // clause deletes those relationships, as in Neo4j
 // (storage.ConnectedNodeDeleter).
-func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
-	beingDeleted := deletingEdgeSet(edgeIDs)
+func connectedDeleteTargets(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	if err := addDeletingEdges(ctx, beingDeleted, edgeIDs); err != nil {
+		return nil, err
+	}
 	var connected map[storage.NodeID]struct{}
-	for _, nodeID := range nodeIDs {
-		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
-		if err != nil {
-			return nil, err
+	for batch, batchErr := range materializedBatches(ctx, len(nodeIDs)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		if residual {
-			if connected == nil {
-				connected = make(map[storage.NodeID]struct{})
+		for _, nodeID := range nodeIDs[batch.start:batch.end] {
+			residual, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
+			if err != nil {
+				return nil, err
 			}
-			connected[nodeID] = struct{}{}
+			if residual {
+				if connected == nil {
+					connected = make(map[storage.NodeID]struct{})
+				}
+				connected[nodeID] = struct{}{}
+			}
 		}
 	}
 	return connected, nil
 }
 
-func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
-	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+// addDeletingEdges adds the relationships a DELETE removes to beingDeleted.
+// The caller makes the set: it stays in the caller's frame.
+func addDeletingEdges(ctx context.Context, beingDeleted map[storage.EdgeID]struct{}, edgeIDs []storage.EdgeID) error {
+	ids := materializedRowCheckpoint{ctx: ctx, rows: len(edgeIDs)}
 	for _, id := range edgeIDs {
+		if ids.due() && ids.canceled() {
+			return ctx.Err()
+		}
 		beingDeleted[id] = struct{}{}
 	}
-	return beingDeleted
+	return nil
 }
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID.
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
 	outgoing, err := store.GetOutgoingEdges(nodeID)
 	if err != nil {
 		return false, err
 	}
-	for _, edge := range outgoing {
-		if _, deleting := beingDeleted[edge.ID]; !deleting {
-			return true, nil
+	for batch, batchErr := range materializedBatches(ctx, len(outgoing)) {
+		if batchErr != nil {
+			return false, batchErr
+		}
+		for _, edge := range outgoing[batch.start:batch.end] {
+			if _, deleting := beingDeleted[edge.ID]; !deleting {
+				return true, nil
+			}
 		}
 	}
 	incoming, err := store.GetIncomingEdges(nodeID)
 	if err != nil {
 		return false, err
 	}
-	for _, edge := range incoming {
-		if _, deleting := beingDeleted[edge.ID]; !deleting {
-			return true, nil
+	for batch, batchErr := range materializedBatches(ctx, len(incoming)) {
+		if batchErr != nil {
+			return false, batchErr
+		}
+		for _, edge := range incoming[batch.start:batch.end] {
+			if _, deleting := beingDeleted[edge.ID]; !deleting {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

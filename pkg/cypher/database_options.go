@@ -44,7 +44,7 @@ func databaseOptionValue(key string, value interface{}) (string, error) {
 		return upper, nil
 	}
 	return "", localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
-		localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(value), "'OFF', 'DIFF', 'FULL'"))
+		localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(nil, value), "'OFF', 'DIFF', 'FULL'"))
 }
 
 // splitDatabaseOptions cuts a CREATE DATABASE statement at its OPTIONS

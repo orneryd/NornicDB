@@ -69,7 +69,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		projected.Rows = append(projected.Rows, values)
 	}
-	nodeIDs, edgeIDs := collectDeleteMutationTargets(projected)
+	nodeIDs, edgeIDs, err := collectDeleteMutationTargets(ctx, projected)
+	if err != nil {
+		return nil, true, err
+	}
 	store := e.getStorage(ctx)
 	// A node relationships still connect is deleted for now and checked at
 	// commit, when the transaction can hold it (connectedNodeDeletes); a
@@ -78,10 +81,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	if !detach {
 		if _, deferred := store.(storage.ConnectedNodeDeleter); deferred {
 			var err error
-			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs); err != nil {
+			if connected, err = connectedDeleteTargets(ctx, store, nodeIDs, edgeIDs); err != nil {
 				return nil, true, err
 			}
-		} else if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
+		} else if err := validateNoResidualRelationships(ctx, store, nodeIDs, edgeIDs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -90,47 +93,67 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// statement deleted reaches storage again: it is already gone
 	// (storage.ErrNotFound) and counts once, as in Neo4j (#827).
 	deletedEdges := make(map[storage.EdgeID]struct{}, len(edgeIDs))
-	for _, edgeID := range edgeIDs {
-		if err := store.DeleteEdge(edgeID); err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
-			}
-			return nil, true, err
+	for batch, batchErr := range materializedBatches(ctx, len(edgeIDs)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		deletedEdges[edgeID] = struct{}{}
-	}
-	if detach {
-		for _, nodeID := range nodeIDs {
-			incident, err := undirectedIncidentEdges(store, nodeID)
-			if err != nil {
+		for _, edgeID := range edgeIDs[batch.start:batch.end] {
+			if err := store.DeleteEdge(edgeID); err != nil {
+				if errors.Is(err, storage.ErrNotFound) {
+					continue
+				}
 				return nil, true, err
 			}
-			for _, edge := range incident {
-				deletedEdges[edge.ID] = struct{}{}
+			deletedEdges[edgeID] = struct{}{}
+		}
+	}
+	if detach {
+		for batch, batchErr := range materializedBatches(ctx, len(nodeIDs)) {
+			if batchErr != nil {
+				return nil, true, batchErr
+			}
+			for _, nodeID := range nodeIDs[batch.start:batch.end] {
+				incident, err := undirectedIncidentEdges(store, nodeID)
+				if err != nil {
+					return nil, true, err
+				}
+				for innerBatch, innerErr := range materializedBatches(ctx, len(incident)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, edge := range incident[innerBatch.start:innerBatch.end] {
+						deletedEdges[edge.ID] = struct{}{}
+					}
+				}
 			}
 		}
 	}
 	stats := &QueryStats{RelationshipsDeleted: len(deletedEdges)}
-	for _, nodeID := range nodeIDs {
-		deleteNode := store.DeleteNode
-		if _, stillConnected := connected[nodeID]; stillConnected {
-			deleteNode = store.(storage.ConnectedNodeDeleter).DeleteConnectedNode
+	for batch, batchErr := range materializedBatches(ctx, len(nodeIDs)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		if err := deleteNode(nodeID); err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
+		for _, nodeID := range nodeIDs[batch.start:batch.end] {
+			deleteNode := store.DeleteNode
+			if _, stillConnected := connected[nodeID]; stillConnected {
+				deleteNode = store.(storage.ConnectedNodeDeleter).DeleteConnectedNode
 			}
-			return nil, true, err
+			if err := deleteNode(nodeID); err != nil {
+				if errors.Is(err, storage.ErrNotFound) {
+					continue
+				}
+				return nil, true, err
+			}
+			stats.NodesDeleted++
+			e.removeNodeFromSearch(string(nodeID))
 		}
-		stats.NodesDeleted++
-		e.removeNodeFromSearch(string(nodeID))
 	}
 	deleted := deletedEntitiesOf(ctx)
 	if deleted == nil {
 		deleted = &deletedEntities{}
 	}
 	deleted.add(nodeIDs, deletedEdges)
-	e.replaceDeletedEntityViews(rows, deleted)
+	e.replaceDeletedEntityViews(ctx, rows, deleted)
 	return stats, true, nil
 }
 
@@ -193,7 +216,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(node.Properties)
 				written := simplePropertyWrites(node.Properties, simpleProperty, value)
 				setNodeProperty(node, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
+				if err := e.persistSetEntities(ctx, store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -206,7 +229,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(relationship.Properties)
 				written := simplePropertyWrites(relationship.Properties, simpleProperty, value)
 				setRelationshipProperty(relationship, simpleProperty, value)
-				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
+				if err := e.persistSetEntities(ctx, store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -219,7 +242,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if !handled || err != nil {
 			return nil, handled, err
 		}
-		if err := e.persistSetEntities(store, states, stats, wrapSetError); err != nil {
+		if err := e.persistSetEntities(ctx, store, states, stats, wrapSetError); err != nil {
 			return nil, true, err
 		}
 	}
@@ -549,12 +572,19 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		// The clause parsed once: a row whose relationship already exists
 		// is its matches, without rendering and parsing the row's text.
 		if pattern, startNode, endNode, templated := template.pattern(ctx, e, row); templated {
-			matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, pattern, startNode, endNode)
+			matches, findErr := findParsedMergeRelationships(ctx, e.getStorage(ctx), identities, pattern, startNode, endNode)
 			if findErr != nil {
 				return nil, nil, findErr
 			}
 			if len(matches) > 0 {
-				out = append(out, e.mergeRelationshipRows(row, nil, nil, pattern, startNode, endNode, matches)...)
+				merged, mergeErr := e.mergeRelationshipRows(ctx, row, nil, nil, pattern, startNode, endNode, matches)
+				if mergeErr != nil {
+					return nil, nil, mergeErr
+				}
+				var appendErr error
+				if out, appendErr = appendPopulation(ctx, out, merged); appendErr != nil {
+					return nil, nil, appendErr
+				}
 				continue
 			}
 		}
@@ -595,8 +625,9 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				}
 				// It may have written between any pair of nodes.
 				identities.reset()
-				out = append(out, produced...)
-				return nil
+				var appendErr error
+				out, appendErr = appendPopulation(ctx, out, produced)
+				return appendErr
 			}
 			if multiRelationship {
 				if err := mergeWholePath(); err != nil {
@@ -635,32 +666,40 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
 						return nil, nil, err
 					}
-					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)
+					matches, scanned, findErr := e.findMergeNodesScanned(ctx, e.getStorage(ctx), labels, properties)
 					if findErr != nil {
 						return nil, nil, findErr
 					}
 					if len(matches) > 0 {
 						matchedRows := make([]pipelineRow, 0, len(matches))
-						for _, node := range matches {
-							expanded := make(pipelineRow, util.SafePreallocSum(len(row), 2))
-							for name, value := range row {
-								expanded[name] = value
+						for innerBatch, innerErr := range materializedBatches(ctx, len(matches)) {
+							if innerErr != nil {
+								return nil, nil, innerErr
 							}
-							if variable != "" {
-								expanded[variable] = node
+							for _, node := range matches[innerBatch.start:innerBatch.end] {
+								expanded := make(pipelineRow, util.SafePreallocSum(len(row), 2))
+								for name, value := range row {
+									expanded[name] = value
+								}
+								if variable != "" {
+									expanded[variable] = node
+								}
+								if nodePathVariable != "" {
+									path := PathResult{Nodes: []*storage.Node{node}}
+									expanded[nodePathVariable] = e.pathToMap(path)
+								}
+								matchedRows = append(matchedRows, expanded)
 							}
-							if nodePathVariable != "" {
-								path := PathResult{Nodes: []*storage.Node{node}}
-								expanded[nodePathVariable] = e.pathToMap(path)
-							}
-							matchedRows = append(matchedRows, expanded)
 						}
 						// ON MATCH SET applies to every matched row, through
 						// the shared SET applicator.
 						if err := e.applyMergeActions(ctx, matchedRows, onMatchSet, stats); err != nil {
 							return nil, nil, err
 						}
-						out = append(out, matchedRows...)
+						var appendErr error
+						if out, appendErr = appendPopulation(ctx, out, matchedRows); appendErr != nil {
+							return nil, nil, appendErr
+						}
 						continue
 					}
 					if scanned {
@@ -677,12 +716,15 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			startNode := nodeContext[relationshipPattern.startVariable]
 			endNode := nodeContext[relationshipPattern.endVariable]
 			if startNode != nil && endNode != nil {
-				matches, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
+				matches, findErr := findParsedMergeRelationships(ctx, e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
 				if findErr != nil {
 					return nil, nil, findErr
 				}
 				if len(matches) > 0 {
-					matchedRows := e.mergeRelationshipRows(row, nodeContext, relContext, relationshipPattern, startNode, endNode, matches)
+					matchedRows, mergeErr := e.mergeRelationshipRows(ctx, row, nodeContext, relContext, relationshipPattern, startNode, endNode, matches)
+					if mergeErr != nil {
+						return nil, nil, mergeErr
+					}
 					if onMatchSet != "" {
 						// It can change identity values.
 						identities.reset()
@@ -690,7 +732,10 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if err := e.applyMergeActions(ctx, matchedRows, onMatchSet, stats); err != nil {
 						return nil, nil, err
 					}
-					out = append(out, matchedRows...)
+					var appendErr error
+					if out, appendErr = appendPopulation(ctx, out, matchedRows); appendErr != nil {
+						return nil, nil, appendErr
+					}
 					continue
 				}
 			}
@@ -750,14 +795,18 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					}
 				} else {
 					identities.reset()
-					found, findErr := findParsedMergeRelationships(e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
+					found, findErr := findParsedMergeRelationships(ctx, e.getStorage(ctx), identities, relationshipPattern, startNode, endNode)
 					if findErr != nil {
 						return nil, nil, findErr
 					}
 					matches = found
 				}
 				if len(matches) > 0 {
-					produced = e.mergeRelationshipRows(newRow, nil, nil, relationshipPattern, startNode, endNode, matches)
+					merged, mergeErr := e.mergeRelationshipRows(ctx, newRow, nil, nil, relationshipPattern, startNode, endNode, matches)
+					if mergeErr != nil {
+						return nil, nil, mergeErr
+					}
+					produced = merged
 				}
 			}
 		}
@@ -771,7 +820,10 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
 			return nil, nil, err
 		}
-		out = append(out, produced...)
+		var appendErr error
+		if out, appendErr = appendPopulation(ctx, out, produced); appendErr != nil {
+			return nil, nil, appendErr
+		}
 	}
 	return out, stats, nil
 }
@@ -784,18 +836,25 @@ func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	at := strings.Index(clause, pattern)
-	for _, row := range rows {
-		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
-		resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
-		if err != nil {
-			return nil, nil, err
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, nil, batchErr
 		}
-		produced, rowStats, err := e.pipelineApplyMerge(ctx, []pipelineRow{row}, clause[:at]+resolved+clause[at+len(pattern):])
-		if err != nil {
-			return nil, nil, err
+		for _, row := range rows[batch.start:batch.end] {
+			rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
+			resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
+			if err != nil {
+				return nil, nil, err
+			}
+			produced, rowStats, err := e.pipelineApplyMerge(ctx, []pipelineRow{row}, clause[:at]+resolved+clause[at+len(pattern):])
+			if err != nil {
+				return nil, nil, err
+			}
+			addQueryStats(stats, rowStats)
+			if out, err = appendPopulation(ctx, out, produced); err != nil {
+				return nil, nil, err
+			}
 		}
-		addQueryStats(stats, rowStats)
-		out = append(out, produced...)
 	}
 	return out, stats, nil
 }
@@ -803,29 +862,34 @@ func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows
 // mergeRelationshipRows returns one row per relationship a MERGE matched or
 // created: row with the MERGE's node and relationship bindings, the pattern's
 // relationship variable and its path variable.
-func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) []pipelineRow {
+func (e *StorageExecutor) mergeRelationshipRows(ctx context.Context, row pipelineRow, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, pattern *mergeRelationshipPattern, startNode, endNode *storage.Node, relationships []*storage.Edge) ([]pipelineRow, error) {
 	rows := make([]pipelineRow, 0, len(relationships))
-	for _, relationship := range relationships {
-		expanded := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext), 2))
-		for name, value := range row {
-			expanded[name] = value
+	for batch, batchErr := range materializedBatches(ctx, len(relationships)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		for name, node := range nodeContext {
-			expanded[name] = node
+		for _, relationship := range relationships[batch.start:batch.end] {
+			expanded := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext), 2))
+			for name, value := range row {
+				expanded[name] = value
+			}
+			for name, node := range nodeContext {
+				expanded[name] = node
+			}
+			for name, edge := range relContext {
+				expanded[name] = edge
+			}
+			if pattern.relVariable != "" {
+				expanded[pattern.relVariable] = relationship
+			}
+			if pattern.pathVariable != "" {
+				path := PathResult{Nodes: []*storage.Node{startNode, endNode}, Relationships: []*storage.Edge{relationship}, Length: 1}
+				expanded[pattern.pathVariable] = e.pathToMap(path)
+			}
+			rows = append(rows, expanded)
 		}
-		for name, edge := range relContext {
-			expanded[name] = edge
-		}
-		if pattern.relVariable != "" {
-			expanded[pattern.relVariable] = relationship
-		}
-		if pattern.pathVariable != "" {
-			path := PathResult{Nodes: []*storage.Node{startNode, endNode}, Relationships: []*storage.Edge{relationship}, Length: 1}
-			expanded[pattern.pathVariable] = e.pathToMap(path)
-		}
-		rows = append(rows, expanded)
 	}
-	return rows
+	return rows, nil
 }
 
 // containsRemoveClauseAnywhere reports a REMOVE keyword outside strings,
@@ -846,34 +910,39 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 		return nil, err
 	}
 	stats := &QueryStats{}
-	for _, row := range rows {
-		items, ok := e.evaluateListForPipelineWithContext(ctx, listExpr, row)
-		if !ok {
-			return nil, invalid()
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		for _, item := range items {
-			// The loop is a mutation boundary: a cancellation between items
-			// stops the remaining writes (the MERGE branch probes too).
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			child := make(pipelineRow, len(row)+1)
-			for name, value := range row {
-				child[name] = value
-			}
-			child[variable] = item
-			scope := make(map[string]struct{}, len(child))
-			for name := range child {
-				scope[name] = struct{}{}
-			}
-			result, handled, err := e.runPipelineClauses(ctx, []pipelineRow{child}, scope, updates, updates)
-			if err != nil {
-				return nil, err
-			}
-			if !handled {
+		for _, row := range rows[batch.start:batch.end] {
+			items, ok := e.evaluateListForPipelineWithContext(ctx, listExpr, row)
+			if !ok {
 				return nil, invalid()
 			}
-			addQueryStats(stats, result.Stats)
+			for _, item := range items {
+				// The loop is a mutation boundary: a cancellation between items
+				// stops the remaining writes (the MERGE branch probes too).
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				child := make(pipelineRow, len(row)+1)
+				for name, value := range row {
+					child[name] = value
+				}
+				child[variable] = item
+				scope := make(map[string]struct{}, len(child))
+				for name := range child {
+					scope[name] = struct{}{}
+				}
+				result, handled, err := e.runPipelineClauses(ctx, []pipelineRow{child}, scope, updates, updates)
+				if err != nil {
+					return nil, err
+				}
+				if !handled {
+					return nil, invalid()
+				}
+				addQueryStats(stats, result.Stats)
+			}
 		}
 	}
 	return stats, nil

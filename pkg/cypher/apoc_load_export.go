@@ -676,21 +676,26 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 	csvContent.WriteByte('\n')
 
 	// Data rows
-	for _, row := range result.Rows {
-		values := make([]string, len(row))
-		for i, val := range row {
-			switch v := val.(type) {
-			case string:
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(v, "\"", "\"\""))
-			case nil:
-				values[i] = ""
-			default:
-				jsonVal, _ := json.Marshal(v)
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		csvContent.WriteString(strings.Join(values, ","))
-		csvContent.WriteByte('\n')
+		for _, row := range result.Rows[batch.start:batch.end] {
+			values := make([]string, len(row))
+			for i, val := range row {
+				switch v := val.(type) {
+				case string:
+					values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(v, "\"", "\"\""))
+				case nil:
+					values[i] = ""
+				default:
+					jsonVal, _ := json.Marshal(v)
+					values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
+				}
+			}
+			csvContent.WriteString(strings.Join(values, ","))
+			csvContent.WriteByte('\n')
+		}
 	}
 
 	content := csvContent.String()
@@ -801,6 +806,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 // callApocImportJson imports JSON graph data directly.
 // Syntax: CALL apoc.import.json(urlOrFile) YIELD nodes, relationships
 func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	work := materializedRowCheckpoint{ctx: ctx}
 	store := e.getStorage(ctx)
 	prefixIDs := true
 	dbName := GetUseDatabaseFromContext(ctx)
@@ -869,6 +875,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 					if labels, ok := nodeMap["labels"].([]interface{}); ok {
 						for _, l := range labels {
+							if work.due() && work.canceled() {
+								return nil, ctx.Err()
+							}
 							if ls, ok := l.(string); ok {
 								node.Labels = append(node.Labels, ls)
 							}

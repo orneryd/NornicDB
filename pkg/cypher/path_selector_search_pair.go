@@ -248,7 +248,8 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 				continue
 			}
 			next := path
-			next.steps = append(append([]pathSearchPathStep(nil), path.steps...), pathSearchPathStep{edge: step.edge, move: step.move, node: step.node})
+			steps, _ := appendPopulation(s.ctx, make([]pathSearchPathStep, 0, len(path.steps)+1), path.steps)
+			next.steps = append(steps, pathSearchPathStep{edge: step.edge, move: step.move, node: step.node})
 			back(step.key, next)
 			release(step.edge.ID)
 		}

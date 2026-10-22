@@ -38,12 +38,17 @@ func TypedExecute[T any](ctx context.Context, exec *StorageExecutor, cypher stri
 
 	// Decode rows into typed structs
 	typedRows := make([]T, 0, len(rawResult.Rows))
-	for _, row := range rawResult.Rows {
-		var decoded T
-		if err := decodeRow(rawResult.Columns, row, &decoded); err != nil {
-			return nil, localizedError(localization.CypherCoreTypedDecodeRowFailed(err), err)
+	for batch, batchErr := range materializedBatches(ctx, len(rawResult.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		typedRows = append(typedRows, decoded)
+		for _, row := range rawResult.Rows[batch.start:batch.end] {
+			var decoded T
+			if err := decodeRow(rawResult.Columns, row, &decoded); err != nil {
+				return nil, localizedError(localization.CypherCoreTypedDecodeRowFailed(err), err)
+			}
+			typedRows = append(typedRows, decoded)
+		}
 	}
 
 	return &TypedExecuteResult[T]{

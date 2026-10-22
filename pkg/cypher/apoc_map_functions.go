@@ -31,7 +31,7 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 		return nil, err
 	}
 	if values[1] == nil {
-		return apocMapWithoutKeys(entries, nil, false), nil
+		return apocMapWithoutKeys(valueWalk(ctx.StatementContext()), entries, nil, false), nil
 	}
 	key, isString := values[1].(string)
 	if !isString {
@@ -42,9 +42,9 @@ func fnApocMapRemoveKey(ctx cypherfn.Context, args []string) (interface{}, error
 		return nil, err
 	}
 	if _, present := entries[key]; !present {
-		return apocMapWithoutKeys(entries, nil, false), nil
+		return apocMapWithoutKeys(valueWalk(ctx.StatementContext()), entries, nil, false), nil
 	}
-	return apocMapWithoutKeys(entries, map[string]struct{}{key: {}}, recursive), nil
+	return apocMapWithoutKeys(valueWalk(ctx.StatementContext()), entries, map[string]struct{}{key: {}}, recursive), nil
 }
 
 // fnApocMapRemoveKeys is apoc.map.removeKeys(map, keys, config = {}). A key
@@ -72,7 +72,7 @@ func fnApocMapRemoveKeys(ctx cypherfn.Context, args []string) (interface{}, erro
 			keys[key] = struct{}{}
 		}
 	}
-	return apocMapWithoutKeys(entries, keys, recursive), nil
+	return apocMapWithoutKeys(valueWalk(ctx.StatementContext()), entries, keys, recursive), nil
 }
 
 // apocMapArguments evaluates the (map, key or keys, config = {}) arguments
@@ -145,15 +145,18 @@ func apocMapValue(value interface{}) (map[string]interface{}, bool) {
 // also removes keys from nested maps and from the maps in nested lists, and
 // drops a nested map or list left empty (an empty list too), as APOC does.
 // The top-level map is returned even when empty.
-func apocMapWithoutKeys(entries map[string]interface{}, keys map[string]struct{}, recursive bool) map[string]interface{} {
+func apocMapWithoutKeys(work *materializedRowCheckpoint, entries map[string]interface{}, keys map[string]struct{}, recursive bool) map[string]interface{} {
 	out := make(map[string]interface{}, len(entries))
 	for key, value := range entries {
+		if work.visit() {
+			return out
+		}
 		if _, removed := keys[key]; removed {
 			continue
 		}
 		if recursive {
 			if nested, isMap := apocMapValue(value); isMap {
-				nested = apocMapWithoutKeys(nested, keys, true)
+				nested = apocMapWithoutKeys(work, nested, keys, true)
 				if len(nested) == 0 {
 					continue
 				}
@@ -161,8 +164,11 @@ func apocMapWithoutKeys(entries map[string]interface{}, keys map[string]struct{}
 			} else if items, isList := cypherListValue(value); isList {
 				kept := make([]interface{}, 0, len(items))
 				for _, item := range items {
+					if work.visit() {
+						return out
+					}
 					if nested, isMap := apocMapValue(item); isMap {
-						nested = apocMapWithoutKeys(nested, keys, true)
+						nested = apocMapWithoutKeys(work, nested, keys, true)
 						if len(nested) == 0 {
 							continue
 						}
@@ -190,5 +196,5 @@ func apocMapNullArgumentError(function, argument string) error {
 
 func apocMapArgumentTypeError(function, expected string, value interface{}) error {
 	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-		localization.CypherCoreFunctionArgumentInvalid(function, "a "+expected, neo4jValueRepr(value)))
+		localization.CypherCoreFunctionArgumentInvalid(function, "a "+expected, neo4jValueRepr(nil, value)))
 }

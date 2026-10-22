@@ -386,7 +386,12 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, fmt.Errorf("gds.util.asNodes expects a list of node ids, got %s", cypherTypeSystemName(values[0]))
 	}
 	nodes := make([]interface{}, 0, len(ids))
+	statement := ctx.StatementContext()
+	lookups := materializedRowCheckpoint{ctx: statement}
 	for _, id := range ids {
+		if lookups.due() && lookups.canceled() {
+			return nil, statement.Err()
+		}
 		if node := gdsNodeByID(ctx.Storage, id); node != nil {
 			nodes = append(nodes, node)
 		}

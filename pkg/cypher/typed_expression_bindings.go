@@ -20,7 +20,7 @@ func withExpressionBinding(ctx context.Context, expression string, value interfa
 		for key, original := range params {
 			bound[key] = original
 		}
-		bound[name], _ = normalizeParameterValue(value)
+		bound[name], _ = normalizeParameterValue(valueWalk(ctx), value)
 		return withQueryParams(ctx, bound), "$" + name
 	}
 }

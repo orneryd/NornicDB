@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"sort"
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -29,9 +29,9 @@ func newGraphProjection(name, database string) *GraphProjection {
 // projection reads stored nodes in ID order (#1183); an aggregation keeps its
 // rows' first-occurrence order, which is GDS's node mapping and decides
 // Louvain's community IDs and similarity's tie winners.
-func (p *GraphProjection) indexNodes(sorted bool) {
+func (p *GraphProjection) indexNodes(ctx context.Context, sorted bool) {
 	if sorted {
-		sort.Strings(p.NodeIDs)
+		_ = sortStrings(ctx, p.NodeIDs)
 	}
 	p.nodeIndex = gdsNodeIndex(p.NodeIDs)
 }
@@ -51,7 +51,7 @@ func (p *GraphProjection) nodeIDValue(id string) interface{} {
 // finishCounts records catalog totals once each import has supplied its labels
 // and types. Native projections retain requested empty labels/types; aggregation
 // imports infer them only from their rows.
-func (p *GraphProjection) finishCounts() {
+func (p *GraphProjection) finishCounts(ctx context.Context) {
 	contexts := 0
 	if len(p.RelationshipProjection) > 0 {
 		contexts = len(p.Types)
@@ -65,8 +65,8 @@ func (p *GraphProjection) finishCounts() {
 	if len(p.relationshipTypeOrder) > 1 {
 		p.relationshipTypeIndex = gdsNodeIndex(p.relationshipTypeOrder)
 	}
-	sort.Strings(p.Labels)
-	sort.Strings(p.Types)
+	_ = sortStrings(ctx, p.Labels)
+	_ = sortStrings(ctx, p.Types)
 	p.NodeCount = len(p.NodeIDs)
 	p.RelationshipCount = len(p.Relationships)
 }
@@ -139,14 +139,14 @@ func gdsNodeIndex(nodes []string) map[string]int {
 // orderOutgoing owns GDS's constituent graph traversal: relationship types in
 // their import-map order, then targets within each type. Stable sorting retains
 // the order of parallel arcs. Algorithms consume this order before arithmetic.
-func (g *gdsSubgraph) orderOutgoing() {
+func (g *gdsSubgraph) orderOutgoing(ctx context.Context) {
 	for source, edges := range g.outgoing {
 		if len(edges) > 1 {
 			var ranks []int
 			if len(g.outgoingTypes) > source {
 				ranks = g.outgoingTypes[source]
 			}
-			sort.Stable(gdsOrderedEdges{edges: edges, ranks: ranks})
+			_ = sortPopulationInterfaceStable(ctx, gdsOrderedEdges{edges: edges, ranks: ranks})
 		}
 	}
 }
@@ -200,7 +200,7 @@ func (p *GraphProjection) matchesNodeLabels(id string, labels []string) bool {
 // nodePropertyAvailability owns label-aware schema validation for algorithms.
 // A usable property must be projected for every selected label. GDS's errors
 // still list the union from the whole projection, including unselected labels.
-func (p *GraphProjection) nodePropertyAvailability(labels []string) (selected, available []string) {
+func (p *GraphProjection) nodePropertyAvailability(ctx context.Context, labels []string) (selected, available []string) {
 	if len(labels) == 0 || containsString(labels, "*") {
 		labels = p.Labels
 	}
@@ -210,6 +210,6 @@ func (p *GraphProjection) nodePropertyAvailability(labels []string) (selected, a
 			available = appendUnique(available, key)
 		}
 	}
-	sort.Strings(available)
+	_ = sortStrings(ctx, available)
 	return selected, available
 }

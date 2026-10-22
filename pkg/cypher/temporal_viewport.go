@@ -48,23 +48,28 @@ type temporalCurrentNodeChecker interface {
 	IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
 }
 
-func filterNodesByTemporalViewport(nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
+func filterNodesByTemporalViewport(ctx context.Context, nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
 	if !viewport.Enabled() || checker == nil {
 		return nodes, nil
 	}
 	filtered := make([]*storage.Node, 0, len(nodes))
-	for _, node := range nodes {
-		if node == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-		if err != nil {
-			return nil, err
+		for _, node := range nodes[batch.start:batch.end] {
+			if node == nil {
+				continue
+			}
+			visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+			if err != nil {
+				return nil, err
+			}
+			if !visible {
+				continue
+			}
+			filtered = append(filtered, node)
 		}
-		if !visible {
-			continue
-		}
-		filtered = append(filtered, node)
 	}
 	return filtered, nil
 }

@@ -2,45 +2,10 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strings"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
-	if len(nodes) <= 1 {
-		return nodes
-	}
-
-	// Parse multiple ORDER BY columns: "n.value ASC, n.name DESC"
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
-	if len(specs) == 0 {
-		return nodes
-	}
-
-	sorted := make([]*storage.Node, len(nodes))
-	copy(sorted, nodes)
-
-	sort.Slice(sorted, func(i, j int) bool {
-		for _, spec := range specs {
-			val1, _ := sorted[i].Properties[spec.propName]
-			val2, _ := sorted[j].Properties[spec.propName]
-
-			cmp := e.compareOrderValues(val1, val2)
-			if cmp != 0 {
-				if spec.descending {
-					return cmp > 0
-				}
-				return cmp < 0
-			}
-		}
-		return false // All equal
-	})
-
-	return sorted
-}
 
 // parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
 func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []nodeOrderSpec {
@@ -102,7 +67,7 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 // callers can tell "unrecognized" apart from "evaluated to null" and raise the
 // proper statement error (or route to the EXISTS-subquery machinery).
 func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
-	return e.evaluateExpressionFromValuesContext(context.Background(), expr, values)
+	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
 }
 
 // evaluateRowFallback is the row evaluator's fallback to the shared
@@ -113,10 +78,10 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
 	// The slot names expr as the row evaluator's: the shared evaluator
 	// evaluates it itself rather than hand it back (handedBackByRowEvaluator).
-	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
+	ctx := context.WithValue(rowStatementContextOrBackground(values), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
 	// Keep the statement's clock for the functions that read it (decay, #866).
 	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
-		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {
+		if instant, ok := statementInstant(statement); ok {
 			ctx = context.WithValue(ctx, temporalStatementTimeKey{}, instant)
 		}
 	}

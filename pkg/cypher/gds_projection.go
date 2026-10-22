@@ -90,7 +90,7 @@ func (e *StorageExecutor) graphProjection(name string) (*GraphProjection, error)
 }
 
 // databaseProjections is database's projections, by name.
-func databaseProjections(database string) []*GraphProjection {
+func databaseProjections(ctx context.Context, database string) []*GraphProjection {
 	projectionsMu.RLock()
 	defer projectionsMu.RUnlock()
 	var projections []*GraphProjection
@@ -99,7 +99,7 @@ func databaseProjections(database string) []*GraphProjection {
 			projections = append(projections, projection)
 		}
 	}
-	sort.Slice(projections, func(i, j int) bool { return projections[i].Name < projections[j].Name })
+	_ = sortPopulation(ctx, projections, func(i, j int) bool { return projections[i].Name < projections[j].Name })
 	return projections
 }
 
@@ -149,18 +149,18 @@ func (spec gdsElementSpec) merges() bool {
 // '|' ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form. Labels,
 // types and properties no stored element has, and a name already in use,
 // are refused with GDS's messages.
-func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphProject(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
 		return nil, err
 	}
-	nodeSpecs, err := gdsProjectionSpecs(procedureArgument(args, 1), "node", contexts...)
+	nodeSpecs, err := gdsProjectionSpecs(procedureArgument(args, 1), "node", ctx)
 	if err != nil {
 		return nil, err
 	}
-	relSpecs, err := gdsProjectionSpecs(procedureArgument(args, 2), "relationship", contexts...)
+	relSpecs, err := gdsProjectionSpecs(procedureArgument(args, 2), "relationship", ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...co
 	if err != nil {
 		return nil, err
 	}
-	projection, err := e.buildGraphProjection(graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
+	projection, err := e.buildGraphProjection(ctx, graphName, nodeSpecs, relSpecs, configuration["validateRelationships"] == true)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +280,7 @@ func gdsProjectionSpecs(value interface{}, kind string, contexts ...context.Cont
 	case string:
 		addText(projection)
 	case map[string]interface{}:
-		keys := appendSortedMapKeys(nil, projection)
+		keys := sortedMapKeys(statementOfContexts(contexts), projection)
 		if kind == "relationship" && len(keys) > 1 && len(contexts) > 0 {
 			if ordered, literalOrder := gdsMapLiteralKeys(projection, contexts...); literalOrder {
 				keys = gdsNativeProjectionMapOrder(ordered)
@@ -466,14 +466,20 @@ func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ..
 
 // buildGraphProjection reads the projected nodes and relationships from
 // storage, streaming both.
-func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
+func (e *StorageExecutor) buildGraphProjection(ctx context.Context, name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	projection := newGraphProjection(name, e.databaseName())
-	ctx := context.Background()
 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
 	nodePropertyType := make(map[string]string) // one builder per projected key, shared across labels
-	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
+	// A projection receives no statement context (procedure dispatch, a separate
+	// item); its scans still go through the scan adapter.
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	err := streamNodesWithFallback(scan, e.storage, streamChunkSize, func(node *storage.Node) error {
+		if err := scan.observe(); err != nil {
+			return err
+		}
 		for _, label := range node.Labels {
 			labelsSeen[label] = true
 		}
@@ -527,7 +533,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotFound(strings.Join(requested, ", ")), nil)
 	}
 	// Node IDs in order, so the same graph gives the same rows (#1183).
-	projection.indexNodes(true)
+	projection.indexNodes(ctx, true)
 
 	typesSeen := make(map[string]bool)
 	relPropertySeen := make(map[string]bool)
@@ -545,7 +551,10 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	// with validateRelationships, those with an end outside the projection),
 	// so memory follows the projection, not the store.
 	var edges []*storage.Edge
-	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+	err = streamEdgesWithFallback(scan, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+		if err := scan.observe(); err != nil {
+			return err
+		}
 		typesSeen[edge.Type] = true
 		if !gdsTypeProjected(relSpecs, edge.Type) {
 			return nil
@@ -560,7 +569,9 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	if err != nil {
 		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
 	}
-	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	if err := sortPopulation(ctx, edges, func(i, j int) bool { return edges[i].ID < edges[j].ID }); err != nil {
+		return nil, err
+	}
 	for _, edge := range edges {
 		typesSeen[edge.Type] = true
 		start, end := string(edge.StartNode), string(edge.EndNode)
@@ -685,7 +696,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			"type": spec.element, "orientation": spec.orientation, "aggregation": spec.aggregation, "properties": properties, "indexInverse": spec.indexInverse,
 		}
 	}
-	projection.finishCounts()
+	projection.finishCounts(ctx)
 	// Stored scalar values can widen a builder. A default must fit its
 	// stored type; without stored values the default supplies that type.
 	// Finalize each key before converting its earlier values.
@@ -881,7 +892,7 @@ var gdsDropColumns = []string{
 
 // gdsDegreeDistribution is the projection's out-degree distribution as GDS
 // reports it: min, max, mean and percentiles.
-func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
+func gdsDegreeDistribution(ctx context.Context, projection *GraphProjection) map[string]interface{} {
 	degrees := make([]int64, len(projection.NodeIDs))
 	// With no labels, types or property requested the shared selector cannot
 	// fail. Count every projected direction, including parallel edges and loops.
@@ -893,7 +904,7 @@ func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
 			}
 		},
 	})
-	sort.Slice(degrees, func(i, j int) bool { return degrees[i] < degrees[j] })
+	_ = sortPopulation(ctx, degrees, func(i, j int) bool { return degrees[i] < degrees[j] })
 	distribution := map[string]interface{}{"min": int64(0), "max": int64(0), "mean": 0.0}
 	percentile := func(p float64) int64 {
 		if len(degrees) == 0 {
@@ -945,19 +956,19 @@ func appendUnique(values []string, value string) []string {
 // callGdsGraphList implements CALL gds.graph.list([graphName]) as GDS does
 // (#1161): this database's projections, or the one named, with GDS's
 // columns.
-func (e *StorageExecutor) callGdsGraphList(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphList(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	name, err := optionalProcedureString("gds.graph.list", args, 0, "graphName", "")
 	if err != nil {
 		return nil, err
 	}
 	columns := append([]string{"degreeDistribution"}, gdsDropColumns...)
 	rows := make([][]any, 0)
-	for _, projection := range databaseProjections(e.databaseName()) {
+	for _, projection := range databaseProjections(ctx, e.databaseName()) {
 		if name != "" && projection.Name != name {
 			continue
 		}
 		info := gdsGraphInfo(projection)
-		info["degreeDistribution"] = gdsDegreeDistribution(projection)
+		info["degreeDistribution"] = gdsDegreeDistribution(ctx, projection)
 		row := make([]any, len(columns))
 		for i, column := range columns {
 			row[i] = info[column]
@@ -1044,7 +1055,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 }
 
 // callGdsGraphExists implements CALL gds.graph.exists(graphName) (#1161).
-func (e *StorageExecutor) callGdsGraphExists(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphExists(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	name, err := requiredProcedureString("gds.graph.exists", args, 0, "graphName")
 	if err != nil {
 		return nil, err

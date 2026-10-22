@@ -251,7 +251,7 @@ func TestGh728BindingWhereUsesSharedTypedPredicate(t *testing.T) {
 				case "compiled":
 					got = exec.getCompiledBindingWhere(ctx, test.clause)(row, test.params)
 				case "shared":
-					values := parameterRowsOf(test.params, false)
+					values := parameterRowsOf(context.Background(), test.params, false)
 					values["a"] = row["a"]
 					got = exec.evaluateMatchRowPredicate(withQueryParams(ctx, test.params), test.clause, values)
 				case "with":

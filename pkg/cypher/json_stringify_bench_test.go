@@ -72,7 +72,7 @@ RETURN toString(uuid.v5('6ba7b811-9dad-11d1-80b4-00c04fd430c8', 'example:summary
 func BenchmarkJSONStringifyPayloadHash64KiB(b *testing.B) {
 	payload := jsonStringifyPayload()
 	var text strings.Builder
-	if err := jsonProfiles["python-canonical"].write(&text, payload); err != nil {
+	if err := jsonProfiles["python-canonical"].write(nil, &text, payload); err != nil {
 		b.Fatal(err)
 	}
 	b.SetBytes(int64(text.Len()))
