@@ -41,7 +41,7 @@ func TestFabricStructuralReadersUseCanonicalQuotation(t *testing.T) {
 			}
 			require.Equal(t, []string{"a", mapText, "tail"}, parts)
 
-			parts, operators, union, err := splitTopLevelUnion("RETURN " + mapText + " AS x UNION ALL RETURN {plain: 2} AS x")
+			parts, operators, union, err := splitTopLevelUnion("RETURN "+mapText+" AS x UNION ALL RETURN {plain: 2} AS x", nil)
 			require.NoError(t, err)
 			require.True(t, union)
 			require.Len(t, parts, 2)

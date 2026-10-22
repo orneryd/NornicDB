@@ -69,6 +69,13 @@ func (p *remoteParticipant) end(ctx context.Context, commit bool) error {
 	return err
 }
 
+// endWithin ends the participant within storage.RemoteRequestTimeout.
+func (p *remoteParticipant) endWithin(ctx context.Context, commit bool) error {
+	ctx, cancel := context.WithTimeout(ctx, storage.RemoteRequestTimeout)
+	defer cancel()
+	return p.end(ctx, commit)
+}
+
 // rollbackDetached rolls back a sub-transaction that outlives its connection
 // (the HTTP transaction API's), whose rollback must reach the server: it runs
 // detached from ctx, bounded by storage.RemoteRequestTimeout. end returns by
@@ -310,8 +317,13 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 		_ = handle.end(ctx, false)
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
-	commitFn := func(_ *SubTransaction) error { return handle.end(ctx, true) }
-	rollbackFn := func(_ *SubTransaction) error { return handle.end(ctx, false) }
+	// The sub-transaction ends with its transaction, after the statement or
+	// APPLY batch that enlisted it has returned and cancelled ctx. As for a
+	// local participant, completion keeps ctx's values but not its
+	// cancellation; storage.RemoteRequestTimeout bounds it.
+	terminalCtx := context.WithoutCancel(ctx)
+	commitFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, true) }
+	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
 		_ = handle.end(ctx, false)
 		return nil, err

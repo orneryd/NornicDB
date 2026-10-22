@@ -97,17 +97,22 @@ func (f *FragmentExec) OutputColumns() []string {
 	return f.Columns
 }
 
-// FragmentApply represents sequential execution: for each row from Input,
-// execute Inner and concatenate results. This models correlated subqueries
-// where the inner query references variables from the outer scope.
+// FragmentApply executes a correlated CALL body per Input row, or an outer
+// continuation over the complete Input stream when Projection is true.
 type FragmentApply struct {
 	// Projection marks an outer continuation whose columns replace input bindings.
 	Projection bool
 	// Input is the outer fragment producing driver rows.
 	Input Fragment
 
-	// Inner is the fragment executed once per input row.
+	// Inner is the CALL body or outer continuation.
 	Inner Fragment
+
+	// Optional marks OPTIONAL CALL: an input row whose body returns no rows is
+	// kept, with null for the body's columns.
+	Optional bool
+	// Unit marks a CALL body without RETURN, which keeps every input row.
+	Unit bool
 
 	// Columns lists the combined output columns from Input and Inner.
 	Columns []string

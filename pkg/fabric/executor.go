@@ -24,9 +24,41 @@ type FabricExecutor struct {
 	catalog *Catalog
 	local   *LocalFragmentExecutor
 	remote  *RemoteFragmentExecutor
+	// Explicit local participants and all remote transaction handles share mutable
+	// execution state. Dispatch owns that boundary for UNION and APPLY fan-out.
+	serializeExec bool
+	execMu        sync.Mutex
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	union                  UnionContract
+}
+
+// UnionContract is the Cypher executor's UNION semantics for the branches
+// Fabric combines, so a composite UNION returns what the same UNION returns
+// on one graph. Unset, branches combine by position and DISTINCT by row hash.
+type UnionContract struct {
+	// ColumnOrder reports whether branch returns the same column names as
+	// columns and, when their order differs, the index in branch of each.
+	ColumnOrder func(columns, branch []string) (order []int, sameNames bool)
+	// ColumnsError is the error for a branch returning other column names.
+	ColumnsError func(columns, branch []string) error
+	// NewDistinct returns the add of an empty row set: add reports whether an
+	// equivalent row was already added.
+	NewDistinct func() func(row []interface{}) bool
+}
+
+// SetUnionContract installs the UNION semantics every UNION route applies.
+func (e *FabricExecutor) SetUnionContract(contract UnionContract) {
+	e.union = contract
+}
+
+// SetConcurrentExecution configures whether fragments may execute concurrently.
+// Explicit transactions use serial dispatch because their local executors are
+// shared. Remote dispatch always serializes: autocommit statements also share
+// remote transaction handles across their branches.
+func (e *FabricExecutor) SetConcurrentExecution(concurrent bool) {
+	e.serializeExec = !concurrent
 }
 
 const (
@@ -84,41 +116,57 @@ func (e *FabricExecutor) executeInit(f *FragmentInit) (*ResultStream, error) {
 
 // executeExec dispatches a bound executable fragment to local or remote.
 func (e *FabricExecutor) executeExec(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}, authToken string) (*ResultStream, error) {
+	result, _, err := e.dispatchExec(ctx, tx, f, params, authToken)
+	return result, err
+}
+
+// dispatchExec owns query execution for both materialized and iterator callers.
+// Local and remote row APIs already collect their results before returning an
+// iterator; keeping that dispatch here also keeps transaction state serialized.
+func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}, authToken string) (*ResultStream, int, error) {
+	if e.serializeExec {
+		e.execMu.Lock()
+		defer e.execMu.Unlock()
+	}
 	loc, execParams, ctx, err := e.prepareExecDispatch(ctx, tx, f, params)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	if _, remote := loc.(*LocationRemote); remote && !e.serializeExec {
+		e.execMu.Lock()
+		defer e.execMu.Unlock()
 	}
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 
 	switch l := loc.(type) {
 	case *LocationLocal:
 		if e.local == nil {
-			return nil, fmt.Errorf("local executor not configured")
+			return nil, 0, fmt.Errorf("local executor not configured")
 		}
 		res, err := e.local.ExecuteWithRecord(ctx, l, f.Query, execParams, recordBindings)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if res != nil && len(res.Columns) == 0 {
 			res.Columns = inferReturnColumnsFromQuery(f.Query)
 		}
-		return res, nil
+		return res, 256, nil
 
 	case *LocationRemote:
 		if e.remote == nil {
-			return nil, fmt.Errorf("remote executor not configured")
+			return nil, 0, fmt.Errorf("remote executor not configured")
 		}
 		res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if res != nil && len(res.Columns) == 0 {
 			res.Columns = inferReturnColumnsFromQuery(f.Query)
 		}
-		return res, nil
+		return res, 128, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported location type: %T", loc)
+		return nil, 0, fmt.Errorf("unsupported location type: %T", loc)
 	}
 }
 
@@ -131,35 +179,14 @@ func (e *FabricExecutor) executeRows(ctx context.Context, tx *FabricTransaction,
 		}
 		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), 128), nil
 	case *FragmentExec:
-		// Stream directly from local/remote executors for FragmentExec to avoid
-		// eager result materialization in operator paths.
-		loc, execParams, execCtx, err := e.prepareExecDispatch(ctx, tx, f, params)
+		res, prefetch, err := e.dispatchExec(ctx, tx, f, params, authToken)
 		if err != nil {
 			return nil, nil, err
 		}
-		switch l := loc.(type) {
-		case *LocationLocal:
-			if e.local == nil {
-				return nil, nil, fmt.Errorf("local executor not configured")
-			}
-			recordBindings, _ := RecordBindingsFromContext(execCtx)
-			cols, it, err := e.local.ExecuteWithRecordRows(execCtx, l, f.Query, execParams, recordBindings)
-			if err != nil {
-				return nil, nil, err
-			}
-			return cols, wrapPipelineIterator(ctx, it, 256), nil
-		case *LocationRemote:
-			if e.remote == nil {
-				return nil, nil, fmt.Errorf("remote executor not configured")
-			}
-			cols, it, err := e.remote.ExecuteRows(execCtx, l, f.Query, execParams, authToken)
-			if err != nil {
-				return nil, nil, err
-			}
-			return cols, wrapPipelineIterator(ctx, it, 128), nil
-		default:
-			return nil, nil, fmt.Errorf("unsupported location type: %T", loc)
+		if res == nil {
+			return nil, wrapPipelineIterator(ctx, NewResultRowIterator(nil), prefetch), nil
 		}
+		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), prefetch), nil
 	case *FragmentUnion:
 		return e.executeUnionRows(ctx, tx, f, params, authToken)
 	default:
@@ -410,7 +437,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	if inputIter == nil {
 		inputIter = NewResultRowIterator(nil)
 	}
-	if continuation, ok := f.Inner.(*FragmentExec); ok && f.Projection && continuation.Graph == nil {
+	if continuation, ok := f.Inner.(*FragmentExec); ok && f.Projection {
 		inputResult, err := materializeIterator(inputCols, inputIter)
 		if err != nil {
 			return nil, fmt.Errorf("apply input failed: %w", err)
@@ -421,10 +448,10 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		inputIter = NewResultRowIterator(inputResult)
 	}
 
-	// For non-simple leading WITH pipelines (e.g. trailing WITH collect(...) after
-	// CALL blocks), execute once over the full input row stream instead of per-row.
-	// A dynamic graph reference resolves per row, so it takes the per-row path.
-	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil {
+	// The remaining paths execute correlated CALL bodies per outer record. Their
+	// lookup rewrites do not apply to the outer continuation above, nor to
+	// OPTIONAL or unit CALL, whose input rows the per-row merge below keeps.
+	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil && !f.Optional && !f.Unit {
 		// Streaming fast path: avoid full outer materialization when correlated
 		// batched row lookup rewrite can consume the iterator directly.
 		if streamed, handled, err := e.tryExecuteApplyBatchedLookupRowsIter(ctx, tx, inputCols, inputIter, execFrag, params, authToken); handled {
@@ -469,6 +496,11 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	result := &ResultStream{Columns: append([]string(nil), f.Columns...)}
 	innerFragment := f.Inner
 	outerIdx := buildColumnIndex(inputCols)
+	if f.Unit && len(result.Columns) == 0 {
+		// A unit subquery exports nothing, so its columns are its input's,
+		// also when there is no input row.
+		result.Columns = append([]string(nil), inputCols...)
+	}
 
 	// For each input row, execute the inner fragment with imported variables.
 	parentBindings, _ := RecordBindingsFromContext(ctx)
@@ -477,7 +509,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
-		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && execFrag.Graph == nil {
+		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && !f.Optional && !f.Unit && execFrag.Graph == nil {
 			if cols, projected, ok := projectSimpleReturnFromRow(execFrag.Query, inputCols, inputRow); ok {
 				if len(result.Columns) == 0 {
 					result.Columns = cols
@@ -494,6 +526,13 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 
 		if innerResult == nil {
 			innerResult = &ResultStream{}
+		}
+		// A unit subquery runs its body for the body's effects and exports
+		// nothing: the input row is kept exactly once, whatever rows the body
+		// produced internally (none, or a nested CALL's).
+		if f.Unit {
+			result.Rows = append(result.Rows, newCompiledRowCombiner(result.Columns, outerIdx, nil).combine(inputRow, nil))
+			continue
 		}
 		if len(innerResult.Rows) == 0 {
 			if execFrag, ok := innerFragment.(*FragmentExec); ok {
@@ -513,6 +552,11 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 			}
 		}
 		if len(innerResult.Rows) == 0 {
+			// OPTIONAL CALL keeps the input row with null for the body's columns.
+			if f.Optional {
+				combiner := newCompiledRowCombiner(result.Columns, outerIdx, buildColumnIndex(innerResult.Columns))
+				result.Rows = append(result.Rows, combiner.combine(inputRow, make([]interface{}, len(innerResult.Columns))))
+			}
 			continue
 		}
 		innerIdx := buildColumnIndex(innerResult.Columns)
@@ -2776,22 +2820,12 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	isWith := startsWithFold(trimmed, "WITH ")
-	isReturn := startsWithFold(trimmed, "RETURN ")
-	if !isWith && !isReturn {
+	if trimmed == "" {
 		return nil, false, nil
 	}
-	if isWith {
-		withEnd, ok := findLeadingWithClauseEnd(trimmed)
-		if !ok || withEnd <= 0 {
-			return nil, false, nil
-		}
-		withClause := strings.TrimSpace(trimmed[:withEnd])
-		// Keep correlated per-row APPLY for simple import WITH clauses.
-		if isSimpleWithImportClause(withClause, inputResult.Columns) {
-			return nil, false, nil
-		}
-	}
+	// The planner's Projection marker owns this decision. A continuation consumes
+	// the complete input stream even when it starts with a simple WITH, UNWIND or
+	// another CALL. Guessing from the leading clause loses later query horizons.
 
 	rows := make([]map[string]interface{}, 0, len(inputResult.Rows))
 	for _, row := range inputResult.Rows {
@@ -3224,18 +3258,7 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 			_ = lhsIt.Close()
 			return nil, nil, fmt.Errorf("union RHS failed: %w", err)
 		}
-		cols := f.Columns
-		if len(cols) == 0 {
-			cols = lhsCols
-			if len(cols) == 0 {
-				cols = rhsCols
-			}
-		}
-		out := NewConcatRowIterator(lhsIt, rhsIt)
-		if f.Distinct {
-			out = NewDistinctRowIterator(out)
-		}
-		return cols, out, nil
+		return e.mergeUnion(f, lhsCols, lhsIt, rhsCols, rhsIt)
 	}
 
 	var (
@@ -3284,6 +3307,13 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 		}
 		return nil, nil, err
 	}
+	return e.mergeUnion(f, lhsCols, lhsIt, rhsCols, rhsIt)
+}
+
+// mergeUnion combines a UNION's branch streams; every UNION route ends here.
+// A branch without column metadata returned no rows and has nothing to match,
+// and the pipeline's row wrapper column is resolved after execution.
+func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowIterator, rhsCols []string, rhs RowIterator) ([]string, RowIterator, error) {
 	cols := f.Columns
 	if len(cols) == 0 {
 		cols = lhsCols
@@ -3291,9 +3321,32 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 			cols = rhsCols
 		}
 	}
-	out := NewConcatRowIterator(lhsIt, rhsIt)
+	if e.union.ColumnOrder != nil && len(lhsCols) > 0 && len(rhsCols) > 0 && !isFabricRowWrapper(lhsCols) && !isFabricRowWrapper(rhsCols) {
+		order, sameNames := e.union.ColumnOrder(lhsCols, rhsCols)
+		if !sameNames {
+			_ = lhs.Close()
+			_ = rhs.Close()
+			return nil, nil, e.union.ColumnsError(lhsCols, rhsCols)
+		}
+		if order != nil {
+			rhs = NewConvertingRowIterator(rhs, func(row []interface{}) []interface{} {
+				values := make([]interface{}, len(order))
+				for column, position := range order {
+					if position < len(row) {
+						values[column] = row[position]
+					}
+				}
+				return values
+			})
+		}
+	}
+	out := NewConcatRowIterator(lhs, rhs)
 	if f.Distinct {
-		out = NewDistinctRowIterator(out)
+		distinct := NewDistinctRowIterator(out)
+		if e.union.NewDistinct != nil {
+			distinct.(*distinctRowIterator).added = e.union.NewDistinct()
+		}
+		out = distinct
 	}
 	return cols, out, nil
 }
@@ -3310,16 +3363,9 @@ func (e *FabricExecutor) executeUnionSequential(ctx context.Context, tx *FabricT
 		_ = lhsIt.Close()
 		return nil, fmt.Errorf("union RHS failed: %w", err)
 	}
-	cols := f.Columns
-	if len(cols) == 0 {
-		cols = lhsCols
-		if len(cols) == 0 {
-			cols = rhsCols
-		}
-	}
-	out := NewConcatRowIterator(lhsIt, rhsIt)
-	if f.Distinct {
-		out = NewDistinctRowIterator(out)
+	cols, out, err := e.mergeUnion(f, lhsCols, lhsIt, rhsCols, rhsIt)
+	if err != nil {
+		return nil, err
 	}
 	return materializeIterator(cols, out)
 }
@@ -3371,18 +3417,17 @@ func (e *FabricExecutor) executeUnionParallel(ctx context.Context, tx *FabricTra
 		}
 		return nil, err
 	}
-	cols := f.Columns
-	if len(cols) == 0 {
-		cols = lhs
-		if len(cols) == 0 {
-			cols = rhs
-		}
-	}
-	out := NewConcatRowIterator(lit, rit)
-	if f.Distinct {
-		out = NewDistinctRowIterator(out)
+	cols, out, err := e.mergeUnion(f, lhs, lit, rhs, rit)
+	if err != nil {
+		return nil, err
 	}
 	return materializeIterator(cols, out)
+}
+
+// isFabricRowWrapper reports whether columns are the APPLY pipeline's single
+// row map column (executeApplyAsPipeline).
+func isFabricRowWrapper(columns []string) bool {
+	return len(columns) == 1 && columns[0] == "__fabric_row"
 }
 
 func fragmentContainsWrite(fragment Fragment) bool {
