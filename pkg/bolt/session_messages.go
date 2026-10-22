@@ -57,24 +57,6 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
 	s.refreshAuthResult()
-	if s.server != nil && s.server.memoryPolicy != nil {
-		lease, admissionErr := s.server.memoryPolicy.ReserveWireRequest(int64(len(data)), int64(len(data)))
-		if admissionErr != nil {
-			if s.inTransaction {
-				// Admission runs on the session owner, before decoding or further
-				// storage work. Reclaim any staged writes immediately.
-				if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
-					return err
-				}
-			}
-			message := localization.ApplicationMemoryPressure()
-			if errors.Is(admissionErr, memory.ErrStaleSample) {
-				message = localization.ApplicationMemoryUnavailable()
-			}
-			return s.sendLocalizedRunFailure("Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
-		}
-		defer lease.Release()
-	}
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
