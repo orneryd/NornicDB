@@ -7,7 +7,7 @@ import (
 )
 
 // Admin handlers can embed an unparsed suffix in a name or a manager error.
-// Retain the original command's PASSWORD literal before alias whitespace
+// Retain the original command's PASSWORD value before alias whitespace
 // compaction or OPTIONS splitting destroys that context. Other literals retain
 // their ordinary diagnostics. Only RedactError projects the diagnostic,
 // including URI credentials, localized data and encoded forms.
@@ -15,7 +15,7 @@ func redactAdminCommandError(query string, retErr *error) {
 	if *retErr == nil {
 		return
 	}
-	var values []string
+	values := observability.ContextCredentials(query)
 	for offset := 0; offset < len(query); {
 		index := keywordIndexFrom(query, "PASSWORD", offset, defaultKeywordScanOpts())
 		if index < 0 {
@@ -28,24 +28,43 @@ func redactAdminCommandError(query string, retErr *error) {
 		// An invalid value can itself be PASSWORD. Keep that next keyword
 		// visible so PASSWORD PASSWORD 'value' still supplies its literal.
 		offset = i
-		quote := query[i]
-		if quote != '\'' && quote != '"' {
-			continue
+		from := startsWithKeywordFold(query[i:], "FROM")
+		if from {
+			i = queryGapEnd(query, i+len("FROM"))
 		}
-		end, closed := scanCypherQuotedText(query, i, quote)
-		valueEnd := end
-		if closed {
-			valueEnd--
+		for slot := 0; slot < 2 && i < len(query); slot++ {
+			start, end := i, i
+			quote := query[i]
+			if quote == '\'' || quote == '"' {
+				var closed bool
+				end, closed = scanCypherQuotedText(query, i, quote)
+				start++
+				i = end
+				if closed {
+					end--
+				}
+			} else {
+				for i < len(query) && !isWhitespace(query[i]) && query[i] != ';' {
+					i++
+				}
+				end = i
+			}
+			value := query[start:end]
+			values = append(values, value)
+			// Alias handlers can compact whitespace in the entire suffix.
+			compacted := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(value)
+			if compacted != value {
+				values = append(values, compacted)
+			}
+			if !from {
+				break
+			}
+			i = queryGapEnd(query, i)
+			if !startsWithKeywordFold(query[i:], "TO") {
+				break
+			}
+			i = queryGapEnd(query, i+len("TO"))
 		}
-		value := query[i+1 : valueEnd]
-		values = append(values, value)
-		// CREATE/DROP ALIAS historically remove these four whitespace bytes
-		// from their whole suffix, including any supplied literal password.
-		compacted := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(value)
-		if compacted != value {
-			values = append(values, compacted)
-		}
-		offset = end
 	}
 	*retErr = observability.RedactError(*retErr, values...)
 }
