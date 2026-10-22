@@ -108,7 +108,7 @@
   other: API GraphQL habilitada
 - id: server.log.heimdall_disabled
   description: Registro de inicio cuando el asistente de IA Heimdall está deshabilitado.
-  other: asistente de IA Heimdall deshabilitado
+  other: sistema agéntico de Heimdall deshabilitado; los plugins configurados siguen disponibles
 - id: server.log.search_rerank_disabled
   description: Registro de inicio cuando la reordenación de búsqueda de segunda etapa está deshabilitada.
   other: reordenación de búsqueda deshabilitada

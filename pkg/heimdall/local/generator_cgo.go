@@ -1,24 +1,25 @@
-//go:build cgo && !nolocalllm && (darwin || linux)
+//go:build cgo && !nolocalllm && (darwin || linux) && !yzma
 
-// Package heimdall provides the Heimdall cognitive guardian for NornicDB.
+// Local inference backend for the Heimdall host.
 // This file provides the CGO-enabled generator using localllm.
-package heimdall
+package local
 
 import (
 	"context"
 	"os"
 	"strconv"
 
+	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 )
 
 func init() {
 	// Register the CGO-enabled generator loader
-	SetGeneratorLoader(cgoGeneratorLoader)
+	heimdall.SetGeneratorLoader(cgoGeneratorLoader)
 }
 
 // cgoGeneratorLoader loads a generation model using localllm CGO bindings.
-func cgoGeneratorLoader(modelPath string, gpuLayers, contextSize, batchSize, lazyMode int) (Generator, error) {
+func cgoGeneratorLoader(modelPath string, gpuLayers, contextSize, batchSize, lazyMode int) (heimdall.Generator, error) {
 	opts := localllm.DefaultGenerationOptions(modelPath)
 	opts.GPULayers = gpuLayers
 	opts.ContextSize = contextSize
@@ -65,7 +66,7 @@ type cgoGenerator struct {
 	model *localllm.GenerationModel
 }
 
-func (g *cgoGenerator) Generate(ctx context.Context, prompt string, params GenerateParams) (string, error) {
+func (g *cgoGenerator) Generate(ctx context.Context, prompt string, params heimdall.GenerateParams) (string, error) {
 	llamaParams := localllm.GenerateParams{
 		MaxTokens:   params.MaxTokens,
 		Temperature: params.Temperature,
@@ -76,7 +77,7 @@ func (g *cgoGenerator) Generate(ctx context.Context, prompt string, params Gener
 	return g.model.Generate(ctx, prompt, llamaParams)
 }
 
-func (g *cgoGenerator) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) error {
+func (g *cgoGenerator) GenerateStream(ctx context.Context, prompt string, params heimdall.GenerateParams, callback func(token string) error) error {
 	llamaParams := localllm.GenerateParams{
 		MaxTokens:   params.MaxTokens,
 		Temperature: params.Temperature,

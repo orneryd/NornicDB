@@ -156,7 +156,7 @@ func TestRateLimitingEnabledLogPreservesFieldsAcrossLocales(t *testing.T) {
 }
 
 func TestHeimdallDisabledLogPreservesFieldsAcrossLocales(t *testing.T) {
-	testServerLogAcrossLocales(t, "server.heimdall.disabled", "heimdall AI assistant disabled", "asistente de IA Heimdall deshabilitado", func(config *Config) {
+	testServerLogAcrossLocales(t, "server.heimdall.disabled", "Heimdall agentic harness disabled; configured plugins remain available", "sistema agéntico de Heimdall deshabilitado; los plugins configurados siguen disponibles", func(config *Config) {
 		config.Features = &nornicConfig.FeatureFlagsConfig{HeimdallEnabled: false}
 	}, func(t *testing.T, record map[string]any) {
 		require.Equal(t, "heimdall", record["subsystem"])

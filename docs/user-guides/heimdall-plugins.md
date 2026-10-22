@@ -389,7 +389,7 @@ func (p *MyPlugin) handleDetect(ctx heimdall.ActionContext) (*heimdall.ActionRes
 cd plugins/myplugin
 go build -buildmode=plugin -o myplugin.so .
 
-# Remote-provider-only Heimdall build (no local GGUF/localllm dependency)
+# Optional: same Heimdall-only plugin, also independent of local GGUF/localllm
 go build -tags nolocalllm -buildmode=plugin -o myplugin.so .
 
 # Deploy
@@ -401,10 +401,16 @@ cp myplugin.so $NORNICDB_HEIMDALL_PLUGINS_DIR/
 
 - Must export `var Plugin heimdall.HeimdallPlugin = &YourType{}`
 - Built with same Go version as NornicDB
-- Same CGO settings (important for llama.cpp)
-- Same build tags as the NornicDB binary
+- Same CGO settings and architecture (Go shared-package ABI requirement)
+- Compatible build settings for shared dependencies
 
-If your host binary uses Heimdall only through remote providers like Ollama or OpenAI, you can build both the host binary and Heimdall plugins with `-tags nolocalllm` to avoid linking the local GGUF generator.
+Heimdall-only plugins import `pkg/heimdall`, which has no `localllm` dependency.
+They build without native llama.cpp libraries, and the same plugin can load in a
+host built with or without `-tags nolocalllm`. Plugins that separately import
+`localllm` or other tag-dependent packages still need compatible shared dependencies.
+The host installs its optional local generator by importing
+`pkg/heimdall/local`; NornicDB server does this automatically. Embedded applications
+that use `heimdall.NewManager` for local inference should blank-import that adapter.
 
 For the built-in watcher example:
 
@@ -478,7 +484,7 @@ func TestMyPlugin_Actions(t *testing.T) {
 # Start NornicDB with Heimdall enabled
 NORNICDB_HEIMDALL_ENABLED=true ./nornicdb
 
-# Note: Heimdall plugins are skipped unless Heimdall is enabled and initialized.
+# Plugins also load with Heimdall disabled; enabling it here activates chat/inference.
 # Environment variables override config file values, so double-check your container env.
 
 # Open Bifrost chat UI and type:
@@ -1142,3 +1148,75 @@ If you see ordering issues:
 ### Changelog
 
 - **1.1.0**: Added optional lifecycle hooks (PrePromptHook, PreExecuteHook, PostExecuteHook, DatabaseEventHook), inline notification system for proper ordering
+
+## Exposing plugin actions through the external MCP server
+
+Actions remain internal by default. Set `External: true` on an `ActionFunc`
+(the contract flag is `external: true`) to publish that action to MCP clients:
+
+```go
+func (p *MyPlugin) Actions() map[string]heimdall.ActionFunc {
+    return map[string]heimdall.ActionFunc{
+        "summarize": {
+            External: true,
+            Description: "Summarize a supplied prompt using the configured inference model",
+            InputSchema: json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string"}},"required":["prompt"]}`),
+            Handler: func(ctx heimdall.ActionContext) (*heimdall.ActionResult, error) {
+                prompt, ok := ctx.Params["prompt"].(string)
+                if !ok || prompt == "" {
+                    return nil, fmt.Errorf("prompt must be a non-empty string")
+                }
+                return p.ctx.Heimdall.SendRawPrompt(ctx, prompt)
+            },
+        },
+    }
+}
+```
+
+Save the `SubsystemContext` received by `Initialize` in `p.ctx`. The existing
+`HeimdallInvoker` uses the configured inference provider, including local
+llama.cpp; external tools do not create another model instance. Use `SendPrompt`
+when action routing is desired, or `SendRawPrompt` for direct inference.
+
+When Heimdall initializes its plugins, opted-in actions join the existing MCP
+server's tools. MCP must be enabled; Heimdall plugins load from the configured plugin directories even when `NORNICDB_HEIMDALL_ENABLED=false`. The internal model still
+receives all registered actions. `NORNICDB_HEIMDALL_MCP_ENABLE` controls the
+opposite direction (memory tools supplied to internal inference), and does not
+control public plugin exposure. No default watcher examples opt into exposure.
+
+Clients discover the combined list through `tools/list` and invoke actions
+through `tools/call`, using names such as `heimdall_myplugin_summarize`. The same
+behavior is available on `/mcp`, `/mcp/tools/list`, `/mcp/tools/call`, and their
+database-pinned variants. Action descriptions and input schemas are preserved;
+an omitted schema uses `DefaultActionInputSchema`.
+
+Registration is first-in, first-out: built-in MCP tools are registered first,
+then external actions in successful plugin registration order. Since `Actions()`
+returns a Go map, action keys within each plugin are sorted. A duplicate final
+tool name logs a registration failure and keeps the first definition and handler;
+other tools continue registering. This also applies to collisions between
+plugin/action names that produce the same underscore-prefixed name.
+
+External action handlers receive the request context, arguments, principal roles,
+database access mode, and access resolver. MCP applies its existing database read
+admission; plugins must enforce permissions for their operations, just as on
+Bifrost. Use the provided database router and request context for graph operations.
+A URL-pinned database is supplied as the `database` argument. Setting `External`
+is an explicit decision to expose the handler to authenticated MCP callers; it
+does not add inference, administrative, or write permissions to the caller.
+
+
+### Plugin-only installation
+
+Set `NORNICDB_HEIMDALL_PLUGINS_DIR` to the directory containing your plugin and
+leave `NORNICDB_HEIMDALL_ENABLED=false`. NornicDB initializes/starts configured
+plugins and publishes their opted-in external tools without creating a model,
+Bifrost chat handler, or agentic inference loop. `Config.Enabled` and
+`Config.BifrostEnabled` are false in this mode. The database router, runtime
+metrics, and direct `InvokeAction` remain available; the Bifrost bridge is a no-op.
+Prompt methods return `Success: false` and `SLM not available` when inference is
+absent. A model initialization failure also leaves plugin tools available without
+inference. Enable Heimdall separately to give plugins access to the configured
+inference provider and agentic chat pipeline.
+
+Failed plugin starts are rolled back and never published as MCP tools. Server shutdown calls plugin `Stop` and `Shutdown` and removes external tools. `ShutdownAll` also clears registration order so a later reload starts with a fresh FIFO list.

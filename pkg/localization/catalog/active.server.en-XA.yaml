@@ -108,7 +108,7 @@
   other: "[!! graphql API enabled !!]"
 - id: server.log.heimdall_disabled
   description: Pseudo-locale Heimdall-disabled startup log.
-  other: "[!! heimdall AI assistant disabled !!]"
+  other: "[!! Heimdall agentic harness disabled; configured plugins remain available !!]"
 - id: server.log.search_rerank_disabled
   description: Pseudo-locale search rerank disabled log.
   other: "[!! search rerank disabled !!]"

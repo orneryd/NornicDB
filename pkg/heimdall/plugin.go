@@ -528,6 +528,8 @@ type SubsystemEvent struct {
 // Aligned with MCP (Model Context Protocol) tool format: name, description, inputSchema.
 // Invocation uses the same shape as MCP tools/call: action name + params (arguments).
 type ActionFunc struct {
+	// External opts this action into the public MCP server. False keeps it internal.
+	External    bool                                           `json:"external,omitempty"`
 	Name        string                                         // Full name: heimdall.{plugin}.{action} (MCP tool "name")
 	Handler     func(ctx ActionContext) (*ActionResult, error) // The action handler
 	Description string                                         // Human-readable description (MCP "description")
@@ -736,23 +738,26 @@ type RuntimeMetrics struct {
 
 // LoadedHeimdallPlugin represents a loaded SLM plugin with full subsystem management.
 type LoadedHeimdallPlugin struct {
-	Plugin  HeimdallPlugin // The actual plugin implementing full interface
-	Path    string         // Path to .so file (empty for built-in)
-	Builtin bool           // True if this is a built-in plugin
+	Plugin      HeimdallPlugin // The actual plugin implementing full interface
+	Path        string         // Path to .so file (empty for built-in)
+	Builtin     bool           // True if this is a built-in plugin
+	actionNames []string       // successfully registered actions owned by this plugin
 }
 
 // SubsystemManager manages all SLM plugins/subsystems.
 // Provides the SLM with full control over registered subsystems.
 type SubsystemManager struct {
-	mu              sync.RWMutex
-	plugins         map[string]*LoadedHeimdallPlugin // keyed by plugin name
-	actions         map[string]ActionFunc            // keyed by full name: slm.plugin.action
-	ctx             SubsystemContext                 // shared context for subsystems
-	initialized     bool
-	orderedPlugins  []*LoadedHeimdallPlugin
-	orderDirty      bool
-	orderGeneration uint64
-	registering     map[string]struct{} // names reserved during initialization
+	mu                 sync.RWMutex
+	plugins            map[string]*LoadedHeimdallPlugin // keyed by plugin name
+	actionOrder        []string                         // successful registrations, FIFO; sorted within each plugin
+	actions            map[string]ActionFunc            // keyed by full name: slm.plugin.action
+	ctx                SubsystemContext                 // shared context for subsystems
+	initialized        bool
+	orderedPlugins     []*LoadedHeimdallPlugin
+	orderDirty         bool
+	orderGeneration    uint64
+	registering        map[string]struct{} // names reserved during initialization
+	actionRemovalHooks []func([]string)
 }
 
 var (
@@ -828,10 +833,22 @@ func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin
 	m.plugins[name] = lp
 	m.orderDirty = true
 	m.orderGeneration++
-	for actionName, action := range actions {
+	actionNames := make([]string, 0, len(actions))
+	for actionName := range actions {
+		actionNames = append(actionNames, actionName)
+	}
+	sort.Strings(actionNames)
+	for _, actionName := range actionNames {
+		action := actions[actionName]
 		fullName := fmt.Sprintf("heimdall_%s_%s", name, actionName)
+		if _, exists := m.actions[fullName]; exists {
+			slog.Warn("Heimdall tool registration failed: name collision", "tool", fullName, "plugin", name, "outcome", "kept first registration")
+			continue
+		}
 		action.Name = fullName
 		m.actions[fullName] = action
+		m.actionOrder = append(m.actionOrder, fullName)
+		lp.actionNames = append(lp.actionNames, fullName)
 	}
 	m.initialized = true
 	m.mu.Unlock()
@@ -901,12 +918,23 @@ func (m *SubsystemManager) ShutdownAll() error {
 		}
 		// Ordering callbacks saw the installed peers. Detach that same generation
 		// before shutdown callbacks, preserving any registrations they perform.
+		names := make([]string, 0, len(m.actions))
+		for name := range m.actions {
+			names = append(names, name)
+		}
+		hooks := m.actionRemovalHooks
+		m.actionRemovalHooks = nil
+		m.actionOrder = nil
+		m.initialized = false
 		m.plugins = make(map[string]*LoadedHeimdallPlugin)
 		m.actions = make(map[string]ActionFunc)
 		m.orderedPlugins = nil
 		m.orderDirty = true
 		m.orderGeneration++
 		m.mu.Unlock()
+		for _, hook := range hooks {
+			hook(names)
+		}
 		break
 	}
 
@@ -1064,7 +1092,7 @@ func decoratePluginOpenError(err error) error {
 	if !strings.Contains(msg, "different version of package") {
 		return err
 	}
-	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and build tags as the NornicDB binary (for remote-provider-only Heimdall builds, match whether the host binary was built with -tags nolocalllm)", msg, runtime.Version())
+	return fmt.Errorf("%s; rebuild the plugin with the same Go toolchain (%s), CGO setting, architecture, and shared dependency build settings as the NornicDB binary; Heimdall-only plugins do not need to match the host nolocalllm tag", msg, runtime.Version())
 }
 
 // reflectHeimdallPlugin wraps a plugin loaded via reflection.

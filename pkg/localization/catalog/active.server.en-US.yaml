@@ -108,7 +108,7 @@
   other: graphql API enabled
 - id: server.log.heimdall_disabled
   description: Server startup log when the Heimdall AI assistant is disabled.
-  other: heimdall AI assistant disabled
+  other: Heimdall agentic harness disabled; configured plugins remain available
 - id: server.log.search_rerank_disabled
   description: Server startup log when stage-2 search reranking is disabled.
   other: search rerank disabled
