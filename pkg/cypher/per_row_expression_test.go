@@ -359,18 +359,77 @@ func TestRowPredicateUnreachedCaseIsNotEvaluated(t *testing.T) {
 // allocates per list, not per element: its parts that don't read the
 // element are evaluated once per list, and its element parts allocate
 // nothing (#1214).
-func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
-	exec, store := perRowTestExecutor(t)
-	edge, err := store.GetEdge("r1")
-	if err != nil {
-		t.Fatal(err)
+//
+// Endpoint projection (#1553) and hoisting (#1618) make storage decoding a
+// constant part of this measurement. A Badger-backed fixture can still vary
+// by one allocation even when BOTH samples have twenty elements. Keep that
+// storage work outside this compiler guard; the real-store endpoint tests
+// above cover its values and visibility. Exact read counts below also catch
+// an endpoint expression accidentally moving back inside the element loop.
+type rowAllocationEndpointEngine struct {
+	storage.Engine
+	nodes     map[storage.NodeID]*storage.Node
+	edge      *storage.Edge
+	reads     int
+	edgeReads int
+}
+
+func (s *rowAllocationEndpointEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+	s.reads++
+	if node := s.nodes[id]; node != nil {
+		return node, nil
 	}
+	return nil, storage.ErrNotFound
+}
+
+func (s *rowAllocationEndpointEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+	s.edgeReads++
+	if s.edge != nil && id == s.edge.ID {
+		return s.edge, nil
+	}
+	return nil, storage.ErrNotFound
+}
+
+func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
+	store := &rowAllocationEndpointEngine{nodes: map[storage.NodeID]*storage.Node{
+		"a": {ID: "a", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "a"}},
+		"b": {ID: "b", Labels: []string{"P"}, Properties: map[string]interface{}{"id": "b"}},
+	}}
+	// This guard evaluates compiled values directly, without a query, caches,
+	// background storage workers, or persisted procedure discovery.
+	exec := &StorageExecutor{storage: store, propertyDecayEngineKnown: true}
+	edge := &storage.Edge{ID: "r1", Type: "R", StartNode: "a", EndNode: "b", Properties: map[string]interface{}{"kind": "k"}}
+	store.edge = edge
 	// AllocsPerRun counts process-wide allocations. Finish any collection
 	// left by earlier tests, then keep GC work and pool eviction outside this
 	// bounded measurement. Restore the caller's GC setting even on failure.
 	previousGC := debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(previousGC)
 	runtime.GC()
+	for _, tc := range []struct {
+		expression string
+		reads      int
+	}{
+		{"any(k IN $keys WHERE k = startNode(r).id + '|' + endNode(r).id + '|' + r.kind)", 2},
+		{"none(k IN $keys WHERE k = startNode(r).id)", 1},
+		{"all(k IN $keys WHERE k <> r.kind)", 0},
+		{"single(k IN $keys WHERE k = r.kind)", 0},
+		{"size([k IN $keys WHERE k = r.kind])", 0},
+		{"size([k IN $keys WHERE k = r.kind | k + '|'])", 0},
+		{"reduce(found = false, k IN $keys | found OR k = startNode(r).id + '|' + r.kind)", 1},
+		{"allReduce(found = false, k IN $keys | k = endNode(r).id, NOT found)", 1},
+		{"startNode(r).id + '|' + r.kind IN $keys", 1},
+		{"all(k IN $keys WHERE k IS NOT NULL OR EXISTS { MATCH (n) })", 0},
+		{"all(k IN $keys WHERE k IS NOT NULL OR COUNT { MATCH (n) } > 0)", 0},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			testRowValueProgramListAllocations(t, exec, store, edge, tc.expression, tc.reads)
+		})
+	}
+}
+
+func testRowValueProgramListAllocations(t *testing.T, exec *StorageExecutor, store *rowAllocationEndpointEngine, edge *storage.Edge, expr string, reads int) {
+	t.Helper()
 	keys := func(n int) []interface{} {
 		list := make([]interface{}, n)
 		for i := range list {
@@ -378,44 +437,38 @@ func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
 		}
 		return list
 	}
-	for expr, perElement := range map[string]float64{
-		"any(k IN $keys WHERE k = startNode(r).id + '|' + endNode(r).id + '|' + r.kind)":  0,
-		"none(k IN $keys WHERE k = startNode(r).id)":                                      0,
-		"all(k IN $keys WHERE k <> r.kind)":                                               0,
-		"single(k IN $keys WHERE k = r.kind)":                                             0,
-		"size([k IN $keys WHERE k = r.kind])":                                             0,
-		"size([k IN $keys WHERE k = r.kind | k + '|'])":                                   0,
-		"reduce(found = false, k IN $keys | found OR k = startNode(r).id + '|' + r.kind)": 0,
-		"allReduce(found = false, k IN $keys | k = endNode(r).id, NOT found)":             0,
-		"startNode(r).id + '|' + r.kind IN $keys":                                         0,
-		"all(k IN $keys WHERE k IS NOT NULL OR EXISTS { MATCH (n) })":                     0,
-		"all(k IN $keys WHERE k IS NOT NULL OR COUNT { MATCH (n) } > 0)":                  0,
-	} {
-		root, _ := (&rowValueCompiler{}).compile(expr)
-		shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
-		longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
-		evaluate := func(row map[string]interface{}) {
-			if _, ok, err := root.eval(exec, row, nil); !ok || err != nil {
-				t.Fatalf("%s: unresolved or %v", expr, err)
-			}
+	root, _ := (&rowValueCompiler{}).compile(expr)
+	shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
+	longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
+	evaluate := func(row map[string]interface{}) {
+		store.reads = 0
+		store.edgeReads = 0
+		if _, ok, err := root.eval(exec, row, nil); !ok || err != nil {
+			t.Fatalf("%s: unresolved or %v", expr, err)
 		}
-		// Warm both inputs before either sample, including storage caches and
-		// the parts a program delegates to the text evaluator.
-		for range 10 {
-			evaluate(shortRow)
-			evaluate(longRow)
+		if store.reads != reads {
+			t.Fatalf("%s: %d endpoint reads for %d elements, want %d", expr, store.reads, len(row["$keys"].([]interface{})), reads)
 		}
-		short := testing.AllocsPerRun(100, func() { evaluate(shortRow) })
-		long := testing.AllocsPerRun(100, func() { evaluate(longRow) })
-		t.Logf("%s: 20 elements = %g allocations, 200 = %g", expr, short, long)
-		if strings.Contains(expr, " OR EXISTS {") || strings.Contains(expr, " OR COUNT {") {
-			if short > 3 || long > 3 {
-				t.Errorf("%s: skipped subquery allocated %g/%g times, want at most 3 at each list length", expr, short, long)
-			}
+		if store.edgeReads != reads {
+			t.Fatalf("%s: %d relationship reads for %d elements, want %d", expr, store.edgeReads, len(row["$keys"].([]interface{})), reads)
 		}
-		if growth := (long - short) / 180; growth > perElement {
-			t.Errorf("%s: %.0f allocations for 20 elements, %.0f for 200: %.2f per element, want at most %.0f", expr, short, long, growth, perElement)
+	}
+	// Warm both inputs before either sample, including storage caches and
+	// the parts a program delegates to the text evaluator.
+	for range 10 {
+		evaluate(shortRow)
+		evaluate(longRow)
+	}
+	short := testing.AllocsPerRun(100, func() { evaluate(shortRow) })
+	long := testing.AllocsPerRun(100, func() { evaluate(longRow) })
+	t.Logf("%s: 20 elements = %g allocations, 200 = %g", expr, short, long)
+	if strings.Contains(expr, " OR EXISTS {") || strings.Contains(expr, " OR COUNT {") {
+		if short > 3 || long > 3 {
+			t.Errorf("%s: skipped subquery allocated %g/%g times, want at most 3 at each list length", expr, short, long)
 		}
+	}
+	if growth := (long - short) / 180; growth > 0 {
+		t.Errorf("%s: %.0f allocations for 20 elements, %.0f for 200: %.2f per element, want at most 0", expr, short, long, growth)
 	}
 }
 
