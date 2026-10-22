@@ -183,14 +183,15 @@ func TestWithHotPathTrace_NilTraceReturnsOriginalContext(t *testing.T) {
 
 func TestWithHotPathTrace_RoundTrip(t *testing.T) {
 	ctx := context.Background()
-	trace := &HotPathTrace{ApplyBatchedLookupRows: true}
+	trace := &HotPathTrace{}
+	trace.ApplyBatchedLookupRows.Store(true)
 
 	ctx = WithHotPathTrace(ctx, trace)
 	recovered := hotPathTraceFromContext(ctx)
 	if recovered == nil {
 		t.Fatal("expected non-nil trace from context")
 	}
-	if !recovered.ApplyBatchedLookupRows {
+	if !recovered.ApplyBatchedLookupRows.Load() {
 		t.Fatal("expected ApplyBatchedLookupRows to be true")
 	}
 }

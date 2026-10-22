@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -807,7 +808,7 @@ func TestQueryIsWrite(t *testing.T) {
 // --- Additional coverage tests ---
 
 func TestSplitTopLevelUnion_NoUnion(t *testing.T) {
-	parts, ops, hasUnion, err := splitTopLevelUnion("MATCH (n) RETURN n")
+	parts, ops, hasUnion, err := splitTopLevelUnion("MATCH (n) RETURN n", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -820,14 +821,14 @@ func TestSplitTopLevelUnion_NoUnion(t *testing.T) {
 }
 
 func TestSplitTopLevelUnion_EmptyBranch(t *testing.T) {
-	_, _, _, err := splitTopLevelUnion("UNION ALL RETURN 1")
+	_, _, _, err := splitTopLevelUnion("UNION ALL RETURN 1", nil)
 	if err == nil {
 		t.Fatal("expected error for empty leading branch")
 	}
 }
 
 func TestSplitTopLevelUnion_EmptyTrailingBranch(t *testing.T) {
-	_, _, _, err := splitTopLevelUnion("RETURN 1 UNION ALL ")
+	_, _, _, err := splitTopLevelUnion("RETURN 1 UNION ALL ", nil)
 	if err == nil {
 		t.Fatal("expected error for empty trailing branch")
 	}
@@ -835,7 +836,7 @@ func TestSplitTopLevelUnion_EmptyTrailingBranch(t *testing.T) {
 
 func TestSplitTopLevelUnion_InsideQuotes(t *testing.T) {
 	// UNION inside single-quoted string.
-	_, _, hasUnion, err := splitTopLevelUnion("RETURN 'UNION ALL' AS x")
+	_, _, hasUnion, err := splitTopLevelUnion("RETURN 'UNION ALL' AS x", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -843,7 +844,7 @@ func TestSplitTopLevelUnion_InsideQuotes(t *testing.T) {
 		t.Fatal("expected UNION inside quotes to be ignored")
 	}
 	// UNION inside double-quoted string.
-	_, _, hasUnion, err = splitTopLevelUnion(`RETURN "UNION" AS x`)
+	_, _, hasUnion, err = splitTopLevelUnion(`RETURN "UNION" AS x`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -854,19 +855,19 @@ func TestSplitTopLevelUnion_InsideQuotes(t *testing.T) {
 
 func TestSplitTopLevelUnion_InsideBracesParens(t *testing.T) {
 	// UNION inside braces should not split.
-	_, _, hasUnion, _ := splitTopLevelUnion("CALL { RETURN 1 UNION RETURN 2 } RETURN x")
+	_, _, hasUnion, _ := splitTopLevelUnion("CALL { RETURN 1 UNION RETURN 2 } RETURN x", nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside braces to be ignored")
 	}
 	// UNION inside parens should not split.
-	_, _, hasUnion, _ = splitTopLevelUnion("RETURN (1 UNION 2)")
+	_, _, hasUnion, _ = splitTopLevelUnion("RETURN (1 UNION 2)", nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside parens to be ignored")
 	}
 }
 
 func TestSplitTopLevelUnion_DistinctUnion(t *testing.T) {
-	parts, ops, hasUnion, err := splitTopLevelUnion("RETURN 1 AS x UNION RETURN 2 AS x")
+	parts, ops, hasUnion, err := splitTopLevelUnion("RETURN 1 AS x UNION RETURN 2 AS x", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1051,7 +1052,7 @@ func TestIsValidIdentifier(t *testing.T) {
 func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 	// Line comment.
 	query := "// comment\nCALL { RETURN 1 }\nRETURN x"
-	blocks, err := extractTopLevelCallBlocks(query)
+	blocks, err := extractTopLevelCallBlocks(query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1060,7 +1061,7 @@ func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 	}
 	// Block comment.
 	query = "/* block comment */ CALL { RETURN 1 } RETURN x"
-	blocks, err = extractTopLevelCallBlocks(query)
+	blocks, err = extractTopLevelCallBlocks(query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1072,7 +1073,7 @@ func TestExtractTopLevelCallBlocks_WithComments(t *testing.T) {
 func TestExtractTopLevelCallBlocks_InsideQuotes(t *testing.T) {
 	// CALL inside single-quoted string.
 	query := "RETURN 'CALL { RETURN 1 }' AS x"
-	blocks, err := extractTopLevelCallBlocks(query)
+	blocks, err := extractTopLevelCallBlocks(query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1084,7 +1085,7 @@ func TestExtractTopLevelCallBlocks_InsideQuotes(t *testing.T) {
 func TestExtractTopLevelCallBlocks_CallWithoutBrace(t *testing.T) {
 	// CALL followed by non-brace (procedure call, not subquery).
 	query := "CALL db.procedure() RETURN x"
-	blocks, err := extractTopLevelCallBlocks(query)
+	blocks, err := extractTopLevelCallBlocks(query, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1095,7 +1096,7 @@ func TestExtractTopLevelCallBlocks_CallWithoutBrace(t *testing.T) {
 
 func TestExtractTopLevelCallBlocks_UnmatchedBrace(t *testing.T) {
 	query := "CALL { RETURN 1"
-	_, err := extractTopLevelCallBlocks(query)
+	_, err := extractTopLevelCallBlocks(query, nil)
 	if err == nil {
 		t.Fatal("expected error for unmatched brace")
 	}
@@ -1325,7 +1326,7 @@ func TestPlan_UnionWithThreeBranches(t *testing.T) {
 	catalog.Register("g1", &LocationLocal{DBName: "g1"})
 	p := NewFabricPlanner(catalog)
 
-	frag, err := p.Plan("RETURN 1 AS x UNION ALL RETURN 2 AS x UNION RETURN 3 AS x", "g1")
+	frag, err := p.Plan("RETURN 1 AS x UNION ALL RETURN 2 AS x UNION ALL RETURN 3 AS x", "g1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1334,8 +1335,8 @@ func TestPlan_UnionWithThreeBranches(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected FragmentUnion root, got %T", frag)
 	}
-	if !u.Distinct {
-		t.Fatal("expected outer union to be DISTINCT")
+	if u.Distinct {
+		t.Fatal("expected outer union to be ALL (not distinct)")
 	}
 	inner, ok := u.LHS.(*FragmentUnion)
 	if !ok {
@@ -1343,6 +1344,11 @@ func TestPlan_UnionWithThreeBranches(t *testing.T) {
 	}
 	if inner.Distinct {
 		t.Fatal("expected inner union to be ALL (not distinct)")
+	}
+
+	// UNION and UNION ALL at one level are rejected before a branch is planned.
+	if _, err := p.Plan("RETURN 1 AS x UNION ALL RETURN 2 AS x UNION RETURN 3 AS x", "g1"); !errors.Is(err, ErrMixedUnion) {
+		t.Fatalf("expected ErrMixedUnion, got %v", err)
 	}
 }
 
@@ -1395,12 +1401,12 @@ func TestExtractWithImports_WithASKeyword(t *testing.T) {
 
 func TestSplitTopLevelUnion_EscapedQuotes(t *testing.T) {
 	// Single-quoted string with escaped quote containing UNION.
-	_, _, hasUnion, _ := splitTopLevelUnion("RETURN 'it''s a UNION' AS x")
+	_, _, hasUnion, _ := splitTopLevelUnion("RETURN 'it''s a UNION' AS x", nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside escaped single quotes to be ignored")
 	}
 	// Double-quoted string with escaped quote containing UNION.
-	_, _, hasUnion, _ = splitTopLevelUnion(`RETURN "say ""UNION""" AS x`)
+	_, _, hasUnion, _ = splitTopLevelUnion(`RETURN "say ""UNION""" AS x`, nil)
 	if hasUnion {
 		t.Fatal("expected UNION inside escaped double quotes to be ignored")
 	}
@@ -1516,7 +1522,7 @@ func TestParseLeadingUse_GraphRefError(t *testing.T) {
 
 func TestExtractTopLevelCallBlocks_QuotedCallBrace(t *testing.T) {
 	// CALL inside double-quoted string.
-	blocks, err := extractTopLevelCallBlocks(`RETURN "CALL { RETURN 1 }" AS x`)
+	blocks, err := extractTopLevelCallBlocks(`RETURN "CALL { RETURN 1 }" AS x`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1527,7 +1533,7 @@ func TestExtractTopLevelCallBlocks_QuotedCallBrace(t *testing.T) {
 
 func TestExtractTopLevelCallBlocks_EscapedQuotes(t *testing.T) {
 	// CALL inside single-quoted string with escaped quotes.
-	blocks, err := extractTopLevelCallBlocks("RETURN 'it''s CALL { }' AS x")
+	blocks, err := extractTopLevelCallBlocks("RETURN 'it''s CALL { }' AS x", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1535,7 +1541,7 @@ func TestExtractTopLevelCallBlocks_EscapedQuotes(t *testing.T) {
 		t.Fatalf("expected 0 blocks, got %d", len(blocks))
 	}
 	// CALL inside double-quoted string with escaped quotes.
-	blocks, err = extractTopLevelCallBlocks(`RETURN "say ""CALL { }""" AS x`)
+	blocks, err = extractTopLevelCallBlocks(`RETURN "say ""CALL { }""" AS x`, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
