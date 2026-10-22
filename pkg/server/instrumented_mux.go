@@ -2,8 +2,8 @@
 //
 // instrumentedMux is the SOLE observation site for HTTP requests per
 // AGENTS.md §7 DRY (single chokepoint per subsystem). It wraps the
-// existing *http.ServeMux at the http.Server.Handler mount site
-// (server.go Start()), reading `r.Pattern` post-mux.ServeHTTP — the Go
+// existing handler inside metadata admission at wrapWithMiddleware, reading
+// `r.Pattern` post-mux.ServeHTTP — the Go
 // 1.22+ stdlib field populated AFTER pattern matching — to extract a
 // closed-shape `path_template` label value (D-03 / KD-04: stdlib mux
 // chosen, no router migration).
@@ -112,8 +112,8 @@ type cacheKey struct {
 }
 
 // instrumentedMux wraps mux.ServeHTTP with the Plan 04-02 HTTP
-// observation chokepoint. Returns an http.Handler that callers mount on
-// http.Server.Handler in place of the bare *http.ServeMux.
+// observation chokepoint. wrapWithMiddleware mounts it inside metadata admission
+// before Start installs the complete application handler on http.Server.
 //
 // If m is nil, the wrapper is a no-op pass-through — keeps existing test
 // fixtures and pre-Phase-1 callers compiling unchanged. Production

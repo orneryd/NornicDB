@@ -18,7 +18,14 @@ func TestPolicyPressureRecoveryKeepsLiveAndAncestorPressureClosed(t *testing.T) 
 		now := time.Unix(100, 0)
 		policy := NewPolicy(1000, 100, time.Minute, func() (Sample, error) { return sample, nil }, func() time.Time { return now })
 		collections := 0
-		policy.recovery.reclaim = func() { collections++ }
+		var last time.Time
+		policy.recovery.reclaim = func() {
+			if collections > 0 {
+				require.GreaterOrEqual(t, now.Sub(last), pressureRecoveryRetryInterval)
+			}
+			last = now
+			collections++
+		}
 		require.NoError(t, policy.Refresh())
 		for i := 0; i < 100; i++ {
 			_, err := policy.Reserve(1)
@@ -26,7 +33,7 @@ func TestPolicyPressureRecoveryKeepsLiveAndAncestorPressureClosed(t *testing.T) 
 			now = now.Add(pressureRecoveryInterval)
 			require.NoError(t, policy.Refresh())
 		}
-		require.Equal(t, 1, collections, "rejected retries cannot rearm collection without completed work")
+		require.Equal(t, 17, collections, "sustained pressure permits only one unleased attempt per thirty seconds")
 		require.Zero(t, policy.Reserved())
 	}
 }
@@ -65,9 +72,11 @@ func TestPolicyPressureRecoveryRearmsAfterCompletedWorkAndCooldown(t *testing.T)
 }
 
 func TestPolicyPressureRecoveryDoesNotHoldAdmissionLockOrOverlap(t *testing.T) {
-	var used atomic.Int64
+	var used, clockNanos atomic.Int64
 	used.Store(950)
-	policy := NewPolicy(1000, 100, time.Minute, func() (Sample, error) { return Sample{Used: used.Load()}, nil }, time.Now)
+	clockNanos.Store(time.Unix(100, 0).UnixNano())
+	policy := NewPolicy(1000, 100, time.Minute, func() (Sample, error) { return Sample{Used: used.Load()}, nil },
+		func() time.Time { return time.Unix(0, clockNanos.Load()) })
 	started, finish := make(chan struct{}), make(chan struct{})
 	var collections atomic.Int32
 	policy.recovery.reclaim = func() {
@@ -82,6 +91,7 @@ func TestPolicyPressureRecoveryDoesNotHoldAdmissionLockOrOverlap(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- policy.Refresh() }()
 	<-started
+	clockNanos.Add(int64(2 * pressureRecoveryRetryInterval))
 	var group sync.WaitGroup
 	for i := 0; i < 32; i++ {
 		group.Add(1)

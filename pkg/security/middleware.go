@@ -95,7 +95,8 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 		}
 
 		// Validate query parameter tokens (for SSE/WebSocket)
-		if tokenParam := r.URL.Query().Get("token"); tokenParam != "" {
+		query := r.URL.Query()
+		if tokenParam := query.Get("token"); tokenParam != "" {
 			if err := ValidateToken(tokenParam); err != nil {
 				m.writeError(w, r, localization.InvalidTokenParameter(err), http.StatusUnauthorized)
 				return
@@ -105,7 +106,7 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 		// Validate URL parameters
 		urlParams := []string{"callback", "redirect", "redirect_uri", "url", "webhook"}
 		for _, param := range urlParams {
-			if urlValue := r.URL.Query().Get(param); urlValue != "" {
+			if urlValue := query.Get(param); urlValue != "" {
 				if err := ValidateURL(urlValue, m.isDevelopment, m.allowHTTP); err != nil {
 					m.writeError(w, r, localization.InvalidURLParameter(param, err), http.StatusBadRequest)
 					return

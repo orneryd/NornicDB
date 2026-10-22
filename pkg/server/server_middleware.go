@@ -13,6 +13,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
 // =============================================================================
@@ -293,13 +294,13 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 		path := r.URL.Path
 		switch {
 		case path == "/status":
-			http.TimeoutHandler(next, statusTimeout, "request timeout: status busy").ServeHTTP(w, r)
+			serveRequestTimeout(next, w, r, statusTimeout, "request timeout: status busy")
 			return
 		case path == "/nornicdb/embed/stats":
-			http.TimeoutHandler(next, embedStatsTimeout, "request timeout: embed stats busy").ServeHTTP(w, r)
+			serveRequestTimeout(next, w, r, embedStatsTimeout, "request timeout: embed stats busy")
 			return
 		case path == "/nornicdb/search":
-			http.TimeoutHandler(next, searchTimeout, "request timeout: search busy").ServeHTTP(w, r)
+			serveRequestTimeout(next, w, r, searchTimeout, "request timeout: search busy")
 			return
 		case strings.HasPrefix(path, "/db/") && strings.Contains(path, "/tx"):
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -307,12 +308,19 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 				defer s.activeTxReqs.Add(-1)
 				next.ServeHTTP(w, r)
 			})
-			http.TimeoutHandler(txWrapped, txTimeout, "request timeout: transaction busy").ServeHTTP(w, r)
+			serveRequestTimeout(txWrapped, w, r, txTimeout, "request timeout: transaction busy")
 			return
 		default:
 			next.ServeHTTP(w, r)
 		}
 	}))
+}
+
+func serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Request, timeout time.Duration, message string) {
+	// Retain before TimeoutHandler starts its goroutine, even if cancellation
+	// wins before the worker is scheduled. The worker releases on return/panic.
+	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
+	http.TimeoutHandler(next, timeout, message).ServeHTTP(w, r)
 }
 
 func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {

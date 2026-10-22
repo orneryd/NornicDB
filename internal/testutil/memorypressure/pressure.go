@@ -15,6 +15,12 @@ import (
 // includes committed heap pages, including idle pages not returned to the OS.
 // A recovery must collect and scavenge; lowering a fake sample cannot pass.
 func New(t *testing.T) *memory.Policy {
+	return NewWithClock(t, time.Now)
+}
+
+// NewWithClock uses an injected policy clock to exercise recovery cooldowns
+// without waiting for wall time. Heap usage and reclamation remain real.
+func NewWithClock(t *testing.T, now func() time.Time) *memory.Policy {
 	t.Helper()
 	previousGC := debug.SetGCPercent(-1)
 	previousLimit := debug.SetMemoryLimit(1<<63 - 1)
@@ -31,7 +37,7 @@ func New(t *testing.T) *memory.Policy {
 	}
 	return memory.NewPolicy(used()+16<<20, 0, time.Second, func() (memory.Sample, error) {
 		return memory.Sample{Used: used()}, nil
-	}, time.Now)
+	}, now)
 }
 
 // Garbage makes completed work's allocation unreachable without collecting it.
