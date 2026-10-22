@@ -5,6 +5,8 @@
 package multidb
 
 import (
+	"iter"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +44,8 @@ type ConstituentRef struct {
 	// ... AT '<url>' USER <user> PASSWORD '<password>'
 	//
 	// Password is encrypted before persisting metadata to the system namespace.
+	// URI userinfo is normalized into these same fields, retaining forwarding
+	// mode so that URI credentials remain a fallback when no token is supplied.
 	// At runtime, DatabaseManager decrypts it before invoking RemoteEngineFactory.
 	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
@@ -51,6 +55,7 @@ type ConstituentRef struct {
 	// - "user_password": use explicit User/Password for outbound Basic auth
 	// Empty is treated as "oidc_forwarding" for remote constituents.
 	AuthMode string `json:"auth_mode,omitempty"`
+
 }
 
 // Validate validates a constituent reference.
@@ -151,18 +156,15 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 		aliasMap[ref.Alias] = true
 	}
 
-	// Encrypt remote user_password credentials before persistence.
+	// Normalize new input through the same owner used by metadata persistence.
 	encrypted := make([]ConstituentRef, len(constituents))
 	copy(encrypted, constituents)
 	for i := range encrypted {
-		ref := &encrypted[i]
-		if ref.Type == "remote" && strings.EqualFold(strings.TrimSpace(ref.AuthMode), "user_password") {
-			ciphertext, err := m.encryptRemotePassword(ref.Password)
-			if err != nil {
-				return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(ref.Alias, err), err)
-			}
-			ref.Password = ciphertext
+		ref, err := m.normalizeRemoteCredentials(encrypted[i], true)
+		if err != nil {
+			return err
 		}
+		encrypted[i] = ref
 	}
 
 	// Create composite database info
@@ -244,13 +246,9 @@ func (m *DatabaseManager) AddConstituent(compositeName string, constituent Const
 		}
 	}
 
-	encrypted := constituent
-	if encrypted.Type == "remote" && strings.EqualFold(strings.TrimSpace(encrypted.AuthMode), "user_password") {
-		ciphertext, err := m.encryptRemotePassword(encrypted.Password)
-		if err != nil {
-			return localizedError(localization.MultidbCompositeSecureRemoteCredentialsFailed(encrypted.Alias, err), err)
-		}
-		encrypted.Password = ciphertext
+	encrypted, err := m.normalizeRemoteCredentials(constituent, true)
+	if err != nil {
+		return err
 	}
 
 	// Add constituent
@@ -274,13 +272,13 @@ func (m *DatabaseManager) RemoveConstituent(compositeName string, alias string) 
 		return localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
-	// Find and remove constituent
-	for i, ref := range info.Constituents {
-		if ref.Alias == alias {
-			info.Constituents = append(info.Constituents[:i], info.Constituents[i+1:]...)
-			info.UpdatedAt = time.Now()
-			return m.persistMetadata()
-		}
+	// Remove the selected registration, using the same folded last-winner
+	// rule as catalog, execution and admission. Earlier registrations remain
+	// available if the winning registration is explicitly removed.
+	if i, _, found := findCanonicalConstituent(info.Constituents, alias); found {
+		info.Constituents = slices.Delete(info.Constituents, i, i+1)
+		info.UpdatedAt = time.Now()
+		return m.persistMetadata()
 	}
 
 	return localizedError(localization.MultidbCompositeAliasNotFound(alias), nil)
@@ -300,10 +298,125 @@ func (m *DatabaseManager) GetCompositeConstituents(compositeName string) ([]Cons
 		return nil, localizedError(localization.MultidbCompositeDatabaseNotComposite(compositeName), nil)
 	}
 
-	// Return a copy
-	result := make([]ConstituentRef, len(info.Constituents))
-	copy(result, info.Constituents)
-	return result, nil
+	return snapshotConstituents(info.Constituents), nil
+}
+
+// canonicalConstituents is the shared catalog/manager reader of graph aliases.
+// Preserve the catalog's last-registration-wins rule for case-folded duplicates.
+// Walk backward so a single lookup can stop at its winner without copying the
+// catalog. Empty wanted enumerates all winners; a lookup yields only its last
+// matching alias and needs no duplicate-tracking map. Keys use the catalog's
+// exact case normalization.
+func canonicalConstituents(refs []ConstituentRef, wanted string) iter.Seq2[string, ConstituentRef] {
+	return func(yield func(string, ConstituentRef) bool) {
+		var seen map[string]struct{}
+		if wanted == "" {
+			seen = make(map[string]struct{}, len(refs))
+		}
+		for i := len(refs) - 1; i >= 0; i-- {
+			ref := refs[i]
+			key := strings.ToLower(ref.Alias)
+			if wanted != "" {
+				if !constituentAliasMatches(key, wanted) {
+					continue
+				}
+			} else {
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			if !yield(key, ref) || wanted != "" {
+				return
+			}
+		}
+	}
+}
+
+// constituentAliasMatches compares against the catalog's lowercase key. ASCII
+// lookups avoid allocating another lowercase string; non-ASCII input retains
+// strings.ToLower semantics, including distinctions broader EqualFold erases.
+func constituentAliasMatches(key, alias string) bool {
+	if len(key) != len(alias) {
+		return key == strings.ToLower(alias)
+	}
+	for i := 0; i < len(alias); i++ {
+		c := alias[i]
+		if c >= 128 {
+			return key == strings.ToLower(alias)
+		}
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if key[i] != c {
+			return false
+		}
+	}
+	return true
+}
+
+// constituentAliasValuesMatch compares raw alias values without allocating on
+// the common ASCII path. The Unicode fallback matches the catalog's ToLower
+// normalization exactly.
+func constituentAliasValuesMatch(stored, wanted string) bool {
+	if len(stored) != len(wanted) {
+		for i := 0; i < len(stored); i++ {
+			if stored[i] >= 0x80 {
+				return strings.ToLower(stored) == strings.ToLower(wanted)
+			}
+		}
+		for i := 0; i < len(wanted); i++ {
+			if wanted[i] >= 0x80 {
+				return strings.ToLower(stored) == strings.ToLower(wanted)
+			}
+		}
+		// ASCII case folding never changes a string's byte length.
+		return false
+	}
+	for i := 0; i < len(stored); i++ {
+		a, b := stored[i], wanted[i]
+		if a >= 128 || b >= 128 {
+			return strings.ToLower(stored) == strings.ToLower(wanted)
+		}
+		if a >= 'A' && a <= 'Z' {
+			a += 'a' - 'A'
+		}
+		if b >= 'A' && b <= 'Z' {
+			b += 'a' - 'A'
+		}
+		if a != b {
+			return false
+		}
+	}
+	return true
+}
+
+// findCanonicalConstituent returns the last registered case-folded alias and
+// its index without building an iterator or normalized key strings.
+func findCanonicalConstituent(refs []ConstituentRef, wanted string) (int, ConstituentRef, bool) {
+	for i := len(refs) - 1; i >= 0; i-- {
+		ref := refs[i]
+		if constituentAliasValuesMatch(ref.Alias, wanted) {
+			return i, ref, true
+		}
+	}
+	return -1, ConstituentRef{}, false
+}
+
+// snapshotConstituents returns the same winners in their stored order for
+// metadata/catalog callers that need an independent slice.
+func snapshotConstituents(refs []ConstituentRef) []ConstituentRef {
+	if refs == nil {
+		return nil
+	}
+	result := make([]ConstituentRef, 0, len(refs))
+	for _, ref := range canonicalConstituents(refs, "") {
+		result = append(result, ref)
+	}
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	return result
 }
 
 // ListCompositeDatabases returns all composite databases.
@@ -357,10 +470,8 @@ func (m *DatabaseManager) ExistsOrIsConstituent(name string) bool {
 		constituentAlias := name[dotIdx+1:]
 		info, exists := m.databases[compositeName]
 		if exists && info.Type == "composite" {
-			for _, ref := range info.Constituents {
-				if strings.EqualFold(ref.Alias, constituentAlias) {
-					return true
-				}
+			for range canonicalConstituents(info.Constituents, constituentAlias) {
+				return true
 			}
 		}
 	}

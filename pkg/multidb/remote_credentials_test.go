@@ -73,6 +73,72 @@ func TestIsEncryptedRemoteCredential(t *testing.T) {
 	assert.False(t, isEncryptedRemoteCredential(""))
 }
 
+func TestIsCredentialFreeSimpleHTTPURL(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want bool
+	}{
+		{name: "plain host", uri: "http://example.test", want: true},
+		{name: "escaped path", uri: "https://example.test/path%20item", want: true},
+		{name: "userinfo", uri: "http://synthetic@example.test"},
+		{name: "query", uri: "http://example.test/?user=synthetic"},
+		{name: "fragment", uri: "http://example.test/#synthetic"},
+		{name: "bad escape", uri: "http://example.test/%GG"},
+		{name: "bad port", uri: "http://example.test:port"},
+		{name: "noncanonical scheme", uri: "HTTP://example.test"},
+		{name: "space", uri: "http://example.test/path with space"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isCredentialFreeSimpleHTTPURL(tt.uri))
+		})
+	}
+}
+
+func TestCredentialFreeAliasStorageLookupDoesNotAllocate(t *testing.T) {
+	remote := storage.NewMemoryEngine()
+	defer remote.Close()
+	ref := ConstituentRef{Alias: "remote", DatabaseName: "remote", Type: "remote", URI: "http://example.test"}
+	manager := &DatabaseManager{databases: map[string]*DatabaseInfo{
+		"probe": &DatabaseInfo{Type: "composite", Constituents: []ConstituentRef{ref}},
+	}, remoteEngineFactory: func(ConstituentRef, string) (storage.Engine, error) { return remote, nil }}
+	manager.primeRuntimeCredentialFastPaths()
+	resolved, _, credentialFree, found := manager.resolveCompositeConstituentInternal("probe.remote")
+	if !found || !credentialFree {
+		t.Fatal("canonical credential-free endpoint was not classified for the fast path")
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		var err error
+		_, err = manager.getRemoteStorageInternal(resolved, "", credentialFree)
+		if err != nil {
+			t.Fatal("getting storage for a credential-free alias failed")
+		}
+	})
+	assert.Zero(t, allocs)
+}
+
+func TestRuntimeCredentialFreeFastPathRequiresCredentialFreeMetadata(t *testing.T) {
+	tests := []struct {
+		ref  ConstituentRef
+		want bool
+	}{
+		{ref: ConstituentRef{Type: "remote", URI: "http://example.test"}, want: true},
+		{ref: ConstituentRef{Type: "remote", URI: "http://synthetic-user:synthetic-pass@example.test"}},
+		{ref: ConstituentRef{Type: "remote", URI: "http://example.test/?token=synthetic-token"}},
+		{ref: ConstituentRef{Type: "remote", URI: "http://example.test", User: "synthetic-user"}},
+		{ref: ConstituentRef{Type: "remote", URI: "http://example.test", Password: "synthetic-pass"}},
+		{ref: ConstituentRef{Type: "remote", URI: "http://example.test", SecretRef: "synthetic-ref"}},
+		{ref: ConstituentRef{Type: "remote", URI: "http://example.test", AuthMode: "user_password"}},
+		{ref: ConstituentRef{Type: "local", URI: "http://example.test"}},
+	}
+	for _, tt := range tests {
+		if got := runtimeCredentialFreeRemoteRef(tt.ref); got != tt.want {
+			t.Fatal("credential fast-path classification did not match the expected security boundary")
+		}
+	}
+}
+
 func TestDatabaseManager_EncryptRemotePassword(t *testing.T) {
 	inner := storage.NewMemoryEngine()
 	defer inner.Close()

@@ -462,7 +462,7 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 	}
 
 	// Resolve the specific constituent by alias.
-	constituentEngine, err := compositeEngine.GetConstituentByAlias(alias)
+	constituentEngine, err := compositeEngine.GetConstituentByAlias(strings.ToLower(alias))
 	if err != nil {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}

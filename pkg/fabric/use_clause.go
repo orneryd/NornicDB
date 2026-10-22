@@ -72,9 +72,8 @@ var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE
 // CALL { } subquery. It returns the graph reference, the query after it,
 // and whether the query starts with USE.
 //
-//   - USE [GRAPH] <reference>: GRAPH is the optional keyword when a name
-//     that is not a clause keyword follows it (USE graph RETURN 1 names the
-//     graph "graph").
+//   - USE [GRAPH] <reference>: the enclosing grammar decides whether GRAPH
+//     is the modifier or a graph name, including keyword-spelled names.
 //   - The reference is a name (parts separated by '.', each a symbolic or
 //     backtick-quoted name, spaces and comments allowed around '.'), or a
 //     function call, a dynamic reference (graph.byName(…)).
@@ -86,28 +85,73 @@ var subqueryUseClauseFollowers = [...]string{"FOREACH", "ORDER", "CALL", "CREATE
 // Errors are *UseSyntaxError with Neo4j's message. The syntax is checked
 // before any graph is looked up, so a bad statement is a SyntaxError even
 // when the graph doesn't exist.
-func ParseUseClause(query string, inSubquery bool) (clause UseClause, remaining string, hasUse bool, err error) {
-	trimmed := strings.TrimSpace(query)
-	if !startsWithWordFold(trimmed, "USE") {
+func ParseUseClause(query string, inSubquery bool) (UseClause, string, bool, error) {
+	// This negative lexical filter avoids parsing unrelated ordinary queries.
+	// Presence never assigns roles: the complete grammar decides GRAPH/name.
+	start := -1
+	for token := range queryTokens(query) {
+		if !token.word || !strings.EqualFold(token.text, "USE") {
+			return UseClause{}, query, false, nil
+		}
+		start = token.start
+		break
+	}
+	if start < 0 {
 		return UseClause{}, query, false, nil
 	}
-	start := skipSpacesAndComments(trimmed, len("USE"))
-	if word, next, ok := scanWord(trimmed, start); ok && strings.EqualFold(word, "GRAPH") {
-		// GRAPH is the keyword when a name follows it that is not a clause
-		// keyword; otherwise it is the graph's name.
-		after := skipSpacesAndComments(trimmed, next)
-		if after < len(trimmed) && (trimmed[after] == '`' || isNameStart(trimmed[after])) {
-			if follow, _, ok := scanWord(trimmed, after); !ok || !isUseClauseFollower(follow, inSubquery) {
-				start = after
+	q := ReadQueryStructure(query)
+	if q.parsed && len(q.Clauses) > 0 && q.Clauses[0].Kind == "USE" {
+		if err := q.validateUseAt(0, inSubquery); err != nil {
+			return UseClause{}, "", true, err
+		}
+		return *q.Clauses[0].Use, q.Clauses[0].Remaining, true, nil
+	}
+	// Preserve diagnostics and ordinary extensions outside this grammar. A
+	// completed graph reference still comes from the native syntax owner.
+	var preset *QueryClause
+	if clause := q.First("USE"); clause != nil && clause.Start == start && clause.End > start {
+		preset = clause
+	}
+	return parseUseClauseFallback(query, inSubquery, preset)
+}
+
+func parseUseClauseFallback(query string, inSubquery bool, preset *QueryClause) (UseClause, string, bool, error) {
+	var clause UseClause
+	var end int
+	trimmed := query
+	if preset != nil {
+		// Diagnose a malformed continuation of a grammar-established reference.
+		// This cannot choose GRAPH versus name: its start is supplied by AST.
+		if _, _, err := scanGraphReference(query, preset.graphStart); err != nil {
+			return UseClause{}, "", true, err
+		}
+		clause = *preset.Use
+		end = preset.End
+	} else {
+		trimmed = strings.TrimSpace(query)
+		trimmed = trimmed[skipSpacesAndComments(trimmed, 0):]
+		if !startsWithWordFold(trimmed, "USE") {
+			return UseClause{}, query, false, nil
+		}
+		start := skipSpacesAndComments(trimmed, len("USE"))
+		if word, next, ok := scanWord(trimmed, start); ok && strings.EqualFold(word, "GRAPH") {
+			// GRAPH is the keyword when a name follows it that is not a clause
+			// keyword; otherwise it is the graph's name.
+			after := skipSpacesAndComments(trimmed, next)
+			if after < len(trimmed) && (trimmed[after] == '`' || isNameStart(trimmed[after])) {
+				if follow, _, ok := scanWord(trimmed, after); !ok || !isUseClauseFollower(follow, inSubquery) {
+					start = after
+				}
 			}
 		}
-	}
 
-	clause, end, err := scanGraphReference(trimmed, start)
-	if err != nil {
-		return UseClause{}, "", true, err
-	}
+		var err error
+		clause, end, err = scanGraphReference(trimmed, start)
+		if err != nil {
+			return UseClause{}, "", true, err
+		}
 
+	}
 	next := skipSpacesAndComments(trimmed, end)
 	if next < len(trimmed) && trimmed[next] == ';' {
 		// A ';' ends the statement: after it only whitespace and comments
@@ -394,16 +438,14 @@ func skipSpacesAndComments(s string, i int) int {
 // skipping string literals (with backslash escapes) and backtick names.
 func matchingParen(s string, open int) (int, bool) {
 	depth := 0
-	for i := open; i < len(s); i++ {
-		switch s[i] {
-		case '\'', '"', '`':
-			i = skipQuoted(s, i)
-		case '(':
+	for token := range queryTokens(s[open:]) {
+		switch token.text {
+		case "(":
 			depth++
-		case ')':
+		case ")":
 			depth--
 			if depth == 0 {
-				return i, true
+				return open + token.start, true
 			}
 		}
 	}
@@ -436,24 +478,11 @@ func splitArguments(text string) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	var args []string
-	depth, start := 0, 0
-	for i := 0; i < len(text); i++ {
-		switch text[i] {
-		case '\'', '"', '`':
-			i = skipQuoted(text, i)
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case ',':
-			if depth == 0 {
-				args = append(args, strings.TrimSpace(text[start:i]))
-				start = i + 1
-			}
-		}
+	parts := splitTopLevelCSV(text)
+	for index := range parts {
+		parts[index] = strings.TrimSpace(parts[index])
 	}
-	return append(args, strings.TrimSpace(text[start:]))
+	return parts
 }
 
 // doubleQuoteStringLiterals writes an expression's single-quoted string

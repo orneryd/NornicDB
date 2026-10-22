@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -871,6 +872,27 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
+	if !isFlatReturnProjection(clause) {
+		if q := fabric.ReadQueryStructure(clause); q.Starts("RETURN") && len(q.Clauses) == 1 && q.Clauses[0].Projection != nil {
+			p := q.Clauses[0].Projection
+			plan := &returnProjectionPlan{modifiers: p.Modifiers, distinct: p.Distinct, star: p.Star}
+			for _, item := range p.Items {
+				alias := item.Column
+
+				if p.Star {
+					text := item.Expression
+					if item.HasAlias {
+						text += " AS `" + strings.ReplaceAll(item.Alias, "`", "``") + "`"
+					}
+					plan.starItems = append(plan.starItems, text)
+				} else {
+					plan.addProjection(item.Expression, alias)
+				}
+			}
+			plan.valid = p.Star || len(plan.projections) > 0
+			return plan
+		}
+	}
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (RETURN by ORDER BY by, #894).
 	body := strings.TrimSpace(clause)
@@ -896,6 +918,22 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 	}
 	plan.valid = len(plan.projections) > 0
 	return plan
+}
+
+// isFlatReturnProjection keeps ordinary scalar RETURN clauses on the legacy
+// parser path. Nested expressions, quoted identifiers, modifiers, and UNION
+// clauses still use Fabric's shared structure reader.
+func isFlatReturnProjection(clause string) bool {
+	clause = strings.TrimSpace(clause)
+	const keyword = "RETURN"
+	if len(clause) <= len(keyword) || !strings.EqualFold(clause[:len(keyword)], keyword) || isIdentByte(clause[len(keyword)]) {
+		return false
+	}
+	body := clause[len(keyword):]
+	if strings.ContainsAny(body, "`()[]{}\r\n") || firstTopLevelModifierIndex(body) >= 0 || topLevelKeywordIndex(body, "UNION") >= 0 {
+		return false
+	}
+	return true
 }
 
 // withStarExpanded is the plan of RETURN *, items with the * written out

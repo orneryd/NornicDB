@@ -636,12 +636,12 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"CREATE (n:Row)": {
-				Columns: []string{"n"},
+			"CREATE (n:Row) RETURN n AS v": {
+				Columns: []string{"v"},
 				Rows:    [][]interface{}{{"lhs"}},
 			},
-			"RETURN 1 AS one": {
-				Columns: []string{"one"},
+			"RETURN 1 AS v": {
+				Columns: []string{"v"},
 				Rows:    [][]interface{}{{int64(1)}},
 			},
 		},
@@ -651,16 +651,16 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 	union := &FragmentUnion{
 		LHS: &FragmentExec{
 			Input:     &FragmentInit{},
-			Query:     "CREATE (n:Row)",
+			Query:     "CREATE (n:Row) RETURN n AS v",
 			GraphName: "db1",
-			Columns:   []string{"n"},
+			Columns:   []string{"v"},
 			IsWrite:   true,
 		},
 		RHS: &FragmentExec{
 			Input:     &FragmentInit{},
-			Query:     "RETURN 1 AS one",
+			Query:     "RETURN 1 AS v",
 			GraphName: "db1",
-			Columns:   []string{"one"},
+			Columns:   []string{"v"},
 		},
 		Columns: []string{"v"},
 	}
@@ -864,7 +864,7 @@ func TestFragmentContainsWrite(t *testing.T) {
 func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 	query := "WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
 	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id MATCH (n) WHERE n.id = id RETURN n"
+	expected := "WITH $id AS id WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
 	}
@@ -873,7 +873,7 @@ func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
 func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
 	query := "WITH 'MATCH as text' AS txt, id RETURN txt, id"
 	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id RETURN txt, id"
+	expected := "WITH $id AS id WITH 'MATCH as text' AS txt, id RETURN txt, id"
 	if rewritten != expected {
 		t.Fatalf("expected %q, got %q", expected, rewritten)
 	}
@@ -1217,7 +1217,7 @@ func TestSplitTopLevelAnd_QuotedStrings(t *testing.T) {
 		t.Fatalf("expected 2 parts with brackets, got %d: %v", len(parts), parts)
 	}
 	// AND inside braces should not split.
-	parts = splitTopLevelAnd("{a AND b} AND c = 1")
+	parts = splitTopLevelAnd("{value: a AND b} AND c = 1")
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 parts with braces, got %d: %v", len(parts), parts)
 	}
@@ -1244,15 +1244,10 @@ func TestSplitTopLevelEquality_AllBranches(t *testing.T) {
 	if ok {
 		t.Fatal("expected >= to not match as equality")
 	}
-	// == : the first = is skipped (next is =), but the second = is detected
-	// as a standalone equality. This matches the code's actual behavior — "a =="
-	// splits at the second =, producing lhs="a =" rhs=" b".
-	lhs, rhs, ok = splitTopLevelEquality("a == b")
-	if !ok {
-		t.Fatal("expected == to still match at second =")
-	}
-	if lhs != "a =" || rhs != "b" {
-		t.Fatalf("unexpected == parse: lhs=%q rhs=%q", lhs, rhs)
+	// Invalid equality is rejected rather than split at an arbitrary byte.
+	_, _, ok = splitTopLevelEquality("a == b")
+	if ok {
+		t.Fatal("expected invalid == expression to be rejected")
 	}
 	// Equality inside single-quoted string.
 	lhs, rhs, ok = splitTopLevelEquality("n.x = 'a=b'")
@@ -1309,9 +1304,9 @@ func TestContainsStandaloneIdentifier(t *testing.T) {
 	if containsStandaloneIdentifier(`"textKey128"`, "textKey128") {
 		t.Fatal("expected identifier inside double quotes to be ignored")
 	}
-	// Inside backtick string.
-	if containsStandaloneIdentifier("`textKey128`", "textKey128") {
-		t.Fatal("expected identifier inside backticks to be ignored")
+	// Backticks quote a variable name.
+	if !containsStandaloneIdentifier("`textKey128`", "textKey128") {
+		t.Fatal("expected quoted identifier to be found")
 	}
 	// Empty identifier.
 	if containsStandaloneIdentifier("abc", "") {
@@ -2094,13 +2089,19 @@ func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(
 	}
 }
 
-func TestExecuteApplyAsPipeline_SimpleImportNotPipelined(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
+func TestExecuteApplyAsPipeline_SimpleWithContinuation(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	capture := &pipelineCaptureCypherExecutor{}
+	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
 	input := &ResultStream{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	inner := &FragmentExec{Query: "WITH a MATCH (n) WHERE n.id = a RETURN n"}
-	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
-	if used {
-		t.Fatal("expected simple import WITH to not be pipelined")
+	inner := &FragmentExec{Query: "WITH a ORDER BY a RETURN collect(a) AS values", GraphName: "db1"}
+	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
+	if err != nil || !used {
+		t.Fatalf("expected whole-stream continuation: used=%v err=%v", used, err)
+	}
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a "+inner.Query {
+		t.Fatalf("unexpected continuation query: %s", capture.lastQuery)
 	}
 }
 
@@ -2145,15 +2146,15 @@ func TestExecuteUnion_RoutesToSequentialForWrite(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"CREATE (n:A)":  {Columns: []string{"n"}, Rows: [][]interface{}{{"a"}}},
-			"RETURN 1 AS x": {Columns: []string{"x"}, Rows: [][]interface{}{{int64(1)}}},
+			"CREATE (n:A) RETURN n AS v": {Columns: []string{"v"}, Rows: [][]interface{}{{"a"}}},
+			"RETURN 1 AS v":              {Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}}},
 		},
 	}
 	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
-		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A)", GraphName: "db1", IsWrite: true},
-		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "db1"},
+		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A) RETURN n AS v", GraphName: "db1", IsWrite: true},
+		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS v", GraphName: "db1"},
 		Columns: []string{"v"},
 	}
 	result, err := exec.Execute(context.Background(), nil, union, nil, "")
@@ -2589,17 +2590,17 @@ func TestInferReturnColumnsFromQuery_BacktickAlias(t *testing.T) {
 
 func TestSplitTopLevelResultModifiers_ParensSkipped(t *testing.T) {
 	// ORDER BY inside parens should not split.
-	proj, mods := splitTopLevelResultModifiers("coalesce(a ORDER BY b) AS x ORDER BY x")
+	proj, mods := splitTopLevelResultModifiers("coalesce('ORDER BY', a) AS x ORDER BY x")
 	if mods != "ORDER BY x" {
 		t.Fatalf("expected mods='ORDER BY x', got %q", mods)
 	}
-	if proj != "coalesce(a ORDER BY b) AS x" {
-		t.Fatalf("expected proj='coalesce(a ORDER BY b) AS x', got %q", proj)
+	if proj != "coalesce('ORDER BY', a) AS x" {
+		t.Fatalf("expected proj='coalesce('ORDER BY', a) AS x', got %q", proj)
 	}
 }
 
 func TestSplitTopLevelResultModifiers_BracketsSkipped(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiers("[ORDER BY x] AS arr LIMIT 5")
+	proj, mods := splitTopLevelResultModifiers("['ORDER BY', x] AS arr LIMIT 5")
 	if mods != "LIMIT 5" {
 		t.Fatalf("expected mods='LIMIT 5', got %q", mods)
 	}
@@ -2607,7 +2608,7 @@ func TestSplitTopLevelResultModifiers_BracketsSkipped(t *testing.T) {
 }
 
 func TestSplitTopLevelResultModifiers_BracesSkipped(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiers("{ORDER BY: 1} AS m SKIP 3")
+	proj, mods := splitTopLevelResultModifiers("{`ORDER BY`: 1} AS m SKIP 3")
 	if mods != "SKIP 3" {
 		t.Fatalf("expected mods='SKIP 3', got %q", mods)
 	}
@@ -3657,7 +3658,7 @@ func TestIsSimpleWithImportClause_EmptyParts(t *testing.T) {
 
 func TestFindLeadingWithClauseEnd_SingleQuoteEscape(t *testing.T) {
 	// Escaped single quote inside WITH clause.
-	query := "WITH 'it''s' AS x MATCH (n)"
+	query := "WITH 'it\\'s' AS x MATCH (n)"
 	pos, ok := findLeadingWithClauseEnd(query)
 	if !ok {
 		t.Fatal("expected true")
@@ -4334,9 +4335,9 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 func TestInferReturnColumnsFromQuery_EmptyItemAfterComma(t *testing.T) {
 	// Trailing comma leaves an empty item.
 	got := inferReturnColumnsFromQuery("RETURN a, ")
-	// Empty items are skipped.
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a], got %v", got)
+	// The structural owner rejects an incomplete projection.
+	if got != nil {
+		t.Fatalf("expected no columns for invalid syntax, got %v", got)
 	}
 }
 
@@ -4540,10 +4541,10 @@ func TestProjectSimpleReturnFromRow_EmptyItemInReturn(t *testing.T) {
 	}
 }
 
-func TestProjectSimpleReturnFromRow_NonSimpleAlias(t *testing.T) {
-	_, _, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
-	if ok {
-		t.Fatal("expected false for non-simple alias")
+func TestProjectSimpleReturnFromRow_QuotedAlias(t *testing.T) {
+	columns, row, ok := projectSimpleReturnFromRow("RETURN a AS `weird name`", []string{"a"}, []interface{}{1})
+	if !ok || len(columns) != 1 || columns[0] != "weird name" || len(row) != 1 || row[0] != 1 {
+		t.Fatalf("expected decoded quoted alias and value, got %v %v %v", columns, row, ok)
 	}
 }
 

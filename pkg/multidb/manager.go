@@ -66,6 +66,9 @@ type DatabaseManager struct {
 
 	// Optional encryptor for remote constituent credentials persisted in metadata.
 	remoteCredentialCipher *remoteCredentialCipher
+	// Credential-free endpoints are validated once per stored constituent so
+	// ordinary alias lookups avoid reparsing the same URL.
+	runtimeCredentialFreeRemoteRefs map[remoteCredentialFastPathKey]struct{}
 }
 
 // DatabaseInfo holds metadata about a database.
@@ -465,17 +468,9 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 	// Resolve dotted composite constituent references first (e.g. "cmp.tr").
 	// This is required for protocol-level USE routing where the effective database
 	// name is a constituent graph reference, not a top-level database metadata key.
-	if ref, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
+	if ref, resolvedName, credentialFree, ok := m.resolveCompositeConstituentInternal(name); ok {
 		if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			runtimeRef := ref
-			if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-				decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-				if decErr != nil {
-					return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-				}
-				runtimeRef.Password = decrypted
-			}
-			return m.getRemoteStorageInternal(runtimeRef, authToken)
+			return m.getRemoteStorageInternal(ref, authToken, credentialFree)
 		}
 		return m.getStorageInternal(resolvedName)
 	}
@@ -497,22 +492,19 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		constituentNames := make(map[string]string)
 		accessModes := make(map[string]string)
 
-		for _, ref := range info.Constituents {
+		for _, ref := range canonicalConstituents(info.Constituents, "") {
 			var constituentStorage storage.Engine
-			runtimeRef := ref
 			actualName := ref.DatabaseName
 			var err error
 
 			switch ref.Type {
 			case "remote":
-				if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-					decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-					if decErr != nil {
-						return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-					}
-					runtimeRef.Password = decrypted
+				index, _, found := findCanonicalConstituent(info.Constituents, ref.Alias)
+				credentialFree := false
+				if found {
+					_, credentialFree = m.runtimeCredentialFreeRemoteRefs[remoteCredentialFastPathKey{database: info, index: index}]
 				}
-				constituentStorage, err = m.getRemoteStorageInternal(runtimeRef, authToken)
+				constituentStorage, err = m.getRemoteStorageInternal(ref, authToken, credentialFree)
 				if err != nil {
 					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
 				}
@@ -555,37 +547,39 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 // resolveCompositeConstituentInternal resolves dotted graph references in the form
 // "<composite>.<alias>" to a constituent reference and resolved backing database name.
 // Must be called with lock held.
-func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (ConstituentRef, string, bool) {
+func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (ConstituentRef, string, bool, bool) {
 	dotIdx := strings.IndexByte(name, '.')
 	if dotIdx <= 0 || dotIdx >= len(name)-1 {
-		return ConstituentRef{}, "", false
+		return ConstituentRef{}, "", false, false
 	}
 
 	compositeName := strings.TrimSpace(name[:dotIdx])
 	constituentAlias := strings.TrimSpace(name[dotIdx+1:])
 	if compositeName == "" || constituentAlias == "" {
-		return ConstituentRef{}, "", false
+		return ConstituentRef{}, "", false, false
 	}
 
 	info, exists := m.databases[compositeName]
 	if !exists || info.Type != "composite" {
-		return ConstituentRef{}, "", false
+		return ConstituentRef{}, "", false, false
 	}
-	for _, ref := range info.Constituents {
-		if !strings.EqualFold(ref.Alias, constituentAlias) {
-			continue
-		}
-		resolvedName := ref.DatabaseName
-		if !strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			var err error
-			resolvedName, err = m.resolveDatabaseInternal(ref.DatabaseName)
-			if err != nil {
-				return ConstituentRef{}, "", false
-			}
-		}
-		return ref, resolvedName, true
+	index, ref, found := findCanonicalConstituent(info.Constituents, constituentAlias)
+	if !found {
+		return ConstituentRef{}, "", false, false
 	}
-	return ConstituentRef{}, "", false
+	credentialFree := false
+	if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
+		_, credentialFree = m.runtimeCredentialFreeRemoteRefs[remoteCredentialFastPathKey{database: info, index: index}]
+	}
+	resolvedName := ref.DatabaseName
+	if !strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
+		var err error
+		resolvedName, err = m.resolveDatabaseInternal(ref.DatabaseName)
+		if err != nil {
+			return ConstituentRef{}, "", false, false
+		}
+	}
+	return ref, resolvedName, credentialFree, true
 }
 
 // getStorageInternal gets storage for a database without resolving aliases.
@@ -617,11 +611,19 @@ func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error
 
 // getRemoteStorageInternal creates an engine for a remote constituent.
 // Must be called with lock held.
-func (m *DatabaseManager) getRemoteStorageInternal(ref ConstituentRef, authToken string) (storage.Engine, error) {
+func (m *DatabaseManager) getRemoteStorageInternal(ref ConstituentRef, authToken string, credentialFree bool) (storage.Engine, error) {
 	if m.remoteEngineFactory == nil {
 		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.Alias), nil)
 	}
-	engine, err := m.remoteEngineFactory(ref, authToken)
+	runtimeRef := ref
+	if !credentialFree {
+		var err error
+		runtimeRef, err = m.resolveRemoteCredentials(ref, authToken)
+		if err != nil {
+			return nil, err
+		}
+	}
+	engine, err := m.remoteEngineFactory(runtimeRef, authToken)
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +673,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 	}
 
 	aliases := append([]string(nil), info.Aliases...)
-	constituents := append([]ConstituentRef(nil), info.Constituents...)
+	constituents := snapshotConstituents(info.Constituents)
 
 	info.sizeMu.RLock()
 	totalSize := info.totalSize
@@ -791,16 +793,14 @@ func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string,
 		if info == nil || info.Type != "composite" {
 			return "", ErrDatabaseNotFound
 		}
-		for _, constituent := range info.Constituents {
-			if constituent.Alias != selection[dot+1:] {
-				continue
-			}
-			if constituent.Type == "local" {
-				return m.resolveDatabaseInternal(constituent.DatabaseName)
-			}
-			return compositeName, nil
+		_, constituent, found := findCanonicalConstituent(info.Constituents, selection[dot+1:])
+		if !found {
+			return "", ErrDatabaseNotFound
 		}
-		return "", ErrDatabaseNotFound
+		if constituent.Type == "local" {
+			return m.resolveDatabaseInternal(constituent.DatabaseName)
+		}
+		return compositeName, nil
 	}
 	return m.resolveDatabaseInternal(selection)
 }

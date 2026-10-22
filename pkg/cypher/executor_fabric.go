@@ -14,6 +14,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 type fabricStatsAccumulatorKey struct{}
@@ -60,20 +61,9 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 	//   - USE <composite>
 	//   - USE <composite>.<constituent>
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
-	opts := defaultKeywordScanOpts()
-	searchFrom := 0
-	for {
-		useIdx := keywordIndexFrom(cypher, "USE", searchFrom, opts)
-		if useIdx < 0 {
-			break
-		}
-		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
-		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
-			return true
-		}
-		searchFrom = useIdx + len("USE")
-	}
-	return false
+	return fabric.ReadQueryStructure(cypher).AnyUse(func(use fabric.UseClause) bool {
+		return e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())
+	})
 }
 
 func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
@@ -120,9 +110,10 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 
 	authToken := GetAuthTokenFromContext(ctx)
 	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
-		base:       e,
-		authToken:  authToken,
-		autoCommit: autoCommit,
+		base:        e,
+		authToken:   authToken,
+		autoCommit:  autoCommit,
+		transaction: tx,
 	}, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
@@ -157,6 +148,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
+	fabricExecutor.SetConcurrentExecution(autoCommit)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
@@ -168,8 +160,12 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		}
 		return nil, fabricGraphReferenceError(err)
 	}
-	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows)
+	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
 	if autoCommit {
+		if _, err := txphase.CommitContext(ctx); err != nil {
+			_ = tx.Rollback(nil)
+			return nil, err
+		}
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
 		}
@@ -478,47 +474,7 @@ func (e *StorageExecutor) currentDatabaseName() string {
 // inferTopLevelReturnColumns best-effort derives outer RETURN columns for Fabric queries.
 // This is used when a distributed execution path returns zero rows and no columns.
 func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
-	opts := defaultKeywordScanOpts()
-	opts.SkipBraces = true
-
-	lastReturn := -1
-	searchFrom := 0
-	for {
-		idx := keywordIndexFrom(query, "RETURN", searchFrom, opts)
-		if idx < 0 {
-			break
-		}
-		lastReturn = idx
-		searchFrom = idx + len("RETURN")
-	}
-	if lastReturn < 0 {
-		return nil
-	}
-
-	clause := strings.TrimSpace(query[lastReturn+len("RETURN"):])
-	if clause == "" {
-		return nil
-	}
-
-	// Strip trailing ORDER BY / SKIP / LIMIT at top-level.
-	end := len(clause)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	clause = strings.TrimSpace(clause[:end])
-	clause = strings.TrimSuffix(clause, ";")
-	clause = strings.TrimSpace(clause)
-	if clause == "" {
-		return nil
-	}
-
-	items := e.parseReturnItems(clause)
-	if len(items) == 0 {
-		return nil
-	}
-	return e.buildColumnsFromReturnItems(items)
+	return fabric.ReturnColumns(query)
 }
 
 func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
@@ -551,11 +507,21 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 			qualified := dbName + "." + ref.Alias
 			if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
 				catalog.Register(qualified, &fabric.LocationRemote{
-					DBName:   ref.DatabaseName,
-					URI:      ref.URI,
-					AuthMode: strings.TrimSpace(ref.AuthMode),
-					User:     ref.User,
-					Password: ref.Password,
+					GraphName: qualified,
+					DBName:    ref.DatabaseName,
+					URI:       ref.URI,
+					AuthMode:  strings.TrimSpace(ref.AuthMode),
+					ResolveEngine: func(authToken string) (storage.Engine, error) {
+						resolved, err := e.dbManager.GetStorageForUse(qualified, authToken)
+						if err != nil {
+							return nil, err
+						}
+						engine, ok := resolved.(storage.Engine)
+						if !ok {
+							return nil, localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(qualified), nil)
+						}
+						return engine, nil
+					},
 				})
 				continue
 			}
@@ -596,9 +562,11 @@ func mapString(m map[string]interface{}, key string) string {
 }
 
 type cypherFabricExecutor struct {
-	base       *StorageExecutor
-	authToken  string
-	autoCommit bool
+	base            *StorageExecutor
+	authToken       string
+	autoCommit      bool
+	transaction     *fabric.FabricTransaction
+	localDispatchMu sync.Mutex
 
 	mu sync.Mutex
 	// localTxExecBySub holds the sub-transaction executors of a statement
@@ -642,39 +610,72 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 		return nil, nil, false, nil
 	}
 	executor := c.base.cloneForStorage(c.base.storage)
-	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
-	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
+	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params, recordBindings)
 	return columns, rows, true, err
 }
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
 
-	exec := c.base.cloneForStorage(engine)
+	var exec *StorageExecutor
 	if len(recordBindings) > 0 {
-		exec.fabricRecordBindings = recordBindings
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
-	if !c.autoCommit {
-		if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
+			// Fabric has one write participant. Its local fragments share one
+			// transactional executor until the coordinator admits COMMIT.
+			// Concurrent read-only participants keep their independent path.
+			if c.autoCommit {
+				c.localDispatchMu.Lock()
+				defer c.localDispatchMu.Unlock()
+			}
 			txExec, err := c.ensureLocalShardTxExecutor(ctx, sub, dbName, engine)
 			if err != nil {
 				return nil, nil, err
 			}
 			exec = txExec
-			if len(recordBindings) > 0 {
-				exec.fabricRecordBindings = recordBindings
-			}
 		}
+	}
+	if exec == nil {
+		exec = c.base.cloneForStorage(engine)
 	}
 
 	ctx = withExecutionDatabase(ctx, dbName)
-	return c.executeFragmentQuery(ctx, exec, query, params)
+	return c.executeFragmentQuery(ctx, exec, query, params, recordBindings)
 }
 
-func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	result, err := exec.executeInternal(ctx, query, params)
+func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
+	query = fabric.LocalQuery(query)
+	query, names := canonicalizeQuotedVariablesWithBindings(query, recordBindings)
+	if names != nil {
+		params = names.parameterValues(params)
+		recordBindings = names.bindingValues(recordBindings)
+		ctx = withQuotedVariableNames(ctx, names)
+	}
+	previousBindings := exec.fabricRecordBindings
+	exec.fabricRecordBindings = recordBindings
+	defer func() { exec.fabricRecordBindings = previousBindings }()
+	// Fragment imports are installed before the engine's shared compile-time
+	// scope/type owner runs. Both parser paths enter through this gate, so
+	// body-scope improvements apply here without another Fabric scope reader.
+	if err := exec.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
+		_, err = names.restore(nil, err, exec.parseReturnItems)
+		return nil, nil, err
+	}
+	var result *ExecuteResult
+	var err error
+	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && (exec.txContext == nil || !exec.txContext.active) && (embedding || fabric.ReadQueryStructure(query).HasEmbeddingCandidate()) {
+		// Inline embeddings use the normal mutation/transaction owner. Internal
+		// fragment execution alone deliberately does not start an implicit tx.
+		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+			return txExec.executeInternal(txCtx, stripped, params)
+		})
+	} else {
+		result, err = exec.executeInternal(ctx, query, params)
+	}
+	result, err = names.restore(result, err, exec.parseReturnItems)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -688,181 +689,23 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 }
 
 func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[string]interface{}) string {
-	if len(recordBindings) == 0 {
-		return query
-	}
-	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
-		return query
-	}
-	withEnd := findLeadingWithEndLocal(trimmed)
-	if withEnd <= 0 || withEnd >= len(trimmed) {
-		return query
-	}
-	withClause := strings.TrimSpace(trimmed[len("WITH "):withEnd])
-	rest := strings.TrimSpace(trimmed[withEnd:])
-	if rest == "" {
-		return query
-	}
-	// Stripping is safe for simple imported bindings when the next clause is a
-	// top-level read/projection/pipeline clause that can resolve identifiers from
-	// Fabric record bindings.
-	if !(startsWithKeywordFold(rest, "MATCH") ||
-		startsWithKeywordFold(rest, "OPTIONAL MATCH") ||
-		startsWithKeywordFold(rest, "RETURN") ||
-		startsWithKeywordFold(rest, "UNWIND") ||
-		startsWithKeywordFold(rest, "USE")) {
-		return query
-	}
-	imports := splitCommaTopLevelLocal(withClause)
-	if len(imports) == 0 {
-		return query
-	}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		if name == "" || strings.Contains(name, " ") {
-			return query
-		}
-		if _, ok := recordBindings[name]; !ok {
-			return query
-		}
-	}
-	rewritten := rest
-	local := localOccurrences{text: rest}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, &local)
-	}
-	return rewritten
+	return fabric.StripLeadingImportsForRecord(query, recordBindings)
 }
 
 func findLeadingWithEndLocal(query string) int {
-	inSingle, inDouble, inBacktick := false, false, false
-	depth := 0
-	for i := len("WITH "); i < len(query); i++ {
-		ch := query[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		}
-		if depth != 0 {
-			continue
-		}
-		if startsWithKeywordAtLocal(query, i, "MATCH") ||
-			startsWithKeywordAtLocal(query, i, "OPTIONAL MATCH") ||
-			startsWithKeywordAtLocal(query, i, "RETURN") ||
-			startsWithKeywordAtLocal(query, i, "WHERE") ||
-			startsWithKeywordAtLocal(query, i, "USE") ||
-			startsWithKeywordAtLocal(query, i, "WITH") ||
-			startsWithKeywordAtLocal(query, i, "CALL") ||
-			startsWithKeywordAtLocal(query, i, "CREATE") ||
-			startsWithKeywordAtLocal(query, i, "MERGE") ||
-			startsWithKeywordAtLocal(query, i, "UNWIND") ||
-			startsWithKeywordAtLocal(query, i, "SET") ||
-			startsWithKeywordAtLocal(query, i, "DELETE") ||
-			startsWithKeywordAtLocal(query, i, "DETACH DELETE") {
-			return i
-		}
+	end, ok := fabric.LeadingWithClauseEnd(query)
+	if !ok || end == len(query) {
+		return -1
 	}
-	return -1
+	return end
 }
 
 func startsWithKeywordAtLocal(s string, i int, kw string) bool {
-	if i < 0 || i+len(kw) > len(s) {
-		return false
-	}
-	if i > 0 {
-		prev := s[i-1]
-		if isIdentByte(prev) {
-			return false
-		}
-	}
-	if !strings.EqualFold(s[i:i+len(kw)], kw) {
-		return false
-	}
-	j := i + len(kw)
-	if j < len(s) {
-		next := s[j]
-		if isIdentByte(next) {
-			return false
-		}
-	}
-	return true
+	return fabric.ClauseKeywordAt(s, i, kw)
 }
 
 func splitCommaTopLevelLocal(s string) []string {
-	var parts []string
-	start := 0
-	depth := 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
+	return splitTopLevelComma(s)
 }
 
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
@@ -891,12 +734,17 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	}
 
 	terminalCtx := context.WithoutCancel(beginCtx)
+	if tx := c.fabricTransaction(); tx != nil {
+		terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
+	}
 	commitFn := func(_ *fabric.SubTransaction) error {
 		_, err := txExec.Execute(terminalCtx, "COMMIT", nil)
 		return err
 	}
 	rollbackFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(terminalCtx, "ROLLBACK", nil)
+		// Local storage rollback has no context API. Always release its state;
+		// the protocol terminal owner bounds its wait independently.
+		_, err := txExec.Execute(context.WithoutCancel(terminalCtx), "ROLLBACK", nil)
 		return err
 	}
 	if err := c.bindCallbacksOnce(sub, commitFn, rollbackFn); err != nil {
@@ -908,11 +756,8 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 }
 
 func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, commitFn fabric.CommitCallback, rollbackFn fabric.RollbackCallback) error {
-	if c.base == nil || c.base.txContext == nil {
-		return nil
-	}
-	tx, ok := c.base.txContext.tx.(*fabric.FabricTransaction)
-	if !ok || tx == nil {
+	tx := c.fabricTransaction()
+	if tx == nil {
 		return nil
 	}
 	return tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn)
@@ -922,10 +767,19 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 // (USE graph.byName(g)) for Fabric: values holds the statement's
 // parameters and the current row's variables.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
-	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
+		query, names := canonicalizeQuotedVariablesWithBindings("RETURN "+expression, values)
+		bindings, params := values, values
+		if names != nil {
+			bindings, params = names.bindingValues(values), names.parameterValues(values)
+		}
+		projection := fabric.ReadQueryStructure(query).ResultClause()
+		if projection == nil || projection.Projection == nil || len(projection.Projection.Items) != 1 {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
+		}
+		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), projection.Projection.Items[0].Expression, pipelineRow(bindings))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err
@@ -961,4 +815,17 @@ func fabricGraphReferenceError(err error) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
 	}
 	return err
+}
+
+// fabricTransaction is the coordinator's participant/lifetime owner on both
+// implicit and explicit dispatch; direct helper callers keep the session owner.
+func (c *cypherFabricExecutor) fabricTransaction() *fabric.FabricTransaction {
+	if c.transaction != nil {
+		return c.transaction
+	}
+	if c.base != nil && c.base.txContext != nil {
+		tx, _ := c.base.txContext.tx.(*fabric.FabricTransaction)
+		return tx
+	}
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // isSystemCommandNoGraph returns true for statements that operate on database metadata
@@ -372,7 +373,12 @@ func splitReturnExpressions(clause string) []string {
 // When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
 // cypher25 is the statement's language version (its scope checks differ).
-func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool) error {
+	// Preprocessing can consume the statement's remaining budget. Validation
+	// is a new execution phase and must not start after cancellation.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// A text the selected validator accepted passed every check below (it
 	// is marked valid only then), so a repeated query skips them all (#823):
 	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
@@ -400,14 +406,14 @@ func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
 		return err
 	}
 	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLR(cypher, cypher25)
+		return e.validateSyntaxANTLR(ctx, cypher, cypher25)
 	}
 	return e.validateSyntaxNornic(cypher)
 }
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
-func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string, cypher25 bool) error {
 	if isNornicExtensionStatement(cypher) {
 		if err := e.validateSyntaxNornic(cypher); err != nil {
 			return err
@@ -415,7 +421,13 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
 		return nil
 	}
-	parserError := antlr.Validate(cypher)
+	parserError := antlr.ValidateContext(ctx, cypher)
+	if parserError == context.Canceled || parserError == context.DeadlineExceeded {
+		return parserError
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if parserError == nil {
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 		return nil
@@ -429,7 +441,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 	if err := validateKnownFunctions(cypher); err != nil {
 		return err
 	}
-	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", observability.RedactText(parserError.Error()))
 }
 
 // isNornicExtensionStatement reports whether cypher is a statement outside

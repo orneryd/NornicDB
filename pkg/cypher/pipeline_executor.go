@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -63,8 +64,9 @@ const (
 // keyword (MATCH/CREATE/WITH/UNWIND/RETURN) and the clause body — exactly
 // what you would pass to the clause implementation.
 type pipelineClause struct {
-	kind pipelineClauseKind
-	text string
+	embeddingCandidate string
+	kind               pipelineClauseKind
+	text               string
 	// optional marks OPTIONAL CALL (kinds pipelineClauseCall and
 	// pipelineClauseCallSubquery; text is the CALL itself): an input row the
 	// call produces no row for is kept, with null for the call's columns
@@ -206,6 +208,9 @@ func splitUnwindBody(body string) (list, alias string, ok bool) {
 // pipelineClauseBody is a clause's text after its keyword, which the
 // clause splitter matched in any letter case (Return, rEtUrN).
 func pipelineClauseBody(text, keyword string) string {
+	if body, ok := fabric.ClauseBody(text, keyword); ok {
+		return body
+	}
 	text = strings.TrimSpace(text)
 	if len(text) >= len(keyword) && strings.EqualFold(text[:len(keyword)], keyword) {
 		text = text[len(keyword):]
@@ -280,6 +285,28 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 // subquery) returns (nil, false) so the caller falls back. topLevelCall
 // reports whether the query has a CALL of its own (cachedPipelineClauses).
 func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
+	// Fabric fragments and ordinary grammar-supported statements share the
+	// parser's clause ownership, including keyword-named expressions. The
+	// scanner below remains only for Nornic extensions absent from the grammar.
+	if structure := fabric.ReadQueryStructure(cypher); structure.Err == nil {
+		kinds := map[string]pipelineClauseKind{"MATCH": pipelineClauseMatch, "OPTIONAL MATCH": pipelineClauseOptionalMatch, "CREATE": pipelineClauseCreate, "MERGE": pipelineClauseMerge, "DELETE": pipelineClauseDelete, "DETACH DELETE": pipelineClauseDelete, "SET": pipelineClauseSet, "REMOVE": pipelineClauseRemove, "WITH": pipelineClauseWith, "UNWIND": pipelineClauseUnwind, "FOR": pipelineClauseUnwind, "RETURN": pipelineClauseReturn, "FOREACH": pipelineClauseForeach, "LET": pipelineClauseLet, "FILTER": pipelineClauseFilter}
+		for _, clause := range structure.Clauses {
+			kind, found := kinds[clause.Kind]
+			if clause.Kind == "CALL" {
+				found = true
+				topLevelCall = true
+				kind = pipelineClauseCall
+				if clause.Nested != nil {
+					kind = pipelineClauseCallSubquery
+				}
+			}
+			if !found {
+				return nil, false, topLevelCall
+			}
+			clauses = append(clauses, pipelineClause{kind: kind, text: clause.ExecutionText, embeddingCandidate: clause.EmbeddingCandidate, optional: clause.Optional && clause.Kind == "CALL"})
+		}
+		return clauses, len(clauses) > 0, topLevelCall
+	}
 	type kw struct {
 		name string
 		kind pipelineClauseKind
@@ -848,6 +875,25 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				e.refreshRowEntities(ctx, rows)
 			}
 		case pipelineClauseWith:
+			// The execution frame is the authoritative variable owner. It
+			// already includes wildcard exports, scoped imports and UNION
+			// branches; no syntax reader reconstructs those scopes.
+			if name := clause.embeddingCandidate; name != "" {
+				if binding, bound := pipelineFrameBinding(ctx, scope, name); !bound {
+					if wrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+						mutated := wrapper.snapshotMutatedNodeIDs()
+						if err := e.applyInlineEmbeddingMutations(ctx, mutated); err != nil {
+							return nil, true, err
+						}
+						wrapper.clearMutatedNodeIDs(mutated)
+					} else {
+						return nil, true, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
+					}
+					continue
+				} else {
+					clause.text = "WITH " + binding
+				}
+			}
 			// Carry imports after projection without adding them to DISTINCT/group keys.
 			if source != nil {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
@@ -2218,4 +2264,22 @@ func keywordsBefore(s string, position int, words ...string) int {
 		end = start
 	}
 	return end
+}
+
+// pipelineFrameBinding uses the execution frame and its existing identifier
+// translation. It does not reconstruct CALL, UNION or wildcard scopes.
+func pipelineFrameBinding(ctx context.Context, scope map[string]struct{}, name string) (string, bool) {
+	if _, bound := scope[name]; bound {
+		return name, true
+	}
+	if names, _ := ctx.Value(quotedVariablesKey{}).(*quotedVariableNames); names != nil {
+		for internal, original := range names.internal {
+			if original.name == name {
+				if _, bound := scope[internal]; bound {
+					return internal, true
+				}
+			}
+		}
+	}
+	return name, false
 }
