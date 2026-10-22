@@ -26,3 +26,17 @@ func (s *Server) toolDefinitions(database string) []Tool {
 	defer s.mu.RUnlock()
 	return append(GetToolDefinitionsWithDefaultDatabase(database), s.pluginTools...)
 }
+
+// UnregisterTool removes a plugin tool from discovery and future calls. Native
+// tools cannot be removed through this method. Already executing calls may finish.
+func (s *Server) UnregisterTool(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, tool := range s.pluginTools {
+		if tool.Name == name {
+			delete(s.handlers, name)
+			s.pluginTools = append(s.pluginTools[:i], s.pluginTools[i+1:]...)
+			return
+		}
+	}
+}

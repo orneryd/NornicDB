@@ -15,3 +15,12 @@ blocked checks must be identified in the PR; they are not passes.
 - [x] Initialize configured plugins when the harness is disabled or inference startup fails.
 - [x] Compile a real plugin without local native libraries and load it in a nolocalllm host with the harness disabled.
 - [ ] Verify native inference with the local adapter (native library unavailable here).
+
+## PR review corrections
+
+- [x] Reproduce MCP drain deadlock, retained failed-start registration and stale exported tools before fixing.
+- [x] Roll back failed starts and invoke plugin cleanup before external publication.
+- [x] Remove owned MCP exports and reset FIFO state on unregister/shutdown.
+- [x] Stop and shut down server-owned plugins, including plugin-only mode.
+- [x] Correct plugin-only startup logs, catalog text and documentation.
+- [ ] Validate final lifecycle regressions, package suites and race checks; record exact limits on PR.

@@ -452,15 +452,16 @@ func (s *Server) Start(addr string) error {
 // Stop gracefully shuts down the server.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
-
-	if s.httpServer != nil {
-		return util.ShutdownHTTPServer(ctx, s.httpServer)
+	server := s.httpServer
+	s.mu.Unlock()
+	// Shutdown waits for handlers which also acquire s.mu. Never hold it while draining.
+	if server != nil {
+		return util.ShutdownHTTPServer(ctx, server)
 	}
 	return nil
 }

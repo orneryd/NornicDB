@@ -28,3 +28,15 @@ server initializes/starts plugins and exposes their external tools without
 loading a model or creating the Bifrost chat handler. Direct action/database
 access remains available; prompt inference reports unavailable. A failed model
 initialization does not prevent this plugin-only path.
+
+### Requirement: Plugin export lifecycle
+WHEN plugin Start fails THEN its registration/actions are removed and Shutdown
+cleans up the initialized plugin before MCP publication. WHEN the manager shuts
+down THEN owned external tools disappear from discovery and future calls, FIFO
+order resets, and native/collision-winning tools owned elsewhere remain intact.
+WHEN the server stops THEN its initialized plugins receive Stop and Shutdown
+exactly once, including with the harness disabled.
+
+### Requirement: Standalone MCP draining
+WHEN MCP Stop drains an in-flight list or call request THEN registry operations
+can finish without waiting for the shutdown owner's mutex.

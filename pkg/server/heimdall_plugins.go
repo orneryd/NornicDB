@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
@@ -18,7 +19,6 @@ func (s *Server) initHeimdallPluginsWithoutInference(features *nornicConfig.Feat
 		return
 	}
 	router := newHeimdallDBRouter(s.db, s.dbManager, features)
-	s.heimdallCacheRouter = router
 	metrics := &heimdallMetricsReader{}
 	manager := heimdall.GetSubsystemManager()
 	bridge := &heimdall.NoOpBifrost{}
@@ -33,7 +33,19 @@ func (s *Server) initHeimdallPluginsWithoutInference(features *nornicConfig.Feat
 
 // loadHeimdallPlugins is shared by inference-enabled and plugin-only startup.
 func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.Server) {
+	s.heimdallPluginsMu.Lock()
+	defer s.heimdallPluginsMu.Unlock()
+	if s.closed.Load() {
+		if router, ok := ctx.Database.(*heimdallDBRouter); ok {
+			router.Close()
+		}
+		return
+	}
 	manager := heimdall.GetSubsystemManager()
+	s.heimdallSubsystem = manager
+	if router, ok := ctx.Database.(*heimdallDBRouter); ok {
+		s.heimdallCacheRouter = router
+	}
 	manager.SetContext(ctx)
 	if dir := s.config.PluginsDir; dir != "" {
 		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(dir))
@@ -53,4 +65,19 @@ func (s *Server) loadHeimdallPlugins(ctx heimdall.SubsystemContext, server *mcp.
 		s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryDuplicateEvent(s.config.HeimdallPluginsDir, s.config.PluginsDir))
 	}
 	registerHeimdallMCPTools(server, manager, ctx.Database, ctx.Metrics, ctx.Bifrost)
+}
+
+// stopHeimdallPlugins serializes cleanup with both plugin-only and async startup.
+func (s *Server) stopHeimdallPlugins() error {
+	s.heimdallPluginsMu.Lock()
+	defer s.heimdallPluginsMu.Unlock()
+	var err error
+	if manager := s.heimdallSubsystem; manager != nil {
+		err = errors.Join(manager.StopAll(), manager.ShutdownAll())
+		s.heimdallSubsystem = nil
+	}
+	if s.heimdallCacheRouter != nil {
+		s.heimdallCacheRouter.Close()
+	}
+	return err
 }

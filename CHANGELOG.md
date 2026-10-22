@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Roll back failed Heimdall plugin starts, retire exported MCP tools on shutdown, stop plugin-only installations with the server, and let standalone MCP shutdown drain active tool requests without holding the registry lock.
+
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited
   reclamation and requires a fresh physical reading before reopening admission

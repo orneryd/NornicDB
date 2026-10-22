@@ -622,6 +622,9 @@ var Plugin TestPlugin
 		require.Error(t, err)
 		require.Nil(t, loaded)
 		require.Contains(t, err.Error(), "start")
+		_, registered := heimdall.GetSubsystemManager().GetPlugin(p.Name())
+		require.False(t, registered, "failed starts must not retain callable actions")
+
 	})
 }
 

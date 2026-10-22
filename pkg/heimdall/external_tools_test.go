@@ -55,3 +55,32 @@ func TestExternalFlagJSONContract(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{}`), &internal))
 	require.False(t, internal.External)
 }
+
+func TestUnregisterPluginPreservesOtherOwnersAndReloadOrder(t *testing.T) {
+	m := &SubsystemManager{plugins: make(map[string]*LoadedHeimdallPlugin), actions: make(map[string]ActionFunc)}
+	register := func(name string, actions map[string]ActionFunc) {
+		t.Helper()
+		require.NoError(t, m.RegisterPlugin(&externalTestPlugin{NewMockPlugin(name), actions}, "", true))
+	}
+	register("a", map[string]ActionFunc{"b_c": {External: true}, "z": {External: true}})
+	register("a_b", map[string]ActionFunc{"c": {External: true}, "d": {External: true}})
+	var removed [][]string
+	m.OnActionsRemoved(func(names []string) { removed = append(removed, append([]string(nil), names...)); m.ExternalActions() })
+	m.UnregisterPlugin("missing")
+	require.Empty(t, removed)
+	m.UnregisterPlugin("a")
+	require.Equal(t, [][]string{{"heimdall_a_b_c", "heimdall_a_z"}}, removed)
+	actions := m.ExternalActions()
+	require.Len(t, actions, 1)
+	require.Equal(t, "heimdall_a_b_d", actions[0].Name)
+	require.NoError(t, m.ShutdownAll())
+	require.False(t, m.initialized)
+	require.Empty(t, m.actionOrder)
+	require.Empty(t, m.actionRemovalHooks)
+	require.Len(t, removed, 2)
+	register("a", map[string]ActionFunc{"z": {External: true}})
+	require.Len(t, m.ExternalActions(), 1)
+	require.Equal(t, []string{"heimdall_a_z"}, m.actionOrder)
+	require.NoError(t, m.ShutdownAll())
+	require.Len(t, removed, 2, "shutdown must retire old consumer callbacks")
+}

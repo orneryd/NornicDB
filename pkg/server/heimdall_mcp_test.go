@@ -104,3 +104,38 @@ func TestHeimdallMCPExposureAndInference(t *testing.T) {
 		require.False(t, action.External, name)
 	}
 }
+
+func TestHeimdallMCPShutdownRemovesTools(t *testing.T) {
+	heimdall.ResetSubsystemManagerForTests()
+	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
+	manager := heimdall.GetSubsystemManager()
+	plugin := &mcpInferencePlugin{}
+	require.NoError(t, manager.RegisterPlugin(plugin, "", true))
+	server := mcp.NewServer(nil, nil)
+	registerHeimdallMCPTools(server, manager, nil, nil, nil)
+	require.NoError(t, manager.ShutdownAll())
+	require.Len(t, server.ToolDefinitions(), len(mcp.GetToolDefinitions()))
+	_, err := server.CallTool(context.Background(), "heimdall_external_test_infer", nil)
+	require.Error(t, err)
+	require.Empty(t, manager.ExternalActions())
+	require.NoError(t, manager.RegisterPlugin(&mcpInferencePlugin{}, "", true))
+	registerHeimdallMCPTools(server, manager, nil, nil, nil)
+	require.Len(t, server.ToolDefinitions(), len(mcp.GetToolDefinitions())+2)
+	require.Len(t, manager.ExternalActions(), 2, "reload must not duplicate FIFO entries")
+}
+
+func TestHeimdallMCPShutdownKeepsCollisionWinner(t *testing.T) {
+	heimdall.ResetSubsystemManagerForTests()
+	t.Cleanup(heimdall.ResetSubsystemManagerForTests)
+	manager := heimdall.GetSubsystemManager()
+	require.NoError(t, manager.RegisterPlugin(&mcpInferencePlugin{}, "", true))
+	server := mcp.NewServer(nil, nil)
+	const name = "heimdall_external_test_infer"
+	require.NoError(t, server.RegisterTool(mcp.Tool{Name: name}, func(context.Context, map[string]interface{}) (interface{}, error) { return "original", nil }))
+	registerHeimdallMCPTools(server, manager, nil, nil, nil)
+	require.NoError(t, manager.ShutdownAll())
+	result, err := server.CallTool(context.Background(), name, nil)
+	require.NoError(t, err)
+	require.Equal(t, "original", result)
+	require.Equal(t, len(mcp.GetToolDefinitions())+1, len(server.ToolDefinitions()))
+}

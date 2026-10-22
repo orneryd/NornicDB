@@ -484,7 +484,7 @@ func TestMyPlugin_Actions(t *testing.T) {
 # Start NornicDB with Heimdall enabled
 NORNICDB_HEIMDALL_ENABLED=true ./nornicdb
 
-# Note: Heimdall plugins are skipped unless Heimdall is enabled and initialized.
+# Plugins also load with Heimdall disabled; enabling it here activates chat/inference.
 # Environment variables override config file values, so double-check your container env.
 
 # Open Bifrost chat UI and type:
@@ -1218,3 +1218,5 @@ Prompt methods return `Success: false` and `SLM not available` when inference is
 absent. A model initialization failure also leaves plugin tools available without
 inference. Enable Heimdall separately to give plugins access to the configured
 inference provider and agentic chat pipeline.
+
+Failed plugin starts are rolled back and never published as MCP tools. Server shutdown calls plugin `Stop` and `Shutdown` and removes external tools. `ShutdownAll` also clears registration order so a later reload starts with a fresh FIFO list.

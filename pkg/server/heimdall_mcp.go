@@ -15,13 +15,14 @@ func registerHeimdallMCPTools(server *mcp.Server, manager *heimdall.SubsystemMan
 	if server == nil {
 		return
 	}
+	registered := make(map[string]bool)
 	for _, action := range manager.ExternalActions() {
 		schema := action.InputSchema
 		if len(schema) == 0 {
 			schema = heimdall.DefaultActionInputSchema
 		}
 		// RegisterTool logs collisions and retains the first registration.
-		_ = server.RegisterTool(mcp.Tool{Name: action.Name, Description: action.Description, InputSchema: schema}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+		err := server.RegisterTool(mcp.Tool{Name: action.Name, Description: action.Description, InputSchema: schema}, func(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 			if action.Handler == nil {
 				return nil, fmt.Errorf("action %s has no handler", action.Name)
 			}
@@ -31,6 +32,18 @@ func registerHeimdallMCPTools(server *mcp.Server, manager *heimdall.SubsystemMan
 				DatabaseAccessMode: heimdall.DatabaseAccessModeFromContext(ctx),
 				ResolvedAccess:     heimdall.ResolvedAccessResolverFromContext(ctx),
 			})
+		})
+		if err == nil {
+			registered[action.Name] = true
+		}
+	}
+	if len(registered) > 0 {
+		manager.OnActionsRemoved(func(names []string) {
+			for _, name := range names {
+				if registered[name] {
+					server.UnregisterTool(name)
+				}
+			}
 		})
 	}
 }

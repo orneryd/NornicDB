@@ -106,3 +106,21 @@ func TestPluginToolsConcurrentRegistrationAndDiscovery(t *testing.T) {
 	}
 	require.Len(t, s.ToolDefinitions(), len(GetToolDefinitions())+8)
 }
+
+func TestUnregisterToolKeepsNativeAndAllowsReload(t *testing.T) {
+	s := NewServer(nil, nil)
+	original := s.ToolDefinitions()
+	s.UnregisterTool(ToolStore)
+	s.UnregisterTool("missing")
+	require.Equal(t, original, s.ToolDefinitions())
+	require.NoError(t, s.RegisterTool(Tool{Name: "temporary"}, func(context.Context, map[string]interface{}) (interface{}, error) { return "first", nil }))
+	s.UnregisterTool("temporary")
+	require.Equal(t, original, s.ToolDefinitions())
+	_, err := s.CallTool(context.Background(), "temporary", nil)
+	require.Error(t, err)
+	require.NoError(t, s.RegisterTool(Tool{Name: "temporary"}, func(context.Context, map[string]interface{}) (interface{}, error) { return "replacement", nil }))
+	result, err := s.CallTool(context.Background(), "temporary", nil)
+	require.NoError(t, err)
+	require.Equal(t, "replacement", result)
+	require.Equal(t, len(original)+1, len(s.ToolDefinitions()))
+}

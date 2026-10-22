@@ -22,3 +22,13 @@ Server startup supplies a plugin-only context when the harness is disabled or
 model initialization fails. It has a no-op Bifrost bridge and a live action invoker
 without a generator; prompt methods truthfully report that inference is absent.
 Plugin initialization/start and external tool registration use one shared path.
+
+The subsystem manager owns action removal and notifies MCP consumers outside its
+lock. Each loaded plugin records only its successful action registrations, so a
+rollback cannot remove a collision winner owned by another plugin. Shutdown clears
+FIFO state and retires export-removal hooks before plugin shutdown callbacks.
+The MCP registry removes plugin tools from both discovery and invocation, preserving
+native tools. Standalone MCP Stop snapshots its HTTP server under its mutex and
+drains requests after releasing that mutex.
+Server-owned plugin cleanup runs after HTTP draining, retains the database router
+until plugin Stop/Shutdown complete, and serializes against asynchronous startup.

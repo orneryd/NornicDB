@@ -738,24 +738,26 @@ type RuntimeMetrics struct {
 
 // LoadedHeimdallPlugin represents a loaded SLM plugin with full subsystem management.
 type LoadedHeimdallPlugin struct {
-	Plugin  HeimdallPlugin // The actual plugin implementing full interface
-	Path    string         // Path to .so file (empty for built-in)
-	Builtin bool           // True if this is a built-in plugin
+	Plugin      HeimdallPlugin // The actual plugin implementing full interface
+	Path        string         // Path to .so file (empty for built-in)
+	Builtin     bool           // True if this is a built-in plugin
+	actionNames []string       // successfully registered actions owned by this plugin
 }
 
 // SubsystemManager manages all SLM plugins/subsystems.
 // Provides the SLM with full control over registered subsystems.
 type SubsystemManager struct {
-	mu              sync.RWMutex
-	plugins         map[string]*LoadedHeimdallPlugin // keyed by plugin name
-	actionOrder     []string                         // successful registrations, FIFO; sorted within each plugin
-	actions         map[string]ActionFunc            // keyed by full name: slm.plugin.action
-	ctx             SubsystemContext                 // shared context for subsystems
-	initialized     bool
-	orderedPlugins  []*LoadedHeimdallPlugin
-	orderDirty      bool
-	orderGeneration uint64
-	registering     map[string]struct{} // names reserved during initialization
+	mu                 sync.RWMutex
+	plugins            map[string]*LoadedHeimdallPlugin // keyed by plugin name
+	actionOrder        []string                         // successful registrations, FIFO; sorted within each plugin
+	actions            map[string]ActionFunc            // keyed by full name: slm.plugin.action
+	ctx                SubsystemContext                 // shared context for subsystems
+	initialized        bool
+	orderedPlugins     []*LoadedHeimdallPlugin
+	orderDirty         bool
+	orderGeneration    uint64
+	registering        map[string]struct{} // names reserved during initialization
+	actionRemovalHooks []func([]string)
 }
 
 var (
@@ -846,6 +848,7 @@ func (m *SubsystemManager) RegisterPlugin(p HeimdallPlugin, path string, builtin
 		action.Name = fullName
 		m.actions[fullName] = action
 		m.actionOrder = append(m.actionOrder, fullName)
+		lp.actionNames = append(lp.actionNames, fullName)
 	}
 	m.initialized = true
 	m.mu.Unlock()
@@ -915,12 +918,23 @@ func (m *SubsystemManager) ShutdownAll() error {
 		}
 		// Ordering callbacks saw the installed peers. Detach that same generation
 		// before shutdown callbacks, preserving any registrations they perform.
+		names := make([]string, 0, len(m.actions))
+		for name := range m.actions {
+			names = append(names, name)
+		}
+		hooks := m.actionRemovalHooks
+		m.actionRemovalHooks = nil
+		m.actionOrder = nil
+		m.initialized = false
 		m.plugins = make(map[string]*LoadedHeimdallPlugin)
 		m.actions = make(map[string]ActionFunc)
 		m.orderedPlugins = nil
 		m.orderDirty = true
 		m.orderGeneration++
 		m.mu.Unlock()
+		for _, hook := range hooks {
+			hook(names)
+		}
 		break
 	}
 

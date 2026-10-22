@@ -163,6 +163,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -664,7 +665,9 @@ type Server struct {
 	mcpServer *mcp.Server
 
 	// Heimdall - AI assistant for database management
-	heimdallHandler *heimdall.Handler
+	heimdallHandler   *heimdall.Handler
+	heimdallPluginsMu sync.Mutex
+	heimdallSubsystem *heimdall.SubsystemManager
 
 	// GraphQL handler for GraphQL API
 	graphqlHandler *graphql.Handler
@@ -1366,7 +1369,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			// Create database router wrapper for Heimdall (multi-db aware)
 			dbRouter := newHeimdallDBRouter(db, dbManager, featuresConfig)
-			s.heimdallCacheRouter = dbRouter
 			metricsReader := &heimdallMetricsReader{}
 			handler := heimdall.NewHandler(manager, heimdallCfg, dbRouter, metricsReader)
 			handler.SetLocalizer(s.localizer)
@@ -2007,10 +2009,12 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 		return nil // Already closed
 	}
 
+	defer func() {
+		if shutdownErr := s.stopHeimdallPlugins(); shutdownErr != nil {
+			err = errors.Join(err, shutdownErr)
+		}
+	}()
 	s.statementCacheIndex.Close()
-	if s.heimdallCacheRouter != nil {
-		s.heimdallCacheRouter.Close()
-	}
 	s.executorCache.Clear()
 	// Cancel the background embedder initialisation now and wait for it
 	// before returning, so it can't install an embedder (or log) after Stop.
