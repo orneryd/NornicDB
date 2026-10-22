@@ -3,8 +3,10 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,6 +140,149 @@ func TestChunkedSearchReportsUnusableChunkEmbeddings(t *testing.T) {
 	}
 	require.True(t, isQueryEmbeddingFallback(SearchFallbackNoEmbedder))
 	require.False(t, isQueryEmbeddingFallback(SearchFallbackRerankScoresFlat))
+}
+
+type selectiveChunkReranker struct{}
+
+func (selectiveChunkReranker) Name() string                     { return "selective" }
+func (selectiveChunkReranker) Enabled() bool                    { return true }
+func (selectiveChunkReranker) IsAvailable(context.Context) bool { return true }
+func (selectiveChunkReranker) Rerank(_ context.Context, _ string, candidates []RerankCandidate) ([]RerankResult, error) {
+	results := make([]RerankResult, 0, len(candidates))
+	for _, id := range []string{"a", "c", "b"} {
+		for index, candidate := range candidates {
+			if candidate.ID == id {
+				score := map[string]float64{"a": 0.9, "b": 0.5, "c": 0.1}[id]
+				results = append(results, RerankResult{ID: id, OriginalRank: index + 1, CrossScore: score, FinalScore: score, Filtered: id == "b"})
+			}
+		}
+	}
+	return results, nil
+}
+
+type emptySelectionReranker struct{ providerFiltered bool }
+
+func (emptySelectionReranker) Name() string                     { return "empty-selection" }
+func (emptySelectionReranker) Enabled() bool                    { return true }
+func (emptySelectionReranker) IsAvailable(context.Context) bool { return true }
+func (r emptySelectionReranker) Rerank(_ context.Context, _ string, candidates []RerankCandidate) ([]RerankResult, error) {
+	results := make([]RerankResult, len(candidates))
+	for index, candidate := range candidates {
+		score := 0.3 - 0.1*float64(index)
+		results[index] = RerankResult{
+			ID: candidate.ID, OriginalRank: index + 1,
+			CrossScore: score, FinalScore: score, Filtered: r.providerFiltered,
+		}
+	}
+	return results, nil
+}
+
+func TestSearchTextChunksKeepsAppliedEmptyRerankSelection(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		providerFiltered bool
+		minScore         float64
+	}{
+		{name: "provider filtered", providerFiltered: true},
+		{name: "request minimum", minScore: 0.5},
+	} {
+		for _, chunks := range [][]string{{"alpha"}, {"chunk one", "chunk two"}} {
+			name := fmt.Sprintf("%s/%d_chunks", testCase.name, len(chunks))
+			t.Run(name, func(t *testing.T) {
+				ctx := context.Background()
+				engine := newNamespacedEngine(t)
+				service := NewServiceWithDimensions(engine, 2)
+				t.Cleanup(func() { require.NoError(t, service.Close()) })
+				service.SetSearchResultCachePolicy(0, 0)
+				for _, id := range []string{"a", "b", "c"} {
+					node := &storage.Node{
+						ID: storage.NodeID(id), Labels: []string{"Doc"},
+						Properties:      map[string]any{"content": "alpha complete query chunk one chunk two " + id},
+						ChunkEmbeddings: [][]float32{{1, 0}, {0, 1}},
+					}
+					_, err := engine.CreateNode(node)
+					require.NoError(t, err)
+					require.NoError(t, service.IndexNode(node))
+				}
+				service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
+				service.SetReranker(emptySelectionReranker{providerFiltered: testCase.providerFiltered})
+				options := DefaultSearchOptions()
+				options.Limit = 3
+				options.RerankEnabled = true
+				options.RerankTopK = 3
+				options.RerankMinScore = testCase.minScore
+				options.MinRRFScore = 0
+
+				response, err := SearchTextChunks(ctx, "complete query", options,
+					func(context.Context, string) ([]string, error) { return chunks, nil },
+					func(_ context.Context, text string) ([]float32, error) {
+						if text == "chunk two" {
+							return []float32{0, 1}, nil
+						}
+						return []float32{1, 0}, nil
+					}, service.Search)
+				require.NoError(t, err)
+				require.Empty(t, response.Results)
+				require.False(t, response.FallbackTriggered)
+				require.Equal(t, SearchFallbackNone, response.FallbackReason)
+				require.True(t, response.rerankApplied)
+				require.Len(t, response.rerankExcluded, 3)
+				if len(chunks) == 1 {
+					require.Equal(t, "rrf_hybrid+rerank", response.SearchMethod)
+				} else {
+					require.Equal(t, "chunked_rrf_hybrid+rerank", response.SearchMethod)
+				}
+			})
+		}
+	}
+}
+
+func TestMultiChunkCataloguePreservesRerankEligibility(t *testing.T) {
+	ctx := context.Background()
+	engine := newNamespacedEngine(t)
+	service := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	service.SetSearchResultCachePolicy(0, 0)
+	for _, id := range []string{"a", "b", "c"} {
+		node := &storage.Node{
+			ID: storage.NodeID(id), Labels: []string{"Doc"},
+			Properties:      map[string]any{"content": "alpha beta document " + id},
+			ChunkEmbeddings: [][]float32{{1, 0}},
+		}
+		_, err := engine.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, service.IndexNode(node))
+	}
+	service.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(service.vectorIndex), NewCPUExactScorer(service.vectorIndex))
+	service.SetReranker(selectiveChunkReranker{})
+	for _, chunks := range [][]string{{"alpha"}, {"alpha", "beta"}} {
+		options := DefaultSearchOptions()
+		options.Limit = 3
+		options.RerankEnabled = true
+		options.RerankTopK = 3
+		options.MinRRFScore = 0
+		page, err := service.SearchTextContinuation(ctx, "alpha beta", options, SearchContinuationRequest{
+			Owner: fmt.Sprintf("chunks-%d", len(chunks)), Database: "nornic",
+			Mode: SearchContinuationRankedThenID, N: 1, RankedLimit: 3,
+		}, func(context.Context, string) ([]string, error) { return chunks, nil }, func(context.Context, string) ([]float32, error) {
+			return []float32{1, 0}, nil
+		}, service.Search, ChunkedSearchErrorPolicy{})
+		require.NoError(t, err)
+		var ids []string
+		for page != nil {
+			for _, result := range page.Results {
+				ids = append(ids, result.ID)
+			}
+			if !page.HasMore {
+				break
+			}
+			page, err = service.SearchTextContinuation(ctx, "", nil, SearchContinuationRequest{
+				Owner: fmt.Sprintf("chunks-%d", len(chunks)), Database: "nornic", QID: page.QID, N: 1,
+			}, nil, nil, nil, ChunkedSearchErrorPolicy{})
+			require.NoError(t, err)
+		}
+		require.Equal(t, []string{"a", "c"}, ids)
+	}
 }
 
 // A query of one chunk is searched as itself: a failed, empty or failing

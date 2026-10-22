@@ -75,8 +75,7 @@ func TestCallRerankAPILocalizedErrors(t *testing.T) {
 		{name: "create request", apiURL: "://bad-url", id: localization.MessageSearchRerankRequestCreationFailed, english: `failed to create request: parse "://bad-url": missing protocol scheme`},
 		{name: "send request", apiURL: "http://rerank.test", cause: requestCause, transport: func(*http.Request) (*http.Response, error) { return nil, requestCause }, id: localization.MessageSearchRerankRequestFailed, english: "rerank request failed: Post \"http://rerank.test\": backend unavailable"},
 		{name: "API status", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusServiceUnavailable, `{}`), id: localization.MessageSearchRerankAPIStatus, english: "rerank API returned status 503"},
-		{name: "parse response", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusOK, `{`), id: localization.MessageSearchRerankResponseParseFailed, english: "failed to parse response: unexpected EOF"},
-		{name: "unrecognized response", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusOK, `{}`), id: localization.MessageSearchRerankResponseUnrecognized, english: "unable to parse rerank response"},
+		{name: "parse response", apiURL: "http://rerank.test", transport: rerankResponse(http.StatusOK, `{`), id: localization.MessageSearchRerankResponseParseFailed, english: "failed to parse response: rerank response does not contain exactly one JSON value: unexpected EOF"},
 	}
 
 	for _, tt := range tests {

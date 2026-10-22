@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -203,7 +204,7 @@ func TestLocalReranker_RerankNilContextCapsAndTruncates(t *testing.T) {
 	}
 }
 
-func TestLocalReranker_RerankAllFilteredFallsBack(t *testing.T) {
+func TestLocalReranker_RerankAllFilteredStaysVisibleForValidation(t *testing.T) {
 	cfg := &LocalRerankerConfig{
 		Enabled:       true,
 		Timeout:       0,
@@ -221,10 +222,17 @@ func TestLocalReranker_RerankAllFilteredFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 2 || results[0].ID != "a" || results[1].ID != "b" {
-		t.Fatalf("expected pass-through results, got %#v", results)
+	if len(results) != 2 {
+		t.Fatalf("expected complete raw results, got %#v", results)
 	}
-	if results[0].FinalScore != candidates[0].Score || results[1].FinalScore != candidates[1].Score {
-		t.Fatalf("expected original scores preserved, got %#v", results)
+	seen := make(map[string]bool, len(results))
+	for _, result := range results {
+		seen[result.ID] = true
+		if !result.Filtered || math.Abs(result.FinalScore-0.1) > 1e-6 {
+			t.Fatalf("expected provider score and filter decision, got %#v", results)
+		}
+	}
+	if !seen["a"] || !seen["b"] {
+		t.Fatalf("expected both candidate identities, got %#v", results)
 	}
 }

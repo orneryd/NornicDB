@@ -81,8 +81,8 @@ func TestRerankerReportsProviderFailure(t *testing.T) {
 	require.Nil(t, results)
 }
 
-// A response that ranks none of the candidates is an error too.
-func TestRerankerReportsUnusableResponse(t *testing.T) {
+// Invalid provider indices fail at the shared wire owner before projection.
+func TestRerankerRejectsUnusableResponseAtWireOwner(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{{"index": 7, "relevance_score": 0.9}},
@@ -92,7 +92,7 @@ func TestRerankerReportsUnusableResponse(t *testing.T) {
 	reranker, err := NewReranker(&RerankerConfig{Enabled: true, APIURL: server.URL, APIKey: "test-key", Timeout: time.Second})
 	require.NoError(t, err)
 	results, err := reranker.Rerank(context.Background(), "query", []Candidate{{ID: "a", Content: "alpha", Score: 0.4}})
-	require.ErrorContains(t, err, "unable to parse rerank response")
+	require.ErrorContains(t, err, "invalid results")
 	require.Nil(t, results)
 }
 
@@ -113,7 +113,7 @@ func TestRerankerRequiresExplicitAPIKey(t *testing.T) {
 	require.ErrorContains(t, err, "requires an API key")
 }
 
-func TestRerankerMinScoreCanReturnEmpty(t *testing.T) {
+func TestRerankerMinScoreMarksRawResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{{"index": 0, "relevance_score": 0.2}},
@@ -124,5 +124,6 @@ func TestRerankerMinScoreCanReturnEmpty(t *testing.T) {
 	require.NoError(t, err)
 	results, err := reranker.Rerank(context.Background(), "query", []Candidate{{ID: "a", Content: "alpha", Score: 0.4}})
 	require.NoError(t, err)
-	require.Empty(t, results)
+	require.Len(t, results, 1)
+	require.True(t, results[0].Filtered)
 }

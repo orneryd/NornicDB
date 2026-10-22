@@ -164,15 +164,24 @@ func (s *Service) searchGraph(ctx context.Context, query string, embedding []flo
 	}
 	reranked := false
 	if opts.RerankEnabled {
-		var reason SearchFallbackReason
-		pool, reason, reranked = s.rerankGraphPool(ctx, query, pool, opts)
-		if reason != SearchFallbackNone {
-			response.FallbackTriggered, response.FallbackReason = true, reason
+		var outcome rerankOutcome
+		pool, outcome = s.rerankGraphPool(ctx, query, pool, opts)
+		reranked = outcome.Method == rerankMethodApplied
+		if outcome.FallbackTriggered {
+			response.FallbackTriggered, response.FallbackReason = true, outcome.FallbackReason
 		}
-		if reranked {
+		if outcome.Method == rerankMethodApplied {
 			response.SearchMethod += "+rerank"
 		}
+		if len(outcome.excludedIDs) > 0 {
+			response.rerankExcluded = make(map[string]struct{}, len(outcome.excludedIDs))
+			for _, id := range outcome.excludedIDs {
+				response.rerankExcluded[id] = struct{}{}
+			}
+		}
 	}
+	response.rerankApplied = reranked
+	response.rerankOrderOwned = opts.RerankEnabled
 	results := make([]SearchResult, 0, min(limit, len(pool)))
 	for _, candidate := range pool {
 		if len(results) >= limit {
@@ -193,64 +202,47 @@ func (s *Service) searchGraph(ctx context.Context, query string, embedding []flo
 // rerankGraphPool orders a graph search's fused candidates with the
 // configured reranker, the top RerankTopK of them in one call, each read as
 // its searchable text (a relationship's type and properties, as relationship
-// search indexes it). Below RerankMinScore a candidate is dropped. Without a
-// reranker it keeps the fused order, as node search does; on a failure, flat
-// scores or no candidate text it keeps it too, and reports why. reranked is
-// whether the reranker ordered the pool.
-func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*graphCandidate, opts *SearchOptions) (ordered []*graphCandidate, reason SearchFallbackReason, reranked bool) {
+// search indexes it). The shared outcome owns the TopK output cap,
+// completeness, filtering, order and fallback; this function only maps that
+// canonical order to graph hits.
+func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*graphCandidate, opts *SearchOptions) (ordered []*graphCandidate, outcome rerankOutcome) {
 	s.mu.RLock()
 	reranker := s.reranker
 	s.mu.RUnlock()
 	// An empty pool has nothing to rerank, and no reason to report: a query
 	// chunk that matched nothing doesn't make the search's rerank fail, as
 	// in the node rerank (applyStage2Rerank).
-	if len(pool) == 0 || reranker == nil || !reranker.Enabled() {
-		return pool, SearchFallbackNone, false
+	if len(pool) == 0 {
+		return pool, s.runRerank(ctx, reranker, query, nil, rerankRunOptions{resultLimit: opts.Limit})
 	}
 	top := len(pool)
 	if opts.RerankTopK > 0 && top > opts.RerankTopK {
 		top = opts.RerankTopK
 	}
 	maxChars := effectiveRerankMaxChars(opts)
-	byKey := make(map[string]*graphCandidate, top)
-	candidates := make([]RerankCandidate, 0, top)
-	for _, candidate := range pool[:top] {
-		text := s.graphRerankContent(&candidate.result, query, maxChars)
-		if text == "" {
-			continue
-		}
+	byKey := make(map[string]*graphCandidate, len(pool))
+	candidates := make([]RerankCandidate, 0, len(pool))
+	for index, candidate := range pool {
 		key := candidate.key()
 		byKey[key] = candidate
+		text := ""
+		if index < top {
+			text = s.graphRerankContent(&candidate.result, query, maxChars)
+		}
 		candidates = append(candidates, RerankCandidate{ID: key, Content: text, Score: candidate.rrf})
 	}
-	if len(candidates) == 0 {
-		return pool, SearchFallbackRerankNoCandidates, false
-	}
-	ranked, err := reranker.Rerank(ctx, query, candidates)
-	if err != nil {
-		s.logPrintf("⚠️ Graph reranking failed (%s): %v; using fused order", reranker.Name(), err)
-		return pool, SearchFallbackRerankFailed, false
-	}
-	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
-	// Nearly identical scores keep the fused order, as the node rerank keeps
-	// the RRF order (rerank_scores_flat), and so does a single candidate's
-	// score; a single score left of several candidates is the reranker's
-	// filtering (its minimum score or top K), which is kept.
-	if rerankScoresFlat(len(ranked), len(candidates), func() float64 { return ranked[0].FinalScore - ranked[len(ranked)-1].FinalScore }) {
-		return pool, SearchFallbackRerankScoresFlat, false
-	}
-	ordered = make([]*graphCandidate, 0, len(pool))
-	used := make(map[string]bool, len(ranked))
-	for _, result := range ranked {
+	outcome = s.runRerank(ctx, reranker, query, candidates, rerankRunOptions{
+		providerLimit: top,
+		resultLimit:   opts.Limit,
+		minScore:      opts.RerankMinScore,
+	})
+	ordered = make([]*graphCandidate, 0, len(outcome.Results))
+	for _, result := range outcome.Results {
 		candidate := byKey[result.ID]
-		if candidate == nil || used[result.ID] || result.FinalScore < opts.RerankMinScore {
-			continue
-		}
-		used[result.ID] = true
 		candidate.result.Score = result.FinalScore
 		ordered = append(ordered, candidate)
 	}
-	return ordered, SearchFallbackNone, true
+	return ordered, outcome
 }
 
 // graphRerankContent is the text a reranker sees for a graph candidate, read

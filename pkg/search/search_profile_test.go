@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -76,6 +78,30 @@ func BenchmarkSearchProfile_RRFHybrid(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := svc.Search(context.Background(), query, queryEmb, opts)
 		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSearchProfile_RRFHybrid_Rerank(b *testing.B) {
+	svc, queryEmb := buildSearchProfileFixture(b, 9000, 64)
+	svc.resultCache = nil
+	svc.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.SetReranker(&testReranker{enabled: true})
+	opts := DefaultSearchOptions()
+	opts.Limit = 20
+	opts.RerankEnabled = true
+	opts.RerankTopK = 100
+	query := "where are my prescriptions?"
+
+	if _, err := svc.Search(context.Background(), query, queryEmb, opts); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := svc.Search(context.Background(), query, queryEmb, opts); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -115,6 +115,8 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/adminimport/neo4j_csv.go:ExportNeo4jCSV":                "sets and validates the CSV output quote option; does not read Cypher source",
 		"pkg/observability/logging.go:appendEscapedJSONString":       "encodes log attribute values as JSON, not Cypher source",
 		"pkg/observability/logging.go:safeASCII":                     "classifies JSON output escaping, not Cypher source",
+		"internal/rerankwire/decode.go:validateEnvelopeProse":        "validates JSON response-envelope prose, not Cypher source",
+		"internal/rerankwire/decode.go:possibleJSONScalarStart":      "classifies JSON response-envelope scalar starts, not Cypher source",
 		"testing/cypher/tck/value.go:parseValue":                     "parses TCK expected-result table notation, not executable Cypher text",
 		"testing/cypher/tck/value.go:parseString":                    "decodes TCK expected-result table strings, not executable Cypher text",
 		"testing/cypher/tck/value.go:parseKey":                       "parses TCK expected-result map keys, not executable Cypher text",

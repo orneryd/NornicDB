@@ -533,7 +533,7 @@ func cloneContinuationSearchOptions(options *SearchOptions) SearchOptions {
 // SearchResponse restores the canonical search response with this page's rows.
 func (p *SearchContinuationPage) SearchResponse() *SearchResponse {
 	response := searchResponseMetadata(p.response)
-	response.Results = p.Results
+	response.Results = append([]SearchResult(nil), p.Results...)
 	response.Returned = p.Returned
 	response.SearchMethod = p.SearchMethod
 	response.FallbackTriggered = p.FallbackTriggered
