@@ -19,7 +19,7 @@ type parsedSimpleMatchRelationshipPattern struct {
 	rightVar    string
 	rightLabels []string
 	relVar      string
-	relType     string
+	relType     relationshipTypeFacts
 	isReverse   bool
 }
 
@@ -513,7 +513,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	}
 
 	pattern, ok := e.parseSimpleMatchRelationshipPattern(matchSegment)
-	if !ok || strings.TrimSpace(pattern.relVar) == "" || strings.TrimSpace(pattern.relType) == "" {
+	if !ok || strings.TrimSpace(pattern.relVar) == "" {
 		return nil, false
 	}
 
@@ -549,7 +549,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexNameMatching(e.storage.GetSchema(), vectorProp, storage.ConstraintEntityRelationship, pattern.relType.matchesStorageName)
 	if !hasIndex {
 		return nil, false
 	}
@@ -638,7 +638,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	pattern, ok := e.parseSimpleMatchRelationshipPattern(preWithSegment)
-	if !ok || strings.TrimSpace(pattern.relVar) == "" || strings.TrimSpace(pattern.relType) == "" {
+	if !ok || strings.TrimSpace(pattern.relVar) == "" {
 		return nil, false
 	}
 
@@ -702,7 +702,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexNameMatching(e.storage.GetSchema(), vectorProp, storage.ConstraintEntityRelationship, pattern.relType.matchesStorageName)
 	if !hasIndex {
 		return nil, false
 	}
@@ -1355,6 +1355,12 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 }
 
 func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
+	return findCosineVectorIndexNameMatching(schema, property, entityType, func(name string) bool {
+		return strings.TrimSpace(name) == strings.TrimSpace(label)
+	})
+}
+
+func findCosineVectorIndexNameMatching(schema *storage.SchemaManager, property string, entityType storage.ConstraintEntityType, nameMatches func(string) bool) (string, bool) {
 	if schema == nil {
 		return "", false
 	}
@@ -1373,7 +1379,7 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 			continue
 		}
 		idxLabel, _ := idx["label"].(string)
-		if strings.TrimSpace(idxLabel) != strings.TrimSpace(label) {
+		if !nameMatches(idxLabel) {
 			continue
 		}
 		idxProp, _ := idx["property"].(string)
@@ -1473,8 +1479,9 @@ func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (p
 	if err != nil || strings.TrimSpace(remainder) != "" {
 		return parsedSimpleMatchRelationshipPattern{}, false
 	}
-	relVar, relType, relPropsStr, err := parseCreateRelationshipContent(relContent)
-	if err != nil || strings.TrimSpace(relPropsStr) != "" || strings.TrimSpace(relType) == "" {
+	declaration := relationshipDeclarationOf(relContent)
+	relType, ok := declaration.singleLiteralType()
+	if !ok || declaration.properties != "" {
 		return parsedSimpleMatchRelationshipPattern{}, false
 	}
 
@@ -1492,8 +1499,8 @@ func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (p
 		leftLabels:  leftLabels,
 		rightVar:    rightVar,
 		rightLabels: rightLabels,
-		relVar:      strings.TrimSpace(relVar),
-		relType:     strings.TrimSpace(relType),
+		relVar:      declaration.variable,
+		relType:     relType,
 		isReverse:   isReverse,
 	}, true
 }

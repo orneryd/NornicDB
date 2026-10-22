@@ -24,8 +24,8 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 	defer sm.mu.Unlock()
 
 	var restore func()
-	if contract, ok := sm.constraintContracts[name]; ok {
-		restore = sm.dropConstraintContractLocked(contract)
+	if revision, ok := sm.constraintContracts[name]; ok {
+		restore = sm.dropConstraintContractLocked(revision)
 	} else {
 		r, err := sm.dropConstraintLocked(name)
 		if err != nil {
@@ -48,7 +48,8 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 // dropConstraintContractLocked removes a contract and the primitives compiled
 // from it, returning a function that restores all of them. Compiled entries a
 // user already dropped individually are skipped.
-func (sm *SchemaManager) dropConstraintContractLocked(contract ConstraintContract) func() {
+func (sm *SchemaManager) dropConstraintContractLocked(revision *constraintContractRevision) func() {
+	contract := revision.contract
 	restores := make([]func(), 0, len(contract.Entries))
 	for idx, entry := range contract.Entries {
 		if entry.Kind != ConstraintContractKindPrimitiveNode && entry.Kind != ConstraintContractKindPrimitiveRelationship {
@@ -63,7 +64,7 @@ func (sm *SchemaManager) dropConstraintContractLocked(contract ConstraintContrac
 		for i := len(restores) - 1; i >= 0; i-- {
 			restores[i]()
 		}
-		sm.constraintContracts[contract.Name] = contract
+		sm.constraintContracts[contract.Name] = revision
 	}
 }
 

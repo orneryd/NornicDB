@@ -235,6 +235,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
 	cypher = strings.TrimSpace(cypher)
+	// PROFILE executes the source statement through Execute again, so keep
+	// it before expression rewrites introduce internal-only function calls.
+	profileSource := cypher
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
 	// become the expressions they stand for, once, here (#907).
 	cypher25 := cypherVersionFromContext(ctx) == "25"
@@ -425,7 +428,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if mode == ModeExplain {
 				return e.executeExplain(ctx, modeQuery)
 			}
-			return e.executeProfile(ctx, modeQuery)
+			return e.executeProfile(ctx, modeQuery, profileSource)
 		}
 		info := e.analyzer.Analyze(cypher)
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
@@ -475,15 +478,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 
 		if fabricResultCacheKey != "" {
-			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
+			e.cache.putWithDependenciesAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, info.schemaFacts, HotPathTrace{}, embeddingGeneration)
 		}
 
 		if info.IsWriteQuery && e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
+			info.schemaFacts.invalidate(e.cache)
 		}
 
 		return result, nil
@@ -808,7 +807,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if info.HasProfile {
 		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeProfile(ctx, innerQuery)
+		return e.executeProfile(ctx, innerQuery, profileSource)
 	}
 
 	// If in explicit transaction, execute within it
@@ -874,7 +873,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" && !stream.streamed() {
-		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
+		e.cache.putWithDependenciesAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, info.schemaFacts, e.LastHotPathTrace(), embeddingGeneration)
 	}
 
 	// Invalidate caches on write operations (using cached analysis)
@@ -887,11 +886,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 		// Invalidate query result cache using cached labels
 		if e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
+			info.schemaFacts.invalidate(e.cache)
 		}
 	}
 

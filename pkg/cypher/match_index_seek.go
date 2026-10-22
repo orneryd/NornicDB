@@ -1223,26 +1223,18 @@ func whereLabelDisjunction(variable, term string) ([]string, bool) {
 		if !strings.HasPrefix(rest, ":") {
 			return nil, false
 		}
-		names := strings.TrimSpace(rest[1:])
-		for {
-			written, end, ok := scanSymbolicName(names, 0)
-			if !ok {
-				return nil, false
-			}
-			labels = append(labels, symbolicNameValue(written))
-			names = strings.TrimSpace(names[end:])
-			if names == "" {
-				break
-			}
-			if names[0] != '|' {
-				return nil, false
-			}
-			names = strings.TrimSpace(names[1:])
+		expression, valid := parseLabelExpression(rest[1:])
+		if !valid {
+			return nil, false
 		}
+		names, disjunction := expression.alternatives()
+		if !disjunction {
+			return nil, false
+		}
+		labels = append(labels, names...)
 	}
 	return labels, len(labels) > 0
 }
-
 func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variable, whereClause string) (property string, value interface{}, ok bool) {
 	shape := simpleIndexedEqualityShapeFor(ctx, variable, whereClause)
 	if !shape.ok {

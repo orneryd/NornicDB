@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -744,9 +743,9 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 		if index&bfsCancelCheckMask == 0 && traversal.traversalCancelled() {
 			return count, true
 		}
-		if len(rel.Types) > 0 {
-			if len(rel.Types) == 1 {
-				if edge.Type != rel.Types[0] {
+		if rel.Types.len() > 0 {
+			if rel.Types.len() == 1 {
+				if edge.Type != rel.Types.at(0).storageName() {
 					continue
 				}
 			} else if _, ok := traversal.relTypeSet[edge.Type]; !ok {
@@ -891,7 +890,23 @@ func patternMapsAreConstantText(pattern string) bool {
 		switch c := pattern[index]; c {
 		case '\'', '"', '`':
 			index = skipCypherQuotedText(pattern, index, c) - 1
-		case '(', '[':
+		case '[':
+			if previous := trimRightIndex(pattern, 0, index); previous == 0 || pattern[previous-1] != '-' {
+				depth++
+				continue
+			}
+			// A relationship's map is its declaration's; its own WHERE is
+			// read per relationship, so the pattern isn't constant.
+			close := findMatchingBracket(pattern, index)
+			if close < 0 {
+				return false
+			}
+			declaration := relationshipDeclarationHead(pattern[index+1 : close])
+			if declaration.predicate != "" || !constantPropertyMap(declaration.properties) {
+				return false
+			}
+			index = close
+		case '(':
 			depth++
 		case ')', ']':
 			depth--
@@ -900,16 +915,29 @@ func patternMapsAreConstantText(pattern string) bool {
 				continue
 			}
 			close := findMatchingDelimiter(pattern, index, '{', '}')
-			if close < 0 {
+			if close < 0 || !constantPropertyMap(pattern[index:close+1]) {
 				return false
 			}
-			for _, pair := range splitTopLevelComma(pattern[index+1 : close]) {
-				separator := findTopLevelMapKeyValueSeparator(pair)
-				if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
-					return false
-				}
-			}
 			index = close
+		}
+	}
+	return true
+}
+
+// constantPropertyMap reports whether a property map's ({…}) values are all
+// literals or parameters; no map (or a parameter map) is constant.
+func constantPropertyMap(properties string) bool {
+	if properties == "" || properties[0] != '{' {
+		return true
+	}
+	close := findMatchingDelimiter(properties, 0, '{', '}')
+	if close < 0 {
+		return false
+	}
+	for _, pair := range splitTopLevelComma(properties[1:close]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
+			return false
 		}
 	}
 	return true
@@ -1022,36 +1050,30 @@ func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[stri
 // pattern of text ((n WHERE n.x > 1), -[r WHERE r.w = 2]->), outside quoted
 // text.
 func patternHasInlineWhere(text string) bool {
-	depth := 0
-	for index := 0; index < len(text); index++ {
-		switch character := text[index]; character {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(text, index, character) - 1
-		case '(', '[':
-			depth++
-		case ')', ']':
-			depth--
-		case 'W', 'w':
-			if depth > 0 && matchKeywordAt(text, index, "WHERE") && (index == 0 || !isIdentByte(text[index-1])) {
-				return true
-			}
-		}
-	}
-	return false
+	return mayUsePatternPredicate(text)
 }
 
 func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
-	query := strings.TrimSpace(body)
-	if !hasPrefixFold(query, "MATCH") {
-		query = "MATCH " + query
-	}
-	clauses, ok := splitPipelineClauses(query)
-	if !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	admission := boundPatternCountAdmissionOf(body)
+	if !admission.admitted {
 		return nil, nil, false
 	}
-	// The bound-pattern matcher doesn't read a node's or relationship's own
-	// WHERE ((m:Coll WHERE m.id IN $ids)); the pipeline does.
-	if patternHasInlineWhere(query) {
+	// The kernel expands from the row's bound entities. A pattern none of
+	// whose variables is bound here has nothing to expand from: the pipeline
+	// evaluates it with its label scan and projection.
+	anchored := false
+	for _, name := range admission.variables {
+		switch value := values[name].(type) {
+		case *storage.Node:
+			anchored = value != nil
+		case *storage.Edge:
+			anchored = value != nil
+		}
+		if anchored {
+			break
+		}
+	}
+	if !anchored {
 		return nil, nil, false
 	}
 	for name, value := range values {
@@ -1065,6 +1087,45 @@ func boundPatternCountBindings(body string, values map[string]interface{}) (map[
 	}
 	nodes, rels := entityBindings(values)
 	return nodes, rels, true
+}
+
+// The body's shape decides admission and names the pattern's variables, so a
+// COUNT evaluated for every row reads it once; the row's bindings are still
+// checked on each call.
+type boundPatternCountAdmission struct {
+	admitted  bool
+	variables []string
+}
+
+var boundPatternCountAdmissions = newBoundedCache[string, boundPatternCountAdmission](1024, boundedCacheStringShardIndex)
+
+func boundPatternCountAdmissionOf(body string) boundPatternCountAdmission {
+	cacheable := len(body) <= 1024
+	if cacheable {
+		if admission, ok := boundPatternCountAdmissions.get(body); ok {
+			return admission
+		}
+	}
+	query := strings.TrimSpace(body)
+	if !hasPrefixFold(query, "MATCH") {
+		query = "MATCH " + query
+	}
+	clauses, ok := splitPipelineClauses(query)
+	// The bound-pattern matcher doesn't read a node's or relationship's own
+	// WHERE ((m:Coll WHERE m.id IN $ids)); the pipeline does.
+	admission := boundPatternCountAdmission{admitted: ok && len(clauses) == 1 && clauses[0].kind == pipelineClauseMatch && !patternHasInlineWhere(query)}
+	if admission.admitted {
+		pattern := strings.TrimSpace(query[len("MATCH"):])
+		if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
+			pattern = strings.TrimSpace(pattern[:where])
+		}
+		structure := matchPatternStructure(pattern)
+		admission.variables = append(extractNodeVariables(structure), extractRelationshipVariables(structure)...)
+	}
+	if cacheable {
+		boundPatternCountAdmissions.put(strings.Clone(body), admission)
+	}
+	return admission
 }
 
 // entityBindings splits a row's node and relationship values out of it.
@@ -1111,7 +1172,6 @@ func containsIdentifierWord(text, name string) bool {
 // [MATCH] (v)-[:T|U]->(), (v)<-[:T]-(), ()-[:T]->(v), with the arrows in
 // either spelling (-->, -[r]->). Its count is the node's degree, unless the
 // relationship variable is bound in the row (boundDegreeCount).
-var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
 
 // boundDegreeShape is a parsed boundDegreePattern body: the bound variable,
 // the hop's direction from it and its relationship types. ok is false for any
@@ -1120,7 +1180,7 @@ type boundDegreeShape struct {
 	variable     string
 	relationship string // the hop's relationship variable, or ""
 	outgoing     bool
-	types        []string
+	types        relationshipTypes
 	ok           bool
 }
 
@@ -1139,33 +1199,7 @@ func parseBoundDegreeShape(body string) boundDegreeShape {
 }
 
 func parseBoundDegreeShapeText(body string) boundDegreeShape {
-	trimmed := strings.TrimSpace(body)
-	if len(trimmed) == 0 || strings.ContainsAny(trimmed, "{*,") {
-		return boundDegreeShape{}
-	}
-	match := boundDegreePattern.FindStringSubmatch(trimmed)
-	if match == nil {
-		return boundDegreeShape{}
-	}
-	variable, relationship, types := match[1], match[3], match[4]
-	outgoing := match[2] == "" && match[5] == ">"
-	incoming := match[2] == "<" && match[5] == ""
-	if variable == "" {
-		// ()-[:T]->(v) is an incoming hop of v.
-		variable, relationship, types = match[10], match[7], match[8]
-		outgoing = match[6] == "<" && match[9] == ""
-		incoming = match[6] == "" && match[9] == ">"
-	}
-	if outgoing == incoming {
-		return boundDegreeShape{}
-	}
-	var relTypes []string
-	for _, relType := range strings.Split(types, "|") {
-		if relType = strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relType), ":")), "`"); relType != "" {
-			relTypes = append(relTypes, relType)
-		}
-	}
-	return boundDegreeShape{variable: variable, relationship: relationship, outgoing: outgoing, types: relTypes, ok: true}
+	return relationshipDegreeShape(body)
 }
 
 // boundDegreeCount counts COUNT { (v)-[:T]->() } for a node bound in values
@@ -1200,12 +1234,12 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 	} else {
 		edges, _ = store.GetIncomingEdges(node.ID)
 	}
-	if len(shape.types) == 0 {
+	if shape.types.len() == 0 {
 		return int64(len(edges))
 	}
 	var count int64
 	for _, edge := range edges {
-		if e.edgeTypeMatches(edge.Type, shape.types) {
+		if shape.types.matches(edge.Type) {
 			count++
 		}
 	}

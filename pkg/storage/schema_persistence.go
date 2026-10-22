@@ -118,8 +118,8 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 
 	if len(sm.constraintContracts) > 0 {
 		def.ConstraintContracts = make([]ConstraintContract, 0, len(sm.constraintContracts))
-		for _, contract := range sm.constraintContracts {
-			def.ConstraintContracts = append(def.ConstraintContracts, cloneConstraintContract(contract))
+		for _, revision := range sm.constraintContracts {
+			def.ConstraintContracts = append(def.ConstraintContracts, revision.description())
 		}
 		sort.Slice(def.ConstraintContracts, func(i, j int) bool {
 			return def.ConstraintContracts[i].Name < def.ConstraintContracts[j].Name
@@ -335,7 +335,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	// Reset all collections.
 	sm.uniqueConstraints = make(map[string]*UniqueConstraint)
 	sm.constraints = make(map[string]Constraint)
-	sm.constraintContracts = make(map[string]ConstraintContract)
+	sm.constraintContracts = make(map[string]*constraintContractRevision)
 	sm.propertyTypeConstraints = make(map[string]PropertyTypeConstraint)
 	sm.compositeIndexes = make(map[string]*CompositeIndex)
 	sm.fulltextIndexes = make(map[string]*FulltextIndex)
@@ -381,7 +381,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	}
 
 	for _, contract := range def.ConstraintContracts {
-		sm.constraintContracts[contract.Name] = cloneConstraintContract(contract)
+		sm.constraintContracts[contract.Name] = compileConstraintContractRevision(contract)
 	}
 
 	// Property type constraints.

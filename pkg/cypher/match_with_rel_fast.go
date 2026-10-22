@@ -17,7 +17,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
-	if len(matches.Relationship.Types) != 1 || upperASCII(matches.Relationship.Types[0]) != "ORDERS" {
+	if !matches.Relationship.Types.soleUpperNameIs("ORDERS") {
 		return nil, false, nil
 	}
 	if matches.Relationship.Direction != "incoming" {
@@ -69,7 +69,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 		return nil, false, nil
 	}
 
-	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types[0])
+	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types.at(0).storageName())
 	if err != nil {
 		return nil, false, err
 	}

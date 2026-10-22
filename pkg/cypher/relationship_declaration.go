@@ -1,9 +1,505 @@
 package cypher
 
-import "strings"
+import (
+	"strconv"
+	"strings"
 
-// A relationship pattern's inside ([r:A|B *1..2 {k: v}]) is read by one
-// scanner for CREATE, MERGE and MATCH (relationshipDeclarationOf, and
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
+
+// The shared syntax owner seals the decoded type and its quoted/dynamic facts
+// below both parser adapters and storage. These nominal wrappers preserve the
+// executor's semantic API without copying or reconstructing type vectors.
+type relationshipTypeFacts cyphertext.RelationshipType
+type relationshipTypes cyphertext.RelationshipTypes
+
+func (types relationshipTypes) len() int { return cyphertext.RelationshipTypes(types).Len() }
+func (types relationshipTypes) at(index int) relationshipTypeFacts {
+	return relationshipTypeFacts(cyphertext.RelationshipTypes(types).At(index))
+}
+func (value relationshipTypeFacts) storageName() string {
+	return cyphertext.RelationshipType(value).StorageName()
+}
+func (value relationshipTypeFacts) isDynamic() bool {
+	return cyphertext.RelationshipType(value).IsDynamic()
+}
+func (value relationshipTypeFacts) isQuoted() bool {
+	return cyphertext.RelationshipType(value).IsQuoted()
+}
+func (value relationshipTypeFacts) matchesStorageName(name string) bool {
+	return cyphertext.RelationshipType(value).MatchesStorageName(name)
+}
+func (types relationshipTypes) hasDynamic() bool {
+	for index := 0; index < types.len(); index++ {
+		if types.at(index).isDynamic() {
+			return true
+		}
+	}
+	return false
+}
+func (types relationshipTypes) contains(name string) bool {
+	for index := 0; index < types.len(); index++ {
+		if types.at(index).matchesStorageName(name) {
+			return true
+		}
+	}
+	return false
+}
+func (types relationshipTypes) matches(name string) bool {
+	return types.len() == 0 || types.contains(name)
+}
+func (types relationshipTypes) firstOccurrence(index int) bool {
+	value := types.at(index)
+	for previous := 0; previous < index; previous++ {
+		other := types.at(previous)
+		if other.storageName() == value.storageName() && other.isDynamic() == value.isDynamic() {
+			return false
+		}
+	}
+	return true
+}
+func (types relationshipTypes) soleUpperNameIs(name string) bool {
+	return types.len() == 1 && !types.at(0).isDynamic() && upperASCII(types.at(0).storageName()) == name
+}
+func (types relationshipTypes) same(other relationshipTypes) bool {
+	if types.len() != other.len() {
+		return false
+	}
+	for index := 0; index < types.len(); index++ {
+		left, right := types.at(index), other.at(index)
+		if left.storageName() != right.storageName() || left.isDynamic() != right.isDynamic() {
+			return false
+		}
+	}
+	return true
+}
+func (types relationshipTypes) bytes() int { return cyphertext.RelationshipTypes(types).Bytes() }
+func (types relationshipTypes) storageNames() []string {
+	if types.len() == 0 {
+		return nil
+	}
+	names := make([]string, types.len())
+	for index := range names {
+		names[index] = types.at(index).storageName()
+	}
+	return names
+}
+
+// relationshipHop is the common admission shape for degree and lookup-index
+// shortcuts. Only the declaration owner opens a relationship's brackets.
+type relationshipHop struct {
+	from, to            string
+	declaration         relationshipDeclaration
+	incoming, outgoing  bool
+	bracketed, complete bool
+	toStart, end        int
+}
+
+func readRelationshipHop(text string) (hop relationshipHop, ok bool) {
+	hop, ok = readRelationshipHopPrefix(text)
+	return hop, ok && !(hop.incoming && hop.outgoing) && queryGapEnd(text, hop.end) == len(text)
+}
+
+// relationshipFrame is an opaque connection boundary, before interpreting its
+// declaration. Syntax-only consumers never need to resolve a dynamic token.
+type relationshipFrame struct {
+	detailOpen, detailClose, end, outgoingAt int
+	incoming, outgoing, bracketed, complete  bool
+}
+
+type relationshipHopFrame struct {
+	fromOpen, fromClose, toOpen, toClose int
+	connection                           relationshipFrame
+}
+
+// containsRelationshipPattern classifies graph frames through the owner and
+// the canonical quote/comment reader, including inside nested expressions.
+func containsRelationshipPattern(expression string) bool {
+	for index := 0; index < len(expression); index++ {
+		switch c := expression[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end - 1
+			}
+		case '(':
+			if _, present := relationshipChainEnd(expression, index, len(expression)); present {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type relationshipExpressionShape struct{ pattern, brace, buildsValues bool }
+
+// Expression programs retain the structural facts they need. A graph
+// expression needs no materialized copy of its masked declaration text.
+func relationshipExpressionReaderText(expression string) relationshipExpressionShape {
+	if containsRelationshipPattern(expression) {
+		_, facts := readRelationshipNodeText(expression, false)
+		return relationshipExpressionShape{pattern: true, brace: facts.brace, buildsValues: true}
+	}
+	return relationshipExpressionShape{brace: strings.Contains(expression, "{"), buildsValues: expressionBuildsValues(relationshipNodeText(expression))}
+}
+
+func readRelationshipFrame(text string, start int, bounds map[int]int) (relationshipFrame, bool) {
+	owned, ok := cyphertext.ReadConnectionFrame(text, start, bounds)
+	open, close := owned.DetailBounds()
+	return relationshipFrame{detailOpen: open, detailClose: close, end: owned.End(), outgoingAt: owned.OutgoingAt(), incoming: owned.Incoming(), outgoing: owned.Outgoing(), bracketed: owned.Bracketed(), complete: owned.Complete()}, ok
+}
+
+func relationshipConnectionOf(text string, frame relationshipFrame) relationshipHop {
+	hop := relationshipHop{incoming: frame.incoming, outgoing: frame.outgoing, bracketed: frame.bracketed, complete: frame.complete, end: frame.end}
+	if frame.bracketed {
+		hop.declaration = relationshipDeclarationOf(text[frame.detailOpen+1 : frame.detailClose])
+	} else {
+		hop.declaration = relationshipDeclarationHead("")
+	}
+	return hop
+}
+
+// Bare declarations remain valid for the legacy declaration adapter. Complete
+// hop/chain callers additionally require both connecting dashes and endpoints.
+func readRelationshipConnection(text string, start int) (relationshipHop, bool) {
+	frame, ok := readRelationshipFrame(text, start, nil)
+	if !ok {
+		return relationshipHop{}, false
+	}
+	return relationshipConnectionOf(text, frame), true
+}
+
+// A quantified group is a path endpoint too. Leave invalid attachments to the
+// path validator, rather than changing their error into a scalar arrow error.
+func relationshipConnectionStartAfterNode(text string, open, close int) int {
+	at := queryGapEnd(text, close+1)
+	inner := queryGapEnd(text, open+1)
+	if inner < close && text[inner] == '(' {
+		if quantifier, ok := relationshipQuantifierAt(text, at, len(text)); ok {
+			at = queryGapEnd(text, quantifier.end)
+		}
+	}
+	if at >= len(text) || text[at] != '-' && text[at] != '<' && text[at] != '[' {
+		return -1
+	}
+	return at
+}
+func relationshipFrameAfterNode(text string, open, close int, bounds map[int]int) (relationshipFrame, bool) {
+	at := relationshipConnectionStartAfterNode(text, open, close)
+	if at < 0 {
+		return relationshipFrame{}, false
+	}
+	return readRelationshipFrame(text, at, bounds)
+}
+
+func relationshipPrefixAfterNode(text string, open, close int) (cyphertext.ConnectionPrefix, bool) {
+	at := relationshipConnectionStartAfterNode(text, open, close)
+	if at < 0 {
+		var prefix cyphertext.ConnectionPrefix
+		return prefix, false
+	}
+	return cyphertext.ReadConnectionPrefix(text, at)
+}
+
+func readRelationshipHopFrame(text string, start int, bounds map[int]int) (shape relationshipHopFrame, ok bool) {
+	shape.fromOpen = queryGapEnd(text, start)
+	if shape.fromOpen >= len(text) || text[shape.fromOpen] != '(' {
+		return shape, false
+	}
+	shape.fromClose = relationshipDelimiterEnd(text, shape.fromOpen, '(', ')', bounds)
+	if shape.fromClose < 0 {
+		return shape, false
+	}
+	connection, valid := relationshipFrameAfterNode(text, shape.fromOpen, shape.fromClose, bounds)
+	if !valid || !connection.complete {
+		return shape, false
+	}
+	shape.connection, shape.toOpen = connection, connection.end
+	if shape.toOpen >= len(text) || text[shape.toOpen] != '(' {
+		return shape, false
+	}
+	shape.toClose = relationshipDelimiterEnd(text, shape.toOpen, '(', ')', bounds)
+	return shape, shape.toClose >= 0
+}
+
+func readRelationshipHopPrefix(text string) (relationshipHop, bool) {
+	shape, ok := readRelationshipHopFrame(text, 0, nil)
+	if !ok {
+		return relationshipHop{}, false
+	}
+	hop := relationshipConnectionOf(text, shape.connection)
+	hop.from = strings.TrimSpace(text[shape.fromOpen+1 : shape.fromClose])
+	hop.to = strings.TrimSpace(text[shape.toOpen+1 : shape.toClose])
+	hop.toStart, hop.end = shape.toOpen, shape.toClose+1
+	return hop, true
+}
+
+// invalidRelationshipArrow validates frame membership using the same connection
+// reader. Cached balanced boundaries keep nested expression scopes linear.
+func invalidRelationshipArrow(query string) int {
+	live := false
+	for index := 0; index+1 < len(query); index++ {
+		switch c := query[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(query, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(query, index); end >= 0 {
+				index = end - 1
+			}
+		case '-':
+			if query[index+1] == '>' {
+				live = true
+			}
+		}
+		if live {
+			break
+		}
+	}
+	if !live {
+		return -1
+	}
+	context := newMapPatternContext(query)
+	if context.unbalanced {
+		// An incomplete frame cannot classify arrows. The selected validator
+		// owns the delimiter error and must report it before membership.
+		return -1
+	}
+	bounds := context.closes
+	var inline [16]int
+	arrows := inline[:0]
+	for index := 0; index < len(query); index++ {
+		switch c := query[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(query, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(query, index); end >= 0 {
+				index = end - 1
+			}
+		case '(':
+			if close, closed := bounds[index]; closed {
+				frame, ok := relationshipFrameAfterNode(query, index, close, bounds)
+				if !ok || !frame.complete {
+					continue
+				}
+				arrow := frame.outgoingAt
+				if arrow >= 0 && arrow+1 < len(query) && query[arrow+1] == '>' {
+					arrows = append(arrows, arrow)
+				}
+			}
+		case '-':
+			if index+1 >= len(query) || query[index+1] != '>' {
+				continue
+			}
+			if len(arrows) == 0 || arrows[len(arrows)-1] != index {
+				return index
+			}
+			arrows = arrows[:len(arrows)-1]
+		}
+	}
+	return -1
+}
+
+func relationshipChainEnd(q string, open, end int) (int, bool) {
+	close := findMatchingDelimiter(q[:end], open, '(', ')')
+	if close < 0 {
+		return 0, false
+	}
+	inner := skipASCIISpaces(q, open+1, close)
+	if inner < close && q[inner] == '(' {
+		return 0, false
+	}
+	chainEnd, relationships := close+1, 0
+	for from := open; from < end; {
+		shape, ok := readRelationshipHopFrame(q[from:end], 0, nil)
+		if !ok {
+			break
+		}
+		chainEnd = from + shape.toClose + 1
+		relationships++
+		from += shape.toOpen
+	}
+	return chainEnd, relationships > 0
+}
+
+func relationshipDegreeShape(body string) boundDegreeShape {
+	body = strings.TrimSpace(body)
+	if end, ok := keywordSpanAt(body, 0, "MATCH"); ok {
+		body = strings.TrimSpace(body[end:])
+	}
+	hop, ok := readRelationshipHop(body)
+	d := hop.declaration
+	if !ok || hop.incoming == hop.outgoing || d.hasLength || d.lengthInvalid || d.properties != "" || d.predicate != "" || d.invalidType != "" || hasDynamicToken(d.typeText) {
+		return boundDegreeShape{}
+	}
+	variable, outgoing := hop.from, hop.outgoing
+	if variable == "" {
+		variable, outgoing = hop.to, hop.incoming
+	} else if hop.to != "" {
+		return boundDegreeShape{}
+	}
+	if !isPatternVariableName(variable) || d.variable != "" && !isPatternVariableName(d.variable) {
+		return boundDegreeShape{}
+	}
+	return boundDegreeShape{variable: symbolicNameValue(variable), relationship: symbolicNameValue(d.variable), outgoing: outgoing, types: d.types, ok: true}
+}
+
+func relationshipLookupPattern(text string) bool {
+	end, ok := keywordSpanAt(text, 0, "FOR")
+	if !ok {
+		return false
+	}
+	text = strings.TrimSpace(text[end:])
+	on := topLevelKeywordIndex(text, "ON")
+	if on < 0 {
+		return false
+	}
+	hop, ok := readRelationshipHop(text[:on])
+	d := hop.declaration
+	if !ok || hop.from != "" || hop.to != "" || !isPatternVariableName(d.variable) || d.hasColon || d.hasLength || d.lengthInvalid || d.properties != "" || d.predicate != "" {
+		return false
+	}
+	end, ok = keywordSpanAt(text, on, "ON EACH")
+	if !ok {
+		return false
+	}
+	call := strings.TrimSpace(text[end:])
+	name, rest, ok := parseIdentifierToken(call)
+	if !ok || !strings.EqualFold(name, "type") {
+		return false
+	}
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, "(") || findMatchingParen(rest, 0) != len(rest)-1 {
+		return false
+	}
+	variable := strings.TrimSpace(rest[1 : len(rest)-1])
+	return isPatternVariableName(variable) && symbolicNameValue(variable) == symbolicNameValue(d.variable)
+}
+
+// ignoresDynamicType is decided before resolution/validation of a token value.
+// Neo4j 5.26.30 ignores that value on legacy * ranges, including empty strings,
+// nulls and odd parameter values. Single-hop and quantified forms still resolve.
+func (d relationshipDeclaration) ignoresDynamicType(chain labelChain, mode labelPatternMode) bool {
+	return d.hasLength && mode == labelPatternMatch && chain.dynamic && chain.expr.kind == labelExpressionDynamic
+}
+
+func (d relationshipDeclaration) ignoredDynamicTypeStaticError(chain labelChain, params map[string]interface{}) error {
+	expression := strings.TrimSpace(chain.expr.expression)
+	return staticDynamicTokenTypeError((staticTypeScope{params: params}).staticExpressionType(expression), dynamicTokenLabel)
+}
+
+type relationshipRewriteFacts struct{ present, predicate, properties, mapReads, labels, repeated, brace bool }
+
+// Only this owner constructs the text accepted by node/list prefilters.
+// Relationship interiors have already been consumed and masked in this type.
+type relationshipNodeText string
+
+// patternElement never exposes a relationship's source text. Structural
+// iteration consumes its declaration before handing the element to a reader.
+type patternElement struct {
+	node           string
+	relationship   relationshipDeclaration
+	isRelationship bool
+	start, end     int
+}
+
+func eachPatternElement(pattern string, visit func(patternElement), cache ...*relationshipDeclarationCache) {
+	for index := 0; index < len(pattern); index++ {
+		switch pattern[index] {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(pattern, index, pattern[index]) - 1
+		case '(', '[':
+			closer := ')'
+			if pattern[index] == '[' {
+				closer = ']'
+			}
+			closing := findMatchingDelimiter(pattern, index, rune(pattern[index]), closer)
+			if closing < 0 {
+				return
+			}
+			if pattern[index] == '[' {
+				var declaration relationshipDeclaration
+				if len(cache) > 0 {
+					declaration = cache[0].readDeclaration(pattern[index+1 : closing])
+				} else {
+					declaration = relationshipDeclarationOf(pattern[index+1 : closing])
+				}
+				visit(patternElement{relationship: declaration, isRelationship: true, start: index, end: closing})
+			} else {
+				visit(patternElement{node: pattern[index : closing+1], start: index, end: closing})
+			}
+			index = closing
+		}
+	}
+}
+
+// relationshipNodeReaderText removes relationship interiors before a scanner
+// for node/list/expression syntax runs. Its relationship facts come exclusively
+// from the declaration; no prefilter gets a second interpretation of that text.
+func relationshipNodeReaderText(query string, cache ...*relationshipDeclarationCache) (relationshipNodeText, relationshipRewriteFacts) {
+	text, facts := readRelationshipNodeText(query, true, cache...)
+	return relationshipNodeText(text), facts
+}
+
+// Both materialized prefilters and fact-only callers use this one traversal.
+// A brace contributes only outside an owner-consumed relationship interior.
+func readRelationshipNodeText(query string, materialize bool, cache ...*relationshipDeclarationCache) (string, relationshipRewriteFacts) {
+	var facts relationshipRewriteFacts
+	var masked strings.Builder
+	last := 0
+	var names [8]string
+	count := 0
+	for open, close := nextRelationshipBracketInExpressions(query, 0); open >= 0; open, close = nextRelationshipBracketInExpressions(query, close+1) {
+		facts.brace = facts.brace || strings.Contains(query[last:open+1], "{")
+		var d relationshipDeclaration
+		if len(cache) > 0 {
+			d = cache[0].readDeclaration(query[open+1 : close])
+		} else {
+			d = relationshipDeclarationHead(query[open+1 : close])
+		}
+		facts.present = true
+		facts.predicate = facts.predicate || d.predicate != ""
+		facts.properties = facts.properties || d.properties != ""
+		facts.mapReads = facts.mapReads || indexOutsideQuotes(d.properties, '.') >= 0 || indexOutsideQuotes(d.properties, '(') >= 0
+		facts.labels = facts.labels || d.needsRewrite
+		name := symbolicNameValue(d.variable)
+		if isPatternVariableName(d.variable) {
+			if count == len(names) {
+				facts.repeated = true
+			} else {
+				for _, earlier := range names[:count] {
+					facts.repeated = facts.repeated || earlier == name
+				}
+				names[count] = name
+				count++
+			}
+		}
+		if materialize {
+			if last == 0 {
+				masked.Grow(len(query))
+			}
+			masked.WriteString(query[last : open+1])
+			for i := open + 1; i < close; i++ {
+				masked.WriteByte(' ')
+			}
+		}
+		last = close
+	}
+	facts.brace = facts.brace || strings.Contains(query[last:], "{")
+	if last == 0 {
+		return query, facts
+	}
+	if !materialize {
+		return "", facts
+	}
+	masked.WriteString(query[last:])
+	return masked.String(), facts
+}
+
+// A relationship pattern's inside ([r:A|B *1..2 {k: v}], [r:A WHERE p]) is
+// read by one scanner wherever a statement uses it: CREATE, MERGE, MATCH,
+// the clause rewrites, the fast-path plans, the write-stretch analysis and
+// schema statements (relationshipDeclarationOf, and
 // relationshipDeclarationHead for readers that need no type list): a
 // backtick-quoted type may hold any character, ':', '|', '*', '{' and
 // spaces included, and a doubled backtick inside it is one backtick, as
@@ -14,6 +510,11 @@ import "strings"
 // relationshipDeclaration is a relationship pattern's inside, read outside
 // backticks.
 type relationshipDeclaration struct {
+	// Source offsets belong to this owner too; rewriters never scan the inside.
+	typeOffset, chainOffset, variableEnd, whereOffset int
+	dynamic, alternatives, conservativeType           bool
+	needsRewrite                                      bool
+	viaIS                                             bool
 	// variable is the relationship variable as written, trimmed ("" when
 	// there is none).
 	variable string
@@ -24,15 +525,16 @@ type relationshipDeclaration struct {
 	typeText string
 	// types are the type names in order, backtick-quoted ones unquoted
 	// (`a``b` is a`b); a dynamic $(e) item is kept as written.
-	types []string
+	types relationshipTypes
 	// invalidType is the first type as written that names no type: an
 	// unquoted one that isn't an identifier (a name Neo4j can't parse
 	// unquoted) or an empty quoted one (``); "" when there is none.
 	invalidType string
+	emptyType   bool
 	// hasLength is set for a variable length (*, *2, *1..3, before or after
 	// the types); length is its digits and dots after the *.
 	hasLength bool
-	length    string
+	rangeText string
 	// lengthInvalid is set when the length is malformed: '..' without a
 	// '*', or anything but digits and at most one '..' after the '*'
 	// (MATCH rejects it). Quoted text and expressions don't count (#879).
@@ -40,40 +542,80 @@ type relationshipDeclaration struct {
 	// properties is the property map, from its { to the end, trimmed, or a
 	// trailing parameter ($props); "" when there is none.
 	properties string
+	// predicate is the element's own WHERE predicate ([r:T WHERE r.k = 1]),
+	// the text after WHERE, trimmed; "" when there is none.
+	predicate string
+}
+
+// relationshipDeclarationCache belongs to one statement rewrite. Facts are
+// reused across admission, binding, and rewriting within one execution.
+type relationshipDeclarationCache struct {
+	declarationFirst                    cachedRelationshipDeclaration
+	declarationPresent                  bool
+	declarationRest                     []cachedRelationshipDeclaration
+	declarationOverflow                 map[string]relationshipDeclaration
+	repetitionKnown, repetitionPossible bool
+}
+
+func (cache *relationshipDeclarationCache) rememberRewriteFacts(facts relationshipRewriteFacts) {
+	cache.repetitionKnown, cache.repetitionPossible = true, facts.repeated
+}
+
+func (cache *relationshipDeclarationCache) mayRepeatVariables() bool {
+	return !cache.repetitionKnown || cache.repetitionPossible
+}
+
+type cachedRelationshipDeclaration struct {
+	sourceInterior string
+	declaration    relationshipDeclaration
+}
+
+func (cache *relationshipDeclarationCache) readDeclaration(text string) relationshipDeclaration {
+	if cache.declarationPresent && cache.declarationFirst.sourceInterior == text {
+		return cache.declarationFirst.declaration
+	}
+	for _, entry := range cache.declarationRest {
+		if entry.sourceInterior == text {
+			return entry.declaration
+		}
+	}
+	if declaration, ok := cache.declarationOverflow[text]; ok {
+		return declaration
+	}
+	declaration := relationshipDeclarationHead(text)
+	if !cache.declarationPresent {
+		cache.declarationFirst = cachedRelationshipDeclaration{sourceInterior: text, declaration: declaration}
+		cache.declarationPresent = true
+	} else if len(cache.declarationRest) < 7 {
+		cache.declarationRest = append(cache.declarationRest, cachedRelationshipDeclaration{sourceInterior: text, declaration: declaration})
+	} else {
+		// Keep lookup work bounded for statements with many declarations.
+		if cache.declarationOverflow == nil {
+			cache.declarationOverflow = make(map[string]relationshipDeclaration)
+		}
+		cache.declarationOverflow[text] = declaration
+	}
+	return declaration
 }
 
 // relationshipDeclarationOf reads a relationship pattern's inside (the text
 // between [ and ]). Types are separated by | (or by a second colon, the
 // deprecated [:A|:B] form); empty items are skipped.
 func relationshipDeclarationOf(inner string) relationshipDeclaration {
-	declaration := relationshipDeclarationHead(inner)
-	if !declaration.hasColon {
-		return declaration
+	entry, cached := relationshipDeclarationEntryOf(inner)
+	if entry.typed {
+		return entry.full
 	}
-	text := declaration.typeText
-	inBacktick, depth, start := false, 0, 0
-	for index := 0; index <= len(text); index++ {
-		if index < len(text) {
-			switch c := text[index]; {
-			case c == '`':
-				inBacktick = !inBacktick // a doubled backtick toggles twice
-				continue
-			case inBacktick:
-				continue
-			case c == '(':
-				depth++
-				continue
-			case c == ')':
-				depth--
-				continue
-			case depth > 0 || c != '|' && c != ':':
-				continue
-			}
-		}
-		declaration.addType(strings.TrimSpace(text[start:index]))
-		start = index + 1
+	entry.full, entry.typed = entry.head, true
+	if entry.head.hasColon {
+		types, invalid, empty, alternatives := cyphertext.ReadRelationshipTypes(entry.head.typeText)
+		entry.full.types = relationshipTypes(types)
+		entry.full.invalidType, entry.full.emptyType, entry.full.alternatives = invalid, empty, alternatives
 	}
-	return declaration
+	if cached {
+		relationshipDeclarationFacts.put(strings.Clone(inner), entry)
+	}
+	return entry.full
 }
 
 // relationshipDeclarationHead reads a relationship pattern's inside as
@@ -81,8 +623,58 @@ func relationshipDeclarationOf(inner string) relationshipDeclaration {
 // invalidType stay empty): the variable, the type text, the length and the
 // property map. MATCH's range check and variable-length variables read it.
 func relationshipDeclarationHead(inner string) relationshipDeclaration {
-	var declaration relationshipDeclaration
+	entry, _ := relationshipDeclarationEntryOf(inner)
+	return entry.head
+}
+
+// Declaration facts are independent of rows and parameters, and every field
+// is an immutable string, scalar or owner-built type list, so consumers share
+// one entry per inside by copy: the head, and the typed declaration once a
+// consumer has read the type list. Row traversal reads both for every row.
+type relationshipDeclarationEntry struct {
+	head, full relationshipDeclaration
+	typed      bool
+}
+
+var relationshipDeclarationFacts = newBoundedCache[string, relationshipDeclarationEntry](4096, boundedCacheStringShardIndex)
+
+// relationshipDeclarationEntryOf returns the retained entry for inner, or a
+// new one holding its head; cacheable reports whether inner may be retained.
+func relationshipDeclarationEntryOf(inner string) (entry relationshipDeclarationEntry, cacheable bool) {
+	if len(inner) > 1024 {
+		return relationshipDeclarationEntry{head: readRelationshipDeclarationHead(inner)}, false
+	}
+	if entry, ok := relationshipDeclarationFacts.get(inner); ok {
+		return entry, true
+	}
+	// The retained facts are slices of their own copy of inner, never of
+	// the caller's statement.
+	owned := strings.Clone(inner)
+	entry = relationshipDeclarationEntry{head: readRelationshipDeclarationHead(owned)}
+	relationshipDeclarationFacts.put(owned, entry)
+	return entry, true
+}
+
+func readRelationshipDeclarationHead(inner string) (declaration relationshipDeclaration) {
+	declaration = relationshipDeclaration{whereOffset: -1, typeOffset: -1}
 	head := strings.TrimSpace(inner)
+	leading := len(inner) - len(strings.TrimLeftFunc(inner, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }))
+	// A complete symbolic name, including IS and literal-like keywords, is
+	// already the variable. It has no type/range/map/predicate to scan again.
+	if written, end, ok := scanSymbolicName(head, 0); ok && end == len(head) {
+		declaration.variable = written
+		declaration.variableEnd = leading + end
+		return declaration
+	}
+	// The WHERE predicate ends the inside; it is an expression, so nothing in
+	// it is the type, the length or the property map.
+	if strings.IndexAny(head, "Ww") >= 0 {
+		if where := elementWhereIndex(head, -1, len(head)); where >= 0 {
+			declaration.whereOffset = leading + where
+			declaration.predicate = strings.TrimSpace(head[where+len("WHERE"):])
+			head = strings.TrimSpace(head[:where])
+		}
+	}
 	masked := blankRelationshipExpressions(head)
 	if brace := strings.IndexByte(masked, '{'); brace >= 0 {
 		declaration.properties = strings.TrimSpace(head[brace:])
@@ -101,7 +693,7 @@ func relationshipDeclarationHead(inner string) relationshipDeclaration {
 			end++
 		}
 		declaration.hasLength = true
-		declaration.length = head[star+1 : end]
+		declaration.rangeText = head[star+1 : end]
 		if strings.TrimSpace(head[end:]) == "" {
 			head = head[:star]
 		} else {
@@ -110,13 +702,117 @@ func relationshipDeclarationHead(inner string) relationshipDeclaration {
 	}
 	colon := indexByteOutsideBackticks(head, ':')
 	if colon < 0 {
+		// IS is another spelling of the type marker; its variable still
+		// comes from the canonical symbolic-name reader.
+		name, end, ok := scanSymbolicName(head, 0)
+		marker := 0
+		if ok {
+			marker = skipASCIISpaces(head, end, len(head))
+			// IS is a symbolic name until another token makes it a type
+			// marker. In [is IS T], the second IS is that marker; in
+			// [IS T], the first is. A lone [is] always binds a variable.
+			if strings.EqualFold(name, "IS") && marker < len(head) {
+				if stop, secondMarker := keywordSpanAt(head, marker, "IS"); !secondMarker || skipASCIISpaces(head, stop, len(head)) == len(head) {
+					marker = 0
+				}
+			}
+		}
+		if stop, is := keywordSpanAt(head, marker, "IS"); is && skipASCIISpaces(head, stop, len(head)) < len(head) {
+			if marker > 0 {
+				declaration.variable = name
+			}
+			declaration.hasColon, declaration.viaIS = true, true
+			declaration.needsRewrite = true
+			declaration.typeText = strings.TrimSpace(head[stop:])
+			declaration.dynamic = hasDynamicToken(declaration.typeText)
+			declaration.conservativeType = strings.ContainsAny(declaration.typeText, "`$&!%()")
+			declaration.typeOffset = leading + skipASCIISpaces(head, stop, len(head))
+			declaration.variableEnd = leading + len(declaration.variable)
+			declaration.chainOffset = declaration.variableEnd
+			return declaration
+		}
 		declaration.variable = strings.TrimSpace(head)
+		declaration.variableEnd = leading + len(declaration.variable)
 		return declaration
 	}
 	declaration.hasColon = true
 	declaration.variable = strings.TrimSpace(head[:colon])
 	declaration.typeText = strings.TrimSpace(head[colon+1:])
+	declaration.dynamic = hasDynamicToken(declaration.typeText)
+	declaration.conservativeType = strings.ContainsAny(declaration.typeText, "`$&!%()")
+	// The declaration already masked quoted names and expressions. Static
+	// plain names need no label tree merely to decide whether to rewrite.
+	declaration.needsRewrite = declaration.dynamic || strings.ContainsAny(masked[colon+1:], "|&!%(:")
+	declaration.variableEnd = leading + len(declaration.variable)
+	declaration.chainOffset = leading + indexByteOutsideBackticks(inner[leading:], ':')
+	declaration.typeOffset = skipASCIISpaces(inner, declaration.chainOffset+1, len(inner))
 	return declaration
+}
+
+type relationshipTypeChainPlan struct {
+	chain labelChain
+	ok    bool
+}
+
+// Share only immutable grammar facts. Dynamic values are still resolved on
+// each execution, and resolveDynamic builds a new expression without changing
+// this plan. The owner keeps the key and its expression text together.
+var relationshipTypeChainPlans = newBoundedCache[string, relationshipTypeChainPlan](4096, boundedCacheStringShardIndex)
+
+func (d relationshipDeclaration) typeChain() (labelChain, bool) {
+	text := d.typeText
+	if len(text) > 1024 {
+		return scanLabelChain(text, true)
+	}
+	if plan, ok := relationshipTypeChainPlans.get(text); ok {
+		return plan.chain, plan.ok
+	}
+	text = strings.Clone(text)
+	chain, ok := scanLabelChain(text, true)
+	if ok {
+		chain.expr.freezeSchemaDependencies()
+	}
+	relationshipTypeChainPlans.put(text, relationshipTypeChainPlan{chain: chain, ok: ok})
+	return chain, ok
+}
+
+func (d relationshipDeclaration) staticTypeName() string {
+	if d.types.len() == 1 && !d.types.at(0).isDynamic() {
+		return d.types.at(0).storageName()
+	}
+	return symbolicNameValue(d.typeText)
+}
+
+// fulltextTypes supplies decoded names; a quoted name such as A|B remains
+// one type rather than being reinterpreted as union syntax by schema DDL.
+func (d relationshipDeclaration) fulltextTypes() ([]string, bool) {
+	if d.types.len() == 0 || d.invalidType != "" || d.emptyType || d.dynamic || d.hasLength || d.lengthInvalid || d.properties != "" || d.predicate != "" {
+		return nil, false
+	}
+	return d.types.storageNames(), true
+}
+
+func (d relationshipDeclaration) hopBounds(unbounded int) (min, max int) {
+	spec := d.rangeText
+	if spec == "" {
+		return 1, unbounded
+	}
+	if left, right, ranged := strings.Cut(spec, ".."); ranged {
+		min, max = 1, unbounded
+		if left != "" {
+			min, _ = strconv.Atoi(left)
+		}
+		if right != "" {
+			max, _ = strconv.Atoi(right)
+		}
+		return min, max
+	}
+	min, _ = strconv.Atoi(spec)
+	return min, min
+}
+
+func (d relationshipDeclaration) unboundedLength() bool {
+	return d.hasLength && (d.rangeText == "" || strings.HasSuffix(d.rangeText, ".."))
 }
 
 // relationshipLengthInvalid reports a malformed length in masked, a
@@ -167,30 +863,370 @@ func blankRelationshipExpressions(text string) string {
 	return string(out)
 }
 
-// addType adds one type item as written: unquoted when backtick-quoted,
-// noted in invalidType when it names no type (an empty quoted name, or an
-// unquoted one that is neither dynamic nor an identifier).
-func (declaration *relationshipDeclaration) addType(item string) {
-	switch written := item; {
-	case item == "":
-		return
-	case item[0] == '`':
-		if item = symbolicNameValue(item); item == "" && declaration.invalidType == "" {
-			declaration.invalidType = written
-		}
-	case hasDynamicToken(item):
-	case !isValidIdentifier(item) && declaration.invalidType == "":
-		declaration.invalidType = item
-	}
-	declaration.types = append(declaration.types, item)
-}
-
 // singleType is the declaration's one type for CREATE and MERGE: its name,
 // or the type text as written when it is dynamic or names more or fewer
 // than one type (the shape validators reject those first).
 func (declaration relationshipDeclaration) singleType() string {
-	if len(declaration.types) == 1 && !hasDynamicToken(declaration.typeText) {
-		return declaration.types[0]
+	if declaration.types.len() == 1 && !hasDynamicToken(declaration.typeText) {
+		return declaration.types.at(0).storageName()
 	}
 	return declaration.typeText
+}
+
+// boundOutgoingRelationship reads (a)-[inside]->(b), the shape the UNWIND
+// batch plans take, into its two node variables (simple identifiers) and its
+// relationship's declaration; ok is false for any other shape.
+func boundOutgoingRelationship(body string) (start string, declaration relationshipDeclaration, end string, ok bool) {
+	hop, valid := readRelationshipHop(body)
+	if !valid || !hop.bracketed || hop.incoming || !hop.outgoing || !isSimpleIdentifier(hop.from) || !isSimpleIdentifier(hop.to) {
+		return "", declaration, "", false
+	}
+	return hop.from, hop.declaration, hop.to, true
+}
+
+// singleStaticType is the declaration's one type when it names exactly one
+// type by a plain name, with no length and no predicate: what the fast-path
+// plans accept. ok is false for anything else.
+func (declaration relationshipDeclaration) singleStaticType() (string, bool) {
+	value, ok := declaration.singleLiteralType()
+	if !ok || !isSimpleIdentifier(value.storageName()) {
+		return "", false
+	}
+	return value.storageName(), true
+}
+
+// singleLiteralType keeps the classification for fast paths that also accept
+// quoted literal names. Properties are a separate admission fact for callers.
+func (declaration relationshipDeclaration) singleLiteralType() (relationshipTypeFacts, bool) {
+	if declaration.types.len() != 1 || declaration.invalidType != "" || declaration.emptyType || declaration.hasLength ||
+		declaration.lengthInvalid || declaration.predicate != "" || declaration.types.at(0).isDynamic() {
+		return relationshipTypeFacts{}, false
+	}
+	return declaration.types.at(0), true
+}
+
+// propertyMapBody is the text inside the declaration's property map ({…}),
+// trimmed; ok is false when it has none or a parameter map.
+func (declaration relationshipDeclaration) propertyMapBody() (string, bool) {
+	properties := declaration.properties
+	if len(properties) < 2 || properties[0] != '{' || findMatchingDelimiter(properties, 0, '{', '}') != len(properties)-1 {
+		return "", false
+	}
+	return strings.TrimSpace(properties[1 : len(properties)-1]), true
+}
+
+// traversalPatternParts consumes the same opaque connection frames as degree,
+// lookup, syntax admission and chain classification. In particular, a gap after
+// ']' cannot discard the connection's direction.
+type traversalRelationship struct {
+	variable, properties               string
+	types                              relationshipTypes
+	minHops, maxHops                   int
+	incoming, outgoing, variableLength bool
+}
+
+func relationshipTraversalOf(connection relationshipHop) traversalRelationship {
+	d := connection.declaration
+	result := traversalRelationship{variable: d.variable, properties: d.properties, types: d.types, minHops: 1, maxHops: 1, incoming: connection.incoming, outgoing: connection.outgoing, variableLength: d.hasLength}
+	if d.hasLength {
+		result.minHops, result.maxHops = d.hopBounds(VarLengthUnboundedMaxHops)
+	}
+	return result
+}
+
+func traversalPatternParts(pattern string) []traversalPart {
+	var parts []traversalPart
+	start := strings.IndexByte(pattern, '(')
+	for start >= 0 && start < len(pattern) {
+		end := findMatchingParen(pattern, start)
+		if end < 0 {
+			return parts
+		}
+		if parts == nil {
+			parts = make([]traversalPart, 0, 2)
+		}
+		part := traversalPart{node: pattern[start+1 : end]}
+		frame, ok := relationshipFrameAfterNode(pattern, start, end, nil)
+		if !ok || !frame.complete || frame.end >= len(pattern) || pattern[frame.end] != '(' {
+			return append(parts, part)
+		}
+		part.relationship = relationshipTraversalOf(relationshipConnectionOf(pattern, frame))
+		part.hasRelationship = true
+		parts = append(parts, part)
+		start = frame.end
+	}
+	return parts
+}
+
+// relationshipVariableTokens is the binding inventory for identifier lowering.
+// The quoted-variable pass receives declaration facts rather than inferring a
+// relationship variable from neighboring punctuation. Plain declarations count
+// too: their quoted references must name the same binding, even for literals.
+func relationshipVariableTokens(query string) []quotedToken {
+	var bindings []quotedToken
+	for _, token := range scanQuotedTokens(query) {
+		if token.relationshipBinding {
+			bindings = append(bindings, token)
+		}
+	}
+	return bindings
+}
+
+// expressionListText is a list's interior, never a relationship declaration.
+// The owner classifies brackets through its connection frames. Nested lists
+// in relationship properties, predicates and dynamic expressions remain lists.
+type expressionListText string
+
+func eachExpressionList(query string, visit func(expressionListText) error) error {
+	var inline [16]int
+	stack := inline[:0]
+	relationshipOpen := -1
+	for index := 0; index < len(query); index++ {
+		switch c := query[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(query, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(query, index); end >= 0 {
+				index = end - 1
+			}
+		case '[':
+			if index != relationshipOpen {
+				close := findMatchingBracket(query, index)
+				if close < 0 {
+					return nil
+				}
+				if err := visit(expressionListText(query[index+1 : close])); err != nil {
+					return err
+				}
+			}
+			stack = append(stack, index)
+		case '(', '{':
+			stack = append(stack, index)
+		case ')', ']', '}':
+			if len(stack) == 0 {
+				continue
+			}
+			open := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if c == ')' && query[open] == '(' {
+				frame, ok := relationshipFrameAfterNode(query, open, index, nil)
+				if ok && frame.complete && frame.bracketed {
+					d := relationshipDeclarationHead(query[frame.detailOpen+1 : frame.detailClose])
+					if d.variable == "" || isPatternVariableName(d.variable) {
+						relationshipOpen = frame.detailOpen
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// scanQuotedTokens lists the backtick-quoted symbolic names of query outside
+// string literals, with their positions classified.
+func scanQuotedTokens(query string) []quotedToken {
+	return scanQuotedTokensInto(query, nil)
+}
+
+// The statement canonicalizer supplies a small buffer for common bindings.
+// Larger statements grow normally; classification still belongs to this owner.
+type quotedTokenFrame struct {
+	open         int
+	bindingIndex int
+	connection   cyphertext.ConnectionPrefix
+}
+
+func scanQuotedTokensInto(query string, tokens []quotedToken) []quotedToken {
+	var inline [16]quotedTokenFrame
+	brackets := inline[:0]
+	var pending cyphertext.ConnectionPrefix
+	pendingOpen := -1
+	for i := 0; i < len(query); {
+		switch c := query[i]; c {
+		case '/':
+			if end := queryCommentEnd(query, i); end >= 0 {
+				i = end
+				continue
+			}
+		case '\'', '"':
+			i = skipQuotedText(query, i)
+			continue
+		case '(', '[', '{':
+			frame := quotedTokenFrame{open: i, bindingIndex: -1}
+			if c == '[' && pendingOpen == i {
+				// Reserve this declaration's source-order position. Quoted
+				// tokens inside the detail are still visited by this walk.
+				frame.connection, frame.bindingIndex = pending, len(tokens)
+				tokens = append(tokens, quotedToken{start: skipASCIISpaces(query, i+1, len(query))})
+				pendingOpen = -1
+			}
+			brackets = append(brackets, frame)
+		case ')', ']', '}':
+			if len(brackets) > 0 {
+				frame := brackets[len(brackets)-1]
+				brackets = brackets[:len(brackets)-1]
+				if c == ']' && query[frame.open] == '[' && frame.bindingIndex >= 0 {
+					owned, ok := frame.connection.Complete(i)
+					if ok && owned.Complete() {
+						d := relationshipDeclarationHead(query[frame.open+1 : i])
+						if isPatternVariableName(d.variable) {
+							start := skipASCIISpaces(query, frame.open+1, i)
+							tokens[frame.bindingIndex] = quotedToken{start: start, end: start + len(d.variable), written: d.variable, name: symbolicNameValue(d.variable), variable: true, binding: true, relationshipBinding: true}
+						}
+					}
+				}
+				if c == ')' && query[frame.open] == '(' {
+					if prefix, ok := relationshipPrefixAfterNode(query, frame.open, i); ok && prefix.DetailOpen() >= 0 {
+						pending, pendingOpen = prefix, prefix.DetailOpen()
+					}
+				}
+			}
+		case '$':
+			if i+1 < len(query) && query[i+1] == '`' {
+				if written, end, ok := scanSymbolicName(query, i+1); ok {
+					tokens = append(tokens, quotedToken{start: i + 1, end: end, written: written, name: symbolicNameValue(written), parameter: true})
+					i = end
+					continue
+				}
+			}
+		case '`':
+			written, end, ok := scanSymbolicName(query, i)
+			if !ok {
+				i++
+				continue
+			}
+			inner := byte(0)
+			bindingIndex := -1
+			if len(brackets) > 0 {
+				frame := brackets[len(brackets)-1]
+				inner = query[frame.open]
+				if frame.bindingIndex >= 0 && tokens[frame.bindingIndex].start == i {
+					bindingIndex = frame.bindingIndex
+				}
+			}
+			token := quotedToken{start: i, end: end, written: written, name: symbolicNameValue(written)}
+			classifyQuotedToken(query, &token, inner)
+			if bindingIndex >= 0 {
+				tokens[bindingIndex] = token
+			} else {
+				tokens = append(tokens, token)
+			}
+			i = end
+			continue
+		}
+		i++
+	}
+	// An incomplete connection or a detail without a binding leaves only a
+	// reserved position. Preserve real quoted empty tokens for admission.
+	written := tokens[:0]
+	for _, token := range tokens {
+		if token.end > token.start {
+			written = append(written, token)
+		}
+	}
+	return written
+}
+
+// classifyQuotedToken decides from its surroundings whether a quoted name is
+// a variable, and whether it binds one.
+func classifyQuotedToken(query string, token *quotedToken, inner byte) {
+	prev, prevIndex := previousSignificant(query, token.start)
+	next, nextIndex := nextSignificant(query, token.end)
+	prevWord := upperASCII(previousWord(query, token.start))
+	nextWord := upperASCII(nextWordAt(query, nextIndex))
+	switch {
+	case prev == '.' && !(prevIndex > 0 && query[prevIndex-1] == '.'):
+		return // property key (n.`p q`) or map projection property selector
+	case next == '(':
+		return // function or procedure name
+	case next == '.' && dottedNameCall(query, nextIndex):
+		return // procedure or function namespace
+	case prev == ':' && isLabelColon(query, prevIndex, inner):
+		return // label or relationship type
+	case (prev == '|' || prev == '&' || prev == '!') && inLabelExpression(query, prevIndex, inner):
+		return // label expression
+	case next == ':' && inner == '{' && (prev == '{' || prev == ','):
+		return // map key
+	case isNonVariableKeyword(prevWord):
+		return // database, index, constraint, alias, user or role name
+	}
+	token.variable = true
+	switch {
+	case inner == '{' && (prev == '{' || prev == ',') && (next == ',' || next == '}') && mapProjectionBrace(query, token.start):
+		token.selector = true
+	case prevWord == "AS":
+		token.binding = true
+	case (prev == '[' || prev == '(' || prev == ',') && declaredAt(query, prevIndex+1, token.start):
+		token.binding = true // comprehension, quantifier, reduce, FOREACH or named path variable
+	case prev == '(' && (next == ':' || next == ')' || next == '{') && !callParenthesis(query, prevIndex):
+		token.binding = true // node pattern variable
+	case next == '=' && !followsOperator(query, nextIndex) && (prev == ',' || prev == '(' || prevWord == "MATCH" || prevWord == "MERGE" || prevWord == "CREATE"):
+		token.binding = true // path variable or reduce accumulator
+	case indexASCIIFold(query[:token.start], "yield") >= 0 && inYieldList(query, token.start):
+		if nextWord != "AS" {
+			token.procColumn = true
+			token.variable = false
+		}
+	}
+}
+
+// isLabelColon reports whether the ':' at colon starts a label or a
+// relationship type rather than a map value ({key: value}).
+func isLabelColon(query string, colon int, inner byte) bool {
+	if inner != '{' {
+		return true
+	}
+	before, beforeIndex := previousSignificant(query, colon)
+	if before == 0 {
+		return true
+	}
+	start := beforeIndex
+	if before == '`' {
+		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
+		}
+	} else {
+		for start > 0 && isIdentByte(query[start-1]) {
+			start--
+		}
+	}
+	keyPrev, _ := previousSignificant(query, start)
+	return !(keyPrev == '{' || keyPrev == ',')
+}
+
+// inLabelExpression reports whether the operator at index continues a label
+// expression (:A|B, :A&B, :!A).
+func inLabelExpression(query string, index int, inner byte) bool {
+	before, beforeIndex := previousSignificant(query, index)
+	if before == ':' {
+		return isLabelColon(query, beforeIndex, inner)
+	}
+	start := beforeIndex
+	if before == '`' {
+		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
+		}
+	} else if isIdentByte(before) {
+		for start > 0 && isIdentByte(query[start-1]) {
+			start--
+		}
+	} else {
+		return false
+	}
+	operator, operatorIndex := previousSignificant(query, start)
+	switch operator {
+	case ':':
+		return isLabelColon(query, operatorIndex, inner)
+	case '|', '&', '!':
+		return inLabelExpression(query, operatorIndex, inner)
+	}
+	return false
+}
+
+func relationshipDelimiterEnd(text string, open int, opener, closer rune, bounds map[int]int) int {
+	if bounds != nil {
+		if end, ok := bounds[open]; ok {
+			return end
+		}
+		return -1
+	}
+	return findMatchingDelimiter(text, open, opener, closer)
 }

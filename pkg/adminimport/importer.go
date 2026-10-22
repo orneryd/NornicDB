@@ -993,8 +993,10 @@ func applySchemaDefinition(engine storage.Engine, path string) error {
 			return err
 		}
 	}
-	for _, contract := range schema.GetAllConstraintContracts() {
-		if err := storage.ValidateConstraintContractOnCreationForEngine(engine, contract); err != nil {
+	// The imported schema's own revisions check the imported data; nothing is
+	// compiled again.
+	for _, compiled := range schema.CompiledConstraintContracts() {
+		if err := storage.ValidateCompiledConstraintContractOnCreationForEngine(engine, compiled); err != nil {
 			return err
 		}
 	}

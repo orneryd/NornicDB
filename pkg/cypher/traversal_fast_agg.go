@@ -49,7 +49,7 @@ func (exprMatcher) key(expr string) string {
 
 func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnItems []returnItem) (rows [][]interface{}, ok bool, err error) {
 	// Only handle typed 1-hop patterns with no properties/filters.
-	if len(matches.Relationship.Types) != 1 {
+	if matches.Relationship.Types.len() != 1 {
 		return nil, false, nil
 	}
 	if len(matches.StartNode.properties) != 0 || len(matches.EndNode.properties) != 0 {
@@ -62,7 +62,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 	startVar := matches.StartNode.variable
 	endVar := matches.EndNode.variable
 	relVar := matches.Relationship.Variable
-	relType := matches.Relationship.Types[0]
+	relType := matches.Relationship.Types.at(0).storageName()
 
 	// We only optimize the "implicit GROUP BY startVar.<prop>" family, which covers:
 	// - count(endVar)
@@ -462,7 +462,7 @@ func buildChainedAggregationPlan(matches *TraversalMatch, returnItems []returnIt
 		return chainedAggregationPlan{}, false
 	}
 	for _, seg := range matches.Segments {
-		if seg.Relationship.MinHops != 1 || seg.Relationship.MaxHops != 1 || len(seg.Relationship.Types) != 1 {
+		if seg.Relationship.MinHops != 1 || seg.Relationship.MaxHops != 1 || seg.Relationship.Types.len() != 1 {
 			return chainedAggregationPlan{}, false
 		}
 	}
@@ -569,11 +569,11 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 
 	switch plan.kind {
 	case "two-hop-boundary-count":
-		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types[0])
+		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types.at(0).storageName())
 		if err != nil {
 			return nil, false, err
 		}
-		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types[0])
+		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types.at(0).storageName())
 		if err != nil {
 			return nil, false, err
 		}
@@ -615,15 +615,15 @@ func (e *StorageExecutor) tryFastChainedRelationshipAggregation(matches *Travers
 		seg2 := matches.Segments[2]
 		requiredRightLabels := append([]string(nil), seg2.ToNode.labels...)
 
-		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types[0])
+		edges0, _, err := e.getEdgesByTypeFast(seg0.Relationship.Types.at(0).storageName())
 		if err != nil {
 			return nil, false, err
 		}
-		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types[0])
+		edges1, _, err := e.getEdgesByTypeFast(seg1.Relationship.Types.at(0).storageName())
 		if err != nil {
 			return nil, false, err
 		}
-		edges2, _, err := e.getEdgesByTypeFast(seg2.Relationship.Types[0])
+		edges2, _, err := e.getEdgesByTypeFast(seg2.Relationship.Types.at(0).storageName())
 		if err != nil {
 			return nil, false, err
 		}

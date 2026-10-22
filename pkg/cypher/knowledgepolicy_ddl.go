@@ -581,27 +581,19 @@ func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBindin
 	if i >= len(s) || s[i] != '[' {
 		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedIn("'['"), nil)
 	}
-	i++
-	i = kpSkipSpaces(s, i)
-
-	_, i = kpScanIdent(s, i)
-	i = kpSkipSpaces(s, i)
-
-	if i < len(s) && s[i] == ':' {
-		i++
-		edgeType, j := kpScanIdent(s, i)
-		if edgeType == "" {
+	close := findMatchingBracket(s, i)
+	if close < 0 {
+		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedIn("']'"), nil)
+	}
+	declaration := relationshipDeclarationOf(s[i+1 : close])
+	if declaration.hasColon {
+		if declaration.types.len() != 1 || declaration.invalidType != "" || declaration.dynamic || declaration.hasLength || declaration.properties != "" || declaration.predicate != "" {
 			return binding, i, localizedError(localization.CypherKnowledgePolicyEdgeTypeExpectedAfterColon(), nil)
 		}
-		binding.TargetEdgeType = edgeType
+		binding.TargetEdgeType = declaration.singleType()
 		binding.IsEdge = true
-		i = j
 	}
-
-	i = kpSkipSpaces(s, i)
-	if i < len(s) && s[i] == ']' {
-		i++
-	}
+	i = close + 1
 	if i < len(s) && s[i] == '-' {
 		i++
 	}

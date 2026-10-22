@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -39,7 +38,7 @@ type PathResult struct {
 type TraversalContext struct {
 	startNode        *storage.Node
 	endNode          *storage.Node
-	relTypes         []string // Allowed relationship types (empty = any)
+	relTypes         relationshipTypes // Allowed relationship types (empty = any)
 	relTypeSet       map[string]struct{}
 	relProperties    map[string]interface{}
 	direction        string // "outgoing", "incoming", "both"
@@ -162,12 +161,13 @@ func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.N
 	return edges
 }
 
-func buildRelTypeSet(relTypes []string) map[string]struct{} {
-	if len(relTypes) <= 1 {
+func buildRelTypeSet(relTypes relationshipTypes) map[string]struct{} {
+	if relTypes.len() <= 1 {
 		return nil
 	}
-	set := make(map[string]struct{}, len(relTypes))
-	for _, relType := range relTypes {
+	set := make(map[string]struct{}, relTypes.len())
+	for index := 0; index < relTypes.len(); index++ {
+		relType := relTypes.at(index).storageName()
 		set[relType] = struct{}{}
 	}
 	return set
@@ -175,90 +175,39 @@ func buildRelTypeSet(relTypes []string) map[string]struct{} {
 
 // RelationshipPattern represents a parsed relationship pattern
 type RelationshipPattern struct {
-	Variable       string   // r in [r:TYPE]
-	Types          []string // TYPE in [r:TYPE|OTHER]
-	Direction      string   // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
-	MinHops        int      // min in [*min..max]
-	MaxHops        int      // max in [*min..max]
-	VariableLength bool     // whether the pattern explicitly uses `*`
+	Variable       string            // r in [r:TYPE]
+	Types          relationshipTypes // TYPE in [r:TYPE|OTHER]
+	Direction      string            // "outgoing" (-[r]->), "incoming" (<-[r]-), "both" (-[r]-)
+	MinHops        int               // min in [*min..max]
+	MaxHops        int               // max in [*min..max]
+	VariableLength bool              // whether the pattern explicitly uses `*`
 	Properties     map[string]interface{}
 }
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
 func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) *RelationshipPattern {
-	result := &RelationshipPattern{
-		Direction:  "both",
-		MinHops:    1,
-		MaxHops:    1,
-		Properties: make(map[string]interface{}),
+	connection, ok := readRelationshipConnection(pattern, 0)
+	if !ok || queryGapEnd(pattern, connection.end) != len(pattern) {
+		var empty relationshipHop
+		return e.relationshipPatternOf(ctx, relationshipTraversalOf(empty))
 	}
+	return e.relationshipPatternOf(ctx, relationshipTraversalOf(connection))
+}
 
-	// Determine direction from both ends before trimming either marker. A
-	// relationship carrying arrowheads at both ends is traversable in either
-	// direction; neither marker may overwrite the other.
-	hasIncomingArrow := strings.HasPrefix(pattern, "<-")
-	hasOutgoingArrow := strings.HasSuffix(pattern, "->")
-	switch {
-	case hasIncomingArrow && hasOutgoingArrow:
-		result.Direction = "both"
-	case hasIncomingArrow:
+func (e *StorageExecutor) relationshipPatternOf(ctx context.Context, connection traversalRelationship) *RelationshipPattern {
+	result := &RelationshipPattern{Direction: "both", MinHops: 1, MaxHops: 1, Properties: make(map[string]interface{})}
+	if connection.incoming && !connection.outgoing {
 		result.Direction = "incoming"
-	case hasOutgoingArrow:
+	}
+	if connection.outgoing && !connection.incoming {
 		result.Direction = "outgoing"
 	}
-	if hasIncomingArrow {
-		pattern = pattern[2:]
-	} else if strings.HasPrefix(pattern, "-") {
-		pattern = pattern[1:]
+	result.VariableLength = connection.variableLength
+	result.MinHops, result.MaxHops = connection.minHops, connection.maxHops
+	if connection.properties != "" {
+		result.Properties = e.parseProperties(ctx, connection.properties)
 	}
-	if hasOutgoingArrow {
-		pattern = pattern[:len(pattern)-2]
-	} else if strings.HasSuffix(pattern, "-") {
-		pattern = pattern[:len(pattern)-1]
-	}
-
-	// Extract [r:TYPE {props}] part, read outside backticks: a quoted type
-	// may hold any character, a * or : included (#879, #907).
-	if strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]") {
-		declaration := relationshipDeclarationOf(pattern[1 : len(pattern)-1])
-
-		// Variable length: [*], [*2], [*1..3], [*2..], [*..5].
-		if declaration.hasLength {
-			result.VariableLength = true
-			spec := declaration.length
-			hasRange := strings.Contains(spec, "..")
-			switch {
-			case spec == "":
-				// `[*]` — fully unbounded.
-				result.MinHops = 1
-				result.MaxHops = VarLengthUnboundedMaxHops
-			case hasRange:
-				parts := strings.SplitN(spec, "..", 2)
-				result.MinHops = 1
-				if parts[0] != "" {
-					result.MinHops, _ = strconv.Atoi(parts[0])
-				}
-				if parts[1] != "" {
-					result.MaxHops, _ = strconv.Atoi(parts[1])
-				} else {
-					// `[*N..]` — open-ended upper bound.
-					result.MaxHops = VarLengthUnboundedMaxHops
-				}
-			default:
-				result.MinHops, _ = strconv.Atoi(spec)
-				result.MaxHops = result.MinHops
-			}
-		}
-
-		// Property maps are valid with or without a relationship type, e.g.
-		// [r {name: 'value'}] and [r:TYPE {name: 'value'}].
-		if declaration.properties != "" {
-			result.Properties = e.parseProperties(ctx, declaration.properties)
-		}
-		result.Variable = declaration.variable
-		result.Types = declaration.types
-	}
-
+	result.Variable, result.Types = connection.variable, connection.types
 	return result
 }
 
@@ -1152,224 +1101,59 @@ func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern str
 	if hasQuantifiedGroup(pattern) {
 		return nil
 	}
-	pattern = normalizeAnonymousTraversalRelationships(pattern)
-	// First check if this is a chained pattern (has multiple relationship segments)
-	if e.isChainedPattern(pattern) {
-		return e.parseChainedTraversalPattern(ctx, pattern)
+	parts := traversalPatternParts(pattern)
+	if len(parts) > 2 {
+		return e.parseChainedTraversalPattern(ctx, parts)
 	}
-	return e.parseTraversalPatternStateMachine(ctx, pattern)
+	return e.parseSingleTraversalParts(ctx, parts)
 }
 
-func normalizeAnonymousTraversalRelationships(pattern string) string {
-	var normalized strings.Builder
-	normalized.Grow(len(pattern) + 8)
-	quote := byte(0)
-	for index := 0; index < len(pattern); {
-		character := pattern[index]
-		if quote != 0 {
-			normalized.WriteByte(character)
-			if character == quote && !isBackslashEscaped(pattern, index) {
-				quote = 0
-			}
-			index++
-			continue
-		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote = character
-			normalized.WriteByte(character)
-			index++
-			continue
-		}
-		switch {
-		case strings.HasPrefix(pattern[index:], "<-->"):
-			normalized.WriteString("-[]-")
-			index += len("<-->")
-		case strings.HasPrefix(pattern[index:], "-->"):
-			normalized.WriteString("-[]->")
-			index += len("-->")
-		case strings.HasPrefix(pattern[index:], "<--"):
-			normalized.WriteString("<-[]-")
-			index += len("<--")
-		case strings.HasPrefix(pattern[index:], "--"):
-			normalized.WriteString("-[]-")
-			index += len("--")
-		default:
-			normalized.WriteByte(character)
-			index++
-		}
-	}
-	return normalized.String()
+// traversalPart contains node text and the parsed relationship that follows
+// it. The declaration owner never exposes relationship source through it.
+type traversalPart struct {
+	node            string
+	relationship    traversalRelationship
+	hasRelationship bool
 }
 
 // isChainedPattern checks if a pattern has multiple relationship segments
 // e.g., (a)<-[:R1]-(b)-[:R2]->(c) or (a)-[:R1]->(b)-[:R2]->(c)
 func (e *StorageExecutor) isChainedPattern(pattern string) bool {
-	// Count relationship patterns by counting ]-
-	// A chained pattern has at least 2 relationship segments
-	count := 0
-	// Reverse iteration: order doesn't matter for counting
-	for i := len(pattern) - 2; i >= 0; i-- {
-		if pattern[i] == ']' && (pattern[i+1] == '-' || pattern[i+1] == '>') {
-			count++
-		}
-	}
-	return count >= 2
+	return len(traversalPatternParts(pattern)) > 2
 }
 
 // parseChainedTraversalPattern parses multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
-func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, parts []traversalPart) *TraversalMatch {
+	if len(parts) < 2 {
+		return nil // Not enough parts for a valid pattern
+	}
 	result := &TraversalMatch{
 		IsChained:         true,
 		Segments:          []TraversalSegment{},
 		IntermediateNodes: []nodePatternInfo{},
 	}
 
-	// Parse segments by splitting on relationship boundaries
-	// We need to find each (node)-[rel]->(node) or (node)<-[rel]-(node) segment
-
-	// Use state machine to properly handle nested parens and quotes
-	type segmentPart struct {
-		nodeStr string
-		relStr  string
-	}
-
-	var parts []segmentPart
-	var currentNode strings.Builder
-	var currentRel strings.Builder
-	inNode := false
-	inRel := false
-	parenDepth := 0
-	bracketDepth := 0
-	inQuote := false
-	quoteChar := byte(0)
-
-	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
-
-		// Handle quotes
-		if (c == '\'' || c == '"') && !isBackslashEscaped(pattern, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		}
-
-		if inQuote {
-			if inNode {
-				currentNode.WriteByte(c)
-			} else if inRel {
-				currentRel.WriteByte(c)
-			}
-			continue
-		}
-
-		switch c {
-		case '(':
-			if parenDepth == 0 {
-				inNode = true
-			}
-			parenDepth++
-			if inNode {
-				currentNode.WriteByte(c)
-			}
-		case ')':
-			parenDepth--
-			if inNode {
-				currentNode.WriteByte(c)
-			}
-			if parenDepth == 0 {
-				inNode = false
-			}
-		case '[':
-			if bracketDepth == 0 {
-				inRel = true
-			}
-			bracketDepth++
-			if inRel {
-				currentRel.WriteByte(c)
-			}
-		case ']':
-			if inRel {
-				currentRel.WriteByte(c)
-			}
-			bracketDepth--
-			if bracketDepth == 0 {
-				inRel = false
-				// Capture the direction arrows after ]
-				for j := i + 1; j < len(pattern) && (pattern[j] == '-' || pattern[j] == '>'); j++ {
-					currentRel.WriteByte(pattern[j])
-					i = j
-				}
-				// Save this part
-				parts = append(parts, segmentPart{
-					nodeStr: currentNode.String(),
-					relStr:  currentRel.String(),
-				})
-				currentNode.Reset()
-				currentRel.Reset()
-			}
-		case '<', '-':
-			if !inNode && !inRel && parenDepth == 0 && bracketDepth == 0 {
-				// Direction marker before relationship - add to next rel
-				currentRel.WriteByte(c)
-			} else if inNode {
-				currentNode.WriteByte(c)
-			} else if inRel {
-				currentRel.WriteByte(c)
-			}
-		default:
-			if inNode {
-				currentNode.WriteByte(c)
-			} else if inRel {
-				currentRel.WriteByte(c)
-			}
-		}
-	}
-
-	// Capture final node if present
-	if currentNode.Len() > 0 {
-		parts = append(parts, segmentPart{
-			nodeStr: currentNode.String(),
-			relStr:  "",
-		})
-	}
-
-	// Now convert parts to segments
-	if len(parts) < 2 {
-		return nil // Not enough parts for a valid pattern
-	}
-
 	// Parse all nodes first
-	var allNodes []nodePatternInfo
+	allNodes := make([]nodePatternInfo, 0, len(parts))
 	for _, part := range parts {
-		nodeStr := strings.Trim(part.nodeStr, "()")
-		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, nodeStr))
+		allNodes = append(allNodes, e.parseNodePatternFromString(ctx, part.node))
 	}
 
 	// Build segments
 	for i := 0; i < len(parts)-1; i++ {
-		relStr := parts[i].relStr
-		if relStr == "" {
+		if !parts[i].hasRelationship {
 			continue
 		}
-
-		segment := TraversalSegment{
+		result.Segments = append(result.Segments, TraversalSegment{
 			FromNode:     allNodes[i],
 			ToNode:       allNodes[i+1],
-			Relationship: *e.parseRelationshipPattern(ctx, relStr),
-		}
-		result.Segments = append(result.Segments, segment)
+			Relationship: *e.relationshipPatternOf(ctx, parts[i].relationship),
+		})
 	}
 
 	// Set start and end nodes
-	if len(allNodes) > 0 {
-		result.StartNode = allNodes[0]
-	}
-	if len(allNodes) > 1 {
-		result.EndNode = allNodes[len(allNodes)-1]
-	}
+	result.StartNode = allNodes[0]
+	result.EndNode = allNodes[len(allNodes)-1]
 
 	// Intermediate nodes are all nodes except first and last
 	if len(allNodes) > 2 {
@@ -1384,59 +1168,20 @@ func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, patt
 	return result
 }
 
-// parseTraversalPatternStateMachine parses patterns with a state machine
-// to properly handle parentheses and special characters inside quoted property values.
+// parseTraversalPatternStateMachine parses a one-relationship pattern
+// ((a)-[r:T]->(b)) from its parts (traversalPatternParts).
 func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
-	// Find the boundaries of (startNode), -[rel]->, and (endNode)
-	// respecting quotes and nested parentheses
+	return e.parseSingleTraversalParts(ctx, traversalPatternParts(pattern))
+}
 
-	// Find start node: first balanced parentheses
-	startIdx := strings.Index(pattern, "(")
-	if startIdx < 0 {
+func (e *StorageExecutor) parseSingleTraversalParts(ctx context.Context, parts []traversalPart) *TraversalMatch {
+	if len(parts) < 2 || !parts[0].hasRelationship {
 		return nil
 	}
-	startEnd := findMatchingParen(pattern, startIdx)
-	if startEnd < 0 {
-		return nil
-	}
-	startNodeStr := pattern[startIdx+1 : startEnd]
-
-	// Find relationship: -[...]-> or <-[...]-
-	relStart := strings.Index(pattern[startEnd:], "[")
-	if relStart < 0 {
-		return nil
-	}
-	relStart += startEnd
-	relEnd := findMatchingBracket(pattern, relStart)
-	if relEnd < 0 {
-		return nil
-	}
-
-	// Extract full relationship pattern including arrows
-	relPatternStart := startEnd + 1
-	relPatternEnd := relEnd + 1
-	// Include the arrow after ]
-	for relPatternEnd < len(pattern) && (pattern[relPatternEnd] == '-' || pattern[relPatternEnd] == '>') {
-		relPatternEnd++
-	}
-	relStr := pattern[relPatternStart:relPatternEnd]
-
-	// Find end node: next balanced parentheses after relationship
-	endStart := strings.Index(pattern[relEnd:], "(")
-	if endStart < 0 {
-		return nil
-	}
-	endStart += relEnd
-	endEnd := findMatchingParen(pattern, endStart)
-	if endEnd < 0 {
-		return nil
-	}
-	endNodeStr := pattern[endStart+1 : endEnd]
-
 	return &TraversalMatch{
-		StartNode:    e.parseNodePatternFromString(ctx, startNodeStr),
-		Relationship: *e.parseRelationshipPattern(ctx, relStr),
-		EndNode:      e.parseNodePatternFromString(ctx, endNodeStr),
+		StartNode:    e.parseNodePatternFromString(ctx, parts[0].node),
+		Relationship: *e.relationshipPatternOf(ctx, parts[0].relationship),
+		EndNode:      e.parseNodePatternFromString(ctx, parts[1].node),
 	}
 }
 
@@ -1506,7 +1251,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // The traversal still checks the whole pattern from each start node.
 func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
 	relationship := match.Relationship
-	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
+	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || relationship.Types.len() == 0 ||
 		relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
@@ -1521,7 +1266,8 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			nodes = append(nodes, node)
 		}
 	}
-	for _, relationshipType := range relationship.Types {
+	for index := 0; index < relationship.Types.len(); index++ {
+		relationshipType := relationship.Types.at(index).storageName()
 		edges, err := store.GetEdgesByType(relationshipType)
 		if err != nil {
 			return nil, true, err
@@ -2106,9 +1852,9 @@ func (e *StorageExecutor) findPaths(
 			continue
 		}
 		// Check relationship type filter
-		if len(ctx.relTypes) > 0 {
-			if len(ctx.relTypes) == 1 {
-				if edge.Type != ctx.relTypes[0] {
+		if ctx.relTypes.len() > 0 {
+			if ctx.relTypes.len() == 1 {
+				if edge.Type != ctx.relTypes.at(0).storageName() {
 					continue
 				}
 			} else {

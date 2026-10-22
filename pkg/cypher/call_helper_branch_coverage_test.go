@@ -45,13 +45,6 @@ func (e *callIncomingErrEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.
 }
 
 func TestCallTailHelperParsersAndPredicates(t *testing.T) {
-	t.Run("relationship_type_constraint_detection", func(t *testing.T) {
-		assert.True(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[:R]->(b) RETURN a"))
-		assert.False(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[r]->(b) RETURN a"))
-		assert.True(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[':R']->(b) RETURN a"))
-		assert.False(t, callTailHasRelationshipTypeConstraint("MATCH (a)-[r:R->(b) RETURN a"))
-	})
-
 	t.Run("path_assignment_splitting", func(t *testing.T) {
 		left, right, ok := splitPathAssignment("p = (a)-[:R]->(b)")
 		require.True(t, ok)

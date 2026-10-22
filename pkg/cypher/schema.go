@@ -828,60 +828,6 @@ func extractIndexPropertiesSegment(onClause string) (string, string, error) {
 	return strings.TrimSpace(onClause[:optionsPos]), strings.TrimSpace(onClause[optionsPos:]), nil
 }
 
-func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
-	forClause = strings.TrimSpace(forClause)
-	if forClause == "" {
-		return "", "", false, localizedError(localization.CypherSchemaEmptyClause("FOR"), nil)
-	}
-
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
-		if bracketStart < 0 {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-		if !ok {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-
-		prefix := strings.TrimSpace(forClause[:bracketStart])
-		suffix := strings.TrimSpace(rest)
-		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		relRaw := strings.TrimSpace(inside[colon+1:])
-		if relRaw == "" {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		relType := normalizeIdentifierToken(relRaw)
-		if relType == "" {
-			return "", "", false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
-		}
-		return "", relType, true, nil
-	}
-
-	inside, rest, ok := extractParenSection(forClause)
-	if !ok || strings.TrimSpace(rest) != "" {
-		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
-	}
-
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
-		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
-	}
-	labelRaw := strings.TrimSpace(inside[colon+1:])
-	label = normalizeIdentifierToken(labelRaw)
-	if label == "" {
-		return "", "", false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
-	}
-	return label, "", false, nil
-}
-
 func (e *StorageExecutor) parseCreateIndexDDL(cypher string, prefixKeyword string) (parsedCreateIndexDDL, error) {
 	q := strings.TrimSpace(cypher)
 	if q == "" {
@@ -1123,31 +1069,6 @@ type parsedCreateFulltextIndexDDL struct {
 	relationshipTypes []string
 	properties        []string
 	isRelationship    bool
-}
-
-func parseCreateFulltextForPattern(forClause string) (label string, relationshipTypes []string, isRelationship bool, err error) {
-	label, relTypeRaw, isRelationship, err := parseCreateIndexForPattern(forClause)
-	if err != nil {
-		// Neo4j compatibility: allow non-parenthesized node pattern `n:Label`.
-		if !strings.Contains(forClause, "[") {
-			parts := strings.SplitN(strings.TrimSpace(forClause), ":", 2)
-			if len(parts) == 2 {
-				compatLabel := normalizeIdentifierToken(strings.TrimSpace(parts[1]))
-				if compatLabel != "" {
-					return compatLabel, nil, false, nil
-				}
-			}
-		}
-		return "", nil, false, err
-	}
-	if !isRelationship {
-		return label, nil, false, nil
-	}
-	relTypes, err := parseFulltextRelationshipTypes(relTypeRaw)
-	if err != nil {
-		return "", nil, false, err
-	}
-	return "", relTypes, true, nil
 }
 
 func extractFulltextPropertiesSegment(onClause string) (string, string, error) {
@@ -1713,41 +1634,6 @@ func (e *StorageExecutor) parseCreateConstraintDomainDDL(cypher string) (parsedD
 	return parsedDomainConstraintDDL{name: parsed.name, label: parsed.label, isRelationship: parsed.isRelationship, property: property, allowedRaw: allowedRaw}, nil
 }
 
-func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) {
-	forClause = strings.TrimSpace(forClause)
-	if forClause == "" {
-		return "", "", false
-	}
-	bracketStart := strings.Index(forClause, "[")
-	if bracketStart < 0 {
-		return "", "", false
-	}
-	inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-	if !ok {
-		return "", "", false
-	}
-	prefix := strings.TrimSpace(forClause[:bracketStart])
-	suffix := strings.TrimSpace(rest)
-
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
-		return "", "", false
-	}
-	relType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-	if relType == "" {
-		return "", "", false
-	}
-
-	if strings.Contains(suffix, "->") {
-		direction = "OUTGOING"
-	} else if strings.Contains(prefix, "<-") {
-		direction = "INCOMING"
-	} else {
-		return "", "", false
-	}
-	return relType, direction, true
-}
-
 func parseCardinalityRequireExpr(requireExpr string) (int, bool) {
 	requireExpr = strings.TrimSpace(requireExpr)
 	idx := keywordIndexFrom(requireExpr, "MAX COUNT", 0, defaultKeywordScanOpts())
@@ -1822,60 +1708,6 @@ func parseNodeLabelOnlyPattern(inner string) (string, bool) {
 	return label, true
 }
 
-func parsePolicyForClause(forClause string) (sourceLabel string, relType string, targetLabel string, ok bool) {
-	forClause = strings.TrimSpace(forClause)
-	if !strings.HasPrefix(forClause, "(") {
-		return "", "", "", false
-	}
-	leftInside, leftRest, ok := extractParenSection(forClause)
-	if !ok {
-		return "", "", "", false
-	}
-	sourceLabel, ok = parseNodeLabelOnlyPattern(leftInside)
-	if !ok {
-		return "", "", "", false
-	}
-
-	leftRest = strings.TrimSpace(leftRest)
-	if !strings.HasPrefix(leftRest, "-") {
-		return "", "", "", false
-	}
-	bracketStart := strings.Index(leftRest, "[")
-	if bracketStart < 0 {
-		return "", "", "", false
-	}
-	relInside, relRest, ok := extractBracketSection(leftRest[bracketStart:])
-	if !ok {
-		return "", "", "", false
-	}
-	colon := strings.Index(relInside, ":")
-	if colon < 0 {
-		return "", "", "", false
-	}
-	relType = normalizeIdentifierToken(strings.TrimSpace(relInside[colon+1:]))
-	if relType == "" {
-		return "", "", "", false
-	}
-
-	relRest = strings.TrimSpace(relRest)
-	if !strings.HasPrefix(relRest, "->") {
-		return "", "", "", false
-	}
-	relRest = strings.TrimSpace(relRest[2:])
-	if !strings.HasPrefix(relRest, "(") {
-		return "", "", "", false
-	}
-	rightInside, trailing, ok := extractParenSection(relRest)
-	if !ok || strings.TrimSpace(trailing) != "" {
-		return "", "", "", false
-	}
-	targetLabel, ok = parseNodeLabelOnlyPattern(rightInside)
-	if !ok {
-		return "", "", "", false
-	}
-	return sourceLabel, relType, targetLabel, true
-}
-
 func parsePolicyModeRequireExpr(requireExpr string) (string, bool) {
 	requireExpr = strings.TrimSpace(requireExpr)
 	if startsWithKeywordFold(requireExpr, "ALLOWED") {
@@ -1916,7 +1748,7 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, err
 	}
 
-	label, relType, isRelationship, err := parseCreateIndexForPattern(patternSpan)
+	label, declaration, isRelationship, err := parseSchemaIndexForPattern(patternSpan)
 	if err != nil {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("relationship FOR"), nil)
 	}
@@ -1925,18 +1757,18 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 	if !ok || (!isRelationship && kind != "unique") {
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("relationship key/unique"), nil)
 	}
-	patternExpr := strings.TrimSpace(patternSpan)
-	var patternInside string
+	variable, relType := "", ""
 	if isRelationship {
-		patternInside, _, ok = extractBracketSection(patternExpr[strings.Index(patternExpr, "["):])
+		variable = symbolicNameValue(declaration.variable)
+		relType = declaration.staticTypeName()
 	} else {
-		patternInside, _, ok = extractParenSection(patternExpr)
+		patternInside, _, valid := extractParenSection(strings.TrimSpace(patternSpan))
+		colon := strings.Index(patternInside, ":")
+		if !valid || colon < 0 {
+			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
+		}
+		variable = normalizeIdentifierToken(patternInside[:colon])
 	}
-	colon := strings.Index(patternInside, ":")
-	if !ok || colon < 0 {
-		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaInvalidPattern("constraint FOR"), nil)
-	}
-	variable := normalizeIdentifierToken(patternInside[:colon])
 	propertyExpr := requireExpr
 	if inside, _, wrapped := extractParenSection(requireExpr); wrapped {
 		propertyExpr = inside
@@ -2537,4 +2369,103 @@ func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher s
 	}
 
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+func parseCreateIndexForPattern(forClause string) (label string, relationshipType string, isRelationship bool, err error) {
+	label, declaration, isRelationship, err := parseSchemaIndexForPattern(forClause)
+	if err != nil || !isRelationship {
+		return label, "", isRelationship, err
+	}
+	return "", declaration.staticTypeName(), true, nil
+}
+func parseSchemaIndexForPattern(forClause string) (label string, declaration relationshipDeclaration, isRelationship bool, err error) {
+	forClause = strings.TrimSpace(forClause)
+	if forClause == "" {
+		return "", declaration, false, localizedError(localization.CypherSchemaEmptyClause("FOR"), nil)
+	}
+	if hop, ok := readRelationshipHop(forClause); ok {
+		declaration = hop.declaration
+		if !declaration.hasColon || declaration.staticTypeName() == "" {
+			return "", declaration, false, localizedError(localization.CypherSchemaInvalidClause("relationship FOR"), nil)
+		}
+		return "", declaration, true, nil
+	}
+	inside, rest, ok := extractParenSection(forClause)
+	if !ok || strings.TrimSpace(rest) != "" {
+		return "", declaration, false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	}
+
+	colon := strings.Index(inside, ":")
+	if colon < 0 {
+		return "", declaration, false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	}
+	labelRaw := strings.TrimSpace(inside[colon+1:])
+	label = normalizeIdentifierToken(labelRaw)
+	if label == "" {
+		return "", declaration, false, localizedError(localization.CypherSchemaInvalidClause("node FOR"), nil)
+	}
+	return label, declaration, false, nil
+}
+
+func parseCreateFulltextForPattern(forClause string) (label string, relationshipTypes []string, isRelationship bool, err error) {
+	label, declaration, isRelationship, err := parseSchemaIndexForPattern(forClause)
+	if err != nil {
+		// Neo4j compatibility: allow non-parenthesized node pattern `n:Label`.
+		if !strings.HasPrefix(strings.TrimSpace(forClause), "(") {
+			parts := strings.SplitN(strings.TrimSpace(forClause), ":", 2)
+			if len(parts) == 2 && (strings.TrimSpace(parts[0]) == "" || isPatternVariableName(strings.TrimSpace(parts[0]))) {
+				compatLabel := normalizeIdentifierToken(strings.TrimSpace(parts[1]))
+				if compatLabel != "" {
+					return compatLabel, nil, false, nil
+				}
+			}
+		}
+		return "", nil, false, err
+	}
+	if !isRelationship {
+		return label, nil, false, nil
+	}
+	relTypes, valid := declaration.fulltextTypes()
+	if !valid {
+		return "", nil, false, nerrors.ErrInvalidFulltextRelationshipTypes
+	}
+	return "", relTypes, true, nil
+}
+
+func parseRelationshipForDirection(forClause string) (relType string, direction string, ok bool) {
+	hop, valid := readRelationshipHop(forClause)
+	if !valid || !hop.declaration.hasColon {
+		return "", "", false
+	}
+	relType = hop.declaration.staticTypeName()
+	if relType == "" {
+		return "", "", false
+	}
+	if hop.outgoing {
+		return relType, "OUTGOING", true
+	}
+	if hop.incoming {
+		return relType, "INCOMING", true
+	}
+	return "", "", false
+}
+
+func parsePolicyForClause(forClause string) (sourceLabel string, relType string, targetLabel string, ok bool) {
+	hop, valid := readRelationshipHop(forClause)
+	if !valid || !hop.outgoing || !hop.declaration.hasColon {
+		return "", "", "", false
+	}
+	sourceLabel, ok = parseNodeLabelOnlyPattern(hop.from)
+	if !ok {
+		return "", "", "", false
+	}
+	relType = hop.declaration.staticTypeName()
+	if relType == "" {
+		return "", "", "", false
+	}
+	targetLabel, ok = parseNodeLabelOnlyPattern(hop.to)
+	if !ok {
+		return "", "", "", false
+	}
+	return sourceLabel, relType, targetLabel, true
 }

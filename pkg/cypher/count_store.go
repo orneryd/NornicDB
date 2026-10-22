@@ -101,7 +101,7 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 	direction := matches.Relationship.Direction
 
 	if len(start) > 0 || len(end) > 0 {
-		if direction == "both" || len(types) == 0 {
+		if direction == "both" || types.len() == 0 {
 			return 0, false, nil
 		}
 		// The labelled endpoint is the relationship's start node when it is
@@ -114,7 +114,8 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 			label, startTier = end[0], direction == "incoming"
 		}
 		var total int64
-		for _, edgeType := range types {
+		for index := 0; index < types.len(); index++ {
+			edgeType := types.at(index).storageName()
 			var n int64
 			var err error
 			if startTier {
@@ -133,14 +134,15 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 	if direction == "both" {
 		return countUndirectedRelationshipMatches(store, types)
 	}
-	if len(types) == 0 {
+	if types.len() == 0 {
 		n, err := store.EdgeCount()
 		return n, true, err
 	}
 	// Every engine keeps a per-type counter (#638): typed counts are point
 	// reads.
 	var total int64
-	for _, edgeType := range types {
+	for index := 0; index < types.len(); index++ {
+		edgeType := types.at(index).storageName()
 		n, err := store.EdgeCountByType(edgeType)
 		if err != nil {
 			return 0, true, err
@@ -153,9 +155,9 @@ func (e *StorageExecutor) relationshipCountFromStore(ctx context.Context, matche
 // countUndirectedRelationshipMatches is an undirected pattern's cardinality,
 // not the number of relationships: a relationship matches once from each
 // endpoint, a self-loop once.
-func countUndirectedRelationshipMatches(store storage.Engine, types []string) (int64, bool, error) {
+func countUndirectedRelationshipMatches(store storage.Engine, types relationshipTypes) (int64, bool, error) {
 	var candidates []*storage.Edge
-	if len(types) == 0 {
+	if types.len() == 0 {
 		edges, err := store.AllEdges()
 		if err != nil {
 			return 0, true, err
@@ -163,7 +165,8 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 		candidates = edges
 	} else {
 		seen := make(map[storage.EdgeID]struct{})
-		for _, relationshipType := range types {
+		for index := 0; index < types.len(); index++ {
+			relationshipType := types.at(index).storageName()
 			edges, err := store.GetEdgesByType(relationshipType)
 			if err != nil {
 				return 0, true, err

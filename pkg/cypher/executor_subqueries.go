@@ -1072,7 +1072,9 @@ func isPatternVariableAt(text string, index, length int) bool {
 		if before := previousNonSpace(text, opening); before != '-' && before != '<' {
 			return false
 		}
-		return next == ':' || next == ']' || next == '{' || next == '*'
+		// The relationship's variable, as its declaration owner reads it.
+		closing := findMatchingBracket(text, opening)
+		return closing > index && relationshipDeclarationHead(text[opening+1:closing]).variable == text[index:index+length]
 	}
 	return next == '=' && nextNonSpace(text, strings.IndexByte(text[index:], '=')+index+1) == '('
 }

@@ -1969,27 +1969,6 @@ func isRelationshipPatternOperand(expression string) bool {
 	return chain && end == len(expression)
 }
 
-// containsRelationshipPattern reports whether a relationship pattern
-// (relationshipChainEnd) starts anywhere in expression outside a string
-// literal.
-func containsRelationshipPattern(expression string) bool {
-	for i := 0; i < len(expression); i++ {
-		switch c := expression[i]; c {
-		case '\'', '"', '`':
-			j := i + 1
-			for j < len(expression) && (expression[j] != c || isBackslashEscaped(expression, j)) {
-				j++
-			}
-			i = j
-		case '(':
-			if _, chain := relationshipChainEnd(expression, i, len(expression)); chain {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values map[string]interface{}) (interface{}, bool, error) {
 	needle, leftOK, err := e.evaluateRowValue(left, values)
 	if err != nil {

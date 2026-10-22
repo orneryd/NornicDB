@@ -51,6 +51,8 @@ type QueryInfo struct {
 	// Labels mentioned (for cache invalidation)
 	Labels []string
 
+	schemaFacts *statementSchemaFacts
+
 	// Relationship types mentioned
 	RelationshipTypes []string
 
@@ -321,7 +323,9 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.IsCompoundQuery = clauseCount > 1
 
 	// Extract labels for cache invalidation
-	info.Labels = extractLabelsFromQuery(cypher)
+	info.schemaFacts = statementSchemaFactsOf(cypher)
+	info.Labels = info.schemaFacts.labelMetadata()
+	info.RelationshipTypes = info.schemaFacts.typeMetadata()
 
 	return info
 }
@@ -513,11 +517,11 @@ func referencedIn(clauses []pipelineClause, variable string) bool {
 // ((n:L1:L2 {…}) gives n: [L1 L2]).
 func patternNodeLabels(pattern string) map[string][]string {
 	nodes := map[string][]string{}
-	eachPatternElement(pattern, func(opener byte, element string) {
-		if opener != '(' {
+	eachPatternElement(pattern, func(element patternElement) {
+		if element.isRelationship {
 			return
 		}
-		head, _ := splitNodePatternProperties(element)
+		head, _ := splitNodePatternProperties(element.node)
 		if variable, labels, err := parseNodeHead(head); err == nil && variable != "" {
 			nodes[variable] = append(nodes[variable], labels...)
 		}
@@ -525,57 +529,45 @@ func patternNodeLabels(pattern string) map[string][]string {
 	return nodes
 }
 
-// eachPatternElement calls visit with each node "(…)" and relationship
-// "[…]" of pattern, delimiters included, skipping quoted text.
-func eachPatternElement(pattern string, visit func(opener byte, element string)) {
-	for index := 0; index < len(pattern); index++ {
-		switch pattern[index] {
-		case '\'', '"', '`':
-			index = skipQuotedSemanticText(pattern, index) - 1
-		case '(', '[':
-			closer := ')'
-			if pattern[index] == '[' {
-				closer = ']'
-			}
-			closing := findMatchingDelimiter(pattern, index, rune(pattern[index]), closer)
-			if closing < 0 {
-				return
-			}
-			visit(pattern[index], pattern[index:closing+1])
-			index = closing
-		}
-	}
-}
-
 // appendPatternPropertyExpressions adds to keys the key: expression pairs of
 // the property maps of pattern's nodes labelled label and relationships of
 // type label.
 func appendPatternPropertyExpressions(keys map[string][]string, pattern, label string) map[string][]string {
-	eachPatternElement(pattern, func(opener byte, element string) {
-		inner := element[1 : len(element)-1]
-		brace := indexByteOutsideBackticks(inner, '{')
-		if brace < 0 {
+	eachPatternElement(pattern, func(element patternElement) {
+		var properties string
+		if element.isRelationship {
+			declaration := element.relationship
+			if declaration.dynamic || !declaration.types.contains(label) {
+				return
+			}
+			properties = declaration.properties
+		} else {
+			head, props := splitNodePatternProperties(element.node)
+			_, chain, hasLabels := splitNodeHead(head)
+			if !hasLabels {
+				return
+			}
+			if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
+				return
+			}
+			properties = props
+		}
+		if len(properties) < 2 || properties[0] != '{' {
 			return
 		}
-		_, chain, hasLabels := splitNodeHead(inner[:brace])
-		if !hasLabels {
-			return
-		}
-		if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
-			return
-		}
-		closing := findMatchingDelimiter(inner, brace, '{', '}')
+		closing := findMatchingDelimiter(properties, 0, '{', '}')
 		if closing < 0 {
 			return
 		}
-		for _, pair := range splitTopLevelComma(inner[brace+1 : closing]) {
-			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				if keys == nil {
-					keys = make(map[string][]string)
-				}
-				key := normalizePropertyKey(pair[:separator])
-				keys[key] = append(keys[key], strings.TrimSpace(pair[separator+1:]))
+		expressions, err := parsePropertyExpressions(properties)
+		if err != nil {
+			return
+		}
+		for _, expression := range expressions {
+			if keys == nil {
+				keys = make(map[string][]string)
 			}
+			keys[expression.key] = append(keys[expression.key], expression.expr)
 		}
 	})
 	return keys

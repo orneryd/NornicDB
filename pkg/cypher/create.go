@@ -186,7 +186,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			if rest, _, ok := splitPatternParameterMap(relStr); ok {
 				relStr = rest
 			}
-			relVar := relationshipDeclarationOf(relStr).variable
+			relVar := relationshipDeclarationHead(relStr).variable
 
 			// CREATE needs exactly one relationship type.
 			if relType == "" {
@@ -781,6 +781,13 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 				if depth > 0 {
 					current.WriteString(pattern[i : end+1])
 				}
+				i = end
+				continue
+			}
+		}
+		if c == '[' && depth == 0 {
+			// A relationship's inside ([:R {k: f(x)}]) holds no node.
+			if end := findMatchingBracket(pattern, i); end > i {
 				i = end
 				continue
 			}

@@ -177,7 +177,7 @@ func (e *StorageExecutor) parseCreateEdgeTemplates(body string) ([]createEdgeTem
 			return nil, false
 		}
 		relType := declaration.singleType()
-		if relType == "" || strings.Contains(relType, "$") {
+		if relType == "" || declaration.types.hasDynamic() {
 			return nil, false
 		}
 		var expressions []pipelinePropertyExpression

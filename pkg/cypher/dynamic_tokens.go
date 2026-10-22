@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -335,17 +336,27 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 		}
 	}
 	typeName := scope.staticExpressionType(expression)
-	switch {
-	case typeName == "" || typeName == "String" || typeName == "Any":
-		return nil
-	case use == dynamicTokenLabel:
-		if strings.HasPrefix(typeName, "List<") && (typeName == "List<String>" || typeName == "List<T>" || typeName == "List<Any>") {
-			return nil
-		}
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(typeName))
-	default:
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(typeName))
+	return staticDynamicTokenTypeError(typeName, use)
+}
+
+var dynamicTokenKeySignature = staticArgumentType{options: []string{"String", "Any"}}
+var dynamicTokenLabelSignature = staticArgumentType{options: []string{"String", "Any", "List<String>", "List<Any>"}}
+
+func staticDynamicTokenTypeError(typeName string, use dynamicTokenUse) error {
+	// Use the signature owner's union handling, as function arguments do:
+	// CASE can have several possible result types. A compatible alternative
+	// is admitted here; the selected value is still checked at run time.
+	argument := dynamicTokenKeySignature
+	if use == dynamicTokenLabel {
+		argument = dynamicTokenLabelSignature
 	}
+	if argument.accepts(typeName) {
+		return nil
+	}
+	if use == dynamicTokenLabel {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(typeName))
+	}
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(typeName))
 }
 
 // dynamicLabelTestFunction is the predicate a dynamic label or type in a
@@ -360,6 +371,11 @@ const dynamicLabelTestFunction = "__nornic_haslabels"
 // its argument types are checked only when a row reaches the predicate.
 const dynamicLabelPredicateFunction = "__nornic_labelpredicate"
 
+// Neo4j 5.26 checks a legacy variable-length dynamic type statically, but
+// does not evaluate it or filter the expanded relationships by it. Keep a
+// generated call for staticPatternTokenError to check; its runtime is true.
+const dynamicRangeTypeMode = "range"
+
 func init() {
 	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
 	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
@@ -369,6 +385,9 @@ func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error
 	if len(args) != 3 {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentCount(dynamicLabelTestFunction, "3", len(args)))
+	}
+	if strings.TrimSpace(args[2]) == "'"+dynamicRangeTypeMode+"'" {
+		return true, nil
 	}
 	values := make([]interface{}, len(args))
 	for i, arg := range args {
@@ -416,22 +435,7 @@ func labelsSatisfyNames(labels, names []string, any bool) bool {
 
 // hasDynamicToken reports whether text holds a dynamic label or type ($(e),
 // $all(e), $any(e)) outside quoted text.
-func hasDynamicToken(text string) bool {
-	if strings.IndexByte(text, '$') < 0 {
-		return false
-	}
-	for i := 0; i < len(text); i++ {
-		switch c := text[i]; c {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(text, i, c) - 1
-		case '$':
-			if dynamicLabelStartsAt(text, i) {
-				return true
-			}
-		}
-	}
-	return false
-}
+func hasDynamicToken(text string) bool { return cyphertext.HasDynamicToken(text) }
 
 // resolveRowDynamicTokens replaces the dynamic labels and types of a CREATE
 // or MERGE pattern whose values depend on the row (the label-expression

@@ -28,8 +28,8 @@ func (sm *SchemaManager) NodeWriteChecked(labels []string) bool {
 				return true
 			}
 		}
-		for _, contract := range sm.constraintContracts {
-			if contract.TargetEntityType == string(ConstraintEntityNode) && contract.TargetLabelOrType == label {
+		for _, revision := range sm.constraintContracts {
+			if revision.contract.TargetEntityType == string(ConstraintEntityNode) && revision.contract.TargetLabelOrType == label {
 				return true
 			}
 		}
@@ -57,8 +57,8 @@ func (sm *SchemaManager) EdgeWriteChecked(relType string) bool {
 			return true
 		}
 	}
-	for _, contract := range sm.constraintContracts {
-		if contract.TargetEntityType == string(ConstraintEntityRelationship) && contract.TargetLabelOrType == relType {
+	for _, revision := range sm.constraintContracts {
+		if revision.contract.TargetEntityType == string(ConstraintEntityRelationship) && revision.contract.TargetLabelOrType == relType {
 			return true
 		}
 	}

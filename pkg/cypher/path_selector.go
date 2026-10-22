@@ -532,18 +532,8 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 			if quantifier, _, ok := quantifierAfterArrow(q, close, end); ok && quantifier.max < 0 {
 				return true
 			}
-			inner := close
-			if where := elementWhereIndex(q, i, close); where >= 0 {
-				inner = where
-			}
-			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
-				inner = i + 1 + brace
-			}
-			if star := indexOutsideQuotes(q[i+1:inner], '*'); star >= 0 {
-				length := strings.TrimSpace(q[i+1+star+1 : inner])
-				if dots := strings.Index(length, ".."); length == "" || dots >= 0 && strings.TrimSpace(length[dots+2:]) == "" {
-					return true
-				}
+			if declaration := relationshipDeclarationHead(q[i+1 : close]); declaration.unboundedLength() {
+				return true
 			}
 			i = close
 		case '-', '<':
@@ -576,14 +566,7 @@ func hasVariableLengthRelationship(q string, start, end int) bool {
 			if close < 0 {
 				return false
 			}
-			inner := close
-			if where := elementWhereIndex(q, i, close); where >= 0 {
-				inner = where
-			}
-			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
-				inner = i + 1 + brace
-			}
-			if indexOutsideQuotes(q[i+1:inner], '*') >= 0 {
+			if relationshipDeclarationHead(q[i+1 : close]).hasLength {
 				return true
 			}
 			i = close

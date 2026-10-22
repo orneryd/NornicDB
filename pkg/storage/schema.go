@@ -98,10 +98,10 @@ type SchemaManager struct {
 	schemaMutationMu          sync.Mutex
 
 	// Constraints
-	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
-	constraints             map[string]Constraint             // key: constraint name, stores all constraint types
-	constraintContracts     map[string]ConstraintContract     // key: contract name
-	propertyTypeConstraints map[string]PropertyTypeConstraint // key: constraint name
+	uniqueConstraints       map[string]*UniqueConstraint           // key: "Label:property"
+	constraints             map[string]Constraint                  // key: constraint name, stores all constraint types
+	constraintContracts     map[string]*constraintContractRevision // key: contract name
+	propertyTypeConstraints map[string]PropertyTypeConstraint      // key: constraint name
 
 	// pendingWrites is the write cache of an AsyncEngine above the engine that
 	// maintains these indexes; index lookups merge its pending writes (#719).
@@ -219,7 +219,7 @@ func NewSchemaManager() *SchemaManager {
 	return &SchemaManager{
 		uniqueConstraints:       make(map[string]*UniqueConstraint),
 		constraints:             make(map[string]Constraint),
-		constraintContracts:     make(map[string]ConstraintContract),
+		constraintContracts:     make(map[string]*constraintContractRevision),
 		propertyTypeConstraints: make(map[string]PropertyTypeConstraint),
 		compositeIndexes:        make(map[string]*CompositeIndex),
 		fulltextIndexes:         make(map[string]*FulltextIndex),

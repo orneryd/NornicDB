@@ -282,6 +282,17 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 		switch character {
 		case '\'', '"', '`':
 			quote = character
+		case '[':
+			// A relationship's parameter map is its declaration's; a $ in its
+			// dynamic type or WHERE predicate is not one.
+			if previous := trimRightIndex(pattern, 0, index); depth == 0 && previous > 0 && pattern[previous-1] == '-' {
+				if closing := findMatchingBracket(pattern, index); closing > index {
+					if strings.HasPrefix(relationshipDeclarationHead(pattern[index+1:closing]).properties, "$") {
+						return true
+					}
+					index = closing
+				}
+			}
 		case '{':
 			depth++
 		case '}':

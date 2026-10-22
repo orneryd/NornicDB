@@ -19,8 +19,7 @@ import (
 // (storage/schema_lookup_index.go).
 
 var (
-	lookupNodePattern         = regexp.MustCompile(`(?is)^FOR\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*ON\s+EACH\s+labels\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$`)
-	lookupRelationshipPattern = regexp.MustCompile(`(?is)^FOR\s*\(\s*\)\s*<?-\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*->?\s*\(\s*\)\s*ON\s+EACH\s+type\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$`)
+	lookupNodePattern = regexp.MustCompile(`(?is)^FOR\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*ON\s+EACH\s+labels\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$`)
 )
 
 // executeCreateLookupIndex handles CREATE LOOKUP INDEX. A second lookup
@@ -84,7 +83,7 @@ func parseCreateLookupIndex(cypher string) (name string, ifNotExists bool, entit
 	if match := lookupNodePattern.FindStringSubmatch(rest); match != nil && match[1] == match[2] {
 		return name, ifNotExists, storage.ConstraintEntityNode, true
 	}
-	if match := lookupRelationshipPattern.FindStringSubmatch(rest); match != nil && match[1] == match[2] {
+	if relationshipLookupPattern(rest) {
 		return name, ifNotExists, storage.ConstraintEntityRelationship, true
 	}
 	return "", false, "", false

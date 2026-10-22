@@ -26,6 +26,15 @@ func splitTopLevelComma(input string) []string {
 // fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
 // allocating.
 func appendTopLevelComma(parts []string, input string) []string {
+	return appendTopLevelCommaParts(parts, input, false)
+}
+
+// appendTopLevelCommaParts shares the lexical owner with strict map readers;
+// only their policy for a trailing empty entry differs.
+func appendTopLevelCommaParts(parts []string, input string, keepEmpty bool) []string {
+	if strings.Contains(input, "/") {
+		input = StripComments(input)
+	}
 	if strings.TrimSpace(input) == "" {
 		return parts
 	}
@@ -51,7 +60,7 @@ func appendTopLevelComma(parts []string, input string) []string {
 		}
 	}
 
-	if s := strings.TrimSpace(input[start:]); s != "" {
+	if s := strings.TrimSpace(input[start:]); s != "" || keepEmpty {
 		parts = append(parts, s)
 	}
 	return parts

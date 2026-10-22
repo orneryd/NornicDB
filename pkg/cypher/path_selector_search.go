@@ -71,7 +71,7 @@ type pathPatternItem struct {
 	// predicates are checked on the element alone: its property map and
 	// the conjuncts of the pattern's predicates that read only it.
 	predicates []string
-	types      []string
+	types      relationshipTypes
 	// direction is "outgoing", "incoming" or "both".
 	direction string
 	// min and max are a group's or variable-length relationship's bounds
@@ -201,21 +201,17 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 	if prefix, suffix := text[:open], text[close+1:]; close < 0 || prefix != "-" && prefix != "<-" || suffix != "-" && suffix != "->" {
 		return item, false
 	}
-	inner := text[open+1 : close]
-	if where := elementWhereIndex(text, open, close); where >= 0 {
-		item.predicates = append(item.predicates, strings.TrimSpace(text[where+len("WHERE"):close]))
-		inner = text[open+1 : where]
+	declaration := relationshipDeclarationOf(text[open+1 : close])
+	if declaration.predicate != "" {
+		item.predicates = append(item.predicates, declaration.predicate)
 	}
-	declaration := relationshipDeclarationOf(inner)
 	if declaration.invalidType != "" {
 		return item, false
 	}
 	item.variable, item.types = declaration.variable, declaration.types
-	for _, name := range item.types {
-		if strings.HasPrefix(name, "$(") {
-			// A dynamic type is read per row by the MATCH step only.
-			return item, false
-		}
+	if item.types.hasDynamic() {
+		// Dynamic types are resolved per row by MATCH, not this plan.
+		return item, false
 	}
 	if strings.HasPrefix(declaration.properties, "$") {
 		return item, false
@@ -223,20 +219,7 @@ func parsePathPatternRelationship(text string) (pathPatternItem, bool) {
 	item.predicates = append(propertyMapPredicates(item.variable, declaration.properties), item.predicates...)
 	if declaration.hasLength {
 		item.varLength = true
-		item.min, item.max = 1, -1
-		switch spec := declaration.length; {
-		case strings.Contains(spec, ".."):
-			parts := strings.SplitN(spec, "..", 2)
-			if parts[0] != "" {
-				item.min = atoiOr(parts[0], 1)
-			}
-			if parts[1] != "" {
-				item.max = atoiOr(parts[1], -1)
-			}
-		case spec != "":
-			item.min = atoiOr(spec, 1)
-			item.max = item.min
-		}
+		item.min, item.max = declaration.hopBounds(-1)
 	}
 	return item, true
 }
@@ -295,7 +278,7 @@ type pathSearchSlot struct {
 type pathSearchTransition struct {
 	variable   string
 	list       bool
-	types      []string
+	types      relationshipTypes
 	direction  string
 	predicates []string
 	to         int
@@ -1343,7 +1326,7 @@ func selectedPathPlanBytes(plan *selectedPathPlan, filters []string, keyBytes in
 		for _, slot := range a.slots {
 			size += len(slot.variable) + stringsBytes(slot.labels) + stringsBytes(slot.predicates) + cap(slot.empty)*int(unsafe.Sizeof(int(0))) + cap(slot.transitions)*int(unsafe.Sizeof(pathSearchTransition{}))
 			for _, t := range slot.transitions {
-				size += len(t.variable) + len(t.direction) + stringsBytes(t.types) + stringsBytes(t.predicates)
+				size += len(t.variable) + len(t.direction) + t.types.bytes() + stringsBytes(t.predicates)
 			}
 		}
 		size += (cap(a.chains) + cap(a.from) + cap(a.into)) * int(unsafe.Sizeof([]int{}))

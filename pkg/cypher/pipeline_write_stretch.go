@@ -177,18 +177,13 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 // a variable ((a) in CREATE (a)-[:R]->(b)) is one bound before, not a node
 // the clause creates.
 func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
-	eachPatternElement(pattern, func(opener byte, element string) {
-		inner := element[1 : len(element)-1]
-		head := inner
-		brace := indexByteOutsideBackticks(inner, '{')
-		if brace >= 0 {
-			head = inner[:brace]
-			addStretchMapKeys(inner[brace:], tokens)
-		}
-		if opener == '(' {
+	eachPatternElement(pattern, func(element patternElement) {
+		if !element.isRelationship {
+			head, properties := splitNodePatternProperties(element.node)
+			addStretchMapKeys(properties, tokens)
 			variable, chain, hasLabels := splitNodeHead(head)
 			if !hasLabels {
-				if written && brace < 0 && variable != "" {
+				if written && properties == "" && variable != "" {
 					return
 				}
 				tokens.anyNode = true
@@ -197,22 +192,24 @@ func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
 			addStretchLabelChain(":"+chain, tokens)
 			return
 		}
-		if star := strings.IndexByte(head, '*'); star >= 0 {
-			head = head[:star]
+		declaration := element.relationship
+		addStretchMapKeys(declaration.properties, tokens)
+		if declaration.predicate != "" {
+			// [r:T WHERE …] reads what its predicate reads.
+			addStretchExpressionReads(declaration.predicate, tokens)
 		}
-		colon := indexByteOutsideBackticks(head, ':')
-		if colon < 0 {
+		if !declaration.hasColon {
 			tokens.anyRelationship = true
 			return
 		}
-		typeText := head[colon+1:]
-		if strings.ContainsAny(typeText, "`$&!%()") {
+		if declaration.conservativeType {
 			// A quoted, dynamic or expression type: any relationship.
 			tokens.anyRelationship = true
 			return
 		}
-		for _, relationshipType := range strings.Split(typeText, "|") {
-			tokens.add(&tokens.types, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relationshipType), ":")))
+		for index := 0; index < declaration.types.len(); index++ {
+			relationshipType := declaration.types.at(index).storageName()
+			tokens.add(&tokens.types, relationshipType)
 		}
 	})
 }
@@ -244,6 +241,17 @@ func addStretchLabelChain(chain string, tokens *stretchTokens) {
 // relationship, since the analysis doesn't model their patterns.
 func addStretchExpressionReads(text string, tokens *stretchTokens) {
 	addStretchPropertyReads(text, tokens)
+	nodeText, facts := relationshipNodeReaderText(text)
+	if facts.present {
+		tokens.anyNode, tokens.anyRelationship = true, true
+	}
+	addStretchNodeExpressionReads(nodeText, tokens)
+}
+
+// Relationship headers have already been consumed by the owner. A type's
+// colon must not be interpreted again as an expression's node-label test.
+func addStretchNodeExpressionReads(nodeText relationshipNodeText, tokens *stretchTokens) {
+	text := string(nodeText)
 	lower := lowerASCII(text)
 	if strings.Contains(lower, "labels(") {
 		tokens.anyNode = true

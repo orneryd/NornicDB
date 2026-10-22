@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -37,64 +38,7 @@ func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
 // unless a doubled backtick has to be unescaped, so scanning allocates
 // nothing for ordinary labels.
 func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) bool {
-	for start := 0; ; {
-		index := start
-		for index < len(chain) && isASCIISpace(chain[index]) {
-			index++
-		}
-		if index+1 < len(chain) && chain[index] == '$' && chain[index+1] == '(' {
-			closing := findMatchingDelimiter(chain, index+1, '(', ')')
-			if closing < 0 {
-				return false
-			}
-			end := closing + 1
-			for end < len(chain) && isASCIISpace(chain[end]) {
-				end++
-			}
-			if end < len(chain) && chain[end] != ':' {
-				return false
-			}
-			visit(strings.TrimSpace(chain[index+2:closing]), false, true)
-			if end >= len(chain) {
-				return true
-			}
-			start = end + 1
-			continue
-		}
-		if index < len(chain) && chain[index] == '`' {
-			name, end, ok := scanQuotedName(chain, index)
-			if !ok {
-				return false
-			}
-			for end < len(chain) && isASCIISpace(chain[end]) {
-				end++
-			}
-			if end < len(chain) && chain[end] != ':' {
-				return false
-			}
-			visit(name, true, false)
-			if end >= len(chain) {
-				return true
-			}
-			start = end + 1
-			continue
-		}
-		end := strings.IndexByte(chain[start:], ':')
-		if end < 0 {
-			end = len(chain)
-		} else {
-			end += start
-		}
-		segment := chain[start:end]
-		if strings.IndexByte(segment, '`') >= 0 {
-			return false
-		}
-		visit(strings.TrimSpace(segment), false, false)
-		if end >= len(chain) {
-			return true
-		}
-		start = end + 1
-	}
+	return cyphertext.EachChainItem(chain, visit)
 }
 
 // validateChainLabel applies the label rules to one label: a quoted label is
@@ -187,79 +131,25 @@ func labelChainNames(chain string) []string {
 // splitNodeHead splits the part of a node pattern before its property map,
 // "n:L1:`L 2`", into the variable and the label chain at the first colon
 // outside backticks. hasLabels reports whether there was a colon.
-func splitNodeHead(head string) (variable, chain string, hasLabels bool) {
-	colon := indexByteOutsideBackticks(head, ':')
-	if colon < 0 {
-		return strings.TrimSpace(head), "", false
-	}
-	return strings.TrimSpace(head[:colon]), head[colon+1:], true
-}
+func splitNodeHead(head string) (string, string, bool) { return cyphertext.SplitNodeHead(head, false) }
 
 // indexByteOutsideBackticks returns the index of the first b in s that is not
 // inside a backtick-quoted name, or -1.
 func indexByteOutsideBackticks(s string, b byte) int {
-	inBacktick := false
-	for index := 0; index < len(s); index++ {
-		switch s[index] {
-		case '`':
-			inBacktick = !inBacktick // a doubled backtick toggles twice
-		case b:
-			if !inBacktick {
-				return index
-			}
-		}
-	}
-	return -1
+	return cyphertext.IndexByteOutsideBackticks(s, b)
 }
 
 // strictNodeHeadLabels parses a node head for fast paths that decline
 // anything unusual: every label must be non-empty (no "n::A" or "n:") and
 // the chain well formed. Quoted labels are unquoted.
-func strictNodeHeadLabels(head string) (variable string, labels []string, ok bool) {
-	variable, chain, hasLabels := splitNodeHead(head)
-	if !hasLabels {
-		return variable, []string{}, true
-	}
-	labels = make([]string, 0, strings.Count(chain, ":")+1)
-	ok = true
-	wellFormed := eachChainLabel(chain, func(name string, quoted bool) {
-		if name == "" {
-			ok = false
-			return
-		}
-		labels = append(labels, name)
-	})
-	if !wellFormed || !ok {
-		return "", nil, false
-	}
-	return variable, labels, true
+func strictNodeHeadLabels(head string) (string, []string, bool) {
+	return cyphertext.StrictNodeHeadLabels(head, false)
 }
 
 // scanQuotedName reads a backtick-quoted name starting at s[start] == '`'
 // and returns it unquoted (a doubled backtick is one backtick) with the index
 // after the closing backtick. The name is a slice of s unless it contains a
 // doubled backtick.
-func scanQuotedName(s string, start int) (name string, end int, ok bool) {
-	var unescaped *strings.Builder
-	segment := start + 1
-	for index := start + 1; index < len(s); index++ {
-		if s[index] != '`' {
-			continue
-		}
-		if index+1 < len(s) && s[index+1] == '`' {
-			if unescaped == nil {
-				unescaped = &strings.Builder{}
-			}
-			unescaped.WriteString(s[segment : index+1])
-			index++
-			segment = index + 1
-			continue
-		}
-		if unescaped == nil {
-			return s[start+1 : index], index + 1, true
-		}
-		unescaped.WriteString(s[segment:index])
-		return unescaped.String(), index + 1, true
-	}
-	return "", start, false
+func scanQuotedName(s string, start int) (string, int, bool) {
+	return cyphertext.ScanQuotedName(s, start)
 }

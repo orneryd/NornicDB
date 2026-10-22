@@ -148,7 +148,7 @@ func TestBoundRelationshipDeleteTargetNode(t *testing.T) {
 
 func TestRelationshipTypeAllowed(t *testing.T) {
 	multi := []string{"LINKS", "OWNS"}
-	multiSet := buildRelTypeSet(multi)
+	multiSet := buildRelTypeSet(relationshipTypesForTest(multi...))
 
 	cases := []struct {
 		name       string
@@ -165,7 +165,7 @@ func TestRelationshipTypeAllowed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := relationshipTypeAllowed(tc.edgeType, tc.allowed, tc.allowedSet); got != tc.want {
+			if got := relationshipTypeAllowed(tc.edgeType, relationshipTypesForTest(tc.allowed...), tc.allowedSet); got != tc.want {
 				t.Fatalf("relationshipTypeAllowed(%q, %v) = %v, want %v", tc.edgeType, tc.allowed, got, tc.want)
 			}
 		})

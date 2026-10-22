@@ -41,6 +41,55 @@ type labelExpression struct {
 	operands   []*labelExpression
 	expression string
 	any        bool
+	schema     *labelExpressionSchema
+}
+
+// A cached grammar tree publishes its dependency view together with its
+// syntax. Both remain immutable; consumers never rebuild or mutate the view.
+type labelExpressionSchema struct {
+	names []string
+	broad bool
+}
+
+// freezeSchemaDependencies runs only on a fresh tree, before its owner
+// publishes the type-chain plan. Dynamic resolution constructs new trees.
+func (x *labelExpression) freezeSchemaDependencies() {
+	names, broad := x.schemaDependencies()
+	x.schema = &labelExpressionSchema{names: names, broad: broad}
+}
+
+// schemaDependencies lowers the parsed label grammar to invalidation data.
+// A dynamic expression or one matching an unlabelled entity depends on writes
+// outside any finite list. Negated names still participate in invalidation.
+func (x *labelExpression) schemaDependencies() ([]string, bool) {
+	if x != nil && x.schema != nil {
+		return x.schema.names, x.schema.broad
+	}
+	var names []string
+	dynamic := false
+	var visit func(*labelExpression)
+	visit = func(value *labelExpression) {
+		if value == nil {
+			return
+		}
+		switch value.kind {
+		case labelExpressionName:
+			if !containsString(names, value.name) {
+				if names == nil {
+					names = make([]string, 0, max(1, len(x.operands)))
+				}
+				names = append(names, value.name)
+			}
+		case labelExpressionDynamic:
+			dynamic = true
+		default:
+			for _, operand := range value.operands {
+				visit(operand)
+			}
+		}
+	}
+	visit(x)
+	return names, x == nil || dynamic || x.matches(nil)
 }
 
 // labelExpressionOfNames is the conjunction of names, the legacy :A:B form.
@@ -290,6 +339,8 @@ type labelChain struct {
 	colons bool
 	// symbols: a label expression operator or parenthesis was used.
 	symbols bool
+	// nonUnionSymbols excludes relationship unions and their grouping syntax.
+	nonUnionSymbols bool
 	// barColons: the legacy relationship type alternative |: (R|:S).
 	barColons bool
 	// dynamic: a $(e), $all(e) or $any(e) term (dynamicAny: $any).
@@ -305,7 +356,7 @@ func scanLabelChain(text string, relationship bool) (labelChain, bool) {
 		return labelChain{}, false
 	}
 	return labelChain{expr: expr, end: p.pos, colons: p.usedColons, symbols: p.usedSymbols, barColons: p.usedBarColons,
-		dynamic: p.usedDynamic, dynamicAny: p.usedDynamicAny}, true
+		dynamic: p.usedDynamic, dynamicAny: p.usedDynamicAny, nonUnionSymbols: p.usedNonUnionSymbols}, true
 }
 
 type labelExpressionParser struct {
@@ -317,6 +368,7 @@ type labelExpressionParser struct {
 	relationship bool
 
 	usedColons, usedSymbols, usedBarColons bool
+	usedNonUnionSymbols                    bool
 	// usedDynamic: a $(e), $all(e) or $any(e) term; usedDynamicAny: $any.
 	usedDynamic, usedDynamicAny bool
 }
@@ -351,6 +403,7 @@ func (p *labelExpressionParser) binary(op byte, operand func() (*labelExpression
 		p.usedBarColons = true
 	} else {
 		p.usedSymbols = true
+		p.usedNonUnionSymbols = p.usedNonUnionSymbols || op != '|'
 	}
 	return expr, true
 }
@@ -440,10 +493,12 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 			return nil, false
 		}
 		p.usedSymbols = true
+		p.usedNonUnionSymbols = true
 		return &labelExpression{kind: labelExpressionNot, operands: []*labelExpression{operand}}, true
 	case '%':
 		p.pos = at + 1
 		p.usedSymbols = true
+		p.usedNonUnionSymbols = true
 		return &labelExpression{kind: labelExpressionAny}, true
 	case '$':
 		// A dynamic label: $(e), $all(e), $any(e).
@@ -625,7 +680,17 @@ const labelWildcardMode = "wildcard"
 
 // cypherStringLiteral quotes text as a Cypher string literal.
 func cypherStringLiteral(text string) string {
-	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(text) + "'"
+	var out strings.Builder
+	out.Grow(len(text) + 2)
+	out.WriteByte('\'')
+	for index := 0; index < len(text); index++ {
+		if text[index] == '\\' || text[index] == '\'' {
+			out.WriteByte('\\')
+		}
+		out.WriteByte(text[index])
+	}
+	out.WriteByte('\'')
+	return out.String()
 }
 
 // resolveDynamic replaces the expression's dynamic terms with the names their

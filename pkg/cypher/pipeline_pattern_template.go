@@ -27,26 +27,8 @@ type pipelinePropertyExpression struct {
 // into its pairs, as parseProperties reads them. ok is false for a pair it
 // would skip (no key), which the general route handles.
 func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelinePropertyExpression, bool) {
-	props = strings.TrimSpace(props)
-	if strings.HasPrefix(props, "{") && strings.HasSuffix(props, "}") {
-		props = props[1 : len(props)-1]
-	}
-	if strings.TrimSpace(props) == "" {
-		return nil, true
-	}
-	pairs := e.splitPropertyPairs(props)
-	out := make([]pipelinePropertyExpression, 0, len(pairs))
-	for _, pair := range pairs {
-		colon := findTopLevelMapKeyValueSeparator(pair)
-		if colon <= 0 {
-			return nil, false
-		}
-		out = append(out, pipelinePropertyExpression{
-			key:  normalizePropertyKey(strings.TrimSpace(pair[:colon])),
-			expr: strings.TrimSpace(pair[colon+1:]),
-		})
-	}
-	return out, true
+	expressions, err := parsePropertyExpressions(props)
+	return expressions, err == nil
 }
 
 // evaluatePipelineProperties evaluates pattern predicates for a row without

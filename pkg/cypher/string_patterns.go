@@ -10,6 +10,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"unicode"
 )
@@ -364,22 +365,7 @@ func ParseAggregation(expr string) *AggregationResult {
 }
 
 // isValidIdentifier checks if s is a valid Cypher identifier (alphanumeric + underscore, starts with letter/underscore).
-func isValidIdentifier(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	first := s[0]
-	if !isIdentStartByte(first) {
-		return false
-	}
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if !isIdentByte(c) {
-			return false
-		}
-	}
-	return true
-}
+func isValidIdentifier(text string) bool { return cyphertext.IsIdentifier(text) }
 
 // ParseAggregationProperty is a convenience function that returns just the variable and property.
 // Returns ("", "") if not a valid aggregation with a property.

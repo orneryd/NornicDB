@@ -22,22 +22,12 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 	}
 
 	parenDepth, bracketDepth, braceDepth := 0, 1, 0
-	var quote byte
 	for i := 1; i < len(expr)-1; i++ {
 		char := expr[i]
-		if quote != 0 {
-			if char == '\\' {
-				i++
-				continue
-			}
-			if char == quote {
-				quote = 0
-			}
-			continue
-		}
 		switch char {
-		case '\'', '"':
-			quote = char
+		case '\'', '"', '`':
+			// A string or a quoted name (a type `D]'Z`) is one token.
+			i = skipCypherQuotedText(expr, i, char) - 1
 		case '(':
 			parenDepth++
 		case ')':
@@ -336,12 +326,14 @@ func rowContextShapeOf(expr string) *rowContextShape {
 	if shape, cached := rowContextShapes.get(expr); cached {
 		return shape
 	}
+	facts := relationshipExpressionReaderText(expr)
+	pattern := facts.pattern
 	shape := &rowContextShape{
-		pattern:          containsRelationshipPattern(expr),
-		statementContext: needsRowStatementContext(expr),
-		buildsValues:     expressionBuildsValues(expr),
+		pattern:          pattern,
+		statementContext: pattern || needsNonPatternRowStatementContext(expr),
+		buildsValues:     facts.buildsValues,
 		trimmed:          strings.TrimSpace(expr),
-		brace:            strings.Contains(expr, "{"),
+		brace:            facts.brace,
 	}
 	shape.subquery, shape.isSubquery = standaloneSubqueryExpression(expr)
 	if function, argument, ok := parseFunctionCallWS(shape.trimmed); ok {

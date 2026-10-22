@@ -80,29 +80,44 @@ func TestQuotedRelationshipTypes(t *testing.T) {
 func TestRelationshipDeclarationOf(t *testing.T) {
 	for _, tc := range []struct {
 		inner string
-		want  relationshipDeclaration
+		want  relationshipDeclarationExpected
 	}{
-		{"", relationshipDeclaration{}},
-		{"r", relationshipDeclaration{variable: "r"}},
-		{"r:A|B", relationshipDeclaration{variable: "r", hasColon: true, typeText: "A|B", types: []string{"A", "B"}}},
-		{":A|:`B c`", relationshipDeclaration{hasColon: true, typeText: "A|:`B c`", types: []string{"A", "B c"}}},
-		{"r:`a|b`*1..2 {k: '*'}", relationshipDeclaration{variable: "r", hasColon: true, typeText: "`a|b`", types: []string{"a|b"}, hasLength: true, length: "1..2", properties: "{k: '*'}"}},
-		{":$(t)", relationshipDeclaration{hasColon: true, typeText: "$(t)", types: []string{"$(t)"}}},
+		{"", relationshipDeclarationExpected{}},
+		{"r", relationshipDeclarationExpected{variable: "r"}},
+		{"r:A|B", relationshipDeclarationExpected{variable: "r", hasColon: true, typeText: "A|B", types: []string{"A", "B"}}},
+		{":A|:`B c`", relationshipDeclarationExpected{hasColon: true, typeText: "A|:`B c`", types: []string{"A", "B c"}}},
+		{"r:`a|b`*1..2 {k: '*'}", relationshipDeclarationExpected{variable: "r", hasColon: true, typeText: "`a|b`", types: []string{"a|b"}, hasLength: true, rangeText: "1..2", properties: "{k: '*'}"}},
+		{":$(t)", relationshipDeclarationExpected{hasColon: true, typeText: "$(t)", types: []string{"$(t)"}}},
 		// A length before the types reads, but MATCH rejects it as Neo4j does
 		// (Invalid input ':').
-		{"r*2..5:KNOWS", relationshipDeclaration{variable: "r", hasColon: true, typeText: "KNOWS", types: []string{"KNOWS"}, hasLength: true, length: "2..5", lengthInvalid: true}},
-		{"r:T*x", relationshipDeclaration{variable: "r", hasColon: true, typeText: "Tx", types: []string{"Tx"}, hasLength: true, lengthInvalid: true}},
-		{"r:T..", relationshipDeclaration{variable: "r", hasColon: true, typeText: "T..", types: []string{"T.."}, invalidType: "T..", lengthInvalid: true}},
-		{":$(t * 2)*1..2", relationshipDeclaration{hasColon: true, typeText: "$(t * 2)", types: []string{"$(t * 2)"}, hasLength: true, length: "1..2"}},
-		{":$(ts[0..1][0]) {w: 1}", relationshipDeclaration{hasColon: true, typeText: "$(ts[0..1][0])", types: []string{"$(ts[0..1][0])"}, properties: "{w: 1}"}},
-		{"r:R $p", relationshipDeclaration{variable: "r", hasColon: true, typeText: "R", types: []string{"R"}, properties: "$p"}},
-		{":$(a:b)|C", relationshipDeclaration{hasColon: true, typeText: "$(a:b)|C", types: []string{"$(a:b)", "C"}}},
-		{":Ts R", relationshipDeclaration{hasColon: true, typeText: "Ts R", types: []string{"Ts R"}, invalidType: "Ts R"}},
-		{":``|`a`", relationshipDeclaration{hasColon: true, typeText: "``|`a`", types: []string{"", "a"}, invalidType: "``"}},
+		{"r*2..5:KNOWS", relationshipDeclarationExpected{variable: "r", hasColon: true, typeText: "KNOWS", types: []string{"KNOWS"}, hasLength: true, rangeText: "2..5", lengthInvalid: true}},
+		{"r:T*x", relationshipDeclarationExpected{variable: "r", hasColon: true, typeText: "Tx", types: []string{"Tx"}, hasLength: true, lengthInvalid: true}},
+		{"r:T..", relationshipDeclarationExpected{variable: "r", hasColon: true, typeText: "T..", types: []string{"T.."}, invalidType: "T..", lengthInvalid: true}},
+		{":$(t * 2)*1..2", relationshipDeclarationExpected{hasColon: true, typeText: "$(t * 2)", types: []string{"$(t * 2)"}, hasLength: true, rangeText: "1..2"}},
+		{":$(ts[0..1][0]) {w: 1}", relationshipDeclarationExpected{hasColon: true, typeText: "$(ts[0..1][0])", types: []string{"$(ts[0..1][0])"}, properties: "{w: 1}"}},
+		{"r:R $p", relationshipDeclarationExpected{variable: "r", hasColon: true, typeText: "R", types: []string{"R"}, properties: "$p"}},
+		{":$(a:b)|C", relationshipDeclarationExpected{hasColon: true, typeText: "$(a:b)|C", types: []string{"$(a:b)", "C"}}},
+		{":Ts R", relationshipDeclarationExpected{hasColon: true, typeText: "Ts R", types: []string{"Ts R"}, invalidType: "Ts R"}},
+		{":``|`a`", relationshipDeclarationExpected{hasColon: true, typeText: "``|`a`", types: []string{"", "a"}, invalidType: "``"}},
 	} {
-		require.Equal(t, tc.want, relationshipDeclarationOf(tc.inner), tc.inner)
+		got := relationshipDeclarationOf(tc.inner)
+		require.Equal(t, tc.want.variable, got.variable, tc.inner)
+		require.Equal(t, tc.want.hasColon, got.hasColon, tc.inner)
+		require.Equal(t, tc.want.typeText, got.typeText, tc.inner)
+		require.Equal(t, tc.want.types, got.types.storageNames(), tc.inner)
+		require.Equal(t, tc.want.hasLength, got.hasLength, tc.inner)
+		require.Equal(t, tc.want.rangeText, got.rangeText, tc.inner)
+		require.Equal(t, tc.want.properties, got.properties, tc.inner)
+		require.Equal(t, tc.want.invalidType, got.invalidType, tc.inner)
+		require.Equal(t, tc.want.lengthInvalid, got.lengthInvalid, tc.inner)
 	}
 	require.Equal(t, "A|B", relationshipDeclarationOf(":A|B").singleType())
 	require.Equal(t, "$(t)", relationshipDeclarationOf(":$(t)").singleType())
 	require.Equal(t, "a b", relationshipDeclarationOf(":`a b`").singleType())
+}
+
+type relationshipDeclarationExpected struct {
+	variable, typeText, rangeText, properties, invalidType string
+	hasColon, hasLength, lengthInvalid                     bool
+	types                                                  []string
 }

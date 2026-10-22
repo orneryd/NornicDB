@@ -662,8 +662,8 @@ func shallowValueBytes(value interface{}) int64 {
 // value: it calls range() or reduce(), or has a list comprehension
 // ([x IN list | …] or [x IN list WHERE …]). A conservative read of the
 // text: a false positive only binds the statement context for the budget.
-func expressionBuildsValues(expression string) bool {
-	lower := lowerASCII(expression)
+func expressionBuildsValues(expression relationshipNodeText) bool {
+	lower := lowerASCII(string(expression))
 	if strings.Contains(lower, "range(") || strings.Contains(lower, "reduce(") {
 		return true
 	}

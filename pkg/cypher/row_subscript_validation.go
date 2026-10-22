@@ -178,20 +178,31 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
 			start--
 		}
+		// A property chain can start on another primary expression, not
+		// only a variable: {outer:{xs:[11,17]}}.outer.xs[i], f().xs[i],
+		// and [{xs:[17]}][0].xs[i]. Include that receiver so the row and
+		// compiled evaluators both recognize the final [i] as a subscript.
+		if expression[start] == '.' {
+			if receiver := rowSubscriptReceiverStart(expression, start); receiver >= 0 {
+				return receiver
+			}
+		}
 		return start
 	}
 }
 
 func matchingRowDelimiterStart(expression string, closeIndex int, open, close byte) int {
-	depth := 0
-	for index := closeIndex; index >= 0; index-- {
+	for index := 0; index <= closeIndex; index++ {
 		switch expression[index] {
-		case close:
-			depth++
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, expression[index]) - 1
 		case open:
-			depth--
-			if depth == 0 {
+			end := findMatchingDelimiter(expression, index, rune(open), rune(close))
+			if end == closeIndex {
 				return index
+			}
+			if end >= 0 && end < closeIndex {
+				index = end
 			}
 		}
 	}

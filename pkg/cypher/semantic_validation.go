@@ -495,7 +495,7 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 	expression = maskPathFunctionCalls(expression)
 	segmentStart := 0
 	for index := 0; index < len(expression); index++ {
-		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
+		if expression[index] != '[' || relationshipBracketAt(expression, 0, index) {
 			continue
 		}
 		close := findMatchingBracket(expression, index)

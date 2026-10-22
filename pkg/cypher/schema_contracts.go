@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -23,45 +24,28 @@ func parseConstraintContractForClause(forClause string) (entityType storage.Cons
 		return "", "", "", false
 	}
 
-	if strings.Contains(forClause, "[") {
-		bracketStart := strings.Index(forClause, "[")
-		if bracketStart < 0 {
+	if hop, valid := readRelationshipHop(forClause); valid {
+		declaration := hop.declaration
+		if !declaration.hasColon {
 			return "", "", "", false
 		}
-		inside, rest, ok := extractBracketSection(forClause[bracketStart:])
-		if !ok {
-			return "", "", "", false
-		}
-		prefix := strings.TrimSpace(forClause[:bracketStart])
-		suffix := strings.TrimSpace(rest)
-		if !strings.Contains(prefix, "(") || !strings.Contains(suffix, "(") {
-			return "", "", "", false
-		}
-		colon := strings.Index(inside, ":")
-		if colon < 0 {
-			return "", "", "", false
-		}
-		variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-		labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
+		variable = symbolicNameValue(declaration.variable)
+		labelOrType = declaration.staticTypeName()
 		if labelOrType == "" {
 			return "", "", "", false
 		}
 		return storage.ConstraintEntityRelationship, variable, labelOrType, true
 	}
-
 	inside, rest, ok := extractParenSection(forClause)
 	if !ok || strings.TrimSpace(rest) != "" {
 		return "", "", "", false
 	}
-	colon := strings.Index(inside, ":")
-	if colon < 0 {
+	writtenVariable, labels, valid := strictNodeHeadLabels(inside)
+	if !valid || len(labels) != 1 || labels[0] == "" {
 		return "", "", "", false
 	}
-	variable = normalizeIdentifierToken(strings.TrimSpace(inside[:colon]))
-	labelOrType = normalizeIdentifierToken(strings.TrimSpace(inside[colon+1:]))
-	if labelOrType == "" {
-		return "", "", "", false
-	}
+	variable = symbolicNameValue(writtenVariable)
+	labelOrType = labels[0]
 	return storage.ConstraintEntityNode, variable, labelOrType, true
 }
 
@@ -70,32 +54,11 @@ func parseCurlySection(s string) (inside string, rest string, ok bool) {
 	if s == "" || s[0] != '{' {
 		return "", s, false
 	}
-	depth := 0
-	quote := byte(0)
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if quote != 0 {
-			if ch == quote {
-				quote = 0
-			}
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			quote = ch
-			continue
-		}
-		if ch == '{' {
-			depth++
-			continue
-		}
-		if ch == '}' {
-			depth--
-			if depth == 0 {
-				return s[1:i], strings.TrimSpace(s[i+1:]), true
-			}
-		}
+	closing := findMatchingDelimiter(s, 0, '{', '}')
+	if closing < 0 {
+		return "", s, false
 	}
-	return "", s, false
+	return s[1:closing], strings.TrimSpace(s[closing+1:]), true
 }
 
 func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parsedCreateConstraintContractDDL, error) {
@@ -206,7 +169,13 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 			return nil, true, err
 		}
 	}
-	if err := storage.ValidateConstraintContractOnCreationForEngine(e.storage, contract); err != nil {
+	// One compilation serves admission, the scan of existing data and the
+	// stored schema revision.
+	compiled, err := storage.CompileConstraintContract(contract)
+	if err != nil {
+		return nil, true, err
+	}
+	if err := storage.ValidateCompiledConstraintContractOnCreationForEngine(e.storage, compiled); err != nil {
 		return nil, true, err
 	}
 	schema := e.storage.GetSchema()
@@ -221,7 +190,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 			newTemporal = append(newTemporal, constraint)
 		}
 	}
-	if err := schema.AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
+	if err := schema.AddCompiledConstraintContractBundle(compiled, compiledConstraints, compiledTypes, ifNotExists); err != nil {
 		return nil, true, err
 	}
 	// See addSchemaConstraint: new temporal entries are authoritative on an
@@ -251,70 +220,10 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 }
 
 func splitConstraintContractEntries(body string) ([]string, error) {
-	entries := make([]string, 0)
-	var current strings.Builder
-	braceDepth := 0
-	bracketDepth := 0
-	parenDepth := 0
-	quote := rune(0)
-
-	flush := func() {
-		entry := strings.TrimSpace(current.String())
-		if entry != "" {
-			entries = append(entries, entry)
-		}
-		current.Reset()
-	}
-
-	for _, ch := range body {
-		switch {
-		case quote != 0:
-			current.WriteRune(ch)
-			if ch == quote {
-				quote = 0
-			}
-		case ch == '\'' || ch == '"':
-			quote = ch
-			current.WriteRune(ch)
-		case ch == '{':
-			braceDepth++
-			current.WriteRune(ch)
-		case ch == '}':
-			if braceDepth == 0 {
-				return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
-			}
-			braceDepth--
-			current.WriteRune(ch)
-		case ch == '[':
-			bracketDepth++
-			current.WriteRune(ch)
-		case ch == ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-			current.WriteRune(ch)
-		case ch == '(':
-			parenDepth++
-			current.WriteRune(ch)
-		case ch == ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-			current.WriteRune(ch)
-		case ch == '\n' || ch == ';':
-			if braceDepth == 0 && bracketDepth == 0 && parenDepth == 0 {
-				flush()
-				continue
-			}
-			current.WriteRune(ch)
-		default:
-			current.WriteRune(ch)
-		}
-	}
-	if quote != 0 || braceDepth != 0 || bracketDepth != 0 {
+	entries, valid := cyphertext.SplitConstraintEntries(body)
+	if !valid {
 		return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
 	}
-	flush()
 	return entries, nil
 }
 

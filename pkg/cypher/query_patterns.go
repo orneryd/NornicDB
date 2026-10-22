@@ -156,40 +156,13 @@ func extractMatchClause(query string) string {
 	return query[matchIdx:end]
 }
 
+// countRelationshipPatterns counts the relationship brackets of s, found by
+// the shared bracket finder.
 func countRelationshipPatterns(s string) int {
-	inQuote := false
-	quoteChar := byte(0)
 	count := 0
-
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		if (c == '\'' || c == '"') && !isBackslashEscaped(s, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-		}
-		if inQuote {
-			continue
-		}
-
-		if c != '[' {
-			continue
-		}
-
-		// Relationship patterns are introduced by a preceding '-' (possibly with whitespace).
-		j := i - 1
-		for j >= 0 && isWhitespace(s[j]) {
-			j--
-		}
-		if j >= 0 && s[j] == '-' {
-			count++
-		}
+	for open, close := nextRelationshipBracket(s, 0); open >= 0; open, close = nextRelationshipBracket(s, close+1) {
+		count++
 	}
-
 	return count
 }
 
@@ -223,17 +196,17 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 	if first.ToNode.variable != second.FromNode.variable {
 		return false
 	}
-	if len(first.Relationship.Types) == 0 || len(second.Relationship.Types) == 0 {
+	if first.Relationship.Types.len() == 0 || second.Relationship.Types.len() == 0 {
 		return false
 	}
-	if first.Relationship.Types[0] != second.Relationship.Types[0] {
+	if first.Relationship.Types.at(0).storageName() != second.Relationship.Types.at(0).storageName() {
 		return false
 	}
 
 	info.Pattern = PatternMutualRelationship
 	info.StartVar = first.FromNode.variable
 	info.EndVar = first.ToNode.variable
-	info.RelType = first.Relationship.Types[0]
+	info.RelType = first.Relationship.Types.at(0).storageName()
 	return true
 }
 
@@ -364,8 +337,8 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 		return "", "", "", "", false
 	}
 	relType := ""
-	if len(match.Relationship.Types) > 0 {
-		relType = match.Relationship.Types[0]
+	if match.Relationship.Types.len() > 0 {
+		relType = match.Relationship.Types.at(0).storageName()
 	}
 	return match.StartNode.variable, match.Relationship.Variable, relType, match.EndNode.variable, true
 }
@@ -536,13 +509,28 @@ func functionCallParenAt(text string, open int) bool {
 // extractNodeVariables extracts node variable names from a MATCH pattern,
 // plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
 // function call's arguments or an expression starting with a subquery
-// (EXISTS { … } AND …) is not a node.
+// (EXISTS { … } AND …) is not a node, and neither is anything in a
+// relationship's head (its type `x(y)`, a quote in `D]'Z`, its map) or a
+// quoted name; a relationship's own WHERE predicate is read as written.
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
-		if matchClause[i] == '\'' || matchClause[i] == '"' {
-			i = skipQuotedSemanticText(matchClause, i) - 1
+		switch c := matchClause[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(matchClause, i, c) - 1
 			continue
+		case '[':
+			if previous := trimRightIndex(matchClause, 0, i); previous > 0 && matchClause[previous-1] == '-' {
+				if end := findMatchingBracket(matchClause, i); end >= 0 {
+					// Resume at the relationship's own WHERE, if any.
+					if declaration := relationshipDeclarationHead(matchClause[i+1 : end]); declaration.whereOffset >= 0 {
+						i = i + 1 + declaration.whereOffset + len("WHERE") - 1
+					} else {
+						i = end
+					}
+					continue
+				}
+			}
 		}
 		if matchClause[i] == '{' {
 			if end := findMatchingDelimiter(matchClause, i, '{', '}'); end >= 0 {
@@ -584,60 +572,9 @@ func extractNodeVariables(matchClause string) []string {
 	return vars
 }
 
-// extractRelationshipType extracts the relationship type from a pattern
-func extractRelationshipType(pattern string) string {
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] != '[' {
-			continue
-		}
-		inner, _, ok := extractBracketSection(pattern[i:])
-		if !ok {
-			continue
-		}
-		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
-			typePart := strings.TrimSpace(inner[colonIdx+1:])
-			if propIdx := strings.Index(typePart, "{"); propIdx >= 0 {
-				typePart = strings.TrimSpace(typePart[:propIdx])
-			}
-			if pipeIdx := strings.Index(typePart, "|"); pipeIdx >= 0 {
-				typePart = strings.TrimSpace(typePart[:pipeIdx])
-			}
-			if typePart != "" {
-				return typePart
-			}
-		}
-	}
-	return ""
-}
-
 func extractRelationshipVariable(pattern string) string {
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] != '[' {
-			continue
-		}
-		inner, _, ok := extractBracketSection(pattern[i:])
-		if !ok {
-			continue
-		}
-		inner = strings.TrimSpace(inner)
-		if inner == "" {
-			return ""
-		}
-		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
-			name := strings.TrimSpace(inner[:colonIdx])
-			if name != "" {
-				return name
-			}
-			return ""
-		}
-		if inner[0] == '*' {
-			return ""
-		}
-		name, _, ok := parseIdentifierToken(inner)
-		if ok {
-			return name
-		}
-		return ""
+	if open, close := nextRelationshipBracket(pattern, 0); open >= 0 {
+		return relationshipDeclarationOf(pattern[open+1 : close]).variable
 	}
 	return ""
 }

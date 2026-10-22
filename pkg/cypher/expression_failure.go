@@ -751,6 +751,11 @@ func rowOperandRecordsFailure(expression string) bool {
 // expression its match evaluates: a property map or an inline WHERE. Labels,
 // types, directions and bound variables raise no error.
 func relationshipPatternMayFail(pattern string) bool {
+	nodeText, facts := relationshipNodeReaderText(pattern)
+	pattern = string(nodeText)
+	if facts.predicate || facts.properties {
+		return true
+	}
 	return strings.IndexByte(pattern, '{') >= 0 || containsFold(pattern, "WHERE")
 }
 

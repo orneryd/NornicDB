@@ -17,24 +17,9 @@ func validateArrowOperators(query string) error {
 	if !strings.Contains(query, "->") {
 		return nil
 	}
-	for i := 0; i+1 < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(query, i, c) - 1
-		case '/':
-			if end := queryCommentEnd(query, i); end >= 0 {
-				i = end - 1
-			}
-		case '-':
-			if query[i+1] != '>' {
-				continue
-			}
-			if i > 0 && (query[i-1] == '-' || query[i-1] == ']') {
-				continue
-			}
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				localization.CypherCoreInvalidInputExpectedExpression(">"))
-		}
+	if invalidRelationshipArrow(query) >= 0 {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCoreInvalidInputExpectedExpression(">"))
 	}
 	return nil
 }
