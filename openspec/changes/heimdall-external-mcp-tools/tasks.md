@@ -5,7 +5,8 @@
 - [x] Document the contract and annotate default plugin examples without exposing them.
 - [x] Add deterministic registration, protocol, context and inference regression tests.
 - [x] Execute focused unit tests with CGO_ENABLED=0 (all three affected packages pass).
-- [ ] Execute native/race checks successfully (llama.cpp library unavailable).
+- [x] Execute focused race checks with `-tags nolocalllm` across Heimdall, MCP, server and plugin loader.
+- [ ] Execute native llama.cpp model checks (library unavailable).
 - [ ] Execute release-base verification successfully.
 
 The user authorized submitting the PR if validation cannot run. Unexecuted or
@@ -23,4 +24,4 @@ blocked checks must be identified in the PR; they are not passes.
 - [x] Remove owned MCP exports and reset FIFO state on unregister/shutdown.
 - [x] Stop and shut down server-owned plugins, including plugin-only mode.
 - [x] Correct plugin-only startup logs, catalog text and documentation.
-- [ ] Validate final lifecycle regressions, package suites and race checks; record exact limits on PR.
+- [x] Validate lifecycle regressions and focused race checks; full Heimdall/MCP suites pass. All 646 server top-level tests were accounted for in isolated batches: 642 pass, one previously reported base failure, three Neo4j-dependent skips. Record the localization verification blocker and single-process suite timeout on the PR.
