@@ -41,14 +41,17 @@ RETURN size(groups) AS n`
 // resetTransactionMemory restores unlimited memory after a test.
 func resetTransactionMemory(t testing.TB) {
 	t.Helper()
-	t.Cleanup(func() {
-		r := transactionMemory
-		r.mu.Lock()
-		r.databases = make(map[string]*databaseMemory)
-		r.globalSet = false
-		r.mu.Unlock()
-		ConfigureTransactionMemory(0, TransactionMemoryLimits{})
-	})
+	resetTransactionMemoryState()
+	t.Cleanup(resetTransactionMemoryState)
+}
+
+func resetTransactionMemoryState() {
+	r := transactionMemory
+	r.mu.Lock()
+	r.databases = make(map[string]*databaseMemory)
+	r.globalSet = false
+	r.mu.Unlock()
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{})
 }
 
 // newTestMemoryTracker is a pooled tracker for database, reset as
@@ -555,6 +558,8 @@ func TestTransactionMemoryCreditReturnedOnFailure(t *testing.T) {
 // from what it counted where rows keep it; the same values in a list built
 // any other way are walked in full.
 func TestKnownListsSizeCollectedListsOnce(t *testing.T) {
+	// Simulate a previously selected test leaving a process-wide limit behind.
+	ConfigureTransactionMemory(1, TransactionMemoryLimits{})
 	resetTransactionMemory(t)
 	tracker := newTestMemoryTracker("known")
 	t.Cleanup(tracker.end)
