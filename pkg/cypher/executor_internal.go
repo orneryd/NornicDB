@@ -52,7 +52,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	if config.IsCypherQueryNormalizationEnabled() {
-		cypher, _ = canonicalizeQueryText(cypher)
+		var err error
+		cypher, _, err = normalizeQueryText(cypher)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cypher, _ = canonicalizeNumericLiterals(cypher)
 	cypher, _ = canonicalizeFunctionAliases(cypher)

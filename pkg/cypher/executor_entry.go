@@ -196,7 +196,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// statement runs as sent.
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
 	if config.IsCypherQueryNormalizationEnabled() {
-		canonical, rewrite = canonicalizeQueryText(cypher)
+		var err error
+		canonical, rewrite, err = normalizeQueryText(cypher)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if rewrite != nil {
 		cypher = canonical
@@ -801,14 +805,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		_ = registerStatement()
 	}
 
-	// Check for EXPLAIN/PROFILE execution modes (using cached analysis)
-	if info.HasExplain {
-		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeExplain(ctx, innerQuery)
-	}
-	if info.HasProfile {
-		_, innerQuery := parseExecutionMode(cypher)
-		return e.executeProfile(ctx, innerQuery)
+	// Prefix consumption and dispatch share one reader, including comments
+	// and EOF. A classifier flag must never re-enter the unchanged statement.
+	if info.HasExplain || info.HasProfile {
+		mode, innerQuery := parseExecutionMode(cypher)
+		if mode == ModeExplain {
+			return e.executeExplain(ctx, innerQuery)
+		}
+		if mode == ModeProfile {
+			return e.executeProfile(ctx, innerQuery)
+		}
 	}
 
 	// If in explicit transaction, execute within it

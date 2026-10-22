@@ -81,21 +81,16 @@ type ExecutionPlan struct {
 
 // parseExecutionMode extracts EXPLAIN or PROFILE prefix from a query
 func parseExecutionMode(query string) (ExecutionMode, string) {
-	trimmed := strings.TrimSpace(query)
-	// Only the prefix is compared: the statement isn't copied to upper case.
-	if len(trimmed) >= 8 && trimmed[7] == ' ' {
-		if strings.EqualFold(trimmed[:7], "EXPLAIN") {
-			return ModeExplain, strings.TrimSpace(trimmed[8:])
-		}
-		if strings.EqualFold(trimmed[:7], "PROFILE") {
-			return ModeProfile, strings.TrimSpace(trimmed[8:])
-		}
-	}
-	return ModeNormal, trimmed
+	mode, statement, _ := readExecutionModes(query, ModeNormal)
+	return mode, statement
 }
 
 // executeExplain returns the execution plan without executing the query
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
+	query, err := executionModeStatement(ModeExplain, query)
+	if err != nil {
+		return nil, err
+	}
 	if indexASCIIFold(query, "shortestpath") >= 0 {
 		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
@@ -116,6 +111,10 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 
 // executeProfile executes the query and returns the plan with statistics
 func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*ExecuteResult, error) {
+	query, err := executionModeStatement(ModeProfile, query)
+	if err != nil {
+		return nil, err
+	}
 	// Build the plan first
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {

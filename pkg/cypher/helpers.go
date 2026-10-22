@@ -44,113 +44,43 @@ func containsKeywordOutsideStrings(s, keyword string) bool {
 // string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
 // without word boundary checks (useful for symbols like -> and <-).
 func containsOutsideStrings(s, substr string) bool {
+	found, _ := inspectOutsideStrings(s, substr)
+	return found
+}
+
+// inspectOutsideStrings also retains unfinished comments for statement admission.
+// It uses the same lexical walk as symbol lookup, including when normalization
+// is disabled, so admission does not add a second pass over ordinary statements.
+func inspectOutsideStrings(s, substr string) (bool, int) {
 	if substr == "" {
-		return false
+		return false, -1
 	}
 	first := substr[0]
-
-	var (
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
-	)
-
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-
-		if inLineComment {
-			if c == '\n' {
-				inLineComment = false
-			}
+		switch c := s[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(s, i, c) - 1
 			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-
-		if inSingleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '\'' {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
+		case '/':
+			if end := queryCommentEnd(s, i); end >= 0 {
+				if unclosedQueryComment(s, i, end) {
+					return false, i
 				}
-				inSingleQuote = false
-			}
-			continue
-		}
-		if inDoubleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '"' {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		}
-		if inBacktick {
-			if c == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-			}
-			continue
-		}
-
-		if c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
+				i = end - 1
 				continue
 			}
 		}
-
-		if c == '\'' {
-			inSingleQuote = true
-			continue
-		}
-		if c == '"' {
-			inDoubleQuote = true
-			continue
-		}
-		if c == '`' {
-			inBacktick = true
-			continue
-		}
-
-		if c != first {
+		if s[i] != first {
 			continue
 		}
 		if i+len(substr) > len(s) {
-			return false
+			return false, -1
 		}
 		if s[i:i+len(substr)] == substr {
-			return true
+			return true, -1
 		}
 	}
-
-	return false
+	return false, -1
 }
 
 // ========================================

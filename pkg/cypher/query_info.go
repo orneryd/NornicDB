@@ -265,8 +265,9 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.HasLoadCSV = containsKeyword(upper, "LOAD CSV")
 
 	// Special handling
-	info.HasExplain = strings.HasPrefix(upper, "EXPLAIN")
-	info.HasProfile = strings.HasPrefix(upper, "PROFILE")
+	mode, _ := parseExecutionMode(upper)
+	info.HasExplain = mode == ModeExplain
+	info.HasProfile = mode == ModeProfile
 	info.HasShow = strings.HasPrefix(upper, "SHOW")
 	info.HasSchema = containsKeyword(upper, "CREATE INDEX") ||
 		containsKeyword(upper, "CREATE RANGE INDEX") ||
@@ -694,14 +695,7 @@ func containsKeyword(upper, keyword string) bool {
 func detectFirstClause(upper string) ClauseType {
 	upper = strings.TrimSpace(upper)
 
-	// Strip EXPLAIN/PROFILE prefix
-	if strings.HasPrefix(upper, "EXPLAIN ") {
-		upper = strings.TrimPrefix(upper, "EXPLAIN ")
-		upper = strings.TrimSpace(upper)
-	} else if strings.HasPrefix(upper, "PROFILE ") {
-		upper = strings.TrimPrefix(upper, "PROFILE ")
-		upper = strings.TrimSpace(upper)
-	}
+	_, upper = parseExecutionMode(upper)
 
 	switch {
 	case strings.HasPrefix(upper, "MATCH"):
