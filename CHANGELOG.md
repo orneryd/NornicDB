@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Heimdall plugin actions can opt into the public MCP server with `External: true`; combined tool registration retains the first name and logs collisions. Default examples remain internal. Plugins compile independently of the optional local inference adapter and load with the agentic harness disabled.
+  Failed starts roll back; exported tools retire with their owners; server shutdown
+  stops plugin-only installations; standalone MCP shutdown drains active requests
+  without holding the registry lock.
 - Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
 
 ### Cluster upgrade requirement
@@ -22,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
-
-- Roll back failed Heimdall plugin starts, retire exported MCP tools on shutdown, stop plugin-only installations with the server, and let standalone MCP shutdown drain active tool requests without holding the registry lock.
 
 - Recover application memory admission after rejected queries leave idle Go heap
   pages resident in the cgroup. The shared sampler performs bounded, rate-limited
