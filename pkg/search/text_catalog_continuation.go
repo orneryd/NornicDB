@@ -173,6 +173,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	decayFilter := s.nodeDecayFilter
 	s.mu.RUnlock()
 	rankedByID := make(map[string]SearchResult)
+	rankedIDs := make([]string, 0)
 	searchMethod := "id"
 	fallbackTriggered := false
 	fallbackReason := SearchFallbackNone
@@ -182,9 +183,12 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		fallbackReason = ranked.FallbackReason
 		for _, result := range ranked.Results {
 			result.Phase = SearchContinuationRankedPhase
-			rankedByID[searchResultID(result)] = result
+			id := searchResultID(result)
+			rankedByID[id] = result
+			rankedIDs = append(rankedIDs, id)
 		}
 	}
+	rankedSeen := make(map[string]struct{}, len(rankedByID))
 	var members map[string]*continuationGroup
 	var ungroupedChunks [][]SearchResult
 	if request.GroupBy != "" {
@@ -230,6 +234,11 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			groupKey = value
 		}
 		id := string(node.ID)
+		if ranked != nil {
+			if _, excluded := ranked.rerankExcluded[id]; excluded {
+				return nil
+			}
+		}
 		logicalID := id
 		if groupKey != "" {
 			logicalID = groupKey
@@ -244,6 +253,10 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			candidate.Phase = SearchContinuationCatalogPhase
 		}
 		candidate.GroupKey = groupKey
+		if candidate.Phase == SearchContinuationRankedPhase {
+			rankedByID[id] = candidate
+			rankedSeen[id] = struct{}{}
+		}
 		retainedBytes += compactContinuationResultBytes(candidate)
 		if retainedBytes > policy.MaxBuildBytes {
 			return resultstream.ErrCapacity
@@ -255,6 +268,9 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			passageCount++
 			if passageCount > policy.MaxPassages {
 				return resultstream.ErrCapacity
+			}
+			if candidate.Phase == SearchContinuationRankedPhase {
+				return nil
 			}
 			if len(ungroupedChunks) == 0 || len(ungroupedChunks[len(ungroupedChunks)-1]) == cap(ungroupedChunks[len(ungroupedChunks)-1]) {
 				ungroupedChunks = append(ungroupedChunks, make([]SearchResult, 0, 1024))
@@ -299,22 +315,46 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	var results []SearchResult
 	if request.GroupBy == "" {
 		results = make([]SearchResult, 0, memberCount)
+		// The ranked response is the canonical ordered list. Catalogue scanning
+		// decides membership and hydrates results, but never derives a new rank
+		// from provider or retrieval scores.
+		for _, id := range rankedIDs {
+			if candidate, ok := rankedByID[id]; ok {
+				if _, eligible := rankedSeen[id]; !eligible {
+					continue
+				}
+				results = append(results, candidate)
+			}
+		}
+		catalogStart := len(results)
 		for _, chunk := range ungroupedChunks {
 			results = append(results, chunk...)
 		}
+		sort.Slice(results[catalogStart:], func(i, j int) bool {
+			return results[catalogStart+i].ID < results[catalogStart+j].ID
+		})
 	}
 	if request.GroupBy != "" {
 		results = make([]SearchResult, 0, len(members))
 		for _, group := range members {
-			passages := group.catalog
-			if len(group.ranked) > 0 {
-				passages = group.ranked
-				sort.Slice(passages, func(i, j int) bool {
-					return betterContinuationRepresentative(passages[i], passages[j])
-				})
-			} else {
-				sort.Slice(passages, func(i, j int) bool { return passages[i].ID < passages[j].ID })
+			group.ranked = nil
+		}
+		rankedGroups := make([]string, 0, len(members))
+		for _, id := range rankedIDs {
+			if _, eligible := rankedSeen[id]; !eligible {
+				continue
 			}
+			passage, ok := rankedByID[id]
+			if !ok {
+				continue
+			}
+			group := members[passage.GroupKey]
+			if len(group.ranked) == 0 {
+				rankedGroups = append(rankedGroups, passage.GroupKey)
+			}
+			group.ranked = append(group.ranked, passage)
+		}
+		appendGroup := func(passages []SearchResult) {
 			representative := passages[0]
 			representative.Passages = make([]SearchPassage, len(passages))
 			for index := range passages {
@@ -322,23 +362,22 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			}
 			results = append(results, representative)
 		}
+		for _, groupKey := range rankedGroups {
+			appendGroup(members[groupKey].ranked)
+		}
+		catalogGroups := make([]string, 0, len(members)-len(rankedGroups))
+		for groupKey, group := range members {
+			if len(group.ranked) == 0 {
+				catalogGroups = append(catalogGroups, groupKey)
+			}
+		}
+		sort.Strings(catalogGroups)
+		for _, groupKey := range catalogGroups {
+			passages := members[groupKey].catalog
+			sort.Slice(passages, func(i, j int) bool { return passages[i].ID < passages[j].ID })
+			appendGroup(passages)
+		}
 	}
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Phase != results[j].Phase {
-			return results[i].Phase == SearchContinuationRankedPhase
-		}
-		if results[i].Phase == SearchContinuationRankedPhase && results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		left, right := results[i].ID, results[j].ID
-		if request.GroupBy != "" {
-			left, right = results[i].GroupKey, results[j].GroupKey
-		}
-		if left != right {
-			return left < right
-		}
-		return results[i].ID < results[j].ID
-	})
 	eligibleCount := len(results)
 	execution.catalog(eligibleCount)
 	results = results[:execution.resultCount]
@@ -407,25 +446,6 @@ func searchPassageFromResult(result SearchResult) SearchPassage {
 	result.GroupKey = ""
 	result.Passages = nil
 	return result
-}
-
-func betterContinuationRepresentative(candidate, current SearchResult) bool {
-	if candidate.Score != current.Score {
-		return candidate.Score > current.Score
-	}
-	if candidate.ID != current.ID {
-		return candidate.ID < current.ID
-	}
-	if candidate.RRFScore != current.RRFScore {
-		return candidate.RRFScore > current.RRFScore
-	}
-	if candidate.Similarity != current.Similarity {
-		return candidate.Similarity > current.Similarity
-	}
-	if candidate.VectorRank != current.VectorRank {
-		return candidate.VectorRank < current.VectorRank
-	}
-	return candidate.BM25Rank < current.BM25Rank
 }
 
 func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOptions, decayFilter NodeDecayFilterFunc, authorizeNode NodeAuthorizationFunc) (bool, error) {

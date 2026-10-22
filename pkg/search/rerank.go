@@ -51,6 +51,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/rerankwire"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
@@ -61,8 +62,8 @@ import (
 // response, timeout), Rerank returns an error instead of a pass-through
 // ranking. The Service owns the fail-open: a search keeps its fused order and
 // reports the fallback (SearchFallbackRerankFailed), and RerankCandidates
-// returns the candidates in their given order. A disabled reranker passes
-// candidates through unchanged.
+// returns that canonical failure through its existing error result. A disabled
+// reranker passes candidates through unchanged.
 type Reranker interface {
 	// Name identifies the reranker implementation for observability.
 	// Examples: "cross_encoder", "heimdall_llm".
@@ -75,7 +76,10 @@ type Reranker interface {
 	// cheap; Search() should not call it on the hot path.
 	IsAvailable(ctx context.Context) bool
 
-	// Rerank reorders candidates for a query.
+	// Rerank returns the raw provider-selected candidate indices in provider
+	// order. A unique in-range subset is valid. Implementations preserve every
+	// returned entry; search.Service alone validates it and completes a valid
+	// subset with omitted candidates in their original order.
 	Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error)
 }
 
@@ -148,6 +152,22 @@ type RerankCandidate = voyage.Candidate
 // RerankResult is a reranked document with new score.
 type RerankResult = voyage.RankedCandidate
 
+func rerankResultForIndex(candidates []RerankCandidate, index, newRank int, score float64) RerankResult {
+	result := RerankResult{
+		OriginalRank: index + 1,
+		NewRank:      newRank,
+		CrossScore:   score,
+		FinalScore:   score,
+	}
+	if index >= 0 && index < len(candidates) {
+		candidate := candidates[index]
+		result.ID = candidate.ID
+		result.Content = candidate.Content
+		result.BiScore = candidate.Score
+	}
+	return result
+}
+
 // Rerank takes a query and candidates, returns reranked results.
 func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if ce == nil || ce.config == nil || !ce.config.Enabled {
@@ -173,17 +193,11 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 		return nil, err
 	}
 
-	// Build results with new scores
-	results := make([]RerankResult, len(candidates))
-	for i, c := range candidates {
-		results[i] = RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: i + 1,
-			BiScore:      c.Score,
-			CrossScore:   scores[i],
-			FinalScore:   scores[i], // Use cross-encoder score as final
-		}
+	// Preserve every provider entry, including duplicates and invalid indices,
+	// for the shared Service validator.
+	results := make([]RerankResult, len(scores))
+	for i, score := range scores {
+		results[i] = rerankResultForIndex(candidates, score.index, i+1, score.score)
 	}
 
 	// Sort by cross-encoder score descending
@@ -191,20 +205,23 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 		return results[i].CrossScore > results[j].CrossScore
 	})
 
-	// Assign new ranks and filter by MinScore
-	filtered := make([]RerankResult, 0, len(results))
+	// Assign new ranks and mark provider filtering. Service validates before it
+	// removes filtered entries, so malformed low-score entries cannot disappear.
 	for i := range results {
 		results[i].NewRank = i + 1
-		if results[i].CrossScore >= ce.config.MinScore {
-			filtered = append(filtered, results[i])
-		}
+		results[i].Filtered = results[i].CrossScore < ce.config.MinScore
 	}
 
-	return filtered, nil
+	return results, nil
+}
+
+type indexedRerankScore struct {
+	index int
+	score float64
 }
 
 // callRerankAPI calls the cross-encoder service.
-func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) ([]float64, error) {
+func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) ([]indexedRerankScore, error) {
 	// Build request body - supports multiple formats
 	// Format 1: Cohere-style
 	// Format 2: HuggingFace TEI-style
@@ -251,54 +268,32 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 	// Parse response - handle multiple formats
 	var result struct {
 		// Cohere format
-		Results []struct {
-			Index          int     `json:"index"`
-			RelevanceScore float64 `json:"relevance_score"`
-		} `json:"results"`
+		Results []rerankwire.IndexedResult `json:"results"`
 
 		// HuggingFace TEI format
-		Scores []float64 `json:"scores"`
+		Scores []rerankwire.Required[float64] `json:"scores"`
 
 		// Simple format
-		Rankings []struct {
-			Index int     `json:"index"`
-			Score float64 `json:"score"`
-		} `json:"rankings"`
+		Rankings []rerankwire.IndexedResult `json:"rankings"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := rerankwire.DecodeResponse(resp.Body, &result); err != nil {
 		return nil, localizedError(localization.SearchRerankResponseParseFailed(err), err)
 	}
 
-	scores := make([]float64, len(candidates))
+	return acceptIndexedRerankScores(result.Results, result.Scores, result.Rankings, len(candidates))
+}
 
-	// Handle Cohere format
-	if len(result.Results) > 0 {
-		for _, r := range result.Results {
-			if r.Index < len(scores) {
-				scores[r.Index] = r.RelevanceScore
-			}
-		}
-		return scores, nil
+func acceptIndexedRerankScores(results []rerankwire.IndexedResult, scores []rerankwire.Required[float64], rankings []rerankwire.IndexedResult, population int) ([]indexedRerankScore, error) {
+	accepted, err := rerankwire.AcceptCrossEncoder(results, scores, rankings, population)
+	if err != nil {
+		return nil, err
 	}
-
-	// Handle HuggingFace TEI format
-	if len(result.Scores) > 0 {
-		copy(scores, result.Scores)
-		return scores, nil
+	normalized := make([]indexedRerankScore, len(accepted))
+	for index, result := range accepted {
+		normalized[index] = indexedRerankScore{index: result.Index, score: result.Score}
 	}
-
-	// Handle simple format
-	if len(result.Rankings) > 0 {
-		for _, r := range result.Rankings {
-			if r.Index < len(scores) {
-				scores[r.Index] = r.Score
-			}
-		}
-		return scores, nil
-	}
-
-	return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
+	return normalized, nil
 }
 
 // IsAvailable checks if the reranking service is available.

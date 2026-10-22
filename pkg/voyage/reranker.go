@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Candidate is a document submitted for provider-native reranking.
@@ -26,6 +23,10 @@ type RankedCandidate struct {
 	BiScore      float64
 	CrossScore   float64
 	FinalScore   float64
+	// Filtered preserves provider output until search.Service has validated the
+	// complete batch. It is exported only because the Voyage adapter and the
+	// search owner are separate packages; no protocol projects it.
+	Filtered bool `json:"-"`
 }
 
 // RerankerConfig configures Voyage's native rerank provider.
@@ -97,9 +98,8 @@ func (r *Reranker) Enabled() bool {
 // IsAvailable performs the cheap local availability check required by search.
 func (r *Reranker) IsAvailable(context.Context) bool { return r.Enabled() }
 
-// Rerank applies Voyage's native reranking. A failed request, or a response
-// that ranks none of the candidates, is an error: the caller decides how to
-// fall back, and can report that it did.
+// Rerank applies Voyage's native reranking. It preserves the provider's raw
+// indexed result set so search.Service can validate the batch before filtering.
 func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candidate) ([]RankedCandidate, error) {
 	if !r.Enabled() {
 		return PassThrough(candidates), nil
@@ -123,27 +123,31 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		return nil, err
 	}
 	results := make([]RankedCandidate, 0, len(resp.Data))
-	seenValidResult := false
 	for rank, item := range resp.Data {
-		if item.Index < 0 || item.Index >= len(head) {
-			continue
-		}
-		seenValidResult = true
-		candidate := head[item.Index]
-		if r.config.MinScore > 0 && item.RelevanceScore < r.config.MinScore {
-			continue
-		}
-		results = append(results, RankedCandidate{
-			ID: candidate.ID, Content: candidate.Content,
-			OriginalRank: item.Index + 1, NewRank: rank + 1,
-			BiScore: candidate.Score, CrossScore: item.RelevanceScore, FinalScore: item.RelevanceScore,
-		})
-	}
-	if !seenValidResult {
-		message := localization.SearchRerankResponseUnrecognized()
-		return nil, nornicerrors.NewLocalized(string(message.ID), message, nil)
+		result := rankedCandidateForIndex(head, item.Index, rank+1, item.RelevanceScore)
+		result.Filtered = r.config.MinScore > 0 && item.RelevanceScore < r.config.MinScore
+		results = append(results, result)
 	}
 	return results, nil
+}
+
+// rankedCandidateForIndex preserves the provider's raw candidate index.
+// Invalid indices intentionally produce an unmapped result; search.Service is
+// the single owner that validates the complete provider batch.
+func rankedCandidateForIndex(candidates []Candidate, index, newRank int, score float64) RankedCandidate {
+	result := RankedCandidate{
+		OriginalRank: index + 1,
+		NewRank:      newRank,
+		CrossScore:   score,
+		FinalScore:   score,
+	}
+	if index >= 0 && index < len(candidates) {
+		candidate := candidates[index]
+		result.ID = candidate.ID
+		result.Content = candidate.Content
+		result.BiScore = candidate.Score
+	}
+	return result
 }
 
 // PassThrough ranks candidates in their given order with their given scores:

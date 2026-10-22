@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/rerankwire"
 )
 
 const (
@@ -314,17 +316,11 @@ type rerankRequest struct {
 	Truncation      bool     `json:"truncation"`
 }
 
-type rerankItemWire struct {
-	Index          int     `json:"index"`
-	RelevanceScore float64 `json:"relevance_score"`
-	Document       string  `json:"document,omitempty"`
-}
-
 type rerankResponseWire struct {
-	Data    []rerankItemWire `json:"data"`
-	Results []rerankItemWire `json:"results"`
-	Model   string           `json:"model"`
-	Usage   Usage            `json:"usage"`
+	Data    []rerankwire.IndexedResult `json:"data"`
+	Results []rerankwire.IndexedResult `json:"results"`
+	Model   string                     `json:"model"`
+	Usage   Usage                      `json:"usage"`
 }
 
 // Rerank calls Voyage's reranker endpoint.
@@ -351,15 +347,15 @@ func (c *Client) Rerank(ctx context.Context, query string, documents []string, o
 	if err := c.postJSON(ctx, pathRerank, req, &wire); err != nil {
 		return nil, err
 	}
-	items := wire.Data
-	if len(items) == 0 {
-		items = wire.Results
+	accepted, err := rerankwire.AcceptVoyage(wire.Data, wire.Results, len(documents))
+	if err != nil {
+		return nil, err
 	}
-	out := make([]RerankResult, 0, len(items))
-	for _, item := range items {
+	out := make([]RerankResult, 0, len(accepted))
+	for _, item := range accepted {
 		out = append(out, RerankResult{
 			Index:          item.Index,
-			RelevanceScore: item.RelevanceScore,
+			RelevanceScore: item.Score,
 			Document:       item.Document,
 		})
 	}
@@ -440,7 +436,7 @@ func (c *Client) postOnce(ctx context.Context, path string, body []byte, respons
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
+	if err := rerankwire.DecodeResponse(resp.Body, response); err != nil {
 		return fmt.Errorf("decode voyage response: %w", err)
 	}
 	return nil

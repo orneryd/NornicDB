@@ -2,13 +2,11 @@ package search
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/internal/rerankwire"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
@@ -20,8 +18,8 @@ type LLMFunc func(ctx context.Context, prompt string) (string, error)
 
 // LLMRerankerConfig controls LLM-based reranking behavior.
 //
-// A failed LLM call or unusable output is reported as an error; the search
-// Service falls back to the original order and reports that it did.
+// A failed LLM call is reported as an error. search.Service validates the
+// complete parsed result set and owns fallback reporting.
 type LLMRerankerConfig struct {
 	Enabled bool
 
@@ -85,9 +83,8 @@ func (r *LLMReranker) IsAvailable(ctx context.Context) bool {
 
 // Rerank takes a query and candidates, returns reranked results.
 //
-// An LLM error, or output that ranks none of the candidates, is an error (see
-// Reranker). When the LLM scores every candidate below MinScore, the
-// candidates keep their order.
+// An LLM call error is an error (see Reranker). Parsed output is preserved in
+// full for search.Service to validate before applying MinScore filtering.
 func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if !r.Enabled() {
 		return voyage.PassThrough(candidates), nil
@@ -125,83 +122,20 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 		return nil, err
 	}
 
-	order, scores := parseLLMRerankResponse(strings.TrimSpace(raw), len(candidates))
-	if len(order) == 0 {
-		return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
+	accepted, err := rerankwire.AcceptLLM(raw, len(candidates))
+	if err != nil {
+		return nil, err
+	}
+	if len(accepted) == 0 {
+		return []RerankResult{}, nil
 	}
 
 	// Build reranked results.
-	results := make([]RerankResult, 0, len(candidates))
-
-	seen := make(map[int]struct{}, len(candidates))
-	hasScores := len(scores) > 0
-	for newRank, idx := range order {
-		if idx < 0 || idx >= len(candidates) {
-			continue
-		}
-		if _, ok := seen[idx]; ok {
-			continue
-		}
-		seen[idx] = struct{}{}
-		c := candidates[idx]
-
-		var score float64
-		if hasScores {
-			// If scores are provided, use them (fallback to original score if missing).
-			score = c.Score
-			if s, ok := scores[idx]; ok {
-				score = s
-			}
-			if r.cfg.MinScore > 0 && score < r.cfg.MinScore {
-				// Intentionally drop low-confidence candidates when scored.
-				continue
-			}
-		} else {
-			// If the model did not provide numeric scores, synthesize a monotonic score
-			// from the rank order so downstream code can still use Score as a proxy.
-			// (Ordering is still preserved by returning the slice in rank order.)
-			denom := float64(len(candidates))
-			if denom <= 0 {
-				denom = 1
-			}
-			score = 1.0 - (float64(newRank) / denom)
-		}
-
-		results = append(results, RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: idx + 1,
-			NewRank:      newRank + 1,
-			BiScore:      c.Score,
-			CrossScore:   score,
-			FinalScore:   score,
-		})
-	}
-
-	if len(results) == 0 {
-		return voyage.PassThrough(candidates), nil
-	}
-
-	// Fill any candidates the model omitted (fail-open), preserving original order.
-	for i := range candidates {
-		if _, ok := seen[i]; ok {
-			continue
-		}
-		c := candidates[i]
-		results = append(results, RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: i + 1,
-			NewRank:      len(results) + 1,
-			BiScore:      c.Score,
-			CrossScore:   c.Score,
-			FinalScore:   c.Score,
-		})
-	}
-
-	// Re-assign NewRank sequentially in final output order.
-	for i := range results {
-		results[i].NewRank = i + 1
+	results := make([]RerankResult, 0, len(accepted))
+	for newRank, item := range accepted {
+		result := rerankResultForIndex(candidates, item.Index, newRank+1, item.Score)
+		result.Filtered = item.ScorePresent && r.cfg.MinScore > 0 && item.Score < r.cfg.MinScore
+		results = append(results, result)
 	}
 
 	return results, nil
@@ -245,98 +179,23 @@ Rules:
 	return sb.String()
 }
 
-func parseLLMRerankResponse(raw string, n int) (order []int, scores map[int]float64) {
-	type rankedItem struct {
-		Index int     `json:"index"`
-		Score float64 `json:"score"`
+func parseLLMRerankResponse(raw string, n int) (order []int, scores map[int]float64, err error) {
+	accepted, err := rerankwire.AcceptLLM(raw, n)
+	if err != nil {
+		return nil, nil, err
 	}
-	type resp struct {
-		Ranked []rankedItem `json:"ranked"`
-		Order  []int        `json:"order"`
-		Scores []float64    `json:"scores"`
+	if len(accepted) == 0 {
+		return nil, nil, nil
 	}
-
-	extractJSON := func(s string) string {
-		// Try object first.
-		start := strings.Index(s, "{")
-		end := strings.LastIndex(s, "}")
-		if start >= 0 && end > start {
-			return s[start : end+1]
-		}
-		// Fall back to array.
-		start = strings.Index(s, "[")
-		end = strings.LastIndex(s, "]")
-		if start >= 0 && end > start {
-			return s[start : end+1]
-		}
-		return ""
-	}
-
-	jsonStr := extractJSON(raw)
-	if jsonStr != "" {
-		var parsed resp
-		if err := json.Unmarshal([]byte(jsonStr), &parsed); err == nil {
-			scores = make(map[int]float64, n)
-			seen := make(map[int]struct{}, n)
-
-			if len(parsed.Ranked) > 0 {
-				for _, it := range parsed.Ranked {
-					if it.Index < 0 || it.Index >= n {
-						continue
-					}
-					if _, ok := seen[it.Index]; ok {
-						continue
-					}
-					seen[it.Index] = struct{}{}
-					order = append(order, it.Index)
-					scores[it.Index] = it.Score
-				}
-				return order, scores
+	order = make([]int, len(accepted))
+	for index, result := range accepted {
+		order[index] = result.Index
+		if result.ScorePresent {
+			if scores == nil {
+				scores = make(map[int]float64, len(accepted))
 			}
-
-			if len(parsed.Order) > 0 {
-				for i, idx := range parsed.Order {
-					if idx < 0 || idx >= n {
-						continue
-					}
-					if _, ok := seen[idx]; ok {
-						continue
-					}
-					seen[idx] = struct{}{}
-					order = append(order, idx)
-					if i < len(parsed.Scores) {
-						scores[idx] = parsed.Scores[i]
-					}
-				}
-				return order, scores
-			}
+			scores[result.Index] = result.Score
 		}
 	}
-
-	// Fuzzy fallback: extract integers in order of appearance.
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return !(r >= '0' && r <= '9')
-	})
-	seen := make(map[int]struct{}, n)
-	for _, f := range fields {
-		if f == "" {
-			continue
-		}
-		i, err := strconv.Atoi(f)
-		if err != nil {
-			continue
-		}
-		if i < 0 || i >= n {
-			continue
-		}
-		if _, ok := seen[i]; ok {
-			continue
-		}
-		seen[i] = struct{}{}
-		order = append(order, i)
-	}
-	if len(order) == 0 {
-		return nil, nil
-	}
-	return order, nil
+	return order, scores, nil
 }
