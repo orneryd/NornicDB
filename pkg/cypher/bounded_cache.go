@@ -41,6 +41,11 @@ func boundedCacheStringShardIndex(s string) int {
 	return int(maphash.String(cacheKeyHashSeed, s) % boundedCacheShardCount)
 }
 
+// Borrowed bytes use the same seed and shard as an equivalent string key.
+func boundedCacheBytesShardIndex(s []byte) int {
+	return int(maphash.Bytes(cacheKeyHashSeed, s) % boundedCacheShardCount)
+}
+
 // keywordIndexCacheKeyShardIndex picks a shard for a keyword index cache key
 // without boxing it in an interface.
 func keywordIndexCacheKeyShardIndex(k keywordIndexCacheKey) int {
@@ -67,6 +72,22 @@ func (c *boundedCache[K, V]) get(key K) (V, bool) {
 	value, ok := sh.m[key]
 	sh.mu.RUnlock()
 	return value, ok
+}
+
+// getMatchingFromShard reads a borrowed key without allocating its owned
+// representation. The caller computes the normal shard and compares the full
+// key. Each shard holds at most limit/64 entries.
+func (c *boundedCache[K, V]) getMatchingFromShard(shard int, match func(K) bool) (V, bool) {
+	sh := &c.shards[shard]
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	for key, value := range sh.m {
+		if match(key) {
+			return value, true
+		}
+	}
+	var zero V
+	return zero, false
 }
 
 // put caches value for key, clearing the shard first when it is full.

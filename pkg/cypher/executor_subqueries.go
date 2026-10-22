@@ -298,7 +298,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 		}
 
 		np := e.parseNodePattern(ctx, matchBody)
-		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
+		if np.variable != "" && !pipelineReadsBinding(pipelineDependencyClauses(trimmedOuter), variable) {
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
@@ -530,7 +530,13 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 // import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
 // unit subquery whose body is just that WITH (#907).
 func callSubqueryHasScopeClause(cypher string) bool {
-	return readCallSubqueryScope(cypher).scoped
+	_, scoped, _ := readCallScopeClause(cypher)
+	return scoped
+}
+
+func parseCallSubqueryImportVariables(cypher string) []string {
+	names, _, _ := readCallScopeClause(cypher)
+	return names
 }
 
 type callSubqueryScopeClause struct {
@@ -570,11 +576,11 @@ func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
 	parts := splitProcedureTopLevelComma(scope.text)
 	scope.names = make([]string, 0, len(parts))
 	for _, part := range parts {
-		if simpleSemanticIdentifier(part) == "" && scope.text != "" {
+		name := simpleSemanticIdentifier(part)
+		if name == "" && scope.text != "" {
 			scope.invalid = true
 		}
-		name := strings.Trim(strings.TrimSpace(part), "`")
-		if isSimpleIdentifier(name) {
+		if name != "" {
 			scope.names = append(scope.names, name)
 		}
 	}
@@ -813,12 +819,18 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 		return nil
 	}
 	referenced := make([]string, 0, len(seedResult.Columns))
+	dependencies := pipelineDependencyClauses(subqueryBody)
+	input := make(typeScope, len(seedResult.Columns))
+	for _, name := range seedResult.Columns {
+		input[strings.TrimSpace(name)] = staticOperand{}
+	}
+	proof, complete := input.pipelineDependencies(dependencies)
 	for _, col := range seedResult.Columns {
 		name := strings.TrimSpace(col)
 		if name == "" {
 			continue
 		}
-		if isIdentifierReferenced(subqueryBody, name) {
+		if !complete || proof.reads[name] {
 			referenced = append(referenced, name)
 		}
 	}
@@ -889,90 +901,6 @@ func isLeadingWithFollower(word string) bool {
 	return false
 }
 
-// unscopedCallImports reads the importing WITHs of an unscoped CALL
-// subquery's body: whether any UNION branch (or the body, without UNION)
-// starts with an importing WITH (branchLeadingWithImport), and the
-// variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import (#907); it still reads outer variables
-// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
-// A CALL with a scope clause has no importing WITH
-// (callSubqueryHasScopeClause).
-//
-// names is filled only when collectNames.
-func unscopedCallImports(subqueryBody string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	trimmed := strings.TrimSpace(subqueryBody)
-	if indexASCIIFold(trimmed, "with") < 0 {
-		return nil, false, nil
-	}
-	if indexASCIIFold(trimmed, "union") >= 0 {
-		if branches, _, _, union := parseTopLevelUnionBranches(trimmed); union {
-			for _, branch := range branches {
-				branchNames, branchImports, err := branchLeadingWithImport(branch, outer, collectNames)
-				if err != nil {
-					return nil, false, err
-				}
-				if branchImports {
-					importing = true
-					names = append(names, branchNames...)
-				}
-			}
-			return names, importing, nil
-		}
-	}
-	return branchLeadingWithImport(trimmed, outer, collectNames)
-}
-
-// branchLeadingWithImport reports whether one branch of an unscoped CALL
-// body starts with an importing WITH: WITH * or a WITH that reads a
-// variable from outside (outer), and the variables it lists (not *). Any
-// other leading WITH (WITH 1 AS x, WITH 2 AS i over an outer i) is an
-// ordinary projection inside the subquery (#907). An importing WITH must
-// be followed by a query clause: CALL { WITH x } imports and is an error.
-func branchLeadingWithImport(branch string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	trimmed := strings.TrimSpace(branch)
-	if !startsWithKeywordFold(trimmed, "WITH") {
-		return nil, false, nil
-	}
-	clause, followed := leadingWithClause(trimmed)
-	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	var buffer [8]string
-	for _, item := range appendTopLevelComma(buffer[:0], projection) {
-		expression, alias := parseProjectionExprAlias(item)
-		expression = strings.TrimSpace(expression)
-		if expression == "*" {
-			importing = true
-			continue
-		}
-		if collectNames {
-			// The item's name: the variable itself for a plain reference.
-			names = append(names, alias)
-		} else if importing {
-			break
-		}
-		if importing || expression == "" {
-			continue
-		}
-		// A plain reference (the usual import) needs no expression scan.
-		if expression[0] != '`' && isSimpleIdentifier(expression) {
-			importing = outer(expression)
-			continue
-		}
-		for _, variable := range expressionFreeVariables(expression) {
-			if outer(variable) {
-				importing = true
-				break
-			}
-		}
-	}
-	if !importing {
-		return nil, false, nil
-	}
-	if !followed {
-		return names, true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
-	}
-	return names, true, nil
-}
-
 // unscopedBranchLocals returns the outer variables (names) that one branch
 // of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
@@ -994,24 +922,16 @@ func unscopedBranchLocals(branch string, names []string) []string {
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
 // outer variable applies only to a name the branch reads first (#907).
 func branchDeclaresVariable(branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
 	if !ok {
 		return false
 	}
-	for _, clause := range clauses {
-		index := firstVariableOccurrence(clause.text, variable)
-		if index < 0 {
-			continue
-		}
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
-			return index < patternPartEnd(clause) && isPatternVariableAt(clause.text, index, len(variable))
-		case pipelineClauseUnwind, pipelineClauseWith:
-			return precededByAS(clause.text, index)
-		}
-		return false
-	}
-	return false
+	input := typeScope{variable: staticOperand{}}
+	proof := newSemanticDependencies(input)
+	proof.implicit = true
+	model := &semanticQueryScope{locals: make(map[string]bool)}
+	_, _, _ = (&StorageExecutor{}).semanticScopeWalk(clauses, input, false, subqueryScope{dependencies: proof, result: model})
+	return model.locals[variable]
 }
 
 // patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
@@ -1024,33 +944,6 @@ func patternPartEnd(clause pipelineClause) int {
 		}
 	}
 	return end
-}
-
-// firstVariableOccurrence is the index of the first use of variable in text
-// as a variable: a whole word outside string literals, not a property key
-// (m.variable), a parameter ($variable) or a map key ({variable: …}).
-// -1 when there is none.
-func firstVariableOccurrence(text, variable string) int {
-	for index := 0; index+len(variable) <= len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(text, index, c) - 1
-			continue
-		}
-		if text[index:index+len(variable)] != variable {
-			continue
-		}
-		end := index + len(variable)
-		if (index > 0 && isIdentByte(text[index-1])) || (end < len(text) && isIdentByte(text[end])) {
-			continue
-		}
-		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
-		if previous == '.' || previous == '$' || ((previous == '{' || previous == ',') && next == ':') {
-			continue
-		}
-		return index
-	}
-	return -1
 }
 
 // isPatternVariableAt reports whether the word at index is a pattern's node

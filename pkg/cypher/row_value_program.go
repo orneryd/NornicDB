@@ -651,9 +651,10 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 // the text again. A row without a statement context, or a body the
 // subquery evaluator doesn't resolve, takes the text route.
 type rowSubqueryNode struct {
-	text string
-	kind string
-	body string
+	text  string
+	kind  string
+	body  string
+	scope semanticScalarScopeCache
 }
 
 func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
@@ -661,7 +662,7 @@ func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}
 	if ctx == nil {
 		return e.evaluateRowValueText(n.text, values)
 	}
-	value, resolved, err := e.rowSubqueryValue(ctx, n.kind, n.body, values)
+	value, resolved, err := e.rowSubqueryValueWithScope(ctx, n.kind, n.body, values, &n.scope)
 	if err != nil {
 		return nil, false, err
 	}

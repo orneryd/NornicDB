@@ -1625,7 +1625,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 		if plan.integerComparison != nil {
 			// COUNT { … } <op> <integer>: compare the count directly; a null
 			// or non-integer value takes the general comparison.
-			value, _ := e.evaluateRowSubqueryValue(ctx, plan.found[0].kind, plan.found[0].body, values)
+			value, _ := e.evaluateRowSubqueryValueWithScope(ctx, plan.found[0].kind, plan.found[0].body, values, &plan.scope)
 			if count, ok := value.(int64); ok {
 				return plan.integerComparison.holds(count)
 			}
@@ -2052,12 +2052,16 @@ func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern strin
 // whole EXISTS { } text; recognized is false for an empty body.
 func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists string, values map[string]interface{}) (matched bool, recognized bool) {
 	subquery := strings.TrimSpace(exists[strings.IndexByte(exists, '{')+1 : len(exists)-1])
+	return e.rowExistsSubqueryBodyMatches(ctx, subquery, values, nil)
+}
+
+func (e *StorageExecutor) rowExistsSubqueryBodyMatches(ctx context.Context, subquery string, values map[string]interface{}, cache *semanticScalarScopeCache) (matched bool, recognized bool) {
 	if subquery == "" {
 		return false, false
 	}
 	// The subquery evaluator EXISTS shares with COUNT and COLLECT; its error
 	// fails the statement, it doesn't read as "no rows".
-	value, ok, err := e.rowSubqueryValue(ctx, "EXISTS", subquery, values)
+	value, ok, err := e.rowSubqueryValueWithScope(ctx, "EXISTS", subquery, values, cache)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true

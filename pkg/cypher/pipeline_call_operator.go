@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"slices"
 	"sort"
 	"strings"
 
@@ -30,37 +29,32 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	if strings.TrimSpace(afterCall) != "" {
 		return nil, nil, false, nil
 	}
-	// An unscoped body imports through its branches' leading WITHs
-	// (unscopedCallImports, #907).
-	scoped := parsed.scoped
+	var scopeBuffer [8]string
+	scopeNames := scopeBuffer[:0]
 	if metadata != nil {
-		declared := parsed.scopedImports
-		if declared == nil && !scoped {
-			var importErr error
-			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
-				_, exists := metadata.scope[name]
-				return exists
-			}, true)
-			if importErr != nil {
-				return nil, nil, true, importErr
-			}
+		for name := range metadata.scope {
+			scopeNames = append(scopeNames, name)
 		}
-		for _, name := range declared {
-			if _, exists := metadata.scope[name]; !exists {
-				return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", "variable "+name+" is not defined")
+	} else if len(rows) > 0 {
+		for name := range rows[0] {
+			if !strings.HasPrefix(name, "$") {
+				scopeNames = append(scopeNames, name)
 			}
 		}
 	}
+	model, scopeErr := e.runtimeCallQueryScope(ctx, clause, body, scopeNames)
+	if scopeErr != nil {
+		return nil, nil, true, scopeErr
+	}
 	if len(rows) == 0 {
-		if metadata != nil {
-			metadata.columns = slices.Clone(e.inferTopLevelReturnColumnsFor(ctx, body))
-			for _, name := range metadata.columns {
+		if metadata != nil && model != nil {
+			metadata.columns = append([]string(nil), model.columns...)
+			for _, name := range model.columns {
 				metadata.scope[name] = struct{}{}
 			}
 		}
 		return []pipelineRow{}, &QueryStats{}, true, nil
 	}
-
 	targetExec := e
 	if use, remaining, hasUse, err := parseUseClause(body, true); hasUse || err != nil {
 		if err != nil {
@@ -78,59 +72,23 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		body = remaining
 	}
 
-	scopedImports := parsed.scopedImports
-	hasLegacyImports := false
-	if !scoped {
-		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(body, func(name string) bool {
-			_, exists := rows[0][name]
-			return exists && !strings.HasPrefix(name, "$")
-		}, false)
-		if importErr != nil {
-			return nil, nil, true, importErr
-		}
+	imports := make([]string, 0, len(model.imports))
+	for name := range model.imports {
+		imports = append(imports, name)
 	}
-	// CALL (*) imports every outer variable, including for WITH/RETURN *.
-	// An unscoped body without an importing WITH implicitly imports the
-	// outer variables it reads: a NornicDB extension.
-	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
-	// defined"); NornicDB keeps running such statements as before, since
-	// the import is unambiguous (#907, kept at the owner's direction).
-	imports := scopedImports
-	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
-				imports = append(imports, name)
-			}
-		}
-	}
+	sort.Strings(imports)
 	write := callSubqueryQueryIsWriteFor(ctx, body)
-	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
-	unionBranches, unionAll, _, isUnion := parseTopLevelUnionBranchesFor(ctx, body)
-
-	// A branch of an unscoped body that declares an outer variable's name
-	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
-	// implicitly imported outer value (unscopedBranchLocals, #907).
-	var branchLocals map[string][]string
-	if !scoped && len(rows) > 0 {
-		var outerNames []string
-		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") {
-				outerNames = append(outerNames, name)
-			}
-		}
-		branchLocals = map[string][]string{}
-		branches := []string{body}
-		if isUnion {
-			branches = unionBranches
-		}
-		for _, branch := range branches {
-			if locals := unscopedBranchLocals(branch, outerNames); len(locals) > 0 {
-				branchLocals[strings.TrimSpace(branch)] = locals
-			}
+	independentRead := model.complete && model.proof.complete && len(imports) == 0 && !write
+	branchQueries, unionAll, _, isUnion := parseTopLevelUnionBranchesFor(ctx, body)
+	if !isUnion {
+		branchQueries = []string{body}
+	}
+	branchScopes := make(map[string]*semanticQueryScope, len(model.branches))
+	for index, branch := range model.branches {
+		if index < len(branchQueries) {
+			branchScopes[strings.TrimSpace(branchQueries[index])] = branch
 		}
 	}
-
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
 		clauses, ok := pipelineClausesFor(body)
 		if !ok && !isUnion {
@@ -148,18 +106,12 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			rowMark := memory.mark()
 			input := pipelineRow{}
 			bindParameterRow(runCtx, input)
-			if hasLegacyImports {
-				for name, value := range outer {
-					input[name] = value
+			for _, name := range imports {
+				value, exists := outer[name]
+				if !exists {
+					return out, stats, true, createUndefinedVariableError(name)
 				}
-			} else {
-				for _, name := range imports {
-					value, exists := outer[name]
-					if !exists {
-						return out, stats, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(name), nil)
-					}
-					input[name] = value
-				}
+				input[name] = value
 			}
 			runBranch := func(query string) (*ExecuteResult, error) {
 				branchClauses := clauses
@@ -178,14 +130,22 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 						scope[name] = struct{}{}
 					}
 				}
-				for _, name := range branchLocals[strings.TrimSpace(query)] {
+				branchModel := branchScopes[strings.TrimSpace(query)]
+				if branchModel != nil {
+					branchClauses = branchModel.runtimeClauses(strings.TrimSpace(query), branchClauses)
+				}
+				var localNames map[string]bool
+				if branchModel != nil {
+					localNames = branchModel.locals
+				}
+				for name := range localNames {
 					delete(branchInput, name)
 					delete(scope, name)
 				}
 				var carried pipelineRow
-				if scoped {
+				if branchModel != nil {
 					carried = make(pipelineRow, len(imports))
-					for _, name := range imports {
+					for name := range branchModel.globals {
 						carried[name] = branchInput[name]
 					}
 				}

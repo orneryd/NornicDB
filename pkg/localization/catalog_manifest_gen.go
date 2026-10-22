@@ -1002,6 +1002,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherresidual.union_branch_failed", Constructor: "CypherResidualUnionBranchFailed", Fields: []string{"Branch", "Cause", "Query"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.union_clause_not_found", Constructor: "CypherResidualUnionClauseNotFound", Fields: []string{"Query"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.union_column_count_mismatch", Constructor: "CypherResidualUnionColumnCountMismatch", Fields: []string{"Actual", "Expected"}, PluralForms: []string{"other"}},
+	{ID: "cypherresidual.union_column_names_mismatch", Constructor: "CypherResidualUnionColumnNamesMismatch", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.unwind_clause_not_found", Constructor: "CypherResidualUnwindClauseNotFound", Fields: []string{"Query"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.with_clause_not_found", Constructor: "CypherResidualWithClauseNotFound", Fields: []string{"Query"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.with_item_invalid", Constructor: "CypherResidualWithItemInvalid", Fields: []string{"Item"}, PluralForms: []string{"other"}},

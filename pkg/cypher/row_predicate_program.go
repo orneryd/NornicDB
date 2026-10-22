@@ -134,8 +134,12 @@ func compileRowPredicateFromSubqueries(expr string) rowPredicateNode {
 	if plan := planRowPredicate(expr); plan != nil {
 		return &rowPredicatePlanNode{plan: plan}
 	}
-	if _, whole := wholeExistsPredicate(expr); whole {
-		return &rowPredicateTextNode{text: expr}
+	if negated, whole := wholeExistsPredicate(expr); whole {
+		body := strings.TrimSpace(expr[strings.IndexByte(expr, '{')+1 : len(expr)-1])
+		if body == "" {
+			return &rowPredicateTextNode{text: expr}
+		}
+		return &rowPredicateExistsNode{body: body, negated: negated}
 	}
 	var buffer [8]string
 	if plan := planLogicalExpression(expr, buffer[:0]); plan.kind != logicalNone {
@@ -284,6 +288,17 @@ type rowPredicatePartsTextNode struct{ text string }
 
 func (n *rowPredicatePartsTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.text, values)
+}
+
+type rowPredicateExistsNode struct {
+	body    string
+	negated bool
+	scope   semanticScalarScopeCache
+}
+
+func (n *rowPredicateExistsNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	matched, _ := e.rowExistsSubqueryBodyMatches(ctx, n.body, values, &n.scope)
+	return matched != n.negated
 }
 
 type rowPredicateTextNode struct{ text string }
