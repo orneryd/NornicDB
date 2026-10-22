@@ -30,6 +30,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	if plan, ok := parsePipelineRowWith(clause); ok {
+		plan.imports = pipelineImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
 			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
@@ -93,7 +94,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineRowColumns(out))
+			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineWildcardColumns(out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
@@ -196,6 +197,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 					projectedExpressions[projection.expr] = value
 				}
 			}
+			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
 				out = append(out, newRow)
 				continue
@@ -234,7 +236,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if needsOrderScopes {
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
-	rowPlan := pipelineRowWith{where: postWithWhere}
+	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
@@ -554,51 +556,32 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 	return filtered
 }
 
-// pipelineRowColumns returns the variables bound in rows, sorted: the
-// columns of WITH *.
-func pipelineRowColumns(rows []pipelineRow) []string {
-	seen := make(map[string]struct{})
-	columns := make([]string, 0)
-	for _, row := range rows {
-		for name := range row {
-			if _, ok := seen[name]; !ok {
-				seen[name] = struct{}{}
-				columns = append(columns, name)
-			}
-		}
-	}
-	sort.Strings(columns)
-	return columns
-}
-
 func deduplicatePipelineRows(memory *memoryScope, rows []pipelineRow, columns []string) []pipelineRow {
 	unique, _ := deduplicatePipelineRowsWithScopes(memory, rows, rows, columns)
 	return unique
 }
 
 // deduplicatePipelineRowsWithScopes keeps the first row of each distinct
-// tuple of columns; each kept key counts against memory's limit, and going
+// tuple of columns; each kept tuple counts against memory's limit, and going
 // over stops the deduplication (the statement fails with the limit's
 // error, #1343).
 func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
 	account := memoryAccount{scope: memory}
 	defer account.close()
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
-	keys := make([]string, len(columns))
+	values := make([]interface{}, len(columns))
 	for rowIndex, row := range rows {
 		for i, column := range columns {
-			keys[i] = cypherValueKey(row[column], cypherEquivalenceContract)
+			values[i] = row[column]
 		}
-		key := strings.Join(keys, "\x1f")
-		if _, exists := seen[key]; exists {
+		if _, exists := seen.addTupleByContract(values, cypherEquivalenceContract); exists {
 			continue
 		}
-		if account.grow(int64(len(key))+mapEntryBytes) != nil {
+		if account.growTuple(values, mapEntryBytes) != nil {
 			break
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 	}
@@ -1249,23 +1232,12 @@ func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool 
 }
 
 func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	unique := make([][]interface{}, 0, len(rows))
-	keys := make([]string, 0)
 	for _, row := range rows {
-		if cap(keys) < len(row) {
-			keys = make([]string, len(row))
-		} else {
-			keys = keys[:len(row)]
-		}
-		for index, value := range row {
-			keys[index] = cypherValueKey(value, cypherEquivalenceContract)
-		}
-		key := strings.Join(keys, "\x1f")
-		if _, exists := seen[key]; exists {
+		if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 	}
 	return unique

@@ -794,7 +794,7 @@ func TestCallSubqueryInTransactions(t *testing.T) {
 			RETURN name
 		`, nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "variable prop is not defined")
+		assert.Contains(t, err.Error(), "Variable `prop` not defined")
 	})
 
 	t.Run("stats accumulation across batches", func(t *testing.T) {

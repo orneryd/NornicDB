@@ -77,7 +77,7 @@ func TestReturnOfUndefinedVariableProperty(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (n:N) RETURN m.val", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	require.Contains(t, err.Error(), "variable m is not defined")
+	require.Contains(t, err.Error(), "Variable `m` not defined")
 }
 
 // TestCallSubqueryAfterProcedureYieldImportsTheRow: CALL { WITH x … } after

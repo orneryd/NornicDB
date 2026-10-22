@@ -2,7 +2,7 @@
 
 Mechanically enumerated by TestValueContractInventory with Go ASTs. IDs use file, enclosing function, callee and ordinal; formatting-only line shifts do not create consumers. The guard rejects added, removed or changed sites, implicit constructor names, missing arguments, uninitialized contract variables and constructor aliases. Every registered site includes its required contract and reason.
 
-Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocation probes are also registered in testdata/value_contract_calls.json.
+220 total sites, 130 production sites. Tests and allocation probes are also registered in testdata/value_contract_calls.json.
 
 | Call site | Required contract | Reason |
 |---|---|---|
@@ -28,10 +28,12 @@ Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocati
 | `apoc_collections.go:apocSameValue:cypherValueKeyWithNumericPolicy:2` | `cypherEquivalenceContract` | apoc.map.clean removal-set equivalence retains overlap occurrence identity; Java numeric-kind policy stays separate. |
 | `apoc_collections.go:apocValueSet:addByContract:1` | `cypherValueEqualityContract` | Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates. |
 | `apoc_collections.go:toSet:addByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `apoc_map_null_contract.go:apocMapConstructor:apocSameValue:1` | `equivalence removal adapter (numeric kinds preserved)` | apoc.map.clean uses a Java-object removal set, retaining overlap occurrence identity and numeric kinds. |
+| `apoc_map_null_contract.go:apocMapConstructor:apocSameValue:2` | `equivalence removal adapter (numeric kinds preserved)` | apoc.map.clean string-coercion removal uses the same Java-object equivalence policy while preserving numeric kinds. |
 | `apoc_native_functions.go:*StorageExecutor.nativeAPOCPath:cypherEqualityValue:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `case_evaluation.go:runCaseExpression:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
-| `clauses.go:*StorageExecutor.executeUnionBranches:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `coll_functions.go:fnCollDistinct:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `clauses.go:*StorageExecutor.executeUnionBranches:addTupleByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `coll_functions.go:fnCollDistinct:addByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
 | `coll_functions.go:fnCollIndexOf:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `comparison.go:*StorageExecutor.compareEqual:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `comparison.go:nodePropertiesMatch:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
@@ -42,7 +44,6 @@ Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocati
 | `create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:4` | `cypherValueEqualityContract` | Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates. |
 | `create.go:*StorageExecutor.buildCombinationsUsingWhereJoin:cypherValueKey:5` | `cypherValueEqualityContract` | Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates. |
 | `executor_subqueries.go:compareValuesForSort:compareTemporalOrdering:1` | `ordering (separate contract)` | Ordering is a separate temporal contract, outside equality/equivalence identity. |
-| `functions_eval_functions.go:*StorageExecutor.evaluateExpressionWithContextFullFunctions:apocSameValue:1` | `equivalence removal adapter (numeric kinds preserved)` | apoc.map.clean uses a Java-object removal set, retaining overlap occurrence identity and numeric kinds. |
 | `functions_eval_operators.go:cypherMembership:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `functions_neo5.go:fnNullIf:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `gds_functions.go:fnGDSSameCommunity:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
@@ -60,13 +61,12 @@ Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocati
 | `match_multi.go:collectPropValues:cypherValueKey:1` | `contract` | Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default. |
 | `match_multi.go:filterNodesByAllowedPropSet:cypherValueKey:1` | `contract` | Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default. |
 | `operators.go:*StorageExecutor.evaluateComparisonExpr:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
-| `percentile_semantics.go:*StorageExecutor.evaluatePipelinePercentile:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:cypherValueKey:2` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `pipeline_aggregate_stream.go:*StorageExecutor.tryCartesianAggregatePartitions:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `pipeline_aggregate_stream.go:*pipelineAggregateState.add:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `pipeline_projection.go:deduplicatePipelineResultRows:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
-| `pipeline_projection.go:deduplicatePipelineRowsWithScopes:cypherValueKey:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `percentile_semantics.go:*StorageExecutor.evaluatePipelinePercentile:addByContract:1` | `cypherEquivalenceContract` | DISTINCT/grouping/UNION or set/frequency identity retains the named-zone overlap offset recursively. |
+| `pipeline_aggregate_stream.go:*StorageExecutor.pipelineAggregateGroups:addTupleByContract:1` | `cypherEquivalenceContract` | Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence. |
+| `pipeline_aggregate_stream.go:*StorageExecutor.tryCartesianAggregatePartitions:addTupleByContract:1` | `cypherEquivalenceContract` | Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence. |
+| `pipeline_aggregate_stream.go:*pipelineAggregateState.add:addByContract:1` | `cypherEquivalenceContract` | Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence. |
+| `pipeline_projection.go:deduplicatePipelineResultRows:addTupleByContract:1` | `cypherEquivalenceContract` | Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence. |
+| `pipeline_projection.go:deduplicatePipelineRowsWithScopes:addTupleByContract:1` | `cypherEquivalenceContract` | Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence. |
 | `row_expression.go:compareCypherOrderedValues:compareTemporalOrdering:1` | `ordering (separate contract)` | Ordering is a separate temporal contract, outside equality/equivalence identity. |
 | `row_expression.go:compareCypherOrderedValues:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `row_expression.go:compareCypherPredicateGeneralValue:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
@@ -115,6 +115,25 @@ Branch wt-1403-rel144: 174 total sites, 111 production sites. Tests and allocati
 | `value_equivalence.go:cypherValueKeyWithNumericPolicy:appendValueKey:1` | `contract` | Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default. |
 | `value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKey:1` | `contract` | Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default. |
 | `value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKey:2` | `contract` | Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default. |
+| `value_equivalence_index.go:*cypherValueIndex.addByContract:addTupleValuesByContract:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:*cypherValueIndex.addByContract:cypherComparableKey:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:*cypherValueIndex.addByContract:cypherValueHash:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:*cypherValueIndex.addTupleByContract:addByContract:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:*cypherValueIndex.addTupleByContract:addTupleValuesByContract:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:*cypherValueIndex.addTupleByContract:cypherValueHash:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract:cypherValuesMatch:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherComparableKey:cypherValueKey:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherComparableKey:cypherValueKey:2` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherComparableKey:cypherValueKey:3` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherComparableKey:cypherValueKey:4` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherComparableKey:cypherValueKey:5` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValueHash:cypherComparableKey:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValueHash:cypherValueHash:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValueHash:cypherValueHash:2` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:2` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:1` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
+| `value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:2` | `contract` | Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks. |
 | `value_ordering.go:compareCypherComparableValues:cypherEquality:1` | `three-valued equality adapter` | Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy. |
 | `value_ordering.go:cypherSortRank:temporalOrderParts:1` | `ordering (separate contract)` | Ordering is a separate temporal contract, outside equality/equivalence identity. |
 
