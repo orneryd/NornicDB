@@ -19,10 +19,12 @@ func constraintContractsEngineFixture(t *testing.T) *MemoryEngine {
 }
 
 func TestHasAllLabels(t *testing.T) {
-	require.True(t, hasAllLabels([]string{"A", "B", "C"}, []string{"A", "B"}))
-	require.True(t, hasAllLabels([]string{"A"}, nil), "empty required → trivially satisfied")
-	require.False(t, hasAllLabels([]string{"A"}, []string{"A", "B"}))
-	require.False(t, hasAllLabels(nil, []string{"A"}))
+	pattern := contractPatternForTest(t, "OUTGOING", "R", []string{"A", "B"})
+	require.True(t, pattern.MatchesTargetLabels([]string{"A", "B", "C"}))
+	require.False(t, pattern.MatchesTargetLabels([]string{"A"}))
+	require.False(t, pattern.MatchesTargetLabels(nil))
+	empty := contractPatternForTest(t, "OUTGOING", "R", nil)
+	require.True(t, empty.MatchesTargetLabels([]string{"A"}), "empty required is satisfied")
 }
 
 func TestEvaluateNodeConstraintContractExpressionEngine_PropertyIn_True(t *testing.T) {
@@ -240,23 +242,17 @@ func TestCountMatchingPatternEdgesEngine_Outgoing(t *testing.T) {
 	src, err := engine.GetNode("test:src")
 	require.NoError(t, err)
 
-	count, err := countMatchingPatternEdgesEngine(engine, src, contractPattern{
-		Direction: "OUTGOING", RelationType: "READS", TargetLabels: []string{"Doc"},
-	})
+	count, err := countMatchingPatternEdgesEngine(engine, src, contractPatternForTest(t, "OUTGOING", "READS", []string{"Doc"}))
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
 
 	// Wrong type → 0.
-	count, err = countMatchingPatternEdgesEngine(engine, src, contractPattern{
-		Direction: "OUTGOING", RelationType: "OWNS",
-	})
+	count, err = countMatchingPatternEdgesEngine(engine, src, contractPatternForTest(t, "OUTGOING", "OWNS", nil))
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 
 	// Target label mismatch → 0.
-	count, err = countMatchingPatternEdgesEngine(engine, src, contractPattern{
-		Direction: "OUTGOING", RelationType: "READS", TargetLabels: []string{"NoSuch"},
-	})
+	count, err = countMatchingPatternEdgesEngine(engine, src, contractPatternForTest(t, "OUTGOING", "READS", []string{"NoSuch"}))
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 }
@@ -278,9 +274,7 @@ func TestCountMatchingPatternEdgesEngine_Incoming(t *testing.T) {
 	tgt, err := engine.GetNode("test:tgt")
 	require.NoError(t, err)
 
-	count, err := countMatchingPatternEdgesEngine(engine, tgt, contractPattern{
-		Direction: "INCOMING", RelationType: "FOLLOWS", TargetLabels: []string{"Person"},
-	})
+	count, err := countMatchingPatternEdgesEngine(engine, tgt, contractPatternForTest(t, "INCOMING", "FOLLOWS", []string{"Person"}))
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
 }
@@ -380,4 +374,34 @@ func TestValidateConstraintContractOnCreationForEngine_UnsupportedTargetType(t *
 	err := ValidateConstraintContractOnCreationForEngine(engine, contract)
 	require.Error(t, err)
 	require.Contains(t, strings.ToLower(err.Error()), "unsupported")
+}
+
+// Test fixtures go through the same canonical compiler; no test constructs
+// the private compiled representation or decodes matching facts itself.
+func contractPatternForTest(t *testing.T, direction, relType string, labels []string) contractPattern {
+	t.Helper()
+	quote := func(value string) string { return "`" + strings.ReplaceAll(value, "`", "``") + "`" }
+	target := "("
+	for _, label := range labels {
+		target += ":" + quote(label)
+	}
+	target += ")"
+	text := "(n)-[:" + quote(relType) + "]->" + target
+	if direction == "INCOMING" {
+		text = "(n)<-[:" + quote(relType) + "]-" + target
+	}
+	pattern, err := parseConstraintPattern(text)
+	require.NoError(t, err)
+	return pattern
+}
+
+func assertContractPatternLabels(t *testing.T, pattern contractPattern, labels []string) {
+	t.Helper()
+	require.Equal(t, len(labels), pattern.TargetLabelCount())
+	require.True(t, pattern.MatchesTargetLabels(labels))
+	for index := range labels {
+		without := append([]string(nil), labels[:index]...)
+		without = append(without, labels[index+1:]...)
+		require.False(t, pattern.MatchesTargetLabels(without), "missing required label %q", labels[index])
+	}
 }

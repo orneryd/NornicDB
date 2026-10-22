@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -21,7 +22,7 @@ func (r *queryResolver) queryPaths(ctx context.Context, startID, endID string, d
 	types := make([]string, 0, len(relationshipTypes))
 	for _, typ := range relationshipTypes {
 		if typ != "" {
-			types = append(types, "`"+strings.ReplaceAll(typ, "`", "``")+"`")
+			types = append(types, cyphertext.QuoteName(typ))
 		}
 	}
 	if len(relationshipTypes) > 0 && len(types) == 0 {

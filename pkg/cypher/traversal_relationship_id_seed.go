@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -36,7 +35,7 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	if err != nil || edge == nil {
 		return nil, true, true
 	}
-	if len(relationship.Types) > 0 && !slices.Contains(relationship.Types, edge.Type) {
+	if relationship.Types.len() > 0 && !relationship.Types.contains(edge.Type) {
 		return nil, true, true
 	}
 	endpoints := []storage.NodeID{edge.StartNode}

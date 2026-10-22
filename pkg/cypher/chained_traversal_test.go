@@ -239,11 +239,11 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 
 		// Check first segment
 		assert.Equal(t, "incoming", match.Segments[0].Relationship.Direction)
-		assert.Contains(t, match.Segments[0].Relationship.Types, "HAS_CONTACT")
+		assert.True(t, match.Segments[0].Relationship.Types.contains("HAS_CONTACT"))
 
 		// Check second segment
 		assert.Equal(t, "outgoing", match.Segments[1].Relationship.Direction)
-		assert.Contains(t, match.Segments[1].Relationship.Types, "BELONGS_TO")
+		assert.True(t, match.Segments[1].Relationship.Types.contains("BELONGS_TO"))
 	})
 
 	t.Run("four-node chain", func(t *testing.T) {
@@ -414,7 +414,7 @@ func TestTraverseFromNode(t *testing.T) {
 				labels:   []string{"Area"},
 			},
 			Relationship: RelationshipPattern{
-				Types:     []string{"BELONGS_TO"},
+				Types:     relationshipTypesForTest("BELONGS_TO"),
 				Direction: "outgoing",
 				MinHops:   1,
 				MaxHops:   1,
@@ -446,7 +446,7 @@ func TestTraverseFromNode(t *testing.T) {
 				labels:   []string{"Area"},
 			},
 			Relationship: RelationshipPattern{
-				Types:     []string{"BELONGS_TO"},
+				Types:     relationshipTypesForTest("BELONGS_TO"),
 				Direction: "outgoing",
 				MinHops:   1,
 				MaxHops:   1,
@@ -486,7 +486,7 @@ func TestTraverseFromNode(t *testing.T) {
 			StartNode: nodePatternInfo{variable: "poc", labels: []string{"POC"}},
 			EndNode:   nodePatternInfo{variable: "a", labels: []string{"Area"}},
 			Relationship: RelationshipPattern{
-				Types:     []string{"BELONGS_TO"},
+				Types:     relationshipTypesForTest("BELONGS_TO"),
 				Direction: "outgoing",
 				MinHops:   1,
 				MaxHops:   1,

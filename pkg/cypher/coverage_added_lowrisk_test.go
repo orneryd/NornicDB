@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExtractLabelsFromQuery_ColonScannerEdgeCases(t *testing.T) {
+func TestExtractLabelsFromQuery_OwnerFacts(t *testing.T) {
 	require.Empty(t, extractLabelsFromQuery("RETURN :"))
-	require.Empty(t, extractLabelsFromQuery("MATCH (n:person) RETURN n"))
-	require.Equal(t, []string{"TypeCast"}, extractLabelsFromQuery("MATCH (n::TypeCast) RETURN n"))
+	require.Equal(t, []string{"person"}, extractLabelsFromQuery("MATCH (n:person) RETURN n"))
+	require.Empty(t, extractLabelsFromQuery("MATCH (n::TypeCast) RETURN n"), "unsupported syntax conservatively depends on every write")
 	require.Equal(t, []string{"Person"}, extractLabelsFromQuery("MATCH (n:Person) RETURN n"))
 }
 

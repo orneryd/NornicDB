@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -319,13 +318,22 @@ func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
 	if !isNameableClauseKeyword(keyword) {
 		return false
 	}
-	return clauseKeywordNamedByContext(s, pos, end, keyword) || insideCaseBlock(s, pos)
+	return clauseKeywordNamedByContext(s, pos, end, keyword) || mayContainCaseKeyword(s[:pos]) && insideCaseBlock(s, pos)
+}
+
+// A lexical walker already knows the preceding live byte. Keep that fact
+// instead of walking its prefix again for every possible clause word.
+func clauseKeywordUsedAsNameAfter(s string, pos, end int, keyword string, previous int, possibleCase bool) bool {
+	return isNameableClauseKeyword(keyword) && (clauseKeywordNamedByContextAfter(s, pos, end, keyword, previous) || possibleCase && insideCaseBlock(s, pos))
 }
 
 // clauseKeywordNamedByContext is clauseKeywordUsedAsName's reading of the
 // keyword's neighbours.
 func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
-	i := lastLiveByte(s, pos)
+	return clauseKeywordNamedByContextAfter(s, pos, end, keyword, lastLiveByte(s, pos))
+}
+
+func clauseKeywordNamedByContextAfter(s string, pos, end int, keyword string, i int) bool {
 	if i >= 0 {
 		switch s[i] {
 		case '.', ':':
@@ -1164,9 +1172,7 @@ func indexASCIIFold(text, lowerSub string) int {
 // keyword. Which non-ASCII characters Neo4j takes in a name is checked once,
 // per character, by validateUnicodeOperators (isIdentifierStartRune,
 // isIdentifierPartRune). It and isIdentByte are the scanners' one rule.
-func isIdentStartByte(b byte) bool {
-	return b >= 0x80 || b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
-}
+func isIdentStartByte(b byte) bool { return cyphertext.IsIdentifierStart(b) }
 
 // isIdentStartRune is isIdentStartByte for a decoded character.
 func isIdentStartRune(r rune) bool {
@@ -1182,21 +1188,7 @@ func isIdentRune(r rune) bool {
 // isIdentStartByte takes, a digit, or '$': as in Neo4j, a$b and L$M are
 // names, and $ starts a parameter only where no name goes on
 // (isParameterStart).
-func isIdentByte(b byte) bool {
-	if b >= 0x80 {
-		return true
-	}
-	if b >= 'A' && b <= 'Z' {
-		return true
-	}
-	if b >= 'a' && b <= 'z' {
-		return true
-	}
-	if b >= '0' && b <= '9' {
-		return true
-	}
-	return b == '_' || b == '$'
-}
+func isIdentByte(b byte) bool { return cyphertext.IsIdentifierByte(b) }
 
 // isParameterStart reports whether the '$' at query[index] starts a
 // parameter ($name, $0, $`name`): it doesn't continue a name (a$b).
@@ -1262,18 +1254,7 @@ type queryRewrite struct {
 
 // queryWhitespaceAt returns the length of the whitespace character at
 // query[index] (ASCII or a Unicode space), 0 when there is none.
-func queryWhitespaceAt(query string, index int) int {
-	switch c := query[index]; {
-	case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
-		return 1
-	case c >= utf8.RuneSelf:
-		r, width := utf8.DecodeRuneInString(query[index:])
-		if unicode.IsSpace(r) {
-			return width
-		}
-	}
-	return 0
-}
+func queryWhitespaceAt(query string, index int) int { return cyphertext.WhitespaceAt(query, index) }
 
 // queryCommentEnd returns the end of the comment that starts at
 // query[index], or -1 when none starts there. A line comment ends before
@@ -1284,21 +1265,7 @@ func queryCommentEnd(query string, index int) int {
 
 // queryGapEnd returns the end of the run of whitespace and comments that
 // starts at index, index itself when none does.
-func queryGapEnd(query string, index int) int {
-	end := index
-	for end < len(query) {
-		if commentEnd := queryCommentEnd(query, end); commentEnd >= 0 {
-			end = commentEnd
-			continue
-		}
-		size := queryWhitespaceAt(query, end)
-		if size == 0 {
-			break
-		}
-		end += size
-	}
-	return end
-}
+func queryGapEnd(query string, index int) int { return cyphertext.GapEnd(query, index) }
 
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
 // statements with a syntax of its own, which canonicalizeQueryText leaves as
@@ -1896,7 +1863,7 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 		metadata, metadataRestored := r.restoreValue(result.Metadata)
 		var rows interface{}
 		rowsRestored := false
-		if len(result.Rows) > 0 && isExplainOrProfileText(r.canonical) {
+		if len(result.Rows) > 0 && isExplainText(r.canonical) {
 			rows, rowsRestored = r.restoreValue(result.Rows)
 		}
 		if columns != nil || metadataRestored || rowsRestored {
@@ -1921,11 +1888,12 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 	return result, err
 }
 
-// isExplainOrProfileText reports whether a canonical statement starts with
-// EXPLAIN or PROFILE.
-func isExplainOrProfileText(query string) bool {
-	query = strings.TrimLeft(query, " ")
-	return startsWithKeywordFold(query, "EXPLAIN") || startsWithKeywordFold(query, "PROFILE")
+// isExplainText reports whether a canonical statement starts with EXPLAIN,
+// whose rows describe the plan. A PROFILE statement's rows are its data and
+// are never rewritten: a value equal to a rewritten part of the statement (the
+// type T of a constant dynamic type $('T')) stays the value.
+func isExplainText(query string) bool {
+	return startsWithKeywordFold(strings.TrimLeft(query, " "), "EXPLAIN")
 }
 
 // restoreValue restores the statement text in the strings of value (a plan
@@ -2035,24 +2003,7 @@ func cypherStringLexicalByte(character byte) int {
 }
 
 func scanIdentifierToken(text string, start int) (string, int, bool) {
-	if start < 0 || start >= len(text) {
-		return "", start, false
-	}
-	if text[start] == '`' {
-		end, closed := scanCypherQuotedText(text, start, '`')
-		if !closed {
-			return "", start, false
-		}
-		return strings.ReplaceAll(text[start+1:end-1], "``", "`"), end, true
-	}
-	if !isIdentStartByte(text[start]) {
-		return "", start, false
-	}
-	end := start + 1
-	for end < len(text) && isIdentByte(text[end]) {
-		end++
-	}
-	return text[start:end], end, true
+	return cyphertext.ScanIdentifier(text, start)
 }
 
 func parseIdentifierToken(text string) (string, string, bool) {

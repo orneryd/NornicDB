@@ -101,9 +101,9 @@ func mergeNodeWritesOf(clauses []pipelineClause) *mergeNodeWrites {
 		case pipelineClauseMerge:
 			actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
 			bound := make(map[string]struct{})
-			eachPatternElement(actions.pattern, func(opener byte, element string) {
-				if opener == '(' {
-					bound[nodePatternStructure(element[1:len(element)-1]).variable] = struct{}{}
+			eachPatternElement(actions.pattern, func(element patternElement) {
+				if !element.isRelationship {
+					bound[nodePatternStructure(element.node[1:len(element.node)-1]).variable] = struct{}{}
 				}
 			})
 			writes.addSetItems(mergeActionAssignments(actions.onMatch), renamed, nil)

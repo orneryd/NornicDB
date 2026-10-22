@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -740,9 +741,7 @@ func cypherPropertyRefs(variable string, properties []string) []string {
 	return refs
 }
 
-func quoteCypherIdent(value string) string {
-	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
-}
+func quoteCypherIdent(value string) string { return cyphertext.QuoteName(value) }
 
 func formatConstraintValues(values []interface{}) []string {
 	formatted := make([]string, 0, len(values))

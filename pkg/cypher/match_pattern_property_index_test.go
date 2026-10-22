@@ -454,7 +454,7 @@ WITH rel LIMIT 1`, "rel")
 	require.NotNil(t, relMatch)
 	require.Equal(t, "source_repo", relMatch.StartNode.variable)
 	require.Equal(t, "rel", relMatch.Relationship.Variable)
-	require.Equal(t, []string{"DEPLOYS_FROM"}, relMatch.Relationship.Types)
+	require.Equal(t, []string{"DEPLOYS_FROM"}, relMatch.Relationship.Types.storageNames())
 	require.Equal(t, "outgoing", relMatch.Relationship.Direction)
 }
 

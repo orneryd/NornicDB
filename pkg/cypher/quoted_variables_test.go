@@ -2,11 +2,30 @@ package cypher
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestQuotedVariableCachedParametersConcurrent(t *testing.T) {
+	// The same spelling plan must not retain a caller's parameters, rows or
+	// restored result wrapper, including when executions overlap.
+	for index := 0; index < 8; index++ {
+		t.Run(strconv.Itoa(index), func(t *testing.T) {
+			t.Parallel()
+			exec, _ := newTestExecutor(t)
+			for value := int64(1); value <= 3; value++ {
+				result, err := exec.Execute(context.Background(), "WITH $`input value` AS `true` RETURN `true` AS result", map[string]interface{}{"input value": value})
+				require.NoError(t, err)
+				require.Equal(t, []string{"result"}, result.Columns)
+				require.Equal(t, [][]interface{}{{value}}, result.Rows)
+				result.Rows[0][0] = int64(-1)
+			}
+		})
+	}
+}
 
 // TestQuotedVariablesMatchNeo4j: backtick-quoted variables, labels, keys and
 // parameters in every position read as Neo4j 5.26 reads them (#734); the
@@ -134,10 +153,8 @@ func TestCanonicalizeQuotedVariables(t *testing.T) {
 	// An identifier the statement already uses is never the internal one.
 	first, firstNames := canonicalizeQuotedVariables("WITH 1 AS `a b` RETURN `a b`")
 	require.NotNil(t, firstNames)
-	var internal string
-	for identifier := range firstNames.internal {
-		internal = identifier
-	}
+	require.Len(t, firstNames.internalOrder, 1)
+	internal := firstNames.internalOrder[0]
 	collided, _ := canonicalizeQuotedVariables("WITH 1 AS `a b`, 2 AS " + internal + " RETURN `a b`, " + internal)
 	require.Contains(t, collided, " 2 AS "+internal+" RETURN", "the user's own variable keeps its name: %s", collided)
 	require.NotContains(t, collided, "`a b`")
