@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/textchunk"
 	voyageapi "github.com/orneryd/nornicdb/pkg/voyage"
 )
@@ -574,7 +575,7 @@ func (e *VoyageEmbedder) Backend() string {
 // EmbeddingSpace returns a stable identity for compatible vectors. It includes
 // the endpoint because custom Voyage-compatible services are distinct spaces.
 func (e *VoyageEmbedder) EmbeddingSpace() string {
-	return fmt.Sprintf("voyage:%s:%s:%d:%s", e.mode, e.Model(), e.Dimensions(), strings.TrimRight(e.config.APIURL, "/"))
+	return fmt.Sprintf("voyage:%s:%s:%d:%s", e.mode, e.Model(), e.Dimensions(), observability.RedactURL(strings.TrimRight(e.config.APIURL, "/")))
 }
 
 func voyageContextualizedChunkSize(maxTokens int) int {

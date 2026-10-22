@@ -9,10 +9,12 @@ import (
 	"time"
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 type wrappingAdapter struct {
-	w wrapperCloser
+	w           wrapperCloser
+	credentials []string
 }
 
 type wrapperCloser interface {
@@ -23,8 +25,8 @@ type wrappedBlob struct {
 	Blob *wrapping.BlobInfo `json:"blob"`
 }
 
-func newWrappingAdapter(w wrapperCloser) *wrappingAdapter {
-	return &wrappingAdapter{w: w}
+func newWrappingAdapter(w wrapperCloser, credentials ...string) *wrappingAdapter {
+	return &wrappingAdapter{w: w, credentials: credentials}
 }
 
 func (a *wrappingAdapter) GenerateDataKey(ctx context.Context, opts KeyGenOpts) (*DataKey, error) {
@@ -34,7 +36,7 @@ func (a *wrappingAdapter) GenerateDataKey(ctx context.Context, opts KeyGenOpts) 
 	}
 	blob, err := a.w.Encrypt(ctx, plain)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, observability.RedactError(observability.RedactError(err, string(plain)), a.credentials...))
 	}
 	ct, err := encodeBlob(blob)
 	if err != nil {
@@ -68,7 +70,7 @@ func (a *wrappingAdapter) DecryptDataKey(ctx context.Context, encryptedKey []byt
 	}
 	plain, err := a.w.Decrypt(ctx, blob)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrDecryptFailed, observability.RedactError(err, a.credentials...))
 	}
 	return plain, nil
 }
@@ -80,7 +82,7 @@ func (a *wrappingAdapter) RotateDataKey(ctx context.Context, encryptedKey []byte
 	}
 	blob, err := a.w.Encrypt(ctx, plain)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, observability.RedactError(observability.RedactError(err, string(plain)), a.credentials...))
 	}
 	ct, err := encodeBlob(blob)
 	if err != nil {

@@ -363,17 +363,17 @@ func TestRemoteEngineConfigAndCommitURL(t *testing.T) {
 	if ht.client == nil {
 		t.Fatalf("expected default client")
 	}
-	if got := ht.commitURL(); got != "http://host/db/db/tx/commit" {
+	if got, err := ht.commitURL(); err != nil || got != "http://host/db/db/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 
 	e2, _ := NewRemoteEngine(RemoteEngineConfig{URI: "http://host/db/neo4j", Database: "x"})
-	if got := e2.transport.(*httpTransport).commitURL(); got != "http://host/db/neo4j/tx/commit" {
+	if got, err := e2.transport.(*httpTransport).commitURL(); err != nil || got != "http://host/db/neo4j/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 
 	e3, _ := NewRemoteEngine(RemoteEngineConfig{URI: "http://host/db/neo4j/tx/commit", Database: "x"})
-	if got := e3.transport.(*httpTransport).commitURL(); got != "http://host/db/neo4j/tx/commit" {
+	if got, err := e3.transport.(*httpTransport).commitURL(); err != nil || got != "http://host/db/neo4j/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 }

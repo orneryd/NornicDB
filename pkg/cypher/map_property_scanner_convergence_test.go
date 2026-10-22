@@ -110,6 +110,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"splitCommaTopLevelLocal": true, "splitArgsRespectingArrays": true,
 	}
 	quoteMechanismAllowlist := map[string]string{
+		"pkg/cypher/executor_spans.go:redactSpanErrorText": "Finds quoted Cypher fragments inside free-form trace errors, then delegates escape handling and literal masking to the canonical Cypher readers.",
 		"pkg/adminimport/importer.go:withDefaults":                   "sets a CSV quote option; does not read Cypher source",
 		"pkg/adminimport/importer.go:openCSVSource":                  "validates a CSV quote option before encoding/csv parsing; does not read Cypher source",
 		"pkg/adminimport/neo4j_csv.go:ExportNeo4jCSV":                "sets and validates the CSV output quote option; does not read Cypher source",
