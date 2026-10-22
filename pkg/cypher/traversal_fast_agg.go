@@ -243,7 +243,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 		}
 	} else if needOtherLabelOnly && len(requiredOtherLabels) == 1 {
 		engine, _ := e.storageFast()
-		if idx, ok := engine.(storage.LabelIndexEngine); ok {
+		if idx, ok := storage.ReadCapabilityForEngine[storage.LabelIndexEngine](engine); ok {
 			otherHasLabel, err = idx.HasLabelBatch(otherIDs, requiredOtherLabels[0])
 			if err != nil {
 				return nil, false, err

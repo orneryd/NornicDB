@@ -16,7 +16,7 @@ func FirstNodeIDByLabel(engine Engine, label string) (NodeID, error) {
 		return "", ErrInvalidData
 	}
 
-	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
+	if lookup, ok := ReadCapabilityForEngine[LabelNodeIDLookupEngine](engine); ok {
 		var found NodeID
 		if err := lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
 			found = id
@@ -47,7 +47,7 @@ func NodeIDsByLabel(engine Engine, label string, limit int) ([]NodeID, error) {
 		return nil, ErrInvalidData
 	}
 
-	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
+	if lookup, ok := ReadCapabilityForEngine[LabelNodeIDLookupEngine](engine); ok {
 		ids := make([]NodeID, 0, 64)
 		err := lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
 			ids = append(ids, id)

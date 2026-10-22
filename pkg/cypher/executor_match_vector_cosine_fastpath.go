@@ -436,7 +436,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresNoIndexExactFiltered(ctx context.
 	if !ok || len(queryVector) == 0 {
 		return nil, false
 	}
-	if reader, ok := e.storage.(storage.ProjectedLabelNodeReader); ok {
+	if reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedLabelNodeReader](e.storage); ok {
 		return e.fetchCosineNodeScoresProjectedLabel(ctx, reader, label, property, limit, queryVector, orderDesc, projectedProps, filter)
 	}
 	return e.fetchCosineNodeScoresExactFiltered(ctx, label, property, queryVector, orderDesc, filter)
@@ -886,7 +886,7 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 
 func (e *StorageExecutor) getNodeForVectorHit(id storage.NodeID, projectedProps []string) (*storage.Node, error) {
 	if projectedProps != nil {
-		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
+		if reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedNodeReader](e.storage); ok {
 			return reader.GetNodeProjected(id, projectedProps)
 		}
 	}

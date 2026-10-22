@@ -780,7 +780,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
 		}
-		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
+		if provider, ok := storage.ReadCapabilityForEngine[storage.GraphMutationVersionProvider](e.storage); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)
 			}

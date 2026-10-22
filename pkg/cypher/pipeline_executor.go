@@ -1283,7 +1283,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return nil, false, nil
 	}
 	store := e.getStorage(ctx)
-	reader, ok := store.(storage.ProjectedLabelNodeReader)
+	reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedLabelNodeReader](store)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1303,7 +1303,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	}
 	hideSystemNodes := shouldHideSystemNodes(store)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	checker, canCheckViewport := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](store)
 	var count int64
 	countNode := func(node *storage.Node, whereApplied bool) error {
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {

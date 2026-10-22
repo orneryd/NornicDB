@@ -601,7 +601,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 ) error {
 	store := e.getStorage(ctx)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	checker, canCheckViewport := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](store)
 	hideSystemNodes := shouldHideSystemNodes(store)
 	visited := 0
 	var whereFilter FilterFunc
@@ -655,7 +655,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// proportional to the matching label, applies residual predicates before
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
-		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
+		if reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedLabelNodeReader](store); ok {
 			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return nil
@@ -754,7 +754,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// avoid the storage APIs that first materialize the complete population.
 	// LIMIT additionally stops storage iteration as soon as enough qualifying
 	// nodes have been produced.
-	if streamer, ok := store.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ReadCapabilityForEngine[storage.StreamingEngine](store); ok {
 		err = streamer.StreamNodes(ctx, collect)
 		if err == storage.ErrIterationStopped {
 			err = nil

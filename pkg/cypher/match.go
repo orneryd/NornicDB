@@ -82,10 +82,10 @@ func storageHasDecayFiltering(engine storage.Engine) bool {
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
-		if decay, ok := engine.(interface{ IsDecayEnabled() bool }); ok && decay.IsDecayEnabled() {
+		if decay, ok := storage.ReadCapabilityForEngine[interface{ IsDecayEnabled() bool }](engine); ok && decay.IsDecayEnabled() {
 			return true
 		}
-		if manual, ok := engine.(interface{ HasManualSuppressions() bool }); ok && manual.HasManualSuppressions() {
+		if manual, ok := storage.ReadCapabilityForEngine[interface{ HasManualSuppressions() bool }](engine); ok && manual.HasManualSuppressions() {
 			return true
 		}
 		switch wrapper := engine.(type) {

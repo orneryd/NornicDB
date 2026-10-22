@@ -60,7 +60,7 @@ func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) 
 		return wrapper.GetQueryNode(id)
 	}
 	if e != nil && e.readOnlyQueryNodes {
-		if reader, ok := store.(storage.QueryNodeReader); ok {
+		if reader, ok := storage.ReadCapabilityForEngine[storage.QueryNodeReader](store); ok {
 			return reader.GetQueryNode(id)
 		}
 	}
@@ -76,7 +76,7 @@ func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
 	if info == nil || !info.IsReadOnly || info.IsWriteQuery || !info.HasMatch || info.HasCall {
 		return false
 	}
-	_, ok := e.storage.(storage.QueryNodeReader)
+	_, ok := storage.ReadCapabilityForEngine[storage.QueryNodeReader](e.storage)
 	return ok
 }
 
@@ -90,7 +90,7 @@ func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) 
 	if result == nil {
 		return
 	}
-	recorder, ok := e.storage.(materializedAccessRecorder)
+	recorder, ok := storage.ReadCapabilityForEngine[materializedAccessRecorder](e.storage)
 	if !ok || recorder == nil {
 		return
 	}
