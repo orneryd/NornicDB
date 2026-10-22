@@ -25,7 +25,7 @@ import (
 // statement, so an administration command there is refused as after any
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
-func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
 	if err := internalFunctionCallError(statement); err != nil {
 		// Refused like any statement of the caller's transaction: it fails
 		// an explicit transaction (executeInternal fails it for the rest).
@@ -40,7 +40,16 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		}
 		return nil, e.failTransaction(ctx, statementTypeError(statement, "Administration", "Data", transaction))
 	}
-	return e.executeInternal(withStatementText(ctx, statement), statement, params)
+	if fabricScopeFrom(ctx) != nil && e.shouldUseFabricPlanner(statement) {
+		// A statement that names a composite graph runs as part of the
+		// composite statement it is nested in.
+		result, err = e.executeViaFabric(ctx, statement, params)
+		return result, e.failTransaction(ctx, err)
+	}
+	result, err = e.runScopedStatement(ctx, statement, func(ctx context.Context, target *StorageExecutor) (*ExecuteResult, error) {
+		return target.executeInternal(withStatementText(ctx, statement), statement, params)
+	})
+	return result, e.failTransaction(ctx, err)
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {

@@ -251,14 +251,19 @@ func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 // statement, a statement a procedure runs (nested, run with executeInternal
 // so it stays in the caller's execution) and a CALL { USE … } body.
 func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
-	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
+	scopedExec, ctx, release, err := e.useDatabase(ctx, db, query)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	var result *ExecuteResult
-	if nested {
+	switch {
+	case fabricScopeFrom(ctx) != nil && scopedExec.shouldUseFabricPlanner(query):
+		// Its composite graphs run as part of the composite statement.
+		result, err = scopedExec.executeViaFabric(ctx, query, params)
+	case nested:
 		result, err = scopedExec.executeInternal(ctx, query, params)
-	} else {
+	default:
 		result, err = scopedExec.Execute(ctx, query, params)
 	}
 	if result != nil {
@@ -279,26 +284,35 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // the rules every such statement follows: the caller may use db, the system
 // database runs only what its statement policy allows, and a statement of a
 // transaction (explicit, or the one the statement is nested in) stays on
-// that transaction's database. It returns db's executor and ctx scoped to db.
-func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
+// that transaction's database. Inside a composite statement query opens its
+// writes on db's participant (fabricScope). It returns the executor query
+// runs on and ctx scoped to db; release ends its use of a participant's
+// sub-transaction.
+func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, func(), error) {
 	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
-		return nil, ctx, err
+		return nil, ctx, nil, err
 	}
 	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
 	if err != nil {
-		return nil, ctx, err
+		return nil, ctx, nil, err
 	}
 	if strings.EqualFold(resolvedDB, "system") {
 		if err := systemDatabaseStatementError(query); err != nil {
-			return nil, ctx, err
+			return nil, ctx, nil, err
 		}
 	}
 	if scopedExec != e && e.inTransaction(ctx) {
 		if err := TransactionDatabaseError(e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
-			return nil, ctx, err
+			return nil, ctx, nil, err
 		}
 	}
-	return scopedExec, withExecutionDatabase(ctx, resolvedDB), nil
+	ctx = withExecutionDatabase(ctx, resolvedDB)
+	scope := fabricScopeFrom(ctx)
+	if scope == nil || scopedExec.shouldUseFabricPlanner(query) {
+		return scopedExec, ctx, func() {}, nil
+	}
+	selected := scope.on(resolvedDB, scopedExec.storage)
+	return selected.executorFor(withFabricScope(ctx, selected), scopedExec, query)
 }
 
 // systemDatabaseStatementError is the error for a statement the system

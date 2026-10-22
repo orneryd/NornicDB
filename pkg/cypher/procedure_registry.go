@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -69,6 +70,11 @@ type ProcedureSpec struct {
 	Returns            []ProcedureColumn
 	MinArgs            int
 	MaxArgs            int
+	// ExecutesStatements marks a READ procedure that runs a Cypher statement
+	// it is given (apoc.cypher.run): NornicDB lets that statement write. A
+	// composite statement claims its write database for such a write when
+	// the statement runs (fragmentWrites).
+	ExecutesStatements bool
 }
 
 // writes reports whether a call of the procedure changes the database: its
@@ -96,10 +102,13 @@ type registeredProcedure struct {
 // For example, "tenant.Report" and "tenant.report" are distinct registrations;
 // CALL tenant.REPORT() cannot select either.
 type ProcedureRegistry struct {
-	mu       sync.RWMutex
-	builtins map[string]registeredProcedure
-	user     map[string]registeredProcedure
-	userFold map[string]struct{}
+	mu sync.RWMutex
+	// generation changes with every registration, so what is decided from
+	// the registry (fragmentWrites) is decided again.
+	generation atomic.Uint64
+	builtins   map[string]registeredProcedure
+	user       map[string]registeredProcedure
+	userFold   map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
@@ -121,6 +130,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -141,6 +151,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -217,6 +228,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
 	r.userFold = make(map[string]struct{})
+	r.generation.Add(1)
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {

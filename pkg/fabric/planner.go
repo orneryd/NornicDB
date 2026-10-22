@@ -814,7 +814,6 @@ func newExec(query string, target planTarget, scope string) *FragmentExec {
 		Query:     query,
 		GraphName: target.name,
 		Columns:   nil, // determined at execution time
-		IsWrite:   queryIsWrite(query),
 	}
 	if target.dynamic != nil {
 		exec.Graph = target.dynamic
@@ -1141,21 +1140,6 @@ func isWithImportStopKeyword(token string) bool {
 	default:
 		return false
 	}
-}
-
-// queryIsWrite performs a simple heuristic check for write operations.
-func queryIsWrite(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if hasKeywordAt(query, i, "CREATE") ||
-			hasKeywordAt(query, i, "MERGE") ||
-			hasKeywordAt(query, i, "DETACH DELETE") ||
-			hasKeywordAt(query, i, "DELETE") ||
-			hasKeywordAt(query, i, "SET") ||
-			hasKeywordAt(query, i, "REMOVE") {
-			return true
-		}
-	}
-	return false
 }
 
 // startsWithFold checks if s starts with prefix (case-insensitive).

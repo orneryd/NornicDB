@@ -40,7 +40,12 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
-	query = classificationText(query)
+	return permissionRequirements(classificationText(query))
+}
+
+// permissionRequirements is QueryPermissionRequirements of query in its
+// classification text (classificationText).
+func permissionRequirements(query string) PermissionRequirements {
 	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read:   true,
@@ -97,21 +102,8 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
 	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
 	var procedures []ProcedureSpec
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
-			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
-		}
+	for _, name := range calledProcedureNames(query) {
 		if procedure, found := globalProcedureRegistry.Get(name); found {
 			procedures = append(procedures, procedure.Spec)
 			continue
@@ -127,6 +119,29 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 		}
 	}
 	return procedures
+}
+
+// calledProcedureNames returns the procedure names of every CALL clause of
+// query, wherever it stands. CALL inside string literals and comments is not
+// a clause, and CALL { ... } or CALL (vars) { ... } names no procedure: its
+// body is scanned on.
+func calledProcedureNames(query string) []string {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens = false
+	opts.SkipBrackets = false
+	opts.SkipBraces = false
+	var names []string
+	for from := 0; from < len(query); {
+		at := keywordIndexFrom(query, "CALL", from, opts)
+		if at < 0 {
+			break
+		}
+		from = at + len("CALL")
+		if name, ok := procedureNameAt(query, from); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword

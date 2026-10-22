@@ -24,7 +24,10 @@ type RemoteFragmentExecutor struct {
 // RollbackParticipants rolled it back early, the transaction's COMMIT,
 // ROLLBACK and Close report that outcome instead of ending it again.
 type remoteParticipant struct {
-	tx        storage.RemoteCypherTx
+	tx storage.RemoteCypherTx
+	// write: the sub-transaction runs in write access mode, opened once the
+	// participant claimed the statement's write (participant).
+	write     bool
 	mu        sync.Mutex
 	ended     bool
 	committed bool
@@ -287,16 +290,36 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	if !hasSub || sub == nil {
 		return engine.QueryCypher(ctx, query, params)
 	}
-	handle, err := r.getOrCreateTxHandle(ctx, sub, engine)
+	handle, err := r.participant(ctx, sub, engine, decideAccessMode(query, true))
 	if err != nil {
 		return nil, nil, err
 	}
 	return handle.tx.QueryCypher(ctx, query, params)
 }
 
-func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine) (*remoteParticipant, error) {
+// participant returns the remote sub-transaction a query runs in. A query
+// that writes (its access mode on a remote constituent) runs in a write
+// session, which is opened only once the participant has claimed the
+// statement's write (FabricTransaction.ClaimWrite): a write on a second
+// database is refused before it reaches the remote. Any other query runs in
+// a read session, or in the write session once the participant holds one, so
+// it reads the statement's writes. A read session is rolled back when the
+// transaction ends (FabricTransaction.Commit), so nothing run in it is kept,
+// and a remote that enforces the access mode refuses a write there.
+func (r *RemoteFragmentExecutor) participant(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine, writes bool) (*remoteParticipant, error) {
+	fabricTx, ok := FabricTransactionFromContext(ctx)
+	if !ok || fabricTx == nil {
+		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
+	}
+	if writes {
+		if _, err := fabricTx.ClaimWrite(sub.ShardName); err != nil {
+			return nil, err
+		}
+	}
+	// The write participant's queries all run in its write session.
+	writes = writes || fabricTx.WriteShard() == sub.ShardName
 	r.mu.RLock()
-	if handle, ok := r.txHandles[sub.ShardName]; ok {
+	if handle, ok := r.txHandles[sub.ShardName]; ok && (handle.write || !writes) {
 		r.mu.RUnlock()
 		return handle, nil
 	}
@@ -305,24 +328,33 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
-		return handle, nil
+		if handle.write || !writes {
+			return handle, nil
+		}
+		// The read session ends before the participant writes; it changed
+		// nothing to keep.
+		delete(r.txHandles, sub.ShardName)
+		if err := handle.endWithin(context.WithoutCancel(ctx), false); err != nil {
+			return nil, err
+		}
 	}
-	tx, err := engine.BeginCypherTx(ctx)
+	open := engine.BeginReadCypherTx
+	if writes {
+		open = engine.BeginCypherTx
+	}
+	tx, err := open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	handle := &remoteParticipant{tx: tx}
-	fabricTx, ok := FabricTransactionFromContext(ctx)
-	if !ok || fabricTx == nil {
-		_ = handle.end(ctx, false)
-		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
-	}
+	handle := &remoteParticipant{tx: tx, write: writes}
 	// The sub-transaction ends with its transaction, after the statement or
 	// APPLY batch that enlisted it has returned and cancelled ctx. As for a
 	// local participant, completion keeps ctx's values but not its
 	// cancellation; storage.RemoteRequestTimeout bounds it.
 	terminalCtx := context.WithoutCancel(ctx)
-	commitFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, true) }
+	// A read session ends with a rollback: nothing run in it is kept, also
+	// on a remote that doesn't enforce its access mode.
+	commitFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, handle.write) }
 	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
 		_ = handle.end(ctx, false)

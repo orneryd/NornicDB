@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -47,8 +46,6 @@ func clientTransactionCommand(ctx context.Context, query string) error {
 	}
 	return nil
 }
-
-var firstUseGraphPattern = regexp.MustCompile(`(?is)\bUSE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`)
 
 // TransactionContext holds the active transaction for a Cypher session.
 type TransactionContext struct {
@@ -467,13 +464,6 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	}
 
 	if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
-		if looksLikeWriteQuery(cypher) {
-			if graph := extractFirstUseGraph(cypher); graph != "" {
-				if _, err := ftx.GetOrOpen(graph, true); err != nil {
-					return nil, err
-				}
-			}
-		}
 		// For composite/fabric transactions, route through shared fabric gateway when
 		// query has multi-graph CALL { USE ... } patterns so write-shard constraints are
 		// enforced across statements within the same explicit transaction.
@@ -485,6 +475,15 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 
+	return e.inTransactionStorage(ctx, inlineEmbeddingEnabled, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		return txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
+	})
+}
+
+// inTransactionStorage runs execute on the storage of e's explicit
+// transaction: an executor over the transaction's storage wrapper, which the
+// context carries.
+func (e *StorageExecutor) inTransactionStorage(ctx context.Context, inlineEmbeddingEnabled bool, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
 	tx, ok := e.txContext.tx.(*storage.BadgerTransaction)
 	if !ok {
@@ -497,52 +496,37 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	// the same Badger transaction a second time. Only reuse the wrapper that
 	// belongs to the active explicit transaction; stale wrappers from reused
 	// contexts must fall back to a fresh wrapper for the current tx.
-	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok &&
-		txWrapper != nil &&
-		txWrapper.tx == tx {
-		txExec := e.cloneWithStorage(txWrapper)
-		result, err := txExec.executeQueryAgainstStorage(ctx, cypher, upperQuery)
-		if err != nil {
-			return result, err
-		}
-		if inlineEmbeddingEnabled {
-			mutated := txWrapper.snapshotMutatedNodeIDs()
-			if err := txExec.applyInlineEmbeddingMutations(ctx, mutated); err != nil {
-				return nil, err
+	txCtx := ctx
+	txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper)
+	if !ok || txWrapper == nil || txWrapper.tx != tx {
+		// Reuse one storage adapter for the explicit transaction lifetime. Besides
+		// preserving namespace and mutation state, this prevents every statement
+		// (including RETURN literals) from allocating and reseeding a 1000-entry
+		// transaction lookup cache.
+		txWrapper = e.txContext.storageWrapper
+		if txWrapper == nil || txWrapper.tx != tx {
+			engines := e.resolveImplicitTxEngines()
+			separator := ":"
+			if engines.namespace == "" {
+				separator = ""
 			}
-			txWrapper.clearMutatedNodeIDs(mutated)
+			txWrapper = &transactionStorageWrapper{
+				tx:             tx,
+				underlying:     e.storage,
+				namespace:      engines.namespace,
+				separator:      separator,
+				mutatedNodeIDs: make(map[string]struct{}),
+			}
+			e.txContext.storageWrapper = txWrapper
 		}
-		return result, nil
+		// Pass the wrapper through context (same pattern as implicit transactions)
+		// This is thread-safe and allows getStorage() to automatically use the transaction
+		txCtx = context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	}
-
-	// Reuse one storage adapter for the explicit transaction lifetime. Besides
-	// preserving namespace and mutation state, this prevents every statement
-	// (including RETURN literals) from allocating and reseeding a 1000-entry
-	// transaction lookup cache.
-	txWrapper := e.txContext.storageWrapper
-	if txWrapper == nil || txWrapper.tx != tx {
-		engines := e.resolveImplicitTxEngines()
-		separator := ":"
-		if engines.namespace == "" {
-			separator = ""
-		}
-		txWrapper = &transactionStorageWrapper{
-			tx:             tx,
-			underlying:     e.storage,
-			namespace:      engines.namespace,
-			separator:      separator,
-			mutatedNodeIDs: make(map[string]struct{}),
-		}
-		e.txContext.storageWrapper = txWrapper
-	}
-
-	// Pass the wrapper through context (same pattern as implicit transactions)
-	// This is thread-safe and allows getStorage() to automatically use the transaction
-	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	txExec := e.cloneWithStorage(txWrapper)
 
 	// Execute the query - getStorage() will automatically use the transaction wrapper
-	result, err := txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
+	result, err := execute(txCtx, txExec)
 	if err != nil {
 		return result, err
 	}
@@ -554,23 +538,6 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		txWrapper.clearMutatedNodeIDs(mutated)
 	}
 	return result, nil
-}
-
-func looksLikeWriteQuery(cypher string) bool {
-	upper := upperASCII(classificationText(cypher))
-	return strings.Contains(upper, "CREATE") ||
-		strings.Contains(upper, "MERGE") ||
-		strings.Contains(upper, "DELETE") ||
-		strings.Contains(upper, "SET ") ||
-		strings.Contains(upper, "REMOVE ")
-}
-
-func extractFirstUseGraph(cypher string) string {
-	m := firstUseGraphPattern.FindStringSubmatch(cypher)
-	if len(m) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(m[1])
 }
 
 // executeQueryAgainstStorage executes query with current storage context.

@@ -47,7 +47,10 @@ type remoteTransport interface {
 	query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error)
 	queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error)
 	queryBatch(ctx context.Context, statements []remoteStatement) error
-	beginCypherTx(ctx context.Context) (RemoteCypherTx, error)
+	// beginCypherTx opens a transaction in write access mode, or in read
+	// access mode when write is false: a server that enforces it refuses a
+	// write there.
+	beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error)
 	close() error
 }
 
@@ -259,10 +262,14 @@ func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (b *boltTransport) beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error) {
+	mode := neo4j.AccessModeRead
+	if write {
+		mode = neo4j.AccessModeWrite
+	}
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
-		AccessMode:   neo4j.AccessModeWrite,
+		AccessMode:   mode,
 	})
 	tx, err := session.BeginTransaction(ctx)
 	if err != nil {
@@ -612,7 +619,7 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (h *httpTransport) beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error) {
 	openBody := remoteTxRequest{Statements: []remoteStatement{}}
 	raw, err := json.Marshal(openBody)
 	if err != nil {
@@ -623,6 +630,10 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if !write {
+		// The HTTP API's access mode of the transaction.
+		req.Header.Set("access-mode", "READ")
+	}
 	if h.user != "" || h.password != "" {
 		req.SetBasicAuth(h.user, h.password)
 	} else if h.authToken != "" {
@@ -1453,12 +1464,23 @@ func (r *RemoteEngine) QueryCypher(ctx context.Context, statement string, params
 	return r.transport.queryWithColumns(ctx, statement, params)
 }
 
-// BeginCypherTx opens an explicit remote transaction handle.
+// BeginCypherTx opens an explicit remote transaction handle in write access
+// mode.
 func (r *RemoteEngine) BeginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+	return r.beginCypherTx(ctx, true)
+}
+
+// BeginReadCypherTx opens an explicit remote transaction handle in read
+// access mode: a server that enforces the access mode refuses a write in it.
+func (r *RemoteEngine) BeginReadCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+	return r.beginCypherTx(ctx, false)
+}
+
+func (r *RemoteEngine) beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error) {
 	if ctx == nil {
 		var cancel context.CancelFunc
 		ctx, cancel = defaultCtx()
 		defer cancel()
 	}
-	return r.transport.beginCypherTx(ctx)
+	return r.transport.beginCypherTx(ctx, write)
 }

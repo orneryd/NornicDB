@@ -92,8 +92,6 @@ func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
 
 	firstWrite := "CALL { USE cmp.a CREATE (n:W {id: '1'}) RETURN count(n) AS c } RETURN c"
 	secondWrite := "CALL { USE cmp.b CREATE (n:W {id: '2'}) RETURN count(n) AS c } RETURN c"
-	require.Equal(t, "cmp.a", extractFirstUseGraph(firstWrite))
-	require.Equal(t, "cmp.b", extractFirstUseGraph(secondWrite))
 
 	_, err = exec.Execute(ctx, firstWrite, nil)
 	require.NoError(t, err)

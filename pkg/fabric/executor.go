@@ -243,7 +243,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	}
 	if tx != nil {
 		participant := participantKeyFromLocation(loc)
-		sub, err := tx.GetOrOpen(participant, f.IsWrite)
+		sub, err := tx.GetOrOpen(participant, false)
 		if err != nil {
 			return nil, nil, ctx, err
 		}
@@ -629,7 +629,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -865,7 +865,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1062,7 +1062,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1300,7 +1300,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -3652,7 +3652,7 @@ func isFabricRowWrapper(columns []string) bool {
 func fragmentContainsWrite(fragment Fragment) bool {
 	switch f := fragment.(type) {
 	case *FragmentExec:
-		return f.IsWrite
+		return fragmentMayWrite(f.Query)
 	case *FragmentApply:
 		return fragmentContainsWrite(f.Input) || fragmentContainsWrite(f.Inner)
 	case *FragmentUnion:

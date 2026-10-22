@@ -93,7 +93,7 @@ func (f *fakeRemoteTransport) queryBatch(ctx context.Context, statements []remot
 	return nil
 }
 
-func (f *fakeRemoteTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (f *fakeRemoteTransport) beginCypherTx(ctx context.Context, _ bool) (RemoteCypherTx, error) {
 	if f.beginCypherTxFn != nil {
 		return f.beginCypherTxFn(ctx)
 	}

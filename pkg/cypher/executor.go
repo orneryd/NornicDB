@@ -1683,11 +1683,39 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	})
 }
 
+// configureStatementTransaction applies the settings of a transaction opened
+// for one autocommit statement, without a user BEGIN: CREATE skips the
+// existence read of its generated IDs, and COMMIT skips the per-commit
+// engine.Sync(). The Bolt session's end-of-session Flush and the async
+// engine's ticker-driven flush coalesce durability for implicit writes;
+// forcing an Msync per UNWIND batch turned every batch into a 300µs syscall
+// for no user-visible benefit.
+func configureStatementTransaction(tx *storage.BadgerTransaction) error {
+	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
+		return err
+	}
+	return tx.SetImplicit(true)
+}
+
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
+	}
+
+	// Inside a composite statement the write opens on its database's
+	// participant (fabricScope.openWrite), in the sub-transaction that commits
+	// or rolls back with the whole statement.
+	if scope := fabricScopeFrom(ctx); scope != nil {
+		joined, joinedCtx, release, err := scope.openWrite(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		if joined != nil {
+			return joined.inTransactionStorage(joinedCtx, inlineEmbeddingEnabled, execute)
+		}
 	}
 
 	// Try to get a transaction-capable engine and async wrapper (if present)
@@ -1739,15 +1767,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		_ = tx.Rollback()
 		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}
-	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	// Skip the per-commit engine.Sync(). The Bolt session's end-of-session
-	// Flush and the async engine's ticker-driven flush coalesce durability
-	// for implicit writes; forcing an Msync per UNWIND batch turned every
-	// batch into a 300µs syscall for no user-visible benefit.
-	if err := tx.SetImplicit(true); err != nil {
+	if err := configureStatementTransaction(tx); err != nil {
 		_ = tx.Rollback()
 		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
 	}

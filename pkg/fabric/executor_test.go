@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -111,6 +112,10 @@ type mockEngine struct {
 }
 
 func newTestLocalExecutor(mock *mockCypherExecutor) *LocalFragmentExecutor {
+	return newTestLocalExecutorFor(mock)
+}
+
+func newTestLocalExecutorFor(mock CypherExecutor) *LocalFragmentExecutor {
 	engines := map[string]storage.Engine{
 		"db1":    &mockEngine{},
 		"shard1": &mockEngine{},
@@ -205,7 +210,10 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 		},
 	}
 
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	// The dispatcher hands each local fragment its participant's
+	// sub-transaction; the local participant claims the write when the
+	// fragment writes, as the Cypher executor's does.
+	exec := NewFabricExecutor(catalog, newTestLocalExecutorFor(&claimingCypherExecutor{mock}), nil)
 	ctx := context.Background()
 	tx := NewFabricTransaction("tx-test")
 
@@ -214,7 +222,6 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 		Input:     &FragmentInit{},
 		Query:     "CREATE (n:Test)",
 		GraphName: "shard1",
-		IsWrite:   true,
 	}
 	_, err := exec.Execute(ctx, tx, frag1, nil, "")
 	if err != nil {
@@ -226,12 +233,29 @@ func TestFabricExecutor_TransactionWriteConstraint(t *testing.T) {
 		Input:     &FragmentInit{},
 		Query:     "CREATE (n:Test)",
 		GraphName: "shard2",
-		IsWrite:   true,
 	}
 	_, err = exec.Execute(ctx, tx, frag2, nil, "")
-	if err != ErrSecondWriteShard {
+	if !errors.Is(err, ErrSecondWriteShard) {
 		t.Errorf("expected ErrSecondWriteShard, got: %v", err)
 	}
+	if tx.WriteShard() != "local:shard1" {
+		t.Errorf("expected local:shard1 to write, got %q", tx.WriteShard())
+	}
+}
+
+// claimingCypherExecutor is a local participant that claims the write of
+// the fragment it runs when the fragment creates.
+type claimingCypherExecutor struct{ *mockCypherExecutor }
+
+func (c *claimingCypherExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params, record map[string]interface{}) ([]string, [][]interface{}, error) {
+	tx, _ := FabricTransactionFromContext(ctx)
+	sub, _ := SubTransactionFromContext(ctx)
+	if strings.HasPrefix(query, "CREATE") {
+		if _, err := tx.ClaimWrite(sub.ShardName); err != nil {
+			return nil, nil, err
+		}
+	}
+	return c.mockCypherExecutor.ExecuteQueryWithRecord(ctx, dbName, engine, query, params, record)
 }
 
 func TestFabricExecutor_Apply(t *testing.T) {
@@ -654,7 +678,6 @@ func TestExecuteUnionSequential_Direct(t *testing.T) {
 			Query:     "CREATE (n:Row)",
 			GraphName: "db1",
 			Columns:   []string{"n"},
-			IsWrite:   true,
 		},
 		RHS: &FragmentExec{
 			Input:     &FragmentInit{},
@@ -829,19 +852,19 @@ func TestCombineRowsByIndexes_InnerOverridesOuter(t *testing.T) {
 
 func TestFragmentContainsWrite(t *testing.T) {
 	t.Run("exec write", func(t *testing.T) {
-		if !fragmentContainsWrite(&FragmentExec{IsWrite: true}) {
+		if !fragmentContainsWrite(&FragmentExec{Query: "CREATE (n)"}) {
 			t.Fatal("expected write fragment to be detected")
 		}
 	})
 	t.Run("exec read", func(t *testing.T) {
-		if fragmentContainsWrite(&FragmentExec{IsWrite: false}) {
+		if fragmentContainsWrite(&FragmentExec{Query: "RETURN 1"}) {
 			t.Fatal("expected read fragment to be non-write")
 		}
 	})
 	t.Run("nested apply", func(t *testing.T) {
 		f := &FragmentApply{
-			Input: &FragmentExec{IsWrite: false},
-			Inner: &FragmentExec{IsWrite: true},
+			Input: &FragmentExec{Query: "RETURN 1"},
+			Inner: &FragmentExec{Query: "CREATE (n)"},
 		}
 		if !fragmentContainsWrite(f) {
 			t.Fatal("expected nested write to be detected")
@@ -849,10 +872,10 @@ func TestFragmentContainsWrite(t *testing.T) {
 	})
 	t.Run("nested union", func(t *testing.T) {
 		f := &FragmentUnion{
-			LHS: &FragmentExec{IsWrite: false},
+			LHS: &FragmentExec{Query: "RETURN 1"},
 			RHS: &FragmentApply{
 				Input: &FragmentInit{},
-				Inner: &FragmentExec{IsWrite: true},
+				Inner: &FragmentExec{Query: "CREATE (n)"},
 			},
 		}
 		if !fragmentContainsWrite(f) {
@@ -2137,7 +2160,7 @@ func TestExecuteApplyAsPipeline_FabricColumnsFiltered(t *testing.T) {
 }
 
 func TestFragmentContainsWrite_LeafAndInit(t *testing.T) {
-	if fragmentContainsWrite(&FragmentLeaf{Input: &FragmentExec{IsWrite: true}}) {
+	if fragmentContainsWrite(&FragmentLeaf{Input: &FragmentExec{Query: "CREATE (n)"}}) {
 		t.Log("leaf delegates to input")
 	}
 	if fragmentContainsWrite(&FragmentInit{}) {
@@ -2158,7 +2181,7 @@ func TestExecuteUnion_RoutesToSequentialForWrite(t *testing.T) {
 	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
 
 	union := &FragmentUnion{
-		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A)", GraphName: "db1", IsWrite: true},
+		LHS:     &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:A)", GraphName: "db1"},
 		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "db1"},
 		Columns: []string{"v"},
 	}
@@ -2725,7 +2748,6 @@ func TestExecuteExec_WithTransaction(t *testing.T) {
 		Input:     &FragmentInit{},
 		Query:     "MATCH (n) RETURN n.id",
 		GraphName: "db1",
-		IsWrite:   false,
 	}
 	result, err := exec.Execute(context.Background(), tx, frag, nil, "")
 	if err != nil {
@@ -3110,7 +3132,7 @@ func TestFabricTransaction_Commit_NilCallbacksSkipsToCommitted(t *testing.T) {
 	}
 }
 
-func TestFabricTransaction_Commit_CompensationError(t *testing.T) {
+func TestFabricTransaction_Commit_RollbackError(t *testing.T) {
 	tx := NewFabricTransaction("tx-comp-err")
 	_, _ = tx.GetOrOpen("shard_a", false)
 	_, _ = tx.GetOrOpen("shard_b", false)
@@ -3131,8 +3153,8 @@ func TestFabricTransaction_Commit_CompensationError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "compensation failed on") {
-		t.Fatalf("expected compensation failure in error, got: %v", err)
+	if !strings.Contains(err.Error(), "rollback failed on") {
+		t.Fatalf("expected the rollback failure in the error, got: %v", err)
 	}
 }
 
@@ -3720,7 +3742,7 @@ func TestSplitTopLevelEquality_AllQuoteTypes(t *testing.T) {
 
 func TestFragmentContainsWrite_LeafInputWrite(t *testing.T) {
 	leaf := &FragmentLeaf{
-		Input: &FragmentExec{IsWrite: true},
+		Input: &FragmentExec{Query: "CREATE (n)"},
 	}
 	if !fragmentContainsWrite(leaf) {
 		t.Fatal("expected leaf with write input to be detected")
@@ -3873,7 +3895,7 @@ func TestExecuteExec_RemoteWithTransaction(t *testing.T) {
 
 	tx := NewFabricTransaction("tx-remote")
 	frag := &FragmentExec{
-		Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "remote.shard", IsWrite: true,
+		Input: &FragmentInit{}, Query: "RETURN 1 AS x", GraphName: "remote.shard",
 	}
 	result, err := exec.Execute(context.Background(), tx, frag, nil, "Bearer tok")
 	if err != nil {
@@ -4072,14 +4094,14 @@ func TestE2E_WriteDetectionEnforcesOneWriteShard(t *testing.T) {
 	tx := NewFabricTransaction("tx-e2e")
 
 	// Write to shard1 succeeds.
-	frag1 := &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:Test)", GraphName: "shard1", IsWrite: true}
+	frag1 := &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:Test)", GraphName: "shard1"}
 	_, err := exec.Execute(context.Background(), tx, frag1, nil, "")
 	if err != nil {
 		t.Fatalf("first write should succeed: %v", err)
 	}
 
 	// Write to shard2 must fail with Neo4j-compatible error.
-	frag2 := &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:Test)", GraphName: "shard2", IsWrite: true}
+	frag2 := &FragmentExec{Input: &FragmentInit{}, Query: "CREATE (n:Test)", GraphName: "shard2"}
 	_, err = exec.Execute(context.Background(), tx, frag2, nil, "")
 	if err != ErrSecondWriteShard {
 		t.Fatalf("expected ErrSecondWriteShard, got: %v", err)

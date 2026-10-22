@@ -98,6 +98,13 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	return e.runScopedStatement(ctx, cypher, func(ctx context.Context, target *StorageExecutor) (*ExecuteResult, error) {
+		return target.execute(ctx, cypher, params)
+	})
+}
+
+// execute runs a statement Execute was given.
+func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement

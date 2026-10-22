@@ -85,9 +85,6 @@ type FragmentExec struct {
 
 	// Columns lists the output column names produced by this execution.
 	Columns []string
-
-	// IsWrite indicates whether this fragment performs write operations.
-	IsWrite bool
 }
 
 func (*FragmentExec) fragment() {}

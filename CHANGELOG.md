@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Neo.ClientError.Statement.SyntaxError` (#1339).
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
+- A composite-database statement run outside an explicit transaction keeps its writes only when the whole statement
+  succeeds: a later runtime error, or an error from a remote constituent, now leaves none of them, as in Neo4j. A
+  statement writes to one database: each write takes its database as the statement's write database when it runs,
+  wherever it runs (a part of the statement, a statement a procedure runs, a database a `USE` there selects, a
+  composite statement run inside it, a remote constituent's write session), and a write to a second database is
+  refused before it runs, with nothing kept. A part that receives no rows writes nothing and takes nothing. On a remote
+  constituent only a built-in procedure's mode counts as reading; parts that read run in a read session, which keeps
+  nothing. `CALL { ... } IN TRANSACTIONS` still commits each batch.
 
 - Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
   on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.

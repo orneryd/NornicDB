@@ -69,10 +69,11 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, nil, true, err
 		}
-		scoped, scopedCtx, err := e.useDatabase(ctx, use.Name, remaining)
+		scoped, scopedCtx, release, err := e.useDatabase(ctx, use.Name, remaining)
 		if err != nil {
 			return nil, nil, true, err
 		}
+		defer release()
 		targetExec = scoped
 		ctx = scopedCtx
 		body = remaining
