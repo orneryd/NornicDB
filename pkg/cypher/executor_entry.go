@@ -459,9 +459,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {
-		if err := e.statementParametersError(ctx, cypher, params); err != nil {
-			return nil, err
-		}
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
@@ -469,7 +466,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+			if err := e.validateSemanticScopes(ctx, fabricSingleGraphStatement(modeQuery)); err != nil {
+				return nil, err
+			}
+			if err := e.statementParametersError(ctx, cypher, params); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
@@ -486,8 +486,19 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.observeQuery(classifyOpType(info, true /* isFabric */, false), true, slowStart)
 		execSpan.SetAttributes(attribute.String("cypher.op_type", "fabric"))
 		inExplicitTx := e.txContext != nil && e.txContext.active
+		// As on one database, and as Neo4j compiles a statement, its
+		// variable scopes are checked before it plans, enlists a participant
+		// or runs any part: a CALL scope clause naming a variable the query
+		// doesn't define is rejected here. A missing parameter is reported
+		// after both, so these syntax errors come first.
+		if err := e.validateSemanticScopes(ctx, fabricSingleGraphStatement(cypher)); err != nil {
+			return nil, err
+		}
 		preparedFabric, err := e.prepareFabricExecution(ctx, cypher)
 		if err != nil {
+			return nil, err
+		}
+		if err := e.statementParametersError(ctx, cypher, params); err != nil {
 			return nil, err
 		}
 		ctx = context.WithValue(ctx, fabricPreparedExecKey{}, preparedFabric)
@@ -723,8 +734,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
-	// scopes are those of the statement without it.
-	scopeText, _ := stripWithEmbeddingSuffix(cypher)
+	// scopes are those of the statement without it. EXPLAIN and PROFILE
+	// check the statement they plan, as Neo4j compiles it.
+	_, scopeText := parseExecutionMode(cypher)
+	scopeText, _ = stripWithEmbeddingSuffix(scopeText)
 	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}

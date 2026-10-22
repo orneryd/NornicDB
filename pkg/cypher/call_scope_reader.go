@@ -21,7 +21,7 @@ type callSubqueryScopeClause struct {
 func readCallSubqueryScope(source string) callSubqueryScopeClause {
 	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
 	if !syntax.Valid() {
-		return callSubqueryScopeClause{}
+		return callSubqueryScopeClause{invalid: err != nil}
 	}
 	first, _ := syntax.LeadingCall()
 	if !first.Valid() {

@@ -16,15 +16,36 @@ func decodeRemoteHTTPValue(raw json.RawMessage, metadata []interface{}, index *i
 // REST values preserve the positions lost by Neo4j's flattened metadata for
 // empty maps/lists. A graph marker requires the serializer's distinct envelope,
 // not merely equality between an ordinary map and an entity's property map.
+// The metadata is one flat list per row (a list or map adds its elements'
+// entries, a plain value null); it is walked when the row has graph entities
+// or typed temporal or point values (RemoteTypedValue).
 func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []interface{}, index *int, entities map[string]interface{}) (interface{}, error) {
+	return decodeRemoteHTTPRowValue(raw, restRaw, metadata, index, entities, len(entities) > 0 || remoteHTTPMetaHasTypes(metadata))
+}
+
+// remoteHTTPMetaHasTypes reports whether a row's metadata types a temporal or
+// point value.
+func remoteHTTPMetaHasTypes(metadata []interface{}) bool {
+	for _, entry := range metadata {
+		if typed, ok := entry.(map[string]interface{}); ok {
+			if kind, _ := typed["type"].(string); kind != "" && kind != "node" && kind != "relationship" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func decodeRemoteHTTPRowValue(raw, restRaw json.RawMessage, metadata []interface{}, index *int, entities map[string]interface{}, walk bool) (interface{}, error) {
 	var plain interface{}
-	if err := json.Unmarshal(raw, &plain); err != nil {
+	if err := unmarshalRemoteHTTPJSON(raw, &plain); err != nil {
 		return nil, err
 	}
+	plain = remoteHTTPNumbers(plain)
 	if len(restRaw) > 0 && !json.Valid(restRaw) {
 		return nil, localizedError(localization.StorageRemoteRESTInvalidJSON(), nil)
 	}
-	if len(entities) == 0 {
+	if !walk {
 		return plain, nil
 	}
 	if *index < len(metadata) {
@@ -57,6 +78,12 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 				*index++
 				return RemoteEntityValue(entity), nil
 			}
+			if kind, _ := entityMetadata["type"].(string); kind != "node" && kind != "relationship" {
+				if typed, ok := remoteTypedFromHTTP(kind, plain); ok {
+					*index++
+					return typed, nil
+				}
+			}
 		}
 	}
 	switch plain.(type) {
@@ -85,7 +112,7 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 			if len(restRaw) > 0 && !present {
 				return nil, localizedError(localization.StorageRemoteRESTMapKeysMismatch(), nil)
 			}
-			value, err := decodeRemoteHTTPValueWithREST(nested, nestedREST, metadata, index, entities)
+			value, err := decodeRemoteHTTPRowValue(nested, nestedREST, metadata, index, entities, walk)
 			if err != nil {
 				return nil, err
 			}
@@ -112,7 +139,7 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 			if len(restRaw) > 0 {
 				itemREST = restItems[position]
 			}
-			value, err := decodeRemoteHTTPValueWithREST(item, itemREST, metadata, index, entities)
+			value, err := decodeRemoteHTTPRowValue(item, itemREST, metadata, index, entities, walk)
 			if err != nil {
 				return nil, err
 			}
@@ -145,9 +172,10 @@ func remoteHTTPRESTEntity(raw json.RawMessage, plain interface{}, metadata map[s
 		return false
 	}
 	var properties interface{}
-	if json.Unmarshal(envelope.Data, &properties) != nil {
+	if unmarshalRemoteHTTPJSON(envelope.Data, &properties) != nil {
 		return false
 	}
+	properties = remoteHTTPNumbers(properties)
 	// An ordinary REST map equals its row representation and cannot also equal
 	// its own finite nested data field. No map-key shape grants provenance.
 	return reflect.DeepEqual(plain, properties)

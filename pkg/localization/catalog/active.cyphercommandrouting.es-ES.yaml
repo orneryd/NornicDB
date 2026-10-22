@@ -106,3 +106,5 @@
   other: "No se permite acceder a más de una base de datos por transacción. Se intentó acceder a {{.Target}}, actualmente se usa {{.Current}}"
 - id: cyphercommandrouting.graph_function_only_in_use
   other: "`{{.Function}}` solo está permitido en la primera posición de una cláusula USE."
+- id: cyphercommandrouting.fabric_import_entity
+  other: "Actualmente no se admite importar valores {{.Kind}} en subconsultas remotas"
