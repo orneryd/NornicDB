@@ -20,6 +20,9 @@ func filteredSearchFixture(t *testing.T) *Service {
 	t.Helper()
 	store := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
 	svc := NewServiceWithDimensions(store, 2)
+	// Search can leave the 1,250-vector HNSW build running after its exact
+	// fallback returns. Join the service owner before later build-hook tests.
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	add := func(node *storage.Node) {
 		_, err := store.CreateNode(node)
 		require.NoError(t, err)

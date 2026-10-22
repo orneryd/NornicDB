@@ -18,6 +18,9 @@ func TestVectorQueriesWhileNodesAreIndexed(t *testing.T) {
 	engine := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
+	// Vector queries can start an owner-scoped background HNSW build. Join it
+	// before the engine closes or a later test installs a build hook.
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "n0", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 
 	var wg sync.WaitGroup
