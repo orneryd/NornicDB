@@ -1,10 +1,13 @@
 package fabric
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // HotPathTrace captures per-query Fabric optimization branch usage.
 type HotPathTrace struct {
-	ApplyBatchedLookupRows bool
+	ApplyBatchedLookupRows atomic.Bool
 }
 
 type hotPathTraceKey struct{}
@@ -34,5 +37,5 @@ func markApplyBatchedLookupRows(ctx context.Context) {
 	if trace == nil {
 		return
 	}
-	trace.ApplyBatchedLookupRows = true
+	trace.ApplyBatchedLookupRows.Store(true)
 }
