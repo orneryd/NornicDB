@@ -23,6 +23,9 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 	if expr == "" {
 		return nil, false
 	}
+	if !deterministicExecution(ctx, expr, 0) {
+		return nil, false
+	}
 	for _, variable := range expressionFreeVariables(expr) {
 		if _, bound := e.boundValue(ctx, variable); !bound {
 			return nil, false
@@ -124,16 +127,8 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 		return []*storage.Node{}, true, nil
 	}
 
-	if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+	if !e.pipelineNodeMatchesPattern(node, nodePattern) {
 		return []*storage.Node{}, true, nil
-	}
-
-	if len(nodePattern.properties) > 0 {
-		for k, v := range nodePattern.properties {
-			if node.Properties[k] != v {
-				return []*storage.Node{}, true, nil
-			}
-		}
 	}
 
 	return []*storage.Node{node}, true, nil
@@ -243,16 +238,8 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 		return []*storage.Node{}, true, nil
 	}
 
-	if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+	if !e.pipelineNodeMatchesPattern(node, nodePattern) {
 		return []*storage.Node{}, true, nil
-	}
-
-	if len(nodePattern.properties) > 0 {
-		for k, v := range nodePattern.properties {
-			if node.Properties[k] != v {
-				return []*storage.Node{}, true, nil
-			}
-		}
 	}
 
 	return []*storage.Node{node}, true, nil
@@ -402,7 +389,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		if err != nil || node == nil {
 			continue
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+		if !e.seekCandidateMatchesPattern(node, nodePattern, anyOf) {
 			continue
 		}
 		actual, exists := node.Properties[property]
@@ -478,7 +465,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 		if err != nil || node == nil {
 			continue
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+		if !e.seekCandidateMatchesPattern(node, nodePattern, anyOf) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -544,7 +531,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 		if err != nil || node == nil {
 			continue
 		}
-		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
+		if !e.seekCandidateMatchesPattern(node, nodePattern, anyOf) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -750,7 +737,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+		if !e.pipelineNodeMatchesPattern(node, nodePattern) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -831,7 +818,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
+		if !e.pipelineNodeMatchesPattern(node, nodePattern) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -950,10 +937,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		if err != nil || node == nil {
 			continue
 		}
-		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
-			continue
-		}
-		if len(nodePattern.properties) > 0 && !e.nodeMatchesProps(node, nodePattern.properties) {
+		if !e.pipelineNodeMatchesPattern(node, nodePattern) {
 			continue
 		}
 		nodes = append(nodes, node)
@@ -1181,11 +1165,11 @@ func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, pat
 	return e.indexCandidateLabels(schema, patternLabels, property), nil
 }
 
-// seekCandidateHasLabels reports whether a node an index listed still carries
-// the pattern's labels and one of anyOf (when set): an index can list a node
-// that has since lost the label.
-func seekCandidateHasLabels(node *storage.Node, patternLabels, anyOf []string) bool {
-	if len(patternLabels) > 0 && !mergeNodeHasLabels(node, patternLabels) {
+// seekCandidateMatchesPattern uses the canonical pattern predicate before
+// applying a WHERE label disjunction. An index can list a node that has
+// since lost a label or no longer satisfies an inline property map.
+func (e *StorageExecutor) seekCandidateMatchesPattern(node *storage.Node, pattern nodePatternInfo, anyOf []string) bool {
+	if !e.pipelineNodeMatchesPattern(node, pattern) {
 		return false
 	}
 	return len(anyOf) == 0 || nodeHasAnyLabel(node, anyOf)
@@ -1798,7 +1782,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 	for _, id := range ordered {
 		// An ID the index still lists for a node that is gone or lost a
 		// pattern label is skipped.
-		if node, err := e.getQueryNode(e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
+		if node, err := e.getQueryNode(e.storage, id); err == nil && e.pipelineNodeMatchesPattern(node, nodePattern) {
 			nodes = append(nodes, node)
 		}
 	}
@@ -1913,8 +1897,9 @@ func mirroredComparison(operator string) string {
 // from it, so a lookup that uses an index for rows uses it for count(*) too
 // (#820).
 func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
-	params := getParamsFromContext(ctx)
-	if hint.limit > 0 && hint.orderExpr != "" {
+	// Access selection is independent of window certification. An unbounded
+	// seek still receives the complete WHERE without proving an unused LIMIT.
+	if hint.limit > 0 && hint.orderExpr != "" && compileMatchPredicateFrontier(ctx, whereClause).certifiesNodeWindow(nodePattern.variable) {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
 			func() ([]*storage.Node, bool, error) {
 				return e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit)
@@ -1930,9 +1915,23 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			}
 			if used {
 				e.markOuterIndexTopKUsed()
-				return nodes, false, true, nil
+				return nodes, whereClause != "", true, nil
 			}
 		}
+	}
+	nodes, whereApplied, used, err = e.collectUnboundedIndexNodeCandidates(ctx, nodePattern, whereClause)
+	if used && err == nil {
+		// Access only narrows the population. Every unbounded seek and batch
+		// prefetch crosses the same acceptance/error frontier as the scan.
+		nodes, err = e.compileNodePatternAcceptance(ctx, nodePattern, "").filter(nodes)
+	}
+	return nodes, whereApplied, used, err
+}
+
+func (e *StorageExecutor) collectUnboundedIndexNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+	params := getParamsFromContext(ctx)
+	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
+		return []*storage.Node{node}, false, true, nil
 	}
 	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
 		return nodes, false, used, err
@@ -1978,12 +1977,12 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			if used {
 				e.markMergeSchemaLookupUsed()
 			}
-			if !used || len(nodePattern.labels) < 2 {
+			if !used {
 				return nodes, used, nil
 			}
 			labelled := nodes[:0]
 			for _, node := range nodes {
-				if mergeNodeHasLabels(node, nodePattern.labels) {
+				if e.pipelineNodeMatchesPattern(node, nodePattern) {
 					labelled = append(labelled, node)
 				}
 			}
@@ -2002,9 +2001,6 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			return nil, false, false, err
 		}
 		if used {
-			if len(nodePattern.properties) > 0 {
-				nodes = e.filterNodesByProperties(nodes, nodePattern.properties)
-			}
 			// A WHERE that is exactly <variable>.<property> IN <list> on an
 			// indexed property is answered by the index: one lookup per list
 			// value returns exactly the nodes it selects, so the caller

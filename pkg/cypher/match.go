@@ -5,7 +5,6 @@ package cypher
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -182,45 +181,6 @@ func (e *StorageExecutor) compareNodeOrderSpecs(a, b *storage.Node, specs []node
 		return cmp
 	}
 	return 0
-}
-
-// selectTopKNodesByOrder returns the first k nodes for simple ORDER BY expressions
-// without sorting the full node set. It supports any number of ORDER BY terms.
-func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
-	if k <= 0 || len(nodes) <= k {
-		return nodes, false
-	}
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
-	if len(specs) == 0 {
-		return nil, false
-	}
-
-	top := make([]*storage.Node, 0, k)
-	less := func(a, b *storage.Node) bool {
-		return e.compareNodeOrderSpecs(a, b, specs) < 0
-	}
-	worse := func(a, b *storage.Node) bool {
-		return e.compareNodeOrderSpecs(a, b, specs) > 0
-	}
-
-	for _, n := range nodes {
-		if len(top) < k {
-			top = append(top, n)
-			continue
-		}
-		// Find current worst in top-K (k is small in this workload, linear scan is faster than heap overhead).
-		worstIdx := 0
-		for i := 1; i < len(top); i++ {
-			if worse(top[i], top[worstIdx]) {
-				worstIdx = i
-			}
-		}
-		if less(n, top[worstIdx]) {
-			top[worstIdx] = n
-		}
-	}
-	sort.Slice(top, func(i, j int) bool { return less(top[i], top[j]) })
-	return top, true
 }
 
 // executeAggregation handles aggregate functions (COUNT, SUM, AVG, etc.)

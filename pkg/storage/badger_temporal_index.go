@@ -446,29 +446,11 @@ func (b *BadgerEngine) currentTemporalNodeByScanInNamespace(namespace string, co
 	if err != nil {
 		return nil, err
 	}
-	var best *Node
-	var bestStart time.Time
+	choice := temporalNodeChoice{namespace: namespace, constraint: constraint, keyValue: keyValue, asOf: asOf}
 	for _, candidate := range nodes {
-		if candidate == nil {
-			continue
-		}
-		dbName, _, ok := ParseDatabasePrefix(string(candidate.ID))
-		if !ok || dbName != namespace {
-			continue
-		}
-		if !nodeMatchesTemporalLookup(candidate, constraint, keyValue, asOf) {
-			continue
-		}
-		_, start, _, _, ok := temporalNodeState(candidate, constraint)
-		if !ok {
-			continue
-		}
-		if best == nil || start.After(bestStart) {
-			best = candidate
-			bestStart = start
-		}
+		choice.consider(candidate)
 	}
-	return best, nil
+	return choice.node, nil
 }
 
 // temporalListNodeAsOfInNamespace shares the existing descending history reader
@@ -501,71 +483,75 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 		return false, nil
 	}
 	schema := b.GetSchemaForNamespace(namespace)
+	return temporalNodeIsCurrent(namespace, node, schema, asOf, func(constraint Constraint, keyValue interface{}) (*Node, error) {
+		return b.currentTemporalNodeForConstraint(namespace, node, constraint, keyValue, asOf)
+	})
+}
+
+// temporalNodeIsCurrent is the acceptance rule for every temporal read view.
+// The view owns candidate lookup; constraint/key/identity semantics stay here.
+func temporalNodeIsCurrent(namespace string, node *Node, schema *SchemaManager, asOf time.Time, lookup func(Constraint, interface{}) (*Node, error)) (bool, error) {
+	if node == nil {
+		return false, nil
+	}
 	constraints := temporalConstraintsForLabels(schema, node.Labels)
 	if len(constraints) == 0 {
 		return true, nil
 	}
 	qualifiedID := qualifyTemporalNodeID(namespace, node.ID)
-	matched := false
 	for _, constraint := range constraints {
 		keyValue, _, _, _, ok := temporalNodeState(node, constraint)
 		if !ok {
 			continue
 		}
-		matched = true
-		target := temporalRefreshTarget{
-			constraint: constraint,
-			desc:       makeTemporalDescriptor(namespace, constraint, keyValue),
-			keyValue:   keyValue,
-		}
-		var current *Node
-		var err error
-		spec, _ := splitTemporalKeySpec(constraint.Properties)
-		if spec.listBearing(keyValue) {
-			current, err = b.temporalListNodeAsOfInNamespace(namespace, constraint, keyValue, asOf, false)
-		} else {
-			err = b.withView(func(txn *badger.Txn) error {
-				item, err := txn.Get(temporalCurrentKey(target.desc))
-				if err == nil {
-					var currentID NodeID
-					if err := item.Value(func(val []byte) error {
-						currentID = NodeID(append([]byte(nil), val...))
-						return nil
-					}); err != nil {
-						return err
-					}
-					currentNode, err := b.loadNodeForTemporalTxn(txn, currentID, false)
-					if err != nil {
-						return err
-					}
-					if nodeMatchesTemporalLookup(currentNode, target.constraint, target.keyValue, asOf) {
-						current = currentNode
-						return nil
-					}
-				} else if err != badger.ErrKeyNotFound {
-					return err
-				}
-				current, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, false)
-				return err
-			})
-		}
+		current, err := lookup(constraint, keyValue)
 		if err != nil {
 			return false, err
 		}
-		if current == nil && nodeMatchesTemporalLookup(node, constraint, keyValue, asOf) {
-			current, err = b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
-			if err != nil {
-				return false, err
-			}
-		}
-		if current == nil || current.ID != qualifiedID {
+		if current == nil || qualifyTemporalNodeID(namespace, current.ID) != qualifiedID {
 			return false, nil
 		}
 	}
-	if !matched {
-		return true, nil
-	}
 	return true, nil
+}
+
+func (b *BadgerEngine) currentTemporalNodeForConstraint(namespace string, node *Node, constraint Constraint, keyValue interface{}, asOf time.Time) (*Node, error) {
+	if b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+		return b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
+	}
+	spec, _ := splitTemporalKeySpec(constraint.Properties)
+	if spec.listBearing(keyValue) {
+		return b.temporalListNodeAsOfInNamespace(namespace, constraint, keyValue, asOf, false)
+	}
+	target := temporalRefreshTarget{constraint: constraint, desc: makeTemporalDescriptor(namespace, constraint, keyValue), keyValue: keyValue}
+	var current *Node
+	err := b.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(temporalCurrentKey(target.desc))
+		if err == nil {
+			var currentID NodeID
+			if err := item.Value(func(val []byte) error {
+				currentID = NodeID(append([]byte(nil), val...))
+				return nil
+			}); err != nil {
+				return err
+			}
+			current, err = b.loadNodeForTemporalTxn(txn, currentID, false)
+			if err != nil {
+				return err
+			}
+			if nodeMatchesTemporalLookup(current, constraint, keyValue, asOf) {
+				return nil
+			}
+		} else if err != badger.ErrKeyNotFound {
+			return err
+		}
+		current, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, false)
+		return err
+	})
+	if err != nil || current != nil || !nodeMatchesTemporalLookup(node, constraint, keyValue, asOf) {
+		return current, err
+	}
+	return b.currentTemporalNodeByScanInNamespace(namespace, constraint, keyValue, asOf)
 }
 
 // IsCurrentTemporalNode reports whether the given temporal node is the live/current version.

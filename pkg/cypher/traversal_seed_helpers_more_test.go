@@ -10,9 +10,12 @@ import (
 
 func TestTraversalSeedHelpers_WhereExtractionAndReverse(t *testing.T) {
 	where := "d.filed_at IS NOT NULL AND r.name = 'root' AND id(d) = 'x' AND elementId(d) = 'x2'"
-	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(where, "d", "r")
-	require.Equal(t, "d.filed_at IS NOT NULL AND id(d) = 'x' AND elementId(d) = 'x2'", seedOnly)
-	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause("", "d"))
+	seedOnly := compileMatchPredicateFrontier(context.Background(), where).traversalSeed("d")
+	// Seed pruning needs the complete compiled row-predicate proof. The ID
+	// function terms remain in the complete MATCH filter when that compiler
+	// declines them; semantic variable references alone do not admit replay.
+	require.Equal(t, "d.filed_at IS NOT NULL", seedOnly)
+	require.Equal(t, "", compileMatchPredicateFrontier(context.Background(), "").traversalSeed("d"))
 
 	orig := &TraversalMatch{
 		StartNode:    nodePatternInfo{variable: "a", labels: []string{"A"}},
@@ -27,8 +30,6 @@ func TestTraversalSeedHelpers_WhereExtractionAndReverse(t *testing.T) {
 	require.Nil(t, reverseTraversalMatch(&TraversalMatch{IsChained: true}))
 	require.Nil(t, reverseTraversalMatch(nil))
 
-	require.Equal(t, 200, topKSeedLimit(1))
-	require.Equal(t, 800, topKSeedLimit(200))
 }
 
 func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {

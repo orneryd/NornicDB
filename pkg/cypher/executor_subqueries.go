@@ -314,29 +314,20 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			if parseErr != nil {
 				return nil, parseErr
 			}
+			// The shared access owner narrows with the complete predicate and
+			// applies the canonical temporal/error boundary before returning seeds.
 			if whereClause != "" {
-				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
-				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
-					return nodes, err
+				nodes, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, np, whereClause, pipelineMatchPhysicalHint{})
+				if err != nil {
+					return nil, err
 				}
-				// O(k) batched ID seek path for: MATCH (v) WHERE id(v) IN $ids
-				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromIDIn(ctx, np, whereClause, params); ok || err != nil {
-						return nodes, err
+				if used {
+					if !whereApplied {
+						nodes = e.filterNodes(ctx, nodes, np.variable, whereClause)
 					}
-				}
-				// Indexed IN-list path for batched correlated lookups.
-				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(np, whereClause, params); ok || err != nil {
-						return nodes, err
-					}
-				}
-				// Indexed equality path.
-				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(ctx, np, whereClause); ok || err != nil {
-					return nodes, err
+					return nodes, nil
 				}
 			}
-
 			// Label/property-only fast path.
 			nodes, err := e.loadPatternNodes(ctx, np.labels, np.properties)
 			if err != nil {

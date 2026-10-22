@@ -8,8 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSelectTopKNodesByOrder_MultiKey(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
+func TestTraversalStartSeedOrderLimit_MultiKey(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "ordered_multi_key")
+	exec := NewStorageExecutor(store)
 	nodes := []*storage.Node{
 		{ID: "n1", Properties: map[string]interface{}{"a": int64(3), "b": "a", "c": int64(1)}},
 		{ID: "n2", Properties: map[string]interface{}{"a": int64(3), "b": "a", "c": int64(2)}},
@@ -18,12 +19,21 @@ func TestSelectTopKNodesByOrder_MultiKey(t *testing.T) {
 		{ID: "n5", Properties: map[string]interface{}{"a": int64(1), "b": "a", "c": int64(9)}},
 	}
 
-	topK, ok := exec.selectTopKNodesByOrder(nodes, "n", "n.a DESC, n.b ASC, n.c DESC", 3)
-	require.True(t, ok)
-	require.Len(t, topK, 3)
-	require.Equal(t, "n2", string(topK[0].ID))
-	require.Equal(t, "n1", string(topK[1].ID))
-	require.Equal(t, "n3", string(topK[2].ID))
+	_, err := store.CreateNode(&storage.Node{ID: "q", Labels: []string{"Q"}})
+	require.NoError(t, err)
+	for _, node := range nodes {
+		node.Labels = []string{"N"}
+		node.Properties["id"] = string(node.ID)
+		_, err = store.CreateNode(node)
+		require.NoError(t, err)
+		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID("r-" + string(node.ID)), Type: "R", StartNode: node.ID, EndNode: "q"}))
+	}
+	_, err = exec.Execute(context.Background(), "CREATE INDEX ordered_a FOR (n:N) ON (n.a)", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(context.Background(), "MATCH (n:N)-[:R]->(q:Q) WHERE n.a IS NOT NULL RETURN n.id ORDER BY n.a DESC, n.b ASC, n.c DESC LIMIT 3", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"n2"}, {"n1"}, {"n3"}}, result.Rows)
+	require.True(t, exec.LastHotPathTrace().TraversalStartSeedTopK)
 }
 
 func TestDrawerFeedTraversal_UsesStartSeedTopK(t *testing.T) {
