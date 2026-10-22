@@ -107,7 +107,6 @@ type queryBodyBranch struct {
 type queryBodyClause struct {
 	pipelineClause
 	start, end int
-	syntax     cypherantlr.SyntaxNode
 }
 
 func declinedQueryBody(start, end int) queryBody {
@@ -284,7 +283,7 @@ func queryExpressionBody(container cypherantlr.SyntaxNode) (queryBody, cypherant
 		_, end = where.Span()
 	}
 	branch := queryBodyBranch{start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
-	branch.clauses = []queryBodyClause{{pipelineClause: pipelineClause{kind: pipelineClauseMatch, text: container.Source()[start:end]}, start: start, end: end, syntax: container}}
+	branch.clauses = []queryBodyClause{{pipelineClause: pipelineClause{kind: pipelineClauseMatch, text: container.Source()[start:end], syntax: container}, start: start, end: end}}
 	return queryBody{status: queryBodyRead, branches: []queryBodyBranch{branch}}, container, true
 }
 
@@ -354,7 +353,7 @@ func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	if start > nodeStart {
 		text = text[start-nodeStart:]
 	}
-	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional}, start: start, end: end, syntax: node})
+	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional, syntax: node}, start: start, end: end})
 }
 
 func querySyntaxClauseKind(node cypherantlr.SyntaxNode) (pipelineClauseKind, bool) {

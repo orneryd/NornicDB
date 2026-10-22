@@ -410,16 +410,16 @@ var staticComparisonKeywords = []string{"STARTS WITH", "ENDS WITH", "CONTAINS", 
 // check returns the static type of expression and the first operator type
 // error in it. Its result is proven or unknown (gateProven): a type only a
 // verified rule produced can reach a consumer.
-func (checker staticOperatorChecker) check(expression string) (staticOperand, error) {
+func (checker staticOperatorChecker) check(ctx context.Context, expression string) (staticOperand, error) {
 	if checker.checked == nil {
-		operand, err := checker.derive(expression)
+		operand, err := checker.derive(ctx, expression)
 		return gateProven(operand), err
 	}
 	expression = strings.TrimSpace(expression)
 	if result, done := checker.checked[expression]; done {
 		return result.operand, result.err
 	}
-	operand, err := checker.derive(expression)
+	operand, err := checker.derive(ctx, expression)
 	operand = gateProven(operand)
 	checker.checked[expression] = staticCheckResult{operand: operand, err: err}
 	return operand, err
@@ -428,7 +428,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 // derive is check before its gate. CASE, list comprehensions, quantifiers,
 // pattern expressions and subqueries are not looked into: they bind their
 // own variables.
-func (checker staticOperatorChecker) derive(expression string) (staticOperand, error) {
+func (checker staticOperatorChecker) derive(ctx context.Context, expression string) (staticOperand, error) {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return staticOperand{}, nil
@@ -440,13 +440,13 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 	}
 	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		return checker.checkAtom(expression)
+		return checker.checkAtom(ctx, expression)
 	}
 	if expression[0] == '{' && findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
-		return checker.checkAtom(expression)
+		return checker.checkAtom(ctx, expression)
 	}
 	if _, _, projection := checker.mapProjection(expression); projection {
-		return checker.checkAtom(expression)
+		return checker.checkAtom(ctx, expression)
 	}
 	// A map projection is an operand: an expression around one (s{.a} IS
 	// NULL, toString(s{.a})) is typed like any other.
@@ -456,13 +456,13 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		return staticPatternExpressionType(expression), nil
 	}
 	if inner, enclosed := stripEnclosingExpressionParentheses(expression); enclosed {
-		return checker.check(inner)
+		return checker.check(ctx, inner)
 	}
 	if startsWithKeywordFold(expression, "CASE") {
 		end := leadingCaseExpressionEnd(expression)
 		if isCaseExpression(expression) && end == len(expression) {
 			if parsed, err := parseCaseExpression(expression); err == nil {
-				return checker.checkCase(parsed)
+				return checker.checkCase(ctx, parsed)
 			}
 			return staticOperand{}, nil
 		}
@@ -477,7 +477,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	for _, keyword := range []string{"OR", "XOR", "AND"} {
 		if index := infixKeywordIndex(scan, keyword); index > 0 {
 			for _, side := range [2]string{expression[:index], expression[keywordEndAt(expression, index, keyword):]} {
-				operand, err := checker.check(side)
+				operand, err := checker.check(ctx, side)
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -490,7 +490,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	}
 	// A bare NOT is a variable named not (WITH [1] AS not ... x IN not).
 	if startsWithKeywordFold(expression, "NOT") && strings.TrimSpace(expression[len("NOT"):]) != "" {
-		operand, err := checker.check(expression[len("NOT"):])
+		operand, err := checker.check(ctx, expression[len("NOT"):])
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -505,7 +505,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	if index := topLevelKeywordIndex(scan, "IS"); index > 0 {
 		rest := strings.TrimSpace(expression[index+len("IS"):])
 		if !startsWithKeywordFold(rest, "NULL") && !startsWithKeywordFold(strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(rest), "NOT")), "NULL") {
-			if _, err := checker.check(expression[:index]); err != nil {
+			if _, err := checker.check(ctx, expression[:index]); err != nil {
 				return staticOperand{}, err
 			}
 			return provenOperand("Boolean"), nil
@@ -513,10 +513,10 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	}
 	for _, keyword := range staticComparisonKeywords {
 		if index := topLevelKeywordIndex(scan, keyword); index > 0 {
-			if _, err := checker.check(expression[:index]); err != nil {
+			if _, err := checker.check(ctx, expression[:index]); err != nil {
 				return staticOperand{}, err
 			}
-			right, err := checker.check(expression[keywordEndAt(expression, index, keyword):])
+			right, err := checker.check(ctx, expression[keywordEndAt(expression, index, keyword):])
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -529,7 +529,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	for _, operator := range staticComparisonOperators {
 		if left, right, found := splitAtOperator(expression, operator, findTopLevelOperator(scan, operator, false, true)); found && left != "" && right != "" {
 			for _, side := range [2]string{left, right} {
-				operand, err := checker.check(side)
+				operand, err := checker.check(ctx, side)
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -552,18 +552,18 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		if !staticArithmeticOperandText(left) || !staticArithmeticOperandText(right) {
 			return staticOperand{}, nil
 		}
-		leftType, err := checker.check(left)
+		leftType, err := checker.check(ctx, left)
 		if err != nil {
 			return staticOperand{}, err
 		}
-		rightType, err := checker.check(right)
+		rightType, err := checker.check(ctx, right)
 		if err != nil {
 			return staticOperand{}, err
 		}
 		return checkOperator(operator, leftType, rightType, checker.scope.cypher25)
 	}
 	if (expression[0] == '-' || expression[0] == '+') && len(expression) > 1 {
-		operand, err := checker.check(expression[1:])
+		operand, err := checker.check(ctx, expression[1:])
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -581,15 +581,15 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 		return unaryOperand(operand), nil
 	}
-	return checker.checkAtom(expression)
+	return checker.checkAtom(ctx, expression)
 }
 
 // checkCase type-checks a CASE expression: a searched CASE's conditions must
 // be booleans. Its result retains every possible branch type, so a function
 // signature is rejected only when none of the alternatives fits.
-func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOperand, error) {
+func (checker staticOperatorChecker) checkCase(ctx context.Context, parsed *caseExpression) (staticOperand, error) {
 	if parsed.isSimple {
-		if _, err := checker.check(parsed.testExpression); err != nil {
+		if _, err := checker.check(ctx, parsed.testExpression); err != nil {
 			return staticOperand{}, err
 		}
 	}
@@ -603,7 +603,7 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 	var single staticOperand
 	branches := 0
 	merge := func(text string) error {
-		operand, err := checker.check(text)
+		operand, err := checker.check(ctx, text)
 		if err != nil {
 			return err
 		}
@@ -646,11 +646,11 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 	}
 	for _, when := range parsed.whenClauses {
 		if parsed.isSimple {
-			if _, err := checker.check(when.value); err != nil {
+			if _, err := checker.check(ctx, when.value); err != nil {
 				return staticOperand{}, err
 			}
 		} else {
-			condition, err := checker.check(when.condition)
+			condition, err := checker.check(ctx, when.condition)
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -804,8 +804,8 @@ func staticSliceBounds(inner string) (from, to string, slice bool) {
 
 // checkPostfix type-checks a subscript (receiver[inner]), a slice
 // (receiver[from..to]) or a property access (receiver.key).
-func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, subscript bool) (staticOperand, error) {
-	receiver, err := checker.check(receiverText)
+func (checker staticOperatorChecker) checkPostfix(ctx context.Context, receiverText, inner string, subscript bool) (staticOperand, error) {
+	receiver, err := checker.check(ctx, receiverText)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -824,7 +824,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 	}
 	if from, to, slice := staticSliceBounds(inner); slice {
 		for _, bound := range [2]string{from, to} {
-			operand, err := checker.check(bound)
+			operand, err := checker.check(ctx, bound)
 			if err != nil {
 				return staticOperand{}, err
 			}
@@ -842,7 +842,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		// (WHERE n.x[1..] is a list coercion error in Neo4j).
 		return provenOperand("List<T>"), nil
 	}
-	key, err := checker.check(inner)
+	key, err := checker.check(ctx, inner)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -1067,7 +1067,7 @@ func endsWithOperand(text string) bool {
 // Only a type mismatch of the second check counts: a plus read as unary
 // that wasn't (a variable named distinct before a binary plus) leaves text
 // that can only fail to parse, so it can't reject a valid statement.
-func checkedWithoutUnaryPlus(cypher string, cypher25 bool, check func(string) error) error {
+func checkedWithoutUnaryPlus(ctx context.Context, cypher string, cypher25 bool, check func(string) error) error {
 	if err := check(cypher); err != nil || cypher25 {
 		return err
 	}
@@ -1225,7 +1225,7 @@ func (checker staticOperatorChecker) maskMapProjections(expression string) strin
 
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
-func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand, error) {
+func (checker staticOperatorChecker) checkAtom(ctx context.Context, expression string) (staticOperand, error) {
 	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		name := strings.TrimSpace(expression[1:])
 		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
@@ -1243,19 +1243,19 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return operand, nil
 	}
 	if receiver, inner, subscript, postfix := staticPostfixSplit(expression); postfix {
-		return checker.checkPostfix(receiver, inner, subscript)
+		return checker.checkPostfix(ctx, receiver, inner, subscript)
 	}
 	if pattern, projection, comprehension := splitPatternComprehension(expression); comprehension {
-		return checker.checkPatternComprehension(pattern, projection)
+		return checker.checkPatternComprehension(ctx, pattern, projection)
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
 		if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
-			return checker.checkListComprehension(variable, list, predicate, projection)
+			return checker.checkListComprehension(ctx, variable, list, predicate, projection)
 		}
 		var elements []staticOperand
 		if strings.TrimSpace(inner) != "" {
 			for _, item := range splitTopLevelComma(inner) {
-				element, err := checker.check(item)
+				element, err := checker.check(ctx, item)
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -1268,7 +1268,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		mapOperand := provenOperand("Map")
 		for _, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
 			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				value, err := checker.check(pair[separator+1:])
+				value, err := checker.check(ctx, pair[separator+1:])
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -1290,7 +1290,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		for _, item := range splitTopLevelComma(items) {
 			if separator := findTopLevelMapKeyValueSeparator(item); separator > 0 {
-				if _, err := checker.check(item[separator+1:]); err != nil {
+				if _, err := checker.check(ctx, item[separator+1:]); err != nil {
 					return staticOperand{}, err
 				}
 			}
@@ -1300,13 +1300,13 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
 		if isQuantifierFunction(lowerASCII(function)) {
 			if variable, list, predicate, ok := parseQuantifierArguments(arguments); ok {
-				_, err := checker.checkListComprehension(variable, list, predicate, "")
+				_, err := checker.checkListComprehension(ctx, variable, list, predicate, "")
 				return provenOperand("Boolean"), err
 			}
 		}
 		if isReduceFormFunction(function) {
 			if form, ok := parseReduceForm(function, arguments); ok {
-				return checker.checkReduceTypes(form)
+				return checker.checkReduceTypes(ctx, form)
 			}
 		}
 		var operands []staticOperand
@@ -1318,7 +1318,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 				}
 				// An aggregate's DISTINCT isn't part of its argument.
 				argument, _ = cutDistinct(strings.TrimSpace(argument))
-				operand, err := checker.check(argument)
+				operand, err := checker.check(ctx, argument)
 				if err != nil {
 					return staticOperand{}, err
 				}
@@ -1611,7 +1611,7 @@ func forEachProjectedTailExpression(ctx context.Context, projection, rest string
 // (RETURN n.num AS n ORDER BY n + 2).
 func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
 	if clause.kind == pipelineClauseDelete {
-		if err := staticDeleteTargetTypeError(clause.text, scope); err != nil {
+		if err := staticDeleteTargetTypeError(ctx, clause.text, scope); err != nil {
 			return err
 		}
 	}
@@ -1622,7 +1622,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 			predicateScope = projectedScope()
 		}
 		checker := staticOperatorChecker{scope: predicateScope, params: params}
-		operand, err := checker.check(predicate)
+		operand, err := checker.check(ctx, predicate)
 		if err != nil {
 			return err
 		}
@@ -1633,7 +1633,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 	if clause.kind == pipelineClauseFilter {
 		predicate := pipelineFilterExpression(clause.text)
 		checker := staticOperatorChecker{scope: scope, params: params}
-		operand, err := checker.check(predicate)
+		operand, err := checker.check(ctx, predicate)
 		if err != nil {
 			return err
 		}
@@ -1650,7 +1650,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, claus
 			}
 			checker = *projected
 		}
-		_, err := checker.check(expression)
+		_, err := checker.check(ctx, expression)
 		return err
 	})
 }

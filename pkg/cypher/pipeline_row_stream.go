@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"iter"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,12 +13,15 @@ type pipelineRowProjection struct{ expression, alias string }
 type pipelineRowWith struct {
 	clause, where string
 	star          bool
+	columns       []string
+	sequential    bool
 	projections   []pipelineRowProjection
 
 	// Bound on the plan copy for one invocation, never in the plan cache.
-	imports pipelineRow
-	// Bound only on the invocation copy: eager consumers retain rows/scopes;
-	// streaming consumers borrow one map until their yield returns.
+	imports  pipelineRow
+	contexts []context.Context
+	// Streaming consumers borrow maps until yield returns; eager consumers
+	// retain their rows and may observe the projection's ordering scope.
 	retainRows     bool
 	skipValidation bool
 	observeScope   func(projected, scope pipelineRow)
@@ -85,6 +89,61 @@ func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith
 		return pipelineRowWith{}, false
 	}
 	return plan, true
+}
+
+func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipelineRow, plan pipelineRowWith, projected, scope pipelineRow) (pipelineRow, bool, bool) {
+	if projected == nil {
+		projected = pipelineRow{}
+	} else {
+		clear(projected)
+	}
+	for name, value := range row {
+		if (plan.star && (plan.sequential || plan.columns == nil || slices.Contains(plan.columns, name))) || strings.HasPrefix(name, "$") {
+			projected[name] = value
+		}
+	}
+	for index, projection := range plan.projections {
+		input := row
+		projectionCtx := ctx
+		if plan.sequential {
+			input = projected
+			projectionCtx = plan.contexts[index]
+		}
+		value, found := input[projection.expression]
+		if !found {
+			value, found = e.evaluateRowExpressionWithContext(projectionCtx, projection.expression, input)
+		}
+		if !found {
+			pipelineItemUnevaluable(ctx, projection.expression)
+			return nil, false, false
+		}
+		projected[projection.alias] = value
+	}
+	carryPipelineRowImports(projected, row, plan.imports)
+	if plan.where == "" && scope == nil && plan.observeScope == nil {
+		return projected, true, true
+	}
+	if scope == nil {
+		scope = pipelineRow{}
+	} else {
+		clear(scope)
+	}
+	for name, value := range row {
+		scope[name] = value
+	}
+	for name, value := range projected {
+		scope[name] = value
+	}
+	if plan.where != "" {
+		accepted := e.evaluateWithWhereCondition(ctx, plan.where, scope)
+		if !accepted || getExpressionFailure(ctx) != nil {
+			return projected, accepted, getExpressionFailure(ctx) == nil
+		}
+	}
+	if plan.observeScope != nil {
+		plan.observeScope(projected, scope)
+	}
+	return projected, true, true
 }
 
 func pipelineUnwindUsesRange(clause string) bool {
@@ -497,9 +556,8 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 
 func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
-		plan := plan.withImports(pipelineImports(ctx))
-		observeScope := plan.observeScope
-		needsScope := plan.where != "" || observeScope != nil
+		plan := bindPipelineRowWith(ctx, plan)
+		needsScope := plan.where != "" || plan.observeScope != nil
 		validateRows := !plan.skipValidation && strings.ContainsAny(plan.clause, "([")
 		var projected, scope pipelineRow
 		if !plan.retainRows {
@@ -510,9 +568,7 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 		}
 		valid := true
 		completed := input(func(row pipelineRow) bool {
-			// Borrow the run's buffers by value. Retained rows allocate their
-			// own maps below; reassigning these callback-local variables must
-			// not force two mutable map-handle cells onto the heap per run.
+			// Borrow handles per callback; retained rows get their own maps.
 			projected, scope := projected, scope
 			if err := ctx.Err(); err != nil {
 				recordExpressionFailure(ctx, err)
@@ -526,60 +582,12 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 					return false
 				}
 			}
-			if projected == nil {
-				projected = pipelineRow{}
-			} else {
-				clear(projected)
+			current, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, projected, scope)
+			if !resolved {
+				valid = false
+				return false
 			}
-			for name, value := range row {
-				if plan.star || strings.HasPrefix(name, "$") {
-					projected[name] = value
-				}
-			}
-			for _, projection := range plan.projections {
-				value, found := row[projection.expression]
-				if !found {
-					value, found = e.evaluateRowExpressionWithContext(ctx, projection.expression, row)
-				}
-				if !found {
-					pipelineItemUnevaluable(ctx, projection.expression)
-					valid = false
-					return false
-				}
-				projected[projection.alias] = value
-			}
-			carryPipelineRowImports(projected, row, plan.imports)
-			if needsScope {
-				if scope == nil {
-					if observeScope != nil {
-						scope = make(pipelineRow, len(row)+len(plan.projections))
-					} else {
-						scope = pipelineRow{}
-					}
-				} else {
-					clear(scope)
-				}
-				for name, value := range row {
-					scope[name] = value
-				}
-				for name, value := range projected {
-					scope[name] = value
-				}
-				if plan.where != "" {
-					accepted := e.evaluateWithWhereCondition(ctx, plan.where, scope)
-					if getExpressionFailure(ctx) != nil {
-						valid = false
-						return false
-					}
-					if !accepted {
-						return true
-					}
-				}
-				if observeScope != nil {
-					observeScope(projected, scope)
-				}
-			}
-			return yield(projected)
+			return !accepted || yield(current)
 		})
 		return completed && valid
 	}
@@ -630,11 +638,20 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 }
 
 func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
+	if body := semanticBodyFromContext(ctx); body != nil {
+		var err error
+		ctx, err = e.bindPipelineProgram(ctx, clauses, bindingNames(body.entry))
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, 0, false
+		}
+	}
 	expression, alias, ok := parsePipelineIteration(clauses[0].text)
 	if !ok {
 		return nil, 0, false
 	}
 	plans := make([]pipelineRowWith, 0)
+	contexts := make([]context.Context, 0)
 	for _, clause := range clauses[1:] {
 		if clause.kind != pipelineClauseWith {
 			break
@@ -646,6 +663,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		// The projection reads the rows produced by UNWIND and earlier WITHs.
 		// pipelineWithRowSource validates it against those actual rows.
 		plans = append(plans, plan)
+		contexts = append(contexts, withSemanticBodyClause(ctx, executionBodyScope(ctx, clause)))
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {
 		for _, input := range rows {
@@ -670,8 +688,8 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		}
 		return true
 	})
-	for _, plan := range plans {
-		source = e.pipelineWithRowSource(ctx, source, plan)
+	for index, plan := range plans {
+		source = e.pipelineWithRowSource(contexts[index], source, plan)
 	}
 	return source, len(plans), true
 }

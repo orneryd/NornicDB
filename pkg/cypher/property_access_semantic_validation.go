@@ -65,7 +65,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 				if err := checkExpressionPropertyAccesses(ctx, projection.expression, types, params); err != nil {
 					return err
 				}
-				next[projection.alias] = propertyAccessExpressionType(projection.expression, types, params)
+				next[projection.alias] = propertyAccessExpressionType(ctx, projection.expression, types, params)
 			}
 			types = next
 		case pipelineClauseFilter:
@@ -100,7 +100,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 						continue
 					}
 					name = normalizeProjectionColumnName(name)
-					next[name] = propertyAccessExpressionType(expression, types, params)
+					next[name] = propertyAccessExpressionType(ctx, expression, types, params)
 				}
 			}
 			// WHERE and ORDER BY see the projection's names; ORDER BY also
@@ -129,7 +129,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			variable := normalizeProjectionColumnName(alias)
 			// The element type of each list alternative, from the one
 			// list-element reader; unknown for a list of unknown elements.
-			element := elementOfType(propertyAccessExpressionType(expression, types, params))
+			element := elementOfType(propertyAccessExpressionType(ctx, expression, types, params))
 			if _, known := types[variable]; known || element != "" {
 				next := make(map[string]string, len(types)+1)
 				for name, typeName := range types {
@@ -146,7 +146,7 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 				return err
 			}
 			if clause.kind == pipelineClauseSet {
-				if err := setClauseSourceTypeError(text, types, params); err != nil {
+				if err := setClauseSourceTypeError(ctx, text, types, params); err != nil {
 					return err
 				}
 			}
@@ -180,7 +180,7 @@ func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
 // expression: a parameter's (when checking with parameter values), the type
 // of the variable it copies, or the operator check's. A list comprehension is a
 // list of a type this check doesn't infer (List<T>). "" is unknown.
-func propertyAccessExpressionType(expression string, types map[string]string, params map[string]interface{}) string {
+func propertyAccessExpressionType(ctx context.Context, expression string, types map[string]string, params map[string]interface{}) string {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return ""
@@ -200,7 +200,7 @@ func propertyAccessExpressionType(expression string, types map[string]string, pa
 	}
 	// Every other expression (CASE, a computed list, a call, arithmetic) is
 	// typed by the static operand owner, which keeps a union's alternatives.
-	if typeName := (staticTypeScope{values: types}).staticExpressionType(expression); typeName != "" {
+	if typeName := (staticTypeScope{values: types}).staticExpressionType(ctx, expression); typeName != "" {
 		return typeName
 	}
 	if _, list := stripEnclosingRowDelimiter(expression, '[', ']'); list {
@@ -249,7 +249,7 @@ func checkPropertyAccesses(ctx context.Context, text string, types map[string]st
 // Map, Node or Relationship but was Integer" for a base without properties.
 func checkExpressionPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}) error {
 	if params != nil {
-		if err := validateStaticPropertySubscripts(text, staticTypeScope{values: types, params: params}); err != nil {
+		if err := validateStaticPropertySubscripts(ctx, text, staticTypeScope{values: types, params: params}); err != nil {
 			return err
 		}
 	}

@@ -20,7 +20,9 @@ func TestStatementFactsProgram(t *testing.T) {
 		kind                    resultmetadata.CallKind
 	}{
 		{"CYPHER 25 USE comp CALL () { USE comp.two WITH 1 AS innerValue RETURN * } RETURN *", []string{"innerValue"}, []string{"innerValue"}, []string{}, resultmetadata.ImportListed, resultmetadata.CallReturning},
-		{"WITH 1 AS outerValue CALL (outerValue) { USE comp.two WITH 2 AS innerValue RETURN * } RETURN *", []string{"innerValue", "outerValue"}, []string{"innerValue", "outerValue"}, []string{"outerValue"}, resultmetadata.ImportListed, resultmetadata.CallReturning},
+		// WITH drops wildcard membership, while the scoped import remains
+		// readable explicitly and the enclosing query keeps its own column.
+		{"WITH 1 AS outerValue CALL (outerValue) { USE comp.two WITH 2 AS innerValue RETURN * } RETURN *", []string{"innerValue", "outerValue"}, []string{"innerValue"}, []string{"outerValue"}, resultmetadata.ImportListed, resultmetadata.CallReturning},
 		{"WITH 1 AS outerValue CALL { WITH outerValue USE comp.two WITH 2 AS innerValue RETURN * } RETURN *", []string{"innerValue", "outerValue"}, []string{"innerValue"}, []string{}, resultmetadata.ImportNone, resultmetadata.CallReturning},
 		{"CALL () { CREATE (:FactsUnit) } RETURN 1 AS value", []string{"value"}, []string{}, []string{}, resultmetadata.ImportListed, resultmetadata.CallUnit},
 	} {

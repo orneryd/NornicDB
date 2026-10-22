@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"slices"
 	"strings"
 
@@ -30,6 +31,10 @@ type boundStatementProgram struct {
 	bindings    []statementBinding
 	uses        []statementBindingUse
 	projections map[int]*returnProjectionPlan
+	calls       map[int]*resultmetadata.Call
+	scopes      map[int]resultmetadata.Clause
+	bodies      map[int]*semanticBodyScope
+	frames      map[int]*semanticBodyScope
 	effects     map[int]pipelineClauseEffects
 	scalars     map[int]scalarExpressionSyntax
 }
@@ -61,6 +66,11 @@ func (compilation *boundCompilation) defineClause(clause *boundClause) {
 		}
 	}
 	for _, name := range names {
+		if clause.fresh[name] {
+			start, end := syntaxDeclarationSpan(clause.source.syntax, name)
+			clause.afterIDs[name] = compilation.define(name, start, end)
+			continue
+		}
 		if item, found := projected[name]; found && (!item.direct || item.variable != item.alias) {
 			clause.afterIDs[name] = compilation.define(name, item.definitionStart, item.definitionEnd)
 			continue
@@ -155,7 +165,7 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 	}
 }
 
-func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypherantlr.SyntaxNode) {
+func (compilation *boundCompilation) bindSymbol(ctx context.Context, clause *boundClause, node cypherantlr.SyntaxNode) {
 	if !variableSyntaxRead(node) {
 		return
 	}
@@ -173,7 +183,7 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 			for variable := range scope {
 				semantic[variable] = matchBindingUnknown
 			}
-			if undefinedExpressionVariable(semantic, node.Text()) == nil {
+			if undefinedExpressionVariable(ctx, semantic, node.Text()) == nil {
 				return
 			}
 		}
@@ -186,11 +196,22 @@ func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypher
 	for variable := range scope {
 		semantic[variable] = matchBindingUnknown
 	}
-	if err := undefinedExpressionVariable(semantic, "`"+strings.ReplaceAll(name, "`", "``")+"`"); err != nil {
+	if err := undefinedExpressionVariable(ctx, semantic, "`"+strings.ReplaceAll(name, "`", "``")+"`"); err != nil {
 		compilation.failUndefined(start, name)
 		return
 	}
 	id := identities[name]
+	if clause.source.kind == pipelineClauseLet && clause.branch.bindings != nil {
+		for _, read := range semanticScopeReads(clause.source.syntax) {
+			if read.node.ID() == node.ID() {
+				clause.branch.bindings.readEvent(read, clause.source.syntax, clause.branch.bindings.entry, clause.branch.dependencies)
+				break
+			}
+		}
+	}
+	if id != 0 && id == clause.branch.body.incomingIDs[name] {
+		clause.branch.dependencies.read(name)
+	}
 	if id != 0 {
 		definition := compilation.product.bindings[int(id)-1]
 		if definition.start == start && definition.end == end {

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"maps"
 	"strings"
 )
 
@@ -135,7 +136,7 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 		if pipelineExpressionContainsAggregate(expression) {
 			return sharedClauseSyntaxError("Aggregation is not allowed in FILTER")
 		}
-		if err := undefinedExpressionVariable(scope, expression); err != nil {
+		if err := undefinedExpressionVariable(ctx, scope, expression); err != nil {
 			return err
 		}
 		return e.validateStaticClauseTypes(ctx, clause, input)
@@ -144,18 +145,26 @@ func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchS
 	if err != nil {
 		return err
 	}
+	scope = maps.Clone(scope)
+	input.kinds = scope
+	input.values = maps.Clone(values)
 	for _, projection := range projections {
 		if err := projectionItemTermError(projection.expression); err != nil {
 			return err
 		}
-		if err := undefinedExpressionVariable(scope, projection.expression); err != nil {
+		if err := undefinedExpressionVariable(ctx, scope, projection.expression); err != nil {
 			return err
 		}
-		if err := validateStaticFunctionVariables(projection.expression, input); err != nil {
+		if err := validateStaticFunctionVariables(ctx, projection.expression, input); err != nil {
 			return err
 		}
+		if err := e.validateStaticOperatorTypes(ctx, pipelineClause{kind: pipelineClauseReturn, text: "RETURN " + projection.expression}, input, nil, nil); err != nil {
+			return err
+		}
+		scope[projection.alias] = matchBindingUnknown
+		delete(input.values, projection.alias)
 	}
-	return e.validateStaticOperatorTypes(ctx, clause, input, nil, nil)
+	return nil
 }
 
 func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input pipelineRowSource, clause pipelineClause) (pipelineRowSource, error) {
@@ -186,6 +195,16 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
-	plan := pipelineRowWith{star: true, projections: projections}
+	plan := pipelineRowWith{star: true, projections: projections, sequential: true}
+	frames, err := executionLetFrames(ctx, clause)
+	if err != nil {
+		return nil, err
+	}
+	if len(frames) != len(plan.projections) {
+		return nil, unresolvedStatementError()
+	}
+	for _, frame := range frames {
+		plan.contexts = append(plan.contexts, withSemanticBodyClause(ctx, frame))
+	}
 	return e.pipelineWithRowSource(ctx, input, plan), nil
 }

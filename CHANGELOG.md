@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retain declared UNION branch schemas when participant metadata is absent, align both branch streams before DISTINCT, and keep nested planning on the UNION-aware entry.
 
 - Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports across constituent WITH clauses.
+- Preserve correlated subquery inputs and wildcard columns across indexed reads,
+  nested CALLs, OPTIONAL CALL rows and UNION branches. Keep existing implicit
+  imports shadowable by declarations inside the body. Keep imported DELETE
+  targets readable after WITH and align bound headers with lexical CALL scope.
 
 - Keep the compile-time type check of nested list comprehensions, quantifiers and reduce linear in their nesting: each
   local scope types its arguments once, and enclosing scopes no longer type arguments that read its variables.

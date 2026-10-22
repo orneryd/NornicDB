@@ -193,8 +193,14 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 
 	expectedCols := knownResultColumns(e.CachedResultColumns(ctx, tail, seed.Columns))
 	usedCols := make([]int, 0, len(seed.Columns))
+	dependencies := pipelineDependencyClauses(tail)
+	input := make(typeScope, len(seed.Columns))
+	for _, name := range seed.Columns {
+		input[name] = staticOperand{}
+	}
+	proof, complete := input.pipelineDependencies(ctx, dependencies)
 	for i, col := range seed.Columns {
-		if isIdentifierReferenced(tail, col) {
+		if !complete || proof.reads[col] {
 			usedCols = append(usedCols, i)
 		}
 	}

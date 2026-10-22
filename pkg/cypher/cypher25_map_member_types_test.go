@@ -65,7 +65,7 @@ func TestCypher25MapMemberTypes(t *testing.T) {
 	require.Nil(t, projectStaticValueMembers(t.Context(), scope, "WITH {a: 1}"))
 	require.Equal(t, map[string]map[string]staticOperand{"m": {"a": knownOperand("Integer").proved()}}, projectStaticValueMembers(t.Context(), scope, "WITH {a: 1} AS m"))
 	require.Nil(t, projectStaticValueMembers(t.Context(), staticTypeScope{}, "WITH {a: 1} AS m"))
-	require.Equal(t, "", staticTypeScope{values: map[string]string{"i": "Integer"}, cypher25: true}.staticExpressionType("i.a"))
+	require.Equal(t, "", staticTypeScope{values: map[string]string{"i": "Integer"}, cypher25: true}.staticExpressionType(t.Context(), "i.a"))
 	for expression, member := range map[string]bool{"m.a": true, "m['a'].b": true, "m.`a b`": true, "m[k]": false, "m": false, "m.a + 1": false, "m.": false, "m[": false} {
 		_, ok := staticMemberAccessBase(expression)
 		require.Equal(t, member, ok, expression)

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"strings"
@@ -13,7 +14,7 @@ import (
 // Both passes read the scope's texts through the scope's own results
 // (checked), so an argument the signature check types is not typed again by
 // the operator check, nor its nested scopes.
-func (checker staticOperatorChecker) checkScoped(text string) (staticOperand, error) {
+func (checker staticOperatorChecker) checkScoped(ctx context.Context, text string) (staticOperand, error) {
 	if checker.checked == nil {
 		checker.checked = make(map[string]staticCheckResult)
 	}
@@ -22,18 +23,20 @@ func (checker staticOperatorChecker) checkScoped(text string) (staticOperand, er
 	if checker.params != nil {
 		typer.checked = make(map[string]staticCheckResult)
 	}
-	if err := validateStaticFunctionVariablesTyped(text, func() staticTypeScope { return checker.scope }, typer.argumentType); err != nil {
+	if err := validateStaticFunctionVariablesTyped(ctx, text, func() staticTypeScope { return checker.scope }, func(scope staticTypeScope, expression string) string {
+		return typer.argumentType(ctx, scope, expression)
+	}); err != nil {
 		return staticOperand{}, err
 	}
-	return checker.check(text)
+	return checker.check(ctx, text)
 }
 
 // argumentType is staticExpressionType through the checker's results.
-func (checker staticOperatorChecker) argumentType(scope staticTypeScope, expression string) string {
+func (checker staticOperatorChecker) argumentType(ctx context.Context, scope staticTypeScope, expression string) string {
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params)
+		return propertyAccessExpressionType(ctx, expression, scope.values, scope.params)
 	}
-	operand, err := checker.check(expression)
+	operand, err := checker.check(ctx, expression)
 	if err != nil {
 		return ""
 	}
@@ -42,8 +45,8 @@ func (checker staticOperatorChecker) argumentType(scope staticTypeScope, express
 
 // checkListComprehension validates the source before execution and checks the
 // body with the iterator's element type, shadowing any outer binding.
-func (checker staticOperatorChecker) checkListComprehension(variable, list, predicate, projection string) (staticOperand, error) {
-	source, err := checker.check(list)
+func (checker staticOperatorChecker) checkListComprehension(ctx context.Context, variable, list, predicate, projection string) (staticOperand, error) {
+	source, err := checker.check(ctx, list)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -57,7 +60,7 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 	nested.scope.params = checker.scope.params
 	var element staticOperand
 	for index, expression := range []string{predicate, projection} {
-		operand, err := nested.checkScoped(expression)
+		operand, err := nested.checkScoped(ctx, expression)
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -86,13 +89,13 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 // checkPatternComprehension types [pattern WHERE predicate | projection]:
 // the pattern binds its variables, the predicate must be a boolean, and the
 // result is a list of the projection's type.
-func (checker staticOperatorChecker) checkPatternComprehension(pattern, projection string) (staticOperand, error) {
+func (checker staticOperatorChecker) checkPatternComprehension(ctx context.Context, pattern, projection string) (staticOperand, error) {
 	predicate := ""
 	if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
 		pattern, predicate = strings.TrimSpace(pattern[:where]), strings.TrimSpace(pattern[where+len("WHERE"):])
 	}
 	bindings := make(matchSemanticScope)
-	addMatchPatternBindingKinds(bindings, pattern)
+	addMatchPatternBindingKinds(ctx, bindings, pattern)
 	nested := checker
 	nested.checked = nil // the pattern's bindings make another scope
 	nested.scope.kinds = maps.Clone(checker.scope.kinds)
@@ -120,7 +123,7 @@ func (checker staticOperatorChecker) checkPatternComprehension(pattern, projecti
 		}
 	}
 	if predicate != "" {
-		operand, err := nested.checkScoped(predicate)
+		operand, err := nested.checkScoped(ctx, predicate)
 		if err != nil {
 			return staticOperand{}, err
 		}
@@ -128,7 +131,7 @@ func (checker staticOperatorChecker) checkPatternComprehension(pattern, projecti
 			return staticOperand{}, err
 		}
 	}
-	element, err := nested.checkScoped(projection)
+	element, err := nested.checkScoped(ctx, projection)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -140,15 +143,15 @@ func (checker staticOperatorChecker) checkPatternComprehension(pattern, projecti
 
 // checkReduceTypes binds the source element and initial accumulator once, then
 // validates the step with the same local function-argument owner as comprehensions.
-func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOperand, error) {
-	source, err := checker.check(form.list)
+func (checker staticOperatorChecker) checkReduceTypes(ctx context.Context, form reduceForm) (staticOperand, error) {
+	source, err := checker.check(ctx, form.list)
 	if err != nil {
 		return staticOperand{}, err
 	}
 	if source.excludes(isListTypeName) {
 		return staticOperand{}, operandMismatch(source, "List<T>")
 	}
-	initial, err := checker.check(form.initial)
+	initial, err := checker.check(ctx, form.initial)
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -163,7 +166,7 @@ func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOp
 		if text == "" {
 			continue
 		}
-		operand, err := nested.checkScoped(text)
+		operand, err := nested.checkScoped(ctx, text)
 		if err != nil {
 			return staticOperand{}, err
 		}

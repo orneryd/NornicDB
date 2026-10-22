@@ -650,15 +650,13 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 	})
 }
 
-// rowSubqueryNode is an EXISTS / COUNT / COLLECT { … } subquery read once:
-// its keyword and body. It runs the body for the row in the statement
-// context the row carries, as evaluateRowSubqueryAtom does, without reading
-// the text again. A row without a statement context, or a body the
-// subquery evaluator doesn't resolve, takes the text route.
+// Compiled subqueries use the same evaluator as text expressions. Only the
+// complete scope proof is retained; every row still executes its own body.
 type rowSubqueryNode struct {
-	text string
-	kind string
-	body string
+	text  string
+	kind  string
+	body  string
+	scope semanticScalarScopeCache
 }
 
 func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
@@ -666,7 +664,7 @@ func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}
 	if ctx == nil {
 		return e.evaluateRowValueText(n.text, values)
 	}
-	value, resolved, err := e.rowSubqueryValue(ctx, n.kind, n.body, values)
+	value, resolved, err := e.rowSubqueryValueWithScope(ctx, n.kind, n.body, values, &n.scope)
 	if err != nil {
 		return nil, false, err
 	}

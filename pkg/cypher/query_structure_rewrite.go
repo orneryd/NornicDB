@@ -31,10 +31,12 @@ import (
 const whenBranchVariable = generatedVariablePrefix + "when"
 
 type structureRewriter struct {
-	ctx     context.Context
-	query   string
-	edits   []labelRewriteEdit
-	columns statementColumner
+	ctx      context.Context
+	query    string
+	edits    []labelRewriteEdit
+	columns  statementColumner
+	bindings *semanticBodyScope
+	incoming typeScope
 }
 
 // statementColumner names a statement's result columns
@@ -52,6 +54,12 @@ func desugarQueryStructure(ctx context.Context, query string, columns statementC
 		return query, nil, nil
 	}
 	r := &structureRewriter{ctx: ctx, query: query, columns: columns}
+	if executor, ok := columns.(*StorageExecutor); ok {
+		r.incoming = semanticRuntimeInput(nil)
+		for name := range executor.fabricRecordBindings {
+			r.incoming[name] = staticOperand{}
+		}
+	}
 	if err := r.region(0, len(query), false); err != nil {
 		return query, nil, err
 	}
@@ -256,7 +264,7 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 				return err
 			}
 			if wrap {
-				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit))
+				columns, err := r.fragmentColumns(r.rewrittenRegionText(open+1, close, firstEdit))
 				if err != nil {
 					return err
 				}
@@ -302,9 +310,18 @@ func (r *structureRewriter) subqueries(start, end int) error {
 			if close < 0 {
 				return nil
 			}
+			if !mayUseQueryStructure(r.query[i+1 : close]) {
+				i = close
+				continue
+			}
+			previous, incoming := r.bindings, r.incoming
+			if err := r.enterSubquery(start, end, i); err != nil {
+				return err
+			}
 			if err := r.region(i+1, close, false); err != nil {
 				return err
 			}
+			r.bindings, r.incoming = previous, incoming
 			i = close
 		}
 	}
@@ -333,7 +350,7 @@ func (r *structureRewriter) conditional(start, end int) error {
 		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
 			return err
 		}
-		bodyColumns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit))
+		bodyColumns, err := r.fragmentColumns(r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit))
 		if err != nil {
 			return err
 		}

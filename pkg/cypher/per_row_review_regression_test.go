@@ -107,7 +107,7 @@ func TestRowPredicateCaseExpectedResults(t *testing.T) {
 				rowValueProgramsDisabled.Store(text)
 				ctx := withExpressionFailureSlot(context.Background())
 				row := map[string]interface{}{"x": int64(1), "y": int64(2), "z": int64(0), rowStatementContextKey: ctx}
-				got := compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+				got := compileRowPredicateProgram(t.Context(), tc.expression).holds(exec, ctx, row)
 				rowValueProgramsDisabled.Store(false)
 				if tc.errorText != "" {
 					require.ErrorContains(t, getExpressionFailure(ctx), tc.errorText)

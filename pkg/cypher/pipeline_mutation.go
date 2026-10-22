@@ -16,8 +16,9 @@ import (
 
 // pipelineApplyDelete collects every entity target before validation and
 // mutation, preserving statement atomicity while retaining input rows for
-// subsequent WITH and RETURN clauses.
-func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause string) (*QueryStats, bool, error) {
+// subsequent WITH and RETURN clauses. readable is the admitted clause's
+// readable scope, including carried inputs which WITH removed from its star.
+func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, readable map[string]struct{}, clause string) (*QueryStats, bool, error) {
 	targets, detach, ok := deleteClauseTargets(clause)
 	if !ok || len(targets) == 0 {
 		return nil, false, nil
@@ -30,9 +31,9 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				"DELETE accepts nodes, relationships, and paths, not labels or relationship types",
 			)
 		}
-		references := expressionFreeVariables(expression)
+		references := expressionFreeVariables(ctx, expression)
 		for _, name := range references {
-			if _, bound := scope[name]; !bound {
+			if _, bound := readable[name]; !bound {
 				return nil, true, deleteUndefinedVariableError(name)
 			}
 		}
@@ -389,12 +390,9 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 		}
 	}
 	initial := pipelineRow{}
-	for name, value := range e.fabricRecordBindings {
+	e.forEachPipelineImport(ctx, clauses, func(name string, value interface{}) {
 		initial[name] = value
-	}
-	for name, value := range valueBindingsFromContext(ctx) {
-		initial[name] = value
-	}
+	})
 	bindParameterRow(ctx, initial)
 	rows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{initial}, clauses[:end])
 	if err != nil {
@@ -900,6 +898,14 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 		return nil, invalidForeachError()
 	}
 	update := body.foreach
+	updateCtx := ctx
+	if scope := semanticBodyFromContext(ctx); scope != nil {
+		iteration := scope.iteration
+		if iteration == nil {
+			iteration = scope.localChild(update.variable)
+		}
+		updateCtx = withSemanticBodyClause(ctx, iteration)
+	}
 	stats := &QueryStats{}
 	for _, row := range rows {
 		items, ok := e.evaluateListForPipelineWithContext(ctx, update.listExpression, row)
@@ -921,7 +927,7 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 			for name := range child {
 				scope[name] = struct{}{}
 			}
-			result, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{child}, scope, update.updates, update.updates, nil)
+			result, handled, err := e.runPipelineClauseRows(updateCtx, []pipelineRow{child}, scope, update.updates, update.updates, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -959,19 +965,19 @@ func setSourceTypeError(property, operator string, source staticOperand) error {
 // check, validateStaticPropertyAccessParameters). Literal sources are checked
 // with each item's scope check (validateSetClauseScope), in item order, as
 // Neo4j reports them.
-func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
+func setClauseSourceTypeError(ctx context.Context, clause string, types map[string]string, params map[string]interface{}) error {
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "SET") {
 		body = body[len("SET"):]
 	}
 	for _, assignment := range splitSetAssignments(body) {
 		_, property, operator, source := splitSetAssignment(assignment)
-		if staticLiteralTypeName(source) != "" {
+		if staticLiteralTypeName(ctx, source) != "" {
 			continue
 		}
 		// Parameter values are the run's facts (the per-execution check).
 		var operand staticOperand
-		if typeName := propertyAccessExpressionType(source, types, params); typeName != "" {
+		if typeName := propertyAccessExpressionType(ctx, source, types, params); typeName != "" {
 			operand = typedOperand(typeName).proved()
 		}
 		if err := setSourceTypeError(property, operator, operand); err != nil {

@@ -249,7 +249,7 @@ func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope 
 		if index >= len(procedure.Spec.Params) {
 			break
 		}
-		typeName := scope.staticExpressionType(text)
+		typeName := scope.staticExpressionType(ctx, text)
 		if typeName == "" {
 			continue
 		}
