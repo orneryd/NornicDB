@@ -99,7 +99,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				if properties != nil && len(properties) == 0 && headers[id] != nil {
 					return headers[id], nil
 				}
-				node, err := endpoints.read(id, properties)
+				node, err := endpoints.readRetained(id, properties)
 				if err == nil && node != nil && properties != nil && len(properties) == 0 {
 					if len(headers) == 1024 {
 						clear(headers)
@@ -137,28 +137,8 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				if err != nil || start == nil || !e.matchesEndPattern(start, &match.StartNode) {
 					return nil
 				}
-				var end *storage.Node
-				endpointVisible := false
-				if traversalEndpointsNeedOnlyExist(match) {
-					if checker, ok := store.(storage.RelationshipEndpointChecker); ok {
-						if visible, answered := checker.RelationshipEndpointVisible(endID); answered {
-							endpointVisible = visible
-							if visible && shouldHideSystemNodes(store) {
-								end, err = load(endID, endProperties)
-							}
-						} else {
-							end, err = load(endID, endProperties)
-						}
-					} else {
-						end, err = load(endID, endProperties)
-					}
-				} else {
-					end, err = load(endID, endProperties)
-				}
-				if end != nil {
-					endpointVisible = e.matchesEndPattern(end, &match.EndNode)
-				}
-				if err != nil || !endpointVisible {
+				end, err := load(endID, endProperties)
+				if err != nil || end == nil || !e.matchesEndPattern(end, &match.EndNode) {
 					return nil
 				}
 				if !bind(match.StartNode.variable, start) || !bind(match.EndNode.variable, end) || !bind(match.Relationship.Variable, edge) {
@@ -209,6 +189,9 @@ func traversalSourceProperties(node nodePatternInfo, where string, tail []string
 		return properties
 	}
 	for _, text := range tail {
+		if !traversalVariablePropertiesRead(text, node.variable) {
+			continue
+		}
 		used := pipelineNodePredicateProperties(node.variable, text, nil)
 		if used == nil {
 			return nil

@@ -20,6 +20,20 @@ type patternPhaseScanEngine struct {
 	visited atomic.Int64
 }
 
+// Whole-node scans use StreamNodesWithOptions since #1608; projected scans
+// and whole-node WITH bindings must draw from the same synthetic population.
+func (s *patternPhaseScanEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if opts.Label != "" && opts.Label != "Item" {
+		return s.MemoryEngine.StreamNodesWithOptions(ctx, opts, visit)
+	}
+	return s.StreamNodesByLabelProjectedInScope(opts.Prefix, "Item", opts.Projection, func(node *storage.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return visit(node)
+	})
+}
+
 func (s *patternPhaseScanEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*storage.Node) error) error {
 	if label != "Item" {
 		return s.MemoryEngine.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
@@ -70,6 +84,7 @@ func TestPatternReadStreamsBeforeFullScan(t *testing.T) {
 			rows, done := run.stream.Next(2)
 			require.False(t, done)
 			require.Len(t, rows, 2)
+			require.Equal(t, [][]interface{}{{int64(0)}, {int64(1)}}, rows)
 			require.LessOrEqual(t, store.visited.Load(), int64(64))
 			if query == "MATCH (n:Item {bucket:inspection.value()}) RETURN n.k AS k" {
 				require.Equal(t, int64(1), calls.Load())
