@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -178,13 +180,16 @@ RETURN size(groups) AS n`
 // resetTransactionMemory restores unlimited memory after a test.
 func resetTransactionMemory(t testing.TB) {
 	t.Helper()
-	t.Cleanup(func() {
-		r := transactionMemory
-		r.mu.Lock()
-		r.databases = make(map[string]*databaseMemory)
-		r.mu.Unlock()
-		ConfigureTransactionMemory(0, TransactionMemoryLimits{})
-	})
+	resetTransactionMemoryState()
+	t.Cleanup(resetTransactionMemoryState)
+}
+
+func resetTransactionMemoryState() {
+	r := transactionMemory
+	r.mu.Lock()
+	r.databases = make(map[string]*databaseMemory)
+	r.mu.Unlock()
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{})
 }
 
 // newTransactionMemoryEngine is a store namespaced as the default database,
@@ -199,6 +204,52 @@ func newTransactionMemoryEngine(t testing.TB) storage.Engine {
 func newTransactionMemoryExecutor(t testing.TB) *StorageExecutor {
 	t.Helper()
 	return NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
+}
+
+// newTestMemoryTracker returns a pooled tracker in the clean state that
+// beginTransactionMemory prepares for a statement. Tests that size values
+// through a tracker directly must not inherit another statement's limit or
+// failure.
+func newTestMemoryTracker(database string) *transactionMemoryTracker {
+	return newTestMemoryTrackerFromPool(&transactionMemoryTrackers, database)
+}
+
+// transactionMemoryTrackerGetter is a test-only seam for deterministic helper
+// tests. Production continues to use its concrete sync.Pool.
+type transactionMemoryTrackerGetter interface {
+	Get() any
+}
+
+func newTestMemoryTrackerFromPool(pool transactionMemoryTrackerGetter, database string) *transactionMemoryTracker {
+	tracker := pool.Get().(*transactionMemoryTracker)
+	r := transactionMemory
+	r.mu.Lock()
+	memory := r.databaseLocked(database)
+	limit := memory.transactionMax.Load()
+	databaseLimit := memory.pool.limit.Load()
+	globalLimit := r.global.limit.Load()
+	r.mu.Unlock()
+	tracker.mu.Lock()
+	tracker.database = memory
+	tracker.limit = limit
+	tracker.databaseLimit = databaseLimit
+	tracker.globalLimit = globalLimit
+	tracker.mu.Unlock()
+	tracker.failure.Store(nil)
+	return tracker
+}
+
+// preservePooledTrackerMemoryLimit raises the runtime memory ceiling during a
+// regression that follows a failed statement. Disabling GC alone is not enough
+// when GOMEMLIMIT is reached.
+func preservePooledTrackerMemoryLimit(t testing.TB) {
+	t.Helper()
+	previousMemoryLimit := debug.SetMemoryLimit(math.MaxInt64)
+	previousGCPercent := debug.SetGCPercent(-1)
+	t.Cleanup(func() {
+		debug.SetGCPercent(previousGCPercent)
+		debug.SetMemoryLimit(previousMemoryLimit)
+	})
 }
 
 func requireMemoryError(t testing.TB, err error, code, setting string) {
@@ -758,9 +809,14 @@ func TestTransactionMemoryCreditReturnedOnFailure(t *testing.T) {
 // from what it counted where rows keep it; the same values in a list built
 // any other way are walked in full.
 func TestKnownListsSizeCollectedListsOnce(t *testing.T) {
+	testKnownListsSizeCollectedListsOnce(t)
+}
+
+func testKnownListsSizeCollectedListsOnce(t *testing.T) {
+	// Simulate a previously selected test leaving a process-wide limit behind.
+	ConfigureTransactionMemory(1, TransactionMemoryLimits{})
 	resetTransactionMemory(t)
-	tracker := transactionMemoryTrackers.Get().(*transactionMemoryTracker)
-	tracker.database = transactionMemory.database("known")
+	tracker := newTestMemoryTracker("known")
 	t.Cleanup(tracker.end)
 	state := pipelineAggregateState{name: "collect", expression: "x", memory: memoryAccount{scope: &tracker.root}}
 	for i := 0; i < 100; i++ {
@@ -779,4 +835,20 @@ func TestKnownListsSizeCollectedListsOnce(t *testing.T) {
 	_, known = tracker.knownListBytes(copied)
 	require.False(t, known, "a list built otherwise is walked")
 	require.Equal(t, int64(pipelineRowExtraBytes+sliceHeaderBytes)+estimateValueBytes(copied), estimateResultRowBytes([]interface{}{copied}, tracker))
+}
+
+func TestKnownListsAfterPriorMemoryFailure(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	preservePooledTrackerMemoryLimit(t)
+	resetTransactionMemory(t)
+	ConfigureTransactionMemory(0, TransactionMemoryLimits{TransactionMax: 1})
+	executor := newTransactionMemoryExecutor(t)
+	_, err := executor.Execute(context.Background(), heavyCollectQuery, nil)
+	requireMemoryError(t, err, transactionMemoryLimitCode, transactionMemoryMaxSetting)
+
+	// Re-run the sizing assertions after a real production statement fails.
+	// sync.Pool may discard entries, so this checks reset behavior without
+	// claiming pointer identity.
+	testKnownListsSizeCollectedListsOnce(t)
 }
