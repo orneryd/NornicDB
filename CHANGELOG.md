@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound retained traversal endpoint views to requested properties after canonical reads; scalar traversals no longer retain unrelated node payloads.
+
 - Cancel an admitted search base build before shutdown wakes mutations waiting for its node population.
 - Match Neo4j 5.26 vector similarity argument descriptions to their list-only signatures.
 - Reuse bound nodes in MATCH before discovering candidates, avoiding unnecessary scans through WITH horizons.

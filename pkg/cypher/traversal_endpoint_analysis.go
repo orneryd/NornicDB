@@ -89,10 +89,19 @@ func (e *StorageExecutor) traversalUnusedPropertyVariablesForExpressions(match *
 // v outside a property-agnostic function (count / id / elementId / labels).
 // Conservative: any reference it cannot prove safe reports true.
 func traversalVariablePropertiesRead(expression, variable string) bool {
+	return traversalVisitVariableProperties(expression, variable, nil)
+}
+
+// traversalVisitVariableProperties is the shared reference scanner for header
+// classification and retained property demand. An empty key means a whole or
+// unknown entity read; a false visitor result stops the scan. A nil visitor
+// retains the original allocation-free first-property classification.
+func traversalVisitVariableProperties(expression, variable string, visit func(string) bool) bool {
 	if variable == "" || expression == "" {
 		return false
 	}
 	want := normalizeProjectionColumnName(variable)
+	read := false
 	for index := 0; index < len(expression); {
 		c := expression[index]
 		if c == '\'' || c == '"' {
@@ -135,13 +144,29 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 			continue
 		}
 		if cursor < len(expression) && expression[cursor] == '.' {
-			return true // v.x property access
-		}
-		if !traversalBareVariableInSafeCall(expression, nameStart) {
-			return true // bare v in value position, or inside a property-reading call
+			if visit == nil {
+				return true
+			}
+			propertyStart := cursor + 1
+			for propertyStart < len(expression) && isASCIIWhitespace(expression[propertyStart]) {
+				propertyStart++
+			}
+			property, _, ok := scanSymbolicName(expression, propertyStart)
+			if !ok {
+				property = ""
+			}
+			read = true
+			if !visit(normalizeProjectionColumnName(property)) {
+				return true
+			}
+		} else if !traversalBareVariableInSafeCall(expression, nameStart) {
+			read = true
+			if visit == nil || !visit("") {
+				return true
+			}
 		}
 	}
-	return false
+	return read
 }
 
 // traversalBareVariableInSafeCall reports whether the bare variable occurrence

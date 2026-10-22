@@ -76,3 +76,30 @@ func TestTraversalUnusedPropertyVariables(t *testing.T) {
 	require.False(t, unused["c"])
 	require.True(t, unused["l"])
 }
+
+func TestTraversalEndpointPropertyDemand(t *testing.T) {
+	for _, tc := range []struct {
+		expression string
+		want       []string
+	}{
+		{"sum(e.rank) + max(e.other) + e.rank", []string{"rank", "other"}},
+		{"e . rank + e.nested.k", []string{"rank", "nested"}},
+		{"e.`a b` + e.nested.k", []string{"a b", "nested"}},
+		{"count(e) + id(e) + labels(e)", []string{}},
+		{"'e.rank' + $e + other.rank", []string{}},
+		{"e[$field]", nil},
+		{"collect(e)", nil},
+		{"properties(e)", nil},
+		{"e.rank + e", nil},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			got := traversalEndpointProperties(nodePatternInfo{variable: "e"}, "", []string{tc.expression})
+			if tc.want == nil {
+				require.Nil(t, got, "whole or unknown entity reads must retain their full body")
+			} else {
+				require.NotNil(t, got)
+				require.ElementsMatch(t, tc.want, got)
+			}
+		})
+	}
+}

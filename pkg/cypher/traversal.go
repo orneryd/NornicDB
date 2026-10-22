@@ -46,7 +46,7 @@ type TraversalContext struct {
 	minHops          int
 	maxHops          int
 	usedEdges        map[storage.EdgeID]bool
-	paths            []PathResult
+	nodeProperties   []string                         // nil requires full entities; otherwise only demanded fields
 	nodeCache        map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
 	limit            int                              // OPTIMIZATION: Early termination limit (0 = no limit)
 	resultCount      int                              // Count of results found so far
@@ -297,8 +297,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// so a named labelled endpoint can load by ID + labels only (#1110). The
 	// pipeline supplies the read-only clauses after this MATCH (readTail);
 	// direct callers supply the RETURN items themselves.
+	var endpointProperties []string
 	if readTail != nil {
-		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, readTail)
+		if !matches.IsChained && matches.PathVariable == "" && traversalEndpointTailReadsProperties(matches.EndNode, whereClause, readTail) {
+			// Only the end variable is queried by the single-segment header
+			// flags. A property-reading end already requires a full/projection
+			// read; avoid constructing the redundant unused-variable inventory.
+			endpointProperties = traversalEndpointProperties(matches.EndNode, whereClause, readTail)
+		} else {
+			matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, readTail)
+		}
 	} else {
 		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariables(matches, returnItems, whereClause)
 	}
@@ -412,7 +420,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		} else {
 			viewport, _ := TemporalViewportFromContext(ctx)
 			checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-			paths = e.traverseGraphSequential(ctx, matches, optimizedStartNodes, viewport, checker)
+			paths = e.traverseGraphSequential(ctx, matches, optimizedStartNodes, viewport, checker, endpointProperties...)
 		}
 		// Still need to apply WHERE clause filter (in case there are other conditions)
 		if whereClause != "" {
@@ -423,16 +431,16 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
 		var streamed bool
 		var streamErr error
-		paths, streamed, streamErr = e.traverseGraphWithStreamingStartNodes(ctx, matches, viewport, checker)
+		paths, streamed, streamErr = e.traverseGraphWithStreamingStartNodes(ctx, matches, viewport, checker, endpointProperties...)
 		if streamErr != nil {
 			return nil, streamErr
 		}
 		if !streamed {
-			paths = e.traverseGraph(ctx, matches)
+			paths = e.traverseGraph(ctx, matches, endpointProperties...)
 		}
 	} else {
 		// Normal traversal from all matching nodes
-		paths = e.traverseGraph(ctx, matches)
+		paths = e.traverseGraph(ctx, matches, endpointProperties...)
 		// Apply WHERE clause filter if present
 		if whereClause != "" {
 			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
@@ -1457,7 +1465,7 @@ func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s stri
 }
 
 // traverseGraph executes the traversal and returns all matching paths
-func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMatch) []PathResult {
+func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMatch, properties ...string) []PathResult {
 	viewport, _ := TemporalViewportFromContext(ctx)
 	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
 	// Handle chained patterns differently (multi-segment traversal)
@@ -1491,10 +1499,10 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	// Keep traversal single-threaded when early LIMIT short-circuiting is active so
 	// we can stop globally once enough paths are found.
 	if config.Enabled && len(startNodes) >= config.MinBatchSize && match.TraversalLimit <= 0 {
-		return e.traverseGraphParallel(ctx, match, startNodes, config, viewport, checker)
+		return e.traverseGraphParallel(ctx, match, startNodes, config, viewport, checker, properties...)
 	}
 
-	return e.traverseGraphSequential(ctx, match, startNodes, viewport, checker)
+	return e.traverseGraphSequential(ctx, match, startNodes, viewport, checker, properties...)
 }
 
 // relationshipTypeSeedNodes is the start nodes of a one-hop match whose start
@@ -1549,6 +1557,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 	match *TraversalMatch,
 	viewport TemporalViewport,
 	checker temporalCurrentNodeChecker,
+	properties ...string,
 ) ([]PathResult, bool, error) {
 	store := e.getStorage(ctx)
 	labels := match.StartNode.labels
@@ -1591,7 +1600,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 
 		limitedMatch := *match
 		limitedMatch.TraversalLimit = remaining
-		found := e.traverseGraphSequential(ctx, &limitedMatch, []*storage.Node{node}, viewport, checker)
+		found := e.traverseGraphSequential(ctx, &limitedMatch, []*storage.Node{node}, viewport, checker, properties...)
 		paths = append(paths, found...)
 		remaining -= len(found)
 		if remaining <= 0 {
@@ -1606,7 +1615,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 }
 
 // traverseGraphSequential performs sequential traversal from start nodes
-func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
+func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker, properties ...string) []PathResult {
 	var results []PathResult
 	remaining := -1
 	if match.TraversalLimit > 0 {
@@ -1638,6 +1647,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			cancelCtx:                    ctx,
 			repeatable:                   repeatableElements(ctx),
 			endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+			nodeProperties:               properties,
 			endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
@@ -1658,7 +1668,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 
 // traverseGraphParallel performs parallel traversal from multiple start nodes
 // Each goroutine gets its own TraversalContext to avoid data races
-func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, config ParallelConfig, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
+func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, config ParallelConfig, viewport TemporalViewport, checker temporalCurrentNodeChecker, properties ...string) []PathResult {
 	numWorkers := config.MaxWorkers
 	if numWorkers > len(startNodes) {
 		numWorkers = len(startNodes)
@@ -1710,6 +1720,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					cancelCtx:                    ctx,
 					repeatable:                   repeatableElements(ctx),
 					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+					nodeProperties:               properties,
 					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
@@ -1911,11 +1922,11 @@ func pathResultsReuseRelationship(left, right PathResult) bool {
 }
 
 // traverseFromNode traverses from a specific node rather than finding start nodes by label
-func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
+func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch, properties ...string) []PathResult {
 	if !e.traversalStartMatches(startNode, match.StartNode) {
 		return nil
 	}
-	ctx := e.newMatchTraversalContext(traversalCtx, startNode, match, &match.Relationship)
+	ctx := e.newMatchTraversalContext(traversalCtx, startNode, match, &match.Relationship, properties...)
 	ctx.endNodeID = match.boundEndNodeID
 	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 }
@@ -1948,9 +1959,10 @@ func (e *StorageExecutor) traversalStartMatches(startNode *storage.Node, pattern
 // Single-segment traversals (including each segment of a chain) share the
 // planner's endpoint/relationship read analysis so the header and
 // labels-only fast paths apply to chained patterns too (#1110).
-func (e *StorageExecutor) newMatchTraversalContext(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch, rel *RelationshipPattern) *TraversalContext {
+func (e *StorageExecutor) newMatchTraversalContext(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch, rel *RelationshipPattern, properties ...string) *TraversalContext {
 	ctx := e.newTraversalContext(traversalCtx, startNode, rel)
 	ctx.endpointsNeedOnlyExist = traversalEndpointsNeedOnlyExist(match)
+	ctx.nodeProperties = properties
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
 	return ctx
@@ -2012,6 +2024,13 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 	if nextNode == nil {
 		var err error
 		nextNode, err = e.getQueryNode(e.storage, nextNodeID)
+		properties := ctx.nodeProperties
+		if ctx.temporalViewport.Enabled() {
+			properties = nil
+		} else if ctx.endpointsNeedOnlyLabels || ctx.endpointsNeedOnlyExist {
+			properties = []string{}
+		}
+		nextNode = retainTraversalEndpointNode(nextNode, properties)
 		if err != nil || nextNode == nil {
 			return nil, false
 		}
