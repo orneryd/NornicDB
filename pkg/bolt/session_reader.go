@@ -16,8 +16,10 @@ func (s *Session) startMessageReader() {
 	if s.connCtx != nil {
 		connDone = s.connCtx.Done()
 	}
+	s.messageReaderDone = make(chan struct{})
 
 	go func() {
+		defer close(s.messageReaderDone)
 		for {
 			msg, err := s.readMessage()
 			if err != nil {
@@ -38,6 +40,7 @@ func (s *Session) startMessageReader() {
 				s.cancelActiveRun(msg.msgType)
 			}
 			if !s.enqueueMessage(msg, connDone) {
+				msg.memoryLease.Close()
 				return
 			}
 		}

@@ -1399,6 +1399,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		_ = sniffedConn.SetReadDeadline(time.Time{})
 	}
 	session.startMessageReader()
+	defer session.releaseIncomingReservations()
 
 	keepaliveStarted := false
 	for {
@@ -1599,12 +1600,13 @@ type Session struct {
 	recordBuf  []byte  // Reusable buffer for PackStream message encoding
 
 	// Async message processing (Neo4j-style batching)
-	messageQueue chan *boltMessage // Incoming messages queue
-	readErrQueue chan error        // Terminal read errors from the reader loop
-	writeMu      sync.Mutex        // Protects writer for concurrent access
-	activeRunMu  sync.Mutex
-	activeRun    context.CancelFunc
-	activeReason byte
+	messageQueue      chan *boltMessage // Incoming messages queue
+	messageReaderDone chan struct{}     // reader joined before queued reservations are released
+	readErrQueue      chan error        // Terminal read errors from the reader loop
+	writeMu           sync.Mutex        // Protects writer for concurrent access
+	activeRunMu       sync.Mutex
+	activeRun         context.CancelFunc
+	activeReason      byte
 
 	// implicitBearer carries a JWT pulled from the WS-upgrade cookie
 	// (nornicdb_token / token). It is set by acceptWebSocket BEFORE the
@@ -1668,8 +1670,9 @@ func selectBoltVersion(offers []uint32) (version uint32, reply uint32, ok bool) 
 
 // boltMessage represents a parsed Bolt message ready for processing
 type boltMessage struct {
-	msgType byte
-	data    []byte
+	msgType     byte
+	data        []byte
+	memoryLease *memory.WireRequest
 }
 
 // handshake performs the Bolt handshake.
@@ -1727,70 +1730,14 @@ func (s *Session) handshake() error {
 // readMessage reads a single Bolt message from the connection.
 // Returns the parsed message or nil for empty messages.
 func (s *Session) readMessage() (*boltMessage, error) {
-	// Create a new buffer for this message (since we're async, can't reuse)
-	var msgBuf []byte
-
-	// Read chunks until we get a zero-size chunk (message terminator)
-	var headerBuf [2]byte
-	for {
-		if _, err := io.ReadFull(s.reader, headerBuf[:]); err != nil {
-			return nil, err
-		}
-
-		size := int(headerBuf[0])<<8 | int(headerBuf[1])
-		if size == 0 {
-			break
-		}
-
-		// Grow buffer
-		oldLen := len(msgBuf)
-		newLen := oldLen + size
-		if cap(msgBuf) < newLen {
-			newBuf := make([]byte, newLen, newLen*2)
-			copy(newBuf, msgBuf)
-			msgBuf = newBuf
-		} else {
-			msgBuf = msgBuf[:newLen]
-		}
-
-		if _, err := io.ReadFull(s.reader, msgBuf[oldLen:newLen]); err != nil {
-			return nil, err
-		}
-	}
-
-	if len(msgBuf) == 0 {
-		return nil, nil // Empty message (no-op)
-	}
-
-	// Parse message type
-	if len(msgBuf) < 2 {
-		return nil, fmt.Errorf("message too short: %d bytes", len(msgBuf))
-	}
-
-	// Bolt messages are PackStream structures
-	structMarker := msgBuf[0]
-	var msgType byte
-	var data []byte
-
-	if structMarker >= 0xB0 && structMarker <= 0xBF {
-		msgType = msgBuf[1]
-		data = msgBuf[2:]
-	} else {
-		msgType = msgBuf[0]
-		data = msgBuf[1:]
-	}
-
-	// Make a copy of data since buffer might be reused
-	dataCopy := make([]byte, len(data))
-	copy(dataCopy, data)
-
-	return &boltMessage{msgType: msgType, data: dataCopy}, nil
+	msg, _, err := s.readWireMessage(nil)
+	return msg, err
 }
 
 // processMessage processes a parsed Bolt message.
 func (s *Session) processMessage(msg *boltMessage) error {
 	// No mutex needed - messages are processed sequentially from the queue
-	return s.dispatchMessage(msg.msgType, msg.data)
+	return msg.memoryLease.Run(func() error { return s.dispatchMessage(msg.msgType, msg.data, msg.memoryLease) })
 }
 
 func (s *Session) handleQueuedMessage() error {
@@ -1799,6 +1746,12 @@ func (s *Session) handleQueuedMessage() error {
 	}
 	msg, err := s.nextQueuedMessage()
 	if err != nil {
+		var admission *wireAdmissionError
+		if errors.As(err, &admission) {
+			if sendErr := s.sendApplicationAdmissionFailure(admission.cause); sendErr != nil {
+				return sendErr
+			}
+		}
 		return err
 	}
 	return s.processMessage(msg)
@@ -1862,65 +1815,21 @@ func (s *Session) activeRunReason() byte {
 // handleMessage handles a single Bolt message synchronously (for compatibility).
 // Bolt messages can span multiple chunks - we read until we get a 0-size chunk.
 func (s *Session) handleMessage() error {
-	// Reuse message buffer - reset length but keep capacity
-	s.messageBuf = s.messageBuf[:0]
-
-	// Read chunks until we get a zero-size chunk (message terminator)
-	for {
-		// Read chunk header using reusable buffer (no allocation)
-		if _, err := io.ReadFull(s.reader, s.headerBuf[:]); err != nil {
-			return err
-		}
-
-		size := int(s.headerBuf[0])<<8 | int(s.headerBuf[1])
-		if size == 0 {
-			// Zero-size chunk marks end of message
-			break
-		}
-
-		// Ensure message buffer has capacity
-		oldLen := len(s.messageBuf)
-		newLen := oldLen + size
-		if cap(s.messageBuf) < newLen {
-			// Need to grow - double capacity or use needed size
-			newCap := cap(s.messageBuf) * 2
-			if newCap < newLen {
-				newCap = newLen
+	msg, buffer, err := s.readWireMessage(s.messageBuf)
+	s.messageBuf = buffer
+	if err != nil {
+		var admission *wireAdmissionError
+		if errors.As(err, &admission) {
+			if sendErr := s.sendApplicationAdmissionFailure(admission.cause); sendErr != nil {
+				return sendErr
 			}
-			newBuf := make([]byte, newLen, newCap)
-			copy(newBuf, s.messageBuf)
-			s.messageBuf = newBuf
-		} else {
-			s.messageBuf = s.messageBuf[:newLen]
 		}
-
-		// Read chunk data directly into message buffer
-		if _, err := io.ReadFull(s.reader, s.messageBuf[oldLen:newLen]); err != nil {
-			return err
-		}
+		return err
 	}
-
-	if len(s.messageBuf) == 0 {
-		return nil // Empty message (no-op)
+	if msg == nil {
+		return nil
 	}
-
-	// Parse and handle message
-	if len(s.messageBuf) < 2 {
-		return fmt.Errorf("message too short: %d bytes", len(s.messageBuf))
-	}
-
-	// Bolt messages are PackStream structures
-	structMarker := s.messageBuf[0]
-
-	// Check if it's a tiny struct (0xB0-0xBF)
-	if structMarker >= 0xB0 && structMarker <= 0xBF {
-		msgType := s.messageBuf[1]
-		msgData := s.messageBuf[2:]
-		return s.dispatchMessage(msgType, msgData)
-	}
-
-	// For non-struct markers, try direct message type (fallback)
-	return s.dispatchMessage(s.messageBuf[0], s.messageBuf[1:])
+	return s.processMessage(msg)
 }
 
 // dispatchMessage routes the message to the appropriate handler.
@@ -1933,7 +1842,7 @@ func (s *Session) handleMessage() error {
 // observed separately). The observation runs in a deferred closure so
 // even handler panics still emit a metric (result="error") before the
 // panic re-propagates to the connection-handler's outer recover.
-func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
+func (s *Session) dispatchMessage(msgType byte, data []byte, reservations ...*memory.WireRequest) (retErr error) {
 	op := boltOpName(msgType)
 	start := time.Now()
 
@@ -1970,12 +1879,19 @@ func (s *Session) dispatchMessage(msgType byte, data []byte) (retErr error) {
 		}
 	}
 
-	return s.dispatchInner(msgType, data, op)
+	var lease *memory.WireRequest
+	if len(reservations) > 0 {
+		lease = reservations[0]
+	}
+	if lease == nil && messageDecodesPayload(msgType) && s.server != nil {
+		lease = memory.NewWireRequest(s.server.memoryPolicy)
+	}
+	return lease.Run(func() error { return s.dispatchInner(msgType, data, op, lease) })
 }
 
 // dispatchInner is the unobserved body of dispatchMessage; kept as a
 // sibling so the metrics wrapper above stays a thin chokepoint.
-func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
+func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *memory.WireRequest) error {
 	// TRC-13: per-message span, child of session span.
 	_, msgSpan := startMessageSpan(s.spanCtx, op)
 	defer func() {
@@ -2001,7 +1917,13 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string) error {
 	if s.txLifecycle.isTimedOut() && msgType != MsgReset && msgType != MsgGoodbye {
 		return s.sendTransactionTimeoutAfterJoin()
 	}
-
+	// Framed messages already carry their accumulation reservation. Synthetic
+	// dispatchers still pass through the same pre-decode admission owner.
+	if lease != nil && messageDecodesPayload(msgType) {
+		if err := lease.Grow(int64(len(data))); err != nil {
+			return s.sendApplicationAdmissionFailure(err)
+		}
+	}
 	var err error
 	switch msgType {
 	case MsgHello:

@@ -621,6 +621,8 @@ The Go runtime target and opt-in physical admission are separate settings:
 memory:
   go_runtime_limit_bytes: "6442450944" # integer bytes; Go soft GC target
   application_soft_max: "6g"          # sampled cgroup admission; 0 disables
+  recovery_interval_ms: 5000          # minimum spacing between reclamation starts
+  recovery_rearm_ms: 30000            # rearm without an admitted lease release
   transaction_max: "512m"            # estimated bytes per transaction; 0 unlimited
   transaction_total_max: "2g"         # process transaction pool; 0 unlimited
 ```
@@ -628,9 +630,23 @@ memory:
 Only the Go target derives an automatic default from the cgroup (85%). The
 application and transaction settings default to `0`. Application admission can
 reclaim unused Go heap pages through the shared sampler after a pressure
-rejection, at most once every five seconds and once per completed-work allowance.
+rejection, at most once every five seconds after admitted work releases a lease,
+or once every 30 seconds without a lease release. Configure these defaults with
+`memory.recovery_interval_ms` / `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` and
+`memory.recovery_rearm_ms` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`. Values must be
+integer milliseconds >= 1, with rearm >= interval; invalid values fail startup.
+Both settings require a restart, like the application maximum; they have no CLI flags.
+Legacy embedded `Config` values that omit both fields (zero/zero) still pass
+`Validate`; `Open` supplies the defaults. A partially omitted pair is invalid.
+Explicit zero values in YAML or environment variables are always rejected.
 It rechecks physical capacity before accepting work; see
 [application pressure and recovery](transaction-memory-limits.md#application-pressure-and-recovery).
+
+For embedded use, a successful `nornicdb.Open` publishes the configured
+process-wide transaction limits and defaults. A failed open leaves the limits
+of already-serving databases unchanged. The registry is process-wide: another
+successful open may configure its process defaults; per-database overrides
+remain separate.
 
 ## Vector Search Configuration
 
