@@ -45,12 +45,20 @@ func TestRelationshipIDSeekMatches(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 
-	nodes, none, ok := exec.relationshipIDSeedNodes(ctx, "(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
+	// These direct kernel checks need the same admitted source as public
+	// execution. Missing admission is tested separately as an invariant.
+	seed := func(pattern, where string) ([]*storage.Node, bool, bool) {
+		statement := "MATCH " + pattern + " WHERE " + where + " RETURN r"
+		fixtureAdmission830Context, fixtureAdmission830 := compileRelationshipStatement(ctx, statement, nil)
+		_ = fixtureAdmission830
+		return exec.relationshipIDSeedNodes(fixtureAdmission830, fixtureAdmission830Context, pattern, where)
+	}
+	nodes, none, ok := seed("(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
 	require.True(t, ok)
 	require.False(t, none)
 	require.Len(t, nodes, 1, "the start node only")
-	_, _, ok = exec.relationshipIDSeedNodes(ctx, "(a)-[r*1..2]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
+	_, _, ok = seed("(a)-[r*1..2]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
 	require.False(t, ok, "a variable-length pattern")
-	_, _, ok = exec.relationshipIDSeedNodes(ctx, "(a)-[r]->(b)", "r.id = 7")
+	_, _, ok = seed("(a)-[r]->(b)", "r.id = 7")
 	require.False(t, ok)
 }

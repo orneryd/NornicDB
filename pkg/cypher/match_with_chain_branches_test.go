@@ -32,7 +32,9 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "with_chain_eval"))
 	ctx := context.Background()
 
-	_, _, err := exec.evaluateMatchClauseNodes(ctx, "(:Person)")
+	fixtureAdmission1315Context, fixtureAdmission1315 := statementTestContext(ctx, "(:Person)")
+	_ = fixtureAdmission1315Context
+	_, _, err := exec.evaluateMatchClauseNodes(fixtureAdmission1315, fixtureAdmission1315Context, "(:Person)")
 	require.ErrorContains(t, err, "missing variable")
 
 	_, err = exec.storage.CreateNode(&storage.Node{ID: "a1", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "x", "v": int64(1)}})
@@ -40,13 +42,17 @@ func TestEvaluateMatchClauseNodes_Branches(t *testing.T) {
 	_, err = exec.storage.CreateNode(&storage.Node{ID: "a2", Labels: []string{"A"}, Properties: map[string]interface{}{"k": "y", "v": int64(2)}})
 	require.NoError(t, err)
 
-	nodes, v, err := exec.evaluateMatchClauseNodes(ctx, "(n:A {k:'x'})")
+	fixtureAdmission1316Context, fixtureAdmission1316 := statementTestContext(ctx, "(n:A {k:'x'})")
+	_ = fixtureAdmission1316Context
+	nodes, v, err := exec.evaluateMatchClauseNodes(fixtureAdmission1316, fixtureAdmission1316Context, "(n:A {k:'x'})")
 	require.NoError(t, err)
 	require.Equal(t, "n", v)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("a1"), nodes[0].ID)
 
-	nodes, v, err = exec.evaluateMatchClauseNodes(ctx, "(n:A) WHERE n.v = 2")
+	fixtureAdmission1317Context, fixtureAdmission1317 := statementTestContext(ctx, "(n:A) WHERE n.v = 2")
+	_ = fixtureAdmission1317Context
+	nodes, v, err = exec.evaluateMatchClauseNodes(fixtureAdmission1317, fixtureAdmission1317Context, "(n:A) WHERE n.v = 2")
 	require.NoError(t, err)
 	require.Equal(t, "n", v)
 	require.Len(t, nodes, 1)

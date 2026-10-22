@@ -42,13 +42,19 @@ func TestPluginFunctionsMatchTheirNameAsWritten(t *testing.T) {
 		requireSemanticDetail(t, err, "UnknownFunction")
 	}
 
-	require.Equal(t, "camel:a", exec.evaluateExpressionWithContext(ctx, "zz.text.camelCase('a')", nil, nil))
-	value, ok, err := exec.evaluateRowValue("zz.text.camelCase('a')", nil)
+	fixtureAdmission810Context, fixtureAdmission810 := expressionTestContext(ctx, "zz.text.camelCase('a')")
+	_ = fixtureAdmission810
+	require.Equal(t, "camel:a", exec.evaluateExpressionWithContext(fixtureAdmission810, fixtureAdmission810Context, "zz.text.camelCase('a')", nil, nil))
+	fixtureAdmission811Context, fixtureAdmission811 := expressionTestRow(context.Background(), "zz.text.camelCase('a')", nil)
+	_ = fixtureAdmission811
+	value, ok, err := exec.evaluateRowValue(fixtureAdmission811, "zz.text.camelCase('a')", fixtureAdmission811Context)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "camel:a", value)
 	// An argument the row evaluator can't resolve leaves the call unresolved.
-	_, ok, err = exec.evaluateRowValue("zz.text.camelCase(missing)", nil)
+	fixtureAdmission812Context, fixtureAdmission812 := expressionTestRow(context.Background(), "zz.text.camelCase(missing)", nil)
+	_ = fixtureAdmission812
+	_, ok, err = exec.evaluateRowValue(fixtureAdmission812, "zz.text.camelCase(missing)", fixtureAdmission812Context)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -73,8 +79,12 @@ func TestPluginFunctionsComeFirstAndBuiltInsAnswerWhatPluginsCantCall(t *testing
 		result, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
 		require.NoError(t, err, expression)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
-		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
-		value, ok, err := exec.evaluateRowValue(expression, nil)
+		fixtureAdmission813Context, fixtureAdmission813 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission813
+		require.Equal(t, want, exec.evaluateExpressionWithContext(fixtureAdmission813, fixtureAdmission813Context, expression, nil, nil), expression)
+		fixtureAdmission814Context, fixtureAdmission814 := expressionTestRow(context.Background(), expression, nil)
+		_ = fixtureAdmission814
+		value, ok, err := exec.evaluateRowValue(fixtureAdmission814, expression, fixtureAdmission814Context)
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, want, value, expression)
@@ -82,9 +92,13 @@ func TestPluginFunctionsComeFirstAndBuiltInsAnswerWhatPluginsCantCall(t *testing
 
 	_, err := exec.Execute(ctx, "RETURN zz.only(1) AS v", nil)
 	require.ErrorContains(t, err, "unsupported function signature")
-	_, _, rowErr := exec.evaluateRowValue("zz.only(1)", nil)
+	fixtureAdmission815Context, fixtureAdmission815 := expressionTestRow(context.Background(), "zz.only(1)", nil)
+	_ = fixtureAdmission815
+	_, _, rowErr := exec.evaluateRowValue(fixtureAdmission815, "zz.only(1)", fixtureAdmission815Context)
 	require.ErrorContains(t, rowErr, "unsupported function signature")
 	failureCtx := withExpressionFailureSlot(ctx)
-	require.Nil(t, exec.evaluateExpressionWithContext(failureCtx, "zz.only(1)", nil, nil))
+	fixtureAdmission816Context, fixtureAdmission816 := expressionTestContext(failureCtx, "zz.only(1)")
+	_ = fixtureAdmission816
+	require.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission816, fixtureAdmission816Context, "zz.only(1)", nil, nil))
 	require.Equal(t, rowErr, getExpressionFailure(failureCtx))
 }

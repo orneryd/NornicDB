@@ -115,8 +115,11 @@ func TestRowOperatorFailureBranches(t *testing.T) {
 		{"n {a: 1}", false, ""},
 		{"(a)-[:R]->(b)", false, ""},
 	} {
-		ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
-		_, _ = exec.evaluateRowExpressionWithContext(ctx, tc.expr, row)
+		ctx, fixtureAdmission841 := expressionTestContext(context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{}), tc.expr)
+		_ = fixtureAdmission841
+		fixtureAdmission842Context, fixtureAdmission842 := expressionTestContext(ctx, tc.expr)
+		_ = fixtureAdmission842
+		_, _ = exec.evaluateRowExpressionWithContext(fixtureAdmission842, fixtureAdmission842Context, tc.expr, row)
 		recorded := getExpressionFailure(ctx) != nil
 		require.Equal(t, tc.recorded, recorded, tc.expr)
 		if tc.recorded {

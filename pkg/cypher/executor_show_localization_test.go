@@ -33,8 +33,18 @@ func TestCypherAdminManagerUnavailableErrorsHaveTypedIdentity(t *testing.T) {
 		command string
 		run     func() error
 	}{
-		{name: "show databases", command: "SHOW DATABASES", run: func() error { _, err := exec.executeShowDatabases(ctx, "SHOW DATABASES"); return err }},
-		{name: "create database", command: "CREATE DATABASE", run: func() error { _, err := exec.executeCreateDatabase(ctx, "CREATE DATABASE tenant"); return err }},
+		{name: "show databases", command: "SHOW DATABASES", run: func() error {
+			fixtureAdmission1194Context, fixtureAdmission1194 := statementTestContext(ctx, "SHOW DATABASES")
+			_ = fixtureAdmission1194Context
+			_, err := exec.executeShowDatabases(fixtureAdmission1194, fixtureAdmission1194Context, "SHOW DATABASES")
+			return err
+		}},
+		{name: "create database", command: "CREATE DATABASE", run: func() error {
+			fixtureAdmission1195Context, fixtureAdmission1195 := statementTestContext(ctx, "CREATE DATABASE tenant")
+			_ = fixtureAdmission1195Context
+			_, err := exec.executeCreateDatabase(fixtureAdmission1195, fixtureAdmission1195Context, "CREATE DATABASE tenant")
+			return err
+		}},
 		{name: "drop database", command: "DROP DATABASE", run: func() error { _, err := exec.executeDropDatabase(ctx, "DROP DATABASE tenant"); return err }},
 		{name: "create alias", command: "CREATE ALIAS", run: func() error {
 			_, err := exec.executeCreateAlias(ctx, "CREATE ALIAS alias FOR DATABASE tenant")
@@ -42,10 +52,17 @@ func TestCypherAdminManagerUnavailableErrorsHaveTypedIdentity(t *testing.T) {
 		}},
 		{name: "drop alias", command: "DROP ALIAS", run: func() error { _, err := exec.executeDropAlias(ctx, "DROP ALIAS alias"); return err }},
 		{name: "alter database", command: "ALTER DATABASE", run: func() error {
-			_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE tenant SET LIMIT max_nodes = 1")
+			fixtureAdmission1196Context, fixtureAdmission1196 := statementTestContext(ctx, "ALTER DATABASE tenant SET LIMIT max_nodes = 1")
+			_ = fixtureAdmission1196Context
+			_, err := exec.executeAlterDatabase(fixtureAdmission1196, fixtureAdmission1196Context, "ALTER DATABASE tenant SET LIMIT max_nodes = 1")
 			return err
 		}},
-		{name: "show limits", command: "SHOW LIMITS", run: func() error { _, err := exec.executeShowLimits(ctx, "SHOW LIMITS FOR DATABASE tenant"); return err }},
+		{name: "show limits", command: "SHOW LIMITS", run: func() error {
+			fixtureAdmission1197Context, fixtureAdmission1197 := statementTestContext(ctx, "SHOW LIMITS FOR DATABASE tenant")
+			_ = fixtureAdmission1197Context
+			_, err := exec.executeShowLimits(fixtureAdmission1197, fixtureAdmission1197Context, "SHOW LIMITS FOR DATABASE tenant")
+			return err
+		}},
 	}
 
 	for _, testCase := range testCases {
@@ -122,7 +139,9 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	t.Run("create database", func(t *testing.T) {
 		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), createDatabaseErr: cause}
 		exec.SetDatabaseManager(manager)
-		_, err := exec.executeCreateDatabase(ctx, "CREATE DATABASE tenant_create")
+		fixtureAdmission1198Context, fixtureAdmission1198 := statementTestContext(ctx, "CREATE DATABASE tenant_create")
+		_ = fixtureAdmission1198Context
+		_, err := exec.executeCreateDatabase(fixtureAdmission1198, fixtureAdmission1198Context, "CREATE DATABASE tenant_create")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminCreateDatabaseFailed, "failed to create database 'tenant_create': forced admin failure")
 		require.ErrorIs(t, err, cause)
 		require.Equal(t, "tenant_create", localizedErr.Message.Data["Database"])
@@ -158,7 +177,9 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	t.Run("database limit lookup", func(t *testing.T) {
 		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), getLimitsErr: cause}
 		exec.SetDatabaseManager(manager)
-		_, err := exec.executeShowLimits(ctx, "SHOW LIMITS FOR DATABASE tenant_limits")
+		fixtureAdmission1199Context, fixtureAdmission1199 := statementTestContext(ctx, "SHOW LIMITS FOR DATABASE tenant_limits")
+		_ = fixtureAdmission1199Context
+		_, err := exec.executeShowLimits(fixtureAdmission1199, fixtureAdmission1199Context, "SHOW LIMITS FOR DATABASE tenant_limits")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminDatabaseNotFound, "database 'tenant_limits' not found: forced admin failure")
 		require.ErrorIs(t, err, cause)
 		require.Equal(t, "tenant_limits", localizedErr.Message.Data["Database"])
@@ -168,7 +189,9 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), setLimitsErr: cause}
 		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_limits"))
 		exec.SetDatabaseManager(manager)
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = 42")
+		fixtureAdmission1200Context, fixtureAdmission1200 := statementTestContext(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = 42")
+		_ = fixtureAdmission1200Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1200, fixtureAdmission1200Context, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = 42")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminSetDatabaseLimitsFailed, "failed to set limits for database 'tenant_limits': forced admin failure")
 		require.ErrorIs(t, err, cause)
 		require.Equal(t, "tenant_limits", localizedErr.Message.Data["Database"])
@@ -179,7 +202,9 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_limits"))
 		manager.limits["tenant_limits"] = &multidb.Limits{}
 		exec.SetDatabaseManager(manager)
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = nope")
+		fixtureAdmission1201Context, fixtureAdmission1201 := statementTestContext(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = nope")
+		_ = fixtureAdmission1201Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1201, fixtureAdmission1201Context, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = nope")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminInvalidLimitValue, "invalid max_nodes value: strconv.ParseInt: parsing \"nope\": invalid syntax")
 		require.ErrorIs(t, err, strconv.ErrSyntax)
 		require.Equal(t, "max_nodes", localizedErr.Message.Data["Limit"])

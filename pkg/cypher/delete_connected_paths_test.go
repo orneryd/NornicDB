@@ -69,6 +69,8 @@ func TestConnectedDeleteTargetsLookupErrors(t *testing.T) {
 
 	exec := NewStorageExecutor(adjacencyFailingEngine{Engine: base})
 	node := &storage.Node{ID: "n", Labels: []string{"D"}}
-	_, _, err := exec.pipelineApplyDelete(context.Background(), []pipelineRow{{"n": node}}, map[string]struct{}{"n": {}}, "DELETE n")
+	fixtureAdmission1569Context, fixtureAdmission1569 := statementTestContext(context.Background(), "DELETE n")
+	_ = fixtureAdmission1569Context
+	_, _, err := exec.pipelineApplyDelete(fixtureAdmission1569, fixtureAdmission1569Context, []pipelineRow{{"n": node}}, map[string]struct{}{"n": {}}, "DELETE n")
 	require.ErrorIs(t, err, errAdjacencyRead)
 }

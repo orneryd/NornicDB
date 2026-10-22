@@ -43,7 +43,19 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 	return e.executeInternal(withStatementText(ctx, statement), statement, params)
 }
 
-func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+// executeInternal enters a new executable statement, including evaluated procedure
+// text. It shares the caller's transaction, but never the caller's source program.
+func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	return e.executeStatement(ctx, cypher, params, nil)
+}
+
+// executeFragment executes compiler-generated text belonging to the admitted
+// statement. Its lexical sites remain authoritative through seeds and lowering.
+func (e *StorageExecutor) executeFragment(statement admittedRelationshipStatement, ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	return e.executeStatement(ctx, cypher, params, statement.program)
+}
+
+func (e *StorageExecutor) executeStatement(ctx context.Context, cypher string, params map[string]interface{}, source *relationshipAccessProgram) (result *ExecuteResult, retErr error) {
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}
@@ -97,7 +109,10 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, true)
+		var fixtureAdmission3 admittedRelationshipStatement
+		ctx, fixtureAdmission3 = compileRelationshipStatement(ctx, cypher, source)
+		_ = fixtureAdmission3
+		return e.executeFragmentOnDatabase(fixtureAdmission3, ctx, use.Name, remaining, params)
 	}
 	if err := e.admitTransactionStatement(cypher); err != nil {
 		return nil, err
@@ -107,7 +122,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	if routed != e {
-		return routed.executeInternal(ctx, cypher, params)
+		return routed.executeStatement(ctx, cypher, params, source)
 	}
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
@@ -116,6 +131,12 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
 	}
+
+	params = mergeInheritedQueryParams(ctx, params)
+	params = normalizeQueryParameters(params)
+	var fixtureAdmission4 admittedRelationshipStatement
+	ctx, fixtureAdmission4 = compileRelationshipStatement(ctx, cypher, source, params)
+	_ = fixtureAdmission4
 
 	// Basic syntax validation to preserve existing error behavior.
 	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
@@ -128,9 +149,6 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 
-	params = mergeInheritedQueryParams(ctx, params)
-	params = normalizeQueryParameters(params)
-	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
@@ -138,11 +156,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 
 	// If we're in an explicit transaction, execute within it.
 	if e.txContext != nil && e.txContext.active {
-		return e.executeInTransaction(ctx, cypher, upper)
+		return e.executeAdmittedInTransaction(fixtureAdmission4, ctx, cypher, upper)
 	}
 
 	// Otherwise, stay on the caller's execution path (no implicit tx starts here).
-	return e.executeWithoutTransaction(ctx, cypher, upper)
+	return e.executeAdmittedWithoutTransaction(fixtureAdmission4, ctx, cypher, upper)
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {

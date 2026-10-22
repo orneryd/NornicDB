@@ -118,17 +118,23 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 				}
 				rows = append(rows, values)
 			}
-			expected, err := exec.projectMergeReturnSource(withExpressionFailureSlot(context.Background()), nil, clause, pipelineRowsSource(rows))
+			fixtureAdmission1032Context, fixtureAdmission1032 := statementTestContext(withExpressionFailureSlot(context.Background()), clause)
+			_ = fixtureAdmission1032Context
+			expected, err := exec.projectMergeReturnSource(fixtureAdmission1032, fixtureAdmission1032Context, nil, clause, pipelineRowsSource(rows))
 			require.NoError(t, err)
 			if clause == "RETURN sum(a.value) AS total" {
 				require.Equal(t, [][]interface{}{{int64(18014398509481990)}}, expected.Rows)
 			}
 			for _, workers := range []int{1, 2, 4, 8} {
 				ctx := withExpressionFailureSlot(context.Background())
-				groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, plan, workers)
+				fixtureAdmission1033Context, fixtureAdmission1033 := statementTestContext(ctx, clause)
+				_ = fixtureAdmission1033Context
+				groups, handled, err := exec.tryCartesianAggregatePartitions(fixtureAdmission1033, fixtureAdmission1033Context, patterns, plan, workers)
 				require.True(t, handled)
 				require.NoError(t, err)
-				result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+				fixtureAdmission1034Context, fixtureAdmission1034 := statementTestContext(ctx, clause)
+				_ = fixtureAdmission1034Context
+				result, err := exec.projectMergeReturnSource(fixtureAdmission1034, fixtureAdmission1034Context, nil, clause, nil, groups)
 				require.NoError(t, err)
 				require.Equal(t, expected.Columns, result.Columns)
 				require.Equal(t, expected.Rows, result.Rows)
@@ -136,14 +142,18 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		})
 	}
 	for _, clause := range []string{"RETURN sum(0.5)", "RETURN avg(a.value)", "RETURN collect(a.value)", "RETURN count(DISTINCT a.key)", "RETURN sum(a.value + 1)", "RETURN labels(a), count(*)"} {
-		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(clause), 4)
+		fixtureAdmission1070Context, fixtureAdmission1070 := statementTestContext(context.Background(), "RETURN "+(clause))
+		_ = fixtureAdmission1070Context
+		groups, handled, err := exec.tryCartesianAggregatePartitions(fixtureAdmission1070, fixtureAdmission1070Context, patterns, returnProjectionPlanFor(clause), 4)
 		require.False(t, handled, clause)
 		require.NoError(t, err)
 		require.Nil(t, groups)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	fixtureAdmission1071Context, fixtureAdmission1071 := statementTestContext(ctx, "RETURN "+("RETURN count(*)"))
+	_ = fixtureAdmission1071Context
+	_, handled, err := exec.tryCartesianAggregatePartitions(fixtureAdmission1071, fixtureAdmission1071Context, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -173,10 +183,14 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 	for _, clause := range []string{"RETURN count(a.value) AS total", "RETURN sum(a.value) AS total", "RETURN a.key AS key, count(*) AS total"} {
 		for _, workers := range []int{1, 2, 8} {
 			ctx := withExpressionFailureSlot(context.Background())
-			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(clause), workers)
+			fixtureAdmission1072Context, fixtureAdmission1072 := statementTestContext(ctx, clause)
+			_ = fixtureAdmission1072Context
+			groups, handled, err := exec.tryCartesianAggregatePartitions(fixtureAdmission1072, fixtureAdmission1072Context, patterns, returnProjectionPlanFor(clause), workers)
 			require.True(t, handled)
 			require.NoError(t, err)
-			result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+			fixtureAdmission1073Context, fixtureAdmission1073 := statementTestContext(ctx, clause)
+			_ = fixtureAdmission1073Context
+			result, err := exec.projectMergeReturnSource(fixtureAdmission1073, fixtureAdmission1073Context, nil, clause, nil, groups)
 			require.NoError(t, err)
 			switch clause {
 			case "RETURN count(a.value) AS total":
@@ -189,7 +203,9 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 		}
 	}
 	patterns[0].nodes = append(patterns[0].nodes, patterns[0].nodes...)
-	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	fixtureAdmission1074Context, fixtureAdmission1074 := statementTestContext(&cartesianCancelContext{Context: context.Background()}, "RETURN "+("RETURN count(*)"))
+	_ = fixtureAdmission1074Context
+	_, handled, err := exec.tryCartesianAggregatePartitions(fixtureAdmission1074, fixtureAdmission1074Context, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -215,16 +231,19 @@ func BenchmarkGh713CartesianPartitionWorkers(b *testing.B) {
 				plan := returnProjectionPlanFor(clause)
 				ctx := withExpressionFailureSlot(context.Background())
 				b.ReportAllocs()
+				fixtureAdmission1075Context, fixtureAdmission1075 := statementTestContext(ctx, clause)
 				b.ResetTimer()
+
+				_ = fixtureAdmission1075Context
 				for iteration := 0; iteration < b.N; iteration++ {
-					groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, plan, workers)
+					groups, handled, err := exec.tryCartesianAggregatePartitions(fixtureAdmission1075, fixtureAdmission1075Context, patterns, plan, workers)
 					if err != nil || !handled || len(groups) == 0 {
 						b.Fatalf("unexpected partitions: %v, %v", groups, err)
 					}
 					var total int64
 					for _, group := range groups {
 						projection := group.projections[len(group.projections)-1]
-						value, ok := projection.states[0].result(ctx, exec)
+						value, ok := projection.states[0].result(fixtureAdmission1075, fixtureAdmission1075Context, exec)
 						if !ok {
 							b.Fatal("invalid aggregate state")
 						}
@@ -385,8 +404,10 @@ func TestGh713LocalProjectionAvoidsContextCopies(t *testing.T) {
 		{"$shadow", int64(7)},
 	} {
 		t.Run(test.expression, func(t *testing.T) {
+			statement, fixtureAdmission133 := expressionTestContext(ctx, test.expression)
+			_ = fixtureAdmission133
 			allocations := testing.AllocsPerRun(1000, func() {
-				value, evaluated := exec.evaluateRowExpressionWithContext(ctx, test.expression, values)
+				value, evaluated := exec.evaluateRowExpressionWithContext(fixtureAdmission133, statement, test.expression, values)
 				if !evaluated || value != test.want {
 					t.Fatalf("got %v (%v), want %v", value, evaluated, test.want)
 				}
@@ -395,7 +416,9 @@ func TestGh713LocalProjectionAvoidsContextCopies(t *testing.T) {
 		})
 	}
 	for _, expression := range []string{"extra", "$unused"} {
-		value, evaluated := exec.evaluateRowExpressionWithContext(ctx, expression, values)
+		fixtureAdmission134Context, fixtureAdmission134 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission134
+		value, evaluated := exec.evaluateRowExpressionWithContext(fixtureAdmission134, fixtureAdmission134Context, expression, values)
 		require.True(t, evaluated)
 		if expression == "extra" {
 			require.Equal(t, int64(9), value)
@@ -435,7 +458,9 @@ func TestGh713SharedReturnBorrowedSourceOwnership(t *testing.T) {
 				values["value"] = int64(99)
 				return true
 			}
-			result, err := exec.projectMergeReturnSource(ctx, nil, test.clause, source)
+			fixtureAdmission1076Context, fixtureAdmission1076 := statementTestContext(ctx, test.clause)
+			_ = fixtureAdmission1076Context
+			result, err := exec.projectMergeReturnSource(fixtureAdmission1076, fixtureAdmission1076Context, nil, test.clause, source)
 			if test.code != "" {
 				require.Error(t, err)
 				require.True(t, strings.HasPrefix(statusText(err), test.code), statusText(err))
@@ -455,7 +480,9 @@ func TestGh713SharedReturnBorrowedSourceOwnership(t *testing.T) {
 	}
 	for _, clause := range []string{"RETURN value", "RETURN *"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		result, handled := exec.pipelineApplyReturnSource(ctx, nil, clause, func(func(pipelineRow) bool) bool { return false }, false)
+		fixtureAdmission1092Context, fixtureAdmission1092 := statementTestContext(ctx, clause)
+		_ = fixtureAdmission1092Context
+		result, handled := exec.pipelineApplyReturnSource(fixtureAdmission1092, fixtureAdmission1092Context, nil, clause, func(func(pipelineRow) bool) bool { return false }, false)
 		require.False(t, handled)
 		require.Nil(t, result)
 	}
@@ -618,7 +645,9 @@ func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
 		}},
 	}
 
-	filtered := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	fixtureAdmission1127Context, fixtureAdmission1127 := expressionTestContext(context.Background(), "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	_ = fixtureAdmission1127Context
+	filtered := exec.applyCartesianWherePushdown(fixtureAdmission1127, fixtureAdmission1127Context, patternMatches, "o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
 	require.Len(t, filtered, 2)
 	require.Len(t, filtered[0].nodes, 1)
 	require.Equal(t, "o-1", string(filtered[0].nodes[0].ID))
@@ -646,7 +675,9 @@ func TestCartesianWherePushdown_ContradictoryNullConstraint(t *testing.T) {
 		}},
 	}
 
-	filtered := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "o.joinKey IS NULL AND o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	fixtureAdmission1365Context, fixtureAdmission1365 := expressionTestContext(context.Background(), "o.joinKey IS NULL AND o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
+	_ = fixtureAdmission1365Context
+	filtered := exec.applyCartesianWherePushdown(fixtureAdmission1365, fixtureAdmission1365Context, patternMatches, "o.joinKey IS NULL AND o.joinKey IS NOT NULL AND t.joinKey = o.joinKey")
 	require.Len(t, filtered, 2)
 	require.Len(t, filtered[0].nodes, 0)
 	require.Len(t, filtered[1].nodes, 1)
@@ -668,7 +699,9 @@ func TestCartesianWherePushdown_SingleNodeComparisons(t *testing.T) {
 		}},
 	}
 
-	filtered := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.age >= 32 AND b.age < 30")
+	fixtureAdmission1366Context, fixtureAdmission1366 := expressionTestContext(context.Background(), "a.age >= 32 AND b.age < 30")
+	_ = fixtureAdmission1366Context
+	filtered := exec.applyCartesianWherePushdown(fixtureAdmission1366, fixtureAdmission1366Context, patternMatches, "a.age >= 32 AND b.age < 30")
 	require.Len(t, filtered[0].nodes, 1)
 	require.Equal(t, storage.NodeID("a-2"), filtered[0].nodes[0].ID)
 	require.Len(t, filtered[1].nodes, 1)

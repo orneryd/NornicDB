@@ -53,7 +53,9 @@ func TestExistsMultiClauseBodies(t *testing.T) {
 		require.Equal(t, tc.want, ids("MATCH (a:GraphNode) WITH a, COUNT { "+tc.body+" } AS n WHERE n > 0 RETURN a.id ORDER BY a.id"), tc.body)
 	}
 	// An empty body isn't an EXISTS subquery.
-	_, recognized := exec.rowExistsSubqueryMatches(ctx, "EXISTS { }", nil)
+	fixtureAdmission340Context, fixtureAdmission340 := expressionTestContext(ctx, "EXISTS { }")
+	_ = fixtureAdmission340
+	_, recognized := exec.rowExistsSubqueryMatches(fixtureAdmission340, fixtureAdmission340Context, "EXISTS { }", nil)
 	require.False(t, recognized)
 }
 

@@ -73,7 +73,7 @@ func (p *createPlan) release() {
 // rejection (a unique constraint) also writes nothing. This keeps CREATE
 // atomic on routes that write without a transaction (the async auto-commit
 // route, #628) as well as inside one.
-func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipelineRowSource, clauses []pipelineClause) ([]pipelineRow, *ExecuteResult, bool, error) {
+func (e *StorageExecutor) pipelineCreateSource(admission admittedRelationshipStatement, ctx context.Context, source pipelineRowSource, clauses []pipelineClause) ([]pipelineRow, *ExecuteResult, bool, error) {
 	plan := acquireCreatePlan()
 	defer plan.release()
 	var out []pipelineRow
@@ -85,7 +85,7 @@ func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipel
 		clear(plan.nodeBindings)
 		clear(plan.edgeBindings)
 		var newRow pipelineRow
-		newRow, planningError = e.pipelinePlanCreateRow(ctx, row, clauses, plan)
+		newRow, planningError = e.pipelinePlanCreateRow(admission, ctx, row, clauses, plan)
 		if planningError != nil {
 			return false
 		}
@@ -117,10 +117,10 @@ func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipel
 	return out, created, true, nil
 }
 
-func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
+func (e *StorageExecutor) createPatternsInScope(admission admittedRelationshipStatement, ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
 	plan := acquireCreatePlan()
 	defer plan.release()
-	createdPaths, err := e.planCreatePatterns(ctx, pattern, createdNodes, createdEdges, plan)
+	createdPaths, err := e.planCreatePatterns(admission, ctx, pattern, createdNodes, createdEdges, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 // every node and relationship is parsed, evaluated and validated, and bound
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
-func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
+func (e *StorageExecutor) planCreatePatterns(admission admittedRelationshipStatement, ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
 	for _, fragment := range splitTopLevelComma(pattern) {
 		_, body := parseCreatePathAssignment(strings.TrimSpace(fragment))
 		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
@@ -150,7 +150,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 		if nodePatternStr == "" {
 			continue
 		}
-		if _, err := e.planCreateNode(ctx, nodePatternStr, createdNodes, createdEdges, plan); err != nil {
+		if _, err := e.planCreateNode(admission, ctx, nodePatternStr, createdNodes, createdEdges, plan); err != nil {
 			return nil, err
 		}
 	}
@@ -177,7 +177,7 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			// The relationship is parsed and validated before its endpoints
 			// are created, so a rejected pattern writes nothing.
 			// Parse relationship type and properties
-			relType, relProps, err := e.parseRelationshipTypeAndProps(ctx, relStr)
+			relType, relProps, err := e.parseRelationshipTypeAndProps(admission, ctx, relStr)
 			if err != nil {
 				return nil, err
 			}
@@ -207,12 +207,12 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			// through the shared node planner.
 			sourceNode := chainedSourceNode
 			if sourceNode == nil {
-				sourceNode, err = e.planCreateEndpoint(ctx, sourceContent, createdNodes, createdEdges, plan)
+				sourceNode, err = e.planCreateEndpoint(admission, ctx, sourceContent, createdNodes, createdEdges, plan)
 				if err != nil {
 					return nil, err
 				}
 			}
-			targetNode, err := e.planCreateEndpoint(ctx, targetContent, createdNodes, createdEdges, plan)
+			targetNode, err := e.planCreateEndpoint(admission, ctx, targetContent, createdNodes, createdEdges, plan)
 			if err != nil {
 				return nil, err
 			}
@@ -334,8 +334,8 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 // planCreateNode plans one node from a CREATE node pattern through
 // prepareCreateNodePattern (validation, property references), adds it to plan
 // and binds its variable in nodes.
-func (e *StorageExecutor) planCreateNode(ctx context.Context, pattern string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (*storage.Node, error) {
-	nodePattern, err := e.prepareCreateNodePattern(ctx, pattern, nodes, edges)
+func (e *StorageExecutor) planCreateNode(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (*storage.Node, error) {
+	nodePattern, err := e.prepareCreateNodePattern(admission, ctx, pattern, nodes, edges)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +357,7 @@ func (e *StorageExecutor) planCreateNode(ctx context.Context, pattern string, no
 // planCreateEndpoint resolves a relationship endpoint in a CREATE pattern:
 // a variable already bound in nodes is reused, anything else is planned with
 // planCreateNode.
-func (e *StorageExecutor) planCreateEndpoint(ctx context.Context, content string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (*storage.Node, error) {
+func (e *StorageExecutor) planCreateEndpoint(admission admittedRelationshipStatement, ctx context.Context, content string, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (*storage.Node, error) {
 	content = strings.TrimSpace(content)
 	variable := content
 	if end := strings.IndexAny(content, ":{ "); end >= 0 {
@@ -369,12 +369,12 @@ func (e *StorageExecutor) planCreateEndpoint(ctx context.Context, content string
 	if missingRelationshipEndpoint(valueBindingsFromContext(ctx), variable) {
 		return nil, relationshipEndpointMissingError(variable)
 	}
-	return e.planCreateNode(ctx, "("+content+")", nodes, edges, plan)
+	return e.planCreateNode(admission, ctx, "("+content+")", nodes, edges, plan)
 }
 
 // projectCreateReturn fills out.result with the RETURN row of a CREATE
 // statement, if it has one, through the canonical RETURN operator.
-func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOutcome) error {
+func (e *StorageExecutor) projectCreateReturn(admission admittedRelationshipStatement, ctx context.Context, out *createOutcome) error {
 	if out.returnIdx <= 0 {
 		return nil
 	}
@@ -382,7 +382,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	for name, path := range out.paths {
 		row[name] = e.pathToMap(path)
 	}
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
+	projected, err := e.projectMergeReturn(admission, ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
 	if err != nil {
 		return err
 	}
@@ -398,7 +398,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 // property keys and values. Property values that reference variables created
 // earlier in the statement (b {name: a.name}) are resolved against nodes and
 // relationships.
-func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
+func (e *StorageExecutor) prepareCreateNodePattern(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
 	var parameterProperties map[string]interface{}
 	if head, props := splitNodePatternProperties(pattern); props == "" {
 		if rest, parameter, ok := splitPatternParameterMap(head); ok {
@@ -413,11 +413,11 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if err := e.validateCreatePatternPropertyMap(ctx, pattern); err != nil {
 		return nodePatternInfo{}, err
 	}
-	nodePattern := e.parseNodePattern(ctx, pattern)
+	nodePattern := e.parseNodePattern(admission, ctx, pattern)
 	if parameterProperties != nil {
 		nodePattern.properties = parameterProperties
 	}
-	e.resolveCreatePropertyReferences(ctx, pattern, nodePattern.properties, nodes, relationships)
+	e.resolveCreatePropertyReferences(admission, ctx, pattern, nodePattern.properties, nodes, relationships)
 	for key, value := range nodePattern.properties {
 		if value == nil {
 			delete(nodePattern.properties, key)
@@ -448,7 +448,7 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if err := validatePropertyValues(nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
-	if err := e.validateNoTextFallthrough(ctx, pattern, nodePattern.properties, nodes, relationships); err != nil {
+	if err := e.validateNoTextFallthrough(admission, ctx, pattern, nodePattern.properties, nodes, relationships); err != nil {
 		return nodePatternInfo{}, err
 	}
 	return nodePattern, nil
@@ -487,7 +487,7 @@ func namedPathAssignmentPrefix(pattern string) bool {
 // genuine evaluation failure (1 / 0) keeps its ArithmeticError, and an
 // expression the row evaluator resolves is fine — only a truly unevaluable
 // expression is a syntax error.
-func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern string, properties map[string]interface{}, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) error {
+func (e *StorageExecutor) validateNoTextFallthrough(admission admittedRelationshipStatement, ctx context.Context, pattern string, properties map[string]interface{}, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) error {
 	open := indexByteOutsideBackticks(pattern, '{')
 	if open < 0 {
 		return nil
@@ -527,7 +527,7 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		for name, edge := range relationships {
 			values[name] = edge.Properties
 		}
-		if _, resolved, evalErr := e.evaluateRowValue(expression, values); evalErr != nil {
+		if _, resolved, evalErr := e.evaluateRowValue(admission, expression, values); evalErr != nil {
 			return evalErr
 		} else if resolved {
 			continue
@@ -538,7 +538,7 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 	return nil
 }
 
-func (e *StorageExecutor) resolveCreatePropertyReferences(
+func (e *StorageExecutor) resolveCreatePropertyReferences(admission admittedRelationshipStatement,
 	ctx context.Context,
 	pattern string,
 	properties map[string]interface{},
@@ -579,7 +579,7 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 				continue
 			}
 		}
-		value := e.evaluateExpressionWithContext(ctx, expression, nodes, relationships)
+		value := e.evaluateExpressionWithContext(admission, ctx, expression, nodes, relationships)
 		if value == nil {
 			delete(properties, key)
 			continue
@@ -842,7 +842,7 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 // pattern with no type ("r", ":") yields an empty type. The type's shape
 // (one type, a quoted or identifier name) is checked before, by
 // validateSingleRelationshipDeclaration.
-func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseRelationshipTypeAndProps(admission admittedRelationshipStatement, ctx context.Context, relStr string) (string, map[string]interface{}, error) {
 	relStr = strings.TrimSpace(relStr)
 	relType := ""
 	var relProps map[string]interface{}
@@ -863,7 +863,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	declaration := relationshipDeclarationOf(relStr)
 	if declaration.properties != "" {
 		if propsEnd := findMatchingDelimiter(declaration.properties, 0, '{', '}'); propsEnd > 0 {
-			relProps = e.parseProperties(ctx, declaration.properties[:propsEnd+1])
+			relProps = e.parseProperties(admission, ctx, declaration.properties[:propsEnd+1])
 		}
 	}
 	relType = declaration.singleType()
@@ -1420,7 +1420,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 // every pattern variable can be resolved this way, it returns a single
 // combination map. Otherwise it returns (nil, false) and the caller falls
 // through to the generic label-scan path.
-func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
+func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(admission admittedRelationshipStatement,
 	ctx context.Context,
 	matchClauses []string,
 	params map[string]interface{},
@@ -1457,7 +1457,7 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 			if patternHasRelationship(p) {
 				return nil, false
 			}
-			info := e.parseNodePattern(ctx, p)
+			info := e.parseNodePattern(admission, ctx, p)
 			if info.variable == "" {
 				continue
 			}

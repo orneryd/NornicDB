@@ -273,7 +273,7 @@ func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
 // recursion, so it sees the variables bound at that point (a quantifier's, a
 // comprehension's, reduce's). matched is false for any other expression and
 // when the row carries no statement context.
-func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowSubqueryAtom(admission admittedRelationshipStatement, expr string, values map[string]interface{}) (interface{}, bool, error) {
 	kind, open, ok := rowSubqueryAtom(expr)
 	if !ok {
 		return nil, false, nil
@@ -282,7 +282,7 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 	if ctx == nil {
 		return nil, false, nil
 	}
-	value, resolved, err := e.rowSubqueryValue(ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
+	value, resolved, err := e.rowSubqueryValue(admission, ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
 	if err != nil {
 		return nil, true, err
 	}
@@ -296,8 +296,8 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 // row, correlated with the row's values: EXISTS is whether the body has a row,
 // COUNT how many rows it has, COLLECT the list of its single returned column.
 // A body that is only a pattern is matched as MATCH <pattern>.
-func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
-	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
+func (e *StorageExecutor) evaluateRowSubqueryValue(admission admittedRelationshipStatement, ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
+	value, ok, err := e.rowSubqueryValue(admission, ctx, kind, body, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -309,24 +309,24 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // instead of recording it. It is the one evaluator of EXISTS / COUNT /
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
-func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) rowSubqueryValue(admission admittedRelationshipStatement, ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
 	ctx = withoutLocalSubqueryScope(ctx)
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
-		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
+		if count, ok := e.boundDegreeCount(admission, ctx, body, values); ok {
 			return rowCountValue(kind, count), true, nil
 		}
-		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
+		if count, ok := e.boundChainCount(admission, ctx, body, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
-		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
+		if count, ok := e.boundNodeLookupCount(admission, ctx, body, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
 		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
 			// A pattern the kernel can't match goes to the pipeline below:
 			// its failure isn't a count of 0.
-			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
+			if rows, matched := e.boundPatternRows(admission, ctx, body, nodes, rels, values); matched {
 				return rowCountValue(kind, int64(len(rows))), true, nil
 			}
 		}
@@ -339,7 +339,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		body = grouped
 	}
 	query := rowSubqueryQueryFor(ctx, kind, body)
-	result, err := e.runCorrelatedSubquery(ctx, query, values)
+	result, err := e.runCorrelatedSubquery(admission, ctx, query, values)
 	if err != nil {
 		return nil, false, err
 	}
@@ -378,19 +378,19 @@ func rowCountValue(kind string, rows int64) interface{} {
 // values bound when the pipeline declines the body (a CALL subquery or a
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
-func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) runCorrelatedSubquery(statement admittedRelationshipStatement, ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranchesFor(ctx, query); union {
 		return e.executeUnionBranches(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
-			return e.runCorrelatedSubquery(ctx, branch, values)
+			return e.runCorrelatedSubquery(statement, ctx, branch, values)
 		})
 	}
-	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
+	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(statement, ctx, query)
 	if outcome.terminal() {
 		return outcome.result, outcome.err
 	}
-	return e.executeCorrelatedSubqueryBody(ctx, query, values)
+	return e.executeCorrelatedSubqueryBody(statement, ctx, query, values)
 }
 
 // executeCorrelatedSubqueryBody runs a subquery body through the full
@@ -398,7 +398,7 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 // correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
 // relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
 // WITH $p AS v. Row parameters stay available.
-func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCorrelatedSubqueryBody(admission admittedRelationshipStatement, ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
 	params := make(map[string]interface{}, len(values))
 	for name, value := range getParamsFromContext(ctx) {
 		params[name] = value
@@ -441,7 +441,7 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
 	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	return e.executeFragment(admission, ctx, prefix.String()+query, params)
 }
 
 // boundChainCount counts the rows of a body that is one relationship chain,
@@ -452,13 +452,13 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 // the correlated pipeline evaluates: a pattern list, a body reading a value
 // of the row that isn't a node or relationship, a property map reading the
 // row, a shortest path, or no bound start node.
-func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+func (e *StorageExecutor) boundChainCount(admission admittedRelationshipStatement, ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
 	shape := boundChainShapeFor(ctx, body)
 	if !shape.ok {
 		return 0, false
 	}
 	pattern, where := shape.pattern, shape.where
-	matches := e.parseTraversalPattern(ctx, pattern)
+	matches := e.parseTraversalPattern(admission, ctx, pattern)
 	if matches == nil || !chainVariablesBindEntities(matches, values) {
 		return 0, false
 	}
@@ -466,10 +466,9 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if seed == nil {
 		return 0, false
 	}
-	if count, expanded := e.boundExpandCount(ctx, matches, seed, where, values, first); expanded {
-		return count, true
-	}
-	return e.boundTraversalCount(ctx, matches, seed, where, values, first), true
+	ctx = e.withRelationshipRow(admission, ctx, values, pattern, where)
+	execution := e.relationshipExecutionFor(admission, ctx, pattern, "")
+	return execution.anchoredCount(ctx, matches, seed, values, first)
 }
 
 // boundNodeLookupCount counts the rows of a body that is one labelled node
@@ -483,7 +482,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 // a correlated pipeline run per row, which plans the WHERE's text again for
 // every row; ok is false for any other body, a value of the map the row
 // can't resolve, and under a temporal viewport.
-func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
+func (e *StorageExecutor) boundNodeLookupCount(admission admittedRelationshipStatement, ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
 	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, body, parseBoundNodeShape)
 	if !shape.ok {
 		return 0, false
@@ -498,14 +497,14 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 	}
 	properties := make(map[string]interface{}, len(shape.keys))
 	for index, key := range shape.keys {
-		value, resolved, err := e.evaluateRowValue(shape.values[index], values)
+		value, resolved, err := e.evaluateRowValue(admission, shape.values[index], values)
 		if err != nil || !resolved {
 			return 0, false
 		}
 		properties[key] = normalizePropValue(value)
 	}
 	pattern := nodePatternInfo{variable: shape.variable, labels: shape.labels, properties: properties}
-	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{})
+	nodes, _, err := e.collectPipelineInitialNodeCandidates(admission, ctx, pattern, "", pipelineMatchPhysicalHint{})
 	if err != nil {
 		return 0, false
 	}
@@ -541,7 +540,7 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 			if shape.variable != "" {
 				row[shape.variable] = node
 			}
-			if !e.evaluateRowPredicate(ctx, shape.where, row) {
+			if !e.evaluateRowPredicate(admission, ctx, shape.where, row) {
 				continue
 			}
 		}
@@ -618,57 +617,15 @@ func parseBoundNodeShape(body string) boundNodeShape {
 // boundTraversalCount is boundChainCount for any chain: the paths the
 // traversal finds from seed that agree with the row's nodes and
 // relationships and pass where.
-func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
+func (run relationshipAccessExecution) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
+	e := run.executor
 	var paths []PathResult
 	if matches.IsChained && len(matches.Segments) > 1 {
-		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
+		paths = run.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
 	} else {
-		paths = e.traverseFromNode(ctx, seed, matches)
+		paths = run.traverseFromNode(ctx, seed, matches)
 	}
-	var count int64
-	for _, path := range paths {
-		inner := e.buildPathContext(path, matches)
-		correlated := true
-		for name, node := range inner.nodes {
-			if bound, isNode := values[name].(*storage.Node); isNode && (bound == nil || node == nil || bound.ID != node.ID) {
-				correlated = false
-				break
-			}
-		}
-		for name, relationship := range inner.rels {
-			if !correlated {
-				break
-			}
-			if bound, isRel := values[name].(*storage.Edge); isRel && (bound == nil || relationship == nil || bound.ID != relationship.ID) {
-				correlated = false
-				break
-			}
-		}
-		if !correlated {
-			continue
-		}
-		if where != "" {
-			// The WHERE sees the row's values with the path's bindings.
-			row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
-			for name, value := range values {
-				row[name] = value
-			}
-			for name, node := range inner.nodes {
-				row[name] = node
-			}
-			for name, relationship := range inner.rels {
-				row[name] = relationship
-			}
-			if !e.evaluateRowPredicate(ctx, where, row) {
-				continue
-			}
-		}
-		count++
-		if first {
-			return count
-		}
-	}
-	return count
+	return e.countRelationshipPaths(run.statement(), ctx, paths, matches, where, values, first)
 }
 
 // boundExpandCount is boundChainCount for one relationship of length one,
@@ -680,7 +637,8 @@ func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *Trav
 // first match. It gives the rows the traversal below gives the same body;
 // expanded is false for any other chain, and under a temporal viewport,
 // which the traversal handles.
-func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+func (run relationshipAccessExecution) boundExpandCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) (count int64, expanded bool) {
+	e := run.executor
 	rel := matches.Relationship
 	if matches.IsChained || rel.VariableLength || rel.MinHops != 1 || rel.MaxHops != 1 {
 		return 0, false
@@ -715,7 +673,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	if end != nil {
 		target = end.ID
 		reversed := reverseRelationshipDirection(rel.Direction)
-		if end.ID != seed.ID && e.relationshipDegree(end.ID, reversed) < e.relationshipDegree(seed.ID, rel.Direction) {
+		if end.ID != seed.ID && run.relationshipDegree(end.ID, reversed) < run.relationshipDegree(seed.ID, rel.Direction) {
 			from, target, rel.Direction = end, seed.ID, reversed
 		}
 	}
@@ -723,12 +681,12 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 	var edges []*storage.Edge
 	switch rel.Direction {
 	case "outgoing":
-		edges = e.traversalEdges(traversal, from.ID, true)
+		edges = run.traversalEdges(traversal, from.ID, true)
 	case "incoming":
-		edges = e.traversalEdges(traversal, from.ID, false)
+		edges = run.traversalEdges(traversal, from.ID, false)
 	default:
 		var err error
-		if edges, err = undirectedIncidentEdges(e.storage, from.ID); err != nil {
+		if edges, err = run.undirectedIncidentEdges(ctx, e.storage, from.ID); err != nil {
 			recordExpressionFailure(ctx, err)
 			return 0, true
 		}
@@ -794,7 +752,7 @@ func (e *StorageExecutor) boundExpandCount(ctx context.Context, matches *Travers
 			if rel.Variable != "" {
 				row[rel.Variable] = edge
 			}
-			if !e.evaluateRowPredicate(ctx, where, row) {
+			if !e.evaluateRowPredicate(run.statement(), ctx, where, row) {
 				continue
 			}
 		}
@@ -820,7 +778,8 @@ func reverseRelationshipDirection(direction string) string {
 
 // relationshipDegree is how many relationships a node has in direction: an
 // estimate to choose the cheaper end of an expansion by, never a result.
-func (e *StorageExecutor) relationshipDegree(id storage.NodeID, direction string) int {
+func (run relationshipAccessExecution) relationshipDegree(id storage.NodeID, direction string) int {
+	e := run.executor
 	switch direction {
 	case "outgoing":
 		return e.storage.GetOutDegree(id)
@@ -1172,7 +1131,7 @@ func parseBoundDegreeShapeText(body string) boundDegreeShape {
 // from its adjacency, without the traversal kernel. It takes only the exact
 // boundDegreePattern shape: a far end with a label, properties or a WHERE,
 // more hops, or an undirected hop go through the kernel, which applies them.
-func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, values map[string]interface{}) (int64, bool) {
+func (e *StorageExecutor) boundDegreeCount(admission admittedRelationshipStatement, ctx context.Context, body string, values map[string]interface{}) (int64, bool) {
 	shape := parseBoundDegreeShape(body)
 	if !shape.ok {
 		return 0, false
@@ -1188,11 +1147,14 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 			return 0, false
 		}
 	}
-	return e.nodeDegreeCount(ctx, node, shape), true
+	split := relationshipAccessMatchWhere(body)
+	execution := e.relationshipExecutionFor(admission, ctx, split.pattern, split.where)
+	return execution.degree(ctx, node, shape), true
 }
 
 // nodeDegreeCount is the degree of node along shape's direction and types.
-func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+func (run relationshipAccessExecution) nodeDegreeCount(ctx context.Context, node *storage.Node, shape boundDegreeShape) int64 {
+	e := run.executor
 	store := e.getStorage(ctx)
 	var edges []*storage.Edge
 	if shape.outgoing {

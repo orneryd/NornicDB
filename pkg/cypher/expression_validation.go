@@ -760,17 +760,17 @@ func isCypherListParameter(value interface{}) bool {
 // validateStaticBooleanOperands rejects statically-known non-boolean operands
 // before execution. Expressions whose type depends on a row remain subject to
 // runtime validation by the row evaluator.
-func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, expression string) error {
+func (e *StorageExecutor) validateStaticBooleanOperands(admission admittedRelationshipStatement, ctx context.Context, expression string) error {
 	expression = strings.TrimSpace(expression)
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.validateStaticBooleanOperands(ctx, inner)
+		return e.validateStaticBooleanOperands(admission, ctx, inner)
 	}
 	if hasPrefixFoldASCII(expression, "NOT ") {
 		operand := strings.TrimSpace(expression[len("NOT "):])
-		if err := e.validateStaticBooleanOperands(ctx, operand); err != nil {
+		if err := e.validateStaticBooleanOperands(admission, ctx, operand); err != nil {
 			return err
 		}
-		value, known := e.staticBooleanOperandValue(ctx, operand)
+		value, known := e.staticBooleanOperandValue(admission, ctx, operand)
 		if !known || value == nil {
 			return nil
 		}
@@ -787,10 +787,10 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 			continue
 		}
 		for _, operand := range []string{left, right} {
-			if err := e.validateStaticBooleanOperands(ctx, operand); err != nil {
+			if err := e.validateStaticBooleanOperands(admission, ctx, operand); err != nil {
 				return err
 			}
-			value, known := e.staticBooleanOperandValue(ctx, operand)
+			value, known := e.staticBooleanOperandValue(admission, ctx, operand)
 			if !known || value == nil {
 				continue
 			}
@@ -803,7 +803,7 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 	return nil
 }
 
-func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, expression string) (interface{}, bool) {
+func (e *StorageExecutor) staticBooleanOperandValue(admission admittedRelationshipStatement, ctx context.Context, expression string) (interface{}, bool) {
 	expression = strings.TrimSpace(expression)
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		expression = inner
@@ -812,7 +812,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 		return value, true
 	}
 	if strings.HasPrefix(expression, "{") && strings.HasSuffix(expression, "}") {
-		return e.evaluateMapLiteralFromValues(expression, nil), true
+		return e.evaluateMapLiteralFromValues(admission, expression, nil), true
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND ", "<=", ">=", "<>", "!=", "=", "<", ">"} {
 		if _, _, found := splitByOperatorWithOptions(expression, operator, true, true); found {
@@ -823,7 +823,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") || strings.HasPrefix(upper, "NOT ") {
 		return true, true
 	}
-	value, defined := e.evaluateExpressionWithContextDefined(ctx, expression, nil, nil)
+	value, defined := e.evaluateExpressionWithContextDefined(admission, ctx, expression, nil, nil)
 	if !defined {
 		return nil, false
 	}

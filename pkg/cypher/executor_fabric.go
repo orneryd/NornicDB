@@ -113,6 +113,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 }
 
 func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, prepared *fabricPreparedExec) (*ExecuteResult, error) {
+	ctx, statement := compileRelationshipStatement(ctx, cypher, nil)
 	if prepared == nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
@@ -123,6 +124,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		base:       e,
 		authToken:  authToken,
 		autoCommit: autoCommit,
+		source:     statement.program,
 	}, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
@@ -157,7 +159,9 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
-	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
+	fabricExecutor.SetGraphArgumentEvaluator(func(graphCtx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
+		return e.evaluateGraphArguments(statement, graphCtx, expressions, values)
+	})
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
 	if err != nil {
@@ -599,6 +603,9 @@ type cypherFabricExecutor struct {
 	base       *StorageExecutor
 	authToken  string
 	autoCommit bool
+	// Only a coordinator-created adapter executes fragments of an existing
+	// source. Standalone protocol calls own the executable text they receive.
+	source *relationshipAccessProgram
 
 	mu sync.Mutex
 	// localTxExecBySub holds the sub-transaction executors of a statement
@@ -674,7 +681,7 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	result, err := exec.executeInternal(ctx, query, params)
+	result, err := exec.executeStatement(ctx, query, params, c.source)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -921,11 +928,11 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
 // (USE graph.byName(g)) for Fabric: values holds the statement's
 // parameters and the current row's variables.
-func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
+func (e *StorageExecutor) evaluateGraphArguments(admission admittedRelationshipStatement, ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
+		value, ok := e.evaluateRowExpressionWithContext(admission, ctx, expression, pipelineRow(values))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err

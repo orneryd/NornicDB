@@ -203,7 +203,9 @@ func TestMonsterIssueBodyErrors(t *testing.T) {
 func TestMonsterUnresolvedExpressionProtocol(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	for _, expression := range []string{"unknownVariable", "(n)-->()", "->()", ">()"} {
-		require.Equal(t, expression, exec.evaluateExpressionFromValues(expression, map[string]interface{}{}))
+		fixtureAdmission760Context, fixtureAdmission760 := expressionTestRow(context.Background(), expression, map[string]interface{}{})
+		_ = fixtureAdmission760
+		require.Equal(t, expression, exec.evaluateExpressionFromValues(fixtureAdmission760, expression, fixtureAdmission760Context))
 	}
 	for _, query := range []string{
 		`RETURN '\\| <tab>' AS value`,

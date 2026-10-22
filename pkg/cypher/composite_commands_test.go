@@ -461,9 +461,13 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 
 	t.Run("show composite and constituents direct branches", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		_, err := exec.executeShowCompositeDatabases(ctx, "SHOW COMPOSITE DATABASES")
+		fixtureAdmission1047Context, fixtureAdmission1047 := statementTestContext(ctx, "SHOW COMPOSITE DATABASES")
+		_ = fixtureAdmission1047Context
+		_, err := exec.executeShowCompositeDatabases(fixtureAdmission1047, fixtureAdmission1047Context, "SHOW COMPOSITE DATABASES")
 		require.Error(t, err)
-		_, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE x")
+		fixtureAdmission1048Context, fixtureAdmission1048 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE x")
+		_ = fixtureAdmission1048Context
+		_, err = exec.executeShowConstituents(fixtureAdmission1048, fixtureAdmission1048Context, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE x")
 		require.Error(t, err)
 
 		baseStore := newTestMemoryEngine(t)
@@ -478,42 +482,60 @@ func TestExecuteCreateDropAndShowCompositeDatabase_DirectHandlers(t *testing.T) 
 			map[string]interface{}{"alias": "a1", "database_name": "db1", "type": "local", "access_mode": "read_write"},
 		}))
 
-		res, err := exec.executeShowCompositeDatabases(ctx, "SHOW COMPOSITE DATABASES")
+		fixtureAdmission1049Context, fixtureAdmission1049 := statementTestContext(ctx, "SHOW COMPOSITE DATABASES")
+		_ = fixtureAdmission1049Context
+		res, err := exec.executeShowCompositeDatabases(fixtureAdmission1049, fixtureAdmission1049Context, "SHOW COMPOSITE DATABASES")
 		require.NoError(t, err)
 		require.NotEmpty(t, res.Rows)
 
-		_, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS")
+		fixtureAdmission1050Context, fixtureAdmission1050 := statementTestContext(ctx, "SHOW CONSTITUENTS")
+		_ = fixtureAdmission1050Context
+		_, err = exec.executeShowConstituents(fixtureAdmission1050, fixtureAdmission1050Context, "SHOW CONSTITUENTS")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "FOR COMPOSITE DATABASE name expected")
 
-		res, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE c_show")
+		fixtureAdmission1051Context, fixtureAdmission1051 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE c_show")
+		_ = fixtureAdmission1051Context
+		res, err = exec.executeShowConstituents(fixtureAdmission1051, fixtureAdmission1051Context, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE c_show")
 		require.NoError(t, err)
 		require.NotEmpty(t, res.Rows)
 		require.Equal(t, []string{"alias", "database", "type", "access_mode", "uri", "secret_ref", "auth_mode", "user"}, res.Columns)
 
 		// Flexible whitespace branch: hit COMPOSITE + DATABASE parsing path.
-		res, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE\tDATABASE\tc_show")
+		fixtureAdmission1052Context, fixtureAdmission1052 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE\tDATABASE\tc_show")
+		_ = fixtureAdmission1052Context
+		res, err = exec.executeShowConstituents(fixtureAdmission1052, fixtureAdmission1052Context, "SHOW CONSTITUENTS FOR COMPOSITE\tDATABASE\tc_show")
 		require.NoError(t, err)
 		require.NotEmpty(t, res.Rows)
-		res, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE\nDATABASE\nc_show")
+		fixtureAdmission1053Context, fixtureAdmission1053 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE\nDATABASE\nc_show")
+		_ = fixtureAdmission1053Context
+		res, err = exec.executeShowConstituents(fixtureAdmission1053, fixtureAdmission1053Context, "SHOW CONSTITUENTS FOR COMPOSITE\nDATABASE\nc_show")
 		require.NoError(t, err)
 		require.NotEmpty(t, res.Rows)
 
-		_, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE   ")
+		fixtureAdmission1054Context, fixtureAdmission1054 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE   ")
+		_ = fixtureAdmission1054Context
+		_, err = exec.executeShowConstituents(fixtureAdmission1054, fixtureAdmission1054Context, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE   ")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "name expected")
 
-		_, err = exec.executeShowConstituents(ctx, "SHOW PARTS FOR COMPOSITE DATABASE c_show")
+		fixtureAdmission1055Context, fixtureAdmission1055 := statementTestContext(ctx, "SHOW PARTS FOR COMPOSITE DATABASE c_show")
+		_ = fixtureAdmission1055Context
+		_, err = exec.executeShowConstituents(fixtureAdmission1055, fixtureAdmission1055Context, "SHOW PARTS FOR COMPOSITE DATABASE c_show")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid SHOW CONSTITUENTS syntax")
 
-		_, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE does_not_exist")
+		fixtureAdmission1056Context, fixtureAdmission1056 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE does_not_exist")
+		_ = fixtureAdmission1056Context
+		_, err = exec.executeShowConstituents(fixtureAdmission1056, fixtureAdmission1056Context, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE does_not_exist")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to get constituents")
 
 		weird := &weirdConstituentAdapter{testDatabaseManagerAdapter: adapter}
 		exec.SetDatabaseManager(weird)
-		res, err = exec.executeShowConstituents(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE c_show")
+		fixtureAdmission1057Context, fixtureAdmission1057 := statementTestContext(ctx, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE c_show")
+		_ = fixtureAdmission1057Context
+		res, err = exec.executeShowConstituents(fixtureAdmission1057, fixtureAdmission1057Context, "SHOW CONSTITUENTS FOR COMPOSITE DATABASE c_show")
 		require.NoError(t, err)
 		require.Equal(t, []interface{}{"", "", "", "", "", "", "", ""}, res.Rows[0])
 	})

@@ -14,7 +14,7 @@ import (
 // iteration runs as this shape). The property filter is the same Cypher
 // equality, and the WHERE still runs on every path, so the paths are the
 // same.
-func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matches *TraversalMatch, whereClause string) {
+func (e *StorageExecutor) pushRelationshipEqualities(admission admittedRelationshipStatement, ctx context.Context, matches *TraversalMatch, whereClause string) {
 	rel := &matches.Relationship
 	if whereClause == "" || matches.IsChained || rel.Variable == "" || rel.VariableLength || rel.MinHops != 1 || rel.MaxHops != 1 ||
 		rel.Variable == matches.StartNode.variable || rel.Variable == matches.EndNode.variable || rel.Variable == matches.PathVariable {
@@ -31,7 +31,7 @@ func (e *StorageExecutor) pushRelationshipEqualities(ctx context.Context, matche
 		if _, exists := pushed[term.property]; exists {
 			continue
 		}
-		value, ok := e.indexSeekConstant(ctx, term.constant)
+		value, ok := e.indexSeekConstant(admission, ctx, term.constant)
 		if !ok {
 			continue
 		}

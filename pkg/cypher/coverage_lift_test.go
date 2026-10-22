@@ -36,8 +36,12 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 	require.Equal(t, left.ID, nodeCtx["l"].ID)
 	require.Equal(t, right.ID, nodeCtx["r"].ID)
 	require.Same(t, edge, edgeCtx["e"])
-	assert.True(t, evaluateExpressionBoolWithContext(exec, ctx, "e.active", nodeCtx, edgeCtx))
-	assert.False(t, evaluateExpressionBoolWithContext(exec, ctx, "e.missing", nodeCtx, edgeCtx))
+	fixtureAdmission1077Context, fixtureAdmission1077 := expressionTestContext(ctx, "e.active")
+	_ = fixtureAdmission1077Context
+	assert.True(t, evaluateExpressionBoolWithContext(fixtureAdmission1077, exec, fixtureAdmission1077Context, "e.active", nodeCtx, edgeCtx))
+	fixtureAdmission1078Context, fixtureAdmission1078 := expressionTestContext(ctx, "e.missing")
+	_ = fixtureAdmission1078Context
+	assert.False(t, evaluateExpressionBoolWithContext(fixtureAdmission1078, exec, fixtureAdmission1078Context, "e.missing", nodeCtx, edgeCtx))
 
 	reversePattern, ok := exec.parseSimpleMatchRelationshipPattern("(r:Right)<-[e:REL]-(l:Left)")
 	require.True(t, ok)
@@ -54,10 +58,14 @@ func TestCoverageLiftVectorRelationshipHelpers(t *testing.T) {
 
 	assert.Equal(t, "[-1,2.5]", formatInlineFloat32Vector([]float32{-1, 2.5}))
 	assert.Equal(t, "[]", formatInlineFloat32Vector(nil))
-	vec, ok := exec.resolveCosineQueryVector(ctx, "[1.0, 2.0]")
+	fixtureAdmission1499Context, fixtureAdmission1499 := expressionTestContext(ctx, "[1.0, 2.0]")
+	_ = fixtureAdmission1499Context
+	vec, ok := exec.resolveCosineQueryVector(fixtureAdmission1499, fixtureAdmission1499Context, "[1.0, 2.0]")
 	require.True(t, ok)
 	assert.Equal(t, []float32{1, 2}, vec)
-	_, ok = exec.resolveCosineQueryVector(ctx, "''")
+	fixtureAdmission1500Context, fixtureAdmission1500 := expressionTestContext(ctx, "''")
+	_ = fixtureAdmission1500Context
+	_, ok = exec.resolveCosineQueryVector(fixtureAdmission1500, fixtureAdmission1500Context, "''")
 	assert.False(t, ok)
 
 	for text, want := range map[string]struct {
@@ -149,17 +157,25 @@ func TestCoverageLiftPureBranchHelpers(t *testing.T) {
 	assert.False(t, ok)
 
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	op, target, ok := exec.parseScoreComparisonPredicate(context.Background(), "score >= 0.75", "score")
+	fixtureAdmission1501Context, fixtureAdmission1501 := expressionTestContext(context.Background(), "score >= 0.75")
+	_ = fixtureAdmission1501Context
+	op, target, ok := exec.parseScoreComparisonPredicate(fixtureAdmission1501, fixtureAdmission1501Context, "score >= 0.75", "score")
 	require.True(t, ok)
 	assert.Equal(t, ">=", op)
 	assert.Equal(t, 0.75, target)
-	op, target, ok = exec.parseScoreComparisonPredicate(context.Background(), "0.2 < score", "score")
+	fixtureAdmission1502Context, fixtureAdmission1502 := expressionTestContext(context.Background(), "0.2 < score")
+	_ = fixtureAdmission1502Context
+	op, target, ok = exec.parseScoreComparisonPredicate(fixtureAdmission1502, fixtureAdmission1502Context, "0.2 < score", "score")
 	require.True(t, ok)
 	assert.Equal(t, ">", op)
 	assert.Equal(t, 0.2, target)
-	_, _, ok = exec.parseScoreComparisonPredicate(context.Background(), "score > 0.1 OR score < 0.9", "score")
+	fixtureAdmission1536Context, fixtureAdmission1536 := expressionTestContext(context.Background(), "score > 0.1 OR score < 0.9")
+	_ = fixtureAdmission1536Context
+	_, _, ok = exec.parseScoreComparisonPredicate(fixtureAdmission1536, fixtureAdmission1536Context, "score > 0.1 OR score < 0.9", "score")
 	assert.False(t, ok)
-	_, _, ok = exec.parseScoreComparisonPredicate(context.Background(), "score = 0.5", "score")
+	fixtureAdmission1537Context, fixtureAdmission1537 := expressionTestContext(context.Background(), "score = 0.5")
+	_ = fixtureAdmission1537Context
+	_, _, ok = exec.parseScoreComparisonPredicate(fixtureAdmission1537, fixtureAdmission1537Context, "score = 0.5", "score")
 	assert.False(t, ok)
 
 	assert.True(t, compareScore(0.8, ">", 0.7))
@@ -362,25 +378,39 @@ func TestCoverageLiftOperatorsAndRelationshipVectorLimitZero(t *testing.T) {
 		"keys":  []interface{}{"a", "b"},
 		"vals":  []interface{}{int64(1), int64(2)},
 	})
-	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": int64(2)}, exec.evaluateExpressionWithContext(apocCtx, "apoc.map.merge($left, $right)", nil, nil))
-	assert.Empty(t, exec.evaluateExpressionWithContext(apocCtx, "apoc.map.merge($left)", nil, nil))
-	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": "two"}, exec.evaluateExpressionWithContext(apocCtx, "apoc.map.fromPairs($pairs)", nil, nil))
-	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": int64(2)}, exec.evaluateExpressionWithContext(apocCtx, "apoc.map.fromLists($keys, $vals)", nil, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(apocCtx, "apoc.map.fromLists($keys)", nil, nil))
+	fixtureAdmission228Context, fixtureAdmission228 := expressionTestContext(apocCtx, "apoc.map.merge($left, $right)")
+	_ = fixtureAdmission228
+	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": int64(2)}, exec.evaluateExpressionWithContext(fixtureAdmission228, fixtureAdmission228Context, "apoc.map.merge($left, $right)", nil, nil))
+	fixtureAdmission229Context, fixtureAdmission229 := expressionTestContext(apocCtx, "apoc.map.merge($left)")
+	_ = fixtureAdmission229
+	assert.Empty(t, exec.evaluateExpressionWithContext(fixtureAdmission229, fixtureAdmission229Context, "apoc.map.merge($left)", nil, nil))
+	fixtureAdmission230Context, fixtureAdmission230 := expressionTestContext(apocCtx, "apoc.map.fromPairs($pairs)")
+	_ = fixtureAdmission230
+	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": "two"}, exec.evaluateExpressionWithContext(fixtureAdmission230, fixtureAdmission230Context, "apoc.map.fromPairs($pairs)", nil, nil))
+	fixtureAdmission231Context, fixtureAdmission231 := expressionTestContext(apocCtx, "apoc.map.fromLists($keys, $vals)")
+	_ = fixtureAdmission231
+	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": int64(2)}, exec.evaluateExpressionWithContext(fixtureAdmission231, fixtureAdmission231Context, "apoc.map.fromLists($keys, $vals)", nil, nil))
+	fixtureAdmission232Context, fixtureAdmission232 := expressionTestContext(apocCtx, "apoc.map.fromLists($keys)")
+	_ = fixtureAdmission232
+	assert.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission232, fixtureAdmission232Context, "apoc.map.fromLists($keys)", nil, nil))
 
 	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "rel_vec_zero")
+	store := &relationshipVectorReadCounter{Engine: storage.NewNamespacedEngine(base, "rel_vec_zero")}
 	exec = NewStorageExecutor(store)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:Entity {uuid:'a'})-[:RELATES_TO {uuid:'r1', fact_embedding:[1.0,0.0,0.0]}]->(:Entity {uuid:'b'})", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE VECTOR INDEX rel_emb_zero_idx IF NOT EXISTS FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
+	store.reset()
 	result, err := exec.Execute(ctx, "MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity) RETURN r.uuid AS rid, vector.similarity.cosine(r.fact_embedding, [1.0,0.0,0.0]) AS score ORDER BY score DESC LIMIT 0", nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"rid", "score"}, result.Columns)
 	assert.Empty(t, result.Rows)
-	assert.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+	assert.False(t, exec.LastHotPathTrace().CosineVectorIndexFastPath, "zero limit performs no index access")
+	assert.Zero(t, store.edgeScans.Load())
+	assert.Zero(t, store.edgeReads.Load())
+	assert.Zero(t, store.nodeReads.Load())
 }
 
 func TestCoverageLiftUnwindAndRelationshipBatchEdgeBranches(t *testing.T) {
@@ -402,7 +432,9 @@ func TestCoverageLiftUnwindAndRelationshipBatchEdgeBranches(t *testing.T) {
 	restQuery := `MATCH (source:Service {key: row.source_key})
 MERGE (source)-[rel:PUBLISHES {uuid: row.uuid}]->(target)
 RETURN row.uuid AS uuid`
-	_, handled, err := exec.executeUnwindRelationshipMergeBatch(ctx, "row", batchRows, restQuery)
+	fixtureAdmission1538Context, fixtureAdmission1538 := statementTestContext(ctx, restQuery)
+	_ = fixtureAdmission1538Context
+	_, handled, err := exec.executeUnwindRelationshipMergeBatch(fixtureAdmission1538, fixtureAdmission1538Context, "row", batchRows, restQuery)
 	assert.False(t, handled)
 	require.NoError(t, err)
 }
@@ -475,19 +507,27 @@ func TestCoverageLiftApplySetToNodeMapAndDynamicLabels(t *testing.T) {
 		"labels": []interface{}{"Engineer", "Base", "MATCH", "bad-label", "Analyst"},
 	})
 
-	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n = $props", nil, nil)
+	fixtureAdmission1539Context, fixtureAdmission1539 := statementTestContext(ctx, "n = $props")
+	_ = fixtureAdmission1539Context
+	_, _ = exec.applySetToNodeWithContext(fixtureAdmission1539, fixtureAdmission1539Context, node, "n", "n = $props", nil, nil)
 	assert.Equal(t, map[string]interface{}{"name": "Ada", "age": int64(37)}, node.Properties)
 	node.Properties["name"] = "mutated"
 	assert.Equal(t, "Ada", getParamsFromContext(ctx)["props"].(map[string]interface{})["name"])
 
-	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n = $payload.replacement", nil, nil)
+	fixtureAdmission1540Context, fixtureAdmission1540 := statementTestContext(ctx, "n = $payload.replacement")
+	_ = fixtureAdmission1540Context
+	_, _ = exec.applySetToNodeWithContext(fixtureAdmission1540, fixtureAdmission1540Context, node, "n", "n = $payload.replacement", nil, nil)
 	assert.Equal(t, map[string]interface{}{"name": "Grace", "active": true}, node.Properties)
 
 	// A dynamic label may be any non-empty string, as in Neo4j.
-	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n:$($labels), n:Reviewer, n:Reviewer, ignored = true, n", nil, nil)
+	fixtureAdmission1541Context, fixtureAdmission1541 := statementTestContext(ctx, "n:$($labels), n:Reviewer, n:Reviewer, ignored = true, n")
+	_ = fixtureAdmission1541Context
+	_, _ = exec.applySetToNodeWithContext(fixtureAdmission1541, fixtureAdmission1541Context, node, "n", "n:$($labels), n:Reviewer, n:Reviewer, ignored = true, n", nil, nil)
 	assert.ElementsMatch(t, []string{"Base", "Engineer", "MATCH", "bad-label", "Analyst", "Reviewer"}, node.Labels)
 
-	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n += $props", nil, nil)
+	fixtureAdmission1542Context, fixtureAdmission1542 := statementTestContext(ctx, "n += $props")
+	_ = fixtureAdmission1542Context
+	_, _ = exec.applySetToNodeWithContext(fixtureAdmission1542, fixtureAdmission1542Context, node, "n", "n += $props", nil, nil)
 	assert.Equal(t, "Ada", node.Properties["name"])
 	assert.Equal(t, int64(37), node.Properties["age"])
 }
@@ -595,7 +635,9 @@ func TestCoverageLiftCallTailProjectionAndPredicateMatrix(t *testing.T) {
 	for _, row := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, row))
 	}
-	result, ok := exec.executeCallTailProjectionPlan(ctx, plan, rows, []string{"name", "age"})
+	fixtureAdmission1841Context, fixtureAdmission1841 := statementTestContext(ctx, "WITH name, age WHERE (name STARTS WITH 'A' OR age = $wantedAge) AND name IN $names RETURN name AS n, age AS years ORDER BY years DESC SKIP 0 LIMIT 10")
+	_ = fixtureAdmission1841Context
+	result, ok := exec.executeCallTailProjectionPlan(fixtureAdmission1841, fixtureAdmission1841Context, plan, rows, []string{"name", "age"})
 	require.True(t, ok)
 	assert.Equal(t, []string{"name", "age"}, result.Columns)
 	assert.Equal(t, [][]interface{}{{"Cy", int64(41)}, {"Ada", int64(37)}}, result.Rows)
@@ -658,13 +700,27 @@ func TestCoverageLiftBindingWherePredicates(t *testing.T) {
 	_, ok = exec.compileBindingInPredicate(" IN ['x']", " IN ", false)
 	assert.False(t, ok)
 
-	assert.True(t, exec.evaluateBindingWhere(ctx, row, "a.name STARTS WITH 'Ali' AND a.age >= 30", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, row, "a.name CONTAINS 'lic'", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, row, "a.name ENDS WITH 'ice'", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, row, "a <> b", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, row, "a = b", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, row, "NOT b.flag", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, row, "missing.prop = 1", nil))
+	fixtureAdmission233Context, fixtureAdmission233 := expressionTestContext(ctx, "a.name STARTS WITH 'Ali' AND a.age >= 30")
+	_ = fixtureAdmission233
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission233, fixtureAdmission233Context, row, "a.name STARTS WITH 'Ali' AND a.age >= 30", nil))
+	fixtureAdmission234Context, fixtureAdmission234 := expressionTestContext(ctx, "a.name CONTAINS 'lic'")
+	_ = fixtureAdmission234
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission234, fixtureAdmission234Context, row, "a.name CONTAINS 'lic'", nil))
+	fixtureAdmission235Context, fixtureAdmission235 := expressionTestContext(ctx, "a.name ENDS WITH 'ice'")
+	_ = fixtureAdmission235
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission235, fixtureAdmission235Context, row, "a.name ENDS WITH 'ice'", nil))
+	fixtureAdmission236Context, fixtureAdmission236 := expressionTestContext(ctx, "a <> b")
+	_ = fixtureAdmission236
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission236, fixtureAdmission236Context, row, "a <> b", nil))
+	fixtureAdmission237Context, fixtureAdmission237 := expressionTestContext(ctx, "a = b")
+	_ = fixtureAdmission237
+	assert.False(t, exec.evaluateBindingWhere(fixtureAdmission237, fixtureAdmission237Context, row, "a = b", nil))
+	fixtureAdmission238Context, fixtureAdmission238 := expressionTestContext(ctx, "NOT b.flag")
+	_ = fixtureAdmission238
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission238, fixtureAdmission238Context, row, "NOT b.flag", nil))
+	fixtureAdmission239Context, fixtureAdmission239 := expressionTestContext(ctx, "missing.prop = 1")
+	_ = fixtureAdmission239
+	assert.False(t, exec.evaluateBindingWhere(fixtureAdmission239, fixtureAdmission239Context, row, "missing.prop = 1", nil))
 
 	resolver, ok := exec.compileBindingValueResolver("a.age")
 	require.True(t, ok)
@@ -1069,7 +1125,9 @@ func TestCoverageLiftSchemaDDLExecutionCompatibilityMatrix(t *testing.T) {
 	for _, constraint := range store.GetSchema().GetAllConstraints() {
 		require.NotEqual(t, "bad_text", constraint.Name)
 	}
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_text FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT abc")
+	fixtureAdmission1079Context, fixtureAdmission1079 := statementTestContext(ctx, "CREATE CONSTRAINT bad_text FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT abc")
+	_ = fixtureAdmission1079Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1079, fixtureAdmission1079Context, "CREATE CONSTRAINT bad_text FOR ()-[r:MANAGES]->() REQUIRE MAX COUNT abc")
 	require.ErrorContains(t, err, "invalid cardinality require clause")
 
 	runDDL("CREATE CONSTRAINT IF NOT EXISTS FOR (:Employee)-[:MANAGES]->(:Manager) REQUIRE ALLOWED")

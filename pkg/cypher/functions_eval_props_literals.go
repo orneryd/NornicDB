@@ -7,7 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
+func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	lowerExpr string,
@@ -119,7 +119,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	if inner, isList := stripEnclosingRowDelimiter(expr, '[', ']'); isList {
 		elements := e.splitArrayElements(strings.TrimSpace(inner))
 		result, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
-			value := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(elements[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			value := e.evaluateExpressionWithContextFull(admission, ctx, strings.TrimSpace(elements[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return value, true, getExpressionFailure(ctx)
 		})
 		return result
@@ -127,7 +127,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 
 	// Map literal {key: value}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		return e.parseProperties(ctx, expr)
+		return e.parseProperties(admission, ctx, expr)
 	}
 
 	// Check if this looks like a variable reference (identifier pattern)

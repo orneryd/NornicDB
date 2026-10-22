@@ -173,7 +173,7 @@ var errRowArgumentUnresolved = errors.New("row argument unresolved")
 // and GDS's functions (isGDSFunctionName) in the row evaluator with their one
 // implementation, the function registry (pkg/cypher/fn), and its errors as
 // the other evaluator reports them.
-func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowGraphFunction(admission admittedRelationshipStatement, function, argument string, values map[string]interface{}) (interface{}, bool, error) {
 	var args []string
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
@@ -182,7 +182,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 		Storage:  e.storage,
 		Cypher25: rowIsCypher25(values),
 		Eval: func(expression string) (interface{}, error) {
-			value, resolved, err := e.evaluateRowValue(expression, values)
+			value, resolved, err := e.evaluateRowValue(admission, expression, values)
 			if err != nil {
 				return nil, err
 			}

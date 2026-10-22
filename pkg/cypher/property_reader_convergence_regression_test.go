@@ -24,7 +24,9 @@ func TestPropertyReadersShareReceiverMeaning(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, expr := range []string{"n.name", "n['name']"} {
 				t.Run(expr, func(t *testing.T) {
-					got := e.evaluateExpressionFromValuesContext(context.Background(), expr, map[string]interface{}{"n": tc.value})
+					fixtureAdmission823Context, fixtureAdmission823 := expressionTestContext(context.Background(), expr)
+					_ = fixtureAdmission823
+					got := e.evaluateExpressionFromValuesContext(fixtureAdmission823, fixtureAdmission823Context, expr, map[string]interface{}{"n": tc.value})
 					require.Equal(t, tc.want, got)
 				})
 			}

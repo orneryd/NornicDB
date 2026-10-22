@@ -2038,6 +2038,10 @@ func (r *queryRewrite) restoreValue(value interface{}) (interface{}, bool) {
 // skipCypherQuotedText returns the end of the string literal or quoted name
 // that starts at query[start] (quote): a doubled quote, or a backslash escape
 // in a string, doesn't end it.
+func isCypherQuoteByte(character byte) bool {
+	return character == '\'' || character == '"' || character == '`'
+}
+
 func skipCypherQuotedText(query string, start int, quote byte) int {
 	end, _ := scanCypherQuotedText(query, start, quote)
 	return end
@@ -2113,7 +2117,7 @@ func findMatchingDelimiter(text string, start int, opener, closer rune) int {
 			if depth == 0 {
 				return index
 			}
-		case character == '\'' || character == '"' || character == '`':
+		case isCypherQuoteByte(character):
 			end, closed := scanCypherQuotedText(text, index, character)
 			if !closed {
 				return -1

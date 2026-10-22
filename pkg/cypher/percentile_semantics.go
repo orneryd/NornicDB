@@ -10,7 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelinePercentile(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
 	arguments := e.splitFunctionArgs(expression)
 	if len(arguments) != 2 {
 		return nil, false
@@ -18,7 +18,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 
 	percentile := float64(0)
 	if len(rows) > 0 {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[1]), rows[0])
+		value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(arguments[1]), rows[0])
 		if !resolved {
 			return nil, false
 		}
@@ -44,7 +44,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	values := make([]percentileValue, 0, len(rows))
 	var seen cypherValueIndex
 	for _, row := range rows {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
+		value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(arguments[0]), row)
 		if !resolved {
 			return nil, false
 		}
@@ -94,14 +94,14 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	return values[lower].numeric + (values[upper].numeric-values[lower].numeric)*fraction, true
 }
 
-func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validatePercentileCalls(admission admittedRelationshipStatement, expression string, row pipelineRow) error {
 	for _, function := range []string{"percentilecont", "percentiledisc"} {
 		for _, argumentText := range namedFunctionArguments(expression, function) {
 			arguments := e.splitFunctionArgs(argumentText)
 			if len(arguments) != 2 {
 				continue
 			}
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(arguments[1]), row)
+			value, resolved, err := e.evaluateRowValue(admission, strings.TrimSpace(arguments[1]), row)
 			if err != nil {
 				return err
 			}
@@ -127,12 +127,12 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelinePercentileArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelinePercentileArguments(admission admittedRelationshipStatement, rows []pipelineRow, clause, keyword string) error {
 	if len(rows) == 0 {
 		rows = []pipelineRow{{}}
 	}
 	for _, expression := range projectionExpressions(clause, keyword) {
-		if err := e.validatePercentileCalls(expression, rows[0]); err != nil {
+		if err := e.validatePercentileCalls(admission, expression, rows[0]); err != nil {
 			return err
 		}
 	}

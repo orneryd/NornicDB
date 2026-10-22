@@ -143,13 +143,17 @@ func TestPropertyIndexSeedsAreUsed(t *testing.T) {
 		{item, "n.v > 10"},
 		{item, "n.v IN $ids"},
 	} {
-		_, _, indexed, err := exec.collectPipelineIndexedNodeCandidates(withQueryParams(ctx, map[string]interface{}{"ids": []interface{}{int64(1)}}), seed.pattern, seed.where, pipelineMatchPhysicalHint{})
+		fixtureAdmission1883Context, fixtureAdmission1883 := expressionTestContext(withQueryParams(ctx, map[string]interface{}{"ids": []interface{}{int64(1)}}), seed.where)
+		_ = fixtureAdmission1883Context
+		_, _, indexed, err := exec.collectPipelineIndexedNodeCandidates(fixtureAdmission1883, fixtureAdmission1883Context, seed.pattern, seed.where, pipelineMatchPhysicalHint{})
 		require.NoError(t, err)
 		require.True(t, indexed, seed.where)
 	}
 
 	unindexed := newRangeSeekExecutor(t, false)
-	_, _, indexed, err := unindexed.collectPipelineIndexedNodeCandidates(ctx, item, "n.v > 10", pipelineMatchPhysicalHint{})
+	fixtureAdmission1387Context, fixtureAdmission1387 := expressionTestContext(ctx, "n.v > 10")
+	_ = fixtureAdmission1387Context
+	_, _, indexed, err := unindexed.collectPipelineIndexedNodeCandidates(fixtureAdmission1387, fixtureAdmission1387Context, item, "n.v > 10", pipelineMatchPhysicalHint{})
 	require.NoError(t, err)
 	require.False(t, indexed)
 }

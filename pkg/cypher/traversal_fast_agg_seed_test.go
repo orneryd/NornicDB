@@ -66,11 +66,13 @@ func TestFastAgg_WithCypherSeed_ProductsPerCategoryQueryShape(t *testing.T) {
 		require.NoError(t, err, q)
 	}
 
-	matches := exec.parseTraversalPattern(ctx, "(c:Category)<-[:PART_OF]-(p:Product)")
+	fixtureAdmission891Context, fixtureAdmission891 := traversalTestContext(ctx, "(c:Category)<-[:PART_OF]-(p:Product)", "", nil)
+	_ = fixtureAdmission891
+	matches := exec.parseTraversalPattern(fixtureAdmission891, fixtureAdmission891Context, "(c:Category)<-[:PART_OF]-(p:Product)")
 	require.NotNil(t, matches)
 
 	returnItems := exec.parseReturnItems("c.categoryName, count(p) as productCount")
-	rows, ok, err := exec.tryFastRelationshipAggregations(matches, returnItems)
+	rows, ok, err := relationshipAggregationTest(exec, ctx, "(c:Category)<-[:PART_OF]-(p:Product)", "", matches, returnItems)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, rows, 2)

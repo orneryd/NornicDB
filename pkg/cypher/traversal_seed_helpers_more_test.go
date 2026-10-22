@@ -63,8 +63,10 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 		{expr: "d.drawer_id"},
 		{expr: "d.filed_at"},
 	}
-	res, used, err := exec.tryExecuteTraversalStartSeedOrderLimit(
-		ctx,
+	fixtureAdmission894Context, fixtureAdmission894 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "d.filed_at IS NOT NULL", returnItems)
+	_ = fixtureAdmission894
+	res, used, err := exec.tryExecuteTraversalStartSeedOrderLimit(fixtureAdmission894,
+		fixtureAdmission894Context,
 		"(d:Drawer)-[:IN_ROOM]->(r:Room)",
 		"d.filed_at IS NOT NULL",
 		returnItems,
@@ -79,7 +81,9 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 	require.EqualValues(t, int64(100), res.Rows[0][1])
 	require.Equal(t, "d-1", res.Rows[1][0])
 
-	_, used, err = exec.tryExecuteTraversalStartSeedOrderLimit(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "", 2)
+	fixtureAdmission895Context, fixtureAdmission895 := traversalTestContext(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems)
+	_ = fixtureAdmission895
+	_, used, err = exec.tryExecuteTraversalStartSeedOrderLimit(fixtureAdmission895, fixtureAdmission895Context, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "", 2)
 	require.NoError(t, err)
 	require.False(t, used)
 }
@@ -113,8 +117,10 @@ func TestTraversalEndSeedOrderLimit_Deterministic(t *testing.T) {
 	require.NoError(t, err)
 
 	returnItems := []returnItem{{expr: "d.drawer_id"}, {expr: "r.name"}}
-	res, used, err := exec.tryExecuteTraversalEndSeedOrderLimit(
-		ctx,
+	fixtureAdmission896Context, fixtureAdmission896 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name IS NOT NULL", returnItems)
+	_ = fixtureAdmission896
+	res, used, err := exec.tryExecuteTraversalEndSeedOrderLimit(fixtureAdmission896,
+		fixtureAdmission896Context,
 		"(d:Drawer)-[:IN_ROOM]->(r:Room)",
 		"r.name IS NOT NULL",
 		returnItems,

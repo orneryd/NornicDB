@@ -137,7 +137,9 @@ func TestForeach_PipelineValidation(t *testing.T) {
 		"FOREACH (i IN [1] | RETURN i)", "FOREACH (i IN [1] | SET missing.x = i)",
 	} {
 		t.Run(clause, func(t *testing.T) {
-			_, err := exec.pipelineApplyForeach(context.Background(), []pipelineRow{{}}, clause)
+			fixtureAdmission1594Context, fixtureAdmission1594 := statementTestContext(context.Background(), clause)
+			_ = fixtureAdmission1594Context
+			_, err := exec.pipelineApplyForeach(fixtureAdmission1594, fixtureAdmission1594Context, []pipelineRow{{}}, clause)
 			require.Error(t, err)
 		})
 	}

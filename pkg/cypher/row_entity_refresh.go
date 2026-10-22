@@ -16,7 +16,8 @@ import (
 // (#907). The current version is read once per entity from the statement's
 // storage view; rows that share one copy, or bind distinct entities, cost
 // one pass and no read. An entity the clause deleted keeps its copies.
-func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelineRow) {
+func (run relationshipEntityExecution) refreshRowEntities(ctx context.Context, rows []pipelineRow) {
+	e := run.executor
 	if len(rows) < 2 {
 		return
 	}
@@ -96,4 +97,8 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 			}
 		}
 	}
+}
+
+func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelineRow) {
+	e.relationshipEntityExecution().refreshRowEntities(ctx, rows)
 }

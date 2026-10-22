@@ -93,7 +93,7 @@ const (
 // QueryAnalyzer extracts query metadata with caching.
 type QueryAnalyzer struct {
 	cache   map[string]*QueryInfo
-	raw     map[string]*QueryInfo
+	raw     map[string]*preparedQuery
 	cacheMu sync.RWMutex
 	maxSize int
 }
@@ -105,18 +105,30 @@ func NewQueryAnalyzer(maxSize int) *QueryAnalyzer {
 	}
 	return &QueryAnalyzer{
 		cache:   make(map[string]*QueryInfo),
-		raw:     make(map[string]*QueryInfo),
+		raw:     make(map[string]*preparedQuery),
 		maxSize: maxSize,
 	}
 }
 
 // Analyze extracts query information, using cache when available.
 func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
+	return a.prepare(cypher).info
+}
+
+// A normalized analysis can be shared, but admission belongs to the exact
+// executable source. Keep it in the existing raw-text cache entry rather than
+// perform another syntax-cache lookup and re-admission on every execution.
+type preparedQuery struct {
+	info      *QueryInfo
+	statement *preparedRelationshipStatement
+}
+
+func (a *QueryAnalyzer) prepare(cypher string) *preparedQuery {
 	// Fast path: exact query text cache hit avoids normalization cost on hot loops.
 	a.cacheMu.RLock()
-	if info, ok := a.raw[cypher]; ok {
+	if prepared, ok := a.raw[cypher]; ok {
 		a.cacheMu.RUnlock()
-		return info
+		return prepared
 	}
 	a.cacheMu.RUnlock()
 
@@ -128,18 +140,27 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 
 	// Check cache
 	a.cacheMu.RLock()
-	if info, ok := a.cache[normalized]; ok {
-		a.cacheMu.RUnlock()
-		return info
-	}
+	info := a.cache[normalized]
 	a.cacheMu.RUnlock()
 
-	// Analyze query
-	info := analyzeQuery(text)
-	info.NormalizedQuery = normalized
+	if info == nil {
+		info = analyzeQuery(text)
+		info.NormalizedQuery = normalized
+	}
+	mode := ModeNormal
+	if info.HasExplain {
+		mode = ModeExplain
+	} else if info.HasProfile {
+		mode = ModeProfile
+	}
+	prepared := &preparedQuery{info: info, statement: prepareRelationshipStatement(cypher, mode)}
 
 	// Cache result
 	a.cacheMu.Lock()
+	if current := a.raw[cypher]; current != nil {
+		a.cacheMu.Unlock()
+		return current
+	}
 	// Simple eviction if at capacity
 	if len(a.cache) >= a.maxSize {
 		// Delete oldest (first found - not true LRU but simple and fast)
@@ -155,17 +176,17 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 		}
 	}
 	a.cache[normalized] = info
-	a.raw[cypher] = info
+	a.raw[cypher] = prepared
 	a.cacheMu.Unlock()
 
-	return info
+	return prepared
 }
 
 // ClearCache clears the analysis cache.
 func (a *QueryAnalyzer) ClearCache() {
 	a.cacheMu.Lock()
 	a.cache = make(map[string]*QueryInfo)
-	a.raw = make(map[string]*QueryInfo)
+	a.raw = make(map[string]*preparedQuery)
 	a.cacheMu.Unlock()
 }
 
@@ -265,8 +286,9 @@ func analyzeQuery(cypher string) *QueryInfo {
 	info.HasLoadCSV = containsKeyword(upper, "LOAD CSV")
 
 	// Special handling
-	info.HasExplain = strings.HasPrefix(upper, "EXPLAIN")
-	info.HasProfile = strings.HasPrefix(upper, "PROFILE")
+	mode, _ := parseExecutionMode(upper)
+	info.HasExplain = mode == ModeExplain
+	info.HasProfile = mode == ModeProfile
 	info.HasShow = strings.HasPrefix(upper, "SHOW")
 	info.HasSchema = containsKeyword(upper, "CREATE INDEX") ||
 		containsKeyword(upper, "CREATE RANGE INDEX") ||
@@ -694,14 +716,7 @@ func containsKeyword(upper, keyword string) bool {
 func detectFirstClause(upper string) ClauseType {
 	upper = strings.TrimSpace(upper)
 
-	// Strip EXPLAIN/PROFILE prefix
-	if strings.HasPrefix(upper, "EXPLAIN ") {
-		upper = strings.TrimPrefix(upper, "EXPLAIN ")
-		upper = strings.TrimSpace(upper)
-	} else if strings.HasPrefix(upper, "PROFILE ") {
-		upper = strings.TrimPrefix(upper, "PROFILE ")
-		upper = strings.TrimSpace(upper)
-	}
+	_, upper = parseExecutionMode(upper)
 
 	switch {
 	case strings.HasPrefix(upper, "MATCH"):

@@ -51,7 +51,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 // Returns the result and true if a plugin handled the call, or nil and false
 // if no plugin has the function (or a built-in answers it instead). A call
 // the plugin fails is the statement's error, as in the row evaluator.
-func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+func (e *StorageExecutor) tryCallPluginFunction(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	funcName, argsStr, valid := parseFunctionCallWS(expr)
 	if !valid {
 		return nil, false
@@ -65,7 +65,7 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	// Evaluate each argument
 	var evalArgs []interface{}
 	for _, arg := range args {
-		evalArgs = append(evalArgs, e.evaluateExpressionWithContextFull(ctx, arg, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+		evalArgs = append(evalArgs, e.evaluateExpressionWithContextFull(admission, ctx, arg, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 		if getExpressionFailure(ctx) != nil {
 			return nil, true
 		}
@@ -236,12 +236,12 @@ func callPluginHandlerContext(ctx context.Context, handler interface{}, args []i
 
 // evaluateMapLiteral parses and evaluates a map literal like { key: value, ... }
 // where values can be expressions that reference variables in context.
-func (e *StorageExecutor) evaluateMapLiteral(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) map[string]interface{} {
-	return e.evaluateMapLiteralFull(ctx, expr, nodes, rels, nil, nil, nil, 0)
+func (e *StorageExecutor) evaluateMapLiteral(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) map[string]interface{} {
+	return e.evaluateMapLiteralFull(admission, ctx, expr, nodes, rels, nil, nil, nil, 0)
 }
 
 // evaluateMapLiteralFull parses and evaluates a map literal with full path context
-func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
+func (e *StorageExecutor) evaluateMapLiteralFull(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) map[string]interface{} {
 	result := make(map[string]interface{})
 	keys := make([]string, 0)
 
@@ -275,7 +275,7 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Evaluate the value expression in context with full path info
-		value := e.evaluateExpressionWithContextFull(ctx, valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		value := e.evaluateExpressionWithContextFull(admission, ctx, valueExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if _, exists := result[key]; !exists {
 			keys = append(keys, key)
 		}

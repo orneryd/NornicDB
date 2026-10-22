@@ -126,11 +126,17 @@ func TestMergePathFailures(t *testing.T) {
 	}
 
 	// Text the SET applier or the shape reader can't run, and a cancelled match.
-	require.Error(t, exec.applyMergeActions(ctx, nil, "SET", &QueryStats{}))
-	_, _, _, err = exec.pipelineMergePath(ctx, pipelineRow{}, "(a)-[:R]->(b) x-[:S]->(c)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	fixtureAdmission1878Context, fixtureAdmission1878 := statementTestContext(ctx, "SET")
+	_ = fixtureAdmission1878Context
+	require.Error(t, exec.applyMergeActions(fixtureAdmission1878, fixtureAdmission1878Context, nil, "SET", &QueryStats{}))
+	fixtureAdmission1324Context, fixtureAdmission1324 := traversalTestContext(ctx, "(a)-[:R]->(b) x-[:S]->(c)", "", nil)
+	_ = fixtureAdmission1324Context
+	_, _, _, err = exec.pipelineMergePath(fixtureAdmission1324, fixtureAdmission1324Context, pipelineRow{}, "(a)-[:R]->(b) x-[:S]->(c)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, _, _, err = exec.pipelineMergePath(cancelled, pipelineRow{}, "(a:MA)-[:R]->(b:MB)-[:S]->(c:MC)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	fixtureAdmission1325Context, fixtureAdmission1325 := traversalTestContext(cancelled, "(a:MA)-[:R]->(b:MB)-[:S]->(c:MC)", "", nil)
+	_ = fixtureAdmission1325Context
+	_, _, _, err = exec.pipelineMergePath(fixtureAdmission1325, fixtureAdmission1325Context, pipelineRow{}, "(a:MA)-[:R]->(b:MB)-[:S]->(c:MC)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 }

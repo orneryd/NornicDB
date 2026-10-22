@@ -172,25 +172,37 @@ func TestIssue863ShortestPathEvaluatorBranches(t *testing.T) {
 	a, b := res.Rows[0][0].(*storage.Node), res.Rows[0][1].(*storage.Node)
 	nodes := map[string]*storage.Node{"a": a, "b": b}
 
-	path, ok := exec.evaluateExpressionWithContext(ctx, "shortestPath((a)-[*]-(b))", nodes, nil).(map[string]interface{})
+	fixtureAdmission680Context, fixtureAdmission680 := expressionTestContext(ctx, "shortestPath((a)-[*]-(b))")
+	_ = fixtureAdmission680
+	path, ok := exec.evaluateExpressionWithContext(fixtureAdmission680, fixtureAdmission680Context, "shortestPath((a)-[*]-(b))", nodes, nil).(map[string]interface{})
 	require.True(t, ok)
 	require.EqualValues(t, 1, path["length"])
 	failing := withExpressionFailureSlot(ctx)
-	require.Nil(t, exec.evaluateExpressionWithContext(failing, "shortestPath((a)-[*2..]-(b))", nodes, nil))
+	fixtureAdmission681Context, fixtureAdmission681 := expressionTestContext(failing, "shortestPath((a)-[*2..]-(b))")
+	_ = fixtureAdmission681
+	require.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission681, fixtureAdmission681Context, "shortestPath((a)-[*2..]-(b))", nodes, nil))
 	require.ErrorContains(t, getExpressionFailure(failing), "minimal length")
 
-	m, ok, err := exec.parseShortestPathMatch(ctx, "p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1")
+	fixtureAdmission1625Context, fixtureAdmission1625 := statementTestContext(ctx, "p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1")
+	_ = fixtureAdmission1625Context
+	m, ok, err := exec.parseShortestPathMatch(fixtureAdmission1625, fixtureAdmission1625Context, "p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1")
 	require.NoError(t, err)
 	require.True(t, ok)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err = exec.shortestPathsBetween(cancelled, m, a, b, pipelineRow{"a": a, "b": b})
+	fixtureAdmission682Context, fixtureAdmission682 := shortestTestContext(cancelled, m)
+	_ = fixtureAdmission682
+	_, err = exec.shortestPathsBetween(fixtureAdmission682, fixtureAdmission682Context, m, a, b, pipelineRow{"a": a, "b": b})
 	require.ErrorIs(t, err, context.Canceled)
 
-	_, err = exec.pipelineMatchRows(ctx, pipelineRow{}, "MATCH x")
+	fixtureAdmission683Context, fixtureAdmission683 := statementTestContext(ctx, "MATCH x")
+	_ = fixtureAdmission683
+	_, err = exec.pipelineMatchRows(fixtureAdmission683, fixtureAdmission683Context, pipelineRow{}, "MATCH x")
 	require.ErrorContains(t, err, "invalid path pattern")
 	m.others = []string{"x"}
-	_, err = exec.pipelineApplyShortestPathMatch(ctx, []pipelineRow{{}}, m, false)
+	fixtureAdmission1626Context, fixtureAdmission1626 := statementTestContext(ctx, "p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1")
+	_ = fixtureAdmission1626Context
+	_, err = exec.pipelineApplyShortestPathMatch(fixtureAdmission1626, fixtureAdmission1626Context, []pipelineRow{{}}, m, false)
 	require.ErrorContains(t, err, "invalid path pattern")
 
 	unclosed := "RETURN shortestPath((a)-->(b)"

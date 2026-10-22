@@ -12,16 +12,24 @@ import (
 func TestPipelineProcedureEmptyInputContracts(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
-	_, err := exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components()")
+	fixtureAdmission112Context, fixtureAdmission112 := statementTestContext(ctx, "MATCH (n:Missing) CALL dbms.components()")
+	_ = fixtureAdmission112
+	_, err := exec.executeRequiredPipeline(fixtureAdmission112, fixtureAdmission112Context, "MATCH (n:Missing) CALL dbms.components()")
 	requireSyntaxErrorStatus(t, err, "non-void procedure requires explicit YIELD inside a query")
-	result, err := exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components() YIELD name AS component, versions RETURN component, versions")
+	fixtureAdmission113Context, fixtureAdmission113 := statementTestContext(ctx, "MATCH (n:Missing) CALL dbms.components() YIELD name AS component, versions RETURN component, versions")
+	_ = fixtureAdmission113
+	result, err := exec.executeRequiredPipeline(fixtureAdmission113, fixtureAdmission113Context, "MATCH (n:Missing) CALL dbms.components() YIELD name AS component, versions RETURN component, versions")
 	require.NoError(t, err)
 	require.Equal(t, []string{"component", "versions"}, result.Columns)
 	require.Empty(t, result.Rows)
-	_, err = exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL db.unknownPipelineProcedure() YIELD value RETURN value")
+	fixtureAdmission114Context, fixtureAdmission114 := statementTestContext(ctx, "MATCH (n:Missing) CALL db.unknownPipelineProcedure() YIELD value RETURN value")
+	_ = fixtureAdmission114
+	_, err = exec.executeRequiredPipeline(fixtureAdmission114, fixtureAdmission114Context, "MATCH (n:Missing) CALL db.unknownPipelineProcedure() YIELD value RETURN value")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
-	_, err = exec.executeRequiredPipeline(ctx, "MATCH (n:Missing) CALL dbms.components(1) YIELD name RETURN name")
+	fixtureAdmission115Context, fixtureAdmission115 := statementTestContext(ctx, "MATCH (n:Missing) CALL dbms.components(1) YIELD name RETURN name")
+	_ = fixtureAdmission115
+	_, err = exec.executeRequiredPipeline(fixtureAdmission115, fixtureAdmission115Context, "MATCH (n:Missing) CALL dbms.components(1) YIELD name RETURN name")
 	requireSyntaxErrorStatus(t, err, "invalid argument count even on empty input")
 }
 
@@ -63,12 +71,16 @@ func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 	spec := ProcedureSpec{Name: "typed", MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "value", Type: "ANY"}}}
 	for _, query := range []string{"CALL typed()", "CALL typed(count(1))", "CALL typed(missing)", "CALL typed(1 / 0)"} {
 		t.Run(query, func(t *testing.T) {
-			arguments, err := exec.extractBoundProcedureInvocationArguments(context.Background(), spec, query)
+			fixtureAdmission1835Context, fixtureAdmission1835 := statementTestContext(context.Background(), query)
+			_ = fixtureAdmission1835Context
+			arguments, err := exec.extractBoundProcedureInvocationArguments(fixtureAdmission1835, fixtureAdmission1835Context, spec, query)
 			require.Error(t, err)
 			require.Nil(t, arguments)
 		})
 	}
-	arguments, err := exec.extractBoundProcedureInvocationArguments(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), spec, "CALL typed")
+	fixtureAdmission1836Context, fixtureAdmission1836 := statementTestContext(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), "CALL typed")
+	_ = fixtureAdmission1836Context
+	arguments, err := exec.extractBoundProcedureInvocationArguments(fixtureAdmission1836, fixtureAdmission1836Context, spec, "CALL typed")
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{int64(7)}, arguments)
 	_, err = exec.callVectorQueryArguments(context.Background(), nil, false)
@@ -110,7 +122,9 @@ func TestProcedurePipelinePreservesTypedRowArguments(t *testing.T) {
 	))
 	query := "MATCH (n:ProcTyped)-[r:PROC_TYPED]->(m:ProcTyped) CALL custom.pipeline_entities(n,r,{target:m,values:[n.value,m.value],tag:$tag,parameter:$precision}) YIELD name RETURN name ORDER BY name"
 	params := map[string]interface{}{"tag": "typed", "precision": []float32{0.12345679}}
-	result, err := exec.executeRequiredPipeline(withQueryParams(context.Background(), params), query)
+	fixtureAdmission116Context, fixtureAdmission116 := statementTestContext(withQueryParams(context.Background(), params), query)
+	_ = fixtureAdmission116
+	result, err := exec.executeRequiredPipeline(fixtureAdmission116, fixtureAdmission116Context, query)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}, {"b"}}, result.Rows)
 	public, err := exec.Execute(context.Background(), query, params)
@@ -135,7 +149,9 @@ func TestProcedurePipelinePreservesTypedRowArguments(t *testing.T) {
 func TestCallUnionPreservesTypedValuesAndWriteStats(t *testing.T) {
 	t.Run("typed distinct values", func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-		result, err := exec.executeRequiredPipeline(context.Background(), "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value")
+		fixtureAdmission117Context, fixtureAdmission117 := statementTestContext(context.Background(), "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value")
+		_ = fixtureAdmission117
+		result, err := exec.executeRequiredPipeline(fixtureAdmission117, fixtureAdmission117Context, "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value")
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{int64(1)}, {"1"}}, result.Rows)
 		public, err := exec.Execute(context.Background(), "CALL { RETURN 1 AS value UNION RETURN '1' AS value } RETURN value", nil)
@@ -144,7 +160,13 @@ func TestCallUnionPreservesTypedValuesAndWriteStats(t *testing.T) {
 	})
 	t.Run("recorded failure stops later writes", func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-		result, err := exec.executeRequiredPipeline(context.Background(), `CALL {
+		fixtureAdmission118Context, fixtureAdmission118 := statementTestContext(context.Background(), `CALL {
+			RETURN 1 / 0 AS value
+			UNION ALL
+			CREATE (n:CallUnionErrorCopy {value:1}) RETURN n.value AS value
+		} RETURN value`)
+		_ = fixtureAdmission118
+		result, err := exec.executeRequiredPipeline(fixtureAdmission118, fixtureAdmission118Context, `CALL {
 			RETURN 1 / 0 AS value
 			UNION ALL
 			CREATE (n:CallUnionErrorCopy {value:1}) RETURN n.value AS value
@@ -185,7 +207,9 @@ func TestCallUnionRunsInSharedPipeline(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 			query := "UNWIND [1, 2] AS x CALL (x) { RETURN x AS y " + fixture.separator + " RETURN x AS y } RETURN x, y ORDER BY x, y"
-			result, err := exec.executeRequiredPipeline(context.Background(), query)
+			fixtureAdmission119Context, fixtureAdmission119 := statementTestContext(context.Background(), query)
+			_ = fixtureAdmission119
+			result, err := exec.executeRequiredPipeline(fixtureAdmission119, fixtureAdmission119Context, query)
 			require.NoError(t, err)
 			require.Equal(t, []string{"x", "y"}, result.Columns)
 			require.Equal(t, fixture.want, result.Rows)

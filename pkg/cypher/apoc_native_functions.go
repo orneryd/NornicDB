@@ -167,7 +167,7 @@ func (e *StorageExecutor) nativeAPOCAdjacency(ctx context.Context, name string, 
 		}
 		return false
 	}
-	outgoing, incoming, err := incidentEdgeListsContext(ctx, e.storage, node.ID, "both")
+	outgoing, incoming, err := e.relationshipEntityExecution().incidentEdgeLists(ctx, e.storage, node.ID, "both")
 	if err != nil {
 		return nil, err
 	}

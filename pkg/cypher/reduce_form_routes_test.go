@@ -58,11 +58,17 @@ func TestReduceFormRoutes(t *testing.T) {
 	}
 
 	// Guards for forms the statement checks reject first.
-	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "reduce(a, x IN [1] | x)", nil, nil, nil, nil, nil, 0))
-	_, resolved, err := exec.evaluateRowReduce("reduce", "a, x IN [1] | x", map[string]interface{}{}, exec.evaluateRowValue)
+	fixtureAdmission825Context, fixtureAdmission825 := expressionTestContext(ctx, "reduce(a, x IN [1] | x)")
+	_ = fixtureAdmission825
+	require.Nil(t, exec.evaluateExpressionWithContextFull(fixtureAdmission825, fixtureAdmission825Context, "reduce(a, x IN [1] | x)", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission1753Context, fixtureAdmission1753 := expressionTestContext(context.Background(), "a, x IN [1] | x")
+	_ = fixtureAdmission1753Context
+	_, resolved, err := exec.evaluateRowReduce(fixtureAdmission1753, "reduce", "a, x IN [1] | x", map[string]interface{}{}, exec.evaluateRowValue)
 	require.NoError(t, err)
 	require.False(t, resolved)
-	_, resolved, err = exec.evaluateRowReduce("reduce", "a = 0, x IN [1] | a + $missing.p", map[string]interface{}{}, exec.evaluateRowValue)
+	fixtureAdmission1754Context, fixtureAdmission1754 := expressionTestContext(context.Background(), "a = 0, x IN [1] | a + $missing.p")
+	_ = fixtureAdmission1754Context
+	_, resolved, err = exec.evaluateRowReduce(fixtureAdmission1754, "reduce", "a = 0, x IN [1] | a + $missing.p", map[string]interface{}{}, exec.evaluateRowValue)
 	require.False(t, resolved, "a step the row evaluator can't resolve")
 	_ = err
 }
@@ -72,12 +78,22 @@ func TestReduceFormRoutes(t *testing.T) {
 func TestReduceFormGuards(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "reduce_guards"))
 	ctx := context.Background()
-	require.Nil(t, exec.evaluateReduceForm(ctx, "reduce", "a, x IN [1] | x", nil, nil, nil, nil, nil, 0))
-	require.Nil(t, exec.evaluateReduceForm(ctx, "allReduce", "a = 0, x IN [1] | a, 'x'", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, int64(3), exec.evaluateReduceForm(ctx, "reduce", "a = 1, x IN 2 | a + x", nil, nil, nil, nil, nil, 0))
-	require.Nil(t, exec.evaluateReduceForm(ctx, "reduce", "a = 1, x IN null | a + x", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission1755Context, fixtureAdmission1755 := expressionTestContext(ctx, "a, x IN [1] | x")
+	_ = fixtureAdmission1755Context
+	require.Nil(t, exec.evaluateReduceForm(fixtureAdmission1755, fixtureAdmission1755Context, "reduce", "a, x IN [1] | x", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission1756Context, fixtureAdmission1756 := expressionTestContext(ctx, "a = 0, x IN [1] | a, 'x'")
+	_ = fixtureAdmission1756Context
+	require.Nil(t, exec.evaluateReduceForm(fixtureAdmission1756, fixtureAdmission1756Context, "allReduce", "a = 0, x IN [1] | a, 'x'", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission1757Context, fixtureAdmission1757 := expressionTestContext(ctx, "a = 1, x IN 2 | a + x")
+	_ = fixtureAdmission1757Context
+	require.Equal(t, int64(3), exec.evaluateReduceForm(fixtureAdmission1757, fixtureAdmission1757Context, "reduce", "a = 1, x IN 2 | a + x", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission1758Context, fixtureAdmission1758 := expressionTestContext(ctx, "a = 1, x IN null | a + x")
+	_ = fixtureAdmission1758Context
+	require.Nil(t, exec.evaluateReduceForm(fixtureAdmission1758, fixtureAdmission1758Context, "reduce", "a = 1, x IN null | a + x", nil, nil, nil, nil, nil, 0))
 	edge := &storage.Edge{ID: "e1", Type: "R", Properties: map[string]interface{}{"w": int64(4)}}
-	require.Equal(t, int64(5), exec.evaluateReduceForm(ctx, "reduce", "a = 1, x IN [1] | a + r.w", nil, map[string]*storage.Edge{"r": edge}, nil, nil, nil, 0))
+	fixtureAdmission1759Context, fixtureAdmission1759 := expressionTestContext(ctx, "a = 1, x IN [1] | a + r.w")
+	_ = fixtureAdmission1759Context
+	require.Equal(t, int64(5), exec.evaluateReduceForm(fixtureAdmission1759, fixtureAdmission1759Context, "reduce", "a = 1, x IN [1] | a + r.w", nil, map[string]*storage.Edge{"r": edge}, nil, nil, nil, 0))
 	require.Error(t, checkExpressionPropertyAccesses("reduce(s = 0, x IN [1] | s + i.p)", map[string]string{"i": "Integer"}, nil))
 	require.Error(t, checkExpressionPropertyAccesses("reduce(s = i.p, x IN [1] | s)", map[string]string{"i": "Integer"}, nil))
 	require.NoError(t, checkExpressionPropertyAccesses("reduce(i = {p: 1}, x IN [1] | i.p)", map[string]string{"i": "Integer"}, nil))

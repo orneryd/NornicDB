@@ -168,12 +168,14 @@ func TestGh713AggregateSingleKeyIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			rows := []pipelineRow{{"value": test.values[0]}, {"value": test.values[1]}, {"value": test.values[0]}}
 			ctx := withExpressionFailureSlot(context.Background())
-			groups, handled := exec.pipelineAggregateGroups(ctx, pipelineRowsSource(rows), []returnProjection{{expr: "value"}, {expr: "count(*)", isAggr: true}}, false)
+			fixtureAdmission1638Context, fixtureAdmission1638 := statementTestContext(ctx, ("RETURN "+("value"))+"\n"+("RETURN "+("count(*)")))
+			_ = fixtureAdmission1638Context
+			groups, handled := exec.pipelineAggregateGroups(fixtureAdmission1638, fixtureAdmission1638Context, pipelineRowsSource(rows), []returnProjection{{expr: "value"}, {expr: "count(*)", isAggr: true}}, false)
 			require.True(t, handled)
 			require.Len(t, groups, 2)
 			for index, group := range groups {
 				require.Equal(t, test.values[index], group.first["value"])
-				count, ok := group.value(ctx, exec, 1)
+				count, ok := group.value(fixtureAdmission1638, ctx, exec, 1)
 				require.True(t, ok)
 				require.Equal(t, []int64{2, 1}[index], count)
 			}
@@ -322,7 +324,9 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.columns, public.Columns)
 			if len(test.rows) == 0 {
-				pipeline := exec.executePipeline(ctx, test.query)
+				fixtureAdmission689Context, fixtureAdmission689 := statementTestContext(ctx, test.query)
+				_ = fixtureAdmission689
+				pipeline := exec.executePipeline(fixtureAdmission689, fixtureAdmission689Context, test.query)
 				require.NoError(t, pipeline.err)
 				require.True(t, pipeline.handled())
 				require.Equal(t, test.columns, pipeline.result.Columns)
@@ -584,13 +588,17 @@ func TestCartesianHelpers_ParseAndFilterBranches(t *testing.T) {
 			},
 		}
 
-		out := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id")
+		fixtureAdmission1639Context, fixtureAdmission1639 := expressionTestContext(context.Background(), "a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id")
+		_ = fixtureAdmission1639Context
+		out := exec.applyCartesianWherePushdown(fixtureAdmission1639, fixtureAdmission1639Context, patternMatches, "a.id IN ['x'] AND a.v IS NOT NULL AND a.id = b.id")
 		require.Len(t, out[0].nodes, 1)
 		require.Equal(t, storage.NodeID("a1"), out[0].nodes[0].ID)
 		require.Len(t, out[1].nodes, 1)
 		require.Equal(t, storage.NodeID("b1"), out[1].nodes[0].ID)
 
-		conflicted := exec.applyCartesianWherePushdown(context.Background(), patternMatches, "a.v IS NULL AND a.v IS NOT NULL")
+		fixtureAdmission1640Context, fixtureAdmission1640 := expressionTestContext(context.Background(), "a.v IS NULL AND a.v IS NOT NULL")
+		_ = fixtureAdmission1640Context
+		conflicted := exec.applyCartesianWherePushdown(fixtureAdmission1640, fixtureAdmission1640Context, patternMatches, "a.v IS NULL AND a.v IS NOT NULL")
 		require.Empty(t, conflicted[0].nodes)
 	})
 }
@@ -612,7 +620,9 @@ func TestExecuteCartesianAggregation_Branches(t *testing.T) {
 
 	res := &ExecuteResult{Rows: [][]interface{}{}}
 	ungroupedItems := []returnItem{{expr: "COUNT(*)"}, {expr: "COLLECT(a.kind)"}}
-	out, err := exec.sharedCartesianAggregationForTest(ctx, allMatches, ungroupedItems, res)
+	fixtureAdmission1641Context, fixtureAdmission1641 := statementTestContext(ctx, ("RETURN "+("COUNT(*)"))+"\n"+("RETURN "+("COLLECT(a.kind)")))
+	_ = fixtureAdmission1641Context
+	out, err := exec.sharedCartesianAggregationForTest(fixtureAdmission1641, fixtureAdmission1641Context, allMatches, ungroupedItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(3), out.Rows[0][0])
@@ -620,7 +630,9 @@ func TestExecuteCartesianAggregation_Branches(t *testing.T) {
 
 	res = &ExecuteResult{Rows: [][]interface{}{}}
 	groupedItems := []returnItem{{expr: "a.kind"}, {expr: "COUNT(*)"}, {expr: "COLLECT(b.name)"}}
-	out, err = exec.sharedCartesianAggregationForTest(ctx, allMatches, groupedItems, res)
+	fixtureAdmission1642Context, fixtureAdmission1642 := statementTestContext(ctx, (("RETURN "+("a.kind"))+"\n"+("RETURN "+("COUNT(*)")))+"\n"+("RETURN "+("COLLECT(b.name)")))
+	_ = fixtureAdmission1642Context
+	out, err = exec.sharedCartesianAggregationForTest(fixtureAdmission1642, fixtureAdmission1642Context, allMatches, groupedItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 2)
 
@@ -655,7 +667,9 @@ func TestExecuteAggregation_GroupedAndSingleGroupBranches(t *testing.T) {
 		{expr: "COLLECT(n.tag)"},
 	}
 	res := &ExecuteResult{Rows: [][]interface{}{}}
-	out, err := exec.sharedNodeAggregationForTest(ctx, nodes, "n", groupItems, res)
+	fixtureAdmission1643Context, fixtureAdmission1643 := statementTestContext(ctx, ((((((("RETURN "+("n.grp"))+"\n"+("RETURN "+("COUNT(*)")))+"\n"+("RETURN "+("COUNT(n.val)")))+"\n"+("RETURN "+("SUM(n.num)")))+"\n"+("RETURN "+("AVG(n.avg)")))+"\n"+("RETURN "+("MIN(n.min)")))+"\n"+("RETURN "+("MAX(n.max)")))+"\n"+("RETURN "+("COLLECT(n.tag)")))
+	_ = fixtureAdmission1643Context
+	out, err := exec.sharedNodeAggregationForTest(fixtureAdmission1643, fixtureAdmission1643Context, nodes, "n", groupItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 2)
 
@@ -693,7 +707,9 @@ func TestExecuteAggregation_GroupedAndSingleGroupBranches(t *testing.T) {
 		{expr: "'constant'"},
 	}
 	res = &ExecuteResult{}
-	out, err = exec.sharedNodeAggregationForTest(ctx, nodes, "n", singleItems, res)
+	fixtureAdmission1644Context, fixtureAdmission1644 := statementTestContext(ctx, (((((((((("RETURN "+("COUNT(*)"))+"\n"+("RETURN "+("COUNT(DISTINCT n.tag)")))+"\n"+("RETURN "+("COUNT(n.val)")))+"\n"+("RETURN "+("SUM(n.num)")))+"\n"+("RETURN "+("SUM(1)")))+"\n"+("RETURN "+("AVG(n.avg)")))+"\n"+("RETURN "+("MIN(n.min)")))+"\n"+("RETURN "+("MAX(n.max)")))+"\n"+("RETURN "+("COLLECT(DISTINCT n.tag)")))+"\n"+("RETURN "+("COLLECT(n.tag)")))+"\n"+("RETURN "+("'constant'")))
+	_ = fixtureAdmission1644Context
+	out, err = exec.sharedNodeAggregationForTest(fixtureAdmission1644, fixtureAdmission1644Context, nodes, "n", singleItems, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	row := out.Rows[0]
@@ -714,7 +730,9 @@ func TestExecuteAggregation_GroupedAndSingleGroupBranches(t *testing.T) {
 
 	// No rows still uses single-group aggregation path.
 	emptyRes := &ExecuteResult{}
-	emptyOut, err := exec.sharedNodeAggregationForTest(ctx, nil, "n", []returnItem{{expr: "COUNT(*)"}}, emptyRes)
+	fixtureAdmission1645Context, fixtureAdmission1645 := statementTestContext(ctx, "RETURN "+("COUNT(*)"))
+	_ = fixtureAdmission1645Context
+	emptyOut, err := exec.sharedNodeAggregationForTest(fixtureAdmission1645, fixtureAdmission1645Context, nil, "n", []returnItem{{expr: "COUNT(*)"}}, emptyRes)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, emptyOut.Rows)
 }
@@ -743,7 +761,9 @@ func TestExecuteAggregationSingleGroup_ExtraBranches(t *testing.T) {
 	}
 
 	res := &ExecuteResult{}
-	out, err := exec.sharedNodeAggregationForTest(ctx, nodes, "n", items, res)
+	fixtureAdmission1646Context, fixtureAdmission1646 := statementTestContext(ctx, (((((((((("RETURN "+("SUM(n.num) + SUM(n.num2)"))+"\n"+("RETURN "+("COUNT(DISTINCT n)")))+"\n"+("RETURN "+("COUNT(CASE WHEN n.flag = true THEN 1 END)")))+"\n"+("RETURN "+("SUM(CASE WHEN n.flag = true THEN 1 ELSE 0 END)")))+"\n"+("RETURN "+("SUM(1)")))+"\n"+("RETURN "+("AVG(n.missing)")))+"\n"+("RETURN "+("MIN(n.missing)")))+"\n"+("RETURN "+("MAX(n.missing)")))+"\n"+("RETURN "+("COLLECT(DISTINCT {tag: n.tag})")))+"\n"+("RETURN "+("COLLECT(n.tag)[..2]")))+"\n"+("RETURN "+("COLLECT({tag: n.tag})")))
+	_ = fixtureAdmission1646Context
+	out, err := exec.sharedNodeAggregationForTest(fixtureAdmission1646, fixtureAdmission1646Context, nodes, "n", items, res)
 	require.NoError(t, err)
 	require.Len(t, out.Rows, 1)
 	row := out.Rows[0]
@@ -805,12 +825,24 @@ func TestEvaluateWhereForContext_RelationshipAndBooleanBranches(t *testing.T) {
 	require.NoError(t, err)
 	nodeMap := map[string]*storage.Node{"a": a, "b": b}
 
-	require.True(t, exec.evaluateWhereForContext(ctx, "(a)-[:R]->(b)", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:R]-(a)", nodeMap))
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)<-[:R]-(b)", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.x = 1 AND b.x = 2", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.x = 3 OR b.x = 2", nodeMap))
-	require.True(t, exec.evaluateWhereForContext(ctx, "NOT a.x = 3", nodeMap))
+	fixtureAdmission690Context, fixtureAdmission690 := expressionTestContext(ctx, "(a)-[:R]->(b)")
+	_ = fixtureAdmission690
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission690, fixtureAdmission690Context, "(a)-[:R]->(b)", nodeMap))
+	fixtureAdmission691Context, fixtureAdmission691 := expressionTestContext(ctx, "(b)<-[:R]-(a)")
+	_ = fixtureAdmission691
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission691, fixtureAdmission691Context, "(b)<-[:R]-(a)", nodeMap))
+	fixtureAdmission692Context, fixtureAdmission692 := expressionTestContext(ctx, "(a)<-[:R]-(b)")
+	_ = fixtureAdmission692
+	require.False(t, exec.evaluateWhereForContext(fixtureAdmission692, fixtureAdmission692Context, "(a)<-[:R]-(b)", nodeMap))
+	fixtureAdmission693Context, fixtureAdmission693 := expressionTestContext(ctx, "a.x = 1 AND b.x = 2")
+	_ = fixtureAdmission693
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission693, fixtureAdmission693Context, "a.x = 1 AND b.x = 2", nodeMap))
+	fixtureAdmission694Context, fixtureAdmission694 := expressionTestContext(ctx, "a.x = 3 OR b.x = 2")
+	_ = fixtureAdmission694
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission694, fixtureAdmission694Context, "a.x = 3 OR b.x = 2", nodeMap))
+	fixtureAdmission695Context, fixtureAdmission695 := expressionTestContext(ctx, "NOT a.x = 3")
+	_ = fixtureAdmission695
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission695, fixtureAdmission695Context, "NOT a.x = 3", nodeMap))
 }
 
 func TestCartesianOffsetArithmeticExact(t *testing.T) {

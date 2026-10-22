@@ -32,65 +32,113 @@ func TestDynamicTokenBranches(t *testing.T) {
 
 	// A parameter that wasn't supplied, in every reader of a dynamic token.
 	withParams := withParams(ctx, map[string]interface{}{"other": 1})
-	_, err = exec.dynamicTokenValue(withParams, "$missing", nil, nil)
+	fixtureAdmission1130Context, fixtureAdmission1130 := expressionTestContext(withParams, "$missing")
+	_ = fixtureAdmission1130Context
+	_, err = exec.dynamicTokenValue(fixtureAdmission1130, fixtureAdmission1130Context, "$missing", nil, nil)
 	require.Error(t, err)
-	_, err = exec.chainLabelNames(withParams, []labelChainItem{{expression: "$missing"}}, nil, nil)
+	fixtureAdmission1857Context, fixtureAdmission1857 := statementTestContext(withParams, "RETURN "+("$missing"))
+	_ = fixtureAdmission1857Context
+	_, err = exec.chainLabelNames(fixtureAdmission1857, fixtureAdmission1857Context, []labelChainItem{{expression: "$missing"}}, nil, nil)
 	require.Error(t, err)
-	_, err = exec.dynamicPropertyKeyOf(withParams, "$missing", nil, nil, false)
+	fixtureAdmission1131Context, fixtureAdmission1131 := expressionTestContext(withParams, "$missing")
+	_ = fixtureAdmission1131Context
+	_, err = exec.dynamicPropertyKeyOf(fixtureAdmission1131, fixtureAdmission1131Context, "$missing", nil, nil, false)
 	require.Error(t, err)
-	_, err = exec.resolveRowDynamicTokens(withParams, "(n:$($missing))", nil, nil)
+	fixtureAdmission1132Context, fixtureAdmission1132 := traversalTestContext(withParams, "(n:$($missing))", "", nil)
+	_ = fixtureAdmission1132Context
+	_, err = exec.resolveRowDynamicTokens(fixtureAdmission1132, fixtureAdmission1132Context, "(n:$($missing))", nil, nil)
 	require.Error(t, err)
-	_, err = exec.resolveRowDynamicTokens(ctx, "(n:$(null))", nil, nil)
+	fixtureAdmission1133Context, fixtureAdmission1133 := traversalTestContext(ctx, "(n:$(null))", "", nil)
+	_ = fixtureAdmission1133Context
+	_, err = exec.resolveRowDynamicTokens(fixtureAdmission1133, fixtureAdmission1133Context, "(n:$(null))", nil, nil)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// The pattern resolver leaves quoted text, parameters and unbalanced text.
-	resolved, err := exec.resolveRowDynamicTokens(ctx, "(`n`:$('A') $props)-[:$('R')]->(m:X)", nil, nil)
+	fixtureAdmission1134Context, fixtureAdmission1134 := traversalTestContext(ctx, "(`n`:$('A') $props)-[:$('R')]->(m:X)", "", nil)
+	_ = fixtureAdmission1134Context
+	resolved, err := exec.resolveRowDynamicTokens(fixtureAdmission1134, fixtureAdmission1134Context, "(`n`:$('A') $props)-[:$('R')]->(m:X)", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(`n`:A $props)-[:R]->(m:X)", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n:$('A')", nil, nil)
+	fixtureAdmission1135Context, fixtureAdmission1135 := traversalTestContext(ctx, "(n:$('A')", "", nil)
+	_ = fixtureAdmission1135Context
+	resolved, err = exec.resolveRowDynamicTokens(fixtureAdmission1135, fixtureAdmission1135Context, "(n:$('A')", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n:A", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n:$(", nil, nil)
+	fixtureAdmission1136Context, fixtureAdmission1136 := traversalTestContext(ctx, "(n:$(", "", nil)
+	_ = fixtureAdmission1136Context
+	resolved, err = exec.resolveRowDynamicTokens(fixtureAdmission1136, fixtureAdmission1136Context, "(n:$(", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n:$(", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n:Fixed: $([]))", nil, nil)
+	fixtureAdmission1137Context, fixtureAdmission1137 := traversalTestContext(ctx, "(n:Fixed: $([]))", "", nil)
+	_ = fixtureAdmission1137Context
+	resolved, err = exec.resolveRowDynamicTokens(fixtureAdmission1137, fixtureAdmission1137Context, "(n:Fixed: $([]))", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n:Fixed)", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n {k: 1})", nil, nil)
+	fixtureAdmission1138Context, fixtureAdmission1138 := traversalTestContext(ctx, "(n {k: 1})", "", nil)
+	_ = fixtureAdmission1138Context
+	resolved, err = exec.resolveRowDynamicTokens(fixtureAdmission1138, fixtureAdmission1138Context, "(n {k: 1})", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n {k: 1})", resolved)
 
 	// A label item on a relationship, where its kind isn't known statically.
-	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", "r:$('X')", nil, nil)
+	fixtureAdmission1571Context, fixtureAdmission1571 := statementTestContext(ctx, "r:$('X')")
+	_ = fixtureAdmission1571Context
+	_, err = exec.applySetToRelationshipWithContext(fixtureAdmission1571, fixtureAdmission1571Context, edge, "r", "r:$('X')", nil, nil)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", "r[$missing] = 1", nil, nil)
+	fixtureAdmission1572Context, fixtureAdmission1572 := statementTestContext(ctx, "r[$missing] = 1")
+	_ = fixtureAdmission1572Context
+	_, err = exec.applySetToRelationshipWithContext(fixtureAdmission1572, fixtureAdmission1572Context, edge, "r", "r[$missing] = 1", nil, nil)
 	require.Error(t, err)
-	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", "r['k'] = {a: 1}", nil, nil)
+	fixtureAdmission1573Context, fixtureAdmission1573 := statementTestContext(ctx, "r['k'] = {a: 1}")
+	_ = fixtureAdmission1573Context
+	_, err = exec.applySetToRelationshipWithContext(fixtureAdmission1573, fixtureAdmission1573Context, edge, "r", "r['k'] = {a: 1}", nil, nil)
 	require.Error(t, err)
-	_, err = exec.applySetToNodeWithContext(ctx, node, "n", "n:$(1)", nil, nil)
+	fixtureAdmission1574Context, fixtureAdmission1574 := statementTestContext(ctx, "n:$(1)")
+	_ = fixtureAdmission1574Context
+	_, err = exec.applySetToNodeWithContext(fixtureAdmission1574, fixtureAdmission1574Context, node, "n", "n:$(1)", nil, nil)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	_, err = exec.applySetToNodeWithContext(ctx, node, "n", "n:Bad Label", nil, nil)
+	fixtureAdmission1575Context, fixtureAdmission1575 := statementTestContext(ctx, "n:Bad Label")
+	_ = fixtureAdmission1575Context
+	_, err = exec.applySetToNodeWithContext(fixtureAdmission1575, fixtureAdmission1575Context, node, "n", "n:Bad Label", nil, nil)
 	require.Error(t, err)
-	_, err = exec.applySetToNodeWithContext(ctx, node, "n", "n['k'] = {a: 1}", nil, nil)
+	fixtureAdmission1576Context, fixtureAdmission1576 := statementTestContext(ctx, "n['k'] = {a: 1}")
+	_ = fixtureAdmission1576Context
+	_, err = exec.applySetToNodeWithContext(fixtureAdmission1576, fixtureAdmission1576Context, node, "n", "n['k'] = {a: 1}", nil, nil)
 	require.Error(t, err)
 	result := &ExecuteResult{Stats: &QueryStats{}}
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r:$('X')", result)
+	fixtureAdmission1139Context, fixtureAdmission1139 := statementTestContext(ctx, "REMOVE r:$('X')")
+	_ = fixtureAdmission1139Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1139, fixtureAdmission1139Context, []pipelineRow{{"r": edge}}, "REMOVE r:$('X')", result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r[null]", result)
+	fixtureAdmission1140Context, fixtureAdmission1140 := statementTestContext(ctx, "REMOVE r[null]")
+	_ = fixtureAdmission1140Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1140, fixtureAdmission1140Context, []pipelineRow{{"r": edge}}, "REMOVE r[null]", result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n:$(null)", result)
+	fixtureAdmission1141Context, fixtureAdmission1141 := statementTestContext(ctx, "REMOVE n:$(null)")
+	_ = fixtureAdmission1141Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1141, fixtureAdmission1141Context, []pipelineRow{{"n": node}}, "REMOVE n:$(null)", result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n[null]", result)
+	fixtureAdmission1142Context, fixtureAdmission1142 := statementTestContext(ctx, "REMOVE n[null]")
+	_ = fixtureAdmission1142Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1142, fixtureAdmission1142Context, []pipelineRow{{"n": node}}, "REMOVE n[null]", result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": (*storage.Node)(nil), "r": (*storage.Edge)(nil)}}, "REMOVE n.k, r.k", result)
+	fixtureAdmission1143Context, fixtureAdmission1143 := statementTestContext(ctx, "REMOVE n.k, r.k")
+	_ = fixtureAdmission1143Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1143, fixtureAdmission1143Context, []pipelineRow{{"n": (*storage.Node)(nil), "r": (*storage.Edge)(nil)}}, "REMOVE n.k, r.k", result)
 	require.NoError(t, err)
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n:", result)
+	fixtureAdmission1144Context, fixtureAdmission1144 := statementTestContext(ctx, "REMOVE n:")
+	_ = fixtureAdmission1144Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1144, fixtureAdmission1144Context, []pipelineRow{{"n": node}}, "REMOVE n:", result)
 	require.Error(t, err)
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n", result)
+	fixtureAdmission1145Context, fixtureAdmission1145 := statementTestContext(ctx, "REMOVE n")
+	_ = fixtureAdmission1145Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1145, fixtureAdmission1145Context, []pipelineRow{{"n": node}}, "REMOVE n", result)
 	require.Error(t, err)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	err = exec.pipelineApplyRemove(cancelled, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	fixtureAdmission1146Context, fixtureAdmission1146 := statementTestContext(cancelled, "REMOVE n.k")
+	_ = fixtureAdmission1146Context
+	err = exec.pipelineApplyRemove(fixtureAdmission1146, fixtureAdmission1146Context, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
 	require.ErrorIs(t, err, context.Canceled)
 	items, err := parseRemoveItems("n.a, , n:A")
 	require.NoError(t, err)
@@ -214,16 +262,24 @@ func TestDynamicTokenBranches(t *testing.T) {
 	require.NoError(t, validateRemoveClauseScope(scope2, "REMOVE n:$('A'), n['k'], n.p"))
 
 	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	_, _, err = exec.pipelineApplyRowDynamicMerge(cancelled, []pipelineRow{{"l": "L"}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
+	fixtureAdmission1147Context, fixtureAdmission1147 := traversalTestContext(cancelled, "(n:$(l) {k: 1})", "", nil)
+	_ = fixtureAdmission1147Context
+	_, _, err = exec.pipelineApplyRowDynamicMerge(fixtureAdmission1147, fixtureAdmission1147Context, []pipelineRow{{"l": "L"}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
 	require.ErrorIs(t, err, context.Canceled)
-	_, _, err = exec.pipelineApplyRowDynamicMerge(ctx, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
+	fixtureAdmission1148Context, fixtureAdmission1148 := traversalTestContext(ctx, "(n:$(l) {k: 1})", "", nil)
+	_ = fixtureAdmission1148Context
+	_, _, err = exec.pipelineApplyRowDynamicMerge(fixtureAdmission1148, fixtureAdmission1148Context, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// Removing an absent property is a no-op even when the store rejects writes.
 	failing := NewStorageExecutor(&updateErrorEngine{Engine: store, nodeErr: context.DeadlineExceeded, edgeErr: context.DeadlineExceeded})
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	fixtureAdmission1149Context, fixtureAdmission1149 := statementTestContext(ctx, "REMOVE n.k")
+	_ = fixtureAdmission1149Context
+	err = failing.pipelineApplyRemove(fixtureAdmission1149, fixtureAdmission1149Context, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
 	require.NoError(t, err)
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
+	fixtureAdmission1150Context, fixtureAdmission1150 := statementTestContext(ctx, "REMOVE r.k")
+	_ = fixtureAdmission1150Context
+	err = failing.pipelineApplyRemove(fixtureAdmission1150, fixtureAdmission1150Context, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
 	require.NoError(t, err)
 
 	// Seed real persisted properties so REMOVE must write and report rejection.
@@ -238,8 +294,12 @@ func TestDynamicTokenBranches(t *testing.T) {
 	}
 	edge.Properties["k"] = int64(1)
 	require.NoError(t, store.UpdateEdge(edge))
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	fixtureAdmission1151Context, fixtureAdmission1151 := statementTestContext(ctx, "REMOVE n.k")
+	_ = fixtureAdmission1151Context
+	err = failing.pipelineApplyRemove(fixtureAdmission1151, fixtureAdmission1151Context, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
+	fixtureAdmission1152Context, fixtureAdmission1152 := statementTestContext(ctx, "REMOVE r.k")
+	_ = fixtureAdmission1152Context
+	err = failing.pipelineApplyRemove(fixtureAdmission1152, fixtureAdmission1152Context, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

@@ -42,19 +42,25 @@ MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)`
 
 	t.Run("detach declines fast path", func(t *testing.T) {
-		res, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, seg, "", "rel", true)
+		fixtureAdmission1190Context, fixtureAdmission1190 := statementTestContext(ctx, "")
+		_ = fixtureAdmission1190Context
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1190, fixtureAdmission1190Context, seg, "", "rel", true)
 		require.NoError(t, err)
 		require.False(t, ok)
 		require.Nil(t, res)
 	})
 	t.Run("multiple delete vars decline fast path", func(t *testing.T) {
-		res, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, seg, "", "rel,other", false)
+		fixtureAdmission1191Context, fixtureAdmission1191 := statementTestContext(ctx, "")
+		_ = fixtureAdmission1191Context
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1191, fixtureAdmission1191Context, seg, "", "rel,other", false)
 		require.NoError(t, err)
 		require.False(t, ok)
 		require.Nil(t, res)
 	})
 	t.Run("empty delete var declines fast path", func(t *testing.T) {
-		res, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, seg, "", "  ", false)
+		fixtureAdmission1192Context, fixtureAdmission1192 := statementTestContext(ctx, "")
+		_ = fixtureAdmission1192Context
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1192, fixtureAdmission1192Context, seg, "", "  ", false)
 		require.NoError(t, err)
 		require.False(t, ok)
 		require.Nil(t, res)
@@ -103,7 +109,9 @@ WHERE rel.evidence_source = 'does-not-match'`,
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			exec := seedBoundDeleteFixture(t, 1)
-			res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), tc.segment, "", "rel", false)
+			fixtureAdmission1588Context, fixtureAdmission1588 := statementTestContext(context.Background(), "")
+			_ = fixtureAdmission1588Context
+			res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1588, fixtureAdmission1588Context, tc.segment, "", "rel", false)
 			require.NoError(t, err)
 			require.True(t, ok, "fast path should handle the query")
 			require.Equal(t, 0, res.Stats.RelationshipsDeleted, "no edge should qualify")
@@ -138,7 +146,9 @@ func TestBoundRelationshipDelete_LimitStopsAtRowCount(t *testing.T) {
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WITH rel LIMIT 1`
-	res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+	fixtureAdmission1589Context, fixtureAdmission1589 := statementTestContext(context.Background(), "")
+	_ = fixtureAdmission1589Context
+	res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1589, fixtureAdmission1589Context, seg, "", "rel", false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, res.Stats.RelationshipsDeleted)
@@ -183,7 +193,9 @@ MATCH (source_repo)-[rel*1..2]->(b)`, "rel"},
 	exec := seedBoundDeleteFixture(t, 1)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), tc.segment, "", tc.deleteVar, false)
+			fixtureAdmission1590Context, fixtureAdmission1590 := statementTestContext(context.Background(), "")
+			_ = fixtureAdmission1590Context
+			res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1590, fixtureAdmission1590Context, tc.segment, "", tc.deleteVar, false)
 			require.NoError(t, err)
 			require.False(t, ok, "fast path should decline this shape")
 			require.Nil(t, res)
@@ -199,7 +211,9 @@ func TestBoundRelationshipDelete_DirectionVariants(t *testing.T) {
 		seg := `
 MATCH (target:Repository {id:'repository:target-a'})
 MATCH (target)<-[rel:DEPLOYS_FROM]-(:Repository)`
-		res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+		fixtureAdmission1591Context, fixtureAdmission1591 := statementTestContext(context.Background(), "")
+		_ = fixtureAdmission1591Context
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1591, fixtureAdmission1591Context, seg, "", "rel", false)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Equal(t, 1, res.Stats.RelationshipsDeleted)
@@ -209,7 +223,9 @@ MATCH (target)<-[rel:DEPLOYS_FROM]-(:Repository)`
 		seg := `
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]-(:Repository)`
-		res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+		fixtureAdmission1592Context, fixtureAdmission1592 := statementTestContext(context.Background(), "")
+		_ = fixtureAdmission1592Context
+		res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1592, fixtureAdmission1592Context, seg, "", "rel", false)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Equal(t, 1, res.Stats.RelationshipsDeleted)
@@ -224,7 +240,9 @@ func TestBoundRelationshipDelete_NamedEndNodeWithWhere(t *testing.T) {
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(dest:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'`
-	res, ok, err := exec.tryExecuteBoundRelationshipDelete(context.Background(), seg, "", "rel", false)
+	fixtureAdmission1593Context, fixtureAdmission1593 := statementTestContext(context.Background(), "")
+	_ = fixtureAdmission1593Context
+	res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1593, fixtureAdmission1593Context, seg, "", "rel", false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, res.Stats.RelationshipsDeleted)
@@ -249,7 +267,9 @@ CREATE (s)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(s)
 	seg := `
 MATCH (source_repo:Repository {id:'repository:self'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]-(:Repository)`
-	res, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, seg, "", "rel", false)
+	fixtureAdmission1193Context, fixtureAdmission1193 := statementTestContext(ctx, "")
+	_ = fixtureAdmission1193Context
+	res, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1193, fixtureAdmission1193Context, seg, "", "rel", false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, res.Stats.RelationshipsDeleted, "self-loop edge must be deleted exactly once")

@@ -77,6 +77,7 @@ func TestBoundExpandCountMatchesTraversal(t *testing.T) {
 	ids := []storage.NodeID{"a", "b", "c", "d"}
 	var cases int
 	for _, body := range bodies {
+		bodyContext, bodyStatement := statementTestContext(ctx, body)
 		shape := boundChainShapeFor(ctx, body)
 		require.True(t, shape.ok, body)
 		for _, start := range ids {
@@ -93,16 +94,20 @@ func TestBoundExpandCountMatchesTraversal(t *testing.T) {
 					if rel != "unbound" {
 						values["r"] = rel
 					}
-					matches := exec.parseTraversalPattern(ctx, shape.pattern)
+					fixtureAdmission108Context, fixtureAdmission108 := traversalTestContext(ctx, shape.pattern, "", nil)
+					_ = fixtureAdmission108
+					matches := exec.parseTraversalPattern(fixtureAdmission108, fixtureAdmission108Context, shape.pattern)
 					require.NotNil(t, matches, body)
 					if !chainVariablesBindEntities(matches, values) {
 						continue
 					}
 					seed := values[matches.StartNode.variable].(*storage.Node)
 					for _, first := range []bool{false, true} {
-						got, expanded := exec.boundExpandCount(ctx, matches, seed, shape.where, values, first)
+						got, expanded := exec.relationshipExecutionFor(bodyStatement, bodyContext, shape.pattern, shape.where).boundExpandCount(ctx, matches, seed, shape.where, values, first)
 						require.True(t, expanded, body)
-						want := exec.boundTraversalCount(ctx, exec.parseTraversalPattern(ctx, shape.pattern), seed, shape.where, values, first)
+						fixtureAdmission109Context, fixtureAdmission109 := traversalTestContext(ctx, shape.pattern, "", nil)
+						_ = fixtureAdmission109
+						want := exec.relationshipExecutionFor(bodyStatement, bodyContext, shape.pattern, shape.where).boundTraversalCount(ctx, exec.parseTraversalPattern(fixtureAdmission109, fixtureAdmission109Context, shape.pattern), seed, shape.where, values, first)
 						require.Equal(t, want, got, "%s with a=%s b=%v r=%v first=%v", body, start, end, rel, first)
 						cases++
 					}
@@ -121,11 +126,14 @@ func TestBoundExpandCountDeclinesLongerChains(t *testing.T) {
 	a, err := store.GetNode("a")
 	require.NoError(t, err)
 	for _, body := range []string{"MATCH (a)-[:T]->(b)-[:T]->(c)", "MATCH (a)-[:T*1..2]->(b)", "MATCH (a)-[:T*1]->(b)"} {
+		bodyContext, bodyStatement := statementTestContext(ctx, body)
 		shape := boundChainShapeFor(ctx, body)
 		require.True(t, shape.ok, body)
-		matches := exec.parseTraversalPattern(ctx, shape.pattern)
+		fixtureAdmission110Context, fixtureAdmission110 := traversalTestContext(ctx, shape.pattern, "", nil)
+		_ = fixtureAdmission110
+		matches := exec.parseTraversalPattern(fixtureAdmission110, fixtureAdmission110Context, shape.pattern)
 		require.NotNil(t, matches, body)
-		_, expanded := exec.boundExpandCount(ctx, matches, a, shape.where, map[string]interface{}{"a": a}, true)
+		_, expanded := exec.relationshipExecutionFor(bodyStatement, bodyContext, shape.pattern, shape.where).boundExpandCount(ctx, matches, a, shape.where, map[string]interface{}{"a": a}, true)
 		require.False(t, expanded, body)
 	}
 }

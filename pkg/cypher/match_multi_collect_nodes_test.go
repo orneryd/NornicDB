@@ -151,7 +151,9 @@ func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
 	}
 	exec := NewStorageExecutor(probe)
 
-	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"SystemPrompt"}, nil, "n", "", 3)
+	fixtureAdmission1634Context, fixtureAdmission1634 := expressionTestContext(context.Background(), "")
+	_ = fixtureAdmission1634Context
+	nodes, err := exec.collectNodesWithStreaming(fixtureAdmission1634, fixtureAdmission1634Context, []string{"SystemPrompt"}, nil, "n", "", 3)
 	require.NoError(t, err)
 	require.Len(t, nodes, 3)
 	assert.GreaterOrEqual(t, probe.labelLookupCalls, 1, "label-id lookup path must be used")
@@ -170,8 +172,10 @@ func TestCollectNodesWithStreaming_UsesLabelIndexedStreamForResidualFilters(t *t
 	exec := NewStorageExecutor(probe)
 	probe.labelCalls = 0
 
-	nodes, err := exec.collectNodesWithStreaming(
-		context.Background(), []string{"Person"}, nil, "n", "n.age > 30", -1,
+	fixtureAdmission1635Context, fixtureAdmission1635 := expressionTestContext(context.Background(), "n.age > 30")
+	_ = fixtureAdmission1635Context
+	nodes, err := exec.collectNodesWithStreaming(fixtureAdmission1635,
+		fixtureAdmission1635Context, []string{"Person"}, nil, "n", "n.age > 30", -1,
 	)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
@@ -206,7 +210,9 @@ func TestCollectNodesWithStreaming_PropagatesProjectedReaderError(t *testing.T) 
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesLabelProbeEngine{Engine: base, labelIDs: []storage.NodeID{"nornic:one"}}
 	exec := NewStorageExecutor(probe)
-	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"Person"}, nil, "n", "", 1)
+	fixtureAdmission1636Context, fixtureAdmission1636 := expressionTestContext(context.Background(), "")
+	_ = fixtureAdmission1636Context
+	nodes, err := exec.collectNodesWithStreaming(fixtureAdmission1636, fixtureAdmission1636Context, []string{"Person"}, nil, "n", "", 1)
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 	require.Nil(t, nodes)
 	require.Equal(t, 0, probe.labelLookupCalls)
@@ -218,8 +224,10 @@ func TestCollectNodesWithStreaming_PropagatesLabelLookupReadError(t *testing.T) 
 	probe := &collectNodesIDProbeEngine{
 		Engine: base, labelIDs: []storage.NodeID{"nornic:missing"}, getNodeErr: assert.AnError,
 	}
-	nodes, err := NewStorageExecutor(probe).collectNodesWithStreaming(
-		context.Background(), []string{"Person"}, nil, "n", "", 1,
+	fixtureAdmission1637Context, fixtureAdmission1637 := expressionTestContext(context.Background(), "")
+	_ = fixtureAdmission1637Context
+	nodes, err := NewStorageExecutor(probe).collectNodesWithStreaming(fixtureAdmission1637,
+		fixtureAdmission1637Context, []string{"Person"}, nil, "n", "", 1,
 	)
 	require.ErrorIs(t, err, assert.AnError)
 	require.Nil(t, nodes)

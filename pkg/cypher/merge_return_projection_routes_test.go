@@ -219,13 +219,17 @@ func TestMatchMergeSetHonorsWithWindow(t *testing.T) {
 func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
 	clause := "RETURN 1 AS one, 'x' AS two ORDER BY one LIMIT 1"
-	first, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
+	fixtureAdmission962Context, fixtureAdmission962 := statementTestContext(ctx, clause)
+	_ = fixtureAdmission962Context
+	first, ok := exec.pipelineApplyReturn(fixtureAdmission962, fixtureAdmission962Context, []pipelineRow{{}}, clause)
 	require.True(t, ok)
 	require.Equal(t, []string{"one", "two"}, first.Columns)
 	first.Columns[0] = "changed"
 	require.Same(t, returnProjectionPlanFor(clause), returnProjectionPlanFor(clause))
 
-	second, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
+	fixtureAdmission963Context, fixtureAdmission963 := statementTestContext(ctx, clause)
+	_ = fixtureAdmission963Context
+	second, ok := exec.pipelineApplyReturn(fixtureAdmission963, fixtureAdmission963Context, []pipelineRow{{}}, clause)
 	require.True(t, ok)
 	require.Equal(t, []string{"one", "two"}, second.Columns)
 	require.Equal(t, [][]interface{}{{int64(1), "x"}}, second.Rows)

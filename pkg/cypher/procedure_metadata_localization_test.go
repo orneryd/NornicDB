@@ -363,7 +363,7 @@ func TestBuiltInProcedureSignatureMetadataDefaults(t *testing.T) {
 		t.Run(signature, func(t *testing.T) {
 			registry := NewProcedureRegistry()
 			replaceProcedureRegistryForTest(t, registry)
-			registerProcedure(ProcedureSpec{Name: "custom.defaults", Signature: signature, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 2}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+			registerProcedure(ProcedureSpec{Name: "custom.defaults", Signature: signature, Mode: ProcedureModeRead, MinArgs: 1, MaxArgs: 2}, func(fixtureAdmission1009 admittedRelationshipStatement, _ context.Context, _ *StorageExecutor, _ string, _ []interface{}) (*ExecuteResult, error) {
 				return &ExecuteResult{}, nil
 			})
 			specs := registry.ListBuiltIns()

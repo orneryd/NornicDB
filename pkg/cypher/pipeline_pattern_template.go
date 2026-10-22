@@ -52,10 +52,10 @@ func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelineP
 // evaluatePipelineProperties evaluates pattern predicates for a row without
 // dropping null-valued equality constraints. ok is false when an expression
 // doesn't resolve.
-func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelineProperties(admission admittedRelationshipStatement, ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, bool) {
 	props := make(map[string]interface{}, len(expressions))
 	for _, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression.expr, row)
+		value, ok := e.evaluateRowExpressionWithContext(admission, ctx, expression.expr, row)
 		if !ok {
 			return nil, false
 		}
@@ -103,14 +103,14 @@ func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineN
 
 // node returns the row's node pattern, ok false when the row takes the
 // general route.
-func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool) {
+func (t *pipelineNodeMatchTemplate) node(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool) {
 	if !t.usable {
 		return nodePatternInfo{}, false
 	}
 	if len(t.properties) == 0 {
 		return nodePatternInfo{variable: t.variable, labels: t.labels, labelErr: t.labelErr}, true
 	}
-	props, ok := e.evaluatePipelineProperties(ctx, t.properties, row)
+	props, ok := e.evaluatePipelineProperties(admission, ctx, t.properties, row)
 	if !ok {
 		return nodePatternInfo{}, false
 	}
@@ -174,7 +174,7 @@ func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMerge
 // pattern returns the row's relationship pattern, ok false when the row
 // takes the general route (an endpoint not bound to a node, a property the
 // row evaluator can't evaluate).
-func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool) {
+func (t *pipelineMergeTemplate) pattern(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool) {
 	if !t.usable {
 		return nil, nil, nil, false
 	}
@@ -183,7 +183,7 @@ func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor,
 	if startNode == nil || endNode == nil {
 		return nil, nil, nil, false
 	}
-	props, ok := e.evaluatePipelineProperties(ctx, t.properties, row)
+	props, ok := e.evaluatePipelineProperties(admission, ctx, t.properties, row)
 	if !ok {
 		return nil, nil, nil, false
 	}

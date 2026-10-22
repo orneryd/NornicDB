@@ -34,19 +34,29 @@ func TestSchema_CreateIndexBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeCreateIndex(ctx, "CREATE INDEX idx_named IF NOT EXISTS FOR (n:IdxNodeA) ON (n.p)")
+	fixtureAdmission1400Context, fixtureAdmission1400 := statementTestContext(ctx, "CREATE INDEX idx_named IF NOT EXISTS FOR (n:IdxNodeA) ON (n.p)")
+	_ = fixtureAdmission1400Context
+	_, err := exec.executeCreateIndex(fixtureAdmission1400, fixtureAdmission1400Context, "CREATE INDEX idx_named IF NOT EXISTS FOR (n:IdxNodeA) ON (n.p)")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX IF NOT EXISTS FOR (n:IdxNodeB) ON (n.p, n.q)")
+	fixtureAdmission1401Context, fixtureAdmission1401 := statementTestContext(ctx, "CREATE INDEX IF NOT EXISTS FOR (n:IdxNodeB) ON (n.p, n.q)")
+	_ = fixtureAdmission1401Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1401, fixtureAdmission1401Context, "CREATE INDEX IF NOT EXISTS FOR (n:IdxNodeB) ON (n.p, n.q)")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX idx_legacy ON :IdxNodeC(p)")
+	fixtureAdmission1402Context, fixtureAdmission1402 := statementTestContext(ctx, "CREATE INDEX idx_legacy ON :IdxNodeC(p)")
+	_ = fixtureAdmission1402Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1402, fixtureAdmission1402Context, "CREATE INDEX idx_legacy ON :IdxNodeC(p)")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX FOR (n:IdxNodeD) ON n.p")
+	fixtureAdmission1403Context, fixtureAdmission1403 := statementTestContext(ctx, "CREATE INDEX FOR (n:IdxNodeD) ON n.p")
+	_ = fixtureAdmission1403Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1403, fixtureAdmission1403Context, "CREATE INDEX FOR (n:IdxNodeD) ON n.p")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX idx_invalid")
+	fixtureAdmission1404Context, fixtureAdmission1404 := statementTestContext(ctx, "CREATE INDEX idx_invalid")
+	_ = fixtureAdmission1404Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1404, fixtureAdmission1404Context, "CREATE INDEX idx_invalid")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid CREATE INDEX syntax")
 }
@@ -58,19 +68,27 @@ func TestSchema_CreateIndexBranches_BackfillErrorsAcrossSyntaxes(t *testing.T) {
 	exec := NewStorageExecutor(eng)
 	ctx := context.Background()
 
-	_, err := exec.executeCreateIndex(ctx, "CREATE INDEX idx_named_err FOR (n:ErrBackfill) ON (n.p)")
+	fixtureAdmission1405Context, fixtureAdmission1405 := statementTestContext(ctx, "CREATE INDEX idx_named_err FOR (n:ErrBackfill) ON (n.p)")
+	_ = fixtureAdmission1405Context
+	_, err := exec.executeCreateIndex(fixtureAdmission1405, fixtureAdmission1405Context, "CREATE INDEX idx_named_err FOR (n:ErrBackfill) ON (n.p)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrBackfill")
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX FOR (n:ErrBackfill) ON (n.p)")
+	fixtureAdmission1406Context, fixtureAdmission1406 := statementTestContext(ctx, "CREATE INDEX FOR (n:ErrBackfill) ON (n.p)")
+	_ = fixtureAdmission1406Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1406, fixtureAdmission1406Context, "CREATE INDEX FOR (n:ErrBackfill) ON (n.p)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrBackfill")
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX idx_legacy_err ON :ErrBackfill(p)")
+	fixtureAdmission1407Context, fixtureAdmission1407 := statementTestContext(ctx, "CREATE INDEX idx_legacy_err ON :ErrBackfill(p)")
+	_ = fixtureAdmission1407Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1407, fixtureAdmission1407Context, "CREATE INDEX idx_legacy_err ON :ErrBackfill(p)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrBackfill")
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX FOR (n:ErrBackfill) ON n.p")
+	fixtureAdmission1408Context, fixtureAdmission1408 := statementTestContext(ctx, "CREATE INDEX FOR (n:ErrBackfill) ON n.p")
+	_ = fixtureAdmission1408Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1408, fixtureAdmission1408Context, "CREATE INDEX FOR (n:ErrBackfill) ON n.p")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrBackfill")
 }
@@ -81,34 +99,52 @@ func TestSchema_DropIndexAndDropConstraintBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeDropIndex(ctx, "DROP INDEX")
+	fixtureAdmission1409Context, fixtureAdmission1409 := statementTestContext(ctx, "DROP INDEX")
+	_ = fixtureAdmission1409Context
+	_, err := exec.executeDropIndex(fixtureAdmission1409, fixtureAdmission1409Context, "DROP INDEX")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "index name required")
 
-	_, err = exec.executeDropConstraint(ctx, "DROP CONSTRAINT")
+	fixtureAdmission1410Context, fixtureAdmission1410 := statementTestContext(ctx, "DROP CONSTRAINT")
+	_ = fixtureAdmission1410Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1410, fixtureAdmission1410Context, "DROP CONSTRAINT")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid DROP CONSTRAINT syntax")
 
-	_, err = exec.executeDropConstraint(ctx, "DROP CONSTRAINT a b")
+	fixtureAdmission1411Context, fixtureAdmission1411 := statementTestContext(ctx, "DROP CONSTRAINT a b")
+	_ = fixtureAdmission1411Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1411, fixtureAdmission1411Context, "DROP CONSTRAINT a b")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid DROP CONSTRAINT syntax")
 
-	_, err = exec.executeDropConstraint(ctx, "DROP CONSTRAINT IF EXISTS missing_c")
+	fixtureAdmission1412Context, fixtureAdmission1412 := statementTestContext(ctx, "DROP CONSTRAINT IF EXISTS missing_c")
+	_ = fixtureAdmission1412Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1412, fixtureAdmission1412Context, "DROP CONSTRAINT IF EXISTS missing_c")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX `idx with space` FOR (n:DropNode) ON (n.p)")
+	fixtureAdmission1413Context, fixtureAdmission1413 := statementTestContext(ctx, "CREATE INDEX `idx with space` FOR (n:DropNode) ON (n.p)")
+	_ = fixtureAdmission1413Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1413, fixtureAdmission1413Context, "CREATE INDEX `idx with space` FOR (n:DropNode) ON (n.p)")
 	require.NoError(t, err)
 
-	_, err = exec.executeDropIndex(ctx, "DROP INDEX `idx with space`")
+	fixtureAdmission1414Context, fixtureAdmission1414 := statementTestContext(ctx, "DROP INDEX `idx with space`")
+	_ = fixtureAdmission1414Context
+	_, err = exec.executeDropIndex(fixtureAdmission1414, fixtureAdmission1414Context, "DROP INDEX `idx with space`")
 	require.NoError(t, err)
 
-	_, err = exec.executeDropIndex(ctx, "DROP INDEX missing_idx IF EXISTS")
+	fixtureAdmission1415Context, fixtureAdmission1415 := statementTestContext(ctx, "DROP INDEX missing_idx IF EXISTS")
+	_ = fixtureAdmission1415Context
+	_, err = exec.executeDropIndex(fixtureAdmission1415, fixtureAdmission1415Context, "DROP INDEX missing_idx IF EXISTS")
 	require.NoError(t, err)
 
 	// Vector index drop path should execute special cleanup branch.
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
+	fixtureAdmission1416Context, fixtureAdmission1416 := statementTestContext(ctx, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
+	_ = fixtureAdmission1416Context
+	_, err = exec.executeCreateVectorIndex(fixtureAdmission1416, fixtureAdmission1416Context, "CREATE VECTOR INDEX vec_drop FOR (n:VecNode) ON (n.embedding)")
 	require.NoError(t, err)
-	_, err = exec.executeDropIndex(ctx, "DROP INDEX vec_drop")
+	fixtureAdmission1417Context, fixtureAdmission1417 := statementTestContext(ctx, "DROP INDEX vec_drop")
+	_ = fixtureAdmission1417Context
+	_, err = exec.executeDropIndex(fixtureAdmission1417, fixtureAdmission1417Context, "DROP INDEX vec_drop")
 	require.NoError(t, err)
 }
 

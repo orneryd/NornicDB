@@ -59,16 +59,24 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 						require.Equal(t, [][]interface{}{{want[index]}}, result.Rows, query)
 					}
 					// Both evaluators read the accessor alike.
-					require.Equal(t, want[index], exec.evaluateExpressionWithContext(ctx, call, nil, nil), call)
-					value, ok, err := exec.evaluateRowValue(call, nil)
+					fixtureAdmission873Context, fixtureAdmission873 := expressionTestContext(ctx, call)
+					_ = fixtureAdmission873
+					require.Equal(t, want[index], exec.evaluateExpressionWithContext(fixtureAdmission873, fixtureAdmission873Context, call, nil, nil), call)
+					fixtureAdmission874Context, fixtureAdmission874 := expressionTestRow(context.Background(), call, nil)
+					_ = fixtureAdmission874
+					value, ok, err := exec.evaluateRowValue(fixtureAdmission874, call, fixtureAdmission874Context)
 					require.NoError(t, err, call)
 					require.True(t, ok, call)
 					require.Equal(t, want[index], value, call)
 				}
 			}
 			// A value that isn't temporal gives null in both.
-			require.Nil(t, exec.evaluateExpressionWithContext(ctx, "date.year(1)", nil, nil))
-			value, ok, err := exec.evaluateRowValue("date.year(1)", nil)
+			fixtureAdmission875Context, fixtureAdmission875 := expressionTestContext(ctx, "date.year(1)")
+			_ = fixtureAdmission875
+			require.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission875, fixtureAdmission875Context, "date.year(1)", nil, nil))
+			fixtureAdmission876Context, fixtureAdmission876 := expressionTestRow(context.Background(), "date.year(1)", nil)
+			_ = fixtureAdmission876
+			value, ok, err := exec.evaluateRowValue(fixtureAdmission876, "date.year(1)", fixtureAdmission876Context)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Nil(t, value)
@@ -78,13 +86,19 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 	// time is 0001-01-01T00:00:00Z).
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_accessors_min"))
 	for _, call := range []string{"date.year('0001-01-01')", "datetime.year('0001-01-01T00:00:00Z')", "date.day('0001-01-01')"} {
-		require.Equal(t, int64(1), exec.evaluateExpressionWithContext(context.Background(), call, nil, nil), call)
-		value, ok, err := exec.evaluateRowValue(call, nil)
+		fixtureAdmission877Context, fixtureAdmission877 := expressionTestContext(context.Background(), call)
+		_ = fixtureAdmission877
+		require.Equal(t, int64(1), exec.evaluateExpressionWithContext(fixtureAdmission877, fixtureAdmission877Context, call, nil, nil), call)
+		fixtureAdmission878Context, fixtureAdmission878 := expressionTestRow(context.Background(), call, nil)
+		_ = fixtureAdmission878
+		value, ok, err := exec.evaluateRowValue(fixtureAdmission878, call, fixtureAdmission878Context)
 		require.NoError(t, err, call)
 		require.True(t, ok, call)
 		require.Equal(t, int64(1), value, call)
 	}
-	require.Nil(t, exec.evaluateExpressionWithContext(context.Background(), "date.year('not a date')", nil, nil))
+	fixtureAdmission879Context, fixtureAdmission879 := expressionTestContext(context.Background(), "date.year('not a date')")
+	_ = fixtureAdmission879
+	require.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission879, fixtureAdmission879Context, "date.year('not a date')", nil, nil))
 	// A component that isn't an accessor is not one (date.truncate is a
 	// function of its own; the unknown-function check rejects the rest).
 	value, known := temporalComponent("truncate", "2024-03-15")

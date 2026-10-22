@@ -178,7 +178,9 @@ func TestRowValueProgramsMatchNeo4j(t *testing.T) {
 	for _, tc := range rowValueNeo4jCorpus {
 		for _, text := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/text=%v", tc.expression, text), func(t *testing.T) {
-				ctx := withExpressionFailureSlot(context.Background())
+				fixtureAdmission794Context, fixtureAdmission794 := expressionTestContext(context.Background(), tc.expression)
+				_ = fixtureAdmission794
+				ctx := withExpressionFailureSlot(fixtureAdmission794Context)
 				row := rowValueCorpusRows(t, store)[0]
 				row[rowStatementContextKey] = ctx
 				rowValueProgramsDisabled.Store(text)
@@ -187,10 +189,14 @@ func TestRowValueProgramsMatchNeo4j(t *testing.T) {
 				var ok bool
 				var err error
 				if text {
-					value, ok, err = exec.evaluateRowValueText(tc.expression, row)
+					fixtureAdmission958Context, fixtureAdmission958 := expressionTestContext(context.Background(), tc.expression)
+					_ = fixtureAdmission958Context
+					value, ok, err = exec.evaluateRowValueText(fixtureAdmission958, tc.expression, row)
 				} else {
 					root, _ := (&rowValueCompiler{}).compile(tc.expression)
-					value, ok, err = root.eval(exec, row, nil)
+					fixtureAdmission1723Context, fixtureAdmission1723 := statementTestContext(context.Background(), "RETURN "+(tc.expression))
+					_ = fixtureAdmission1723Context
+					value, ok, err = root.eval(fixtureAdmission1723, exec, row, nil)
 				}
 				require.NoError(t, err)
 				require.NoError(t, getExpressionFailure(ctx))
@@ -206,16 +212,22 @@ func TestRowPredicateProgramsMatchNeo4j(t *testing.T) {
 	for _, tc := range rowPredicateNeo4jCorpus {
 		for _, text := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/text=%v", tc.expression, text), func(t *testing.T) {
-				ctx := withExpressionFailureSlot(context.Background())
+				fixtureAdmission795Context, fixtureAdmission795 := expressionTestContext(context.Background(), tc.expression)
+				_ = fixtureAdmission795
+				ctx := withExpressionFailureSlot(fixtureAdmission795Context)
 				row := rowValueCorpusRows(t, store)[0]
 				row[rowStatementContextKey] = ctx
 				rowValueProgramsDisabled.Store(text)
 				defer rowValueProgramsDisabled.Store(false)
 				var value bool
 				if text {
-					value = exec.evaluateRowPredicateText(ctx, tc.expression, row)
+					fixtureAdmission982Context, fixtureAdmission982 := expressionTestContext(ctx, tc.expression)
+					_ = fixtureAdmission982Context
+					value = exec.evaluateRowPredicateText(fixtureAdmission982, fixtureAdmission982Context, tc.expression, row)
 				} else {
-					value = compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+					fixtureAdmission1724Context, fixtureAdmission1724 := statementTestContext(ctx, "RETURN "+(tc.expression))
+					_ = fixtureAdmission1724Context
+					value = compileRowPredicateProgram(tc.expression).holds(fixtureAdmission1724, exec, fixtureAdmission1724Context, row)
 				}
 				require.NoError(t, getExpressionFailure(ctx))
 				require.Equal(t, tc.want, value)

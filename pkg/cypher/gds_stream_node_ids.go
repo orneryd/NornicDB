@@ -24,13 +24,13 @@ var gdsStreamNodeIDColumns = map[string][]string{
 
 // gdsStreamHandler wraps a GDS stream's handler so its node ids leave
 // through the projection's renderer; other procedures are unchanged.
-func gdsStreamHandler(procedure string, handler ProcedureHandler) ProcedureHandler {
+func gdsStreamHandler(procedure string, handler admittedProcedureHandler) admittedProcedureHandler {
 	columns, ok := gdsStreamNodeIDColumns[procedure]
 	if !ok {
 		return handler
 	}
-	return func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-		result, err := handler(ctx, e, cypher, args)
+	return func(statement admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+		result, err := handler(statement, ctx, e, cypher, args)
 		if err != nil || result == nil {
 			return result, err
 		}

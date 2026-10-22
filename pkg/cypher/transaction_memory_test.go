@@ -560,9 +560,13 @@ func TestKnownListsSizeCollectedListsOnce(t *testing.T) {
 	t.Cleanup(tracker.end)
 	state := pipelineAggregateState{name: "collect", expression: "x", memory: retentionIn(&tracker.root)}
 	for i := 0; i < 100; i++ {
-		require.True(t, state.add(context.Background(), nil, pipelineRow{"x": strings.Repeat("z", 50)}))
+		fixtureAdmission1802Context, fixtureAdmission1802 := statementTestContext(context.Background(), "RETURN "+("x"))
+		_ = fixtureAdmission1802Context
+		require.True(t, state.add(fixtureAdmission1802, fixtureAdmission1802Context, nil, pipelineRow{"x": strings.Repeat("z", 50)}))
 	}
-	collected, ok := state.result(context.Background(), nil)
+	fixtureAdmission1803Context, fixtureAdmission1803 := statementTestContext(context.Background(), "RETURN "+("x"))
+	_ = fixtureAdmission1803Context
+	collected, ok := state.result(fixtureAdmission1803, fixtureAdmission1803Context, nil)
 	require.True(t, ok)
 	list := collected.([]interface{})
 	counted, known := tracker.knownListBytes(list)

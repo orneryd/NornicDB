@@ -108,11 +108,15 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR b.age = 41": false,
 		"a.age = 30 XOR b.none = 1": false,
 	} {
-		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, clause)
+		fixtureAdmission779Context, fixtureAdmission779 := expressionTestContext(ctx, clause)
+		_ = fixtureAdmission779
+		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(fixtureAdmission779Context, clause)
 		require.True(t, ok, clause)
 		require.Equal(t, want, truth(bind, nil) == truthTrue, clause)
 	}
-	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR b.none = 1")
+	fixtureAdmission780Context, fixtureAdmission780 := expressionTestContext(ctx, "a.age = 30 XOR b.none = 1")
+	_ = fixtureAdmission780
+	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(fixtureAdmission780Context, "a.age = 30 XOR b.none = 1")
 	require.True(t, ok)
 	require.Equal(t, truthUnknown, truth(bind, nil))
 	for clause, want := range map[string]bool{
@@ -121,12 +125,16 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR (b)-[:XR]->(a)": false,
 	} {
 		// A pattern operand is decided by the EXISTS owner (#1317).
-		predicate := exec.getCompiledBindingWhere(ctx, clause)
+		fixtureAdmission781Context, fixtureAdmission781 := expressionTestContext(ctx, clause)
+		_ = fixtureAdmission781
+		predicate := exec.getCompiledBindingWhere(fixtureAdmission781, fixtureAdmission781Context, clause)
 		require.Equal(t, want, predicate(bind, nil), clause)
 	}
 	// An XOR whose operand the compiler doesn't support isn't compiled; the
 	// generic evaluator answers it.
-	_, ok = exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR (")
+	fixtureAdmission782Context, fixtureAdmission782 := expressionTestContext(ctx, "a.age = 30 XOR (")
+	_ = fixtureAdmission782
+	_, ok = exec.getCompiledBindingWhereTruthIfSupported(fixtureAdmission782Context, "a.age = 30 XOR (")
 	require.False(t, ok)
 }
 

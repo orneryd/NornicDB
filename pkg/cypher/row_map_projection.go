@@ -44,12 +44,12 @@ func rowMapProjectionSplit(expression string) (variable, items string, ok bool) 
 	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
 }
 
-func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
+func (e *StorageExecutor) evaluateRowMapProjection(admission admittedRelationshipStatement, expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	variable, inner, projection := rowMapProjectionSplit(expression)
 	if !projection {
 		return nil, false, false, nil
 	}
-	base, resolved, err := e.evaluateRowValue(variable, values)
+	base, resolved, err := e.evaluateRowValue(admission, variable, values)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -100,7 +100,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
 				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(strings.TrimSpace(item[separator+1:]), values)
+				value, ok, err := e.evaluateRowValue(admission, strings.TrimSpace(item[separator+1:]), values)
 				if err != nil {
 					return nil, true, false, err
 				}
@@ -113,7 +113,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false, nil
 			}
-			value, ok, err := e.evaluateRowValue(item, values)
+			value, ok, err := e.evaluateRowValue(admission, item, values)
 			if err != nil {
 				return nil, true, false, err
 			}

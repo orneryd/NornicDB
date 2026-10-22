@@ -11,7 +11,7 @@ import (
 // pipelineApplyInitialTraversalMatch adapts the shared streaming traversal
 // operators to pipeline rows. It returns graph entities as bindings so every
 // later WITH, mutation, and RETURN clause continues through the same executor.
-func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
@@ -52,7 +52,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx := withValueBindings(ctx, row)
+		rowCtx := e.withRelationshipRow(admission, ctx, row, pattern, whereClause)
 		materializedPattern := pattern
 		materializedWhere := whereClause
 		physicalWhere := pipelineTraversalPushdownPredicate(ctx, materializedWhere, row, variables)
@@ -64,36 +64,26 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		var handled bool
 		var err error
 		if rowHint.limit > 0 && rowHint.orderExpr != "" {
-			result, handled, err = e.tryExecuteTraversalStartSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+			result, handled, err = e.tryExecuteTraversalStartSeedOrderLimit(admission, rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
 			if err == nil && !handled {
-				result, handled, err = e.tryExecuteTraversalEndSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+				result, handled, err = e.tryExecuteTraversalEndSeedOrderLimit(admission, rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
 			}
 		}
 		if err != nil {
 			return nil, true, err
 		}
 		if !handled {
-			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
+			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(admission, rowCtx, materializedPattern, row)
 			if seedRejected {
 				// The bound node fails the pattern's own labels or inline
 				// properties on that endpoint, so this row matches nothing.
 				continue
 			}
-			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
+			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(admission, rowCtx, materializedPattern, row, variables) {
 				rowHint.earlyLimit = hint.earlyLimit
 				rowHint.readTail = hint.readTail
 			}
-			if startSeedNodes == nil && endSeedNodes == nil {
-				// A relationship pinned by id / elementId starts from its
-				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
-					if none {
-						continue
-					}
-					startSeedNodes = seeds
-				}
-			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(admission, rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}
@@ -121,7 +111,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 				}
 				joined[column] = value
 			}
-			if compatible && (rowWhere == nil || rowWhere.holds(e, ctx, map[string]interface{}(joined))) {
+			if compatible && (rowWhere == nil || rowWhere.holds(admission, e, ctx, map[string]interface{}(joined))) {
 				out = append(out, joined)
 			}
 		}
@@ -183,8 +173,8 @@ func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool 
 // labels and inline properties for that endpoint, so they are checked here:
 // every label must be present and every inline property must match. When the
 // bound node fails them, rejected is true and the row matches nothing.
-func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, pattern string, row pipelineRow) (startSeedNodes, endSeedNodes []*storage.Node, rejected bool) {
-	matches := e.parseTraversalPattern(ctx, pattern)
+func (e *StorageExecutor) pipelineTraversalSeedNodes(admission admittedRelationshipStatement, ctx context.Context, pattern string, row pipelineRow) (startSeedNodes, endSeedNodes []*storage.Node, rejected bool) {
+	matches := e.parseTraversalPattern(admission, ctx, pattern)
 	if matches == nil {
 		return nil, nil, false
 	}
@@ -222,8 +212,8 @@ func pipelineBoundNode(row pipelineRow, variable string) (*storage.Node, bool) {
 
 // boundTraversalLimitSafe admits a cap only when both endpoint identities are
 // already checked by the traversal and no other outer binding can reject a path.
-func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern string, row pipelineRow, variables []string) bool {
-	match := e.parseTraversalPattern(ctx, pattern)
+func (e *StorageExecutor) boundTraversalLimitSafe(admission admittedRelationshipStatement, ctx context.Context, pattern string, row pipelineRow, variables []string) bool {
+	match := e.parseTraversalPattern(admission, ctx, pattern)
 	if match == nil || match.IsChained {
 		return false
 	}
@@ -235,7 +225,7 @@ func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern s
 	return true
 }
 
-func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pipelineClause) pipelineMatchPhysicalHint {
+func (e *StorageExecutor) pipelineMatchHint(admission admittedRelationshipStatement, ctx context.Context, remaining []pipelineClause) pipelineMatchPhysicalHint {
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
 		clause := remaining[0].text
@@ -251,8 +241,8 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 		if _, local := parsePipelineRowWith(clause[:end]); !local {
 			return hint
 		}
-		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
-		skip, _ := e.parseIntModifier(ctx, clause, "SKIP")
+		limit, hasLimit := e.parseIntModifier(admission, ctx, clause, "LIMIT")
+		skip, _ := e.parseIntModifier(admission, ctx, clause, "SKIP")
 		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
 			return hint
 		}
@@ -278,11 +268,11 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 			return hint
 		}
 	}
-	skip, hasSkip := e.parseIntModifier(ctx, body, "SKIP")
+	skip, hasSkip := e.parseIntModifier(admission, ctx, body, "SKIP")
 	if hasSkip && skip != 0 {
 		return hint
 	}
-	limit, hasLimit := e.parseIntModifier(ctx, body, "LIMIT")
+	limit, hasLimit := e.parseIntModifier(admission, ctx, body, "LIMIT")
 	if !hasLimit || limit < 0 {
 		return hint
 	}

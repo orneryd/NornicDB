@@ -89,7 +89,9 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO a, b")
 	require.NoError(t, err)
 	require.True(t, allowsBoosted(t, system, "b", "db.cdc.query"))
-	result, err := exec.executeShowPrivileges(ctx, "SHOW ROLE a PRIVILEGES")
+	fixtureAdmission1744Context, fixtureAdmission1744 := statementTestContext(ctx, "SHOW ROLE a PRIVILEGES")
+	_ = fixtureAdmission1744Context
+	result, err := exec.executeShowPrivileges(fixtureAdmission1744, fixtureAdmission1744Context, "SHOW ROLE a PRIVILEGES")
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, "a", result.Rows[0][5])
@@ -103,7 +105,9 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	exec.SetDatabaseManager(systemOnlyManager{err: errSystemStorage})
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.x ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
-	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
+	fixtureAdmission1745Context, fixtureAdmission1745 := statementTestContext(ctx, "SHOW PRIVILEGES")
+	_ = fixtureAdmission1745Context
+	_, err = exec.executeShowPrivileges(fixtureAdmission1745, fixtureAdmission1745Context, "SHOW PRIVILEGES")
 	require.ErrorIs(t, err, errSystemStorage)
 
 	// Storage errors reading roles or grants, and writing a grant.
@@ -116,7 +120,9 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
 	failing.failScan = true
-	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
+	fixtureAdmission1746Context, fixtureAdmission1746 := statementTestContext(ctx, "SHOW PRIVILEGES")
+	_ = fixtureAdmission1746Context
+	_, err = exec.executeShowPrivileges(fixtureAdmission1746, fixtureAdmission1746Context, "SHOW PRIVILEGES")
 	require.ErrorIs(t, err, errSystemStorage)
 	// A REVOKE checks for immutable grants first: a read that fails is its
 	// error, not "no grant".

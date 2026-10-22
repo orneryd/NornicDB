@@ -80,7 +80,7 @@ func parseOrderByModifier(modifiers string) (column string, descending bool, ok 
 // so every route applies SKIP/LIMIT expressions instead of ignoring them.
 // ok is false when the keyword is absent or the value is not a non-negative
 // integer.
-func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keyword string) (value int, ok bool) {
+func (e *StorageExecutor) parseIntModifier(admission admittedRelationshipStatement, ctx context.Context, modifiers, keyword string) (value int, ok bool) {
 	modifier := intModifierTextFor(ctx, modifiers, keyword)
 	if !modifier.found {
 		return 0, false
@@ -92,7 +92,7 @@ func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keywo
 	if vs == "" {
 		return 0, false
 	}
-	return e.evaluatePipelinePagination(ctx, vs, nil)
+	return e.evaluatePipelinePagination(admission, ctx, vs, nil)
 }
 
 // intModifier is the text of a LIMIT or SKIP modifier's expression: what

@@ -61,7 +61,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 	return validateAndCoerceProcedureArguments(spec, args, nil)
 }
 
-func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
+func (e *StorageExecutor) extractBoundProcedureInvocationArguments(admission admittedRelationshipStatement, ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	bindings := valueBindingsFromContext(ctx)
 	texts := explicitProcedureArgumentTexts(callCypher)
@@ -80,7 +80,7 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 		return nil, err
 	}
 	for index, text := range texts {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, text, pipelineRow(bindings))
+		value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, text, pipelineRow(bindings))
 		if !resolved {
 			pipelineItemUnevaluable(ctx, text)
 			return nil, getExpressionFailure(ctx)
@@ -112,7 +112,7 @@ func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string,
 // after the YIELD) can't have any of them, a WHERE must come before
 // ORDER BY / SKIP / LIMIT, and SKIP / LIMIT follow the same rules as in a
 // WITH or RETURN.
-func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail bool) error {
+func (e *StorageExecutor) validateYieldModifiers(admission admittedRelationshipStatement, yield *yieldClause, hasTail bool) error {
 	if yield == nil || !yield.hasModifiers() {
 		return nil
 	}
@@ -125,12 +125,12 @@ func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail boo
 			localization.CypherCoreYieldWhereMisplaced())
 	}
 	if yield.skip != "" {
-		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
+		if err := e.validateStaticPaginationExpression(admission, "SKIP", yield.skip); err != nil {
 			return err
 		}
 	}
 	if yield.limit != "" {
-		if err := e.validateStaticPaginationExpression("LIMIT", yield.limit); err != nil {
+		if err := e.validateStaticPaginationExpression(admission, "LIMIT", yield.limit); err != nil {
 			return err
 		}
 	}

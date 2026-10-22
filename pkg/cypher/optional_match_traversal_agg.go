@@ -115,13 +115,13 @@ func traversalAggPlaceholder(n int) string {
 
 // aggregateTraversalOptionalRows evaluates a RETURN projection containing
 // aggregates over the joined rows, grouping by the non-aggregate items.
-func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, rows []traversalOptRow, items []returnItem) ([][]interface{}, error) {
+func (e *StorageExecutor) aggregateTraversalOptionalRows(admission admittedRelationshipStatement, ctx context.Context, rows []traversalOptRow, items []returnItem) ([][]interface{}, error) {
 	bindings := make([]pipelineRow, len(rows))
 	for index, row := range rows {
 		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
 	}
 	plan := returnProjectionPlanFromItems(items)
-	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
+	if result, ok := e.pipelineApplyReturnPlan(admission, ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
 		return result.Rows, nil
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {

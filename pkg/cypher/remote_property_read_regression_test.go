@@ -37,7 +37,9 @@ func TestContextComprehensionRejectsOrdinaryEntityShapedMap(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, expression := range []string{"[x IN [{_edgeId:'e',type:'M'}] | id(x)]", "[x IN [{_edgeId:'e',type:'M'}] | type(x)]"} {
 		ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
-		_ = exec.evaluateExpressionWithContextFull(ctx, expression, nil, nil, nil, nil, nil, 0)
+		fixtureAdmission832Context, fixtureAdmission832 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission832
+		_ = exec.evaluateExpressionWithContextFull(fixtureAdmission832, fixtureAdmission832Context, expression, nil, nil, nil, nil, nil, 0)
 		require.Error(t, getExpressionFailure(ctx), expression)
 	}
 }

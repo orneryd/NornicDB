@@ -42,13 +42,17 @@ func TestIssue907MatchProductDependentInlineProperties(t *testing.T) {
 		})
 	}
 	failureCtx := withExpressionFailureSlot(withQueryParams(ctx, params))
-	_, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{}}, []string{
+	fixtureAdmission1613Context, fixtureAdmission1613 := expressionTestContext(failureCtx, "v.document_id = d.id")
+	_ = fixtureAdmission1613Context
+	_, handled, err := exec.pipelineApplyNodeJoinProduct(fixtureAdmission1613, fixtureAdmission1613Context, []pipelineRow{{}}, []string{
 		"(d:Document {id: $document_id})", "(v:Version {id: $version_id})", "(o:Original {id: v.original_id})",
 	}, "v.document_id = d.id")
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, getExpressionFailure(failureCtx))
-	joined, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{"lookup": map[string]interface{}{"original_id": "issue-o"}}}, []string{
+	fixtureAdmission1614Context, fixtureAdmission1614 := expressionTestContext(failureCtx, "v.document_id = d.id")
+	_ = fixtureAdmission1614Context
+	joined, handled, err := exec.pipelineApplyNodeJoinProduct(fixtureAdmission1614, fixtureAdmission1614Context, []pipelineRow{{"lookup": map[string]interface{}{"original_id": "issue-o"}}}, []string{
 		"(d:Document {id: $document_id})", "(v:Version {id: $version_id})", "(o:Original {id: lookup.original_id})",
 	}, "v.document_id = d.id")
 	require.NoError(t, err)
@@ -65,7 +69,9 @@ func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
 			node := &storage.Node{ID: "node", Labels: []string{"N"}, Properties: map[string]interface{}{"v": int64(0)}}
 			id, err := store.CreateNode(node)
 			require.NoError(t, err)
-			_, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": node, "age": nil}, {"n": node, "age": value}}, "SET n.v = 1, age = {v: 2}")
+			fixtureAdmission1615Context, fixtureAdmission1615 := statementTestContext(context.Background(), "SET n.v = 1, age = {v: 2}")
+			_ = fixtureAdmission1615Context
+			_, handled, err := exec.pipelineApplySet(fixtureAdmission1615, fixtureAdmission1615Context, []pipelineRow{{"n": node, "age": nil}, {"n": node, "age": value}}, "SET n.v = 1, age = {v: 2}")
 			require.True(t, handled)
 			require.ErrorContains(t, err, "Neo.ClientError.Statement.TypeError")
 			stored, err := store.GetNode(id)
@@ -79,7 +85,9 @@ func TestIssue908SetScalarTargetRejectsBeforeWrites(t *testing.T) {
 func TestIssue908NullSetTargetsAreNoops(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	for _, value := range []interface{}{nil, (*storage.Node)(nil), (*storage.Edge)(nil)} {
-		stats, handled, err := exec.pipelineApplySet(context.Background(), []pipelineRow{{"n": value}}, "SET n.v = 1")
+		fixtureAdmission1616Context, fixtureAdmission1616 := statementTestContext(context.Background(), "SET n.v = 1")
+		_ = fixtureAdmission1616Context
+		stats, handled, err := exec.pipelineApplySet(fixtureAdmission1616, fixtureAdmission1616Context, []pipelineRow{{"n": value}}, "SET n.v = 1")
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Zero(t, stats.PropertiesSet)
@@ -195,13 +203,17 @@ func TestIssue908ProductBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"p"}, result.Columns)
 	require.Len(t, result.Rows, 1)
-	rows, handled, err := exec.pipelineApplyMatchProduct(ctx, []pipelineRow{{"__nornic_match_product_0": int64(7)}}, []string{"(:A)", "(:B)"}, "true")
+	fixtureAdmission1617Context, fixtureAdmission1617 := expressionTestContext(ctx, "true")
+	_ = fixtureAdmission1617Context
+	rows, handled, err := exec.pipelineApplyMatchProduct(fixtureAdmission1617, fixtureAdmission1617Context, []pipelineRow{{"__nornic_match_product_0": int64(7)}}, []string{"(:A)", "(:B)"}, "true")
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, []pipelineRow{{"__nornic_match_product_0": int64(7)}}, rows)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, _, err = exec.pipelineApplyMatchProduct(cancelled, []pipelineRow{{}}, []string{"(a:A)", "(b:B)"}, "")
+	fixtureAdmission1618Context, fixtureAdmission1618 := expressionTestContext(cancelled, "")
+	_ = fixtureAdmission1618Context
+	_, _, err = exec.pipelineApplyMatchProduct(fixtureAdmission1618, fixtureAdmission1618Context, []pipelineRow{{}}, []string{"(a:A)", "(b:B)"}, "")
 	require.Error(t, err)
 }
 
@@ -231,26 +243,34 @@ func TestIssue908NodeJoinBindings(t *testing.T) {
 	nodes, err := exec.storage.GetNodesByLabel("A")
 	require.NoError(t, err)
 	parts := []string{"(a:A)", "(b:B)"}
-	rows, handled, err := exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": nodes[0], "marker": int64(7)}}, parts, "a.v = b.v")
+	fixtureAdmission1619Context, fixtureAdmission1619 := expressionTestContext(ctx, "a.v = b.v")
+	_ = fixtureAdmission1619Context
+	rows, handled, err := exec.pipelineApplyNodeJoinProduct(fixtureAdmission1619, fixtureAdmission1619Context, []pipelineRow{{"a": nodes[0], "marker": int64(7)}}, parts, "a.v = b.v")
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, rows, 1)
 	require.Equal(t, int64(7), rows[0]["marker"])
 	for _, value := range []interface{}{nil, int64(1), &storage.Node{Labels: []string{"Other"}, Properties: map[string]interface{}{"v": int64(1)}}} {
-		rows, handled, err = exec.pipelineApplyNodeJoinProduct(ctx, []pipelineRow{{"a": value}}, parts, "a.v = b.v")
+		fixtureAdmission1620Context, fixtureAdmission1620 := expressionTestContext(ctx, "a.v = b.v")
+		_ = fixtureAdmission1620Context
+		rows, handled, err = exec.pipelineApplyNodeJoinProduct(fixtureAdmission1620, fixtureAdmission1620Context, []pipelineRow{{"a": value}}, parts, "a.v = b.v")
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Empty(t, rows)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, handled, err = exec.pipelineApplyNodeJoinProduct(cancelled, []pipelineRow{{}}, parts, "a.v = b.v")
+	fixtureAdmission1621Context, fixtureAdmission1621 := expressionTestContext(cancelled, "a.v = b.v")
+	_ = fixtureAdmission1621Context
+	_, handled, err = exec.pipelineApplyNodeJoinProduct(fixtureAdmission1621, fixtureAdmission1621Context, []pipelineRow{{}}, parts, "a.v = b.v")
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 	failing := withExpressionFailureSlot(ctx)
 	failure := newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidType", "Invalid join predicate")
 	recordExpressionFailure(failing, failure)
-	_, handled, err = exec.pipelineApplyNodeJoinProduct(failing, []pipelineRow{{}}, parts, "a.v = b.v")
+	fixtureAdmission1622Context, fixtureAdmission1622 := expressionTestContext(failing, "a.v = b.v")
+	_ = fixtureAdmission1622Context
+	_, handled, err = exec.pipelineApplyNodeJoinProduct(fixtureAdmission1622, fixtureAdmission1622Context, []pipelineRow{{}}, parts, "a.v = b.v")
 	require.True(t, handled)
 	require.ErrorIs(t, err, failure)
 }

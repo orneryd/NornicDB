@@ -130,7 +130,9 @@ func TestRowPredicatePlansMatchNeo4j(t *testing.T) {
 			ctx := withExpressionFailureSlot(context.Background())
 			row := rowValueCorpusRows(t, store)[0]
 			row[rowStatementContextKey] = ctx
-			require.Equal(t, tc.want, exec.evaluateRowPredicatePlan(ctx, plan, row))
+			fixtureAdmission1727Context, fixtureAdmission1727 := statementTestContext(ctx, "RETURN "+(tc.expression))
+			_ = fixtureAdmission1727Context
+			require.Equal(t, tc.want, exec.evaluateRowPredicatePlan(fixtureAdmission1727, fixtureAdmission1727Context, plan, row))
 			require.NoError(t, getExpressionFailure(ctx))
 		})
 	}
@@ -184,7 +186,9 @@ func TestPerRowRound5FoldAllocationBudget(t *testing.T) {
 		{"n.v > 0 AND n.v < 5", 0},
 		{"n.v > 5 OR n.v < 5", 0},
 	} {
-		measure("context "+tc.expression, tc.maximum, func() { exec.evaluateExpressionWithContext(ctx, tc.expression, nodes, nil) })
+		statement, fixtureAdmission797 := expressionTestContext(ctx, tc.expression)
+		_ = fixtureAdmission797
+		measure("context "+tc.expression, tc.maximum, func() { exec.evaluateExpressionWithContext(fixtureAdmission797, statement, tc.expression, nodes, nil) })
 	}
 	row := map[string]interface{}{"n": node}
 	for _, tc := range []struct {
@@ -194,8 +198,10 @@ func TestPerRowRound5FoldAllocationBudget(t *testing.T) {
 		{"(n)-->() OR n.v = 1", 42},
 		{"n.v = 2 OR (n)-[:R]->()", 43},
 	} {
-		require.True(t, exec.evaluateRowPredicate(ctx, tc.expression, row))
-		measure("predicate "+tc.expression, tc.maximum, func() { exec.evaluateRowPredicate(ctx, tc.expression, row) })
+		statement, fixtureAdmission798 := expressionTestContext(ctx, tc.expression)
+		_ = fixtureAdmission798
+		require.True(t, exec.evaluateRowPredicate(fixtureAdmission798, statement, tc.expression, row))
+		measure("predicate "+tc.expression, tc.maximum, func() { exec.evaluateRowPredicate(fixtureAdmission798, statement, tc.expression, row) })
 	}
 	require.NoError(t, getExpressionFailure(ctx))
 }

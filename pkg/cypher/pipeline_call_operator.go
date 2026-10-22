@@ -9,8 +9,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func (e *StorageExecutor) pipelineApplyCallSubquery(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, bool, error) {
-	return e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause, nil)
+func (e *StorageExecutor) pipelineApplyCallSubquery(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, bool, error) {
+	return e.pipelineApplyCallSubqueryWithMetadata(admission, ctx, rows, clause, nil)
 }
 
 type pipelineCallMetadata struct {
@@ -18,7 +18,7 @@ type pipelineCallMetadata struct {
 	columns []string
 }
 
-func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
 	// The statement parses the clause and its body once (pipelineClausePlans),
 	// however many outer rows run the operator.
 	ctx = withPipelineClausePlans(ctx)
@@ -191,7 +191,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				}
 				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
 
-				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+				inner, handled, execErr := runExec.runPipelineClauseRows(admission, branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}

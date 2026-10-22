@@ -17,7 +17,9 @@ func TestApplyWithProjection_ExpressionFallbackBranches(t *testing.T) {
 		Labels:     []string{"Node"},
 		Properties: map[string]interface{}{"name": "alice"},
 	}
-	projected, ok := exec.pipelineApplyWith(ctx, []pipelineRow{{"n": n, "score": int64(7)}}, "WITH toUpper(n.name) AS upper")
+	fixtureAdmission1321Context, fixtureAdmission1321 := statementTestContext(ctx, "WITH toUpper(n.name) AS upper")
+	_ = fixtureAdmission1321Context
+	projected, ok := exec.pipelineApplyWith(fixtureAdmission1321, fixtureAdmission1321Context, []pipelineRow{{"n": n, "score": int64(7)}}, "WITH toUpper(n.name) AS upper")
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"upper": "ALICE"}}, projected)
 	_, err := exec.Execute(ctx, "WITH 7 AS score WITH ghost.prop AS g RETURN g", nil)

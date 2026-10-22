@@ -410,7 +410,7 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 }
 
 // executeShowCompositeDatabases handles SHOW COMPOSITE DATABASES command.
-func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowCompositeDatabases(fixtureAdmission999 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW COMPOSITE DATABASES"), nil)
 	}
@@ -429,7 +429,7 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 }
 
 // executeShowConstituents handles SHOW CONSTITUENTS FOR COMPOSITE DATABASE command.
-func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowConstituents(fixtureAdmission1000 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherCompositeDatabaseManagerUnavailable("SHOW CONSTITUENTS"), nil)
 	}

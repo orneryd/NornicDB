@@ -32,9 +32,13 @@ func TestPushRelationshipEqualities(t *testing.T) {
 		{"(a)-[r:T*1..2]-(b)", "all(x IN r WHERE x.w = 1)", nil},
 		{"(a)-[r:T]-(b)-[s:T]-(c)", "r.w = 1", nil},
 	} {
-		matches := exec.parseTraversalPattern(ctx, test.pattern)
+		fixtureAdmission829Context, fixtureAdmission829 := traversalTestContext(ctx, test.pattern, "", nil)
+		_ = fixtureAdmission829
+		matches := exec.parseTraversalPattern(fixtureAdmission829, fixtureAdmission829Context, test.pattern)
 		require.NotNil(t, matches, test.pattern)
-		exec.pushRelationshipEqualities(ctx, matches, test.where)
+		fixtureAdmission966Context, fixtureAdmission966 := expressionTestContext(ctx, test.where)
+		_ = fixtureAdmission966Context
+		exec.pushRelationshipEqualities(fixtureAdmission966, fixtureAdmission966Context, matches, test.where)
 		if test.want == nil {
 			require.Empty(t, matches.Relationship.Properties, "%s WHERE %s", test.pattern, test.where)
 			continue

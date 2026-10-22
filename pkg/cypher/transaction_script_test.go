@@ -192,15 +192,21 @@ func TestTransactionScript_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// executeTransactionScript non-BEGIN and bare BEGIN paths.
-	res, err := exec.executeTransactionScript(ctx, "MATCH (n) RETURN n")
+	fixtureAdmission1480Context, fixtureAdmission1480 := statementTestContext(ctx, "MATCH (n) RETURN n")
+	_ = fixtureAdmission1480Context
+	res, err := exec.executeTransactionScript(fixtureAdmission1480, fixtureAdmission1480Context, "MATCH (n) RETURN n")
 	require.NoError(t, err)
 	assert.Nil(t, res)
-	res, err = exec.executeTransactionScript(ctx, "BEGIN")
+	fixtureAdmission1481Context, fixtureAdmission1481 := statementTestContext(ctx, "BEGIN")
+	_ = fixtureAdmission1481Context
+	res, err = exec.executeTransactionScript(fixtureAdmission1481, fixtureAdmission1481Context, "BEGIN")
 	require.NoError(t, err)
 	assert.Nil(t, res)
 
 	// Missing COMMIT/ROLLBACK action should return nil,nil.
-	res, err = exec.executeTransactionScript(ctx, "BEGIN RETURN 1")
+	fixtureAdmission1482Context, fixtureAdmission1482 := statementTestContext(ctx, "BEGIN RETURN 1")
+	_ = fixtureAdmission1482Context
+	res, err = exec.executeTransactionScript(fixtureAdmission1482, fixtureAdmission1482Context, "BEGIN RETURN 1")
 	require.NoError(t, err)
 	assert.Nil(t, res)
 
@@ -214,7 +220,9 @@ func TestTransactionScript_AdditionalBranches(t *testing.T) {
 	require.Error(t, err)
 
 	// evaluateConditionExpression non-boolean branch.
-	ok, err := exec.evaluateConditionExpression(ctx, "'x'", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	fixtureAdmission1483Context, fixtureAdmission1483 := expressionTestContext(ctx, "'x'")
+	_ = fixtureAdmission1483Context
+	ok, err := exec.evaluateConditionExpression(fixtureAdmission1483, fixtureAdmission1483Context, "'x'", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 	assert.False(t, ok)
 }
@@ -428,18 +436,26 @@ func TestTransactionScript_CaseRollbackAdditionalErrorBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeCaseRollbackTransactionScript(ctx, "CALL db.labels()")
+	fixtureAdmission1888Context, fixtureAdmission1888 := statementTestContext(ctx, "CALL db.labels()")
+	_ = fixtureAdmission1888Context
+	_, err := exec.executeCaseRollbackTransactionScript(fixtureAdmission1888, fixtureAdmission1888Context, "CALL db.labels()")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing CASE block")
 
-	_, err = exec.executeCaseRollbackTransactionScript(ctx, "CALL db.labels() CASE WHEN true THEN ROLLBACK")
+	fixtureAdmission1889Context, fixtureAdmission1889 := statementTestContext(ctx, "CALL db.labels() CASE WHEN true THEN ROLLBACK")
+	_ = fixtureAdmission1889Context
+	_, err = exec.executeCaseRollbackTransactionScript(fixtureAdmission1889, fixtureAdmission1889Context, "CALL db.labels() CASE WHEN true THEN ROLLBACK")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid transaction CASE syntax")
 
-	_, err = exec.executeCaseRollbackTransactionScript(ctx, "CALL bad.proc() CASE WHEN true THEN ROLLBACK ELSE RETURN 1 COMMIT")
+	fixtureAdmission1890Context, fixtureAdmission1890 := statementTestContext(ctx, "CALL bad.proc() CASE WHEN true THEN ROLLBACK ELSE RETURN 1 COMMIT")
+	_ = fixtureAdmission1890Context
+	_, err = exec.executeCaseRollbackTransactionScript(fixtureAdmission1890, fixtureAdmission1890Context, "CALL bad.proc() CASE WHEN true THEN ROLLBACK ELSE RETURN 1 COMMIT")
 	require.Error(t, err)
 
-	_, err = exec.executeCaseRollbackTransactionScript(ctx, "CALL dbms.info() YIELD id CASE WHEN 'x' THEN ROLLBACK ELSE RETURN id COMMIT")
+	fixtureAdmission1891Context, fixtureAdmission1891 := statementTestContext(ctx, "CALL dbms.info() YIELD id CASE WHEN 'x' THEN ROLLBACK ELSE RETURN id COMMIT")
+	_ = fixtureAdmission1891Context
+	_, err = exec.executeCaseRollbackTransactionScript(fixtureAdmission1891, fixtureAdmission1891Context, "CALL dbms.info() YIELD id CASE WHEN 'x' THEN ROLLBACK ELSE RETURN id COMMIT")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not evaluate to boolean")
 }
@@ -451,7 +467,9 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// Empty return expression should not error and should produce deterministic output.
-	out, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
+	fixtureAdmission1892Context, fixtureAdmission1892 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1892Context
+	out, err := exec.projectTransactionReturn(fixtureAdmission1892, fixtureAdmission1892Context, &ExecuteResult{
 		Columns: []string{"x"},
 		Rows:    [][]interface{}{{1}},
 	}, "")
@@ -460,7 +478,9 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	require.NotEmpty(t, out.Columns)
 
 	// evaluateConditionExpression nil branch.
-	ok, err := exec.evaluateConditionExpression(ctx, "", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	fixtureAdmission1484Context, fixtureAdmission1484 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1484Context
+	ok, err := exec.evaluateConditionExpression(fixtureAdmission1484, fixtureAdmission1484Context, "", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -480,7 +500,9 @@ func TestTransactionProjectionCanonicalRowSet(t *testing.T) {
 		{"* ORDER BY value DESC LIMIT 1", []string{"value"}, [][]interface{}{{int64(3)}}},
 	} {
 		t.Run(test.projection, func(t *testing.T) {
-			result, err := exec.projectTransactionReturn(ctx, input, test.projection)
+			fixtureAdmission1893Context, fixtureAdmission1893 := expressionTestContext(ctx, test.projection)
+			_ = fixtureAdmission1893Context
+			result, err := exec.projectTransactionReturn(fixtureAdmission1893, fixtureAdmission1893Context, input, test.projection)
 			require.NoError(t, err)
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
@@ -518,7 +540,12 @@ RETURN u
 	assert.Equal(t, "Transaction rolled back", rollbackRes.Rows[0][0])
 
 	// executeCaseRollbackTransactionScript: commit projection branch (condition false).
-	caseCommitRes, err := exec.executeCaseRollbackTransactionScript(ctx, `
+	fixtureAdmission1894Context, fixtureAdmission1894 := statementTestContext(ctx, `
+CALL nornic.touchUserTx('u-commit-tx', datetime())
+YIELD u
+CASE WHEN u.age < 18 THEN ROLLBACK ELSE RETURN u.id AS id, u.last_seen AS seen COMMIT`)
+	_ = fixtureAdmission1894Context
+	caseCommitRes, err := exec.executeCaseRollbackTransactionScript(fixtureAdmission1894, fixtureAdmission1894Context, `
 CALL nornic.touchUserTx('u-commit-tx', datetime())
 YIELD u
 CASE WHEN u.age < 18 THEN ROLLBACK ELSE RETURN u.id AS id, u.last_seen AS seen COMMIT`)
@@ -529,7 +556,9 @@ CASE WHEN u.age < 18 THEN ROLLBACK ELSE RETURN u.id AS id, u.last_seen AS seen C
 	assert.NotNil(t, caseCommitRes.Rows[0][1])
 
 	// projectTransactionReturn: direct row map fallback (non-expression column alias).
-	projected, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
+	fixtureAdmission1895Context, fixtureAdmission1895 := expressionTestContext(ctx, "plain AS p")
+	_ = fixtureAdmission1895Context
+	projected, err := exec.projectTransactionReturn(fixtureAdmission1895, fixtureAdmission1895Context, &ExecuteResult{
 		Columns: []string{"plain"},
 		Rows:    [][]interface{}{{int64(7)}},
 	}, "plain AS p")

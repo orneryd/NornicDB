@@ -442,7 +442,9 @@ func TestParseSimpleIndexedInLiteral(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := context.Background()
 
-	prop, vals, ok := exec.parseSimpleIndexedInLiteral(ctx, "n", "n.translationId IN ['src-a','src-c']")
+	fixtureAdmission1312Context, fixtureAdmission1312 := expressionTestContext(ctx, "n.translationId IN ['src-a','src-c']")
+	_ = fixtureAdmission1312Context
+	prop, vals, ok := exec.parseSimpleIndexedInLiteral(fixtureAdmission1312, fixtureAdmission1312Context, "n", "n.translationId IN ['src-a','src-c']")
 	require.True(t, ok)
 	require.Equal(t, "translationId", prop)
 	require.Len(t, vals, 2)

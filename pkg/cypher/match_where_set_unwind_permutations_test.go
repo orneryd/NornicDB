@@ -532,19 +532,41 @@ func TestEvaluateWithWhereCondition_DirectBranches(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "exists IS NOT NULL", vals))
-	assert.False(t, exec.evaluateWithWhereCondition(ctx, "nilVal IS NOT NULL", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "nilVal IS NULL", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "missing IS NULL", vals))
+	fixtureAdmission709Context, fixtureAdmission709 := expressionTestContext(ctx, "exists IS NOT NULL")
+	_ = fixtureAdmission709
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission709, fixtureAdmission709Context, "exists IS NOT NULL", vals))
+	fixtureAdmission710Context, fixtureAdmission710 := expressionTestContext(ctx, "nilVal IS NOT NULL")
+	_ = fixtureAdmission710
+	assert.False(t, exec.evaluateWithWhereCondition(fixtureAdmission710, fixtureAdmission710Context, "nilVal IS NOT NULL", vals))
+	fixtureAdmission711Context, fixtureAdmission711 := expressionTestContext(ctx, "nilVal IS NULL")
+	_ = fixtureAdmission711
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission711, fixtureAdmission711Context, "nilVal IS NULL", vals))
+	fixtureAdmission712Context, fixtureAdmission712 := expressionTestContext(ctx, "missing IS NULL")
+	_ = fixtureAdmission712
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission712, fixtureAdmission712Context, "missing IS NULL", vals))
 
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n >= 10", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n <= 10", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n = 10", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n != 11", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n > 9", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n < 11", vals))
+	fixtureAdmission713Context, fixtureAdmission713 := expressionTestContext(ctx, "n >= 10")
+	_ = fixtureAdmission713
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission713, fixtureAdmission713Context, "n >= 10", vals))
+	fixtureAdmission714Context, fixtureAdmission714 := expressionTestContext(ctx, "n <= 10")
+	_ = fixtureAdmission714
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission714, fixtureAdmission714Context, "n <= 10", vals))
+	fixtureAdmission715Context, fixtureAdmission715 := expressionTestContext(ctx, "n = 10")
+	_ = fixtureAdmission715
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission715, fixtureAdmission715Context, "n = 10", vals))
+	fixtureAdmission716Context, fixtureAdmission716 := expressionTestContext(ctx, "n != 11")
+	_ = fixtureAdmission716
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission716, fixtureAdmission716Context, "n != 11", vals))
+	fixtureAdmission717Context, fixtureAdmission717 := expressionTestContext(ctx, "n > 9")
+	_ = fixtureAdmission717
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission717, fixtureAdmission717Context, "n > 9", vals))
+	fixtureAdmission718Context, fixtureAdmission718 := expressionTestContext(ctx, "n < 11")
+	_ = fixtureAdmission718
+	assert.True(t, exec.evaluateWithWhereCondition(fixtureAdmission718, fixtureAdmission718Context, "n < 11", vals))
 
 	// Unknown pattern defaults to pass-through.
-	assert.False(t, exec.evaluateWithWhereCondition(ctx, "totally_unknown_condition", vals),
+	fixtureAdmission719Context, fixtureAdmission719 := expressionTestContext(ctx, "totally_unknown_condition")
+	_ = fixtureAdmission719
+	assert.False(t, exec.evaluateWithWhereCondition(fixtureAdmission719, fixtureAdmission719Context, "totally_unknown_condition", vals),
 		"an unresolved predicate must not silently admit every row")
 }

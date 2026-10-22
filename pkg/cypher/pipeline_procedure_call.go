@@ -43,7 +43,7 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 //
 // Void calls without YIELD preserve input rows; non-void calls require YIELD.
 // Explicit arguments are evaluated as typed values in the canonical invocation.
-func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, []string, bool, error) {
+func (e *StorageExecutor) pipelineApplyProcedureCall(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, []string, bool, error) {
 	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
 	invocation := strings.TrimSpace(clause)
 	if yieldIndex >= 0 {
@@ -93,7 +93,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		if err := validateProcedureYieldBindings(yield, true); err != nil {
 			return nil, nil, true, err
 		}
-		if err := e.validateYieldModifiers(yield, true); err != nil {
+		if err := e.validateYieldModifiers(admission, yield, true); err != nil {
 			return nil, nil, true, err
 		}
 		for _, item := range yield.items {
@@ -108,7 +108,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			for index, column := range procedure.Spec.Returns {
 				columns[index] = column.Name
 			}
-			if _, err := e.applyYieldFilter(ctx, &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, &yieldClause{items: yield.items}); err != nil {
+			if _, err := e.applyYieldFilter(admission, ctx, &ExecuteResult{Columns: columns, Rows: [][]interface{}{}}, &yieldClause{items: yield.items}); err != nil {
 				return nil, nil, true, err
 			}
 		}
@@ -127,7 +127,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		result := shared
 		if result == nil {
 			var err error
-			result, err = e.executeProcedureCall(withValueBindings(ctx, row), invocation+" "+yieldText, true)
+			result, err = e.executeProcedureCall(admission, withValueBindings(ctx, row), invocation+" "+yieldText, true)
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -173,7 +173,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			extended = append(extended, next)
 		}
 		if where != "" {
-			extended = e.filterPipelineRows(ctx, extended, where)
+			extended = e.filterPipelineRows(admission, ctx, extended, where)
 		}
 		out = append(out, extended...)
 	}

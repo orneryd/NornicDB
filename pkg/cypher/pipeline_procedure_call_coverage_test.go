@@ -59,26 +59,36 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 	ctx := context.Background()
 	rows := []pipelineRow{{"x": int64(1)}}
 
-	out, _, ok, err := exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x)")
+	fixtureAdmission1379Context, fixtureAdmission1379 := statementTestContext(ctx, "CALL cov.echo(x)")
+	_ = fixtureAdmission1379Context
+	out, _, ok, err := exec.pipelineApplyProcedureCall(fixtureAdmission1379, fixtureAdmission1379Context, rows, "CALL cov.echo(x)")
 	requireSyntaxErrorStatus(t, err, "non-void procedure without explicit YIELD")
 	require.True(t, ok)
 	require.Nil(t, out)
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(count(x)) YIELD echoed")
+	fixtureAdmission1380Context, fixtureAdmission1380 := statementTestContext(ctx, "CALL cov.echo(count(x)) YIELD echoed")
+	_ = fixtureAdmission1380Context
+	_, _, ok, err = exec.pipelineApplyProcedureCall(fixtureAdmission1380, fixtureAdmission1380Context, rows, "CALL cov.echo(count(x)) YIELD echoed")
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "aggregate")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.echo(x % 0) YIELD echoed")
+	fixtureAdmission1381Context, fixtureAdmission1381 := statementTestContext(ctx, "CALL cov.echo(x % 0) YIELD echoed")
+	_ = fixtureAdmission1381Context
+	_, _, ok, err = exec.pipelineApplyProcedureCall(fixtureAdmission1381, fixtureAdmission1381Context, rows, "CALL cov.echo(x % 0) YIELD echoed")
 	require.True(t, ok)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/ by zero")
 
-	_, _, ok, err = exec.pipelineApplyProcedureCall(ctx, rows, "CALL cov.fail(x) YIELD echoed")
+	fixtureAdmission1382Context, fixtureAdmission1382 := statementTestContext(ctx, "CALL cov.fail(x) YIELD echoed")
+	_ = fixtureAdmission1382Context
+	_, _, ok, err = exec.pipelineApplyProcedureCall(fixtureAdmission1382, fixtureAdmission1382Context, rows, "CALL cov.fail(x) YIELD echoed")
 	require.True(t, ok)
 	require.Error(t, err)
 
-	out, yielded, ok, err := exec.pipelineApplyProcedureCall(ctx, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1")
+	fixtureAdmission1383Context, fixtureAdmission1383 := statementTestContext(ctx, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1")
+	_ = fixtureAdmission1383Context
+	out, yielded, ok, err := exec.pipelineApplyProcedureCall(fixtureAdmission1383, fixtureAdmission1383Context, []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}, "CALL cov.echo(x) YIELD echoed WHERE echoed > 1")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"echoed"}, yielded)
@@ -115,7 +125,9 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 
 	yield := parseYieldClause("CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1")
 	require.NotNil(t, yield)
-	err = exec.validateYieldModifiers(yield, true)
+	fixtureAdmission1742Context, fixtureAdmission1742 := statementTestContext(context.Background(), "CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1")
+	_ = fixtureAdmission1742Context
+	err = exec.validateYieldModifiers(fixtureAdmission1742, yield, true)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
@@ -125,6 +137,8 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	} {
 		yield := parseYieldClause(call)
 		require.NotNil(t, yield, call)
-		require.Error(t, exec.validateYieldModifiers(yield, true), call)
+		fixtureAdmission1743Context, fixtureAdmission1743 := statementTestContext(context.Background(), call)
+		_ = fixtureAdmission1743Context
+		require.Error(t, exec.validateYieldModifiers(fixtureAdmission1743, yield, true), call)
 	}
 }

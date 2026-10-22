@@ -230,7 +230,7 @@ func bareEndpointVariable(content string) (string, bool) {
 // reports as an error). Planning is atomic: on any failure the nodes and
 // edges already staged by this call are rolled back, so the general route
 // replans the whole clause instead of duplicating the template's prefix.
-func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
+func (t *pipelineCreateTemplate) plan(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
 	if !t.usable {
 		return nil, false, nil
 	}
@@ -271,7 +271,7 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 		var props map[string]interface{}
 		if len(nodeTemplate.properties) > 0 {
 			var ok bool
-			props, ok = e.evaluatePipelineProperties(ctx, nodeTemplate.properties, row)
+			props, ok = e.evaluatePipelineProperties(admission, ctx, nodeTemplate.properties, row)
 			if !ok {
 				rollback()
 				return nil, false, nil
@@ -321,7 +321,7 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 		var props map[string]interface{}
 		if len(edgeTemplate.properties) > 0 {
 			var ok bool
-			props, ok = e.evaluatePipelineProperties(ctx, edgeTemplate.properties, row)
+			props, ok = e.evaluatePipelineProperties(admission, ctx, edgeTemplate.properties, row)
 			if !ok {
 				rollback()
 				return nil, false, nil

@@ -247,7 +247,9 @@ func TestRangeIteratorStopsAtIntegerBoundaries(t *testing.T) {
 func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, expression := range []string{"range(1, 3)", "[1, 2, 3]"} {
-		values, resolved := executor.pipelineUnwindValues(context.Background(), expression, pipelineRow{})
+		fixtureAdmission1749Context, fixtureAdmission1749 := expressionTestContext(context.Background(), expression)
+		_ = fixtureAdmission1749Context
+		values, resolved := executor.pipelineUnwindValues(fixtureAdmission1749, fixtureAdmission1749Context, expression, pipelineRow{})
 		require.True(t, resolved)
 		for value := range values {
 			require.Equal(t, int64(1), value)
@@ -256,7 +258,9 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	}
 	for _, expression := range []string{"range(1, 2, 0)", "range(missing_function(), 2)", "missing_function()"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		_, resolved := executor.pipelineUnwindValues(ctx, expression, pipelineRow{})
+		fixtureAdmission991Context, fixtureAdmission991 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission991Context
+		_, resolved := executor.pipelineUnwindValues(fixtureAdmission991, fixtureAdmission991Context, expression, pipelineRow{})
 		require.False(t, resolved, expression)
 		require.Error(t, getExpressionFailure(ctx))
 	}
@@ -268,7 +272,9 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 		ctx := withExpressionFailureSlot(context.Background())
 		clauses, parsed := canExecuteAsPipeline(query)
 		require.True(t, parsed)
-		_, _, resolved := executor.pipelineApplyUnwindPrefix(ctx, []pipelineRow{{}}, clauses)
+		fixtureAdmission1750Context, fixtureAdmission1750 := statementTestContext(ctx, query)
+		_ = fixtureAdmission1750Context
+		_, _, resolved := executor.pipelineApplyUnwindPrefix(fixtureAdmission1750, fixtureAdmission1750Context, []pipelineRow{{}}, clauses)
 		require.False(t, resolved)
 		require.Error(t, getExpressionFailure(ctx))
 	}
@@ -276,7 +282,9 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	cancel()
 	clauses, parsed := canExecuteAsPipeline("UNWIND range(1, 2) AS x RETURN x")
 	require.True(t, parsed)
-	_, _, resolved := executor.pipelineApplyUnwindPrefix(ctx, []pipelineRow{{}}, clauses)
+	fixtureAdmission1751Context, fixtureAdmission1751 := statementTestContext(ctx, "UNWIND range(1, 2) AS x RETURN x")
+	_ = fixtureAdmission1751Context
+	_, _, resolved := executor.pipelineApplyUnwindPrefix(fixtureAdmission1751, fixtureAdmission1751Context, []pipelineRow{{}}, clauses)
 	require.False(t, resolved)
 	require.ErrorIs(t, getExpressionFailure(ctx), context.Canceled)
 }
@@ -352,7 +360,9 @@ func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) 
 				}
 				return false
 			}
-			groups, resolved := executor.pipelineAggregateGroups(ctx, source, projections, false)
+			fixtureAdmission1752Context, fixtureAdmission1752 := statementTestContext(ctx, "RETURN "+("RETURN count(*) AS total"))
+			_ = fixtureAdmission1752Context
+			groups, resolved := executor.pipelineAggregateGroups(fixtureAdmission1752, fixtureAdmission1752Context, source, projections, false)
 			require.False(t, resolved)
 			require.Nil(t, groups)
 			if canceled {

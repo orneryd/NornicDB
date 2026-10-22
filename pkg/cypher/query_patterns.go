@@ -205,7 +205,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 	}
 
 	exec := &StorageExecutor{}
-	match := exec.parseTraversalPattern(ctx, matchClause)
+	match := exec.parseTraversalPatternStructure(ctx, matchClause)
 	if match == nil || !match.IsChained || len(match.Segments) != 2 {
 		return false
 	}
@@ -349,7 +349,7 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 	}
 
 	exec := &StorageExecutor{}
-	match := exec.parseTraversalPattern(ctx, matchClause)
+	match := exec.parseTraversalPatternStructure(ctx, matchClause)
 	if match == nil || match.IsChained {
 		return "", "", "", "", false
 	}

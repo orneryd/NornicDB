@@ -270,7 +270,7 @@ func gdsLinkPredictionConfig(name string, values []interface{}) (gdsLinkConfig, 
 
 // gdsNeighbors returns a node's neighbourhood under config, or the error a
 // read of its relationships gives.
-func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
+func (run relationshipEntityExecution) gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
 	neighbors := gdsNeighborhood{nodes: map[storage.NodeID]struct{}{}}
 	if store == nil {
 		return neighbors, nil
@@ -311,6 +311,10 @@ func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig)
 		add(edges, false)
 	}
 	return neighbors, nil
+}
+
+func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
+	return relationshipStorageExecution().gdsNeighbors(store, id, config)
 }
 
 func gdsCommon(a, b gdsNeighborhood) []storage.NodeID {

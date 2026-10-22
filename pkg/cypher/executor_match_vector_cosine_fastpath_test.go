@@ -748,8 +748,10 @@ func TestTryFastPathMatchVectorCosine_HandlesAscendingOrder(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:Item {uuid:'worst', emb:[-1.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
 
-	result, handled := exec.tryFastPathMatchVectorCosine(
-		ctx,
+	fixtureAdmission1181Context, fixtureAdmission1181 := statementTestContext(ctx, "MATCH (n:Item) RETURN vector.similarity.cosine(n.emb, [1.0,0.0,0.0]) AS score ORDER BY score ASC LIMIT 5")
+	_ = fixtureAdmission1181Context
+	result, handled := exec.tryFastPathMatchVectorCosine(fixtureAdmission1181,
+		fixtureAdmission1181Context,
 		"MATCH (n:Item) RETURN vector.similarity.cosine(n.emb, [1.0,0.0,0.0]) AS score ORDER BY score ASC LIMIT 5",
 		"MATCH (N:ITEM) RETURN VECTOR.SIMILARITY.COSINE(N.EMB, [1.0,0.0,0.0]) AS SCORE ORDER BY SCORE ASC LIMIT 5",
 	)

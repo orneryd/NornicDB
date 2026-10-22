@@ -47,7 +47,7 @@ type shortestPathMatch struct {
 // parseShortestPathMatch reads the body of a MATCH clause (after MATCH or
 // OPTIONAL MATCH). ok is false when no comma-separated part of its pattern is
 // a shortestPath or allShortestPaths call.
-func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body string) (*shortestPathMatch, bool, error) {
+func (e *StorageExecutor) parseShortestPathMatch(admission admittedRelationshipStatement, ctx context.Context, body string) (*shortestPathMatch, bool, error) {
 	if indexASCIIFold(body, "shortestpath") < 0 {
 		return nil, false, nil
 	}
@@ -81,7 +81,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		return e.parseSelectedPathMatchContext(ctx, inner, pathVariable, others, selector, predicate, terms)
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
-	traversal := e.parseTraversalPattern(ctx, inner)
+	traversal := e.parseTraversalPattern(admission, ctx, inner)
 	if !ok || traversal == nil || traversal.IsChained {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
 			localization.CypherMatchingShortestPathSingleRelationship(funcName))
@@ -98,6 +98,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		endVariable:   traversal.EndNode.variable,
 		pathVariable:  pathVariable,
 		traversal:     traversal,
+		pattern:       inner,
 	}
 	if m.startVariable == "" {
 		m.startVariable = generatedVariablePrefix + "sp_start"
@@ -252,19 +253,19 @@ func shortestPathEndpointPatterns(pattern string) (string, string, bool) {
 // pipelineApplyShortestPathMatch runs a shortestPath MATCH for each row. An
 // OPTIONAL MATCH keeps a row that finds no path, with the clause's new
 // variables null.
-func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, rows []pipelineRow, m *shortestPathMatch, optional bool) ([]pipelineRow, error) {
+func (e *StorageExecutor) pipelineApplyShortestPathMatch(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, m *shortestPathMatch, optional bool) ([]pipelineRow, error) {
 	if m.selector != nil {
-		return e.pipelineApplySelectedPathMatch(ctx, rows, m, optional)
+		return e.pipelineApplySelectedPathMatch(admission, ctx, rows, m, optional)
 	}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		bases, err := e.shortestPathBases(ctx, m, row)
+		bases, err := e.shortestPathBases(admission, ctx, m, row)
 		if err != nil {
 			return nil, err
 		}
 		var pairs []pipelineRow
 		for _, base := range bases {
-			found, err := e.shortestPathEndpointPairs(ctx, m, base)
+			found, err := e.shortestPathEndpointPairs(admission, ctx, m, base)
 			if err != nil {
 				return nil, err
 			}
@@ -274,7 +275,7 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 		for _, pair := range pairs {
 			start, _ := pair[m.startVariable].(*storage.Node)
 			end, _ := pair[m.endVariable].(*storage.Node)
-			paths, err := e.shortestPathsBetween(ctx, m, start, end, pair)
+			paths, err := e.shortestPathsBetween(admission, ctx, m, start, end, pair)
 			if err != nil {
 				return nil, err
 			}
@@ -290,12 +291,12 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 
 // shortestPathBases returns the rows the clause's other patterns bind for
 // one input row, matched one at a time.
-func (e *StorageExecutor) shortestPathBases(ctx context.Context, m *shortestPathMatch, row pipelineRow) ([]pipelineRow, error) {
+func (e *StorageExecutor) shortestPathBases(admission admittedRelationshipStatement, ctx context.Context, m *shortestPathMatch, row pipelineRow) ([]pipelineRow, error) {
 	bases := []pipelineRow{row}
 	for _, part := range m.others {
 		var next []pipelineRow
 		for _, base := range bases {
-			matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
+			matched, err := e.pipelineMatchRows(admission, ctx, base, "MATCH "+part)
 			if err != nil {
 				return nil, err
 			}
@@ -333,7 +334,7 @@ func (m *shortestPathMatch) unmatchedRow(row pipelineRow) pipelineRow {
 // and end for one input row. An endpoint written as a bare variable the row
 // binds to a node is taken from the row; the others are matched, with the
 // WHERE conjuncts that don't mention the path.
-func (e *StorageExecutor) shortestPathEndpointPairs(ctx context.Context, m *shortestPathMatch, row pipelineRow) ([]pipelineRow, error) {
+func (e *StorageExecutor) shortestPathEndpointPairs(admission admittedRelationshipStatement, ctx context.Context, m *shortestPathMatch, row pipelineRow) ([]pipelineRow, error) {
 	var patterns []string
 	for _, endpoint := range [][2]string{{m.startPattern, m.startVariable}, {m.endPattern, m.endVariable}} {
 		node, bound := row[endpoint[1]].(*storage.Node)
@@ -343,7 +344,7 @@ func (e *StorageExecutor) shortestPathEndpointPairs(ctx context.Context, m *shor
 		patterns = append(patterns, endpoint[0])
 	}
 	if len(patterns) == 0 {
-		if m.endpointWhere != "" && !e.evaluateWithWhereCondition(ctx, m.endpointWhere, map[string]interface{}(row)) {
+		if m.endpointWhere != "" && !e.evaluateWithWhereCondition(admission, ctx, m.endpointWhere, map[string]interface{}(row)) {
 			return nil, getExpressionFailure(ctx)
 		}
 		return []pipelineRow{row}, nil
@@ -352,14 +353,14 @@ func (e *StorageExecutor) shortestPathEndpointPairs(ctx context.Context, m *shor
 	if m.endpointWhere != "" {
 		clause += " WHERE " + m.endpointWhere
 	}
-	return e.pipelineMatchRows(ctx, row, clause)
+	return e.pipelineMatchRows(admission, ctx, row, clause)
 }
 
 // pipelineMatchRows runs a MATCH clause for one row, for a step that
 // matches part of its own pattern; a clause shape the pipeline can't run is
 // an invalid pattern.
-func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow, clause string) ([]pipelineRow, error) {
-	rows, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{row}, clause)
+func (e *StorageExecutor) pipelineMatchRows(admission admittedRelationshipStatement, ctx context.Context, row pipelineRow, clause string) ([]pipelineRow, error) {
+	rows, handled, err := e.pipelineApplyMatch(admission, ctx, []pipelineRow{row}, clause)
 	if err == nil && !handled {
 		err = localizedError(localization.CypherMatchingPathPatternInvalid(strings.TrimSpace(clause[len("MATCH"):])), nil)
 	}
@@ -372,7 +373,7 @@ func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow
 // the pair (path_selector_search.go). Identical variable names are rejected
 // when the pattern is read. Different names holding the same node may take
 // a zero-length path when the lower bound is zero.
-func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]pipelineRow, error) {
+func (e *StorageExecutor) shortestPathsBetween(admission admittedRelationshipStatement, ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]pipelineRow, error) {
 	if variable := m.traversal.Relationship.Variable; variable != "" {
 		if _, bound := row[variable]; bound {
 			return nil, errBoundShortestRelationships(shortestPathFunctionName(m.findAll))
@@ -381,11 +382,12 @@ func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestP
 	if start.ID == end.ID && m.traversal.Relationship.MinHops > 0 {
 		return nil, errShortestCommonEndpoints()
 	}
-	maxLength, ok := e.selectedPathLimit(ctx, m.plan, row)
+	maxLength, ok := e.selectedPathLimit(admission, ctx, m.plan, row)
 	if !ok {
 		return nil, getExpressionFailure(ctx)
 	}
-	rows := e.searchSelectedPaths(ctx, m.plan, m.plan.forward, false, row, maxLength, start, end, nil, 1, m.findAll)
+	execution := e.relationshipExecutionFor(admission, ctx, m.pattern, "")
+	rows := execution.selectedPaths(ctx, m.plan, m.plan.forward, false, row, maxLength, start, end, nil, 1, m.findAll)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

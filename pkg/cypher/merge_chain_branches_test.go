@@ -67,7 +67,9 @@ func TestProjectWithContext_ScalarFallback(t *testing.T) {
 	ctx := context.Background()
 	n := &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "A"}}
 	input := []pipelineRow{{"n": n, "score": int64(7)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH n AS nodeAlias, score AS s")
+	fixtureAdmission1318Context, fixtureAdmission1318 := statementTestContext(ctx, "WITH n AS nodeAlias, score AS s")
+	_ = fixtureAdmission1318Context
+	projected, ok := exec.pipelineApplyWith(fixtureAdmission1318, fixtureAdmission1318Context, input, "WITH n AS nodeAlias, score AS s")
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"nodeAlias": n, "s": int64(7)}}, projected)
 	require.Equal(t, []pipelineRow{{"n": n, "score": int64(7)}}, input)
@@ -78,10 +80,14 @@ func TestApplyWithProjection_Branches_Additional(t *testing.T) {
 	ctx := context.Background()
 	n := &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "A"}}
 	input := []pipelineRow{{"n": n, "score": int64(7)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
+	fixtureAdmission1319Context, fixtureAdmission1319 := statementTestContext(ctx, "WITH *")
+	_ = fixtureAdmission1319Context
+	projected, ok := exec.pipelineApplyWith(fixtureAdmission1319, fixtureAdmission1319Context, input, "WITH *")
 	require.True(t, ok)
 	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n AS m, score AS s")
+	fixtureAdmission1320Context, fixtureAdmission1320 := statementTestContext(ctx, "WITH n AS m, score AS s")
+	_ = fixtureAdmission1320Context
+	projected, ok = exec.pipelineApplyWith(fixtureAdmission1320, fixtureAdmission1320Context, input, "WITH n AS m, score AS s")
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"m": n, "s": int64(7)}}, projected)
 }

@@ -82,12 +82,16 @@ func TestLowCoverageHelpers_SmallFunctions(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "low_helpers"))
 	ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{"props": map[string]interface{}{"a": int64(1), "drop": nil}})
 	n := &storage.Node{ID: "n-1", Properties: map[string]interface{}{}}
-	exec.applySetMapMergeToNode(ctx, n, "n", "$props", map[string]*storage.Node{"n": n}, nil, &setWrites{})
+	fixtureAdmission1599Context, fixtureAdmission1599 := statementTestContext(ctx, "RETURN "+("$props"))
+	_ = fixtureAdmission1599Context
+	exec.applySetMapMergeToNode(fixtureAdmission1599, fixtureAdmission1599Context, n, "n", "$props", map[string]*storage.Node{"n": n}, nil, &setWrites{})
 	require.EqualValues(t, int64(1), n.Properties["a"])
 	_, hasDrop := n.Properties["drop"]
 	require.False(t, hasDrop)
 
-	exec.applySetMapMergeToNode(context.Background(), n, "n", "{b: 2}", map[string]*storage.Node{"n": n}, nil, &setWrites{})
+	fixtureAdmission1600Context, fixtureAdmission1600 := statementTestContext(context.Background(), "RETURN "+("{b: 2}"))
+	_ = fixtureAdmission1600Context
+	exec.applySetMapMergeToNode(fixtureAdmission1600, fixtureAdmission1600Context, n, "n", "{b: 2}", map[string]*storage.Node{"n": n}, nil, &setWrites{})
 	require.EqualValues(t, int64(2), n.Properties["b"])
 
 	// unwind_multi_match_create
@@ -183,9 +187,13 @@ func TestAggregatePathSum_Branches(t *testing.T) {
 		{Nodes: []*storage.Node{{ID: "c", Properties: map[string]interface{}{}}}},
 	}
 	m := &TraversalMatch{StartNode: nodePatternInfo{variable: "n"}}
-	got := exec.aggregatePathSum(ctx, paths, m, "n.v")
+	fixtureAdmission1601Context, fixtureAdmission1601 := expressionTestContext(ctx, "n.v")
+	_ = fixtureAdmission1601Context
+	got := exec.aggregatePathSum(fixtureAdmission1601, fixtureAdmission1601Context, paths, m, "n.v")
 	require.Equal(t, 5.5, got)
 
-	got = exec.aggregatePathSum(ctx, []PathResult{{Nodes: []*storage.Node{{ID: "z", Properties: map[string]interface{}{}}}}}, m, "n.v")
+	fixtureAdmission1602Context, fixtureAdmission1602 := expressionTestContext(ctx, "n.v")
+	_ = fixtureAdmission1602Context
+	got = exec.aggregatePathSum(fixtureAdmission1602, fixtureAdmission1602Context, []PathResult{{Nodes: []*storage.Node{{ID: "z", Properties: map[string]interface{}{}}}}}, m, "n.v")
 	require.EqualValues(t, int64(0), got)
 }

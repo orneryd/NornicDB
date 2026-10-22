@@ -460,6 +460,11 @@ func (e *StorageExecutor) handleRollback() (*ExecuteResult, error) {
 // Uses the same transactionStorageWrapper pattern as implicit transactions,
 // routing writes through the transaction for atomicity and rollback support.
 func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	ctx, admission := compileRelationshipStatement(ctx, cypher, nil)
+	return e.executeAdmittedInTransaction(admission, ctx, cypher, upperQuery)
+}
+
+func (e *StorageExecutor) executeAdmittedInTransaction(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
@@ -482,7 +487,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 			return e.executeViaFabricWithTx(ctx, cypher, params, ftx, false)
 		}
 		// Non-fabric-shaped queries still run on the scoped engine in explicit tx session.
-		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+		return e.executeAdmittedWithoutTransaction(admission, ctx, cypher, upperQuery)
 	}
 
 	// All engines now use BadgerTransaction (MemoryEngine wraps BadgerEngine)
@@ -501,7 +506,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		txWrapper != nil &&
 		txWrapper.tx == tx {
 		txExec := e.cloneWithStorage(txWrapper)
-		result, err := txExec.executeQueryAgainstStorage(ctx, cypher, upperQuery)
+		result, err := txExec.executeAdmittedQueryAgainstStorage(admission, ctx, cypher, upperQuery)
 		if err != nil {
 			return result, err
 		}
@@ -542,7 +547,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	txExec := e.cloneWithStorage(txWrapper)
 
 	// Execute the query - getStorage() will automatically use the transaction wrapper
-	result, err := txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
+	result, err := txExec.executeAdmittedQueryAgainstStorage(admission, txCtx, cypher, upperQuery)
 	if err != nil {
 		return result, err
 	}
@@ -575,7 +580,12 @@ func extractFirstUseGraph(cypher string) string {
 
 // executeQueryAgainstStorage executes query with current storage context.
 func (e *StorageExecutor) executeQueryAgainstStorage(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	ctx, admission := compileRelationshipStatement(ctx, cypher, nil)
+	return e.executeAdmittedQueryAgainstStorage(admission, ctx, cypher, upperQuery)
+}
+
+func (e *StorageExecutor) executeAdmittedQueryAgainstStorage(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	e.decayMismatchLogged = false
 	// Single router: the transaction only changes which storage view e.storage is.
-	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	return e.executeAdmittedWithoutTransaction(admission, ctx, cypher, upperQuery)
 }

@@ -25,7 +25,9 @@ func TestDecayScore_DisabledReturns1(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
-	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1246Context, fixtureAdmission1246 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1246Context
+	result := exec.evalDecayScore(fixtureAdmission1246, fixtureAdmission1246Context, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -43,7 +45,9 @@ func TestDecay_DisabledAppliesFalse(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
+	fixtureAdmission1247Context, fixtureAdmission1247 := expressionTestContext(ctx, "decay(n)")
+	_ = fixtureAdmission1247Context
+	result := exec.evalDecay(fixtureAdmission1247, fixtureAdmission1247Context, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -89,13 +93,17 @@ func TestDecayMismatchLoggedOnce(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1248Context, fixtureAdmission1248 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1248Context
+	exec.evalDecayScore(fixtureAdmission1248, fixtureAdmission1248Context, "decayScore(n)", nodes, rels)
 	if !exec.decayMismatchLogged {
 		t.Error("expected decayMismatchLogged=true after first call")
 	}
 
 	exec.decayMismatchLogged = false
-	exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1249Context, fixtureAdmission1249 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1249Context
+	exec.evalDecayScore(fixtureAdmission1249, fixtureAdmission1249Context, "decayScore(n)", nodes, rels)
 	if !exec.decayMismatchLogged {
 		t.Error("flag should be set again after reset")
 	}

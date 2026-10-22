@@ -291,7 +291,7 @@ type quantifiedDeferredCheck struct {
 
 // pipelineApplyQuantifiedPathMatch runs a pattern part with quantified
 // groups for each row; an OPTIONAL MATCH is handled by its caller.
-func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, rows []pipelineRow, m *quantifiedPathMatch) ([]pipelineRow, error) {
+func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, m *quantifiedPathMatch) ([]pipelineRow, error) {
 	var out []pipelineRow
 	// Each match it keeps, with its path, counts against the statement's
 	// memory limit before it is kept: what it binds in full, what it carries
@@ -301,7 +301,7 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 	defer retention.close()
 	for _, row := range rows {
 		state := quantifiedPathState{row: row, used: map[storage.EdgeID]struct{}{}}
-		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
+		err := e.matchQuantifiedPieces(admission, ctx, m, 0, state, func(done quantifiedPathState) error {
 			bound := done.row
 			if m.pathVariable != "" {
 				bound[m.pathVariable] = e.pathToMap(PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
@@ -316,11 +316,11 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 				for name, value := range check.values {
 					iteration[name] = value
 				}
-				if !e.evaluateWithWhereCondition(ctx, check.where, map[string]interface{}(iteration)) {
+				if !e.evaluateWithWhereCondition(admission, ctx, check.where, map[string]interface{}(iteration)) {
 					return getExpressionFailure(ctx)
 				}
 			}
-			if m.where != "" && !e.evaluateWithWhereCondition(ctx, m.where, map[string]interface{}(bound)) {
+			if m.where != "" && !e.evaluateWithWhereCondition(admission, ctx, m.where, map[string]interface{}(bound)) {
 				return getExpressionFailure(ctx)
 			}
 			if err := retention.reserveDerivedRow(row, bound); err != nil {
@@ -339,7 +339,7 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 
 // matchQuantifiedPieces matches m.pieces[index:] from state and calls emit
 // for each complete match.
-func (e *StorageExecutor) matchQuantifiedPieces(ctx context.Context, m *quantifiedPathMatch, index int, state quantifiedPathState, emit func(quantifiedPathState) error) error {
+func (e *StorageExecutor) matchQuantifiedPieces(admission admittedRelationshipStatement, ctx context.Context, m *quantifiedPathMatch, index int, state quantifiedPathState, emit func(quantifiedPathState) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -348,17 +348,17 @@ func (e *StorageExecutor) matchQuantifiedPieces(ctx context.Context, m *quantifi
 	}
 	piece := m.pieces[index]
 	if !piece.group {
-		return e.matchQuantifiedChain(ctx, piece.chain, piece.first, "", state, func(next quantifiedPathState, _ pipelineRow) error {
-			return e.matchQuantifiedPieces(ctx, m, index+1, next, emit)
+		return e.matchQuantifiedChain(admission, ctx, piece.chain, piece.first, "", state, func(next quantifiedPathState, _ pipelineRow) error {
+			return e.matchQuantifiedPieces(admission, ctx, m, index+1, next, emit)
 		})
 	}
 	lists := make(map[string][]interface{}, len(piece.variables))
-	return e.matchQuantifiedIterations(ctx, m, index, piece, 0, state, lists, emit)
+	return e.matchQuantifiedIterations(admission, ctx, m, index, piece, 0, state, lists, emit)
 }
 
 // matchQuantifiedIterations matches the group m.pieces[index] after
 // iterations repetitions, with each inner variable's values so far in lists.
-func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quantifiedPathMatch, index int, piece quantifiedPathPiece, iterations int, state quantifiedPathState, lists map[string][]interface{}, emit func(quantifiedPathState) error) error {
+func (e *StorageExecutor) matchQuantifiedIterations(admission admittedRelationshipStatement, ctx context.Context, m *quantifiedPathMatch, index int, piece quantifiedPathPiece, iterations int, state quantifiedPathState, lists map[string][]interface{}, emit func(quantifiedPathState) error) error {
 	if iterations >= piece.min {
 		done := state
 		done.row = copyPipelineRow(state.row)
@@ -372,13 +372,13 @@ func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quan
 		if iterations == 0 && len(state.nodes) == 0 {
 			// Zero iterations before any node: the group is one node, any.
 			anyNode := generatedVariablePrefix + "qpp_node"
-			if err := e.matchQuantifiedChain(ctx, "("+anyNode+")", anyNode, "", done, func(next quantifiedPathState, _ pipelineRow) error {
+			if err := e.matchQuantifiedChain(admission, ctx, "("+anyNode+")", anyNode, "", done, func(next quantifiedPathState, _ pipelineRow) error {
 				delete(next.row, anyNode)
-				return e.matchQuantifiedPieces(ctx, m, index+1, next, emit)
+				return e.matchQuantifiedPieces(admission, ctx, m, index+1, next, emit)
 			}); err != nil {
 				return err
 			}
-		} else if err := e.matchQuantifiedPieces(ctx, m, index+1, done, emit); err != nil {
+		} else if err := e.matchQuantifiedPieces(admission, ctx, m, index+1, done, emit); err != nil {
 			return err
 		}
 	}
@@ -390,7 +390,7 @@ func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quan
 	for _, variable := range piece.variables {
 		delete(iteration.row, variable)
 	}
-	return e.matchQuantifiedChain(ctx, piece.chain, piece.first, piece.where, iteration, func(next quantifiedPathState, matched pipelineRow) error {
+	return e.matchQuantifiedChain(admission, ctx, piece.chain, piece.first, piece.where, iteration, func(next quantifiedPathState, matched pipelineRow) error {
 		extended := make(map[string][]interface{}, len(lists))
 		for _, variable := range piece.variables {
 			extended[variable] = append(append([]interface{}(nil), lists[variable]...), matched[variable])
@@ -403,14 +403,14 @@ func (e *StorageExecutor) matchQuantifiedIterations(ctx context.Context, m *quan
 			}
 			next.checks = append(append([]quantifiedDeferredCheck(nil), state.checks...), quantifiedDeferredCheck{where: piece.deferred, values: values})
 		}
-		return e.matchQuantifiedIterations(ctx, m, index, piece, iterations+1, next, extended, emit)
+		return e.matchQuantifiedIterations(admission, ctx, m, index, piece, iterations+1, next, extended, emit)
 	})
 }
 
 // matchQuantifiedChain matches chain (with its own WHERE, where) from
 // state: its first node is the path's end node, when the path has one. For
 // each match, then gets the extended state and the chain's bindings.
-func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first, where string, state quantifiedPathState, then func(quantifiedPathState, pipelineRow) error) error {
+func (e *StorageExecutor) matchQuantifiedChain(admission admittedRelationshipStatement, ctx context.Context, chain, first, where string, state quantifiedPathState, then func(quantifiedPathState, pipelineRow) error) error {
 	row := copyPipelineRow(state.row)
 	if len(state.nodes) > 0 {
 		end := state.nodes[len(state.nodes)-1]
@@ -426,7 +426,7 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 	if where != "" {
 		clause += " WHERE " + where
 	}
-	matched, err := e.pipelineMatchRows(ctx, row, clause)
+	matched, err := e.pipelineMatchRows(admission, ctx, row, clause)
 	if err != nil {
 		return err
 	}

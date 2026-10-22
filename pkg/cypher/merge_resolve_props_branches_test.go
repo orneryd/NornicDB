@@ -21,7 +21,9 @@ func TestParseMergeProperties(t *testing.T) {
 		"r": {ID: "r1", Type: "REL", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{"weight": int64(7)}},
 	}
 
-	out := exec.parseMergeProperties(ctx, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}", nodeCtx, relCtx)
+	fixtureAdmission1879Context, fixtureAdmission1879 := expressionTestContext(ctx, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}")
+	_ = fixtureAdmission1879Context
+	out := exec.parseMergeProperties(fixtureAdmission1879, fixtureAdmission1879Context, "{number: 42, text: 'name', literal: 'n.name', from_node: n.name, from_rel: r.weight, gone: null}", nodeCtx, relCtx)
 	require.EqualValues(t, int64(42), out["number"])
 	require.Equal(t, "name", out["text"])
 	require.Equal(t, "n.name", out["literal"])
@@ -31,8 +33,12 @@ func TestParseMergeProperties(t *testing.T) {
 	// matching (#810), which it can't do for a value that was dropped.
 	require.Contains(t, out, "gone")
 	require.Nil(t, out["gone"])
-	require.Empty(t, exec.parseMergeProperties(ctx, "{}", nodeCtx, relCtx))
-	require.Empty(t, exec.parseMergeProperties(ctx, "", nodeCtx, relCtx))
+	fixtureAdmission1880Context, fixtureAdmission1880 := expressionTestContext(ctx, "{}")
+	_ = fixtureAdmission1880Context
+	require.Empty(t, exec.parseMergeProperties(fixtureAdmission1880, fixtureAdmission1880Context, "{}", nodeCtx, relCtx))
+	fixtureAdmission1881Context, fixtureAdmission1881 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1881Context
+	require.Empty(t, exec.parseMergeProperties(fixtureAdmission1881, fixtureAdmission1881Context, "", nodeCtx, relCtx))
 }
 
 func TestExecuteMergeWithContext_AnonymousNodePatternAndChainedNoSpace(t *testing.T) {
@@ -74,15 +80,21 @@ func TestMergeReturnClauseCountHandling_Branches(t *testing.T) {
 		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": r}),
 		exec.mergeBindingRow(ctx, map[string]*storage.Node{"n": n}, map[string]*storage.Edge{"r": nil}),
 	}
-	result, err := exec.projectMergeReturn(ctx, rows, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
+	fixtureAdmission1652Context, fixtureAdmission1652 := statementTestContext(ctx, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
+	_ = fixtureAdmission1652Context
+	result, err := exec.projectMergeReturn(fixtureAdmission1652, fixtureAdmission1652Context, rows, "RETURN count(*) AS c_all, count(n) AS c_n, count(r) AS c_r")
 	require.NoError(t, err)
 	require.Equal(t, []string{"c_all", "c_n", "c_r"}, result.Columns)
 	require.Equal(t, [][]interface{}{{int64(2), int64(2), int64(1)}}, result.Rows)
 
-	result, err = exec.projectMergeReturn(ctx, rows, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
+	fixtureAdmission1653Context, fixtureAdmission1653 := statementTestContext(ctx, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
+	_ = fixtureAdmission1653Context
+	result, err = exec.projectMergeReturn(fixtureAdmission1653, fixtureAdmission1653Context, rows, "RETURN n.name AS name ORDER BY name SKIP 1 LIMIT 1")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
-	result, err = exec.projectMergeReturn(ctx, rows, "RETURN DISTINCT n.name AS name")
+	fixtureAdmission1654Context, fixtureAdmission1654 := statementTestContext(ctx, "RETURN DISTINCT n.name AS name")
+	_ = fixtureAdmission1654Context
+	result, err = exec.projectMergeReturn(fixtureAdmission1654, fixtureAdmission1654Context, rows, "RETURN DISTINCT n.name AS name")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a"}}, result.Rows)
 }

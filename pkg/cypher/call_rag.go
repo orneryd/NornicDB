@@ -15,20 +15,20 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) callDbRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbRetrieve(admission admittedRelationshipStatement, ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	req, err := ragProcedureRequest("db.retrieve", args)
 	if err != nil {
 		return nil, err
 	}
-	return e.runSearchRequest(ctx, req, false, false)
+	return e.runSearchRequest(admission, ctx, req, false, false)
 }
 
-func (e *StorageExecutor) callDbRRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbRRetrieve(admission admittedRelationshipStatement, ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	req, err := ragProcedureRequest("db.rretrieve", args)
 	if err != nil {
 		return nil, err
 	}
-	return e.runSearchRequest(ctx, req, false, true)
+	return e.runSearchRequest(admission, ctx, req, false, true)
 }
 
 func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
@@ -181,7 +181,7 @@ func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (
 	}, nil
 }
 
-func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]interface{}, forceRerank bool, useConfiguredRerank bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) runSearchRequest(admission admittedRelationshipStatement, ctx context.Context, req map[string]interface{}, forceRerank bool, useConfiguredRerank bool) (*ExecuteResult, error) {
 	query := stringOr(req["query"], stringOr(req["text"], ""))
 	qid := stringOr(req["qid"], "")
 	discard, _ := toBool(req["discard"])
@@ -255,7 +255,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if err != nil {
 				return nil, err
 			}
-			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
+			opts.Where = e.compileNodeWhereFilter(admission, context.WithoutCancel(ctx), "node", where)
 			if opts.Graph || opts.Relationships {
 				// One predicate serves both kinds: a node candidate reads
 				// relationship, start and end as null, a relationship
@@ -263,8 +263,8 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 				whereCtx := context.WithoutCancel(ctx)
 				nodeScope := valueBindingsLayer(whereCtx, 3)
 				nodeScope["relationship"], nodeScope["start"], nodeScope["end"] = nil, nil, nil
-				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", where)
-				opts.RelationshipWhere = e.compileRelationshipWhereFilter(whereCtx, where)
+				opts.Where = e.compileNodeWhereFilter(admission, withValueBindings(whereCtx, nodeScope), "node", where)
+				opts.RelationshipWhere = e.compileRelationshipWhereFilter(admission, whereCtx, where)
 			}
 		}
 	}

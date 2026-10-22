@@ -73,7 +73,7 @@ func parseMatchWithStages(cypher string) ([]matchWithStage, string, bool) {
 	}
 }
 
-func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause string) ([]*storage.Node, string, error) {
+func (e *StorageExecutor) evaluateMatchClauseNodes(admission admittedRelationshipStatement, ctx context.Context, clause string) ([]*storage.Node, string, error) {
 	trimmed := strings.TrimSpace(clause)
 	whereIdx := findKeywordIndexInContext(trimmed, "WHERE")
 	patternPart := trimmed
@@ -83,19 +83,19 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 		whereClause = strings.TrimSpace(trimmed[whereIdx+5:])
 	}
 
-	pattern := e.parseNodePattern(ctx, patternPart)
+	pattern := e.parseNodePattern(admission, ctx, patternPart)
 	if pattern.variable == "" {
 		return nil, "", localizedError(localization.CypherMatchingMatchPatternVariableMissing(clause), nil)
 	}
 
 	var nodes []*storage.Node
 	var err error
-	nodes, err = e.loadPatternNodes(ctx, pattern.labels, pattern.properties)
+	nodes, err = e.loadPatternNodes(admission, ctx, pattern.labels, pattern.properties)
 	if err != nil {
 		return nil, "", err
 	}
 	if whereClause != "" {
-		nodes = e.filterNodesByWhereClause(ctx, nodes, whereClause, pattern.variable)
+		nodes = e.filterNodesByWhereClause(admission, ctx, nodes, whereClause, pattern.variable)
 	}
 	return nodes, pattern.variable, nil
 }

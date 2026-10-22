@@ -48,25 +48,25 @@ func isFunctionCall(expr, funcName string) bool {
 }
 
 // evaluateExpression evaluates an expression for a single node context.
-func (e *StorageExecutor) evaluateExpression(ctx context.Context, expr string, varName string, node *storage.Node) interface{} {
-	return e.evaluateExpressionWithContext(ctx, expr, map[string]*storage.Node{varName: node}, nil)
+func (e *StorageExecutor) evaluateExpression(admission admittedRelationshipStatement, ctx context.Context, expr string, varName string, node *storage.Node) interface{} {
+	return e.evaluateExpressionWithContext(admission, ctx, expr, map[string]*storage.Node{varName: node}, nil)
 }
 
 // evaluateExpressionWithPathContext evaluates an expression with full path context.
-func (e *StorageExecutor) evaluateExpressionWithPathContext(ctx context.Context, expr string, pathCtx PathContext) interface{} {
-	return e.evaluateExpressionWithContextFull(ctx, expr, pathCtx.nodes, pathCtx.rels, pathCtx.paths, pathCtx.allPathEdges, pathCtx.allPathNodes, pathCtx.pathLength)
+func (e *StorageExecutor) evaluateExpressionWithPathContext(admission admittedRelationshipStatement, ctx context.Context, expr string, pathCtx PathContext) interface{} {
+	return e.evaluateExpressionWithContextFull(admission, ctx, expr, pathCtx.nodes, pathCtx.rels, pathCtx.paths, pathCtx.allPathEdges, pathCtx.allPathNodes, pathCtx.pathLength)
 }
 
-func (e *StorageExecutor) evaluateExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
-	return e.evaluateExpressionWithContextFull(ctx, expr, nodes, rels, nil, nil, nil, 0)
+func (e *StorageExecutor) evaluateExpressionWithContext(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+	return e.evaluateExpressionWithContextFull(admission, ctx, expr, nodes, rels, nil, nil, nil, 0)
 }
 
 // evaluateExpressionWithContextDefined distinguishes a valid Cypher null from
 // an expression that this evaluator did not recognize. Callers that project
 // values must preserve that distinction instead of replacing null with the
 // original expression text or another fallback value.
-func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
-	value := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+func (e *StorageExecutor) evaluateExpressionWithContextDefined(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+	value := e.evaluateExpressionWithContext(admission, ctx, expr, nodes, rels)
 	if value != nil {
 		return value, true
 	}
@@ -98,7 +98,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Conte
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateExpressionWithContextFull(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -114,7 +114,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
 			if name, inner, ok := parseFunctionCallWS(expr); ok &&
 				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
-				if value, handled, err := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
+				if value, handled, err := e.evaluateShortestPathValue(admission, ctx, name, inner, nodes); handled {
 					if err != nil {
 						recordExpressionFailure(ctx, err)
 					}
@@ -128,7 +128,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
 		if _, _, projection := rowMapProjectionSplit(expr); projection {
-			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
+			value, _ := e.evaluateRowExpressionWithContext(admission, ctx, expr, entityRow(ctx, nodes, rels))
 			return value
 		}
 	}
@@ -138,11 +138,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// entities, paths and values (#1055). Text the row evaluator handed
 		// here is evaluated below instead, its subqueries reached through
 		// its parts.
-		value, _ := e.evaluateRowExpressionWithContext(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		value, _ := e.evaluateRowExpressionWithContext(admission, ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		return value
 	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
-		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
+		return e.evaluatePatternComprehension(admission, ctx, pattern, projection, nodes, rels)
 	}
 	// Direct $param resolution preserves declared types end-to-end.
 	// substituteParams's type-preserving short-circuit leaves "$name" as
@@ -160,7 +160,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		return normalizePropValue(v)
 	}
 	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
-		base := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		base := e.evaluateExpressionWithContextFull(admission, ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		switch value := base.(type) {
 		case map[string]interface{}:
 			return value[property]
@@ -187,18 +187,18 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// blocks once and substitute them as literals, then run the normal
 		// operator pipeline.
 		if spans := caseBlockSpans(expr); len(spans) > 0 {
-			return e.evaluateExpressionWithCASESubstituted(ctx, expr, spans, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return e.evaluateExpressionWithCASESubstituted(admission, ctx, expr, spans, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-		return e.evaluateExpressionWithContextFullOperators(ctx, expr, "", nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		return e.evaluateExpressionWithContextFullOperators(admission, ctx, expr, "", nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
-	return e.evaluateExpressionWithContextFullFunctions(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullFunctions(admission, ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
 // evaluateExpressionWithCASESubstituted evaluates the CASE … END blocks of expr
 // (their spans come from caseBlockSpans) and substitutes each with its literal
 // value before running the shared evaluator over the remainder. It is the
 // CASE-aware complement of the allocation-conscious operator scanners.
-func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Context, expr string, spans []caseBlockSpan, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(admission admittedRelationshipStatement, ctx context.Context, expr string, spans []caseBlockSpan, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	var builder strings.Builder
 	builder.Grow(len(expr))
 	last := 0
@@ -206,7 +206,7 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 	for _, span := range spans {
 		ctx = boundCtx
 		builder.WriteString(expr[last:span.start])
-		value := e.evaluateCaseExpression(ctx, expr[span.start:span.end], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		value := e.evaluateCaseExpression(admission, ctx, expr[span.start:span.end], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		ctx, reference := withExpressionBinding(ctx, expr, value)
 		builder.WriteString(reference)
 		// Carry this binding to subsequent blocks and the final evaluation.
@@ -214,7 +214,7 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 		last = span.end
 	}
 	builder.WriteString(expr[last:])
-	return e.evaluateExpressionWithContextFull(boundCtx, builder.String(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFull(admission, boundCtx, builder.String(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {

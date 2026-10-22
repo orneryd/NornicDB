@@ -242,7 +242,8 @@ func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntit
 	}
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{}) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callNornicDbKnowledgePolicyResolve(args []interface{}) (*ExecuteResult, error) {
+	e := run.executor
 	entityID, err := optionalStringArg(args, 0)
 	if err != nil {
 		return nil, err
@@ -324,6 +325,10 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 			resolution.Explanation,
 		}},
 	}, nil
+}
+
+func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{}) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callNornicDbKnowledgePolicyResolve(args)
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteResult, error) {

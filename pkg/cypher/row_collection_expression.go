@@ -4,16 +4,16 @@ package cypher
 // row, every part evaluated by evaluate (the row evaluator, or the context
 // evaluator for a reduce whose expressions hold subqueries); resolved is false
 // when a part can't be evaluated.
-func (e *StorageExecutor) evaluateRowReduce(function, argument string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowReduce(admission admittedRelationshipStatement, function, argument string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, error) {
 	form, ok := parseReduceForm(function, argument)
 	if !ok {
 		return nil, false, nil
 	}
-	accumulator, resolved, err := evaluate(form.initial, values)
+	accumulator, resolved, err := evaluate(admission, form.initial, values)
 	if err != nil || !resolved {
 		return nil, false, err
 	}
-	listValue, resolved, err := evaluate(form.list, values)
+	listValue, resolved, err := evaluate(admission, form.list, values)
 	if err != nil || !resolved {
 		return nil, false, err
 	}
@@ -22,8 +22,8 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	}
 	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate))
 	return rowReduceLoop(form, accumulator, listValue, scope,
-		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
-		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
+		func() (interface{}, bool, error) { return evaluate(admission, form.step, scope) },
+		func() (interface{}, bool, error) { return evaluate(admission, form.predicate, scope) })
 }
 
 func rowTopLevelPipeIndex(expression string) int {

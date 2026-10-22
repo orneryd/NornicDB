@@ -17,18 +17,24 @@ func TestPipelineApplyWith_AdditionalBranches(t *testing.T) {
 		},
 	}
 
-	out, ok := exec.pipelineApplyWith(context.Background(), rows, "WITH")
+	fixtureAdmission1731Context, fixtureAdmission1731 := statementTestContext(context.Background(), "WITH")
+	_ = fixtureAdmission1731Context
+	out, ok := exec.pipelineApplyWith(fixtureAdmission1731, fixtureAdmission1731Context, rows, "WITH")
 	require.True(t, ok)
 	require.Equal(t, rows, out)
 
 	// Aggregate with alias collapses rows.
-	aggOut, ok := exec.pipelineApplyWith(context.Background(), []pipelineRow{{"x": 1}, {"x": 2}}, "WITH count(*) AS c")
+	fixtureAdmission1732Context, fixtureAdmission1732 := statementTestContext(context.Background(), "WITH count(*) AS c")
+	_ = fixtureAdmission1732Context
+	aggOut, ok := exec.pipelineApplyWith(fixtureAdmission1732, fixtureAdmission1732Context, []pipelineRow{{"x": 1}, {"x": 2}}, "WITH count(*) AS c")
 	require.True(t, ok)
 	require.Len(t, aggOut, 1)
 	require.EqualValues(t, int64(2), aggOut[0]["c"])
 
 	// Property projection from node and map plus literal scalar.
-	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH n.name AS name, m.score AS score, 42 AS answer")
+	fixtureAdmission1733Context, fixtureAdmission1733 := statementTestContext(context.Background(), "WITH n.name AS name, m.score AS score, 42 AS answer")
+	_ = fixtureAdmission1733Context
+	out, ok = exec.pipelineApplyWith(fixtureAdmission1733, fixtureAdmission1733Context, rows, "WITH n.name AS name, m.score AS score, 42 AS answer")
 	require.True(t, ok)
 	require.Len(t, out, 1)
 	require.Equal(t, "alice", out[0]["name"])
@@ -37,7 +43,9 @@ func TestPipelineApplyWith_AdditionalBranches(t *testing.T) {
 
 	// Nested literals and postfix operations share the converged expression
 	// evaluator instead of being classified by a list-subscript specialization.
-	out, ok = exec.pipelineApplyWith(context.Background(), []pipelineRow{{"x": int64(7)}},
+	fixtureAdmission1734Context, fixtureAdmission1734 := statementTestContext(context.Background(), "WITH [x, [], {}] AS values, [x, []][1] AS nested")
+	_ = fixtureAdmission1734Context
+	out, ok = exec.pipelineApplyWith(fixtureAdmission1734, fixtureAdmission1734Context, []pipelineRow{{"x": int64(7)}},
 		"WITH [x, [], {}] AS values, [x, []][1] AS nested")
 	require.True(t, ok)
 	require.Len(t, out, 1)
@@ -45,12 +53,16 @@ func TestPipelineApplyWith_AdditionalBranches(t *testing.T) {
 	require.Equal(t, []interface{}{}, out[0]["nested"])
 
 	// COUNT without alias is unsupported in WITH projection and must fall back.
-	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH count(*)")
+	fixtureAdmission1735Context, fixtureAdmission1735 := statementTestContext(context.Background(), "WITH count(*)")
+	_ = fixtureAdmission1735Context
+	out, ok = exec.pipelineApplyWith(fixtureAdmission1735, fixtureAdmission1735Context, rows, "WITH count(*)")
 	require.False(t, ok)
 	require.Nil(t, out)
 
 	// Unknown expression also falls back.
-	out, ok = exec.pipelineApplyWith(context.Background(), rows, "WITH unknownExpr AS x")
+	fixtureAdmission1736Context, fixtureAdmission1736 := statementTestContext(context.Background(), "WITH unknownExpr AS x")
+	_ = fixtureAdmission1736Context
+	out, ok = exec.pipelineApplyWith(fixtureAdmission1736, fixtureAdmission1736Context, rows, "WITH unknownExpr AS x")
 	require.False(t, ok)
 	require.Nil(t, out)
 }
@@ -59,11 +71,15 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	rows := []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}
-	res, ok := exec.pipelineApplyReturn(context.Background(), rows, "RETURN ")
+	fixtureAdmission1737Context, fixtureAdmission1737 := statementTestContext(context.Background(), "RETURN ")
+	_ = fixtureAdmission1737Context
+	res, ok := exec.pipelineApplyReturn(fixtureAdmission1737, fixtureAdmission1737Context, rows, "RETURN ")
 	require.False(t, ok)
 	require.Nil(t, res)
 
-	res, ok = exec.pipelineApplyReturn(context.Background(), rows, "RETURN count(*) AS c, count(x) AS cx")
+	fixtureAdmission1738Context, fixtureAdmission1738 := statementTestContext(context.Background(), "RETURN count(*) AS c, count(x) AS cx")
+	_ = fixtureAdmission1738Context
+	res, ok = exec.pipelineApplyReturn(fixtureAdmission1738, fixtureAdmission1738Context, rows, "RETURN count(*) AS c, count(x) AS cx")
 	require.True(t, ok)
 	require.Equal(t, []string{"c", "cx"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -71,7 +87,9 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	require.EqualValues(t, int64(2), res.Rows[0][1])
 
 	mixRows := []pipelineRow{{"x": int64(1)}, {"x": int64(2)}}
-	res, ok = exec.pipelineApplyReturn(context.Background(), mixRows, "RETURN count(*) AS c, x")
+	fixtureAdmission1739Context, fixtureAdmission1739 := statementTestContext(context.Background(), "RETURN count(*) AS c, x")
+	_ = fixtureAdmission1739Context
+	res, ok = exec.pipelineApplyReturn(fixtureAdmission1739, fixtureAdmission1739Context, mixRows, "RETURN count(*) AS c, x")
 	require.True(t, ok)
 	require.Len(t, res.Rows, 2)
 	require.EqualValues(t, int64(1), res.Rows[0][0])
@@ -79,7 +97,9 @@ func TestPipelineApplyReturn_AdditionalBranches(t *testing.T) {
 	require.EqualValues(t, int64(1), res.Rows[1][0])
 	require.EqualValues(t, int64(2), res.Rows[1][1])
 
-	res, ok = exec.pipelineApplyReturn(context.Background(), mixRows, "RETURN missing")
+	fixtureAdmission1740Context, fixtureAdmission1740 := statementTestContext(context.Background(), "RETURN missing")
+	_ = fixtureAdmission1740Context
+	res, ok = exec.pipelineApplyReturn(fixtureAdmission1740, fixtureAdmission1740Context, mixRows, "RETURN missing")
 	require.False(t, ok)
 	require.Nil(t, res)
 }

@@ -958,9 +958,9 @@ func errSelectedPathPattern(pattern string) error {
 
 // selectPaths returns the rows of a selected pattern's paths for one row,
 // before the clause's filters.
-func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch, row pipelineRow, count int) ([]pipelineRow, error) {
+func (e *StorageExecutor) selectPaths(statement admittedRelationshipStatement, ctx context.Context, m *shortestPathMatch, row pipelineRow, count int) ([]pipelineRow, error) {
 	plan := m.plan
-	maxLength, ok := e.selectedPathLimit(ctx, plan, row)
+	maxLength, ok := e.selectedPathLimit(statement, ctx, plan, row)
 	if !ok {
 		return nil, getExpressionFailure(ctx)
 	}
@@ -970,8 +970,9 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 		return nil, nil
 	}
 	var rows []pipelineRow
+	execution := e.relationshipExecutionFor(statement, ctx, m.pattern, "")
 	search := func(a *pathSearchAutomaton, reversed bool, source, target *storage.Node, ends []*storage.Node) {
-		rows = append(rows, e.searchSelectedPaths(ctx, plan, a, reversed, row, maxLength, source, target, ends, count, m.selector.groups)...)
+		rows = append(rows, execution.selectedPaths(ctx, plan, a, reversed, row, maxLength, source, target, ends, count, m.selector.groups)...)
 	}
 	switch {
 	case startBound && endBound:
@@ -986,12 +987,12 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 		var starts, ends []*storage.Node
 		var err error
 		if selectedEndpointConstrained(plan.start) || !selectedEndpointConstrained(plan.end) {
-			if starts, err = e.selectedPathEndpoints(ctx, row, plan.start); err != nil {
+			if starts, err = e.selectedPathEndpoints(statement, ctx, row, plan.start); err != nil {
 				return nil, err
 			}
 		}
 		if selectedEndpointConstrained(plan.end) {
-			if ends, err = e.selectedPathEndpoints(ctx, row, plan.end); err != nil {
+			if ends, err = e.selectedPathEndpoints(statement, ctx, row, plan.end); err != nil {
 				return nil, err
 			}
 		}
@@ -1025,15 +1026,15 @@ func (e *StorageExecutor) selectPaths(ctx context.Context, m *shortestPathMatch,
 // selectedPathLimit checks a plan's constant conjuncts for row and returns
 // the longest path its length bounds allow (-1: none); ok is false when the
 // row selects nothing.
-func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedPathPlan, row pipelineRow) (int, bool) {
+func (e *StorageExecutor) selectedPathLimit(admission admittedRelationshipStatement, ctx context.Context, plan *selectedPathPlan, row pipelineRow) (int, bool) {
 	for _, term := range plan.constants {
-		if !e.evaluateWithWhereCondition(ctx, term, map[string]interface{}(row)) {
+		if !e.evaluateWithWhereCondition(admission, ctx, term, map[string]interface{}(row)) {
 			return 0, false
 		}
 	}
 	maxLength := plan.forward.maxLength
 	for _, bound := range plan.lengthBounds {
-		value, _ := e.evaluateRowExpressionWithContext(ctx, bound.bound, row)
+		value, _ := e.evaluateRowExpressionWithContext(admission, ctx, bound.bound, row)
 		if limit, known := pathLengthLimit(value, bound.strict); known {
 			if limit < 0 {
 				return 0, false
@@ -1044,49 +1045,6 @@ func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedP
 		}
 	}
 	return maxLength, true
-}
-
-// searchSelectedPaths runs one search of a plan's automaton a (the
-// reversed pattern when reversed) from source for row and returns the rows
-// of the count shortest paths (count lengths for groups) to each end node:
-// to target only when it is given, to the nodes of ends only when they are.
-func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
-	bind := func(path pathSearchPath) (pipelineRow, bool) {
-		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
-	}
-	s := e.newPathSearch(ctx, a, row, maxLength, source)
-	var rows []pipelineRow
-	if target != nil {
-		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
-		for _, variable := range plan.listVariables {
-			if _, bound := row[variable]; bound {
-				direct = false
-			}
-		}
-		rows = s.pair(source, target, count, groups, direct, bind)
-	} else {
-		if ends != nil {
-			s.ends = make(map[storage.NodeID]bool, len(ends))
-			s.retain(int64(len(ends)) * searchEntryBytes)
-			for _, node := range ends {
-				s.ends[node.ID] = true
-			}
-		}
-		rows = s.run(source, count, groups, bind)
-	}
-	// The search's state goes back whether it found paths, none, or was
-	// cancelled; the rows it found count before they are kept (#1343).
-	s.releaseMemory()
-	if retention := trackedRetention(ctx); retention != nil {
-		defer retention.close()
-		for _, found := range rows {
-			if retention.reserveRow(found) != nil {
-				return nil
-			}
-		}
-		retention.owned(rows)
-	}
-	return rows
 }
 
 // pathLengthLimit is the longest length a length(p) <= value (strict: <)
@@ -1140,12 +1098,12 @@ func selectedEndpointConstrained(item pathPatternItem) bool {
 
 // selectedPathEndpoints returns the nodes an endpoint's node pattern
 // matches for row, with its predicates.
-func (e *StorageExecutor) selectedPathEndpoints(ctx context.Context, row pipelineRow, item pathPatternItem) ([]*storage.Node, error) {
+func (e *StorageExecutor) selectedPathEndpoints(admission admittedRelationshipStatement, ctx context.Context, row pipelineRow, item pathPatternItem) ([]*storage.Node, error) {
 	clause := "MATCH " + item.text
 	if len(item.predicates) > 0 {
 		clause += " WHERE " + strings.Join(item.predicates, " AND ")
 	}
-	matched, err := e.pipelineMatchRows(ctx, row, clause)
+	matched, err := e.pipelineMatchRows(admission, ctx, row, clause)
 	if err != nil {
 		return nil, err
 	}
@@ -1164,7 +1122,7 @@ func (e *StorageExecutor) selectedPathEndpoints(ctx context.Context, row pipelin
 // is false when the path doesn't hold the pattern's predicates that read
 // more than one element. A path found over the reversed pattern (reversed)
 // is read backwards.
-func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, path pathSearchPath) (pipelineRow, bool) {
+func (e *StorageExecutor) bindSelectedPath(admission admittedRelationshipStatement, ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, path pathSearchPath) (pipelineRow, bool) {
 	if ctx.Err() != nil {
 		return nil, false
 	}
@@ -1267,14 +1225,14 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 				iteration[variable] = value
 			}
 			for _, check := range checks {
-				if !e.evaluateWithWhereCondition(ctx, check, map[string]interface{}(iteration)) {
+				if !e.evaluateWithWhereCondition(admission, ctx, check, map[string]interface{}(iteration)) {
 					return nil, false
 				}
 			}
 		}
 	}
 	for _, check := range plan.pathChecks {
-		if !e.evaluateWithWhereCondition(ctx, check, map[string]interface{}(bound)) {
+		if !e.evaluateWithWhereCondition(admission, ctx, check, map[string]interface{}(bound)) {
 			return nil, false
 		}
 	}

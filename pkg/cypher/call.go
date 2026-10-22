@@ -302,14 +302,14 @@ func expectedReturnColumnsFromTail(tail string) []string {
 	return append([]string(nil), plan.columns...)
 }
 
-func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCallTail(admission admittedRelationshipStatement, ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, error) {
 	if seed == nil {
 		return nil, localizedError(localization.CypherCommandRoutingCallTailSeedRequired(), nil)
 	}
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
-	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
+	if projected, ok, err := e.projectCallTailReturnAll(admission, seed, tail); ok || err != nil {
 		return projected, err
 	}
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
@@ -320,14 +320,14 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 		// WITH … [WHERE] RETURN … projections keep their compiled row
 		// projection, which declines aggregation, DISTINCT and SKIP / LIMIT
 		// expressions.
-		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, expectedReturnColumnsFromTail(tail)); ok || err != nil {
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(admission, ctx, seed, tail, expectedReturnColumnsFromTail(tail)); ok || err != nil {
 			return projected, err
 		}
-		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+		if pipelined, ok, err := e.executeCallTailPipeline(admission, ctx, seed, tail); ok || err != nil {
 			return pipelined, err
 		}
 	}
-	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(ctx, seed, tail); ok || err != nil {
+	if pipelined, ok, err := e.tryExecuteCallTailProcedurePipeline(admission, ctx, seed, tail); ok || err != nil {
 		return pipelined, err
 	}
 	if len(seed.Rows) == 0 {
@@ -351,15 +351,15 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// ORDER/LIMIT scope. Write tails (SET/CREATE/DELETE/MERGE/REMOVE) must use
 	// the per-row path to preserve transactional write-per-row semantics.
 	if !isPotentialWriteTail(tail) {
-		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(ctx, seed, tail, expectedCols); ok || err != nil {
+		if projected, ok, err := e.tryExecuteCallTailRelationshipMatchProjection(admission, ctx, seed, tail, expectedCols); ok || err != nil {
 			return projected, err
 		}
-		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(ctx, seed, tail, expectedCols); ok || err != nil {
+		if projected, ok, err := e.tryExecuteCallTailProjectionFilter(admission, ctx, seed, tail, expectedCols); ok || err != nil {
 			return projected, err
 		}
 	}
 	if !isPotentialWriteTail(tail) {
-		if pipelined, ok, err := e.executeCallTailPipeline(ctx, seed, tail); ok || err != nil {
+		if pipelined, ok, err := e.executeCallTailPipeline(admission, ctx, seed, tail); ok || err != nil {
 			return pipelined, err
 		}
 	}
@@ -367,14 +367,14 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	// per-row tails concurrently. It runs the tail once per yielded row, so it
 	// can't aggregate across rows.
 	if len(seed.Rows) > 1 && !isPotentialWriteTail(tail) {
-		if parallel, ok, err := e.executeCallTailParallel(ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
+		if parallel, ok, err := e.executeCallTailParallel(admission, ctx, seed, tail, usedCols, expectedCols); ok || err != nil {
 			return parallel, err
 		}
 	}
 
 	results := make([]callTailRowResult, len(seed.Rows))
 	for i, row := range seed.Rows {
-		res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tail, usedCols, expectedCols)
+		res, err := e.executeCallTailSingleRow(admission, ctx, seed.Columns, row, tail, usedCols, expectedCols)
 		results[i] = callTailRowResult{idx: i, res: res, err: err}
 		if err != nil {
 			break
@@ -386,7 +386,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 // executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
 // (runPipelineClauses) whose input rows are the procedure's yielded rows. It
 // declines (ok false) when a tail clause isn't a pipeline clause.
-func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeCallTailPipeline(admission admittedRelationshipStatement, ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 	clauses, ok := pipelineClausesFor(tail)
 	if !ok || len(clauses) == 0 {
 		return nil, false, nil
@@ -399,14 +399,14 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 	for _, column := range seed.Columns {
 		scope[column] = struct{}{}
 	}
-	result, ok, err := e.runPipelineClauses(ctx, rows, scope, clauses, clauses)
+	result, ok, err := e.runPipelineClauses(admission, ctx, rows, scope, clauses, clauses)
 	if ok {
 		e.markCallTailPipelineUsed()
 	}
 	return result, ok, err
 }
 
-func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
+func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(admission admittedRelationshipStatement,
 	ctx context.Context,
 	seed *ExecuteResult,
 	tail string,
@@ -424,7 +424,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	for _, row := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, row))
 	}
-	projected, ok := e.pipelineApplyWith(ctx, rows, prefix)
+	projected, ok := e.pipelineApplyWith(admission, ctx, rows, prefix)
 	if !ok {
 		return nil, false, nil
 	}
@@ -439,7 +439,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
 	for _, bindings := range projected {
-		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
+		procedureResult, err := e.executeProcedureCall(admission, ctx, callParts.callOnly, true)
 		if err != nil {
 			return nil, true, err
 		}
@@ -456,7 +456,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 		}
 	}
 
-	result, err := e.executeCallTail(ctx, combined, callParts.tail)
+	result, err := e.executeCallTail(admission, ctx, combined, callParts.tail)
 	return result, true, err
 }
 
@@ -498,7 +498,7 @@ func callTailWithProjectionColumns(withClause string) ([]string, bool) {
 	return columns, len(columns) > 0
 }
 
-func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) projectCallTailReturnAll(admission admittedRelationshipStatement, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 	trimmed := strings.TrimSpace(tail)
 	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
 		return nil, false, nil
@@ -526,7 +526,7 @@ func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail str
 	if modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(context.Background(), result, modifiers)
+	result, err := e.applyResultModifiers(admission, context.Background(), result, modifiers)
 	return result, true, err
 }
 
@@ -536,7 +536,7 @@ type callTailRowResult struct {
 	err error
 }
 
-func (e *StorageExecutor) executeCallTailParallel(
+func (e *StorageExecutor) executeCallTailParallel(admission admittedRelationshipStatement,
 	ctx context.Context,
 	seed *ExecuteResult,
 	tail string,
@@ -568,7 +568,7 @@ func (e *StorageExecutor) executeCallTailParallel(
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				res, err := e.executeCallTailSingleRow(ctx, seed.Columns, j.row, tail, usedCols, expectedCols)
+				res, err := e.executeCallTailSingleRow(admission, ctx, seed.Columns, j.row, tail, usedCols, expectedCols)
 				results <- callTailRowResult{idx: j.idx, res: res, err: err}
 			}
 		}()
@@ -615,7 +615,7 @@ func combineCallTailRowResults(results []callTailRowResult, expectedCols []strin
 	return combined, nil
 }
 
-func (e *StorageExecutor) executeCallTailSingleRow(
+func (e *StorageExecutor) executeCallTailSingleRow(admission admittedRelationshipStatement,
 	ctx context.Context,
 	seedCols []string,
 	row []interface{},
@@ -663,7 +663,7 @@ func (e *StorageExecutor) executeCallTailSingleRow(
 		query = strings.Join(prefix, " ") + " " + query
 	}
 
-	inner, err := e.executeInternal(ctx, query, params)
+	inner, err := e.executeFragment(admission, ctx, query, params)
 	if err != nil {
 		return nil, err
 	}
@@ -737,7 +737,7 @@ type callTailRelationshipPatternParts struct {
 	rest         string
 }
 
-func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
+func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(admission admittedRelationshipStatement,
 	ctx context.Context,
 	seed *ExecuteResult,
 	tail string,
@@ -751,7 +751,7 @@ func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 	for _, seedRow := range seed.Rows {
 		rows = append(rows, callTailRow(ctx, seed, seedRow))
 	}
-	result, ok := e.executeCallTailProjectionPlan(ctx, plan, rows, expectedCols)
+	result, ok := e.executeCallTailProjectionPlan(admission, ctx, plan, rows, expectedCols)
 	if !ok {
 		return nil, false, nil
 	}
@@ -762,7 +762,7 @@ func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 // executeCallTailProjectionPlan applies the plan's WITH (and its WHERE), then
 // its RETURN with ORDER BY / SKIP / LIMIT, with the pipeline's appliers. ok is
 // false when an applier declines; nothing has been written then.
-func (e *StorageExecutor) executeCallTailProjectionPlan(
+func (e *StorageExecutor) executeCallTailProjectionPlan(admission admittedRelationshipStatement,
 	ctx context.Context,
 	plan *callTailProjectionPlan,
 	rows []pipelineRow,
@@ -770,15 +770,15 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 ) (*ExecuteResult, bool) {
 	var projected []pipelineRow
 	if plan.passThroughWith {
-		projected = e.filterPipelineRows(ctx, rows, plan.withWhere)
+		projected = e.filterPipelineRows(admission, ctx, rows, plan.withWhere)
 	} else {
 		var ok bool
-		projected, ok = e.pipelineApplyWith(ctx, rows, plan.withClause)
+		projected, ok = e.pipelineApplyWith(admission, ctx, rows, plan.withClause)
 		if !ok {
 			return nil, false
 		}
 	}
-	result, ok := e.pipelineApplyReturn(ctx, projected, plan.returnClause)
+	result, ok := e.pipelineApplyReturn(admission, ctx, projected, plan.returnClause)
 	if !ok {
 		return nil, false
 	}
@@ -788,7 +788,7 @@ func (e *StorageExecutor) executeCallTailProjectionPlan(
 	return result, true
 }
 
-func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
+func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(admission admittedRelationshipStatement,
 	ctx context.Context,
 	seed *ExecuteResult,
 	tail string,
@@ -819,7 +819,7 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		if plan.relType != "" && relationship.Type != plan.relType {
 			continue
 		}
-		expected, _ := e.evaluateRowExpressionWithContext(ctx, plan.propertyExpr, values)
+		expected, _ := e.evaluateRowExpressionWithContext(admission, ctx, plan.propertyExpr, values)
 		if expected == nil || !e.compareEqual(relationship.Properties[plan.propertyKey], expected) {
 			continue
 		}
@@ -844,12 +844,12 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		matched[plan.startVar] = startNode
 		matched[plan.relVar] = relationship
 		matched[plan.endVar] = endNode
-		if plan.whereClause != "" && !e.evaluateRowPredicate(ctx, plan.whereClause, matched) {
+		if plan.whereClause != "" && !e.evaluateRowPredicate(admission, ctx, plan.whereClause, matched) {
 			continue
 		}
 		rows = append(rows, matched)
 	}
-	result, ok := e.executeCallTailProjectionPlan(ctx, plan.projection, rows, expectedCols)
+	result, ok := e.executeCallTailProjectionPlan(admission, ctx, plan.projection, rows, expectedCols)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1418,7 +1418,7 @@ func findKeywordIndexInContext(s, keyword string) int {
 // YIELD's WHERE and orders / pages them with its ORDER BY / SKIP / LIMIT the
 // way a WITH does: through the pipeline, over the aliased rows, so the
 // predicate sees the aliases and evaluates like any other WHERE (#530).
-func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyYieldFilter(admission admittedRelationshipStatement, ctx context.Context, result *ExecuteResult, yield *yieldClause) (*ExecuteResult, error) {
 	if yield == nil {
 		return result, nil
 	}
@@ -1461,7 +1461,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	for _, row := range result.Rows {
 		rows = append(rows, callTailRow(ctx, result, row))
 	}
-	rows = e.filterPipelineRows(ctx, rows, yield.where)
+	rows = e.filterPipelineRows(admission, ctx, rows, yield.where)
 	if yield.orderBy != "" || yield.skip != "" || yield.limit != "" {
 		var with strings.Builder
 		with.WriteString("WITH *")
@@ -1474,7 +1474,7 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		if yield.limit != "" {
 			with.WriteString(" LIMIT " + yield.limit)
 		}
-		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String())
+		ordered, ok := e.pipelineApplyWith(admission, ctx, rows, with.String())
 		if !ok {
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.
@@ -1494,15 +1494,15 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	return result, nil
 }
 
-func (e *StorageExecutor) executeCall(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	return e.executeProcedureCall(ctx, cypher, false)
+func (e *StorageExecutor) executeCall(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
+	return e.executeProcedureCall(admission, ctx, cypher, false)
 }
 
 // executeProcedureCall runs a procedure call and the tail after it. inQuery is
 // true when the call is part of a larger query whose other clauses the caller
 // runs (MATCH … CALL, a CALL in a tail): its YIELD may then filter, order and
 // page, which a standalone call can't (validateYieldModifiers).
-func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeProcedureCall(admission admittedRelationshipStatement, ctx context.Context, cypher string, inQuery bool) (*ExecuteResult, error) {
 	// A RETURN right after YIELD is the start of the tail, like any other
 	// clause, so it runs over all yielded rows (executeCallTail): an aggregate
 	// in it groups the rows, and ORDER BY / SKIP / LIMIT apply to all of them.
@@ -1512,7 +1512,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(callCypher)
-	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
+	if err := e.validateYieldModifiers(admission, yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
 		return nil, err
 	}
 
@@ -1527,7 +1527,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		if err := validateProcedureYieldBindings(yield, hasTail); err != nil {
 			return nil, err
 		}
-		args, err := e.extractBoundProcedureInvocationArguments(ctx, proc.Spec, callCypher)
+		args, err := e.extractBoundProcedureInvocationArguments(admission, ctx, proc.Spec, callCypher)
 		if err != nil {
 			return nil, err
 		}
@@ -1543,12 +1543,12 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 		}
 		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
-		result, err := proc.Handler(procedureCtx, procedureExec, callCypher, args)
+		result, err := proc.invoke(admission, procedureCtx, procedureExec, callCypher, args)
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)
 		}
 		if yield != nil {
-			result, err = e.applyYieldFilter(ctx, result, yield)
+			result, err = e.applyYieldFilter(admission, ctx, result, yield)
 			if err != nil {
 				return nil, err
 			}
@@ -1560,7 +1560,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 				// leading clause.
 				result = &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
 			}
-			return e.executeCallTail(ctx, result, tailCypher)
+			return e.executeCallTail(admission, ctx, result, tailCypher)
 		}
 		return result, nil
 	}
@@ -1609,7 +1609,8 @@ func sortedStringSet(set map[string]bool) []string {
 	return members
 }
 
-func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callDbRelationshipTypes() (*ExecuteResult, error) {
+	e := run.executor
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return nil, err
@@ -1628,6 +1629,10 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbRelationshipTypes()
 }
 
 func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
@@ -1771,7 +1776,8 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callNornicDbStats() (*ExecuteResult, error) {
+	e := run.executor
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
@@ -1781,6 +1787,10 @@ func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
 			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
 		},
 	}, nil
+}
+
+func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callNornicDbStats()
 }
 
 func (e *StorageExecutor) countLabels() int {
@@ -1797,7 +1807,8 @@ func (e *StorageExecutor) countLabels() int {
 	return len(labelSet)
 }
 
-func (e *StorageExecutor) countRelTypes() int {
+func (run relationshipEntityExecution) countRelTypes() int {
+	e := run.executor
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return 0
@@ -1807,6 +1818,10 @@ func (e *StorageExecutor) countRelTypes() int {
 		typeSet[edge.Type] = true
 	}
 	return len(typeSet)
+}
+
+func (e *StorageExecutor) countRelTypes() int {
+	return e.relationshipEntityExecution().countRelTypes()
 }
 
 func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
@@ -1895,7 +1910,8 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callDbSchemaRelProperties() (*ExecuteResult, error) {
+	e := run.executor
 	edges, _ := e.storage.AllEdges()
 
 	// Collect properties per relationship type
@@ -1923,7 +1939,12 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbSchemaRelProperties()
+}
+
+func (run relationshipEntityExecution) callDbPropertyKeys() (*ExecuteResult, error) {
+	e := run.executor
 	nodes, _ := e.storage.AllNodes()
 	edges, _ := e.storage.AllEdges()
 
@@ -1948,6 +1969,10 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbPropertyKeys()
 }
 
 func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {

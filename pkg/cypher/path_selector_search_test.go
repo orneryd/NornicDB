@@ -243,17 +243,27 @@ func TestSelectedPathSearchCancelled(t *testing.T) {
 	require.NoError(t, err)
 	source := result.Rows[0][0].(*storage.Node)
 	cancelled, cancel := context.WithCancel(ctx)
-	search := exec.newPathSearch(cancelled, plan.forward, pipelineRow{}, -1, source)
-	search.begin(source)
-	require.True(t, search.nextLevel())
-	require.True(t, search.nextLevel())
+	fixtureAdmission1706Context, fixtureAdmission1706 := statementTestContext(cancelled, ("MATCH "+("(a)(()-[:T]-())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1706Context
+	search := exec.relationshipExecutionFor(fixtureAdmission1706, fixtureAdmission1706Context, "(a)(()-[:T]-())+(b)", "").newPathSearch(cancelled, plan.forward, pipelineRow{}, -1, source)
+	fixtureAdmission1707Context, fixtureAdmission1707 := statementTestContext(context.Background(), ("MATCH "+("(a)(()-[:T]-())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1707Context
+	search.begin(fixtureAdmission1707, source)
+	fixtureAdmission1708Context, fixtureAdmission1708 := statementTestContext(context.Background(), ("MATCH "+("(a)(()-[:T]-())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1708Context
+	require.True(t, search.nextLevel(fixtureAdmission1708))
+	fixtureAdmission1709Context, fixtureAdmission1709 := statementTestContext(context.Background(), ("MATCH "+("(a)(()-[:T]-())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1709Context
+	require.True(t, search.nextLevel(fixtureAdmission1709))
 	cancel()
 	products, levels := len(search.products), len(search.levels)
 	calls := 0
 	keepGoing, found, _ := search.trails(2, 0, map[storage.EdgeID]struct{}{}, nil, func([]pathSearchHop) bool { calls++; return true })
 	require.False(t, keepGoing)
 	require.False(t, found)
-	require.False(t, search.nextLevel(), "a cancelled search adds no level")
+	fixtureAdmission1710Context, fixtureAdmission1710 := statementTestContext(context.Background(), ("MATCH "+("(a)(()-[:T]-())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1710Context
+	require.False(t, search.nextLevel(fixtureAdmission1710), "a cancelled search adds no level")
 	require.Zero(t, calls)
 	require.Len(t, search.products, products)
 	require.Len(t, search.levels, levels)
@@ -321,12 +331,20 @@ func TestSelectedPathSearchLengthBound(t *testing.T) {
 
 	plan, _, ok := compileSelectedPathPlan("(s)(()-[:E]-())+(t)", "p", "", nil)
 	require.True(t, ok)
-	corner, err := grid.pipelineMatchRows(ctx, pipelineRow{}, "MATCH (s:G {x: 0, y: 0})")
+	fixtureAdmission772Context, fixtureAdmission772 := statementTestContext(ctx, "MATCH (s:G {x: 0, y: 0})")
+	_ = fixtureAdmission772
+	corner, err := grid.pipelineMatchRows(fixtureAdmission772, fixtureAdmission772Context, pipelineRow{}, "MATCH (s:G {x: 0, y: 0})")
 	require.NoError(t, err)
 	source := corner[0]["s"].(*storage.Node)
-	search := grid.newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
-	rows := search.run(source, 1, false, func(path pathSearchPath) (pipelineRow, bool) {
-		return grid.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
+	fixtureAdmission1711Context, fixtureAdmission1711 := statementTestContext(ctx, ("MATCH "+("(s)(()-[:E]-())+(t)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1711Context
+	search := grid.relationshipExecutionFor(fixtureAdmission1711, fixtureAdmission1711Context, "(s)(()-[:E]-())+(t)", "").newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
+	fixtureAdmission1712Context, fixtureAdmission1712 := statementTestContext(context.Background(), ("MATCH "+("(s)(()-[:E]-())+(t)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1712Context
+	rows := search.run(fixtureAdmission1712, source, 1, false, func(path pathSearchPath) (pipelineRow, bool) {
+		fixtureAdmission1713Context, fixtureAdmission1713 := statementTestContext(ctx, ("MATCH "+("(s)(()-[:E]-())+(t)"))+"\n"+("MATCH "+("(s)(()-[:E]-())+(t)")))
+		_ = fixtureAdmission1713Context
+		return grid.bindSelectedPath(fixtureAdmission1713, fixtureAdmission1713Context, plan, plan.forward, false, pipelineRow{}, path)
 	})
 	require.Len(t, rows, 28)
 	reached := map[storage.NodeID]bool{}
@@ -425,13 +443,19 @@ func TestSelectedPathSearchShortestPathRoutes(t *testing.T) {
 // ordinary evaluator.
 func TestSelectedPathSearchShortestPathUnreadable(t *testing.T) {
 	exec, ctx := newShortestSelectorExecutor(t)
-	_, ok, err := exec.parseShortestPathMatch(ctx, "p = shortestPath((a)-[:$(t)*]->(b))")
+	fixtureAdmission1714Context, fixtureAdmission1714 := statementTestContext(ctx, "p = shortestPath((a)-[:$(t)*]->(b))")
+	_ = fixtureAdmission1714Context
+	_, ok, err := exec.parseShortestPathMatch(fixtureAdmission1714, fixtureAdmission1714Context, "p = shortestPath((a)-[:$(t)*]->(b))")
 	require.True(t, ok)
 	require.Error(t, err)
-	_, handled, err := exec.evaluateShortestPathValue(ctx, "shortestPath", "(a)-[:$(t)*]->(b)", nil)
+	fixtureAdmission773Context, fixtureAdmission773 := expressionTestContext(ctx, "shortestPath"+"("+"(a)-[:$(t)*]->(b)"+")")
+	_ = fixtureAdmission773
+	_, handled, err := exec.evaluateShortestPathValue(fixtureAdmission773, fixtureAdmission773Context, "shortestPath", "(a)-[:$(t)*]->(b)", nil)
 	require.True(t, handled)
 	require.Error(t, err)
-	_, handled, err = exec.evaluateShortestPathValue(ctx, "shortestPath", "(a)-->(b)-->(c)", nil)
+	fixtureAdmission774Context, fixtureAdmission774 := expressionTestContext(ctx, "shortestPath"+"("+"(a)-->(b)-->(c)"+")")
+	_ = fixtureAdmission774
+	_, handled, err = exec.evaluateShortestPathValue(fixtureAdmission774, fixtureAdmission774Context, "shortestPath", "(a)-->(b)-->(c)", nil)
 	require.False(t, handled)
 	require.NoError(t, err)
 }

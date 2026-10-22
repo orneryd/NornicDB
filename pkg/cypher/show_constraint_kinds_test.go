@@ -157,6 +157,8 @@ func TestShowConstraintKindErrors(t *testing.T) {
 		require.NoError(t, err, command)
 		require.False(t, isConstraints, command)
 	}
-	_, err := exec.executeShowConstraints(ctx, "SHOW PROPERTY KEY CONSTRAINTS")
+	fixtureAdmission1462Context, fixtureAdmission1462 := statementTestContext(ctx, "SHOW PROPERTY KEY CONSTRAINTS")
+	_ = fixtureAdmission1462Context
+	_, err := exec.executeShowConstraints(fixtureAdmission1462, fixtureAdmission1462Context, "SHOW PROPERTY KEY CONSTRAINTS")
 	require.Error(t, err)
 }

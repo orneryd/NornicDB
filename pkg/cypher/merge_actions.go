@@ -124,11 +124,11 @@ func splitMergeClauseActions(mergeBody string) mergeClauseActions {
 // applyMergeActions applies a MERGE's ON CREATE or ON MATCH SET text
 // (mergeActionClauses.setText) to the rows the MERGE produced, through the shared SET
 // applier, and adds what it wrote to stats.
-func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipelineRow, actions string, stats *QueryStats) error {
+func (e *StorageExecutor) applyMergeActions(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, actions string, stats *QueryStats) error {
 	if actions == "" {
 		return nil
 	}
-	setStats, ok, err := e.pipelineApplySet(ctx, rows, actions)
+	setStats, ok, err := e.pipelineApplySet(admission, ctx, rows, actions)
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func directedMergePath(pattern string) string {
 // row) or the whole path is created, reusing the row's bound variables
 // (#907). created reports which. A null or NaN property in the pattern is a
 // SemanticError, as for a single relationship (validateMergePatternProperties).
-func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
+func (e *StorageExecutor) pipelineMergePath(admission admittedRelationshipStatement, ctx context.Context, row pipelineRow, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (rows []pipelineRow, stats *QueryStats, created bool, err error) {
 	for _, segment := range mergePathSegments(pattern) {
 		shape, shapeErr := e.parseMergeRelationshipShape(segment)
 		if shapeErr != nil {
@@ -239,13 +239,13 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		}
 		for _, content := range [...]string{shape.startContent, shape.endContent} {
 			if _, properties := splitNodePatternProperties("(" + content + ")"); properties != "" {
-				if err := validateMergePatternProperties(e.parseMergeProperties(ctx, properties, nodeContext, relContext), "node"); err != nil {
+				if err := validateMergePatternProperties(e.parseMergeProperties(admission, ctx, properties, nodeContext, relContext), "node"); err != nil {
 					return nil, nil, false, err
 				}
 			}
 		}
 		if shape.relProps != "" {
-			if err := validateMergePatternProperties(e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext), "relationship"); err != nil {
+			if err := validateMergePatternProperties(e.parseMergeProperties(admission, ctx, shape.relProps, nodeContext, relContext), "relationship"); err != nil {
 				return nil, nil, false, err
 			}
 		}
@@ -261,7 +261,10 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// returned bindings remain raw for writes and the outer query projects them.
 	identity := e.cloneWithStorage(e.storage)
 	identity.storedPropertyIdentity = true
-	matched, err := identity.pipelineMatchRows(ctx, row, match)
+	var fixtureAdmission8 admittedRelationshipStatement
+	ctx, fixtureAdmission8 = compileRelationshipStatement(ctx, match, nil)
+	_ = fixtureAdmission8
+	matched, err := identity.pipelineMatchRows(fixtureAdmission8, ctx, row, match)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -278,9 +281,9 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
 	}
 	// One row: the create reports not-ok only with an error.
-	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(createPattern)}})
+	createdRows, result, _, err := e.pipelineApplyCreateClauses(fixtureAdmission8, ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(createPattern)}})
 	if err == nil && assignments != "" {
-		err = e.applyMergeActions(ctx, createdRows, "SET "+assignments, result.Stats)
+		err = e.applyMergeActions(fixtureAdmission8, ctx, createdRows, "SET "+assignments, result.Stats)
 	}
 	if err != nil {
 		if !mergeCreateConflict(err) {
@@ -288,7 +291,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		}
 		// A concurrent MERGE created part of the path first: match again,
 		// as the node and relationship MERGE routes recover (mergeCreateConflict).
-		recovered, matchErr := identity.pipelineMatchRows(ctx, row, match)
+		recovered, matchErr := identity.pipelineMatchRows(fixtureAdmission8, ctx, row, match)
 		if matchErr != nil || len(recovered) == 0 {
 			return nil, nil, false, err
 		}

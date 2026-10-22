@@ -201,10 +201,14 @@ func TestDetachDeleteAnonymousChainedPath(t *testing.T) {
 	edges, edgeErr := executor.Execute(ctx, `MATCH ()-[relationship]->() RETURN count(relationship)`, nil)
 	require.NoError(t, edgeErr)
 	require.Equal(t, int64(3), edges.Rows[0][0])
-	parsed := executor.parseTraversalPattern(ctx, `(:Start)-->()-->()-->()`)
+	fixtureAdmission275Context, fixtureAdmission275 := traversalTestContext(ctx, `(:Start)-->()-->()-->()`, "", nil)
+	_ = fixtureAdmission275
+	parsed := executor.parseTraversalPattern(fixtureAdmission275, fixtureAdmission275Context, `(:Start)-->()-->()-->()`)
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.Segments, 3)
-	require.Len(t, executor.traverseGraph(ctx, parsed), 1)
+	fixtureAdmission1570Context, fixtureAdmission1570 := statementTestContext(ctx, ("MATCH "+(`(:Start)-->()-->()-->()`))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1570Context
+	require.Len(t, executor.relationshipExecutionFor(fixtureAdmission1570, fixtureAdmission1570Context, `(:Start)-->()-->()-->()`, "").traverseGraph(ctx, parsed), 1)
 	matched, matchErr := executor.Execute(ctx, `MATCH path = (:Start)-->()-->()-->() RETURN path`, nil)
 	require.NoError(t, matchErr)
 	require.Len(t, matched.Rows, 1)

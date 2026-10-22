@@ -557,33 +557,45 @@ func TestSystemCommands_AlterDatabaseSetLimit(t *testing.T) {
 	})
 
 	t.Run("error on malformed keyword layout", func(t *testing.T) {
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DB test_db SET LIMIT max_nodes = 1")
+		fixtureAdmission1468Context, fixtureAdmission1468 := statementTestContext(ctx, "ALTER DB test_db SET LIMIT max_nodes = 1")
+		_ = fixtureAdmission1468Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1468, fixtureAdmission1468Context, "ALTER DB test_db SET LIMIT max_nodes = 1")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid ALTER DATABASE syntax")
 	})
 
 	t.Run("error when set limit clause missing", func(t *testing.T) {
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db")
+		fixtureAdmission1469Context, fixtureAdmission1469 := statementTestContext(ctx, "ALTER DATABASE test_db")
+		_ = fixtureAdmission1469Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1469, fixtureAdmission1469Context, "ALTER DATABASE test_db")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "SET LIMIT clause expected")
 	})
 
 	t.Run("error on invalid assignment format", func(t *testing.T) {
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes")
+		fixtureAdmission1470Context, fixtureAdmission1470 := statementTestContext(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes")
+		_ = fixtureAdmission1470Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1470, fixtureAdmission1470Context, "ALTER DATABASE test_db SET LIMIT max_nodes")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid limit assignment syntax")
 	})
 
 	t.Run("error on invalid typed values", func(t *testing.T) {
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes = bad")
+		fixtureAdmission1471Context, fixtureAdmission1471 := statementTestContext(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes = bad")
+		_ = fixtureAdmission1471Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1471, fixtureAdmission1471Context, "ALTER DATABASE test_db SET LIMIT max_nodes = bad")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid max_nodes value")
 
-		_, err = exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db SET LIMIT max_query_time = never")
+		fixtureAdmission1472Context, fixtureAdmission1472 := statementTestContext(ctx, "ALTER DATABASE test_db SET LIMIT max_query_time = never")
+		_ = fixtureAdmission1472Context
+		_, err = exec.executeAlterDatabase(fixtureAdmission1472, fixtureAdmission1472Context, "ALTER DATABASE test_db SET LIMIT max_query_time = never")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid max_query_time value")
 
-		_, err = exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db SET LIMIT max_connections = nope")
+		fixtureAdmission1473Context, fixtureAdmission1473 := statementTestContext(ctx, "ALTER DATABASE test_db SET LIMIT max_connections = nope")
+		_ = fixtureAdmission1473Context
+		_, err = exec.executeAlterDatabase(fixtureAdmission1473, fixtureAdmission1473Context, "ALTER DATABASE test_db SET LIMIT max_connections = nope")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid max_connections value")
 	})
@@ -591,7 +603,9 @@ func TestSystemCommands_AlterDatabaseSetLimit(t *testing.T) {
 	t.Run("error when get limits type is invalid", func(t *testing.T) {
 		bad := &badLimitsTypeDBManager{mockDatabaseManager: mockDBM}
 		exec.SetDatabaseManager(bad)
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes = 1")
+		fixtureAdmission1474Context, fixtureAdmission1474 := statementTestContext(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes = 1")
+		_ = fixtureAdmission1474Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1474, fixtureAdmission1474Context, "ALTER DATABASE test_db SET LIMIT max_nodes = 1")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid limits type returned")
 		exec.SetDatabaseManager(mockDBM)
@@ -600,7 +614,9 @@ func TestSystemCommands_AlterDatabaseSetLimit(t *testing.T) {
 	t.Run("error when set limits fails", func(t *testing.T) {
 		fail := &failingSetLimitsDBManager{mockDatabaseManager: mockDBM}
 		exec.SetDatabaseManager(fail)
-		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes = 1")
+		fixtureAdmission1475Context, fixtureAdmission1475 := statementTestContext(ctx, "ALTER DATABASE test_db SET LIMIT max_nodes = 1")
+		_ = fixtureAdmission1475Context
+		_, err := exec.executeAlterDatabase(fixtureAdmission1475, fixtureAdmission1475Context, "ALTER DATABASE test_db SET LIMIT max_nodes = 1")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to set limits")
 		exec.SetDatabaseManager(mockDBM)
@@ -741,7 +757,9 @@ func TestSystemCommands_ShowDatabase_BranchCoverage(t *testing.T) {
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n1", Type: "SELF"}))
 
 	// Default/fallback branch (dbManager nil): deterministic row.
-	res, err := exec.executeShowDatabase(ctx, "SHOW DATABASE")
+	fixtureAdmission1476Context, fixtureAdmission1476 := statementTestContext(ctx, "SHOW DATABASE")
+	_ = fixtureAdmission1476Context
+	res, err := exec.executeShowDatabase(fixtureAdmission1476, fixtureAdmission1476Context, "SHOW DATABASE")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "nornic", res.Rows[0][0])
@@ -753,13 +771,17 @@ func TestSystemCommands_ShowDatabase_BranchCoverage(t *testing.T) {
 	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_ns")
 	exec.SetDatabaseManager(mockDBM)
-	res, err = exec.executeShowDatabase(ctx, "SHOW DATABASE")
+	fixtureAdmission1477Context, fixtureAdmission1477 := statementTestContext(ctx, "SHOW DATABASE")
+	_ = fixtureAdmission1477Context
+	res, err = exec.executeShowDatabase(fixtureAdmission1477, fixtureAdmission1477Context, "SHOW DATABASE")
 	require.NoError(t, err)
 	require.Equal(t, "tenant_ns", res.Rows[0][0])
 
 	// USE-database context branch has highest priority.
 	useCtx := context.WithValue(ctx, ctxKeyUseDatabase, "tenant_ctx")
-	res, err = exec.executeShowDatabase(useCtx, "SHOW DATABASE")
+	fixtureAdmission1478Context, fixtureAdmission1478 := statementTestContext(useCtx, "SHOW DATABASE")
+	_ = fixtureAdmission1478Context
+	res, err = exec.executeShowDatabase(fixtureAdmission1478, fixtureAdmission1478Context, "SHOW DATABASE")
 	require.NoError(t, err)
 	require.Equal(t, "tenant_ctx", res.Rows[0][0])
 }

@@ -8,11 +8,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
-	return parallelFilterNodes(nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
+func (e *StorageExecutor) filterNodes(admission admittedRelationshipStatement, ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
+	return parallelFilterNodes(nodes, e.compileNodeWhereFilter(admission, ctx, variable, whereClause))
 }
 
-func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
+func (e *StorageExecutor) getCompiledSimpleWhere(admission admittedRelationshipStatement, ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
 	plan := planRowPredicate(whereClause)
 	if plan == nil || !plan.complete {
 		return nil, false
@@ -26,23 +26,23 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 		values[name] = value
 	}
 	return func(node *storage.Node) bool {
-		return e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: &values, nodes: binding{variable: node}, parameters: parameters}, nil)
+		return e.evaluateRowPredicatePartScope(admission, ctx, &plan.root, compiledRowScope{values: &values, nodes: binding{variable: node}, parameters: parameters}, nil)
 	}, true
 }
 
-func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable, whereClause string) func(*storage.Node) bool {
-	if compiled, ok := e.getCompiledSimpleWhere(ctx, variable, whereClause); ok {
+func (e *StorageExecutor) compileNodeWhereFilter(admission admittedRelationshipStatement, ctx context.Context, variable, whereClause string) func(*storage.Node) bool {
+	if compiled, ok := e.getCompiledSimpleWhere(admission, ctx, variable, whereClause); ok {
 		return compiled
 	}
 	return func(node *storage.Node) bool {
-		return e.evaluateWhere(ctx, node, variable, whereClause)
+		return e.evaluateWhere(admission, ctx, node, variable, whereClause)
 	}
 }
 
 // evaluateWhere reports whether a single-node WHERE clause holds, i.e. is
 // known true under Cypher's three-valued logic (null and false both drop the
 // row).
-func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
+func (e *StorageExecutor) evaluateWhere(statement admittedRelationshipStatement, ctx context.Context, node *storage.Node, variable, whereClause string) bool {
 	if strings.TrimSpace(whereClause) == "" {
 		return true
 	}
@@ -57,7 +57,7 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 			values[name] = value
 		}
 	}
-	return e.evaluateRowPredicate(ctx, whereClause, values)
+	return e.evaluateRowPredicate(statement, ctx, whereClause, values)
 }
 
 // compileRelationshipWhereFilter compiles a retrieval's where for relationship
@@ -65,7 +65,7 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 // end (null when not visible) and node as null, with the statement's
 // parameters and the calling row's variables, as evaluateWhere binds them for
 // a node candidate.
-func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
+func (e *StorageExecutor) compileRelationshipWhereFilter(statement admittedRelationshipStatement, ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
 	return func(edge *storage.Edge, start, end *storage.Node) bool {
 		values := pipelineNodeRow(ctx, "node", nil)
 		for name, value := range e.fabricRecordBindings {
@@ -83,7 +83,7 @@ func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, wh
 		if end != nil {
 			values["end"] = end
 		}
-		return e.evaluateRowPredicate(ctx, whereClause, values)
+		return e.evaluateRowPredicate(statement, ctx, whereClause, values)
 	}
 }
 
@@ -137,14 +137,14 @@ func normalizeNodeIDValue(v interface{}) interface{} {
 // evaluateWhereAsBoolean evaluates a WHERE expression (e.g. size(n.content) > 10000, exists(n.prop))
 // using the expression evaluator and returns a boolean. Used when evaluateWhere does not handle
 // the condition as id(), elementId(), or variable.property.
-func (e *StorageExecutor) evaluateWhereAsBoolean(ctx context.Context, whereClause, variable string, node *storage.Node) bool {
+func (e *StorageExecutor) evaluateWhereAsBoolean(admission admittedRelationshipStatement, ctx context.Context, whereClause, variable string, node *storage.Node) bool {
 	nodes := map[string]*storage.Node{variable: node}
-	result := e.evaluateExpressionWithContext(ctx, whereClause, nodes, nil)
+	result := e.evaluateExpressionWithContext(admission, ctx, whereClause, nodes, nil)
 	return predicateValueIsTrue(ctx, result, whereClause)
 }
 
 // parseValue extracts the actual value from a Cypher literal
-func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} {
+func (e *StorageExecutor) parseValue(admission admittedRelationshipStatement, ctx context.Context, s string) interface{} {
 	s = strings.TrimSpace(s)
 
 	if v, ok := resolveParamPathRef(ctx, s); ok {
@@ -155,16 +155,16 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	// ([1, 0] + [0], [[1], [0]][1], [1, 0, 0][0..2]) is evaluated: split as
 	// one literal, it lost or garbled elements.
 	if isListLiteral(s) {
-		return e.parseArrayValue(ctx, s)
+		return e.parseArrayValue(admission, ctx, s)
 	}
 	if strings.HasPrefix(s, "[") {
-		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
+		if evaluated, ok := e.evaluateScalarPropertyExpression(admission, ctx, s); ok {
 			return normalizePropValue(evaluated)
 		}
 	}
 	// Handle map literals: {key: value}
 	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
-		return e.parseProperties(ctx, s)
+		return e.parseProperties(admission, ctx, s)
 	}
 
 	// Handle quoted strings with escape sequence support
@@ -197,7 +197,7 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	}
 
 	if e.hasArithmeticOperator(s) {
-		if evaluated, ok := e.evaluateScalarPropertyExpression(ctx, s); ok {
+		if evaluated, ok := e.evaluateScalarPropertyExpression(admission, ctx, s); ok {
 			return normalizePropValue(evaluated)
 		}
 	}
@@ -236,9 +236,9 @@ func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
 	return dst
 }
 
-func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem, variable string, node *storage.Node) interface{} {
+func (e *StorageExecutor) resolveReturnItem(admission admittedRelationshipStatement, ctx context.Context, item returnItem, variable string, node *storage.Node) interface{} {
 	row := e.mergeBindingRow(ctx, map[string]*storage.Node{variable: node}, nil)
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+item.expr)
+	projected, err := e.projectMergeReturn(admission, ctx, []pipelineRow{row}, "RETURN "+item.expr)
 	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
 		return nil
 	}

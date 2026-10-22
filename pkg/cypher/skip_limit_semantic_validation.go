@@ -45,7 +45,7 @@ func extractPaginationExpressions(cypher string) []paginationExpression {
 	return result
 }
 
-func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
+func (e *StorageExecutor) validateStaticPaginationExpressions(admission admittedRelationshipStatement, cypher string) error {
 	braces := newSubqueryBraceScanner(cypher, 0)
 	// Check original subquery bodies before imported variables are replaced
 	// with their row values. A substituted integer is still a row dependency.
@@ -62,7 +62,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 		case '{':
 			if braces.at(index) {
 				if close := findMatchingDelimiter(cypher, index, '{', '}'); close >= 0 {
-					if err := e.validateStaticPaginationExpressions(cypher[index+1 : close]); err != nil {
+					if err := e.validateStaticPaginationExpressions(admission, cypher[index+1:close]); err != nil {
 						return err
 					}
 					index = close
@@ -71,7 +71,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 		}
 	}
 	for _, pagination := range extractPaginationExpressions(cypher) {
-		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
+		if err := e.validateStaticPaginationExpression(admission, pagination.keyword, pagination.value); err != nil {
 			return err
 		}
 	}
@@ -82,7 +82,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 // the statement is compiled: it must not use a row variable, and unless it
 // reads a parameter it must be a non-negative integer. WITH, RETURN and a
 // procedure call's YIELD share it.
-func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string) error {
+func (e *StorageExecutor) validateStaticPaginationExpression(admission admittedRelationshipStatement, keyword, expression string) error {
 	if expression == "" {
 		return paginationCompileTypeError(keyword, nil)
 	}
@@ -96,7 +96,7 @@ func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression
 	if strings.Contains(expression, "$") {
 		return nil
 	}
-	value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+	value, evaluated, err := e.evaluateRowValue(admission, expression, pipelineRow{})
 	if err != nil {
 		return err
 	}
@@ -121,13 +121,16 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 	if len(params) == 0 {
 		return nil
 	}
+	var fixtureAdmission9 admittedRelationshipStatement
+	ctx, fixtureAdmission9 = compileRelationshipStatement(ctx, cypher, nil)
+	_ = fixtureAdmission9
 	values := make(pipelineRow, len(params))
 	bindParameterRow(ctx, values)
 	for _, pagination := range extractPaginationExpressions(cypher) {
 		if !strings.Contains(pagination.value, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValue(fixtureAdmission9, pagination.value, values)
 		if err != nil {
 			return err
 		}

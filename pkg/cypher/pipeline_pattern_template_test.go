@@ -42,10 +42,12 @@ func TestPipelinePatternTemplateMatchesTextRoute(t *testing.T) {
 	}
 	for _, expression := range expressions {
 		pattern := fmt.Sprintf("(x:L {k: %s})", expression)
-		textRoute := exec.parseNodePattern(withValueBindings(ctx, row), pattern).properties
+		fixtureAdmission1741Context, fixtureAdmission1741 := nodePatternTestContext(withValueBindings(ctx, row), pattern)
+		_ = fixtureAdmission1741Context
+		textRoute := exec.parseNodePattern(fixtureAdmission1741, fixtureAdmission1741Context, pattern).properties
 		pairs, ok := exec.pipelinePropertyExpressions(fmt.Sprintf("{k: %s}", expression))
 		require.True(t, ok, expression)
-		direct, evaluated := exec.evaluatePipelineProperties(ctx, pairs, row)
+		direct, evaluated := exec.evaluatePipelineProperties(fixtureAdmission1741, ctx, pairs, row)
 		if !evaluated {
 			// The row takes the text route.
 			continue

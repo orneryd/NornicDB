@@ -189,7 +189,7 @@ func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 // WHERE leaf with the same three-valued membership as the expression
 // evaluator (cypherMembership): null x, a null list, or a list that holds null
 // without a match give unknown, and NOT IN of unknown stays unknown.
-func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.Node, variable, whereClause string) cypherTruth {
+func (e *StorageExecutor) evaluateInOpTruth(admission admittedRelationshipStatement, ctx context.Context, node *storage.Node, variable, whereClause string) cypherTruth {
 	upperClause := upperASCII(whereClause)
 
 	// Cypher: `<expr> NOT IN <list>` must split on " NOT IN ", not on
@@ -229,7 +229,7 @@ func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.N
 	// Evaluate both sides as expressions so we support both:
 	//   n.prop IN ['a', 'b']
 	//   'a' IN n.listProp
-	value := e.evaluateExpressionWithContext(ctx, left, nodes, nil)
+	value := e.evaluateExpressionWithContext(admission, ctx, left, nodes, nil)
 	rightIdent := strings.TrimSpace(right)
 	var listVal interface{}
 	if isValidIdentifier(rightIdent) {
@@ -238,7 +238,7 @@ func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.N
 		}
 	}
 	if listVal == nil {
-		listVal = e.evaluateExpressionWithContext(ctx, right, nodes, nil)
+		listVal = e.evaluateExpressionWithContext(admission, ctx, right, nodes, nil)
 	}
 	membership, ok := cypherMembership(value, listVal)
 	if !ok {

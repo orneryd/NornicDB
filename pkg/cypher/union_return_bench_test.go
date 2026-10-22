@@ -11,9 +11,12 @@ func BenchmarkExecuteReturn_NoBindings(b *testing.B) {
 	exec, _ := newTestExecutor(b)
 	ctx := context.Background()
 	b.ReportAllocs()
+	fixtureAdmission1823Context, fixtureAdmission1823 := statementTestContext(ctx, "RETURN 1 AS one, 'x' AS two")
 	b.ResetTimer()
+
+	_ = fixtureAdmission1823Context
 	for i := 0; i < b.N; i++ {
-		if _, err := exec.executeReturn(ctx, "RETURN 1 AS one, 'x' AS two"); err != nil {
+		if _, err := exec.executeReturn(fixtureAdmission1823, fixtureAdmission1823Context, "RETURN 1 AS one, 'x' AS two"); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -25,9 +28,12 @@ func BenchmarkExecuteReturn_BoundValues(b *testing.B) {
 	exec, _ := newTestExecutor(b)
 	ctx := withValueBindings(context.Background(), map[string]interface{}{"x": int64(7), "row": map[string]interface{}{"name": "ann"}})
 	b.ReportAllocs()
+	fixtureAdmission1824Context, fixtureAdmission1824 := statementTestContext(ctx, "RETURN x + 1 AS one, row.name AS two")
 	b.ResetTimer()
+
+	_ = fixtureAdmission1824Context
 	for i := 0; i < b.N; i++ {
-		if _, err := exec.executeReturn(ctx, "RETURN x + 1 AS one, row.name AS two"); err != nil {
+		if _, err := exec.executeReturn(fixtureAdmission1824, fixtureAdmission1824Context, "RETURN x + 1 AS one, row.name AS two"); err != nil {
 			b.Fatal(err)
 		}
 	}

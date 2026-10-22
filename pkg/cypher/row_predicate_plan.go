@@ -625,18 +625,18 @@ func (memberships *compiledRowMemberships) find(part *rowPredicatePart) *compile
 	return nil
 }
 
-func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePart(ctx, &plan.root, values)
+func (e *StorageExecutor) evaluateRowPredicatePlan(admission admittedRelationshipStatement, ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePart(admission, ctx, &plan.root, values)
 }
 
-func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: &values}, nil)
+func (e *StorageExecutor) evaluateRowPredicatePart(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePartScope(admission, ctx, part, compiledRowScope{values: &values}, nil)
 }
 
 // evaluateRowPredicatePartScope reads the plan's value as a WHERE predicate.
 // Values and errors stay explicit inside a junction until its logical fold decides.
-func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
-	truth, err := e.rowPredicatePartTruth(ctx, part, scope, memberships)
+func (e *StorageExecutor) evaluateRowPredicatePartScope(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
+	truth, err := e.rowPredicatePartTruth(admission, ctx, part, scope, memberships)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -648,10 +648,10 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 // AND / OR fold (logicalFold), adding them as it evaluates them. It is its
 // own function so that the leaves' frame (rowPredicatePartTruth) doesn't
 // carry the fold's errors.
-func (e *StorageExecutor) rowPredicateJunctionTruth(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
+func (e *StorageExecutor) rowPredicateJunctionTruth(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
 	fold := logicalFold{decisive: part.kind == rowPredicateOr}
 	for i := range part.parts {
-		value, err := e.rowPredicatePartTruth(ctx, &part.parts[i], scope, memberships)
+		value, err := e.rowPredicatePartTruth(admission, ctx, &part.parts[i], scope, memberships)
 		if err != nil {
 			fold.addError(err)
 			continue
@@ -664,11 +664,11 @@ func (e *StorageExecutor) rowPredicateJunctionTruth(ctx context.Context, part *r
 }
 
 // rowPredicatePartTruth is the truth value of a planned part.
-func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
+func (e *StorageExecutor) rowPredicatePartTruth(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
 	scope.executor = e
 	switch part.kind {
 	case rowPredicateAnd, rowPredicateOr:
-		return e.rowPredicateJunctionTruth(ctx, part, scope, memberships)
+		return e.rowPredicateJunctionTruth(admission, ctx, part, scope, memberships)
 	case rowPredicateComparison:
 		if part.left.compiled != nil || part.right.compiled != nil {
 			left, leftOK, err := part.left.evaluate(e, scope)
@@ -680,7 +680,7 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 				return truthUnknown, err
 			}
 			if !leftOK || !rightOK {
-				return e.rowPredicatePartTextTruth(ctx, part, scope)
+				return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 			}
 			if left.isInteger && right.isInteger && !(part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25")) {
 				if held, ordered := part.op.orders(compareInt64(left.integer, right.integer)); ordered {
@@ -697,7 +697,7 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		left, leftOK := part.left.resolveScope(scope)
 		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
-			return e.rowPredicatePartTextTruth(ctx, part, scope)
+			return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 		}
 		if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 			left, right = promoteIntegerToFloat(left, right)
@@ -708,14 +708,14 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		left, leftOK := part.left.resolveScope(scope)
 		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
-			return e.rowPredicatePartTextTruth(ctx, part, scope)
+			return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 		}
 		truth, _ := cypherBooleanTruth(rowStringPredicateValue(left, right, part.stringPredicate))
 		return truth, nil
 	case rowPredicateIn:
 		needle, needleOK := part.left.resolveScope(scope)
 		if !needleOK {
-			return e.rowPredicatePartTextTruth(ctx, part, scope)
+			return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 		}
 		indexed := false
 		if part.membership != nil {
@@ -729,7 +729,7 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		}
 		haystack, haystackOK := part.right.resolveScope(scope)
 		if !haystackOK {
-			return e.rowPredicatePartTextTruth(ctx, part, scope)
+			return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 		}
 		if indexed {
 			if items, ok := toInterfaceSlice(haystack); ok {
@@ -741,24 +741,24 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		}
 		member, ok := rowMembershipOfValues(needle, haystack, false)
 		if !ok {
-			return e.rowPredicatePartTextTruth(ctx, part, scope)
+			return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 		}
 		truth, _ := cypherBooleanTruth(member)
 		return truth, nil
 	case rowPredicateIsNull, rowPredicateIsNotNull:
 		value, ok := part.left.resolveScope(scope)
 		if !ok {
-			return e.rowPredicatePartTextTruth(ctx, part, scope)
+			return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 		}
 		return truthOf(nullEvaluationHandler(part.kind == rowPredicateIsNotNull).evaluate(value)), nil
 	default:
-		return e.rowPredicatePartTextTruth(ctx, part, scope)
+		return e.rowPredicatePartTextTruth(admission, ctx, part, scope)
 	}
 }
 
 // Only an unplanned text leaf needs to materialize a predicate value.
-func (e *StorageExecutor) rowPredicatePartTextTruth(ctx context.Context, part *rowPredicatePart, scope compiledRowScope) (cypherTruth, error) {
-	value, err := e.rowPredicatePartText(ctx, part, scope)
+func (e *StorageExecutor) rowPredicatePartTextTruth(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope) (cypherTruth, error) {
+	value, err := e.rowPredicatePartText(admission, ctx, part, scope)
 	if err != nil {
 		return truthUnknown, err
 	}
@@ -769,17 +769,17 @@ func (e *StorageExecutor) rowPredicatePartTextTruth(ctx context.Context, part *r
 // its text: its value, else (a predicate form only the predicate evaluator
 // reads) whether it holds. As an operand of an AND / OR it runs with its own
 // error slot where the policy asks for one (part.isolation).
-func (e *StorageExecutor) rowPredicatePartText(ctx context.Context, part *rowPredicatePart, scope compiledRowScope) (interface{}, error) {
+func (e *StorageExecutor) rowPredicatePartText(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope) (interface{}, error) {
 	values := rowValuesWithStatementContext(ctx, part.text, scope.materialize())
 	var resolve func(context.Context, map[string]interface{}) (interface{}, bool, error)
 	if !part.predicateOnly {
 		resolve = func(_ context.Context, values map[string]interface{}) (interface{}, bool, error) {
-			return e.evaluateRowValue(part.text, values)
+			return e.evaluateRowValue(admission, part.text, values)
 		}
 	}
 	value, _, err := part.isolation.evaluate(ctx, values, resolve,
 		func(ctx context.Context, values map[string]interface{}) interface{} {
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(admission, ctx, part.text, values)
 		})
 	return value, err
 }

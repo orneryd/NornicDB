@@ -79,10 +79,18 @@ func TestSubqueryValueEvaluatorBranches(t *testing.T) {
 	nodesResult, err := exec.Execute(ctx, "MATCH (n:SV {v: 1}) RETURN n", nil)
 	require.NoError(t, err)
 	node := nodesResult.Rows[0][0].(*storage.Node)
-	require.True(t, exec.evaluateWhere(ctx, node, "n", "COUNT { (n)-->() } > 0"))
-	require.True(t, exec.evaluateWhere(ctx, node, "n", "0 < COUNT { (n)-->() }"))
-	require.True(t, exec.evaluateWhere(ctx, node, "n", "EXISTS { (n)-->() } = true"))
-	require.False(t, exec.evaluateWhere(ctx, node, "n", "EXISTS { (n)-->() } = false"))
+	fixtureAdmission868Context, fixtureAdmission868 := expressionTestContext(ctx, "COUNT { (n)-->() } > 0")
+	_ = fixtureAdmission868
+	require.True(t, exec.evaluateWhere(fixtureAdmission868, fixtureAdmission868Context, node, "n", "COUNT { (n)-->() } > 0"))
+	fixtureAdmission869Context, fixtureAdmission869 := expressionTestContext(ctx, "0 < COUNT { (n)-->() }")
+	_ = fixtureAdmission869
+	require.True(t, exec.evaluateWhere(fixtureAdmission869, fixtureAdmission869Context, node, "n", "0 < COUNT { (n)-->() }"))
+	fixtureAdmission870Context, fixtureAdmission870 := expressionTestContext(ctx, "EXISTS { (n)-->() } = true")
+	_ = fixtureAdmission870
+	require.True(t, exec.evaluateWhere(fixtureAdmission870, fixtureAdmission870Context, node, "n", "EXISTS { (n)-->() } = true"))
+	fixtureAdmission871Context, fixtureAdmission871 := expressionTestContext(ctx, "EXISTS { (n)-->() } = false")
+	_ = fixtureAdmission871
+	require.False(t, exec.evaluateWhere(fixtureAdmission871, fixtureAdmission871Context, node, "n", "EXISTS { (n)-->() } = false"))
 }
 
 // TestSubqueryBodiesWithCallSubqueries covers #652 bodies that contain a CALL
@@ -112,7 +120,9 @@ func TestSubqueryBodiesWithCallSubqueries(t *testing.T) {
 	matched, err := exec.Execute(ctx, "MATCH (a:SC {v: 1})-[r:R]->(b:SC) RETURN a, r", nil)
 	require.NoError(t, err)
 	a, r := matched.Rows[0][0].(*storage.Node), matched.Rows[0][1].(*storage.Edge)
-	result, err := exec.executeCorrelatedSubqueryBody(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
+	fixtureAdmission872Context, fixtureAdmission872 := statementTestContext(ctx, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e")
+	_ = fixtureAdmission872
+	result, err := exec.executeCorrelatedSubqueryBody(fixtureAdmission872, fixtureAdmission872Context, "MATCH (a)-[r]->(b) RETURN b.v + k AS s, m AS m, e AS e", map[string]interface{}{
 		"a": a, "r": r, "k": int64(10), "m": (*storage.Node)(nil), "e": (*storage.Edge)(nil), "$ignored": 1,
 	})
 	require.NoError(t, err)

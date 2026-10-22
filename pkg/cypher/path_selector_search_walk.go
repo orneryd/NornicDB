@@ -101,12 +101,12 @@ func equalStrings(a, b []string) bool {
 // uniformPair returns the rows of the shortest path from source to target
 // (every one for groups) of a uniform pattern, and ok false when the walk
 // search can't answer, which leaves the pair to the general search.
-func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) ([]pipelineRow, bool) {
+func (s *pathSearch) uniformPair(admission admittedRelationshipStatement, source, target *storage.Node, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) ([]pipelineRow, bool) {
 	a := s.a
 	if viewport, ok := TemporalViewportFromContext(s.ctx); a.uniform == nil || source.ID == target.ID || ok && viewport.Enabled() {
 		return nil, false
 	}
-	if !s.chainHolds(a.chains[a.initial][a.uniformStart], source) || !s.slotHolds(a.final, target) {
+	if !s.chainHolds(admission, a.chains[a.initial][a.uniformStart], source) || !s.slotHolds(admission, a.final, target) {
 		return nil, true
 	}
 	forward := s.newWalkSide(source.ID, a.uniform.direction, groups)
@@ -240,7 +240,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 
 // walkEdges lists node's relationships in direction, in two lists.
 func (s *pathSearch) walkEdges(node storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
-	return incidentEdgeListsContext(s.ctx, s.e.storage, node, direction)
+	return s.access.incidentEdgeLists(s.ctx, s.e.storage, node, direction)
 }
 
 // walkTypeMatches reports whether a relationship of the type name takes a

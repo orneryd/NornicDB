@@ -40,7 +40,9 @@ func TestCallTailRelationshipReusesEndpointsWithinExecution(t *testing.T) {
 	counted := &countingCallTailNodes{Engine: store}
 	exec := NewStorageExecutor(counted)
 	seed := &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{edge}, {edge}}}
-	result, handled, err := exec.tryExecuteCallTailRelationshipMatchProjection(context.Background(), seed,
+	fixtureAdmission1840Context, fixtureAdmission1840 := statementTestContext(context.Background(), "MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WITH a, r, b RETURN a.name AS name")
+	_ = fixtureAdmission1840Context
+	result, handled, err := exec.tryExecuteCallTailRelationshipMatchProjection(fixtureAdmission1840, fixtureAdmission1840Context, seed,
 		"MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WITH a, r, b RETURN a.name AS name", nil)
 	require.NoError(t, err)
 	require.True(t, handled)

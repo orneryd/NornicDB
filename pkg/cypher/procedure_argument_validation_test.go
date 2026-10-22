@@ -125,7 +125,9 @@ func TestCallTailReturnAllPreservesColumnsAndValues(t *testing.T) {
 		Rows:    [][]interface{}{{int64(1), "one"}, {int64(2), "two"}},
 	}
 
-	result, err := exec.executeCallTail(context.Background(), seed, "RETURN *")
+	fixtureAdmission822Context, fixtureAdmission822 := statementTestContext(context.Background(), "RETURN *")
+	_ = fixtureAdmission822
+	result, err := exec.executeCallTail(fixtureAdmission822, fixtureAdmission822Context, seed, "RETURN *")
 	require.NoError(t, err)
 	require.Equal(t, seed.Columns, result.Columns)
 	require.Equal(t, seed.Rows, result.Rows)

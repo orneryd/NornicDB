@@ -39,7 +39,9 @@ func TestWithDropsTheRowsItDoesNotKeep(t *testing.T) {
 				refs[i] = weak.Make(unsafe.SliceData(xs))
 				rows[i] = pipelineRow{"x": int64(i), "xs": xs}
 			}
-			out, ok := executor.pipelineApplyWith(ctx, rows, clause)
+			fixtureAdmission960Context, fixtureAdmission960 := statementTestContext(ctx, clause)
+			_ = fixtureAdmission960Context
+			out, ok := executor.pipelineApplyWith(fixtureAdmission960, fixtureAdmission960Context, rows, clause)
 			require.True(t, ok)
 			require.Len(t, out, 1)
 			rows = nil

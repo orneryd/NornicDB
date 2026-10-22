@@ -53,7 +53,9 @@ func TestRemotePathContextReadersUseSharedParts(t *testing.T) {
 		want interface{}
 	}{{"length(p)", int64(1)}, {"nodes(p)", []interface{}{a, b}}, {"relationships(p)", []interface{}{r}}} {
 		t.Run(tc.expr, func(t *testing.T) {
-			require.Equal(t, tc.want, e.evaluateExpressionFromValuesContext(context.Background(), tc.expr, map[string]interface{}{"p": path}))
+			fixtureAdmission831Context, fixtureAdmission831 := expressionTestContext(context.Background(), tc.expr)
+			_ = fixtureAdmission831
+			require.Equal(t, tc.want, e.evaluateExpressionFromValuesContext(fixtureAdmission831, fixtureAdmission831Context, tc.expr, map[string]interface{}{"p": path}))
 		})
 	}
 }

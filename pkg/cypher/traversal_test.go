@@ -111,7 +111,9 @@ func TestParseRelationshipPattern(t *testing.T) {
 		t.Run(tt.pattern, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.parseRelationshipPattern(ctx, tt.pattern)
+			fixtureAdmission927Context, fixtureAdmission927 := relationshipPatternTestContext(ctx, tt.pattern)
+			_ = fixtureAdmission927Context
+			result := exec.parseRelationshipPattern(fixtureAdmission927, fixtureAdmission927Context, tt.pattern)
 
 			if result.Direction != tt.direction {
 				t.Errorf("Direction = %s, want %s", result.Direction, tt.direction)
@@ -134,7 +136,9 @@ func TestParseRelationshipPattern(t *testing.T) {
 
 func TestParseRelationshipPatternWithArrowheadsAtBothEnds(t *testing.T) {
 	exec := &StorageExecutor{}
-	pattern := exec.parseRelationshipPattern(context.Background(), "<-[:LIKES*3]->")
+	fixtureAdmission1818Context, fixtureAdmission1818 := relationshipPatternTestContext(context.Background(), "<-[:LIKES*3]->")
+	_ = fixtureAdmission1818Context
+	pattern := exec.parseRelationshipPattern(fixtureAdmission1818, fixtureAdmission1818Context, "<-[:LIKES*3]->")
 
 	if pattern.Direction != "both" {
 		t.Fatalf("expected bidirectional traversal, got %q", pattern.Direction)
@@ -182,7 +186,9 @@ func TestParseTraversalPattern(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.pattern, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.parseTraversalPattern(ctx, tt.pattern)
+			fixtureAdmission906Context, fixtureAdmission906 := traversalTestContext(ctx, tt.pattern, "", nil)
+			_ = fixtureAdmission906
+			result := exec.parseTraversalPattern(fixtureAdmission906, fixtureAdmission906Context, tt.pattern)
 			if result == nil {
 				t.Fatal("parseTraversalPattern returned nil")
 			}
@@ -314,7 +320,9 @@ func TestVariableLengthPaths(t *testing.T) {
 	// Parse a variable length pattern
 	ctx := context.Background()
 
-	pattern := exec.parseRelationshipPattern(ctx, "-[*1..2:KNOWS]->")
+	fixtureAdmission1507Context, fixtureAdmission1507 := relationshipPatternTestContext(ctx, "-[*1..2:KNOWS]->")
+	_ = fixtureAdmission1507Context
+	pattern := exec.parseRelationshipPattern(fixtureAdmission1507, fixtureAdmission1507Context, "-[*1..2:KNOWS]->")
 
 	if pattern.MinHops != 1 {
 		t.Errorf("MinHops = %d, want 1", pattern.MinHops)
@@ -349,17 +357,23 @@ func TestDegreeFunctionsWithTraversal(t *testing.T) {
 	// Bob has: 1 incoming (from Alice), 2 outgoing (to Carol, to Dave)
 	nodes := map[string]*storage.Node{"n": bob}
 
-	inDegree := exec.evaluateExpressionWithContext(ctx, "inDegree(n)", nodes, nil)
+	fixtureAdmission907Context, fixtureAdmission907 := expressionTestContext(ctx, "inDegree(n)")
+	_ = fixtureAdmission907
+	inDegree := exec.evaluateExpressionWithContext(fixtureAdmission907, fixtureAdmission907Context, "inDegree(n)", nodes, nil)
 	if inDegree != int64(1) {
 		t.Errorf("inDegree(bob) = %v, want 1", inDegree)
 	}
 
-	outDegree := exec.evaluateExpressionWithContext(ctx, "outDegree(n)", nodes, nil)
+	fixtureAdmission908Context, fixtureAdmission908 := expressionTestContext(ctx, "outDegree(n)")
+	_ = fixtureAdmission908
+	outDegree := exec.evaluateExpressionWithContext(fixtureAdmission908, fixtureAdmission908Context, "outDegree(n)", nodes, nil)
 	if outDegree != int64(2) {
 		t.Errorf("outDegree(bob) = %v, want 2", outDegree)
 	}
 
-	totalDegree := exec.evaluateExpressionWithContext(ctx, "degree(n)", nodes, nil)
+	fixtureAdmission909Context, fixtureAdmission909 := expressionTestContext(ctx, "degree(n)")
+	_ = fixtureAdmission909
+	totalDegree := exec.evaluateExpressionWithContext(fixtureAdmission909, fixtureAdmission909Context, "degree(n)", nodes, nil)
 	if totalDegree != int64(3) {
 		t.Errorf("degree(bob) = %v, want 3", totalDegree)
 	}

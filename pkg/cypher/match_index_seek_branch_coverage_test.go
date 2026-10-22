@@ -126,8 +126,10 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, handled, err := exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
+	fixtureAdmission1271Context, fixtureAdmission1271 := expressionTestContext(ctx, "n.name = 'Alice' OR n.code = 'X2'")
+	_ = fixtureAdmission1271Context
+	nodes, handled, err := exec.tryCollectNodesFromPropertyIndexOrEquality(fixtureAdmission1271,
+		fixtureAdmission1271Context,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
 		"n.name = 'Alice' OR n.code = 'X2'",
 		nil,
@@ -136,8 +138,10 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	require.True(t, handled)
 	require.Len(t, nodes, 2)
 
-	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
+	fixtureAdmission1272Context, fixtureAdmission1272 := expressionTestContext(ctx, "n.name = 'Alice'")
+	_ = fixtureAdmission1272Context
+	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(fixtureAdmission1272,
+		fixtureAdmission1272Context,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
 		"n.name = 'Alice'",
 		nil,
@@ -146,8 +150,10 @@ func TestTryCollectNodesFromPropertyIndexOrEquality_Branches(t *testing.T) {
 	require.False(t, handled)
 	require.Nil(t, nodes)
 
-	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(
-		ctx,
+	fixtureAdmission1273Context, fixtureAdmission1273 := expressionTestContext(ctx, "n.name > 'Alice' OR n.code = 'X2'")
+	_ = fixtureAdmission1273Context
+	nodes, handled, err = exec.tryCollectNodesFromPropertyIndexOrEquality(fixtureAdmission1273,
+		fixtureAdmission1273Context,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}},
 		"n.name > 'Alice' OR n.code = 'X2'",
 		nil,

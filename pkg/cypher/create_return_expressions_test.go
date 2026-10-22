@@ -181,7 +181,8 @@ func TestProjectCreatedReturnItemBranches(t *testing.T) {
 	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"v": int64(9)}}
 	query := "CREATE (x) RETURN x.v AS v, 1 + 2 AS sum, count(*) AS count"
 	out := createOutcome{cypher: query, returnIdx: strings.Index(query, "RETURN"), nodes: map[string]*storage.Node{"x": node}, result: &ExecuteResult{}}
-	require.NoError(t, exec.projectCreateReturn(ctx, &out))
+	projectionContext, statement := statementTestContext(ctx, query)
+	require.NoError(t, exec.projectCreateReturn(statement, projectionContext, &out))
 	require.Equal(t, []string{"v", "sum", "count"}, out.result.Columns)
 	require.Equal(t, [][]interface{}{{int64(9), int64(3), int64(1)}}, out.result.Rows)
 }

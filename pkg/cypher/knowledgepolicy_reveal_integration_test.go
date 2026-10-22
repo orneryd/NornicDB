@@ -18,7 +18,9 @@ func TestRevealDispatcher_InReturn(t *testing.T) {
 
 	// reveal(n) should pass through — the fn.Register builtin evaluates reveal(n) → n.
 	// Here we only verify the dispatcher does NOT intercept "reveal" as a decay function.
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "reveal(n)", "reveal(n)", nodes, rels)
+	fixtureAdmission1260Context, fixtureAdmission1260 := expressionTestContext(ctx, "reveal(n)")
+	_ = fixtureAdmission1260Context
+	v, handled := exec.evaluateKnowledgePolicyFunction(fixtureAdmission1260, fixtureAdmission1260Context, "reveal(n)", "reveal(n)", nodes, rels)
 	if handled {
 		t.Errorf("reveal(n) should NOT be handled by knowledgepolicy dispatcher, got %v", v)
 	}
@@ -32,7 +34,9 @@ func TestRevealDispatcher_DecayScoreNotIntercepted(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "decayscore(n)", nodes, rels)
+	fixtureAdmission1261Context, fixtureAdmission1261 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1261Context
+	v, handled := exec.evaluateKnowledgePolicyFunction(fixtureAdmission1261, fixtureAdmission1261Context, "decayScore(n)", "decayscore(n)", nodes, rels)
 	if !handled {
 		t.Error("decayScore(n) should be handled by knowledgepolicy dispatcher")
 	}
@@ -49,7 +53,9 @@ func TestRevealDispatcher_DecayWithScoreNamedIdentifierHandled(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "decay(scoreNode)", "decay(scorenode)", nodes, rels)
+	fixtureAdmission1262Context, fixtureAdmission1262 := expressionTestContext(ctx, "decay(scoreNode)")
+	_ = fixtureAdmission1262Context
+	v, handled := exec.evaluateKnowledgePolicyFunction(fixtureAdmission1262, fixtureAdmission1262Context, "decay(scoreNode)", "decay(scorenode)", nodes, rels)
 	if !handled {
 		t.Fatal("decay(scoreNode) should be handled by knowledgepolicy dispatcher")
 	}
@@ -66,7 +72,9 @@ func TestRevealDispatcher_PolicyHandled(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "policy(n)", "policy(n)", nodes, rels)
+	fixtureAdmission1263Context, fixtureAdmission1263 := expressionTestContext(ctx, "policy(n)")
+	_ = fixtureAdmission1263Context
+	v, handled := exec.evaluateKnowledgePolicyFunction(fixtureAdmission1263, fixtureAdmission1263Context, "policy(n)", "policy(n)", nodes, rels)
 	if !handled {
 		t.Error("policy(n) should be handled by knowledgepolicy dispatcher")
 	}

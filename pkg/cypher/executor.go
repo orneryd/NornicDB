@@ -1218,13 +1218,18 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // notifyEdgeMutated updates live search metadata after a relationship create or
 // mutation so relationship vector queries can use client-supplied vectors before
 // a full search warmup/build has run.
-func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
+func (run relationshipEntityExecution) notifyEdgeMutated(edgeID string) {
+	e := run.executor
 	if e.searchService == nil || edgeID == "" {
 		return
 	}
 	if edge, err := e.storage.GetEdge(storage.EdgeID(edgeID)); err == nil && edge != nil {
 		e.indexMutatedEdge(edge)
 	}
+}
+
+func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
+	e.relationshipEntityExecution().notifyEdgeMutated(edgeID)
 }
 
 func (e *StorageExecutor) indexMutatedEdge(edge *storage.Edge) {
@@ -1644,17 +1649,21 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 // rolled back on error, preventing partial data corruption from failed queries.
 // For strict ACID guarantees with durability, use explicit BEGIN/COMMIT transactions.
 func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	ctx, admission := compileRelationshipStatement(ctx, cypher, nil)
+	return e.executeAdmittedImplicitAsync(admission, ctx, cypher, upperQuery, e.analyzer.Analyze(cypher))
+}
+
+func (e *StorageExecutor) executeAdmittedImplicitAsync(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string, info *QueryInfo) (*ExecuteResult, error) {
 	// Check if this is a write operation using cached analysis
-	info := e.analyzer.Analyze(cypher)
 	needsTransaction := info.IsWriteQuery || (matchKeywordAt(cypher, 0, "CALL") && strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData"))
 
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
 	if needsTransaction {
 		if hasCallInTransactions(cypher) {
-			return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+			return e.executeAdmittedWithoutTransaction(admission, ctx, cypher, upperQuery)
 		}
-		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
+		return e.executeAdmittedWithImplicitTransaction(admission, ctx, cypher, upperQuery)
 	}
 
 	// Read-only operations don't need transaction wrapping. One that cannot
@@ -1663,9 +1672,9 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	if e.readsQueryNodesWithoutVectors(info) {
 		readExec := e.cloneWithStorage(e.storage)
 		readExec.readOnlyQueryNodes = true
-		return readExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+		return readExec.executeAdmittedWithoutTransaction(admission, ctx, cypher, upperQuery)
 	}
-	return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	return e.executeAdmittedWithoutTransaction(admission, ctx, cypher, upperQuery)
 }
 
 // executeWithImplicitTransaction wraps a write query in a single implicit
@@ -1673,13 +1682,18 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 // clients own any replay decision because NornicDB does not know whether a
 // conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	ctx, admission := compileRelationshipStatement(ctx, cypher, nil)
+	return e.executeAdmittedWithImplicitTransaction(admission, ctx, cypher, upperQuery)
+}
+
+func (e *StorageExecutor) executeAdmittedWithImplicitTransaction(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
 	executionCypher, executionUpperQuery := cypher, upperQuery
 	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
 		executionCypher = parsedCypher
 		executionUpperQuery = upperASCII(parsedCypher)
 	}
 	return e.executeWithImplicitTransactionCallback(ctx, cypher, upperQuery, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
-		return txExec.executeWithoutTransaction(txCtx, executionCypher, executionUpperQuery)
+		return txExec.executeAdmittedWithoutTransaction(admission, txCtx, executionCypher, executionUpperQuery)
 	})
 }
 

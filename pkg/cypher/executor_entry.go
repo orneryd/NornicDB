@@ -184,8 +184,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	// The statement as the client sent it may not call NornicDB's internal
 	// functions; the rewrites below produce them (#1105).
-	if err := internalFunctionCallError(cypher); err != nil {
-		return nil, err
+	if !isRewrittenStatement(ctx) {
+		if err := internalFunctionCallError(cypher); err != nil {
+			return nil, err
+		}
 	}
 	// The statement as sent, which GDS's Cypher aggregation projection
 	// reports as its query (#1194).
@@ -371,7 +373,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).
 	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
-		return e.executeOnDatabase(ctx, useDB, cypher, params, false)
+		return e.executeOnDatabase(ctx, useDB, cypher, params)
 	}
 
 	// The quoted-variable and label-expression rewrites map the finished
@@ -405,7 +407,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = desugared
 		defer func() { result, retErr = orderRewrite.restore(result, retErr) }()
 	}
-
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
 	if e.shouldUseFabricPlanner(cypher) {
@@ -413,13 +414,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
-		ctx = withQueryParams(ctx, mergedParams)
+		prepared := e.analyzer.prepare(cypher)
+		var fixtureAdmission1 admittedRelationshipStatement
+		ctx, fixtureAdmission1 = prepared.statement.bind(ctx, mergedParams)
+		_ = fixtureAdmission1
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
 			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+			if err := e.validateSemanticScopes(fixtureAdmission1, ctx, modeQuery); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
@@ -427,7 +431,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			}
 			return e.executeProfile(ctx, modeQuery)
 		}
-		info := e.analyzer.Analyze(cypher)
+		info := prepared.info
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
 		// per RISK-1 corrected classifier. Observation pre-execute so the
 		// counter reflects intent regardless of execution outcome (errors
@@ -504,7 +508,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
+			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
@@ -515,7 +519,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params)
 	}
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
@@ -550,19 +554,18 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// embedded caller that already owns an active transaction keeps running
 	// the script on itself, where handleBegin fails as before.
 	if transactionScriptShape(cypher) {
+		ctx, scriptStatement := compileRelationshipStatement(ctx, cypher, nil, params)
 		if e.txContext != nil && e.txContext.active {
-			if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
+			if result, err := e.executeTransactionScript(scriptStatement, ctx, cypher); result != nil || err != nil {
 				return result, err
 			}
 		} else {
 			scriptExec := e.cloneForStorage(e.storage)
 			scriptExec.txContext = nil
-			if result, err := scriptExec.executeTransactionScript(ctx, cypher); result != nil || err != nil {
+			if result, err := scriptExec.executeTransactionScript(scriptStatement, ctx, cypher); result != nil || err != nil {
 				return result, err
 			}
 		}
-	} else if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
-		return result, err
 	}
 	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
@@ -681,8 +684,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it.
+	prepared := e.analyzer.prepare(cypher)
+	var fixtureAdmission2 admittedRelationshipStatement
+	ctx, fixtureAdmission2 = prepared.statement.bind(ctx, params)
+	_ = fixtureAdmission2
 	scopeText, _ := stripWithEmbeddingSuffix(cypher)
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
+	if err := e.validateSemanticScopes(fixtureAdmission2, ctx, scopeText); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
@@ -699,7 +706,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// This matches Neo4j's architecture where params are kept separate.
 
 	// Store params in context for handlers to use
-	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
@@ -745,7 +751,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Analyze query - uses cached analysis if available
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
-	info := e.analyzer.Analyze(cypher)
+	info := prepared.info
 
 	// Plan 04-03 Sites 1 + 3 (RISK-1 corrected): classify ONCE post-Analyze.
 	// isFabric=false here because the fabric branch returns at line ~963
@@ -815,7 +821,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if e.txContext != nil && e.txContext.active {
 		ctx = withExpressionFailureSlot(ctx)
 		ctx = withStatementClausePlans(ctx, cypher)
-		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
+		result, err := e.executeAdmittedInTransaction(fixtureAdmission2, ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
 			return result, failure
 		}
@@ -827,7 +833,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// storage. Routing them through executeWithoutTransaction directly ensures
 	// correct handling and avoids the write path.
 	if isSystemCommandNoGraph(cypher) || isOrdinarySchemaDDL(cypher) {
-		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
+		result, err := e.executeAdmittedWithoutTransaction(fixtureAdmission2, ctx, cypher, upperQuery)
 		if err != nil {
 			return nil, err
 		}
@@ -850,7 +856,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Auto-commit single query through the implicit-transaction write path.
 	ctx = withExpressionFailureSlot(ctx)
 	ctx = withStatementClausePlans(ctx, cypher)
-	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
+	result, err = e.executeAdmittedImplicitAsync(fixtureAdmission2, ctx, cypher, upperQuery, info)
 	if result != nil && err == nil {
 		if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
 			result.MapKeyOrders = orders

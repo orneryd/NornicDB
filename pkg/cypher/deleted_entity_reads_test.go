@@ -246,7 +246,9 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	res := &ExecuteResult{Stats: &QueryStats{}}
 	input := &ExecuteResult{Columns: []string{"p"}, Rows: [][]interface{}{{map[string]interface{}{
 		"nodes": []interface{}{gone, "x"}, "rels": []interface{}{edge, int64(1)}}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
+	fixtureAdmission1128Context, fixtureAdmission1128 := statementTestContext(context.Background(), "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n")
+	_ = fixtureAdmission1128Context
+	exec.applyDeleteReturnProjection(fixtureAdmission1128, res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
 	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 }
 
@@ -280,7 +282,9 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (n:Lone) RETURN n", nil)
 	require.NoError(t, err)
 	rows := []pipelineRow{{"n": result.Rows[0][0]}}
-	_, handled, err := exec.pipelineApplyDelete(ctx, rows, map[string]struct{}{"n": {}}, "DELETE n")
+	fixtureAdmission1129Context, fixtureAdmission1129 := statementTestContext(ctx, "DELETE n")
+	_ = fixtureAdmission1129Context
+	_, handled, err := exec.pipelineApplyDelete(fixtureAdmission1129, fixtureAdmission1129Context, rows, map[string]struct{}{"n": {}}, "DELETE n")
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Empty(t, rows[0]["n"].(*storage.Node).Properties)

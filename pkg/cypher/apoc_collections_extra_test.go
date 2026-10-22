@@ -154,51 +154,127 @@ func TestApocCollections_DispatchBranches_FromExpressionEvaluator(t *testing.T) 
 	nodes := map[string]*storage.Node{"n1": n1, "n2": n2}
 	ctx := context.Background()
 
-	assert.Equal(t, "a|b|c", e.evaluateExpressionWithContext(ctx, "apoc.text.join(['a','b','c'], '|')", nodes, nil))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.text.join(['a'])", nodes, nil))
+	fixtureAdmission17Context, fixtureAdmission17 := expressionTestContext(ctx, "apoc.text.join(['a','b','c'], '|')")
+	_ = fixtureAdmission17
+	assert.Equal(t, "a|b|c", e.evaluateExpressionWithContext(fixtureAdmission17, fixtureAdmission17Context, "apoc.text.join(['a','b','c'], '|')", nodes, nil))
+	fixtureAdmission18Context, fixtureAdmission18 := expressionTestContext(ctx, "apoc.text.join(['a'])")
+	_ = fixtureAdmission18
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission18, fixtureAdmission18Context, "apoc.text.join(['a'])", nodes, nil))
 
-	assert.Equal(t, float64(2), e.evaluateExpressionWithContext(ctx, "apoc.coll.avg([1,2,3])", nodes, nil))
-	assert.Equal(t, int64(1), e.evaluateExpressionWithContext(ctx, "apoc.coll.min([3,1,2])", nodes, nil))
-	assert.Equal(t, int64(3), e.evaluateExpressionWithContext(ctx, "apoc.coll.max([3,1,2])", nodes, nil))
-	assert.True(t, reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, e.evaluateExpressionWithContext(ctx, "apoc.coll.sort([3,1,2])", nodes, nil)))
-	sortedNodes, ok := e.evaluateExpressionWithContext(ctx, "apoc.coll.sortNodes([n1,n2], 'age')", nodes, nil).([]interface{})
+	fixtureAdmission19Context, fixtureAdmission19 := expressionTestContext(ctx, "apoc.coll.avg([1,2,3])")
+	_ = fixtureAdmission19
+	assert.Equal(t, float64(2), e.evaluateExpressionWithContext(fixtureAdmission19, fixtureAdmission19Context, "apoc.coll.avg([1,2,3])", nodes, nil))
+	fixtureAdmission20Context, fixtureAdmission20 := expressionTestContext(ctx, "apoc.coll.min([3,1,2])")
+	_ = fixtureAdmission20
+	assert.Equal(t, int64(1), e.evaluateExpressionWithContext(fixtureAdmission20, fixtureAdmission20Context, "apoc.coll.min([3,1,2])", nodes, nil))
+	fixtureAdmission21Context, fixtureAdmission21 := expressionTestContext(ctx, "apoc.coll.max([3,1,2])")
+	_ = fixtureAdmission21
+	assert.Equal(t, int64(3), e.evaluateExpressionWithContext(fixtureAdmission21, fixtureAdmission21Context, "apoc.coll.max([3,1,2])", nodes, nil))
+	fixtureAdmission22Context, fixtureAdmission22 := expressionTestContext(ctx, "apoc.coll.sort([3,1,2])")
+	_ = fixtureAdmission22
+	assert.True(t, reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, e.evaluateExpressionWithContext(fixtureAdmission22, fixtureAdmission22Context, "apoc.coll.sort([3,1,2])", nodes, nil)))
+	fixtureAdmission23Context, fixtureAdmission23 := expressionTestContext(ctx, "apoc.coll.sortNodes([n1,n2], 'age')")
+	_ = fixtureAdmission23
+	sortedNodes, ok := e.evaluateExpressionWithContext(fixtureAdmission23, fixtureAdmission23Context, "apoc.coll.sortNodes([n1,n2], 'age')", nodes, nil).([]interface{})
 	assert.True(t, ok)
 	assert.NotNil(t, sortedNodes)
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.sortNodes([n1])", nodes, nil))
+	fixtureAdmission24Context, fixtureAdmission24 := expressionTestContext(ctx, "apoc.coll.sortNodes([n1])")
+	_ = fixtureAdmission24
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission24, fixtureAdmission24Context, "apoc.coll.sortNodes([n1])", nodes, nil))
 
-	assert.True(t, reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, e.evaluateExpressionWithContext(ctx, "apoc.coll.union([1,2],[2,3])", nodes, nil)))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.union([1])", nodes, nil))
-	assert.True(t, reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(2), int64(3)}, e.evaluateExpressionWithContext(ctx, "apoc.coll.unionAll([1,2],[2,3])", nodes, nil)))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.unionAll([1])", nodes, nil))
-	assert.True(t, reflect.DeepEqual([]interface{}{int64(2)}, e.evaluateExpressionWithContext(ctx, "apoc.coll.intersection([1,2],[2,3])", nodes, nil)))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.intersection([1])", nodes, nil))
-	subtracted, ok := e.evaluateExpressionWithContext(ctx, "apoc.coll.subtract([1,2,3],[2])", nodes, nil).([]interface{})
+	fixtureAdmission25Context, fixtureAdmission25 := expressionTestContext(ctx, "apoc.coll.union([1,2],[2,3])")
+	_ = fixtureAdmission25
+	assert.True(t, reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, e.evaluateExpressionWithContext(fixtureAdmission25, fixtureAdmission25Context, "apoc.coll.union([1,2],[2,3])", nodes, nil)))
+	fixtureAdmission26Context, fixtureAdmission26 := expressionTestContext(ctx, "apoc.coll.union([1])")
+	_ = fixtureAdmission26
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission26, fixtureAdmission26Context, "apoc.coll.union([1])", nodes, nil))
+	fixtureAdmission27Context, fixtureAdmission27 := expressionTestContext(ctx, "apoc.coll.unionAll([1,2],[2,3])")
+	_ = fixtureAdmission27
+	assert.True(t, reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(2), int64(3)}, e.evaluateExpressionWithContext(fixtureAdmission27, fixtureAdmission27Context, "apoc.coll.unionAll([1,2],[2,3])", nodes, nil)))
+	fixtureAdmission28Context, fixtureAdmission28 := expressionTestContext(ctx, "apoc.coll.unionAll([1])")
+	_ = fixtureAdmission28
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission28, fixtureAdmission28Context, "apoc.coll.unionAll([1])", nodes, nil))
+	fixtureAdmission29Context, fixtureAdmission29 := expressionTestContext(ctx, "apoc.coll.intersection([1,2],[2,3])")
+	_ = fixtureAdmission29
+	assert.True(t, reflect.DeepEqual([]interface{}{int64(2)}, e.evaluateExpressionWithContext(fixtureAdmission29, fixtureAdmission29Context, "apoc.coll.intersection([1,2],[2,3])", nodes, nil)))
+	fixtureAdmission30Context, fixtureAdmission30 := expressionTestContext(ctx, "apoc.coll.intersection([1])")
+	_ = fixtureAdmission30
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission30, fixtureAdmission30Context, "apoc.coll.intersection([1])", nodes, nil))
+	fixtureAdmission31Context, fixtureAdmission31 := expressionTestContext(ctx, "apoc.coll.subtract([1,2,3],[2])")
+	_ = fixtureAdmission31
+	subtracted, ok := e.evaluateExpressionWithContext(fixtureAdmission31, fixtureAdmission31Context, "apoc.coll.subtract([1,2,3],[2])", nodes, nil).([]interface{})
 	assert.True(t, ok)
 	_ = subtracted
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.subtract([1])", nodes, nil))
+	fixtureAdmission32Context, fixtureAdmission32 := expressionTestContext(ctx, "apoc.coll.subtract([1])")
+	_ = fixtureAdmission32
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission32, fixtureAdmission32Context, "apoc.coll.subtract([1])", nodes, nil))
 
-	_, ok = e.evaluateExpressionWithContext(ctx, "apoc.coll.contains(['a','b','c'],'b')", nodes, nil).(bool)
+	fixtureAdmission33Context, fixtureAdmission33 := expressionTestContext(ctx, "apoc.coll.contains(['a','b','c'],'b')")
+	_ = fixtureAdmission33
+	_, ok = e.evaluateExpressionWithContext(fixtureAdmission33, fixtureAdmission33Context, "apoc.coll.contains(['a','b','c'],'b')", nodes, nil).(bool)
 	assert.True(t, ok)
-	assert.Equal(t, false, e.evaluateExpressionWithContext(ctx, "apoc.coll.contains([1,2,3])", nodes, nil))
-	assert.Equal(t, true, e.evaluateExpressionWithContext(ctx, "apoc.coll.containsAll([1,2,3],[2,3])", nodes, nil))
-	assert.Equal(t, false, e.evaluateExpressionWithContext(ctx, "apoc.coll.containsAll([1,2,3])", nodes, nil))
-	assert.Equal(t, true, e.evaluateExpressionWithContext(ctx, "apoc.coll.containsAny([1,2,3],[5,3])", nodes, nil))
-	assert.Equal(t, false, e.evaluateExpressionWithContext(ctx, "apoc.coll.containsAny([1,2,3])", nodes, nil))
-	assert.Equal(t, int64(1), e.evaluateExpressionWithContext(ctx, "apoc.coll.indexOf([1,2,3],2)", nodes, nil))
-	assert.Equal(t, int64(-1), e.evaluateExpressionWithContext(ctx, "apoc.coll.indexOf([1,2,3])", nodes, nil))
-	assert.NotNil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.split([1,2,3],2)", nodes, nil))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.split([1,2,3])", nodes, nil))
-	assert.NotNil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.partition([1,2,3,4],2)", nodes, nil))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.partition([1,2,3,4])", nodes, nil))
-	assert.NotNil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.zip([1,2],[3,4])", nodes, nil))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.coll.zip([1,2])", nodes, nil))
-	assert.Equal(t, int64(2), e.evaluateExpressionWithContext(ctx, "apoc.coll.occurrences([1,2,2],2)", nodes, nil))
-	assert.Equal(t, int64(0), e.evaluateExpressionWithContext(ctx, "apoc.coll.occurrences([1,2,2])", nodes, nil))
+	fixtureAdmission34Context, fixtureAdmission34 := expressionTestContext(ctx, "apoc.coll.contains([1,2,3])")
+	_ = fixtureAdmission34
+	assert.Equal(t, false, e.evaluateExpressionWithContext(fixtureAdmission34, fixtureAdmission34Context, "apoc.coll.contains([1,2,3])", nodes, nil))
+	fixtureAdmission35Context, fixtureAdmission35 := expressionTestContext(ctx, "apoc.coll.containsAll([1,2,3],[2,3])")
+	_ = fixtureAdmission35
+	assert.Equal(t, true, e.evaluateExpressionWithContext(fixtureAdmission35, fixtureAdmission35Context, "apoc.coll.containsAll([1,2,3],[2,3])", nodes, nil))
+	fixtureAdmission36Context, fixtureAdmission36 := expressionTestContext(ctx, "apoc.coll.containsAll([1,2,3])")
+	_ = fixtureAdmission36
+	assert.Equal(t, false, e.evaluateExpressionWithContext(fixtureAdmission36, fixtureAdmission36Context, "apoc.coll.containsAll([1,2,3])", nodes, nil))
+	fixtureAdmission37Context, fixtureAdmission37 := expressionTestContext(ctx, "apoc.coll.containsAny([1,2,3],[5,3])")
+	_ = fixtureAdmission37
+	assert.Equal(t, true, e.evaluateExpressionWithContext(fixtureAdmission37, fixtureAdmission37Context, "apoc.coll.containsAny([1,2,3],[5,3])", nodes, nil))
+	fixtureAdmission38Context, fixtureAdmission38 := expressionTestContext(ctx, "apoc.coll.containsAny([1,2,3])")
+	_ = fixtureAdmission38
+	assert.Equal(t, false, e.evaluateExpressionWithContext(fixtureAdmission38, fixtureAdmission38Context, "apoc.coll.containsAny([1,2,3])", nodes, nil))
+	fixtureAdmission39Context, fixtureAdmission39 := expressionTestContext(ctx, "apoc.coll.indexOf([1,2,3],2)")
+	_ = fixtureAdmission39
+	assert.Equal(t, int64(1), e.evaluateExpressionWithContext(fixtureAdmission39, fixtureAdmission39Context, "apoc.coll.indexOf([1,2,3],2)", nodes, nil))
+	fixtureAdmission40Context, fixtureAdmission40 := expressionTestContext(ctx, "apoc.coll.indexOf([1,2,3])")
+	_ = fixtureAdmission40
+	assert.Equal(t, int64(-1), e.evaluateExpressionWithContext(fixtureAdmission40, fixtureAdmission40Context, "apoc.coll.indexOf([1,2,3])", nodes, nil))
+	fixtureAdmission41Context, fixtureAdmission41 := expressionTestContext(ctx, "apoc.coll.split([1,2,3],2)")
+	_ = fixtureAdmission41
+	assert.NotNil(t, e.evaluateExpressionWithContext(fixtureAdmission41, fixtureAdmission41Context, "apoc.coll.split([1,2,3],2)", nodes, nil))
+	fixtureAdmission42Context, fixtureAdmission42 := expressionTestContext(ctx, "apoc.coll.split([1,2,3])")
+	_ = fixtureAdmission42
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission42, fixtureAdmission42Context, "apoc.coll.split([1,2,3])", nodes, nil))
+	fixtureAdmission43Context, fixtureAdmission43 := expressionTestContext(ctx, "apoc.coll.partition([1,2,3,4],2)")
+	_ = fixtureAdmission43
+	assert.NotNil(t, e.evaluateExpressionWithContext(fixtureAdmission43, fixtureAdmission43Context, "apoc.coll.partition([1,2,3,4],2)", nodes, nil))
+	fixtureAdmission44Context, fixtureAdmission44 := expressionTestContext(ctx, "apoc.coll.partition([1,2,3,4])")
+	_ = fixtureAdmission44
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission44, fixtureAdmission44Context, "apoc.coll.partition([1,2,3,4])", nodes, nil))
+	fixtureAdmission45Context, fixtureAdmission45 := expressionTestContext(ctx, "apoc.coll.zip([1,2],[3,4])")
+	_ = fixtureAdmission45
+	assert.NotNil(t, e.evaluateExpressionWithContext(fixtureAdmission45, fixtureAdmission45Context, "apoc.coll.zip([1,2],[3,4])", nodes, nil))
+	fixtureAdmission46Context, fixtureAdmission46 := expressionTestContext(ctx, "apoc.coll.zip([1,2])")
+	_ = fixtureAdmission46
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission46, fixtureAdmission46Context, "apoc.coll.zip([1,2])", nodes, nil))
+	fixtureAdmission47Context, fixtureAdmission47 := expressionTestContext(ctx, "apoc.coll.occurrences([1,2,2],2)")
+	_ = fixtureAdmission47
+	assert.Equal(t, int64(2), e.evaluateExpressionWithContext(fixtureAdmission47, fixtureAdmission47Context, "apoc.coll.occurrences([1,2,2],2)", nodes, nil))
+	fixtureAdmission48Context, fixtureAdmission48 := expressionTestContext(ctx, "apoc.coll.occurrences([1,2,2])")
+	_ = fixtureAdmission48
+	assert.Equal(t, int64(0), e.evaluateExpressionWithContext(fixtureAdmission48, fixtureAdmission48Context, "apoc.coll.occurrences([1,2,2])", nodes, nil))
 
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonMap(123)", nodes, nil))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonList(123)", nodes, nil))
-	assert.Equal(t, false, e.evaluateExpressionWithContext(ctx, "apoc.meta.isType(1,2)", nodes, nil))
-	assert.Equal(t, false, e.evaluateExpressionWithContext(ctx, "apoc.meta.isType(1)", nodes, nil))
-	assert.Equal(t, map[string]interface{}{}, e.evaluateExpressionWithContext(ctx, "apoc.map.merge({a:1})", nodes, nil))
-	assert.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.map.fromLists(['a'])", nodes, nil))
+	fixtureAdmission49Context, fixtureAdmission49 := expressionTestContext(ctx, "apoc.convert.fromJsonMap(123)")
+	_ = fixtureAdmission49
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission49, fixtureAdmission49Context, "apoc.convert.fromJsonMap(123)", nodes, nil))
+	fixtureAdmission50Context, fixtureAdmission50 := expressionTestContext(ctx, "apoc.convert.fromJsonList(123)")
+	_ = fixtureAdmission50
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission50, fixtureAdmission50Context, "apoc.convert.fromJsonList(123)", nodes, nil))
+	fixtureAdmission51Context, fixtureAdmission51 := expressionTestContext(ctx, "apoc.meta.isType(1,2)")
+	_ = fixtureAdmission51
+	assert.Equal(t, false, e.evaluateExpressionWithContext(fixtureAdmission51, fixtureAdmission51Context, "apoc.meta.isType(1,2)", nodes, nil))
+	fixtureAdmission52Context, fixtureAdmission52 := expressionTestContext(ctx, "apoc.meta.isType(1)")
+	_ = fixtureAdmission52
+	assert.Equal(t, false, e.evaluateExpressionWithContext(fixtureAdmission52, fixtureAdmission52Context, "apoc.meta.isType(1)", nodes, nil))
+	fixtureAdmission53Context, fixtureAdmission53 := expressionTestContext(ctx, "apoc.map.merge({a:1})")
+	_ = fixtureAdmission53
+	assert.Equal(t, map[string]interface{}{}, e.evaluateExpressionWithContext(fixtureAdmission53, fixtureAdmission53Context, "apoc.map.merge({a:1})", nodes, nil))
+	fixtureAdmission54Context, fixtureAdmission54 := expressionTestContext(ctx, "apoc.map.fromLists(['a'])")
+	_ = fixtureAdmission54
+	assert.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission54, fixtureAdmission54Context, "apoc.map.fromLists(['a'])", nodes, nil))
 }

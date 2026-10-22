@@ -488,18 +488,28 @@ func TestResolveBindingExprUnboundVariable(t *testing.T) {
 	rels := map[string]*storage.Edge{"rel": {ID: "e1", Properties: map[string]interface{}{"kind": "reducer"}}}
 
 	t.Run("elementId on an unbound variable resolves to nil", func(t *testing.T) {
-		require.Nil(t, exec.resolveBindingExpr(ctx, "elementId(ghost)", b, rels))
+		fixtureAdmission1331Context, fixtureAdmission1331 := expressionTestContext(ctx, "elementId(ghost)")
+		_ = fixtureAdmission1331Context
+		require.Nil(t, exec.resolveBindingExpr(fixtureAdmission1331, fixtureAdmission1331Context, "elementId(ghost)", b, rels))
 	})
 	t.Run("property access on an unbound variable resolves to nil", func(t *testing.T) {
-		require.Nil(t, exec.resolveBindingExpr(ctx, "ghost.prop", b, rels))
+		fixtureAdmission1332Context, fixtureAdmission1332 := expressionTestContext(ctx, "ghost.prop")
+		_ = fixtureAdmission1332Context
+		require.Nil(t, exec.resolveBindingExpr(fixtureAdmission1332, fixtureAdmission1332Context, "ghost.prop", b, rels))
 	})
 	t.Run("elementId still resolves for a real relationship binding", func(t *testing.T) {
-		require.Equal(t, "5:relseed:e1", exec.resolveBindingExpr(ctx, "elementId(rel)", b, rels))
+		fixtureAdmission1333Context, fixtureAdmission1333 := expressionTestContext(ctx, "elementId(rel)")
+		_ = fixtureAdmission1333Context
+		require.Equal(t, "5:relseed:e1", exec.resolveBindingExpr(fixtureAdmission1333, fixtureAdmission1333Context, "elementId(rel)", b, rels))
 	})
 	t.Run("property access still resolves for a real relationship binding", func(t *testing.T) {
-		require.Equal(t, "reducer", exec.resolveBindingExpr(ctx, "rel.kind", b, rels))
+		fixtureAdmission1334Context, fixtureAdmission1334 := expressionTestContext(ctx, "rel.kind")
+		_ = fixtureAdmission1334Context
+		require.Equal(t, "reducer", exec.resolveBindingExpr(fixtureAdmission1334, fixtureAdmission1334Context, "rel.kind", b, rels))
 	})
 	t.Run("resolveBindingItem with an empty expression resolves to nil", func(t *testing.T) {
-		require.Nil(t, exec.resolveBindingItem(ctx, returnItem{expr: "  "}, b, rels))
+		fixtureAdmission1657Context, fixtureAdmission1657 := statementTestContext(ctx, "RETURN "+("  "))
+		_ = fixtureAdmission1657Context
+		require.Nil(t, exec.resolveBindingItem(fixtureAdmission1657, fixtureAdmission1657Context, returnItem{expr: "  "}, b, rels))
 	})
 }

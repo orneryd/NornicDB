@@ -155,7 +155,11 @@ func TestRowPredicatePlanEdges(t *testing.T) {
 	ctx := context.Background()
 	plan := planRowPredicate("x IN list")
 	require.NotNil(t, plan)
-	require.True(t, exec.evaluateRowPredicatePlan(ctx, plan, map[string]interface{}{"x": int64(1), "list": []interface{}{int64(1)}}))
+	fixtureAdmission1773Context, fixtureAdmission1773 := statementTestContext(ctx, "RETURN "+("x IN list"))
+	_ = fixtureAdmission1773Context
+	require.True(t, exec.evaluateRowPredicatePlan(fixtureAdmission1773, fixtureAdmission1773Context, plan, map[string]interface{}{"x": int64(1), "list": []interface{}{int64(1)}}))
 	// The haystack isn't bound in the row: the part is evaluated as text.
-	require.False(t, exec.evaluateRowPredicatePlan(ctx, plan, map[string]interface{}{"x": int64(1)}))
+	fixtureAdmission1774Context, fixtureAdmission1774 := statementTestContext(ctx, "RETURN "+("x IN list"))
+	_ = fixtureAdmission1774Context
+	require.False(t, exec.evaluateRowPredicatePlan(fixtureAdmission1774, fixtureAdmission1774Context, plan, map[string]interface{}{"x": int64(1)}))
 }

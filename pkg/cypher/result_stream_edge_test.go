@@ -109,12 +109,16 @@ func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 	}
 	scope := map[string]struct{}{"x": {}}
 	ctx := context.Background()
-	columns, _, handled, err := exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
+	fixtureAdmission1763Context, fixtureAdmission1763 := statementTestContext(ctx, ("RETURN "+("RETURN x"))+"\n"+("RETURN "+("RETURN x")))
+	_ = fixtureAdmission1763Context
+	columns, _, handled, err := exec.pipelineStreamReturn(fixtureAdmission1763, fixtureAdmission1763Context, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, columns)
 
-	_, _, handled, err = exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(2), clauses, clauses, 0, scope, false)
+	fixtureAdmission1764Context, fixtureAdmission1764 := statementTestContext(ctx, ("RETURN "+("RETURN x"))+"\n"+("RETURN "+("RETURN x")))
+	_ = fixtureAdmission1764Context
+	_, _, handled, err = exec.pipelineStreamReturn(fixtureAdmission1764, fixtureAdmission1764Context, NewResultStream(1, nil), nil, declineAfter(2), clauses, clauses, 0, scope, false)
 	require.True(t, handled)
 	require.ErrorContains(t, err, "after it had sent rows")
 }
@@ -176,7 +180,9 @@ func TestStreamedNodeMatchSourceFailures(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	template := exec.pipelineNodeMatchTemplateFor("MATCH (n:Item)")
-	source := exec.pipelineStreamedNodeMatchSource(withExpressionFailureSlot(ctx), pipelineRowsSource([]pipelineRow{{}}), template, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, streamScan: true})
+	fixtureAdmission1765Context, fixtureAdmission1765 := statementTestContext(withExpressionFailureSlot(ctx), "RETURN "+("MATCH (n:Item)"))
+	_ = fixtureAdmission1765Context
+	source := exec.pipelineStreamedNodeMatchSource(fixtureAdmission1765, fixtureAdmission1765Context, pipelineRowsSource([]pipelineRow{{}}), template, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, streamScan: true})
 	yielded := 0
 	require.False(t, source(func(pipelineRow) bool { yielded++; return true }))
 	require.Zero(t, yielded)

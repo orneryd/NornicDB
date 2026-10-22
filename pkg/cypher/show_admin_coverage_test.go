@@ -98,7 +98,9 @@ func TestShowTransactionsIDsAndStatus(t *testing.T) {
 		require.Equal(t, "Neo.ClientError.Statement.TypeError", classified.BoltErrorCode(), query)
 	}
 	// An empty list is no filter.
-	_, filtered, err := exec.transactionIDFilter(ctx, "SHOW TRANSACTIONS []", "SHOW")
+	fixtureAdmission1780Context, fixtureAdmission1780 := statementTestContext(ctx, "SHOW TRANSACTIONS []")
+	_ = fixtureAdmission1780Context
+	_, filtered, err := exec.transactionIDFilter(fixtureAdmission1780, fixtureAdmission1780Context, "SHOW TRANSACTIONS []", "SHOW")
 	require.NoError(t, err)
 	require.False(t, filtered)
 
@@ -125,7 +127,9 @@ func TestTransactionIDFilterRejectsNonExpression(t *testing.T) {
 		"TERMINATE TRANSACTIONS nope": "Variable `nope` not defined",
 	} {
 		command := strings.Fields(head)[0]
-		_, filtered, err := exec.transactionIDFilter(context.Background(), head, command)
+		fixtureAdmission1781Context, fixtureAdmission1781 := statementTestContext(context.Background(), head)
+		_ = fixtureAdmission1781Context
+		_, filtered, err := exec.transactionIDFilter(fixtureAdmission1781, fixtureAdmission1781Context, head, command)
 		require.True(t, filtered, head)
 		require.EqualError(t, err, message, head)
 		var classified interface{ BoltErrorCode() string }

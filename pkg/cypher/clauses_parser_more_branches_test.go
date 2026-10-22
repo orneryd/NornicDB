@@ -105,15 +105,21 @@ func TestExecuteUnion_ErrorAndInferenceBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "clauses_union_more_cov"))
 	ctx := context.Background()
 
-	_, err := exec.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 2 AS x", true)
+	fixtureAdmission160Context, fixtureAdmission160 := statementTestContext(ctx, "RETURN 1 AS x UNION RETURN 2 AS x")
+	_ = fixtureAdmission160
+	_, err := exec.executeUnion(fixtureAdmission160, fixtureAdmission160Context, "RETURN 1 AS x UNION RETURN 2 AS x", true)
 	require.Error(t, err)
 
-	_, err = exec.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 2 AS x", false)
+	fixtureAdmission161Context, fixtureAdmission161 := statementTestContext(ctx, "RETURN 1 AS x UNION ALL RETURN 2 AS x")
+	_ = fixtureAdmission161
+	_, err = exec.executeUnion(fixtureAdmission161, fixtureAdmission161Context, "RETURN 1 AS x UNION ALL RETURN 2 AS x", false)
 	require.Error(t, err)
 
 	// First branch returns 0 rows (and may not preserve column metadata in some paths),
 	// second branch returns one row. UNION should still succeed and preserve shape.
-	res, err := exec.executeUnion(ctx,
+	fixtureAdmission162Context, fixtureAdmission162 := statementTestContext(ctx, "MATCH (n:Missing) RETURN n.name AS name UNION ALL RETURN 'fallback' AS name")
+	_ = fixtureAdmission162
+	res, err := exec.executeUnion(fixtureAdmission162, fixtureAdmission162Context,
 		"MATCH (n:Missing) RETURN n.name AS name UNION ALL RETURN 'fallback' AS name",
 		true,
 	)

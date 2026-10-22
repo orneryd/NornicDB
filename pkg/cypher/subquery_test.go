@@ -2458,7 +2458,9 @@ func TestSubqueryHelpers_AddLimitSkipAndAfterCallProcessing(t *testing.T) {
 			{"bob", float64(0.8)},
 		},
 	}
-	agg, err := exec.processCallSubqueryReturn(ctx, innerForAgg, "RETURN count(*) AS c")
+	fixtureAdmission1796Context, fixtureAdmission1796 := statementTestContext(ctx, "RETURN count(*) AS c")
+	_ = fixtureAdmission1796Context
+	agg, err := exec.processCallSubqueryReturn(fixtureAdmission1796, fixtureAdmission1796Context, innerForAgg, "RETURN count(*) AS c")
 	require.NoError(t, err)
 	require.Equal(t, []string{"c"}, agg.Columns)
 	require.Len(t, agg.Rows, 1)
@@ -2599,13 +2601,17 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		},
 		Stats: &QueryStats{},
 	}
-	retRes, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1")
+	fixtureAdmission1797Context, fixtureAdmission1797 := statementTestContext(ctx, "RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1")
+	_ = fixtureAdmission1797Context
+	retRes, err := exec.processCallSubqueryReturn(fixtureAdmission1797, fixtureAdmission1797Context, inner, "RETURN name AS n, age ORDER BY age DESC SKIP 1 LIMIT 1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "age"}, retRes.Columns)
 	require.Len(t, retRes.Rows, 1)
 	assert.Equal(t, "b", retRes.Rows[0][0])
 
-	aggRes, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names")
+	fixtureAdmission1798Context, fixtureAdmission1798 := statementTestContext(ctx, "RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names")
+	_ = fixtureAdmission1798Context
+	aggRes, err := exec.processCallSubqueryReturn(fixtureAdmission1798, fixtureAdmission1798Context, inner, "RETURN count(*) AS c, sum(age) AS s, avg(age) AS av, min(age) AS mn, max(age) AS mx, collect(name) AS names")
 	require.NoError(t, err)
 	require.Len(t, aggRes.Rows, 1)
 	assert.Equal(t, int64(3), aggRes.Rows[0][0])
@@ -2615,7 +2621,9 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 	_, err = exec.sharedCallTailForTest(ctx, inner, "SET age = 1")
 	require.Error(t, err)
 
-	modified, err := exec.applyResultModifiers(context.Background(), inner, "ORDER BY age DESC SKIP 1 LIMIT 1")
+	fixtureAdmission1799Context, fixtureAdmission1799 := statementTestContext(context.Background(), "ORDER BY age DESC SKIP 1 LIMIT 1")
+	_ = fixtureAdmission1799Context
+	modified, err := exec.applyResultModifiers(fixtureAdmission1799, fixtureAdmission1799Context, inner, "ORDER BY age DESC SKIP 1 LIMIT 1")
 	require.NoError(t, err)
 	require.Len(t, modified.Rows, 1)
 	assert.Equal(t, "b", modified.Rows[0][0])
@@ -2639,7 +2647,9 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		return out
 	}
 
-	gotTopK, err := exec.applyResultModifiers(context.Background(), &ExecuteResult{
+	fixtureAdmission1800Context, fixtureAdmission1800 := statementTestContext(context.Background(), "ORDER BY age DESC LIMIT 10")
+	_ = fixtureAdmission1800Context
+	gotTopK, err := exec.applyResultModifiers(fixtureAdmission1800, fixtureAdmission1800Context, &ExecuteResult{
 		Columns: append([]string(nil), topKInner.Columns...),
 		Rows:    cloneRows(topKInner.Rows),
 		Stats:   &QueryStats{},
@@ -2652,7 +2662,9 @@ func TestSubqueryHelpers_BatchingAndResultModifiers_Branches(t *testing.T) {
 		require.GreaterOrEqual(t, prev, cur)
 	}
 
-	gotWindow, err := exec.applyResultModifiers(context.Background(), &ExecuteResult{
+	fixtureAdmission1801Context, fixtureAdmission1801 := statementTestContext(context.Background(), "ORDER BY age ASC SKIP 5 LIMIT 7")
+	_ = fixtureAdmission1801Context
+	gotWindow, err := exec.applyResultModifiers(fixtureAdmission1801, fixtureAdmission1801Context, &ExecuteResult{
 		Columns: append([]string(nil), topKInner.Columns...),
 		Rows:    cloneRows(topKInner.Rows),
 		Stats:   &QueryStats{},
@@ -3219,7 +3231,13 @@ func TestSeedNodesFromOuterMatch_WithPipelineReturnProjection(t *testing.T) {
 	`, nil)
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, `
+	fixtureAdmission864Context, fixtureAdmission864 := statementTestContext(ctx, `
+MATCH (p:SystemPrompt)
+WITH p
+LIMIT 1
+`)
+	_ = fixtureAdmission864
+	nodes, err := exec.seedNodesFromOuterMatch(fixtureAdmission864, fixtureAdmission864Context, `
 MATCH (p:SystemPrompt)
 WITH p
 LIMIT 1
@@ -3571,9 +3589,15 @@ func TestExistsSubqueryHelpers_DirectBranches(t *testing.T) {
 	}
 	require.NotNil(t, alice)
 
-	assert.True(t, exec.evaluateWhere(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
-	assert.False(t, exec.evaluateWhere(ctx, alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
-	assert.False(t, exec.evaluateWhere(ctx, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() } = false"))
+	fixtureAdmission865Context, fixtureAdmission865 := expressionTestContext(ctx, "EXISTS { MATCH (p)-[:KNOWS]->() }")
+	_ = fixtureAdmission865
+	assert.True(t, exec.evaluateWhere(fixtureAdmission865, fixtureAdmission865Context, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	fixtureAdmission866Context, fixtureAdmission866 := expressionTestContext(ctx, "NOT EXISTS { MATCH (p)-[:KNOWS]->() }")
+	_ = fixtureAdmission866
+	assert.False(t, exec.evaluateWhere(fixtureAdmission866, fixtureAdmission866Context, alice, "p", "NOT EXISTS { MATCH (p)-[:KNOWS]->() }"))
+	fixtureAdmission867Context, fixtureAdmission867 := expressionTestContext(ctx, "EXISTS { MATCH (p)-[:KNOWS]->() } = false")
+	_ = fixtureAdmission867
+	assert.False(t, exec.evaluateWhere(fixtureAdmission867, fixtureAdmission867Context, alice, "p", "EXISTS { MATCH (p)-[:KNOWS]->() } = false"))
 }
 
 func TestExecuteMatchWithCallProcedure_ParseAndExecErrors(t *testing.T) {

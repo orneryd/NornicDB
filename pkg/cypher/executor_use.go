@@ -250,17 +250,24 @@ func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 // selects a database with USE goes through useDatabase: a top-level
 // statement, a statement a procedure runs (nested, run with executeInternal
 // so it stays in the caller's execution) and a CALL { USE … } body.
-func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}) (*ExecuteResult, error) {
+	return e.executeOnSelectedDatabase(ctx, db, query, func(scoped *StorageExecutor, selected context.Context) (*ExecuteResult, error) {
+		return scoped.Execute(selected, query, params)
+	})
+}
+
+func (e *StorageExecutor) executeFragmentOnDatabase(statement admittedRelationshipStatement, ctx context.Context, db, query string, params map[string]interface{}) (*ExecuteResult, error) {
+	return e.executeOnSelectedDatabase(ctx, db, query, func(scoped *StorageExecutor, selected context.Context) (*ExecuteResult, error) {
+		return scoped.executeFragment(statement, selected, query, params)
+	})
+}
+
+func (e *StorageExecutor) executeOnSelectedDatabase(ctx context.Context, db, query string, run func(*StorageExecutor, context.Context) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
 	if err != nil {
 		return nil, err
 	}
-	var result *ExecuteResult
-	if nested {
-		result, err = scopedExec.executeInternal(ctx, query, params)
-	} else {
-		result, err = scopedExec.Execute(ctx, query, params)
-	}
+	result, err := run(scopedExec, ctx)
 	if result != nil {
 		// A routed result can come from a shared cache. Attach the selected
 		// database to a private copy for transport metadata and entity ids.

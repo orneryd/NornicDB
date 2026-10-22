@@ -662,10 +662,14 @@ func TestCallDbRetrieveWrappers_NullRequest(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
-	_, err := exec.callDbRetrieve(ctx, []interface{}{nil})
+	var fixtureAdmission1833Arguments []interface{} = []interface{}{nil}
+	fixtureAdmission1833Context, fixtureAdmission1833 := procedureTestContext(ctx, "db.retrieve", fixtureAdmission1833Arguments)
+	_, err := exec.callDbRetrieve(fixtureAdmission1833, fixtureAdmission1833Context, fixtureAdmission1833Arguments)
 	require.Error(t, err)
 
-	_, err = exec.callDbRRetrieve(ctx, nil)
+	var fixtureAdmission1834Arguments []interface{} = nil
+	fixtureAdmission1834Context, fixtureAdmission1834 := procedureTestContext(ctx, "db.rretrieve", fixtureAdmission1834Arguments)
+	_, err = exec.callDbRRetrieve(fixtureAdmission1834, fixtureAdmission1834Context, fixtureAdmission1834Arguments)
 	require.Error(t, err)
 }
 

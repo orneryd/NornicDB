@@ -212,7 +212,9 @@ func TestCollectDistinctCountsEachValueOnce(t *testing.T) {
 		defer tracker.end()
 		state := pipelineAggregateState{name: "collect", expression: "x", distinct: distinct, memory: retentionIn(&tracker.root)}
 		for i := 0; i < 1000; i++ {
-			require.True(t, state.add(context.Background(), executor, pipelineRow{"x": fmt.Sprintf("distinct value %d", i)}))
+			fixtureAdmission1650Context, fixtureAdmission1650 := statementTestContext(context.Background(), "RETURN "+("x"))
+			_ = fixtureAdmission1650Context
+			require.True(t, state.add(fixtureAdmission1650, fixtureAdmission1650Context, executor, pipelineRow{"x": fmt.Sprintf("distinct value %d", i)}))
 		}
 		return state.memory.account.spent
 	}

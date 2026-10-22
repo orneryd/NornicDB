@@ -109,11 +109,15 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 		"MATCH (a:Doc), (b:Doc) WHERE a.id = b.id",
 		"MATCH (a:Doc), (b:Doc {id: a.id})",
 	} {
-		_, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{}}, clause)
+		fixtureAdmission959Context, fixtureAdmission959 := statementTestContext(ctx, clause)
+		_ = fixtureAdmission959Context
+		_, supported, err := exec.pipelineNodeProductSource(fixtureAdmission959, fixtureAdmission959Context, []pipelineRow{{}}, clause)
 		require.NoError(t, err)
 		require.False(t, supported, clause)
 	}
-	source, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, "MATCH (a:Doc {id: $id}), (b:Doc)")
+	fixtureAdmission1209Context, fixtureAdmission1209 := statementTestContext(ctx, "MATCH (a:Doc {id: $id}), (b:Doc)")
+	_ = fixtureAdmission1209Context
+	source, supported, err := exec.pipelineNodeProductSource(fixtureAdmission1209, fixtureAdmission1209Context, []pipelineRow{{"$id": int64(1)}, {"$id": int64(2)}, {"$id": int64(1)}}, "MATCH (a:Doc {id: $id}), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
 	retained, completed := materializePipelineSource(context.Background(), source)
@@ -131,7 +135,9 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 		return false
 	}))
 	require.Equal(t, 1, visited)
-	nullSource, supported, err := exec.pipelineNodeProductSource(ctx, []pipelineRow{{"a": nil}}, "MATCH (a:Doc), (b:Doc)")
+	fixtureAdmission1210Context, fixtureAdmission1210 := statementTestContext(ctx, "MATCH (a:Doc), (b:Doc)")
+	_ = fixtureAdmission1210Context
+	nullSource, supported, err := exec.pipelineNodeProductSource(fixtureAdmission1210, fixtureAdmission1210Context, []pipelineRow{{"a": nil}}, "MATCH (a:Doc), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
 	empty, completed := materializePipelineSource(context.Background(), nullSource)
@@ -139,7 +145,9 @@ func TestMonster728ProductSourceContracts(t *testing.T) {
 	require.Empty(t, empty)
 	canceled, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
 	cancel()
-	canceledSource, supported, err := exec.pipelineNodeProductSource(canceled, []pipelineRow{{}}, "MATCH (a:Doc), (b:Doc)")
+	fixtureAdmission1211Context, fixtureAdmission1211 := statementTestContext(canceled, "MATCH (a:Doc), (b:Doc)")
+	_ = fixtureAdmission1211Context
+	canceledSource, supported, err := exec.pipelineNodeProductSource(fixtureAdmission1211, fixtureAdmission1211Context, []pipelineRow{{}}, "MATCH (a:Doc), (b:Doc)")
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.False(t, canceledSource(func(pipelineRow) bool { t.Error("canceled source yielded a row"); return true }))
@@ -151,7 +159,9 @@ func TestComprehensionStrictPredicateAcrossExecutionRoutes(t *testing.T) {
 	for _, expression := range []string{"[x IN [1,2] WHERE x + 1]", "[x IN [1,2] WHERE x + 1 | x]"} {
 		t.Run(expression, func(t *testing.T) {
 			ctx := withExpressionFailureSlot(context.Background())
-			exec.evaluateExpressionWithContextFull(ctx, expression, nil, nil, nil, nil, nil, 0)
+			fixtureAdmission662Context, fixtureAdmission662 := expressionTestContext(ctx, expression)
+			_ = fixtureAdmission662
+			exec.evaluateExpressionWithContextFull(fixtureAdmission662, fixtureAdmission662Context, expression, nil, nil, nil, nil, nil, 0)
 			require.Error(t, getExpressionFailure(ctx))
 			for _, prefix := range []string{"RETURN ", "CREATE (n:StrictComprehension) RETURN "} {
 				_, err := exec.Execute(context.Background(), prefix+expression, nil)

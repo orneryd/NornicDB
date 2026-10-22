@@ -386,7 +386,7 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID.
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+func (run relationshipEntityExecution) nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
 	outgoing, err := store.GetOutgoingEdges(nodeID)
 	if err != nil {
 		return false, err
@@ -406,6 +406,10 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 		}
 	}
 	return false, nil
+}
+
+func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	return relationshipStorageExecution().nodeHasResidualRelationships(store, nodeID, beingDeleted)
 }
 
 // residualRelationshipDeleteError builds the error returned when a

@@ -160,9 +160,19 @@ func TestCaseExpression_SharedEvaluatorLevel(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_shared_level"))
 
 	values := map[string]interface{}{"a": int64(3), "b": int64(2), "s": "x"}
-	require.Equal(t, "three", exec.evaluateCaseExpressionFromValues("CASE a WHEN 3 THEN 'three' ELSE 'other' END", values))
-	require.Equal(t, "open", exec.evaluateCaseExpressionFromValues("CASE WHEN a = 9 THEN 'closed' ELSE 'open' END", values))
-	require.Nil(t, exec.evaluateCaseExpressionFromValues("CASE WHEN a < 0 THEN 2 END", values))
-	require.Equal(t, int64(5), exec.evaluateExpressionFromValues("coalesce(missing, null, 5)", values))
-	require.Equal(t, "x", exec.evaluateExpressionFromValues("coalesce(null, s, 'y')", values))
+	fixtureAdmission135Context, fixtureAdmission135 := expressionTestRow(context.Background(), "CASE a WHEN 3 THEN 'three' ELSE 'other' END", values)
+	_ = fixtureAdmission135
+	require.Equal(t, "three", exec.evaluateCaseExpressionFromValues(fixtureAdmission135, "CASE a WHEN 3 THEN 'three' ELSE 'other' END", fixtureAdmission135Context))
+	fixtureAdmission136Context, fixtureAdmission136 := expressionTestRow(context.Background(), "CASE WHEN a = 9 THEN 'closed' ELSE 'open' END", values)
+	_ = fixtureAdmission136
+	require.Equal(t, "open", exec.evaluateCaseExpressionFromValues(fixtureAdmission136, "CASE WHEN a = 9 THEN 'closed' ELSE 'open' END", fixtureAdmission136Context))
+	fixtureAdmission137Context, fixtureAdmission137 := expressionTestRow(context.Background(), "CASE WHEN a < 0 THEN 2 END", values)
+	_ = fixtureAdmission137
+	require.Nil(t, exec.evaluateCaseExpressionFromValues(fixtureAdmission137, "CASE WHEN a < 0 THEN 2 END", fixtureAdmission137Context))
+	fixtureAdmission138Context, fixtureAdmission138 := expressionTestRow(context.Background(), "coalesce(missing, null, 5)", values)
+	_ = fixtureAdmission138
+	require.Equal(t, int64(5), exec.evaluateExpressionFromValues(fixtureAdmission138, "coalesce(missing, null, 5)", fixtureAdmission138Context))
+	fixtureAdmission139Context, fixtureAdmission139 := expressionTestRow(context.Background(), "coalesce(null, s, 'y')", values)
+	_ = fixtureAdmission139
+	require.Equal(t, "x", exec.evaluateExpressionFromValues(fixtureAdmission139, "coalesce(null, s, 'y')", fixtureAdmission139Context))
 }

@@ -15,7 +15,7 @@ import (
 //	MATCH (n) RETURN n AS node LIMIT <k>
 //
 // It is intentionally strict to avoid semantic drift from full Cypher execution.
-func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
 	trimmed := strings.TrimSpace(cypher)
 	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
 		return nil, false
@@ -50,7 +50,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 	}
 
 	limitExpression := StripComments(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"))
-	limit, ok := e.evaluatePipelinePagination(ctx, limitExpression, nil)
+	limit, ok := e.evaluatePipelinePagination(admission, ctx, limitExpression, nil)
 	if !ok {
 		return nil, false
 	}
@@ -61,7 +61,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return &ExecuteResult{Columns: []string{columnName}, Rows: rows, Stats: &QueryStats{}}, true
 	}
 
-	nodes, err := e.collectNodesWithStreaming(ctx, labels, nil, varName, "", limit)
+	nodes, err := e.collectNodesWithStreaming(admission, ctx, labels, nil, varName, "", limit)
 	if err != nil {
 		return nil, false
 	}

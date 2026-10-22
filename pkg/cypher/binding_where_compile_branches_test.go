@@ -17,52 +17,92 @@ func TestBindingWhereCompileAndEvaluate_Branches(t *testing.T) {
 	bind := binding{"a": a, "b": b}
 	params := map[string]interface{}{"pname": "Ali", "ages": []interface{}{int64(30), int64(50)}, "nid": "20"}
 
-	pred := exec.getCompiledBindingWhere(ctx, "a.name STARTS WITH $pname")
+	fixtureAdmission59Context, fixtureAdmission59 := expressionTestContext(ctx, "a.name STARTS WITH $pname")
+	_ = fixtureAdmission59
+	pred := exec.getCompiledBindingWhere(fixtureAdmission59, fixtureAdmission59Context, "a.name STARTS WITH $pname")
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.name ENDS WITH 'ce'")
+	fixtureAdmission60Context, fixtureAdmission60 := expressionTestContext(ctx, "a.name ENDS WITH 'ce'")
+	_ = fixtureAdmission60
+	pred = exec.getCompiledBindingWhere(fixtureAdmission60, fixtureAdmission60Context, "a.name ENDS WITH 'ce'")
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.name CONTAINS 'li'")
+	fixtureAdmission61Context, fixtureAdmission61 := expressionTestContext(ctx, "a.name CONTAINS 'li'")
+	_ = fixtureAdmission61
+	pred = exec.getCompiledBindingWhere(fixtureAdmission61, fixtureAdmission61Context, "a.name CONTAINS 'li'")
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.tag IS NULL")
+	fixtureAdmission62Context, fixtureAdmission62 := expressionTestContext(ctx, "a.tag IS NULL")
+	_ = fixtureAdmission62
+	pred = exec.getCompiledBindingWhere(fixtureAdmission62, fixtureAdmission62Context, "a.tag IS NULL")
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a.tag IS NOT NULL")
+	fixtureAdmission63Context, fixtureAdmission63 := expressionTestContext(ctx, "a.tag IS NOT NULL")
+	_ = fixtureAdmission63
+	pred = exec.getCompiledBindingWhere(fixtureAdmission63, fixtureAdmission63Context, "a.tag IS NOT NULL")
 	require.False(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.age IN [30, 31]")
+	fixtureAdmission64Context, fixtureAdmission64 := expressionTestContext(ctx, "a.age IN [30, 31]")
+	_ = fixtureAdmission64
+	pred = exec.getCompiledBindingWhere(fixtureAdmission64, fixtureAdmission64Context, "a.age IN [30, 31]")
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a.age NOT IN [30, 31]")
+	fixtureAdmission65Context, fixtureAdmission65 := expressionTestContext(ctx, "a.age NOT IN [30, 31]")
+	_ = fixtureAdmission65
+	pred = exec.getCompiledBindingWhere(fixtureAdmission65, fixtureAdmission65Context, "a.age NOT IN [30, 31]")
 	require.False(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a.age IN $ages")
+	fixtureAdmission66Context, fixtureAdmission66 := expressionTestContext(ctx, "a.age IN $ages")
+	_ = fixtureAdmission66
+	pred = exec.getCompiledBindingWhere(fixtureAdmission66, fixtureAdmission66Context, "a.age IN $ages")
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.age >= 30 AND a.age < 31")
+	fixtureAdmission67Context, fixtureAdmission67 := expressionTestContext(ctx, "a.age >= 30 AND a.age < 31")
+	_ = fixtureAdmission67
+	pred = exec.getCompiledBindingWhere(fixtureAdmission67, fixtureAdmission67Context, "a.age >= 30 AND a.age < 31")
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "NOT (a.age < 30)")
+	fixtureAdmission68Context, fixtureAdmission68 := expressionTestContext(ctx, "NOT (a.age < 30)")
+	_ = fixtureAdmission68
+	pred = exec.getCompiledBindingWhere(fixtureAdmission68, fixtureAdmission68Context, "NOT (a.age < 30)")
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a = b OR a.age = 30")
+	fixtureAdmission69Context, fixtureAdmission69 := expressionTestContext(ctx, "a = b OR a.age = 30")
+	_ = fixtureAdmission69
+	pred = exec.getCompiledBindingWhere(fixtureAdmission69, fixtureAdmission69Context, "a = b OR a.age = 30")
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a <> b")
+	fixtureAdmission70Context, fixtureAdmission70 := expressionTestContext(ctx, "a <> b")
+	_ = fixtureAdmission70
+	pred = exec.getCompiledBindingWhere(fixtureAdmission70, fixtureAdmission70Context, "a <> b")
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "id(a) = $nid")
+	fixtureAdmission71Context, fixtureAdmission71 := expressionTestContext(ctx, "id(a) = $nid")
+	_ = fixtureAdmission71
+	pred = exec.getCompiledBindingWhere(fixtureAdmission71, fixtureAdmission71Context, "id(a) = $nid")
 	require.False(t, pred(bind, params))
 
 	// generic fallback path
-	require.True(t, exec.evaluateBindingWhereGeneric(ctx, bind, "a.age = 30", params))
-	require.True(t, exec.evaluateBindingWhereGeneric(ctx, bind, "a.name CONTAINS 'li'", params))
-	require.False(t, exec.evaluateBindingWhereGeneric(ctx, bind, "a.age > 31", params))
+	fixtureAdmission72Context, fixtureAdmission72 := expressionTestContext(ctx, "a.age = 30")
+	_ = fixtureAdmission72
+	require.True(t, exec.evaluateBindingWhereGeneric(fixtureAdmission72, fixtureAdmission72Context, bind, "a.age = 30", params))
+	fixtureAdmission73Context, fixtureAdmission73 := expressionTestContext(ctx, "a.name CONTAINS 'li'")
+	_ = fixtureAdmission73
+	require.True(t, exec.evaluateBindingWhereGeneric(fixtureAdmission73, fixtureAdmission73Context, bind, "a.name CONTAINS 'li'", params))
+	fixtureAdmission74Context, fixtureAdmission74 := expressionTestContext(ctx, "a.age > 31")
+	_ = fixtureAdmission74
+	require.False(t, exec.evaluateBindingWhereGeneric(fixtureAdmission74, fixtureAdmission74Context, bind, "a.age > 31", params))
 
-	v, ok := exec.resolveBindingFallbackValueWithOk(ctx, "$pname", bind, params)
+	fixtureAdmission1019Context, fixtureAdmission1019 := expressionTestContext(ctx, "$pname")
+	_ = fixtureAdmission1019Context
+	v, ok := exec.resolveBindingFallbackValueWithOk(fixtureAdmission1019, fixtureAdmission1019Context, "$pname", bind, params)
 	require.True(t, ok)
 	require.Equal(t, "Ali", v)
-	_, ok = exec.resolveBindingFallbackValueWithOk(ctx, "$missing", bind, params)
+	fixtureAdmission1020Context, fixtureAdmission1020 := expressionTestContext(ctx, "$missing")
+	_ = fixtureAdmission1020Context
+	_, ok = exec.resolveBindingFallbackValueWithOk(fixtureAdmission1020, fixtureAdmission1020Context, "$missing", bind, params)
 	require.False(t, ok)
 
-	require.True(t, exec.evaluateBindingExpressionAsBoolean(ctx, bind, "1 = 1", nil))
-	require.False(t, exec.evaluateBindingExpressionAsBoolean(ctx, bind, "42", nil))
+	fixtureAdmission75Context, fixtureAdmission75 := expressionTestContext(ctx, "1 = 1")
+	_ = fixtureAdmission75
+	require.True(t, exec.evaluateBindingExpressionAsBoolean(fixtureAdmission75, fixtureAdmission75Context, bind, "1 = 1", nil))
+	fixtureAdmission76Context, fixtureAdmission76 := expressionTestContext(ctx, "42")
+	_ = fixtureAdmission76
+	require.False(t, exec.evaluateBindingExpressionAsBoolean(fixtureAdmission76, fixtureAdmission76Context, bind, "42", nil))
 
 	require.True(t, exec.compareNodeIDs("10", "2", ">"))
 	require.True(t, exec.compareNodeIDs("b", "a", ">"))
@@ -108,8 +148,12 @@ func TestBindingWhereResolverAndLiteralListHelpers(t *testing.T) {
 	require.True(t, pred.predicate()(bind, nil))
 
 	require.True(t, normalizeBindingWhereClause("a\nAND\tb") == "a AND b")
-	p1 := exec.getCompiledBindingWhere(ctx, "a.age = 1")
-	p2 := exec.getCompiledBindingWhere(ctx, "a.age = 1")
+	fixtureAdmission77Context, fixtureAdmission77 := expressionTestContext(ctx, "a.age = 1")
+	_ = fixtureAdmission77
+	p1 := exec.getCompiledBindingWhere(fixtureAdmission77, fixtureAdmission77Context, "a.age = 1")
+	fixtureAdmission78Context, fixtureAdmission78 := expressionTestContext(ctx, "a.age = 1")
+	_ = fixtureAdmission78
+	p2 := exec.getCompiledBindingWhere(fixtureAdmission78, fixtureAdmission78Context, "a.age = 1")
 	require.NotNil(t, p1)
 	require.NotNil(t, p2)
 }

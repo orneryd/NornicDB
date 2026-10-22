@@ -55,7 +55,9 @@ func TestFormatFunction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission350Context, fixtureAdmission350 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission350
+			result := exec.evaluateExpressionWithContext(fixtureAdmission350, fixtureAdmission350Context, tt.expr, nil, nil)
 			if str, ok := result.(string); ok {
 				if str != tt.expected {
 					t.Errorf("format() = %q, want %q", str, tt.expected)
@@ -75,7 +77,9 @@ func TestFormatFunctionEdgeCases(t *testing.T) {
 
 	t.Run("format with no args", func(t *testing.T) {
 		ctx := context.Background()
-		result := exec.evaluateExpressionWithContext(ctx, `format('No placeholders')`, nil, nil)
+		fixtureAdmission351Context, fixtureAdmission351 := expressionTestContext(ctx, `format('No placeholders')`)
+		_ = fixtureAdmission351
+		result := exec.evaluateExpressionWithContext(fixtureAdmission351, fixtureAdmission351Context, `format('No placeholders')`, nil, nil)
 		if str, ok := result.(string); ok {
 			if str != "No placeholders" {
 				t.Errorf("format() = %q, want %q", str, "No placeholders")
@@ -88,7 +92,9 @@ func TestFormatFunctionEdgeCases(t *testing.T) {
 	t.Run("format with quoted template", func(t *testing.T) {
 		ctx := context.Background()
 
-		result := exec.evaluateExpressionWithContext(ctx, `format("User: %s", "Alice")`, nil, nil)
+		fixtureAdmission352Context, fixtureAdmission352 := expressionTestContext(ctx, `format("User: %s", "Alice")`)
+		_ = fixtureAdmission352
+		result := exec.evaluateExpressionWithContext(fixtureAdmission352, fixtureAdmission352Context, `format("User: %s", "Alice")`, nil, nil)
 		if str, ok := result.(string); ok {
 			if str != "User: Alice" {
 				t.Errorf("format() = %q, want %q", str, "User: Alice")
@@ -101,7 +107,9 @@ func TestFormatFunctionEdgeCases(t *testing.T) {
 	t.Run("format with percent literal", func(t *testing.T) {
 		ctx := context.Background()
 
-		result := exec.evaluateExpressionWithContext(ctx, `format('100%% complete')`, nil, nil)
+		fixtureAdmission353Context, fixtureAdmission353 := expressionTestContext(ctx, `format('100%% complete')`)
+		_ = fixtureAdmission353
+		result := exec.evaluateExpressionWithContext(fixtureAdmission353, fixtureAdmission353Context, `format('100%% complete')`, nil, nil)
 		if str, ok := result.(string); ok {
 			if str != "100% complete" {
 				t.Errorf("format() = %q, want %q", str, "100% complete")

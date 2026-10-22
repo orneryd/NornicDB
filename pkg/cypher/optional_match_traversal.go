@@ -53,7 +53,7 @@ type optionalClauseEndpoints struct {
 	direction string // "out", "in", or "both", relative to source
 }
 
-func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, predicate string, row traversalOptRow) bool {
+func (e *StorageExecutor) traversalOptionalWhereMatches(admission admittedRelationshipStatement, ctx context.Context, predicate string, row traversalOptRow) bool {
 	if strings.TrimSpace(predicate) == "" {
 		return true
 	}
@@ -69,10 +69,10 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 		values[variable] = value
 	}
 	predicate = substituteWithWhereLabelTests(predicate, values)
-	if value, evaluated := e.evaluateRowExpressionWithContext(ctx, predicate, pipelineRow(values)); evaluated {
+	if value, evaluated := e.evaluateRowExpressionWithContext(admission, ctx, predicate, pipelineRow(values)); evaluated {
 		return predicateValueIsTrue(ctx, value, predicate)
 	}
-	return predicateValueIsTrue(ctx, e.evaluateExpressionWithContext(ctx, predicate, row.nodes, row.rels), predicate)
+	return predicateValueIsTrue(ctx, e.evaluateExpressionWithContext(admission, ctx, predicate, row.nodes, row.rels), predicate)
 }
 
 // splitOptionalMatchClauses splits the text that follows the first
@@ -135,7 +135,7 @@ func extractRelationshipVariables(matchClause string) []string {
 // parseOptionalClauseEndpoints parses one OPTIONAL MATCH relationship pattern
 // into both endpoint node patterns plus relationship variable, type, and
 // direction. It returns an error for patterns without two node endpoints.
-func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
+func (e *StorageExecutor) parseOptionalClauseEndpoints(admission admittedRelationshipStatement, ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
 	eps := optionalClauseEndpoints{direction: "both"}
 	// Anonymous relationships (-->, <--, --) become bracketed ones, so the
 	// relationship bracket below always carries the direction.
@@ -149,7 +149,7 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if closeIdx < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.source = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
+	eps.source = e.parseNodePattern(admission, ctx, pattern[openIdx:closeIdx+1])
 
 	rest := pattern[closeIdx+1:]
 	if relOpen, relClose := firstRelationshipBracket(rest); relOpen >= 0 {
@@ -187,7 +187,7 @@ func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, patt
 	if tClose < 0 {
 		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
 	}
-	eps.target = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
+	eps.target = e.parseNodePattern(admission, ctx, rest[tOpen:tClose+1])
 	return eps, nil
 }
 
@@ -248,8 +248,8 @@ func extendTraversalRow(row traversalOptRow, nodeVar string, node *storage.Node,
 //   - everything else (disconnected patterns, multi-hop chains, bound
 //     relationship variables): applyGeneralOptionalClause, the Apply +
 //     Optional contract. No valid shape is rejected.
-func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
-	return e.applyGeneralOptionalClause(ctx, rows, clause)
+func (e *StorageExecutor) applyTraversalOptionalClause(admission admittedRelationshipStatement, ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+	return e.applyGeneralOptionalClause(admission, ctx, rows, clause)
 }
 
 // isSimpleTraversalIdentifier reports whether s is a bare Cypher identifier

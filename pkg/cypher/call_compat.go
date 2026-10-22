@@ -18,7 +18,8 @@ import (
 // ===== Additional Neo4j Compatibility Procedures =====
 
 // callDbInfo returns database information - Neo4j db.info()
-func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+	e := run.executor
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 	name := e.currentDatabaseName()
@@ -42,6 +43,10 @@ func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error
 			{id, name, creationDate, nodeCount, edgeCount},
 		},
 	}, nil
+}
+
+func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbInfo(ctx)
 }
 
 // callDbPing checks database connectivity - Neo4j db.ping()
@@ -77,11 +82,11 @@ func (e *StorageExecutor) callDbmsInfo() (*ExecuteResult, error) {
 }
 
 // callDbmsListConfig lists DBMS configuration - Neo4j dbms.listConfig()
-func (e *StorageExecutor) callDbmsListConfig() (*ExecuteResult, error) {
-	return e.callDbmsListConfigArguments(context.Background(), nil)
+func (e *StorageExecutor) callDbmsListConfig(admission admittedRelationshipStatement) (*ExecuteResult, error) {
+	return e.callDbmsListConfigArguments(admission, context.Background(), nil)
 }
 
-func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbmsListConfigArguments(admission admittedRelationshipStatement, ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
 	searchString := ""
 	if len(arguments) > 0 {
 		var valid bool
@@ -90,7 +95,7 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "dbms.listConfig requires a STRING search filter")
 		}
 	}
-	settings, err := e.executeShowSettings(ctx, "SHOW SETTINGS")
+	settings, err := e.executeShowSettings(admission, ctx, "SHOW SETTINGS")
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +206,8 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+	e := run.executor
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -354,6 +360,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 	return result, nil
 }
 
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbIndexFulltextQueryRelationships(args)
+}
+
 // buildEdgeFulltextDoc mirrors buildNodeFulltextDoc for relationships.
 func buildEdgeFulltextDoc(edge *storage.Edge, properties []string) *ftDoc {
 	if edge == nil {
@@ -498,7 +508,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationships(ctx context.Contex
 	return e.callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
 }
 
-func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	e := run.executor
 	// Resolve the query vector (same logic as queryNodes)
 	var queryVector []float32
 
@@ -710,6 +721,10 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	}
 
 	return result, nil
+}
+
+func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.Context, indexName string, k int, input *vectorQueryInput) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbIndexVectorQueryRelationshipsInput(ctx, indexName, k, input)
 }
 
 // vectorIndexProcedure names a vector index creation procedure and its
@@ -959,25 +974,26 @@ func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string {
 
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
 	if err != nil {
 		return nil, err
 	}
-	return e.callSetVectorProperty(ctx, arguments, false)
+	return e.callSetVectorProperty(admission, ctx, arguments, false)
 }
 
 // callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
 // Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
 	if err != nil {
 		return nil, err
 	}
-	return e.callSetVectorProperty(ctx, arguments, true)
+	return e.callSetVectorProperty(admission, ctx, arguments, true)
 }
 
-func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callSetVectorProperty(admission admittedRelationshipStatement, ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+	e := run.executor
 	if len(arguments) != 3 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "vector property setter requires three arguments")
 	}
@@ -994,7 +1010,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	propertyKey, validKey := arguments[1].(string)
 	if expression, raw := arguments[2].(string); raw && strings.HasPrefix(strings.TrimSpace(expression), "[") {
-		arguments[2] = e.evaluateExpressionWithContext(ctx, expression, nil, nil)
+		arguments[2] = e.evaluateExpressionWithContext(admission, ctx, expression, nil, nil)
 	}
 	vector, validVector := toFloat64Slice(arguments[2])
 	if !validID || !validKey || !validVector {
@@ -1037,6 +1053,10 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
+func (e *StorageExecutor) callSetVectorProperty(admission admittedRelationshipStatement, ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callSetVectorProperty(admission, ctx, arguments, relationship)
+}
+
 // callTxSetMetadata sets transaction metadata - Neo4j tx.setMetaData()
 //
 // This procedure is used to attach metadata to transactions for logging/debugging.
@@ -1044,7 +1064,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 //
 // Uses the active explicit transaction or the statement's implicit transaction.
 // Metadata is stored with the transaction for logging, debugging, or audit trails.
-func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callTxSetMetadata(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if !strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData") {
 		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)
 	}
@@ -1052,10 +1072,10 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) 
 	if err != nil {
 		return nil, err
 	}
-	return e.callTxSetMetadataArguments(ctx, arguments)
+	return e.callTxSetMetadataArguments(admission, ctx, arguments)
 }
 
-func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callTxSetMetadataArguments(admission admittedRelationshipStatement, ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
 	var tx *storage.BadgerTransaction
 	if e.txContext != nil && e.txContext.active {
 		var supported bool
@@ -1076,7 +1096,7 @@ func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, argume
 
 	metadata, valid := toStringAnyMap(arguments[0])
 	if expression, raw := arguments[0].(string); raw {
-		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(admission, ctx, expression, nil, nil))
 	}
 	if !valid {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "tx.setMetaData requires a MAP")

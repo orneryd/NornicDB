@@ -330,7 +330,7 @@ func showPrivilegeRoles(head string) []string {
 
 // executeShowPrivileges lists the procedure privileges, in Neo4j's columns:
 // access, action, resource, graph, segment, role, immutable.
-func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowPrivileges(fixtureAdmission1003 admittedRelationshipStatement, ctx context.Context, head string) (*ExecuteResult, error) {
 	system, err := e.privilegeStorage(false)
 	if err != nil {
 		return nil, err

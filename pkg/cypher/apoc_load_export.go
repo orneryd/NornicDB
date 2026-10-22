@@ -463,7 +463,8 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{
 
 // callApocExportJson exports graph data to JSON.
 // Syntax: CALL apoc.export.json.all(file, config) YIELD file, nodes, relationships
-func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callApocExportJsonAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e := run.executor
 	// No file (or '') returns the export instead of writing it.
 	filePath, err := optionalProcedureString("apoc.export.json.all", args, 0, "file", "")
 	if err != nil {
@@ -511,6 +512,10 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 			string(jsonData),
 		}},
 	}, nil
+}
+
+func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callApocExportJsonAll(ctx, args)
 }
 
 // callApocExportJsonQuery exports query results to JSON.
@@ -574,7 +579,8 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 
 // callApocExportCsvAll exports all data to CSV.
 // Syntax: CALL apoc.export.csv.all(file, config) YIELD file, nodes, relationships
-func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callApocExportCsvAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e := run.executor
 	// No file (or '') returns the export instead of writing it.
 	filePath, err := optionalProcedureString("apoc.export.csv.all", args, 0, "file", "")
 	if err != nil {
@@ -639,6 +645,10 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 			len(nodes) + len(edges),
 		}},
 	}, nil
+}
+
+func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callApocExportCsvAll(ctx, args)
 }
 
 // callApocExportCsvQuery exports query results to CSV.

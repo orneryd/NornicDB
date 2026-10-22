@@ -389,14 +389,18 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	b := makeNode("b")
 
 	t.Run("parse error", func(t *testing.T) {
-		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		fixtureAdmission1202Context, fixtureAdmission1202 := traversalTestContext(ctx, "(a)-[:KNOWS]->", "", nil)
+		_ = fixtureAdmission1202Context
+		_, err := exec.createPatternsInScope(fixtureAdmission1202, fixtureAdmission1202Context, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 	})
 
 	t.Run("unbound endpoint creates and binds node", func(t *testing.T) {
 		nodeCtx := map[string]*storage.Node{"a": a}
 		result := &ExecuteResult{Stats: &QueryStats{}}
-		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
+		fixtureAdmission1203Context, fixtureAdmission1203 := traversalTestContext(ctx, "(a)-[:KNOWS]->(missing)", "", nil)
+		_ = fixtureAdmission1203Context
+		_, err := exec.createPatternsInScope(fixtureAdmission1203, fixtureAdmission1203Context, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
 		require.NoError(t, err)
 		require.Contains(t, nodeCtx, "missing")
 		require.Equal(t, 1, result.Stats.NodesCreated)
@@ -404,7 +408,9 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	})
 
 	t.Run("relationship type required", func(t *testing.T) {
-		_, err := exec.createPatternsInScope(ctx, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		fixtureAdmission1204Context, fixtureAdmission1204 := traversalTestContext(ctx, "(a)-[r]->(b)", "", nil)
+		_ = fixtureAdmission1204Context
+		_, err := exec.createPatternsInScope(fixtureAdmission1204, fixtureAdmission1204Context, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "relationship type is required")
 	})
@@ -413,7 +419,9 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 		edgeCtx := map[string]*storage.Edge{}
 		result := &ExecuteResult{Stats: &QueryStats{}}
 
-		_, err := exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result)
+		fixtureAdmission1205Context, fixtureAdmission1205 := traversalTestContext(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", "", nil)
+		_ = fixtureAdmission1205Context
+		_, err := exec.createPatternsInScope(fixtureAdmission1205, fixtureAdmission1205Context, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result)
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
 		require.Contains(t, edgeCtx, "r")
@@ -422,7 +430,9 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 		assert.EqualValues(t, 2020, edgeCtx["r"].Properties["since"])
 
 		result2 := &ExecuteResult{Stats: &QueryStats{}}
-		_, err = exec.createPatternsInScope(ctx, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result2)
+		fixtureAdmission1206Context, fixtureAdmission1206 := traversalTestContext(ctx, "(a)<-[r2:KNOWS]-(b)", "", nil)
+		_ = fixtureAdmission1206Context
+		_, err = exec.createPatternsInScope(fixtureAdmission1206, fixtureAdmission1206Context, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result2)
 		require.NoError(t, err)
 		require.Contains(t, edgeCtx, "r2")
 		assert.Equal(t, storage.NodeID("b"), edgeCtx["r2"].StartNode)

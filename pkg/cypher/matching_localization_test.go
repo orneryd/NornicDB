@@ -30,7 +30,9 @@ func TestCypherMatchingLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("optional endpoint validation", func(t *testing.T) {
-		_, err := exec.parseOptionalClauseEndpoints(context.Background(), "-[r]->")
+		fixtureAdmission1649Context, fixtureAdmission1649 := traversalTestContext(context.Background(), "-[r]->", "", nil)
+		_ = fixtureAdmission1649Context
+		_, err := exec.parseOptionalClauseEndpoints(fixtureAdmission1649, fixtureAdmission1649Context, "-[r]->")
 		requireCypherMatchingLocalizedError(t, err, localization.MessageCypherMatchingOptionalMatchNodeEndpointMissing, `optional match pattern "-[r]->" has no node endpoint`)
 	})
 

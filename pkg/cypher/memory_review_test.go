@@ -80,7 +80,9 @@ func TestWithChargesOnlyTheRowsItKeeps(t *testing.T) {
 			defer tracker.end()
 			ctx := context.WithValue(context.Background(), memoryScopeKey{}, &tracker.root)
 			before := tracker.root.mark()
-			out, ok := executor.pipelineApplyWith(ctx, rows, clause)
+			fixtureAdmission961Context, fixtureAdmission961 := statementTestContext(ctx, clause)
+			_ = fixtureAdmission961Context
+			out, ok := executor.pipelineApplyWith(fixtureAdmission961, fixtureAdmission961Context, rows, clause)
 			require.True(t, ok)
 			require.Len(t, out, 1)
 			taken := tracker.root.mark() - before

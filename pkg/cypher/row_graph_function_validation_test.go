@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -18,9 +19,11 @@ func TestLabelsRejectsStaticallyKnownPathArguments(t *testing.T) {
 
 func TestLabelsRejectsNonNodeValuesResolvedAtRuntime(t *testing.T) {
 	executor := &StorageExecutor{}
-	_, _, err := executor.evaluateRowValue("labels(items[1])", pipelineRow{
+	fixtureAdmission836Context, fixtureAdmission836 := expressionTestRow(context.Background(), "labels(items[1])", pipelineRow{
 		"items": []interface{}{&storage.Node{}, int64(1)},
 	})
+	_ = fixtureAdmission836
+	_, _, err := executor.evaluateRowValue(fixtureAdmission836, "labels(items[1])", fixtureAdmission836Context)
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.True(t, errors.As(err, &semanticError))
@@ -37,9 +40,11 @@ func TestTypeRejectsStaticallyKnownNodeArguments(t *testing.T) {
 
 func TestTypeValidatesEveryListComprehensionValueAtRuntime(t *testing.T) {
 	executor := &StorageExecutor{}
-	_, _, err := executor.evaluateRowValue("[value IN items | type(value)]", pipelineRow{
+	fixtureAdmission837Context, fixtureAdmission837 := expressionTestRow(context.Background(), "[value IN items | type(value)]", pipelineRow{
 		"items": []interface{}{&storage.Edge{Type: "T"}, int64(1)},
 	})
+	_ = fixtureAdmission837
+	_, _, err := executor.evaluateRowValue(fixtureAdmission837, "[value IN items | type(value)]", fixtureAdmission837Context)
 	require.Error(t, err)
 	var semanticError *SemanticError
 	require.True(t, errors.As(err, &semanticError))

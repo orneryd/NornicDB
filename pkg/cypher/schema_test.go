@@ -302,36 +302,52 @@ func TestSchemaErrorCases(t *testing.T) {
 
 	t.Run("FulltextNoPropertiesFound", func(t *testing.T) {
 		// Property token missing "n." should parse as zero extracted properties.
-		_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX bad_ft FOR (n:Node) ON EACH [content]")
+		fixtureAdmission1421Context, fixtureAdmission1421 := statementTestContext(ctx, "CREATE FULLTEXT INDEX bad_ft FOR (n:Node) ON EACH [content]")
+		_ = fixtureAdmission1421Context
+		_, err := exec.executeCreateFulltextIndex(fixtureAdmission1421, fixtureAdmission1421Context, "CREATE FULLTEXT INDEX bad_ft FOR (n:Node) ON EACH [content]")
 		if err == nil || !strings.Contains(err.Error(), "no properties found in fulltext index definition") {
 			t.Fatalf("expected no properties error, got: %v", err)
 		}
 	})
 
 	t.Run("DuplicateFulltextAndVectorIndex", func(t *testing.T) {
-		_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
+		fixtureAdmission1422Context, fixtureAdmission1422 := statementTestContext(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
+		_ = fixtureAdmission1422Context
+		_, err := exec.executeCreateFulltextIndex(fixtureAdmission1422, fixtureAdmission1422Context, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
 		if err != nil {
 			t.Fatalf("failed to create baseline fulltext index: %v", err)
 		}
-		_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
+		fixtureAdmission1423Context, fixtureAdmission1423 := statementTestContext(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
+		_ = fixtureAdmission1423Context
+		_, err = exec.executeCreateFulltextIndex(fixtureAdmission1423, fixtureAdmission1423Context, "CREATE FULLTEXT INDEX dup_ft FOR (n:Node) ON EACH [n.content]")
 		require.Error(t, err)
 		require.Contains(t, statusText(err), "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists")
-		_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Node) ON EACH [n.content]")
+		fixtureAdmission1424Context, fixtureAdmission1424 := statementTestContext(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Node) ON EACH [n.content]")
+		_ = fixtureAdmission1424Context
+		_, err = exec.executeCreateFulltextIndex(fixtureAdmission1424, fixtureAdmission1424Context, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Node) ON EACH [n.content]")
 		require.NoError(t, err)
 
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		fixtureAdmission1425Context, fixtureAdmission1425 := statementTestContext(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		_ = fixtureAdmission1425Context
+		_, err = exec.executeCreateVectorIndex(fixtureAdmission1425, fixtureAdmission1425Context, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		if err != nil {
 			t.Fatalf("failed to create baseline vector index: %v", err)
 		}
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		fixtureAdmission1426Context, fixtureAdmission1426 := statementTestContext(ctx, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
+		_ = fixtureAdmission1426Context
+		_, err = exec.executeCreateVectorIndex(fixtureAdmission1426, fixtureAdmission1426Context, "CREATE VECTOR INDEX dup_vec FOR (n:Node) ON (n.embedding)")
 		require.Error(t, err)
 		require.Contains(t, statusText(err), "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists")
-		_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
+		fixtureAdmission1427Context, fixtureAdmission1427 := statementTestContext(ctx, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
+		_ = fixtureAdmission1427Context
+		_, err = exec.executeCreateVectorIndex(fixtureAdmission1427, fixtureAdmission1427Context, "CREATE VECTOR INDEX dup_vec IF NOT EXISTS FOR (n:Node) ON (n.embedding)")
 		require.NoError(t, err)
 	})
 
 	t.Run("FulltextRelationshipIndexSupportsMultipleTypes", func(t *testing.T) {
-		_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX rel_ft_multi FOR ()-[r:OWNS|MANAGES]-() ON EACH [r.note, r.summary]")
+		fixtureAdmission1428Context, fixtureAdmission1428 := statementTestContext(ctx, "CREATE FULLTEXT INDEX rel_ft_multi FOR ()-[r:OWNS|MANAGES]-() ON EACH [r.note, r.summary]")
+		_ = fixtureAdmission1428Context
+		_, err := exec.executeCreateFulltextIndex(fixtureAdmission1428, fixtureAdmission1428Context, "CREATE FULLTEXT INDEX rel_ft_multi FOR ()-[r:OWNS|MANAGES]-() ON EACH [r.note, r.summary]")
 		require.NoError(t, err)
 
 		idx, ok := store.GetSchema().GetFulltextIndex("rel_ft_multi")
@@ -341,7 +357,9 @@ func TestSchemaErrorCases(t *testing.T) {
 	})
 
 	t.Run("FulltextRelationshipIndexRejectsInvalidTypeList", func(t *testing.T) {
-		_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX rel_ft_bad FOR ()-[r:OWNS|]-() ON EACH [r.note]")
+		fixtureAdmission1429Context, fixtureAdmission1429 := statementTestContext(ctx, "CREATE FULLTEXT INDEX rel_ft_bad FOR ()-[r:OWNS|]-() ON EACH [r.note]")
+		_ = fixtureAdmission1429Context
+		_, err := exec.executeCreateFulltextIndex(fixtureAdmission1429, fixtureAdmission1429Context, "CREATE FULLTEXT INDEX rel_ft_bad FOR ()-[r:OWNS|]-() ON EACH [r.note]")
 		require.Error(t, err)
 		require.True(t, errors.Is(err, nerrors.ErrInvalidFulltextRelationshipTypes))
 	})
@@ -744,17 +762,23 @@ func TestSchemaCommandDispatcherAndTypeParserBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// Unknown schema command branch.
-	_, err := exec.executeSchemaCommand(ctx, "CREATE UNKNOWN THING")
+	fixtureAdmission1532Context, fixtureAdmission1532 := statementTestContext(ctx, "CREATE UNKNOWN THING")
+	_ = fixtureAdmission1532Context
+	_, err := exec.executeSchemaCommand(fixtureAdmission1532, fixtureAdmission1532Context, "CREATE UNKNOWN THING")
 	if err == nil {
 		t.Fatal("expected unknown schema command error")
 	}
 
 	// DROP CONSTRAINT IF EXISTS branch should swallow missing constraint errors.
-	_, err = exec.executeDropConstraint(ctx, "DROP CONSTRAINT missing_name IF EXISTS")
+	fixtureAdmission1430Context, fixtureAdmission1430 := statementTestContext(ctx, "DROP CONSTRAINT missing_name IF EXISTS")
+	_ = fixtureAdmission1430Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1430, fixtureAdmission1430Context, "DROP CONSTRAINT missing_name IF EXISTS")
 	if err != nil {
 		t.Fatalf("DROP CONSTRAINT IF EXISTS should not error for missing constraint: %v", err)
 	}
-	_, err = exec.executeDropConstraint(ctx, "DROP CONSTRAINT IF EXISTS missing_name")
+	fixtureAdmission1431Context, fixtureAdmission1431 := statementTestContext(ctx, "DROP CONSTRAINT IF EXISTS missing_name")
+	_ = fixtureAdmission1431Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1431, fixtureAdmission1431Context, "DROP CONSTRAINT IF EXISTS missing_name")
 	if err != nil {
 		t.Fatalf("DROP CONSTRAINT IF EXISTS <name> should not error for missing constraint: %v", err)
 	}
@@ -813,12 +837,16 @@ func TestCreateConstraint_SyntaxVariantCoverage(t *testing.T) {
 		}
 	}
 
-	_, err := exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_node_key FOR (u:BrokenNK) REQUIRE (u) IS NODE KEY")
+	fixtureAdmission1432Context, fixtureAdmission1432 := statementTestContext(ctx, "CREATE CONSTRAINT bad_node_key FOR (u:BrokenNK) REQUIRE (u) IS NODE KEY")
+	_ = fixtureAdmission1432Context
+	_, err := exec.executeCreateConstraint(fixtureAdmission1432, fixtureAdmission1432Context, "CREATE CONSTRAINT bad_node_key FOR (u:BrokenNK) REQUIRE (u) IS NODE KEY")
 	if err == nil || !strings.Contains(err.Error(), "NODE KEY constraint requires properties") {
 		t.Fatalf("expected NODE KEY property validation error, got: %v", err)
 	}
 
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_temporal FOR (t:BrokenTemporal) REQUIRE (t.key, t.from) IS TEMPORAL")
+	fixtureAdmission1433Context, fixtureAdmission1433 := statementTestContext(ctx, "CREATE CONSTRAINT bad_temporal FOR (t:BrokenTemporal) REQUIRE (t.key, t.from) IS TEMPORAL")
+	_ = fixtureAdmission1433Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1433, fixtureAdmission1433Context, "CREATE CONSTRAINT bad_temporal FOR (t:BrokenTemporal) REQUIRE (t.key, t.from) IS TEMPORAL")
 	if err == nil || !strings.Contains(err.Error(), "TEMPORAL constraint requires at least 3 properties") {
 		t.Fatalf("expected TEMPORAL property-count validation error, got: %v", err)
 	}
@@ -858,7 +886,9 @@ func TestCreateConstraint_EachParserPattern(t *testing.T) {
 	}
 
 	for _, q := range queries {
-		_, err := exec.executeCreateConstraint(ctx, q)
+		fixtureAdmission1434Context, fixtureAdmission1434 := statementTestContext(ctx, q)
+		_ = fixtureAdmission1434Context
+		_, err := exec.executeCreateConstraint(fixtureAdmission1434, fixtureAdmission1434Context, q)
 		if strings.Contains(q, " ASSERT ") {
 			require.Error(t, err, q)
 			continue
@@ -879,7 +909,9 @@ func TestCreateConstraint_ValidationAndDuplicateErrorBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed duplicate users: %v", err)
 	}
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT uq_dup IF NOT EXISTS FOR (n:DupUser) REQUIRE n.email IS UNIQUE")
+	fixtureAdmission1435Context, fixtureAdmission1435 := statementTestContext(ctx, "CREATE CONSTRAINT uq_dup IF NOT EXISTS FOR (n:DupUser) REQUIRE n.email IS UNIQUE")
+	_ = fixtureAdmission1435Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1435, fixtureAdmission1435Context, "CREATE CONSTRAINT uq_dup IF NOT EXISTS FOR (n:DupUser) REQUIRE n.email IS UNIQUE")
 	if err == nil {
 		t.Fatal("expected unique constraint validation error on existing duplicate data")
 	}
@@ -888,7 +920,9 @@ func TestCreateConstraint_ValidationAndDuplicateErrorBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed null property user: %v", err)
 	}
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT nn_dup IF NOT EXISTS FOR (n:NullUser) REQUIRE n.email IS NOT NULL")
+	fixtureAdmission1436Context, fixtureAdmission1436 := statementTestContext(ctx, "CREATE CONSTRAINT nn_dup IF NOT EXISTS FOR (n:NullUser) REQUIRE n.email IS NOT NULL")
+	_ = fixtureAdmission1436Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1436, fixtureAdmission1436Context, "CREATE CONSTRAINT nn_dup IF NOT EXISTS FOR (n:NullUser) REQUIRE n.email IS NOT NULL")
 	if err == nil {
 		t.Fatal("expected NOT NULL constraint validation error on existing null property data")
 	}
@@ -897,7 +931,9 @@ func TestCreateConstraint_ValidationAndDuplicateErrorBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed wrong-typed data: %v", err)
 	}
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT tp_dup IF NOT EXISTS FOR (n:TypedBad) REQUIRE n.age IS :: INTEGER")
+	fixtureAdmission1437Context, fixtureAdmission1437 := statementTestContext(ctx, "CREATE CONSTRAINT tp_dup IF NOT EXISTS FOR (n:TypedBad) REQUIRE n.age IS :: INTEGER")
+	_ = fixtureAdmission1437Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1437, fixtureAdmission1437Context, "CREATE CONSTRAINT tp_dup IF NOT EXISTS FOR (n:TypedBad) REQUIRE n.age IS :: INTEGER")
 	if err == nil {
 		t.Fatal("expected type constraint validation error on existing wrong-typed data")
 	}
@@ -911,31 +947,41 @@ func TestCreateIndex_BranchCoverage(t *testing.T) {
 	ctx := context.Background()
 
 	// Named index branch (composite properties).
-	_, err := exec.executeCreateIndex(ctx, "CREATE INDEX idx_person_name_age FOR (n:Person) ON (n.name, n.age)")
+	fixtureAdmission1438Context, fixtureAdmission1438 := statementTestContext(ctx, "CREATE INDEX idx_person_name_age FOR (n:Person) ON (n.name, n.age)")
+	_ = fixtureAdmission1438Context
+	_, err := exec.executeCreateIndex(fixtureAdmission1438, fixtureAdmission1438Context, "CREATE INDEX idx_person_name_age FOR (n:Person) ON (n.name, n.age)")
 	if err != nil {
 		t.Fatalf("expected named composite index creation to succeed: %v", err)
 	}
 
 	// Unnamed index branch (auto-generated name).
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX FOR (n:Product) ON (n.sku, n.region)")
+	fixtureAdmission1439Context, fixtureAdmission1439 := statementTestContext(ctx, "CREATE INDEX FOR (n:Product) ON (n.sku, n.region)")
+	_ = fixtureAdmission1439Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1439, fixtureAdmission1439Context, "CREATE INDEX FOR (n:Product) ON (n.sku, n.region)")
 	if err != nil {
 		t.Fatalf("expected unnamed composite index creation to succeed: %v", err)
 	}
 
 	// Named no-properties branch.
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX idx_empty FOR (n:EmptyIdx) ON (n)")
+	fixtureAdmission1440Context, fixtureAdmission1440 := statementTestContext(ctx, "CREATE INDEX idx_empty FOR (n:EmptyIdx) ON (n)")
+	_ = fixtureAdmission1440Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1440, fixtureAdmission1440Context, "CREATE INDEX idx_empty FOR (n:EmptyIdx) ON (n)")
 	if err == nil {
 		t.Fatal("expected no properties specified for named index")
 	}
 
 	// Unnamed no-properties branch.
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX FOR (n:EmptyIdx2) ON (n)")
+	fixtureAdmission1441Context, fixtureAdmission1441 := statementTestContext(ctx, "CREATE INDEX FOR (n:EmptyIdx2) ON (n)")
+	_ = fixtureAdmission1441Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1441, fixtureAdmission1441Context, "CREATE INDEX FOR (n:EmptyIdx2) ON (n)")
 	if err == nil {
 		t.Fatal("expected no properties specified for unnamed index")
 	}
 
 	// Invalid syntax fallback branch.
-	_, err = exec.executeCreateIndex(ctx, "CREATE INDEX idx_invalid")
+	fixtureAdmission1442Context, fixtureAdmission1442 := statementTestContext(ctx, "CREATE INDEX idx_invalid")
+	_ = fixtureAdmission1442Context
+	_, err = exec.executeCreateIndex(fixtureAdmission1442, fixtureAdmission1442Context, "CREATE INDEX idx_invalid")
 	if err == nil {
 		t.Fatal("expected invalid CREATE INDEX syntax error")
 	}
@@ -946,7 +992,9 @@ func TestCreateIndex_BranchCoverage(t *testing.T) {
 		"CREATE INDEX fact_namespace_predicate_idx IF NOT EXISTS FOR ()-[f:FACT]-() ON (f.namespace, f.predicate)",
 	}
 	for _, q := range relationshipIndexes {
-		_, err = exec.executeCreateIndex(ctx, q)
+		fixtureAdmission1443Context, fixtureAdmission1443 := statementTestContext(ctx, q)
+		_ = fixtureAdmission1443Context
+		_, err = exec.executeCreateIndex(fixtureAdmission1443, fixtureAdmission1443Context, q)
 		if err != nil {
 			t.Fatalf("expected relationship CREATE INDEX syntax to succeed for %s; got %v", q, err)
 		}
@@ -971,7 +1019,9 @@ func TestCreateIndex_Neo4jCompatibilitySyntax(t *testing.T) {
 		"CREATE INDEX `rel idx` IF NOT EXISTS FOR ()-[`r`:`RELATES_TO`]-() ON (`r`.`uuid`) OPTIONS {indexProvider: 'range-1.0'}",
 	}
 	for _, q := range queries {
-		_, err := exec.executeSchemaCommand(ctx, q)
+		fixtureAdmission1533Context, fixtureAdmission1533 := statementTestContext(ctx, q)
+		_ = fixtureAdmission1533Context
+		_, err := exec.executeSchemaCommand(fixtureAdmission1533, fixtureAdmission1533Context, q)
 		if err != nil {
 			t.Fatalf("expected query to succeed: %s; err=%v", q, err)
 		}
@@ -1007,7 +1057,9 @@ func TestCreateRangeIndex_RelationshipPattern(t *testing.T) {
 	ctx := context.Background()
 
 	// A RANGE index on a relationship property is valid Neo4j 5 DDL (#531).
-	_, err := exec.executeSchemaCommand(ctx, "CREATE RANGE INDEX rel_rng FOR ()-[r:RELATES_TO]-() ON (r.uuid)")
+	fixtureAdmission1534Context, fixtureAdmission1534 := statementTestContext(ctx, "CREATE RANGE INDEX rel_rng FOR ()-[r:RELATES_TO]-() ON (r.uuid)")
+	_ = fixtureAdmission1534Context
+	_, err := exec.executeSchemaCommand(fixtureAdmission1534, fixtureAdmission1534Context, "CREATE RANGE INDEX rel_rng FOR ()-[r:RELATES_TO]-() ON (r.uuid)")
 	require.NoError(t, err)
 }
 
@@ -1181,7 +1233,9 @@ func TestCreateFulltextIndex_CompatSyntaxWithoutParenthesizedPattern(t *testing.
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeSchemaCommand(ctx, "CREATE FULLTEXT INDEX ft1 FOR n:base ON n.entity_id")
+	fixtureAdmission1535Context, fixtureAdmission1535 := statementTestContext(ctx, "CREATE FULLTEXT INDEX ft1 FOR n:base ON n.entity_id")
+	_ = fixtureAdmission1535Context
+	_, err := exec.executeSchemaCommand(fixtureAdmission1535, fixtureAdmission1535Context, "CREATE FULLTEXT INDEX ft1 FOR n:base ON n.entity_id")
 	if err != nil {
 		t.Fatalf("expected fulltext compat syntax to succeed: %v", err)
 	}
@@ -1235,16 +1289,22 @@ func TestCreateConstraint_DuplicateNamedDefinitionErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := exec.executeCreateConstraint(ctx, tt.query)
+			fixtureAdmission1444Context, fixtureAdmission1444 := statementTestContext(ctx, tt.query)
+			_ = fixtureAdmission1444Context
+			_, err := exec.executeCreateConstraint(fixtureAdmission1444, fixtureAdmission1444Context, tt.query)
 			require.NoError(t, err, "first create should succeed")
 
 			// Duplicate without IF NOT EXISTS should error
-			_, err = exec.executeCreateConstraint(ctx, tt.query)
+			fixtureAdmission1445Context, fixtureAdmission1445 := statementTestContext(ctx, tt.query)
+			_ = fixtureAdmission1445Context
+			_, err = exec.executeCreateConstraint(fixtureAdmission1445, fixtureAdmission1445Context, tt.query)
 			require.Error(t, err, "duplicate without IF NOT EXISTS should error")
 			require.Contains(t, err.Error(), "already exists")
 
 			// Duplicate with IF NOT EXISTS should be no-op
-			_, err = exec.executeCreateConstraint(ctx, tt.queryWithINE)
+			fixtureAdmission1446Context, fixtureAdmission1446 := statementTestContext(ctx, tt.queryWithINE)
+			_ = fixtureAdmission1446Context
+			_, err = exec.executeCreateConstraint(fixtureAdmission1446, fixtureAdmission1446Context, tt.queryWithINE)
 			require.NoError(t, err, "duplicate with IF NOT EXISTS should be no-op")
 		})
 	}
@@ -1256,36 +1316,52 @@ func TestCreateRangeIndex_ErrorBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
+	fixtureAdmission1447Context, fixtureAdmission1447 := statementTestContext(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
+	_ = fixtureAdmission1447Context
+	_, err := exec.executeCreateRangeIndex(fixtureAdmission1447, fixtureAdmission1447Context, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.age)")
 	if err != nil {
 		t.Fatalf("failed to create baseline range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
+	fixtureAdmission1448Context, fixtureAdmission1448 := statementTestContext(ctx, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
+	_ = fixtureAdmission1448Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1448, fixtureAdmission1448Context, "CREATE RANGE INDEX idx_age FOR (n:Person) ON (n.score)")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
+	fixtureAdmission1449Context, fixtureAdmission1449 := statementTestContext(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
+	_ = fixtureAdmission1449Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1449, fixtureAdmission1449Context, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.score)")
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
+	fixtureAdmission1450Context, fixtureAdmission1450 := statementTestContext(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
+	_ = fixtureAdmission1450Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1450, fixtureAdmission1450Context, "CREATE RANGE INDEX FOR (n:Product) ON (n.price)")
 	if err != nil {
 		t.Fatalf("failed to create unnamed range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
+	fixtureAdmission1451Context, fixtureAdmission1451 := statementTestContext(ctx, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
+	_ = fixtureAdmission1451Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1451, fixtureAdmission1451Context, "CREATE RANGE INDEX FOR (n:Product) ON (n.cost)")
 	if err != nil {
 		t.Fatalf("expected second unnamed range index with different generated name to succeed, got: %v", err)
 	}
 
 	// A RANGE index is CREATE INDEX: composite and relationship forms too.
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
+	fixtureAdmission1452Context, fixtureAdmission1452 := statementTestContext(ctx, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
+	_ = fixtureAdmission1452Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1452, fixtureAdmission1452Context, "CREATE RANGE INDEX idx_multi FOR (n:Person) ON (n.city, n.zip)")
 	if err != nil {
 		t.Fatalf("composite range index: %v", err)
 	}
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
+	fixtureAdmission1453Context, fixtureAdmission1453 := statementTestContext(ctx, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
+	_ = fixtureAdmission1453Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1453, fixtureAdmission1453Context, "CREATE RANGE INDEX idx_rel FOR ()-[r:KNOWS]-() ON (r.since)")
 	if err != nil {
 		t.Fatalf("relationship range index: %v", err)
 	}
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX")
+	fixtureAdmission1454Context, fixtureAdmission1454 := statementTestContext(ctx, "CREATE RANGE INDEX")
+	_ = fixtureAdmission1454Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1454, fixtureAdmission1454Context, "CREATE RANGE INDEX")
 	if err == nil || !strings.Contains(err.Error(), "invalid CREATE") {
 		t.Fatalf("expected invalid syntax error, got: %v", err)
 	}
@@ -1298,19 +1374,27 @@ func TestCreateFulltextIndex_SchemaAndDuplicateErrors(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
-	_, err := exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.title]")
+	fixtureAdmission1455Context, fixtureAdmission1455 := statementTestContext(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.title]")
+	_ = fixtureAdmission1455Context
+	_, err := exec.executeCreateFulltextIndex(fixtureAdmission1455, fixtureAdmission1455Context, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.title]")
 	if err != nil {
 		t.Fatalf("failed to create baseline fulltext index: %v", err)
 	}
-	_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.body]")
+	fixtureAdmission1456Context, fixtureAdmission1456 := statementTestContext(ctx, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.body]")
+	_ = fixtureAdmission1456Context
+	_, err = exec.executeCreateFulltextIndex(fixtureAdmission1456, fixtureAdmission1456Context, "CREATE FULLTEXT INDEX dup_ft FOR (n:Doc) ON EACH [n.body]")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Doc) ON EACH [n.body]")
+	fixtureAdmission1457Context, fixtureAdmission1457 := statementTestContext(ctx, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Doc) ON EACH [n.body]")
+	_ = fixtureAdmission1457Context
+	_, err = exec.executeCreateFulltextIndex(fixtureAdmission1457, fixtureAdmission1457Context, "CREATE FULLTEXT INDEX dup_ft IF NOT EXISTS FOR (n:Doc) ON EACH [n.body]")
 	require.NoError(t, err)
 
 	nilSchema := &nilSchemaEngine{Engine: store}
 	execNilSchema := NewStorageExecutor(nilSchema)
-	_, err = execNilSchema.executeCreateFulltextIndex(ctx, "CREATE FULLTEXT INDEX nil_schema FOR (n:Doc) ON EACH [n.title]")
+	fixtureAdmission1458Context, fixtureAdmission1458 := statementTestContext(ctx, "CREATE FULLTEXT INDEX nil_schema FOR (n:Doc) ON EACH [n.title]")
+	_ = fixtureAdmission1458Context
+	_, err = execNilSchema.executeCreateFulltextIndex(fixtureAdmission1458, fixtureAdmission1458Context, "CREATE FULLTEXT INDEX nil_schema FOR (n:Doc) ON EACH [n.title]")
 	if err == nil || !strings.Contains(err.Error(), "schema manager not available") {
 		t.Fatalf("expected nil schema error, got: %v", err)
 	}
@@ -1323,14 +1407,20 @@ func TestCreateVectorIndex_DuplicateErrorBranch(t *testing.T) {
 	ctx := context.Background()
 
 	query := "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.embedding)"
-	_, err := exec.executeCreateVectorIndex(ctx, query)
+	fixtureAdmission1459Context, fixtureAdmission1459 := statementTestContext(ctx, query)
+	_ = fixtureAdmission1459Context
+	_, err := exec.executeCreateVectorIndex(fixtureAdmission1459, fixtureAdmission1459Context, query)
 	if err != nil {
 		t.Fatalf("failed to create baseline vector index: %v", err)
 	}
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
+	fixtureAdmission1460Context, fixtureAdmission1460 := statementTestContext(ctx, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
+	_ = fixtureAdmission1460Context
+	_, err = exec.executeCreateVectorIndex(fixtureAdmission1460, fixtureAdmission1460Context, "CREATE VECTOR INDEX vec_dup FOR (n:Doc) ON (n.altEmbedding)")
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Schema.IndexWithNameAlreadyExists")
-	_, err = exec.executeCreateVectorIndex(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
+	fixtureAdmission1461Context, fixtureAdmission1461 := statementTestContext(ctx, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
+	_ = fixtureAdmission1461Context
+	_, err = exec.executeCreateVectorIndex(fixtureAdmission1461, fixtureAdmission1461Context, "CREATE VECTOR INDEX vec_dup IF NOT EXISTS FOR (n:Doc) ON (n.altEmbedding)")
 	require.NoError(t, err)
 }
 

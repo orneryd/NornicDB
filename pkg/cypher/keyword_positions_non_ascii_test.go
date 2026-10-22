@@ -91,9 +91,15 @@ func TestKeywordPositionHelpersWithNonASCIIText(t *testing.T) {
 	ctx := context.Background()
 
 	node := &storage.Node{ID: "k748h:n", Labels: []string{"P"}, Properties: map[string]any{"name": "ıstanbul", "tag": "İİ-x"}}
-	require.True(t, exec.evaluateRowStringPredicate(ctx, "n.name", "'ıs'", map[string]interface{}{"n": node}, strings.HasPrefix))
-	require.True(t, exec.evaluateRowStringPredicate(ctx, "n.tag", "'İ-'", map[string]interface{}{"n": node}, strings.Contains))
-	require.False(t, exec.evaluateRowStringPredicate(ctx, "n.name", "'ıı'", map[string]interface{}{"n": node}, strings.HasSuffix))
+	fixtureAdmission1870Context, fixtureAdmission1870 := expressionTestContext(ctx, "n.name")
+	_ = fixtureAdmission1870Context
+	require.True(t, exec.evaluateRowStringPredicate(fixtureAdmission1870, fixtureAdmission1870Context, "n.name", "'ıs'", map[string]interface{}{"n": node}, strings.HasPrefix))
+	fixtureAdmission1871Context, fixtureAdmission1871 := expressionTestContext(ctx, "n.tag")
+	_ = fixtureAdmission1871Context
+	require.True(t, exec.evaluateRowStringPredicate(fixtureAdmission1871, fixtureAdmission1871Context, "n.tag", "'İ-'", map[string]interface{}{"n": node}, strings.Contains))
+	fixtureAdmission1872Context, fixtureAdmission1872 := expressionTestContext(ctx, "n.name")
+	_ = fixtureAdmission1872Context
+	require.False(t, exec.evaluateRowStringPredicate(fixtureAdmission1872, fixtureAdmission1872Context, "n.name", "'ıı'", map[string]interface{}{"n": node}, strings.HasSuffix))
 
 	require.NoError(t, exec.validateSetAssignments([]string{"n.a = toUpper('ıı')", "n:İ"}))
 	require.Error(t, exec.validateSetAssignments([]string{"n.a = notAFunction('ıı')"}))

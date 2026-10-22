@@ -24,11 +24,11 @@ import (
 // Projection expressions use the same row-expression operator as WHERE,
 // RETURN, and ORDER BY so list, map, property, and postfix operations cannot
 // diverge between pipeline clauses.
-func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
-	return e.pipelineApplyWithSource(ctx, rows, clause, pipelineRowsSource(rows), false)
+func (e *StorageExecutor) pipelineApplyWith(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
+	return e.pipelineApplyWithSource(admission, ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+func (e *StorageExecutor) pipelineApplyWithSource(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	// Each row it keeps counts against the statement's memory limit before
 	// it is kept (#1343).
 	retention := newMemoryRetention(ctx)
@@ -37,7 +37,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		plan.imports = pipelineImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
+			projected, accepted, resolved := e.pipelineProjectWithRow(admission, ctx, row, plan, nil, nil)
 			if !resolved {
 				return nil, false
 			}
@@ -56,14 +56,14 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	orderTerms := parseOrderByTerms(body)
 	withSkip, withLimit := 0, -1
 	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
+		value, ok := e.evaluatePipelinePagination(admission, ctx, pipelinePaginationExpression(body, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 		withSkip = value
 	}
 	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
-		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
+		value, ok := e.evaluatePipelinePagination(admission, ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
 		if !ok {
 			return nil, false
 		}
@@ -107,11 +107,11 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			// variables in scope (#883).
 			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineWildcardColumns(out))
 		}
-		out = e.filterPipelineRows(ctx, out, postWithWhere)
-		if !e.orderPipelineRows(ctx, out, orderTerms) {
+		out = e.filterPipelineRows(admission, ctx, out, postWithWhere)
+		if !e.orderPipelineRows(admission, ctx, out, orderTerms) {
 			return nil, false
 		}
-		return retention.keep(e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), reserved)
+		return retention.keep(e.filterPipelineRows(admission, ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), reserved)
 	}
 	items := splitTopLevelComma(body)
 	if len(items) == 0 {
@@ -173,7 +173,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		// rows, which count them as they are built: what the groups took goes
 		// back first, so a collected list counts once, not twice (#1343).
 		aggregation := beginMemorySpan(ctx)
-		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
+		groups, ok := e.pipelineAggregateGroups(admission, ctx, source, aggregates, rowsValidated)
 		if !ok {
 			return nil, false
 		}
@@ -205,7 +205,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 				}
 			}
 			for index, projection := range projections {
-				value, ok := group.value(ctx, e, index)
+				value, ok := group.value(admission, ctx, e, index)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
@@ -233,7 +233,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			for name, value := range newRow {
 				orderScope[name] = value
 			}
-			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
+			if postWithWhere != "" && !e.evaluateWithWhereCondition(admission, ctx, postWithWhere, orderScope) {
 				continue
 			}
 			if retention.reserveRow(newRow) != nil {
@@ -249,10 +249,10 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if withDistinct {
 			out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 		}
-		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
+		if !e.orderPipelineRowsWithScopes(admission, ctx, out, orderScopes, orderTerms) {
 			return nil, false
 		}
-		return retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
+		return retention.keep(e.filterPipelineWindow(admission, ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
 	}
 
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projections), func(index int) (string, string) {
@@ -273,7 +273,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if postWithWhere != "" || needsOrderScopes {
 			scope = make(pipelineRow, len(row)+len(projections))
 		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
+		newRow, accepted, ok := e.pipelineProjectWithRow(admission, ctx, row, rowPlan, nil, scope)
 		if !ok {
 			return nil, false
 		}
@@ -303,16 +303,16 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if withDistinct {
 		out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 	}
-	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
+	if !e.orderPipelineRowsWithScopes(admission, ctx, out, orderScopes, orderTerms) {
 		return nil, false
 	}
-	return retention.keep(e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
+	return retention.keep(e.filterPipelineWindow(admission, ctx, out, orderScopes, withSkip, withLimit, windowedWhere), reserved)
 }
 
 // filterPipelineWindow applies SKIP / LIMIT to rows, then keeps the rows of
 // the window whose scope (the row's projected and incoming values) satisfies
 // whereClause: the WHERE after WITH … SKIP / LIMIT.
-func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes []pipelineRow, skip, limit int, whereClause string) []pipelineRow {
+func (e *StorageExecutor) filterPipelineWindow(admission admittedRelationshipStatement, ctx context.Context, rows, scopes []pipelineRow, skip, limit int, whereClause string) []pipelineRow {
 	if whereClause == "" {
 		return applyPipelineWindow(rows, skip, limit)
 	}
@@ -328,7 +328,7 @@ func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes
 	}
 	filtered := make([]pipelineRow, 0, end-start)
 	for index := start; index < end; index++ {
-		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(scopes[index])) {
+		if e.evaluateWithWhereCondition(admission, ctx, whereClause, map[string]interface{}(scopes[index])) {
 			filtered = append(filtered, rows[index])
 		}
 	}
@@ -351,7 +351,7 @@ func pipelinePaginationExpression(body, keyword string) string {
 	return strings.TrimSpace(expression[:end])
 }
 
-func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expression string, rows []pipelineRow) (int, bool) {
+func (e *StorageExecutor) evaluatePipelinePagination(admission admittedRelationshipStatement, ctx context.Context, expression string, rows []pipelineRow) (int, bool) {
 	// SKIP / LIMIT see the statement's parameters ($l) whatever the
 	// projection kept in the row.
 	values := e.parameterRow(ctx)
@@ -360,7 +360,7 @@ func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expres
 			values[name] = value
 		}
 	}
-	value, evaluated := e.evaluateRowExpressionWithContext(ctx, expression, values)
+	value, evaluated := e.evaluateRowExpressionWithContext(admission, ctx, expression, values)
 	if !evaluated {
 		return 0, false
 	}
@@ -374,8 +374,8 @@ func (e *StorageExecutor) evaluatePipelinePagination(ctx context.Context, expres
 // orderPipelineRows applies every ORDER BY term lexicographically. WITH has
 // already materialized its projection at this point, so aliases and retained
 // entity properties resolve from the same scope exposed to the next clause.
-func (e *StorageExecutor) orderPipelineRows(ctx context.Context, rows []pipelineRow, terms []orderByTerm) bool {
-	return e.orderPipelineRowsWithScopes(ctx, rows, rows, terms)
+func (e *StorageExecutor) orderPipelineRows(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, terms []orderByTerm) bool {
+	return e.orderPipelineRowsWithScopes(admission, ctx, rows, rows, terms)
 }
 
 // orderedProjection is a projection expression an ORDER BY term repeats, with
@@ -523,7 +523,7 @@ func stripExpressionWhitespace(expression string) string {
 // evaluated in scopes[i]. A term the row evaluator can't resolve returns
 // false; when an operator of it failed (1/0, a runtime TypeError) that failure
 // is recorded as the statement's error, as for a projection item.
-func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
+func (e *StorageExecutor) orderPipelineRowsWithScopes(admission admittedRelationshipStatement, ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
 	if len(terms) == 0 || len(rows) == 0 {
 		return true
 	}
@@ -547,7 +547,7 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		for termIndex, term := range terms {
 			// The projections' evaluator: subquery values (COUNT { … }) and
 			// recorded failures behave as in a RETURN item.
-			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
+			value, ok := e.evaluateRowExpressionWithContext(admission, ctx, term.column, scopes[index])
 			if !ok || keys.reserveSortKey(value, scopes[index]) != nil {
 				return false
 			}
@@ -587,13 +587,13 @@ func applyPipelineWindow(rows []pipelineRow, skip, limit int) []pipelineRow {
 	return rows
 }
 
-func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelineRow, whereClause string) []pipelineRow {
+func (e *StorageExecutor) filterPipelineRows(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, whereClause string) []pipelineRow {
 	if whereClause == "" {
 		return rows
 	}
 	filtered := rows[:0]
 	for _, row := range rows {
-		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
+		if e.evaluateWithWhereCondition(admission, ctx, whereClause, map[string]interface{}(row)) {
 			filtered = append(filtered, row)
 		}
 	}
@@ -677,14 +677,14 @@ func pipelineExpressionContainsAggregate(expr string) bool {
 	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, expr string) (interface{}, bool) {
-	return e.evaluatePipelineAggregateExpressionWithContext(context.Background(), rows, expr)
+func (e *StorageExecutor) evaluatePipelineAggregateExpression(admission admittedRelationshipStatement, rows []pipelineRow, expr string) (interface{}, bool) {
+	return e.evaluatePipelineAggregateExpressionWithContext(admission, context.Background(), rows, expr)
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx context.Context, rows []pipelineRow, expr string) (interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, expr string) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
-		return e.evaluatePipelineAggregateWithContext(ctx, rows, name, inner, distinct)
+		return e.evaluatePipelineAggregateWithContext(admission, ctx, rows, name, inner, distinct)
 	}
 	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
 		result := make(map[string]interface{})
@@ -697,7 +697,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 				return nil, false
 			}
 			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-			value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, pair[separator+1:])
+			value, ok := e.evaluatePipelineAggregateExpressionWithContext(admission, ctx, rows, pair[separator+1:])
 			if !ok {
 				return nil, false
 			}
@@ -712,7 +712,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		if _, _, _, _, comprehension := parseListComprehension(inner); !comprehension {
 			result := make([]interface{}, 0)
 			for _, item := range splitTopLevelComma(inner) {
-				value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, item)
+				value, ok := e.evaluatePipelineAggregateExpressionWithContext(admission, ctx, rows, item)
 				if !ok {
 					return nil, false
 				}
@@ -740,7 +740,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			if !ok {
 				return nil, false
 			}
-			value, ok := e.evaluatePipelineAggregateWithContext(ctx, rows, name, inner, distinct)
+			value, ok := e.evaluatePipelineAggregateWithContext(admission, ctx, rows, name, inner, distinct)
 			if !ok {
 				return nil, false
 			}
@@ -751,34 +751,34 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 			last = span.end
 		}
 		rewritten.WriteString(expr[last:])
-		return e.evaluateRowExpressionWithContext(ctx, rewritten.String(), values)
+		return e.evaluateRowExpressionWithContext(admission, ctx, rewritten.String(), values)
 	}
 	if len(rows) == 0 {
-		return e.evaluateRowExpressionWithContext(ctx, expr, pipelineRow{})
+		return e.evaluateRowExpressionWithContext(admission, ctx, expr, pipelineRow{})
 	}
-	return e.evaluateRowExpressionWithContext(ctx, expr, rows[0])
+	return e.evaluateRowExpressionWithContext(admission, ctx, expr, rows[0])
 }
 
 // evaluatePipelineAggregate applies an aggregate to one logical group. Null
 // inputs are ignored by every standard aggregate, including collect().
-func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
-	return e.evaluatePipelineAggregateWithContext(context.Background(), rows, name, expr, distinct)
+func (e *StorageExecutor) evaluatePipelineAggregate(admission admittedRelationshipStatement, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+	return e.evaluatePipelineAggregateWithContext(admission, context.Background(), rows, name, expr, distinct)
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Context, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+func (e *StorageExecutor) evaluatePipelineAggregateWithContext(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
 	if name == "percentilecont" || name == "percentiledisc" {
-		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
+		return e.evaluatePipelinePercentile(admission, ctx, rows, name, expr, distinct)
 	}
 	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: newMemoryRetention(ctx)}
 	scope := newRowEvaluationScope(ctx)
 	defer scope.release()
 	for _, row := range rows {
 		scope.reset(row)
-		if !state.addInScope(ctx, e, scope) {
+		if !state.addInScope(admission, ctx, e, scope) {
 			return nil, false
 		}
 	}
-	return state.result(ctx, e)
+	return state.result(admission, ctx, e)
 }
 
 func pipelineAggregateNumber(value interface{}) (float64, int64, bool, bool) {
@@ -995,15 +995,15 @@ func returnProjectionPlanFromItems(items []returnItem) *returnProjectionPlan {
 //
 // Returns (nil, false) if any item can't be projected, so the caller falls
 // back to the established RETURN projection.
-func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
-	return e.pipelineApplyReturnSource(ctx, rows, clause, pipelineRowsSource(rows), false)
+func (e *StorageExecutor) pipelineApplyReturn(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string) (*ExecuteResult, bool) {
+	return e.pipelineApplyReturnSource(admission, ctx, rows, clause, pipelineRowsSource(rows), false)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
-	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated, preparedGroups...)
+func (e *StorageExecutor) pipelineApplyReturnSource(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
+	return e.pipelineApplyReturnPlan(admission, ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated, preparedGroups...)
 }
 
-func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
+func (e *StorageExecutor) pipelineApplyReturnPlan(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
 	if !plan.valid {
 		return nil, false
 	}
@@ -1016,7 +1016,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
 	if plan.star && len(plan.starItems) > 0 {
-		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
+		return e.pipelineApplyReturnPlan(admission, ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
 	}
 	if plan.star {
 		columns := pipelineWildcardColumns(rows)
@@ -1031,7 +1031,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
-		result, err := e.applyResultModifiers(ctx, result, modifiers)
+		result, err := e.applyResultModifiers(admission, ctx, result, modifiers)
 		return result, err == nil
 	}
 	projs, hasAggregate := plan.projections, plan.hasAggregate
@@ -1043,7 +1043,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			groups = preparedGroups[0]
 		} else {
 			var ok bool
-			groups, ok = e.pipelineAggregateGroups(ctx, source, projs, rowsValidated)
+			groups, ok = e.pipelineAggregateGroups(admission, ctx, source, projs, rowsValidated)
 			if !ok {
 				return nil, false
 			}
@@ -1065,7 +1065,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		for _, group := range groups {
 			outRow := make([]interface{}, 0, len(projs))
 			for index, projection := range projs {
-				value, ok := group.value(ctx, e, index)
+				value, ok := group.value(admission, ctx, e, index)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
@@ -1092,12 +1092,12 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			orderScopes = append(orderScopes, scope)
 		}
 		if len(orderTerms) > 0 {
-			return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
+			return e.finishPipelineReturn(admission, ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 		}
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
 		}
-		result, err := e.applyResultModifiers(ctx, result, modifiers)
+		result, err := e.applyResultModifiers(admission, ctx, result, modifiers)
 		return result, err == nil
 	}
 
@@ -1105,7 +1105,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	// result rows: no per-row map or ORDER BY scope is needed.
 	if modifiers == "" && !returnDistinct {
 		result.Rows = make([][]interface{}, 0, len(rows))
-		projected, completed := e.pipelineProjectPlainReturn(ctx, projs, rows, source, &result.Rows, nil)
+		projected, completed := e.pipelineProjectPlainReturn(admission, ctx, projs, rows, source, &result.Rows, nil)
 		if !completed {
 			return nil, false
 		}
@@ -1133,7 +1133,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	for _, row := range rows {
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
-			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
+			val, ok := e.evaluateRowExpressionWithContext(admission, ctx, p.expr, row)
 			if !ok {
 				pipelineItemUnevaluable(ctx, p.expr)
 				return nil, false
@@ -1156,25 +1156,25 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		}
 		orderScopes = append(orderScopes, scope)
 	}
-	return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
+	return e.finishPipelineReturn(admission, ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 }
 
 // finishPipelineReturn applies DISTINCT, ORDER BY (each row's terms read in
 // orderScopes[i]), SKIP and LIMIT to a RETURN's projected rows and writes
 // them to result in its column order.
-func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
+func (e *StorageExecutor) finishPipelineReturn(admission admittedRelationshipStatement, ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
 	if returnDistinct {
 		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), projectedRows, orderScopes, result.Columns)
 	}
-	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
+	if !e.orderPipelineRowsWithScopes(admission, ctx, projectedRows, orderScopes, orderTerms) {
 		return nil, false
 	}
 	skip := 0
-	if value, ok := e.parseIntModifier(ctx, modifiers, "SKIP"); ok {
+	if value, ok := e.parseIntModifier(admission, ctx, modifiers, "SKIP"); ok {
 		skip = value
 	}
 	limit := -1
-	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
+	if value, ok := e.parseIntModifier(admission, ctx, modifiers, "LIMIT"); ok {
 		limit = value
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)
@@ -1195,7 +1195,7 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 // is set, which stops the projection by returning false. projected is false
 // when a row could not be projected (the expression error, if any, is
 // recorded); completed is false when source declined its shape.
-func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+func (e *StorageExecutor) pipelineProjectPlainReturn(admission admittedRelationshipStatement, ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
 	// The result rows it keeps count against the statement's memory limit
 	// before they are kept (#1343); emitted rows go to the client's stream.
 	retention := trackedRetention(ctx)
@@ -1205,7 +1205,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 		// for a captured result variable.
 		sourceProjected := true
 		sourceCompleted := source(func(row pipelineRow) bool {
-			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+			values, evaluated := e.pipelineProjectReturnRow(admission, ctx, projs, row)
 			if !evaluated {
 				sourceProjected = false
 				return false
@@ -1223,7 +1223,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 		return sourceProjected, sourceCompleted
 	}
 	for _, row := range rows {
-		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+		values, evaluated := e.pipelineProjectReturnRow(admission, ctx, projs, row)
 		if !evaluated {
 			return false, true
 		}
@@ -1246,7 +1246,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 // usual RETURN's until the stream started (a decline is handled false and
 // no error, pipelineDecline); after, a decline is an error, since the
 // client already has rows and no other route may run the statement again.
-func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *ResultStream, rows []pipelineRow, source pipelineRowSource, clauses, originalClauses []pipelineClause, idx int, scope map[string]struct{}, wrote bool) (columns []string, out [][]interface{}, handled bool, err error) {
+func (e *StorageExecutor) pipelineStreamReturn(admission admittedRelationshipStatement, ctx context.Context, stream *ResultStream, rows []pipelineRow, source pipelineRowSource, clauses, originalClauses []pipelineClause, idx int, scope map[string]struct{}, wrote bool) (columns []string, out [][]interface{}, handled bool, err error) {
 	clause := clauses[idx]
 	plan := returnProjectionPlanFor(clause.text)
 	// The statement only reads, so no row holds an entity it deleted
@@ -1274,7 +1274,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	pipelineNameReturnColumns(ctx, named, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
 	stream.begin(named.Columns)
 	stopped := false
-	projected, completed := e.pipelineProjectPlainReturn(ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {
+	projected, completed := e.pipelineProjectPlainReturn(admission, ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {
 		if !stream.emit(ctx, values) {
 			stopped = true
 			return false

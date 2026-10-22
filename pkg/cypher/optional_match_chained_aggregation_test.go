@@ -54,7 +54,9 @@ RETURN collect(DISTINCT f.num) AS first, collect(DISTINCT n.num) AS missing, col
 			require.True(t, ok)
 			require.Len(t, clauses, tc.clauseCount)
 
-			outcome := exec.executePipeline(ctx, tc.query)
+			fixtureAdmission763Context, fixtureAdmission763 := statementTestContext(ctx, tc.query)
+			_ = fixtureAdmission763
+			outcome := exec.executePipeline(fixtureAdmission763, fixtureAdmission763Context, tc.query)
 			require.NoError(t, outcome.err)
 			require.True(t, outcome.handled())
 			require.Equal(t, tc.rows, outcome.result.Rows)

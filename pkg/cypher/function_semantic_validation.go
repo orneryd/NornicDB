@@ -1,11 +1,23 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
+
+type rewrittenStatementKey struct{}
+
+func withRewrittenStatement(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rewrittenStatementKey{}, true)
+}
+
+func isRewrittenStatement(ctx context.Context) bool {
+	rewritten, _ := ctx.Value(rewrittenStatementKey{}).(bool)
+	return rewritten
+}
 
 // validateKnownFunctions is the unknown-function check: every function a
 // statement calls, in any clause or subquery, is a built-in or a loaded

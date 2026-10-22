@@ -58,7 +58,9 @@ func TestForeach_MergeStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_foreach"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeRequiredPipeline(ctx, "FOREACH (x IN [1, 2] | MERGE (n:CancelMerge {value: x}))")
+	fixtureAdmission349Context, fixtureAdmission349 := statementTestContext(ctx, "FOREACH (x IN [1, 2] | MERGE (n:CancelMerge {value: x}))")
+	_ = fixtureAdmission349
+	_, err := exec.executeRequiredPipeline(fixtureAdmission349, fixtureAdmission349Context, "FOREACH (x IN [1, 2] | MERGE (n:CancelMerge {value: x}))")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }

@@ -33,7 +33,12 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 	}
 
 	exists := func(row map[string]interface{}) bool {
-		matched, recognized := exec.rowExistsSubqueryMatches(ctx, `EXISTS {
+		fixtureAdmission188Context, fixtureAdmission188 := expressionTestContext(ctx, `EXISTS {
+		MATCH (fn)-[:RUNS_IN]->(o:Workload)
+		WHERE o.id <> w.id
+	}`)
+		_ = fixtureAdmission188
+		matched, recognized := exec.rowExistsSubqueryMatches(fixtureAdmission188, fixtureAdmission188Context, `EXISTS {
 		MATCH (fn)-[:RUNS_IN]->(o:Workload)
 		WHERE o.id <> w.id
 	}`, row)

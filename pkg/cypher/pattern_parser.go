@@ -88,7 +88,7 @@ func containsReservedKeyword(s string) bool {
 //
 //	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
-func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
+func (e patternSyntaxReader) parseNodePattern(ctx context.Context, pattern string) nodePatternInfo {
 	info := nodePatternInfo{
 		labels:     []string{},
 		properties: make(map[string]interface{}),
@@ -142,11 +142,11 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //
 //	parseProperties("{tags: ['a', 'b'], active: true}")
 //	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
-func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) map[string]interface{} {
-	return e.parsePropertyMap(ctx, propsStr, false)
+func (e *StorageExecutor) parseProperties(admission admittedRelationshipStatement, ctx context.Context, propsStr string) map[string]interface{} {
+	return e.parsePropertyMap(admission, ctx, propsStr, false)
 }
 
-func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) map[string]interface{} {
+func (e *StorageExecutor) parsePropertyMap(admission admittedRelationshipStatement, ctx context.Context, propsStr string, retainNull bool) map[string]interface{} {
 	props := make(map[string]interface{})
 
 	// Remove outer braces
@@ -172,7 +172,7 @@ func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string,
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
-		value := e.parsePropertyValue(ctx, valueStr)
+		value := e.parsePropertyValue(admission, ctx, valueStr)
 		if value == nil && !retainNull {
 			continue
 		}
@@ -367,7 +367,7 @@ func (e *StorageExecutor) splitPropertyPairs(propsStr string) []string {
 //	parsePropertyValue("30")       // int64(30)
 //	parsePropertyValue("true")     // true
 //	parsePropertyValue("[1, 2]")   // []interface{}{int64(1), int64(2)}
-func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr string) interface{} {
+func (e *StorageExecutor) parsePropertyValue(admission admittedRelationshipStatement, ctx context.Context, valueStr string) interface{} {
 	valueStr = strings.TrimSpace(valueStr)
 
 	if valueStr == "" {
@@ -431,15 +431,15 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// an expression, evaluated below.
 	if isListLiteral(valueStr) {
 		if _, _, _, _, comprehension := parseListComprehension(valueStr[1 : len(valueStr)-1]); comprehension {
-			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
+			value, _ := e.evaluateRowExpressionWithContext(admission, ctx, valueStr, e.fabricRecordBindings)
 			return value
 		}
-		return e.parseArrayValue(ctx, valueStr)
+		return e.parseArrayValue(admission, ctx, valueStr)
 	}
 
 	// Handle nested maps (rare in properties, but possible)
 	if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
-		return e.parseProperties(ctx, valueStr)
+		return e.parseProperties(admission, ctx, valueStr)
 	}
 
 	// Check for malformed values (unquoted colon indicates injection attempt or syntax error)
@@ -447,7 +447,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 		// Return a special marker that will trigger validation error
 		return invalidPropertyValue{raw: valueStr}
 	}
-	if value, defined := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings); defined {
+	if value, defined := e.evaluateRowExpressionWithContext(admission, ctx, valueStr, e.fabricRecordBindings); defined {
 		return normalizePropValue(value)
 	}
 
@@ -463,8 +463,8 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	return valueStr
 }
 
-func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr string) (interface{}, bool) {
-	return e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
+func (e *StorageExecutor) evaluateScalarPropertyExpression(admission admittedRelationshipStatement, ctx context.Context, expr string) (interface{}, bool) {
+	return e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
 }
 
 func (e *StorageExecutor) evaluateArithmeticLookupResult(op byte, left interface{}, leftOK bool, right interface{}, rightOK bool) (interface{}, bool) {
@@ -507,10 +507,10 @@ type invalidPropertyValue struct {
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
-func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) []interface{} {
+func (e *StorageExecutor) parseArrayValue(admission admittedRelationshipStatement, ctx context.Context, arrayStr string) []interface{} {
 	elements := e.splitArrayElements(strings.TrimSpace(arrayStr[1 : len(arrayStr)-1]))
 	value, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
-		return e.parsePropertyValue(ctx, strings.TrimSpace(elements[i])), true, getExpressionFailure(ctx)
+		return e.parsePropertyValue(admission, ctx, strings.TrimSpace(elements[i])), true, getExpressionFailure(ctx)
 	})
 	result, _ := value.([]interface{})
 	return result

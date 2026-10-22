@@ -8,7 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) executeCreateTypedPropertyIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateTypedPropertyIndex(fixtureAdmission1016 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	kind := storage.IndexKindText
 	if startsWithKeywords(cypher, "CREATE", "POINT INDEX") {
 		kind = storage.IndexKindPoint

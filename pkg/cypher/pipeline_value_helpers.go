@@ -78,12 +78,12 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
+func (e *StorageExecutor) evaluateListForPipelineWithContext(admission admittedRelationshipStatement, ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
 	if mayContainSubqueryExpression(expr) {
-		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
+		if value, ok := e.evaluateRowExpressionWithContext(admission, ctx, expr, row); ok {
 			return coerceToUnwindItems(value), true
 		}
 	}
@@ -97,7 +97,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		}
 		arguments := make([]interface{}, len(args))
 		for index, argument := range args {
-			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(argument), row)
+			value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(argument), row)
 			if !resolved {
 				return nil, false
 			}
@@ -111,11 +111,11 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		}
 		return items, true
 	}
-	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
+	if value, ok := e.evaluateRowExpressionWithContext(admission, ctx, expr, row); ok {
 		return coerceToUnwindItems(value), true
 	}
 
-	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
+	value := e.evaluateExpressionWithContext(admission, withValueBindings(ctx, row), expr, nil, nil)
 	if text, unresolved := value.(string); unresolved && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false
 	}

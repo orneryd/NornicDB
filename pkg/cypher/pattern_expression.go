@@ -87,7 +87,7 @@ func rowPatternComprehensionAtom(expr string) (pattern, projection string, ok bo
 // subquery: inside a comparison, a list, a CASE or a function argument, with
 // the row's variables and the statement's context (#1109). matched is false
 // for any other expression, or when the row carries no statement context.
-func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(admission admittedRelationshipStatement, expr string, values map[string]interface{}) (interface{}, bool, error) {
 	pattern, projection, comprehension := rowPatternComprehensionAtom(expr)
 	if !comprehension {
 		return nil, false, nil
@@ -97,7 +97,7 @@ func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, value
 		return nil, false, nil
 	}
 	return deferredExpressionResult(ctx, func(ctx context.Context) (interface{}, bool, error) {
-		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, rowValuesInExpressionContext(ctx, values)), true, nil
+		return e.evaluatePatternComprehensionFromRow(admission, ctx, pattern, projection, rowValuesInExpressionContext(ctx, values)), true, nil
 	})
 }
 
@@ -143,8 +143,8 @@ func isStandaloneExistsSubquery(expr string) bool {
 // row, which shadow it. It shares the WHERE predicate's correlated evaluation
 // (evaluateRowExistsPredicate), so an EXISTS value and an EXISTS filter
 // always agree.
-func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, entityRow(ctx, nodes, rels))
+func (e *StorageExecutor) evaluateExistsSubqueryValue(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
+	matched, _ := e.evaluateRowExistsPredicate(admission, ctx, expr, entityRow(ctx, nodes, rels))
 	return matched
 }
 
@@ -152,15 +152,15 @@ func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr 
 // nodes and relationships; the row's other values are in scope for the
 // WHERE, as a pattern comprehension's or a subquery's outer variables are
 // (#1055).
-func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) []traversalOptRow {
-	rows, _ := e.boundPatternRows(ctx, pattern, nodes, rels, values)
+func (e *StorageExecutor) evaluateBoundPatternRows(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) []traversalOptRow {
+	rows, _ := e.boundPatternRows(admission, ctx, pattern, nodes, rels, values)
 	return rows
 }
 
 // boundPatternRows is evaluateBoundPatternRows reporting whether the kernel
 // matched the pattern: ok is false for a pattern it doesn't take or an error,
 // which isn't "no rows" (#1055).
-func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
+func (e *StorageExecutor) boundPatternRows(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
 	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH "):])
@@ -190,7 +190,7 @@ func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, 
 		seed.values[name] = value
 	}
 
-	expanded, err := e.applyTraversalOptionalClause(ctx, []traversalOptRow{seed}, clauses[0])
+	expanded, err := e.applyTraversalOptionalClause(admission, ctx, []traversalOptRow{seed}, clauses[0])
 	if err != nil {
 		return nil, false
 	}
@@ -203,7 +203,7 @@ func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, 
 	return matches, true
 }
 
-func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, pattern, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []interface{} {
+func (e *StorageExecutor) evaluatePatternComprehension(admission admittedRelationshipStatement, ctx context.Context, pattern, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []interface{} {
 	scope := make(pipelineRow, len(nodes)+len(rels))
 	for variable, node := range nodes {
 		scope[variable] = node
@@ -211,7 +211,7 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 	for variable, relationship := range rels {
 		scope[variable] = relationship
 	}
-	return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, scope)
+	return e.evaluatePatternComprehensionFromRow(admission, ctx, pattern, projection, scope)
 }
 
 // evaluatePatternComprehensionFromRow evaluates a correlated pattern against
@@ -219,7 +219,7 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 // projection against the complete outer scope. This keeps WITH/RETURN
 // horizons on the same row-expression path while preserving scalar aliases
 // that are visible inside the comprehension projection.
-func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+func (e *StorageExecutor) evaluatePatternComprehensionFromRow(admission admittedRelationshipStatement, ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
@@ -247,7 +247,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 			rels[variable] = entity
 		}
 	}
-	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels, outer)
+	rows := e.evaluateBoundPatternRows(admission, ctx, pattern, nodes, rels, outer)
 	values := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
 		scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
@@ -271,7 +271,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 		for variable, value := range row.values {
 			scope[variable] = value
 		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
+		value, evaluated, err := e.evaluateRowValue(admission, projection, scope)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -280,7 +280,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 			values = append(values, value)
 			continue
 		}
-		values = append(values, e.evaluateExpressionWithContext(ctx, projection, row.nodes, row.rels))
+		values = append(values, e.evaluateExpressionWithContext(admission, ctx, projection, row.nodes, row.rels))
 	}
 	return values
 }
@@ -355,20 +355,20 @@ func rowContextShapeOf(expr string) *rowContextShape {
 	return shape
 }
 
-func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
+func (e *StorageExecutor) evaluateRowExpressionWithContext(admission admittedRelationshipStatement, ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 		return value, true
 	}
-	return e.evaluateRowExpressionShaped(ctx, expr, rowContextShapeOf(expr), values, false)
+	return e.evaluateRowExpressionShaped(admission, ctx, expr, rowContextShapeOf(expr), values, false)
 }
 
 // evaluateRowExpressionShaped is evaluateRowExpressionWithContext after its
 // bound-value check, for expr's shape. prepared says values already binds
 // every value binding and parameter of ctx (a rowEvaluationScope's map), so
 // binding them again would bind nothing.
-func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr string, shape *rowContextShape, values pipelineRow, prepared bool) (interface{}, bool) {
+func (e *StorageExecutor) evaluateRowExpressionShaped(admission admittedRelationshipStatement, ctx context.Context, expr string, shape *rowContextShape, values pipelineRow, prepared bool) (interface{}, bool) {
 	if shape.pattern {
-		if value, ok, handled := e.evaluatePatternPredicateValue(ctx, expr, values); handled {
+		if value, ok, handled := e.evaluatePatternPredicateValue(admission, ctx, expr, values); handled {
 			return value, ok
 		}
 	}
@@ -408,22 +408,22 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 		}
 	}
 	if shape.isSubquery {
-		return e.evaluateRowSubqueryValue(ctx, shape.subquery.kind, shape.subquery.body, values)
+		return e.evaluateRowSubqueryValue(admission, ctx, shape.subquery.kind, shape.subquery.body, values)
 	}
 	// id() / elementId() resolve the entity identity at this context-aware
 	// boundary: the allocation-conscious row evaluator below carries no
 	// context and would build the id with the executor's default database,
 	// losing a composite subquery's constituent identity (#745 §3).
 	if shape.identity {
-		if value, resolved := e.evaluateRowEntityIdentity(ctx, shape.function, shape.argument, values); resolved {
+		if value, resolved := e.evaluateRowEntityIdentity(admission, ctx, shape.function, shape.argument, values); resolved {
 			return value, true
 		}
 	}
 	if shape.comprehension {
-		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
+		return e.evaluatePatternComprehensionFromRow(admission, ctx, shape.pattern2, shape.projection, values), true
 	}
 	if shape.exists {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, shape.trimmed, values)
+		matched, _ := e.evaluateRowExistsPredicate(admission, ctx, shape.trimmed, values)
 		return matched, true
 	}
 	// The row evaluator's error is the statement's: it is recorded, and the
@@ -444,7 +444,7 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 			}
 		}
 	}
-	value, resolved, err := e.evaluateRowValue(expr, values)
+	value, resolved, err := e.evaluateRowValue(admission, expr, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -461,7 +461,7 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 		// were evaluated above.
 		trimmed := shape.trimmed
 		nodes, rels := entityScopesFromValues(values)
-		value, resolved = e.evaluateExpressionWithContextDefined(withValueBindings(ctx, values), trimmed, nodes, rels)
+		value, resolved = e.evaluateExpressionWithContextDefined(admission, withValueBindings(ctx, values), trimmed, nodes, rels)
 		if getExpressionFailure(ctx) != nil {
 			return nil, false
 		}
@@ -523,13 +523,13 @@ func (scope *rowEvaluationScope) release() {
 	scope.plain, scope.keyed, scope.row = nil, nil, nil
 }
 
-func (scope *rowEvaluationScope) evaluate(ctx context.Context, e *StorageExecutor, expr string) (interface{}, bool) {
+func (scope *rowEvaluationScope) evaluate(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, expr string) (interface{}, bool) {
 	if value, bound := e.evaluateBoundRowValue(expr, scope.row); bound {
 		return value, true
 	}
 	shape := rowContextShapeOf(expr)
 	values, prepared := scope.valuesFor(shape)
-	return e.evaluateRowExpressionShaped(ctx, expr, shape, values, prepared)
+	return e.evaluateRowExpressionShaped(admission, ctx, expr, shape, values, prepared)
 }
 
 // valuesFor is the map an expression of shape is evaluated on: the row
@@ -583,14 +583,14 @@ func (scope *rowEvaluationScope) fill(values pipelineRow) pipelineRow {
 // context-aware row boundary. The element id names the database the statement
 // currently executes on — a composite subquery's constituent after
 // CALL { USE … } — so the identity survives the row projection (#745 §3).
-func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, function, argument string, values pipelineRow) (interface{}, bool) {
+func (e *StorageExecutor) evaluateRowEntityIdentity(admission admittedRelationshipStatement, ctx context.Context, function, argument string, values pipelineRow) (interface{}, bool) {
 	inner := strings.TrimSpace(argument)
 	var node *storage.Node
 	var edge *storage.Edge
 	if value, bound := values[inner]; bound {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
-	} else if value, resolved, err := e.evaluateRowValue(inner, values); err == nil && resolved {
+	} else if value, resolved, err := e.evaluateRowValue(admission, inner, values); err == nil && resolved {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
 	} else {
@@ -631,7 +631,7 @@ func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor sto
 // matches, as EXISTS { pattern }; NOT, AND, OR and XOR over operands that
 // hold one combine their values with Cypher's null logic (#907). handled is
 // false for any other expression.
-func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
+func (e *StorageExecutor) evaluatePatternPredicateValue(admission admittedRelationshipStatement, ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
 	trimmed := strings.TrimSpace(expr)
 	// A chain's first node closes before it ends, so these parentheses
 	// only ever group.
@@ -639,18 +639,18 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
+		matched, _ := e.evaluateRowExistsPredicate(admission, ctx, "EXISTS { "+trimmed+" }", values)
 		return matched, true, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpressionInContext(ctx, trimmed, func(operand string, position foldPosition) (interface{}, bool, error) {
 		if !rowOperandFactsFor(ctx, operand).isolate(position, true) {
-			value, resolved := e.evaluateRowExpressionWithContext(ctx, operand, values)
+			value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, operand, values)
 			return value, resolved, nil
 		}
 		var resolved bool
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			var value interface{}
-			value, resolved = e.evaluateRowExpressionWithContext(ctx, operand, rowValuesInExpressionContext(ctx, values))
+			value, resolved = e.evaluateRowExpressionWithContext(admission, ctx, operand, rowValuesInExpressionContext(ctx, values))
 			return value
 		})
 		return value, resolved, err

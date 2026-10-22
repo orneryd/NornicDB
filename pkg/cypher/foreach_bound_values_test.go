@@ -35,7 +35,9 @@ func TestCreatePropertyValues_ResolveBoundLoopVariables(t *testing.T) {
 	require.EqualValues(t, "ann", nodes[0].Properties["v"])
 
 	// MERGE property through a bound value.
-	_, err = exec.executeMergeWithContext(withValueBindings(ctx, map[string]interface{}{"x": int64(9)}), "MERGE (m:BoundMerge {id: x})", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	fixtureAdmission1867Context, fixtureAdmission1867 := statementTestContext(withValueBindings(ctx, map[string]interface{}{"x": int64(9)}), "MERGE (m:BoundMerge {id: x})")
+	_ = fixtureAdmission1867Context
+	_, err = exec.executeMergeWithContext(fixtureAdmission1867, fixtureAdmission1867Context, "MERGE (m:BoundMerge {id: x})", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	nodes, err = engine.GetNodesByLabel("BoundMerge")
 	require.NoError(t, err)

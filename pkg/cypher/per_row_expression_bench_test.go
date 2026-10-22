@@ -247,13 +247,16 @@ func BenchmarkPerRowExpression_ContextEvaluatorQuantifier(b *testing.B) {
 	}
 	nodes := map[string]*storage.Node{"n": node}
 	const expr = "any(k IN $keys WHERE k = n.id + '|')"
-	if value := exec.evaluateExpressionWithContext(ctx, expr, nodes, nil); value != false {
+	var fixtureAdmission783 admittedRelationshipStatement
+	ctx, fixtureAdmission783 = expressionTestContext(ctx, expr)
+	_ = fixtureAdmission783
+	if value := exec.evaluateExpressionWithContext(fixtureAdmission783, ctx, expr, nodes, nil); value != false {
 		b.Fatalf("got %v", value)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		exec.evaluateExpressionWithContext(ctx, expr, nodes, nil)
+		exec.evaluateExpressionWithContext(fixtureAdmission783, ctx, expr, nodes, nil)
 	}
 }
 
@@ -314,16 +317,18 @@ func BenchmarkPerRowExpression_Operation(b *testing.B) {
 		{"or_short_circuit", "true OR any(k IN $keys WHERE k = startNode(r).id)"},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
+			row, fixtureAdmission784 := expressionTestRow(context.Background(), tc.expr, row)
+			_ = fixtureAdmission784
 			// The first evaluation marks the text, the second compiles it.
 			for i := 0; i < 2; i++ {
-				if _, ok, err := exec.evaluateRowValue(tc.expr, row); !ok || err != nil {
+				if _, ok, err := exec.evaluateRowValue(fixtureAdmission784, tc.expr, row); !ok || err != nil {
 					b.Fatalf("%s: unresolved or %v", tc.expr, err)
 				}
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				exec.evaluateRowValue(tc.expr, row)
+				exec.evaluateRowValue(fixtureAdmission784, tc.expr, row)
 			}
 		})
 	}

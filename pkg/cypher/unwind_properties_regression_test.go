@@ -23,7 +23,9 @@ func TestPipelineCreateSkipsUnusedRowLiteral(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
 	called := 0
-	_, _, handled, err := exec.pipelineApplyCreateClauses(context.Background(), []pipelineRow{
+	fixtureAdmission1826Context, fixtureAdmission1826 := statementTestContext(context.Background(), "RETURN "+("CREATE (n:MongoRecord)"))
+	_ = fixtureAdmission1826Context
+	_, _, handled, err := exec.pipelineApplyCreateClauses(fixtureAdmission1826, fixtureAdmission1826Context, []pipelineRow{
 		{"unused": countedLiteralStringer{calls: &called}},
 	}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (n:MongoRecord)"}})
 	require.NoError(t, err)
@@ -35,7 +37,9 @@ func TestPipelineCreateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
 	called := 0
-	_, _, handled, err := exec.pipelineApplyCreateClauses(context.Background(), []pipelineRow{
+	fixtureAdmission1827Context, fixtureAdmission1827 := statementTestContext(context.Background(), "RETURN "+("CREATE (n:MongoRecord {id: row.id})"))
+	_ = fixtureAdmission1827Context
+	_, _, handled, err := exec.pipelineApplyCreateClauses(fixtureAdmission1827, fixtureAdmission1827Context, []pipelineRow{
 		{"row": map[string]interface{}{"id": "found", "unused": countedLiteralStringer{calls: &called}}},
 	}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE (n:MongoRecord {id: row.id})"}})
 	require.NoError(t, err)
@@ -46,7 +50,9 @@ func TestPipelineCreateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 func TestPipelinePredicateSkipsUnusedRowLiteral(t *testing.T) {
 	called := 0
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	matched := exec.evaluateWithWhereCondition(context.Background(), "42 > 1", map[string]interface{}{
+	fixtureAdmission919Context, fixtureAdmission919 := expressionTestContext(context.Background(), "42 > 1")
+	_ = fixtureAdmission919
+	matched := exec.evaluateWithWhereCondition(fixtureAdmission919, fixtureAdmission919Context, "42 > 1", map[string]interface{}{
 		"unused": countedLiteralStringer{calls: &called},
 	})
 	require.True(t, matched)
@@ -56,7 +62,9 @@ func TestPipelinePredicateSkipsUnusedRowLiteral(t *testing.T) {
 func TestPipelinePredicateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 	called := 0
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	matched := exec.evaluateWithWhereCondition(context.Background(), "item.id = 42", map[string]interface{}{
+	fixtureAdmission920Context, fixtureAdmission920 := expressionTestContext(context.Background(), "item.id = 42")
+	_ = fixtureAdmission920
+	matched := exec.evaluateWithWhereCondition(fixtureAdmission920, fixtureAdmission920Context, "item.id = 42", map[string]interface{}{
 		"item": map[string]interface{}{
 			"id":     42,
 			"unused": countedLiteralStringer{calls: &called},
@@ -587,12 +595,16 @@ func TestParseValue_MapLiterals(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	val := exec.parseValue(ctx, "{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}")
+	fixtureAdmission1828Context, fixtureAdmission1828 := expressionTestContext(ctx, "{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}")
+	_ = fixtureAdmission1828Context
+	val := exec.parseValue(fixtureAdmission1828, fixtureAdmission1828Context, "{_mongo_id: 'm4', _mongo_collection: 'nornic_translation'}")
 	if _, ok := val.(map[string]interface{}); !ok {
 		t.Fatalf("expected plain map literal to parse as map, got %T", val)
 	}
 
-	val = exec.parseValue(ctx, "{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}")
+	fixtureAdmission1829Context, fixtureAdmission1829 := expressionTestContext(ctx, "{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}")
+	_ = fixtureAdmission1829Context
+	val = exec.parseValue(fixtureAdmission1829, fixtureAdmission1829Context, "{`_mongo_id`: 'm5', `_mongo_collection`: 'nornic_translation'}")
 	if _, ok := val.(map[string]interface{}); !ok {
 		t.Fatalf("expected backticked map literal to parse as map, got %T", val)
 	}

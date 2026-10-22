@@ -50,8 +50,12 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		"startNode(d)", "endNode(d)", "startNode(z)", "startNode(unbound)",
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
-		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
-		want, wantErr := exec.evaluateRowFallback(expr, values)
+		fixtureAdmission785Context, fixtureAdmission785 := expressionTestRow(context.Background(), expr, values)
+		_ = fixtureAdmission785
+		got, gotOK, gotErr := exec.evaluateRowValue(fixtureAdmission785, expr, fixtureAdmission785Context)
+		fixtureAdmission980Context, fixtureAdmission980 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission980Context
+		want, wantErr := exec.evaluateRowFallback(fixtureAdmission980, expr, values)
 		wantOK := true
 		if text, isText := want.(string); isText && text == expr {
 			want, wantOK = nil, false
@@ -66,17 +70,25 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	// Wrong argument types must fail through the same shared contract in both
 	// evaluators; neither path may silently turn an ordinary value into null.
 	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
-		_, _, gotErr := exec.evaluateRowValue(expr, values)
-		_, wantErr := exec.evaluateRowFallback(expr, values)
+		fixtureAdmission786Context, fixtureAdmission786 := expressionTestRow(context.Background(), expr, values)
+		_ = fixtureAdmission786
+		_, _, gotErr := exec.evaluateRowValue(fixtureAdmission786, expr, fixtureAdmission786Context)
+		fixtureAdmission981Context, fixtureAdmission981 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission981Context
+		_, wantErr := exec.evaluateRowFallback(fixtureAdmission981, expr, values)
 		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
 			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
 			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
 		}
 	}
-	if node, _, _ := exec.evaluateRowValue("startNode(r)", values); node.(*storage.Node).ID != "a" {
+	fixtureAdmission787Context, fixtureAdmission787 := expressionTestRow(context.Background(), "startNode(r)", values)
+	_ = fixtureAdmission787
+	if node, _, _ := exec.evaluateRowValue(fixtureAdmission787, "startNode(r)", fixtureAdmission787Context); node.(*storage.Node).ID != "a" {
 		t.Fatalf("startNode(r) = %v", node)
 	}
-	if node, _, _ := exec.evaluateRowValue("endNode(d)", values); node != nil {
+	fixtureAdmission788Context, fixtureAdmission788 := expressionTestRow(context.Background(), "endNode(d)", values)
+	_ = fixtureAdmission788
+	if node, _, _ := exec.evaluateRowValue(fixtureAdmission788, "endNode(d)", fixtureAdmission788Context); node != nil {
 		t.Fatalf("endNode(d) of a missing node = %#v", node)
 	}
 
@@ -181,12 +193,15 @@ func TestRowValueProgramAdapterConsistency(t *testing.T) {
 	rows := rowValueCorpusRows(t, store)
 	for _, expr := range rowValueCorpus {
 		for index, row := range rows {
+			var fixtureAdmission789 admittedRelationshipStatement
+			row, fixtureAdmission789 = expressionTestRow(rowStatementContextOrBackground(row), expr, row)
+			_ = fixtureAdmission789
 			rowValueProgramsDisabled.Store(true)
-			want, wantOK, wantErr := exec.evaluateRowValue(expr, row)
+			want, wantOK, wantErr := exec.evaluateRowValue(fixtureAdmission789, expr, row)
 			rowValueProgramsDisabled.Store(false)
 			compiler := rowValueCompiler{}
 			root, _ := compiler.compile(expr)
-			got, gotOK, gotErr := root.eval(exec, row, nil)
+			got, gotOK, gotErr := root.eval(fixtureAdmission789, exec, row, nil)
 			if gotOK != wantOK || !sameRowValue(got, want) || (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
 				t.Errorf("%s (row %d): program %#v, %v, %v; text %#v, %v, %v", expr, index, got, gotOK, gotErr, want, wantOK, wantErr)
 			}
@@ -300,13 +315,19 @@ func TestRowPredicateProgramAdapterConsistency(t *testing.T) {
 	exec, store := perRowTestExecutor(t)
 	rows := rowValueCorpusRows(t, store)
 	evaluate := func(expr string, row map[string]interface{}, program bool) (bool, error) {
-		ctx := withExpressionFailureSlot(context.Background())
+		fixtureAdmission790Context, fixtureAdmission790 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission790
+		ctx := withExpressionFailureSlot(fixtureAdmission790Context)
 		if program {
-			return compileRowPredicateProgram(expr).holds(exec, ctx, row), getExpressionFailure(ctx)
+			fixtureAdmission1721Context, fixtureAdmission1721 := statementTestContext(ctx, "RETURN "+(expr))
+			_ = fixtureAdmission1721Context
+			return compileRowPredicateProgram(expr).holds(fixtureAdmission1721, exec, fixtureAdmission1721Context, row), getExpressionFailure(ctx)
 		}
 		rowValueProgramsDisabled.Store(true)
 		defer rowValueProgramsDisabled.Store(false)
-		return exec.evaluateRowPredicate(ctx, expr, row), getExpressionFailure(ctx)
+		fixtureAdmission965Context, fixtureAdmission965 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission965Context
+		return exec.evaluateRowPredicate(fixtureAdmission965, fixtureAdmission965Context, expr, row), getExpressionFailure(ctx)
 	}
 	for _, expr := range rowPredicateCorpus {
 		// CASE has a hand-written oracle in TestRowPredicateCaseExpectedResults:
@@ -395,8 +416,9 @@ func TestRowValueProgramListAllocationsDoNotGrowWithList(t *testing.T) {
 		root, _ := (&rowValueCompiler{}).compile(expr)
 		shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
 		longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
+		_, statement := expressionTestContext(context.Background(), expr)
 		evaluate := func(row map[string]interface{}) {
-			if _, ok, err := root.eval(exec, row, nil); !ok || err != nil {
+			if _, ok, err := root.eval(statement, exec, row, nil); !ok || err != nil {
 				t.Fatalf("%s: unresolved or %v", expr, err)
 			}
 		}
@@ -432,14 +454,22 @@ func TestRowContextShapeForms(t *testing.T) {
 	}
 	ctx := context.Background()
 	for run := 0; run < 2; run++ {
-		if value := exec.evaluateExpressionWithContext(ctx, "any(k IN [1] WHERE datetime() IS NOT NULL)", map[string]*storage.Node{"n": node}, nil); value != true {
+		fixtureAdmission791Context, fixtureAdmission791 := expressionTestContext(ctx, "any(k IN [1] WHERE datetime() IS NOT NULL)")
+		_ = fixtureAdmission791
+		if value := exec.evaluateExpressionWithContext(fixtureAdmission791, fixtureAdmission791Context, "any(k IN [1] WHERE datetime() IS NOT NULL)", map[string]*storage.Node{"n": node}, nil); value != true {
 			t.Fatalf("run %d: any() with datetime() = %v", run, value)
 		}
 		failure := withExpressionFailureSlot(ctx)
-		if _, ok := exec.evaluateRowExpressionWithContext(failure, "substring(n.id, -1)", pipelineRow{"n": node}); ok || getExpressionFailure(failure) == nil {
+		fixtureAdmission792Context, fixtureAdmission792 := expressionTestContext(failure, "substring(n.id, -1)")
+		_ = fixtureAdmission792
+		if _, ok := exec.evaluateRowExpressionWithContext(fixtureAdmission792, fixtureAdmission792Context, "substring(n.id, -1)", pipelineRow{"n": node}); ok || getExpressionFailure(failure) == nil {
 			t.Fatalf("run %d: substring(n.id, -1) resolved without an error", run)
 		}
-		value, ok := exec.evaluateRowExpressionWithContext(ctx, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
+		fixtureAdmission793Context, fixtureAdmission793 := expressionTestContext(ctx, "[(n)-[:R]->(m) | m.id]")
+		_ = fixtureAdmission793
+		fixtureAdmission926Context, fixtureAdmission926 := expressionTestContext(fixtureAdmission793Context, "[(n)-[:R]->(m) | m.id]")
+		_ = fixtureAdmission926
+		value, ok := exec.evaluateRowExpressionWithContext(fixtureAdmission926, fixtureAdmission926Context, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
 		if !ok || !reflect.DeepEqual(value, []interface{}{"b"}) {
 			t.Fatalf("run %d: pattern comprehension = %v, %v", run, value, ok)
 		}

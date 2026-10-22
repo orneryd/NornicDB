@@ -76,7 +76,7 @@ func TestGDSStreamRendersWithTheProjectionItRead(t *testing.T) {
 	for _, replace := range []bool{false, true} {
 		_, err := run(project)
 		require.NoError(t, err)
-		handler := gdsStreamHandler("gds.louvain.stream", func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+		handler := gdsStreamHandler("gds.louvain.stream", func(statement admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 			result, err := e.callGdsLouvainStream(args)
 			_, dropErr := run("CALL gds.graph.drop('ints')")
 			require.NoError(t, dropErr)
@@ -86,7 +86,8 @@ func TestGDSStreamRendersWithTheProjectionItRead(t *testing.T) {
 			}
 			return result, err
 		})
-		result, err := handler(context.Background(), exec, "", []interface{}{"ints"})
+		streamContext, statement := procedureTestContext(context.Background(), "gds.louvain.stream", []interface{}{"ints"})
+		result, err := handler(statement, streamContext, exec, "CALL gds.louvain.stream($fixtureArgument0)", []interface{}{"ints"})
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 3, "replace=%v", replace)
 		for _, row := range result.Rows {

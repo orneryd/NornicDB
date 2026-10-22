@@ -19,7 +19,7 @@ import (
 
 // ===== SHOW Commands (Neo4j compatibility) =====
 
-func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowSettings(fixtureAdmission1007 admittedRelationshipStatement, _ context.Context, cypher string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	upper := upperASCII(query)
 	prefix := "SHOW SETTINGS"
@@ -103,7 +103,7 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 }
 
 // executeShowIndexes handles SHOW INDEXES command
-func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowIndexes(fixtureAdmission995 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW INDEXES"), nil)
 	}
@@ -234,7 +234,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 // named NODE_PROPERTY_UNIQUENESS / RELATIONSHIP_PROPERTY_UNIQUENESS, the
 // enforcedLabel (a default column) and classification columns, and options
 // without an indexProvider; a Cypher 5 statement as Neo4j 5.26 does.
-func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowConstraints(fixtureAdmission956 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW CONSTRAINTS"), nil)
 	}
@@ -385,13 +385,13 @@ func showCommandHead(cypher string) string {
 // (given the command without its tail), and applyShowTail applies the tail.
 // Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
 // ORDER BY and SKIP / LIMIT behave the same for all of them.
-func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	result, err := run(ctx, showCommandHead(cypher))
+func (e *StorageExecutor) executeShowWithTail(admission admittedRelationshipStatement, ctx context.Context, cypher string, run func(admittedRelationshipStatement, context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	result, err := run(admission, ctx, showCommandHead(cypher))
 	if err != nil {
 		return nil, err
 	}
 	sortShowRowsByName(result)
-	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
+	return e.applyShowTail(admission, ctx, cypher, result, showDefaultColumns(result))
 }
 
 // sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
@@ -511,7 +511,7 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 // same row operators as every other clause. Any other form (RETURN after a
 // WHERE without YIELD, a WHERE before YIELD's ORDER BY, a non-literal YIELD
 // SKIP / LIMIT) is a SyntaxError, as in Neo4j.
-func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyShowTail(admission admittedRelationshipStatement, ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
 	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
 	head := showCommandHead(query)
 	if len(head) == len(query) {
@@ -685,7 +685,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		after = showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", "))
 	}
 	if after != "" {
-		if err := e.validateSemanticScopes(ctx, showYieldedScopeStatement(outputs)+" "+after); err != nil {
+		if err := e.validateSemanticScopes(admission, ctx, showYieldedScopeStatement(outputs)+" "+after); err != nil {
 			return nil, err
 		}
 	}
@@ -697,7 +697,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	default:
 		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
 	}
-	return e.executeCallTail(ctx, projected, clauses.String())
+	return e.executeCallTail(admission, ctx, projected, clauses.String())
 }
 
 // showYieldedScopeStatement binds a SHOW command's yielded columns, for
@@ -784,7 +784,7 @@ func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*
 }
 
 // executeShowProcedures handles SHOW PROCEDURES command
-func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowProcedures(fixtureAdmission997 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	ensureBuiltInProceduresRegistered()
 	registered := ListRegisteredProcedures()
 	procedures := make([][]interface{}, 0, len(registered))
@@ -866,7 +866,7 @@ func showFunctionRows() [][]interface{} {
 	return showFunctionRowsCache
 }
 
-func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowFunctions(fixtureAdmission998 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// The listing is static: its rows (with the argument and return
 	// descriptions parsed from each signature) are built once, and each call
 	// gets its own copy of them.
@@ -970,7 +970,8 @@ func functionSignatureDescriptions(signature string) ([]interface{}, string) {
 }
 
 // executeShowDatabase handles SHOW DATABASE command (singular - shows current database)
-func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) executeShowDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+	e := run.executor
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
@@ -1001,6 +1002,10 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 			RelationshipsCreated: int(edgeCount),
 		},
 	}, showDatabasesDefaultColumns), nil
+}
+
+func (e *StorageExecutor) executeShowDatabase(fixtureAdmission1005 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().executeShowDatabase(ctx, cypher)
 }
 
 // executeShowDatabases handles SHOW DATABASES command (plural - lists all databases).
@@ -1034,7 +1039,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 //   - default: Whether this is the default database
 //   - home: Whether this is the home database
 //   - constituents: Constituent databases (empty for single databases)
-func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowDatabases(fixtureAdmission1004 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW DATABASES"), nil)
 	}
@@ -1158,7 +1163,7 @@ func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.T
 //   - Success: Result with database name in single row
 //   - Error: If database already exists (unless IF NOT EXISTS is used)
 //   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateDatabase(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
@@ -1188,7 +1193,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 	// OPTIONS { … } ends the statement (#937); the options are validated
 	// before anything is created.
-	cypher, options, err := e.splitDatabaseOptions(ctx, cypher, startPos)
+	cypher, options, err := e.splitDatabaseOptions(admission, ctx, cypher, startPos)
 	if err != nil {
 		return nil, err
 	}
@@ -1673,7 +1678,7 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 //
 // Returns:
 //   - Success: Result with alias and database columns
-func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowAliases(fixtureAdmission1006 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherResidualShowAliasesManagerUnavailable(), nil)
 	}
@@ -1769,7 +1774,7 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 // Returns:
 //   - Success: Result with database name
 //   - Error: If database doesn't exist or syntax is invalid
-func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeAlterDatabase(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("ALTER DATABASE"), nil)
 	}
@@ -1794,7 +1799,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 	} else {
 		return nil, localizedError(localization.CypherAdminKeywordExpected("ALTER DATABASE", "DATABASE"), nil)
 	}
-	if result, handled, err := e.alterDatabaseOption(ctx, cypher, startPos); handled {
+	if result, handled, err := e.alterDatabaseOption(admission, ctx, cypher, startPos); handled {
 		return result, err
 	}
 
@@ -1991,7 +1996,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 // Returns:
 //   - Success: Result with limit information in Neo4j-compatible format
 //   - Error: If database doesn't exist
-func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowLimits(fixtureAdmission1008 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW LIMITS"), nil)
 	}

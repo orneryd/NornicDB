@@ -218,7 +218,9 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 	t.Run("three-node chain with variables", func(t *testing.T) {
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission147Context, fixtureAdmission147 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission147
+		match := exec.parseTraversalPattern(fixtureAdmission147, fixtureAdmission147Context, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -249,7 +251,9 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 	t.Run("four-node chain", func(t *testing.T) {
 		pattern := "(a)-[:R1]->(b)-[:R2]->(c)-[:R3]->(d)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission148Context, fixtureAdmission148 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission148
+		match := exec.parseTraversalPattern(fixtureAdmission148, fixtureAdmission148Context, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -264,7 +268,9 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 	t.Run("chain with relationship variables", func(t *testing.T) {
 		pattern := "(a)-[r1:REL1]->(b)-[r2:REL2]->(c)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission149Context, fixtureAdmission149 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission149
+		match := exec.parseTraversalPattern(fixtureAdmission149, fixtureAdmission149Context, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -275,7 +281,9 @@ func TestParseChainedTraversalPattern(t *testing.T) {
 	t.Run("chain with properties", func(t *testing.T) {
 		pattern := "(p:Person {name: 'Test'})<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission150Context, fixtureAdmission150 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission150
+		match := exec.parseTraversalPattern(fixtureAdmission150, fixtureAdmission150Context, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -291,10 +299,14 @@ func TestTraverseChainedGraph(t *testing.T) {
 	t.Run("three-node chain returns correct paths", func(t *testing.T) {
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission151Context, fixtureAdmission151 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission151
+		match := exec.parseTraversalPattern(fixtureAdmission151, fixtureAdmission151Context, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(ctx, match)
+		fixtureAdmission1367Context, fixtureAdmission1367 := statementTestContext(ctx, ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1367Context
+		paths := exec.relationshipExecutionFor(fixtureAdmission1367, fixtureAdmission1367Context, pattern, "").traverseGraph(ctx, match)
 
 		// Should find 3 paths: Person1->POC1->Area1, Person2->POC2->Area1, Person3->POC3->Area2
 		assert.Len(t, paths, 3)
@@ -310,10 +322,14 @@ func TestTraverseChainedGraph(t *testing.T) {
 		// Only get paths to Area1
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area {name: 'Area1'})"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission152Context, fixtureAdmission152 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission152
+		match := exec.parseTraversalPattern(fixtureAdmission152, fixtureAdmission152Context, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(ctx, match)
+		fixtureAdmission1368Context, fixtureAdmission1368 := statementTestContext(ctx, ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1368Context
+		paths := exec.relationshipExecutionFor(fixtureAdmission1368, fixtureAdmission1368Context, pattern, "").traverseGraph(ctx, match)
 
 		// Should find 2 paths: Person1->POC1->Area1, Person2->POC2->Area1
 		assert.Len(t, paths, 2)
@@ -323,10 +339,14 @@ func TestTraverseChainedGraph(t *testing.T) {
 		// Use a non-existent relationship type
 		pattern := "(p:Person)<-[:NONEXISTENT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission153Context, fixtureAdmission153 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission153
+		match := exec.parseTraversalPattern(fixtureAdmission153, fixtureAdmission153Context, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(ctx, match)
+		fixtureAdmission1369Context, fixtureAdmission1369 := statementTestContext(ctx, ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1369Context
+		paths := exec.relationshipExecutionFor(fixtureAdmission1369, fixtureAdmission1369Context, pattern, "").traverseGraph(ctx, match)
 		assert.Len(t, paths, 0)
 	})
 }
@@ -339,10 +359,14 @@ func TestBuildPathContextChained(t *testing.T) {
 	t.Run("maps all three nodes", func(t *testing.T) {
 		pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission154Context, fixtureAdmission154 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission154
+		match := exec.parseTraversalPattern(fixtureAdmission154, fixtureAdmission154Context, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		fixtureAdmission1370Context, fixtureAdmission1370 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1370Context
+		paths := exec.relationshipExecutionFor(fixtureAdmission1370, fixtureAdmission1370Context, pattern, "").traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
 		// Build context for first path
@@ -367,10 +391,14 @@ func TestBuildPathContextChained(t *testing.T) {
 	t.Run("maps relationships with variables", func(t *testing.T) {
 		pattern := "(p:Person)<-[r1:HAS_CONTACT]-(poc:POC)-[r2:BELONGS_TO]->(a:Area)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission155Context, fixtureAdmission155 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission155
+		match := exec.parseTraversalPattern(fixtureAdmission155, fixtureAdmission155Context, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		fixtureAdmission1371Context, fixtureAdmission1371 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1371Context
+		paths := exec.relationshipExecutionFor(fixtureAdmission1371, fixtureAdmission1371Context, pattern, "").traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
 		pathCtx := exec.buildPathContext(paths[0], match)
@@ -421,7 +449,7 @@ func TestTraverseFromNode(t *testing.T) {
 			},
 		}
 
-		paths := exec.traverseFromNode(context.Background(), poc1, match)
+		paths := relationshipTestExecution(exec, context.Background(), "(poc:POC)-[:BELONGS_TO]->(a:Area)", "", nil).traverseFromNode(context.Background(), poc1, match)
 
 		// POC1 should connect to Area1
 		assert.Len(t, paths, 1)
@@ -453,7 +481,7 @@ func TestTraverseFromNode(t *testing.T) {
 			},
 		}
 
-		paths := exec.traverseFromNode(context.Background(), persons[0], match)
+		paths := relationshipTestExecution(exec, context.Background(), "(poc:POC)-[:BELONGS_TO]->(a:Area)", "", nil).traverseFromNode(context.Background(), persons[0], match)
 		assert.Nil(t, paths)
 	})
 
@@ -493,7 +521,7 @@ func TestTraverseFromNode(t *testing.T) {
 			},
 		}
 
-		paths := exec.traverseFromNode(context.Background(), start, match)
+		paths := relationshipTestExecution(exec, context.Background(), "(poc:POC)-[:BELONGS_TO]->(a:Area)", "", nil).traverseFromNode(context.Background(), start, match)
 		require.Len(t, paths, 1)
 		require.Len(t, paths[0].Nodes, 2)
 		assert.Equal(t, storage.NodeID("area-live"), paths[0].Nodes[1].ID)
@@ -596,17 +624,23 @@ func TestChainedPatternEdgeCases(t *testing.T) {
 	t.Run("empty graph returns no paths", func(t *testing.T) {
 		pattern := "(a)-[:R1]->(b)-[:R2]->(c)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission156Context, fixtureAdmission156 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission156
+		match := exec.parseTraversalPattern(fixtureAdmission156, fixtureAdmission156Context, pattern)
 		require.NotNil(t, match)
 
-		paths := exec.traverseGraph(context.Background(), match)
+		fixtureAdmission1372Context, fixtureAdmission1372 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1372Context
+		paths := exec.relationshipExecutionFor(fixtureAdmission1372, fixtureAdmission1372Context, pattern, "").traverseGraph(context.Background(), match)
 		assert.Len(t, paths, 0)
 	})
 
 	t.Run("pattern with quoted property containing special chars", func(t *testing.T) {
 		pattern := `(p:Person {name: "Test (User)"})<-[:HAS_CONTACT]-(poc)-[:BELONGS_TO]->(a)`
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission157Context, fixtureAdmission157 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission157
+		match := exec.parseTraversalPattern(fixtureAdmission157, fixtureAdmission157Context, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -616,7 +650,9 @@ func TestChainedPatternEdgeCases(t *testing.T) {
 	t.Run("pattern with no labels on intermediate nodes", func(t *testing.T) {
 		pattern := "(a:Start)<-[:R1]-(b)-[:R2]->(c:End)"
 		ctx := context.Background()
-		match := exec.parseTraversalPattern(ctx, pattern)
+		fixtureAdmission158Context, fixtureAdmission158 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission158
+		match := exec.parseTraversalPattern(fixtureAdmission158, fixtureAdmission158Context, pattern)
 
 		require.NotNil(t, match)
 		assert.True(t, match.IsChained)
@@ -705,12 +741,14 @@ func BenchmarkChainedTraversal(b *testing.B) {
 	setupChainedBenchmarkData(b, exec)
 
 	pattern := "(p:Person)<-[:HAS_CONTACT]-(poc:POC)-[:BELONGS_TO]->(a:Area)"
-	ctx := context.Background()
-	match := exec.parseTraversalPattern(ctx, pattern)
+	ctx, fixtureAdmission159 := traversalTestContext(context.Background(), pattern, "", nil)
+	_ = fixtureAdmission159
+	match := exec.parseTraversalPattern(fixtureAdmission159, ctx, pattern)
+	run := exec.relationshipExecutionFor(fixtureAdmission159, ctx, pattern, "")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.traverseGraph(context.Background(), match)
+		_ = run.traverseGraph(ctx, match)
 	}
 }
 

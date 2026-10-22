@@ -184,11 +184,26 @@ func TestRowSubqueryAtomCompilesOnce(t *testing.T) {
 	require.Equal(t, "COUNT", node.kind)
 	require.Equal(t, "MATCH (p)-[r:R]->(q:Q) WHERE q.k = 1", node.body)
 
-	// Without a statement context the node reads its text, as the text
+	// Without a row statement context the node reads its text, as the text
 	// route does.
-	value, resolved, err := node.eval(exec, map[string]interface{}{}, nil)
-	textValue, textResolved, textErr := exec.evaluateRowValueText(node.text, map[string]interface{}{})
+	_, rawStatement := expressionTestContext(context.Background(), node.text)
+	value, resolved, err := node.eval(rawStatement, exec, map[string]interface{}{}, nil)
+	fixtureAdmission957Context, fixtureAdmission957 := expressionTestContext(context.Background(), node.text)
+	_ = fixtureAdmission957Context
+	textValue, textResolved, textErr := exec.evaluateRowValueText(fixtureAdmission957, node.text, map[string]interface{}{})
 	require.Equal(t, textValue, value)
 	require.Equal(t, textResolved, resolved)
 	require.Equal(t, textErr, err)
+
+	// With admission both evaluators execute the same actual subquery source.
+	row, fixtureAdmission111 := expressionTestRow(ctx, node.text, map[string]interface{}{})
+	_ = fixtureAdmission111
+	value, resolved, err = node.eval(fixtureAdmission111, exec, row, nil)
+	textValue, textResolved, textErr = exec.evaluateRowValueText(fixtureAdmission111, node.text, row)
+	require.Equal(t, textValue, value)
+	require.Equal(t, textResolved, resolved)
+	require.Equal(t, textErr, err)
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Equal(t, int64(400), value)
 }

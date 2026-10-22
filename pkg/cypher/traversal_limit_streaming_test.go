@@ -58,8 +58,10 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 	txStore := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "traversal", separator: ":"}
 	txProbe := &projectedTraversalCountingEngine{Engine: txStore}
-	txResult, err := NewStorageExecutor(txProbe).executeMatchWithRelationshipsWithPathSeeded(
-		context.Background(), "(a:Person)-[:KNOWS]->(b:Person)", "",
+	fixtureAdmission892Context, fixtureAdmission892 := traversalTestContext(context.Background(), "(a:Person)-[:KNOWS]->(b:Person)", "", []returnItem{{expr: "a.name"}, {expr: "b.name"}})
+	_ = fixtureAdmission892
+	txResult, err := NewStorageExecutor(txProbe).executeMatchWithRelationshipsWithPathSeeded(fixtureAdmission892,
+		fixtureAdmission892Context, "(a:Person)-[:KNOWS]->(b:Person)", "",
 		[]returnItem{{expr: "a.name"}, {expr: "b.name"}}, nil, nil, "", nil, 2,
 	)
 	require.NoError(t, err)

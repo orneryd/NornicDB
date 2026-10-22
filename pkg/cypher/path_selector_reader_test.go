@@ -76,7 +76,9 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 	source, target := r.Rows[0][0].(*storage.Node), r.Rows[0][1].(*storage.Node)
 	for budget := 1; budget <= 128; budget++ {
 		canceled := newCheckpointContext(budget, nil)
-		_, _, err := e.evaluateShortestPathValue(canceled, "shortestPath", "(a)-[:T*1..3]->(b)", map[string]*storage.Node{"a": source, "b": target})
+		fixtureAdmission770Context, fixtureAdmission770 := expressionTestContext(canceled, "shortestPath"+"("+"(a)-[:T*1..3]->(b)"+")")
+		_ = fixtureAdmission770
+		_, _, err := e.evaluateShortestPathValue(fixtureAdmission770, fixtureAdmission770Context, "shortestPath", "(a)-[:T*1..3]->(b)", map[string]*storage.Node{"a": source, "b": target})
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		} else {
@@ -84,7 +86,9 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 		}
 		canceled.cancel()
 		canceled = newCheckpointContext(budget, nil)
-		_, _, err = e.parseShortestPathMatch(canceled, "p = shortestPath((a)-[:T*1..3]->(b))")
+		fixtureAdmission1704Context, fixtureAdmission1704 := statementTestContext(canceled, "p = shortestPath((a)-[:T*1..3]->(b))")
+		_ = fixtureAdmission1704Context
+		_, _, err = e.parseShortestPathMatch(fixtureAdmission1704, fixtureAdmission1704Context, "p = shortestPath((a)-[:T*1..3]->(b))")
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		} else {
@@ -92,11 +96,15 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 		}
 		canceled.cancel()
 	}
-	traversal := e.parseTraversalPattern(ctx, "(a)-[r:T*]->(b)")
+	fixtureAdmission771Context, fixtureAdmission771 := traversalTestContext(ctx, "(a)-[r:T*]->(b)", "", nil)
+	_ = fixtureAdmission771
+	traversal := e.parseTraversalPattern(fixtureAdmission771, fixtureAdmission771Context, "(a)-[r:T*]->(b)")
 	plan, _, ok := compileSelectedPathPlan("(a)-[r:T*]->(b)", "p", "", nil)
 	require.True(t, ok)
 	for _, all := range []bool{false, true} {
-		_, err := e.shortestPathsBetween(ctx, &shortestPathMatch{findAll: all, traversal: traversal, plan: plan}, source, target, pipelineRow{"r": []interface{}{}})
+		fixtureAdmission1705Context, fixtureAdmission1705 := statementTestContext(ctx, ("MATCH "+("(a)-[r:T*]->(b)"))+"\n"+("MATCH "+("(a)-[r:T*]->(b)")))
+		_ = fixtureAdmission1705Context
+		_, err := e.shortestPathsBetween(fixtureAdmission1705, fixtureAdmission1705Context, &shortestPathMatch{findAll: all, traversal: traversal, plan: plan}, source, target, pipelineRow{"r": []interface{}{}})
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError: Bound relationships not allowed in "+shortestPathFunctionName(all)+"(...)", statusText(err))
 	}
 	traversal.EndNode.variable = traversal.StartNode.variable

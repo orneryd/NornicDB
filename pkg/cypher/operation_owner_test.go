@@ -53,12 +53,16 @@ func TestOperationOwnerListLiteralResults(t *testing.T) {
 		{"[]", []interface{}{}},
 		{"[1,'a',[null,2],{v:true}]", []interface{}{int64(1), "a", []interface{}{nil, int64(2)}, map[string]interface{}{"v": true}}},
 	} {
-		value, ok, err := exec.evaluateRowValue(tc.literal, nil)
+		fixtureAdmission761Context, fixtureAdmission761 := expressionTestRow(context.Background(), tc.literal, nil)
+		_ = fixtureAdmission761
+		value, ok, err := exec.evaluateRowValue(fixtureAdmission761, tc.literal, fixtureAdmission761Context)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Equal(t, tc.want, value)
-		require.Equal(t, tc.want, exec.parseArrayValue(ctx, tc.literal))
-		require.Equal(t, tc.want, exec.evaluateExpressionWithContext(ctx, tc.literal, nil, nil))
+		require.Equal(t, tc.want, exec.parseArrayValue(fixtureAdmission761, ctx, tc.literal))
+		fixtureAdmission762Context, fixtureAdmission762 := expressionTestContext(ctx, tc.literal)
+		_ = fixtureAdmission762
+		require.Equal(t, tc.want, exec.evaluateExpressionWithContext(fixtureAdmission762, fixtureAdmission762Context, tc.literal, nil, nil))
 		require.NoError(t, getExpressionFailure(ctx))
 	}
 }

@@ -44,7 +44,7 @@ type rowPredicateProgram struct {
 	root             rowPredicateNode
 }
 type rowPredicateNode interface {
-	holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool
+	holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool
 }
 
 func compileRowPredicateProgram(expression string) *rowPredicateProgram {
@@ -56,11 +56,11 @@ func compileRowPredicateProgram(expression string) *rowPredicateProgram {
 	}
 	return p
 }
-func (p *rowPredicateProgram) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+func (p *rowPredicateProgram) holds(fixtureAdmission931 admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	if p.statementContext {
 		values = rowValuesBindingStatementContext(ctx, values)
 	}
-	return p.root.holds(e, ctx, values)
+	return p.root.holds(fixtureAdmission931, e, ctx, values)
 }
 
 // preparedRowPredicate evaluates one predicate for many rows (a WHERE over
@@ -78,14 +78,14 @@ func prepareRowPredicate(expression string) *preparedRowPredicate {
 	return &preparedRowPredicate{expression: expression}
 }
 
-func (p *preparedRowPredicate) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+func (p *preparedRowPredicate) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	if p.plan != nil {
-		return e.evaluateRowPredicatePlan(ctx, p.plan, values)
+		return e.evaluateRowPredicatePlan(admission, ctx, p.plan, values)
 	}
 	if p.program != nil {
-		return p.program.holds(e, ctx, values)
+		return p.program.holds(admission, e, ctx, values)
 	}
-	held := e.evaluateRowPredicate(ctx, p.expression, values)
+	held := e.evaluateRowPredicate(admission, ctx, p.expression, values)
 	// The evaluation decided how the next row is evaluated: from the
 	// predicate's complete plan, or once it is compiled, from its program,
 	// unless its subqueries are planned as a WHERE's (wherePredicatePlan).
@@ -221,16 +221,16 @@ func compileRowPredicateOperand(text string, position foldPosition) rowPredicate
 	return o
 }
 
-func (o *rowPredicateOperand) evaluate(e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool, error) {
+func (o *rowPredicateOperand) evaluate(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool, error) {
 	if o.pattern {
-		value, ok := e.rowPredicateOperand(ctx, o.text, values)
+		value, ok := e.rowPredicateOperand(admission, ctx, o.text, values)
 		return value, ok, getExpressionFailure(ctx)
 	}
-	return o.value.eval(e, values, nil)
+	return o.value.eval(admission, e, values, nil)
 }
 
-func (o *rowPredicateOperand) resolve(e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool) {
-	value, ok, err := o.evaluate(e, ctx, values)
+func (o *rowPredicateOperand) resolve(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool) {
+	value, ok, err := o.evaluate(admission, e, ctx, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -241,21 +241,21 @@ func (o *rowPredicateOperand) resolve(e *StorageExecutor, ctx context.Context, v
 // foldOperand evaluates the operand for its logical or comparison fold: its
 // value, or (predicateFallback) whether it holds when only the predicate
 // evaluator reads it, with the error slots its isolation asks for.
-func (o *rowPredicateOperand) foldOperand(e *StorageExecutor, ctx context.Context, values map[string]interface{}, predicateFallback bool) (interface{}, bool, error) {
+func (o *rowPredicateOperand) foldOperand(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}, predicateFallback bool) (interface{}, bool, error) {
 	var fallback func(context.Context, map[string]interface{}) interface{}
 	if predicateFallback {
 		fallback = func(ctx context.Context, scope map[string]interface{}) interface{} {
-			return e.evaluateRowPredicateParts(ctx, o.text, scope)
+			return e.evaluateRowPredicateParts(admission, ctx, o.text, scope)
 		}
 	}
 	return o.isolation.evaluate(ctx, values, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
-		return o.evaluate(e, ctx, scope)
+		return o.evaluate(admission, e, ctx, scope)
 	}, fallback)
 }
 
 type rowPredicateConstNode bool
 
-func (n rowPredicateConstNode) holds(*StorageExecutor, context.Context, map[string]interface{}) bool {
+func (n rowPredicateConstNode) holds(fixtureAdmission932 admittedRelationshipStatement, _ *StorageExecutor, _ context.Context, _ map[string]interface{}) bool {
 	return bool(n)
 }
 
@@ -268,8 +268,8 @@ type rowPredicateStrictNode struct {
 	arithmetic bool
 }
 
-func (n *rowPredicateStrictNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	value, evaluated, err := n.value.eval(e, values, nil)
+func (n *rowPredicateStrictNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	value, evaluated, err := n.value.eval(admission, e, values, nil)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -277,25 +277,25 @@ func (n *rowPredicateStrictNode) holds(e *StorageExecutor, ctx context.Context, 
 	if evaluated {
 		return predicateValueHolds(ctx, value, n.arithmetic)
 	}
-	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.text, values)
+	return e.evaluateRowPredicatePartsFromSubqueries(admission, ctx, n.text, values)
 }
 
 type rowPredicatePartsTextNode struct{ text string }
 
-func (n *rowPredicatePartsTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.text, values)
+func (n *rowPredicatePartsTextNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePartsFromSubqueries(admission, ctx, n.text, values)
 }
 
 type rowPredicateTextNode struct{ text string }
 
-func (n *rowPredicateTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateText(ctx, n.text, values)
+func (n *rowPredicateTextNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	return e.evaluateRowPredicateText(admission, ctx, n.text, values)
 }
 
 type rowPredicateLeafTextNode struct{ text string }
 
-func (n *rowPredicateLeafTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateTextFromSubqueries(ctx, n.text, values)
+func (n *rowPredicateLeafTextNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	return e.evaluateRowPredicateTextFromSubqueries(admission, ctx, n.text, values)
 }
 
 type rowPredicateLabelNode struct {
@@ -303,7 +303,7 @@ type rowPredicateLabelNode struct {
 	labels   *labelExpression
 }
 
-func (n *rowPredicateLabelNode) holds(_ *StorageExecutor, _ context.Context, values map[string]interface{}) bool {
+func (n *rowPredicateLabelNode) holds(fixtureAdmission933 admittedRelationshipStatement, _ *StorageExecutor, _ context.Context, values map[string]interface{}) bool {
 	return entityHasAllLabelsOrTypesPredicate(values[n.variable], n.labels)
 }
 
@@ -311,8 +311,8 @@ type rowPredicatePlanNode struct {
 	plan *rowPredicatePlan
 }
 
-func (n *rowPredicatePlanNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePlan(ctx, n.plan, values)
+func (n *rowPredicatePlanNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePlan(admission, ctx, n.plan, values)
 }
 
 // rowPredicateLogicalNode is a top-level OR / XOR / AND / NOT, its operands
@@ -323,9 +323,9 @@ type rowPredicateLogicalNode struct {
 	arithmetic bool
 }
 
-func (n *rowPredicateLogicalNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+func (n *rowPredicateLogicalNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	value, ok, err := n.plan.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
-		return n.operands[index].foldOperand(e, ctx, values, true)
+		return n.operands[index].foldOperand(admission, e, ctx, values, true)
 	})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -339,9 +339,9 @@ type rowPredicateStringNode struct {
 	match       func(string, string) bool
 }
 
-func (n *rowPredicateStringNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	leftValue, leftOK := n.left.resolve(e, ctx, values)
-	rightValue, rightOK := n.right.resolve(e, ctx, values)
+func (n *rowPredicateStringNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	leftValue, leftOK := n.left.resolve(admission, e, ctx, values)
+	rightValue, rightOK := n.right.resolve(admission, e, ctx, values)
 	return leftOK && rightOK && evaluateRowStringPredicateValues(leftValue, rightValue, n.match)
 }
 
@@ -351,13 +351,13 @@ type rowPredicateMembershipNode struct {
 	negated          bool
 }
 
-func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	needle, leftOK, err := n.needle.eval(e, values, nil)
+func (n *rowPredicateMembershipNode) holds(fixtureAdmission934 admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	needle, leftOK, err := n.needle.eval(fixtureAdmission934, e, values, nil)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
 	}
-	haystack, rightOK, err := n.haystack.eval(e, values, nil)
+	haystack, rightOK, err := n.haystack.eval(fixtureAdmission934, e, values, nil)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -374,8 +374,8 @@ type rowPredicateNullNode struct {
 	isNull  bool
 }
 
-func (n *rowPredicateNullNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	value, _ := n.operand.resolve(e, ctx, values)
+func (n *rowPredicateNullNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	value, _ := n.operand.resolve(admission, e, ctx, values)
 	return nullEvaluationHandler(!n.isNull).evaluate(value)
 }
 
@@ -386,9 +386,9 @@ type rowPredicateComparisonNode struct {
 	normalizeIdentity bool
 }
 
-func (n *rowPredicateComparisonNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+func (n *rowPredicateComparisonNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	result, resolved, err := evaluateScannedComparisonChain(ctx, n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
-		return n.operands[index].foldOperand(e, ctx, values, false)
+		return n.operands[index].foldOperand(admission, e, ctx, values, false)
 	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -403,8 +403,8 @@ type rowPredicateValueNode struct {
 	arithmetic bool
 }
 
-func (n *rowPredicateValueNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	value, ok := n.operand.resolve(e, ctx, values)
+func (n *rowPredicateValueNode) holds(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
+	value, ok := n.operand.resolve(admission, e, ctx, values)
 	if !ok {
 		return false
 	}

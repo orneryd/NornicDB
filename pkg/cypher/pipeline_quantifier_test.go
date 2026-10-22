@@ -155,16 +155,22 @@ func TestPipelineQuantifierAcrossRepeatedHorizons(t *testing.T) {
 		switch clause.kind {
 		case pipelineClauseWith:
 			var handled bool
-			rows, handled = exec.pipelineApplyWith(ctx, rows, clause.text)
+			fixtureAdmission967Context, fixtureAdmission967 := statementTestContext(ctx, clause.text)
+			_ = fixtureAdmission967Context
+			rows, handled = exec.pipelineApplyWith(fixtureAdmission967, fixtureAdmission967Context, rows, clause.text)
 			require.True(t, handled, "WITH clause %d: %s", index, clause.text)
 		case pipelineClauseUnwind:
 			var handled bool
-			rows, handled = exec.pipelineApplyUnwind(ctx, rows, clause.text)
+			fixtureAdmission992Context, fixtureAdmission992 := statementTestContext(ctx, clause.text)
+			_ = fixtureAdmission992Context
+			rows, handled = exec.pipelineApplyUnwind(fixtureAdmission992, fixtureAdmission992Context, rows, clause.text)
 			require.True(t, handled, "UNWIND clause %d: %s", index, clause.text)
 		}
 	}
 
-	outcome := exec.executePipeline(ctx, query)
+	fixtureAdmission808Context, fixtureAdmission808 := statementTestContext(ctx, query)
+	_ = fixtureAdmission808
+	outcome := exec.executePipeline(fixtureAdmission808, fixtureAdmission808Context, query)
 	require.NoError(t, outcome.err)
 	require.True(t, outcome.handled())
 	require.Equal(t, []string{"result"}, outcome.result.Columns)

@@ -50,8 +50,14 @@ func TestEvaluatorReadsAPOCArguments(t *testing.T) {
 		"apoc.map.fromPairs([['a', 1]])":   map[string]interface{}{"a": int64(1)},
 		"apoc.convert.fromJsonList('[1.5, [2], {\"a\": 3}, 1e2, 99999999999999999999]')": []interface{}{1.5, []interface{}{int64(2)}, map[string]interface{}{"a": int64(3)}, float64(100), float64(1e20)},
 	} {
-		require.Equal(t, want, e.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
+		fixtureAdmission14Context, fixtureAdmission14 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission14
+		require.Equal(t, want, e.evaluateExpressionWithContext(fixtureAdmission14, fixtureAdmission14Context, expression, nil, nil), expression)
 	}
-	require.NotNil(t, e.evaluateExpressionWithContext(ctx, "duration('P1D')", nil, nil))
-	require.Nil(t, e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonMap('[1]')", nil, nil))
+	fixtureAdmission15Context, fixtureAdmission15 := expressionTestContext(ctx, "duration('P1D')")
+	_ = fixtureAdmission15
+	require.NotNil(t, e.evaluateExpressionWithContext(fixtureAdmission15, fixtureAdmission15Context, "duration('P1D')", nil, nil))
+	fixtureAdmission16Context, fixtureAdmission16 := expressionTestContext(ctx, "apoc.convert.fromJsonMap('[1]')")
+	_ = fixtureAdmission16
+	require.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission16, fixtureAdmission16Context, "apoc.convert.fromJsonMap('[1]')", nil, nil))
 }

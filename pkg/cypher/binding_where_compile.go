@@ -161,9 +161,9 @@ type bindingFilterPredicate struct {
 	values          map[string]interface{}
 }
 
-func (predicate *bindingFilterPredicate) matches(row binding, params map[string]interface{}) bool {
+func (predicate *bindingFilterPredicate) matches(admission admittedRelationshipStatement, row binding, params map[string]interface{}) bool {
 	if predicate.plan != nil {
-		return predicate.executor.evaluateRowPredicatePartScope(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, parameters: predicate.queryParameters}, &predicate.membership)
+		return predicate.executor.evaluateRowPredicatePartScope(admission, predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, parameters: predicate.queryParameters}, &predicate.membership)
 	}
 	for name, node := range row {
 		predicate.values[name] = node
@@ -171,21 +171,21 @@ func (predicate *bindingFilterPredicate) matches(row binding, params map[string]
 	for name, value := range predicate.parameters {
 		predicate.values[name] = value
 	}
-	accepted := predicate.executor.evaluateMatchRowPredicate(predicate.ctx, predicate.clause, predicate.values)
+	accepted := predicate.executor.evaluateMatchRowPredicate(admission, predicate.ctx, predicate.clause, predicate.values)
 	for name := range row {
 		delete(predicate.values, name)
 	}
 	return accepted
 }
 
-func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels relationshipBinding, params map[string]interface{}) bool {
+func (predicate *bindingFilterPredicate) matchesRelationships(admission admittedRelationshipStatement, row binding, rels relationshipBinding, params map[string]interface{}) bool {
 	if predicate.plan != nil {
-		return predicate.executor.evaluateRowPredicatePartScope(predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, rels: rels, parameters: predicate.queryParameters}, &predicate.membership)
+		return predicate.executor.evaluateRowPredicatePartScope(admission, predicate.ctx, &predicate.plan.root, compiledRowScope{nodes: row, rels: rels, parameters: predicate.queryParameters}, &predicate.membership)
 	}
 	for name, value := range rels {
 		predicate.values[name] = value
 	}
-	accepted := predicate.matches(row, params)
+	accepted := predicate.matches(admission, row, params)
 	for name := range rels {
 		delete(predicate.values, name)
 	}
@@ -218,7 +218,7 @@ func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereCl
 	}
 }
 
-func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
+func (e *StorageExecutor) getCompiledBindingWhere(admission admittedRelationshipStatement, ctx context.Context, whereClause string) bindingWherePredicate {
 	key := normalizeBindingWhereClause(whereClause)
 	if predicate, ok := compiledBindingWhereCache.get(key); ok {
 		return predicate
@@ -231,20 +231,20 @@ func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClau
 	// relationship-pattern predicate). They must not enter the global
 	// cache, where the closure would retain one database and leak it into a
 	// later executor using the same predicate text.
-	return e.compileBindingWhere(ctx, key)
+	return e.compileBindingWhere(admission, ctx, key)
 }
 
 func normalizeBindingWhereClause(whereClause string) string {
 	return normalizePipelineWhitespace(whereClause)
 }
 
-func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
+func (e *StorageExecutor) compileBindingWhere(admission admittedRelationshipStatement, ctx context.Context, whereClause string) bindingWherePredicate {
 	if predicate, ok := e.tryCompileBindingWhere(ctx, whereClause); ok {
 		return predicate
 	}
 	clause := strings.TrimSpace(whereClause)
 	return func(b binding, params map[string]interface{}) bool {
-		return e.evaluateBindingWhereGeneric(ctx, b, clause, params)
+		return e.evaluateBindingWhereGeneric(admission, ctx, b, clause, params)
 	}
 }
 
@@ -844,23 +844,23 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateBindingWhereGeneric(admission admittedRelationshipStatement, ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return true
 	}
-	return e.evaluateBindingExpressionAsBoolean(ctx, b, clause, params)
+	return e.evaluateBindingExpressionAsBoolean(admission, ctx, b, clause, params)
 }
 
-func (e *StorageExecutor) resolveBindingFallbackValue(ctx context.Context, expr string, b binding, params map[string]interface{}) interface{} {
-	value, ok := e.resolveBindingFallbackValueWithOk(ctx, expr, b, params)
+func (e *StorageExecutor) resolveBindingFallbackValue(admission admittedRelationshipStatement, ctx context.Context, expr string, b binding, params map[string]interface{}) interface{} {
+	value, ok := e.resolveBindingFallbackValueWithOk(admission, ctx, expr, b, params)
 	if !ok {
 		return nil
 	}
 	return value
 }
 
-func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context, expr string, b binding, params map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) resolveBindingFallbackValueWithOk(admission admittedRelationshipStatement, ctx context.Context, expr string, b binding, params map[string]interface{}) (interface{}, bool) {
 	resolver, ok := e.compileBindingValueResolver(expr)
 	if ok {
 		return resolver(b, params)
@@ -870,10 +870,10 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 			return value, true
 		}
 	}
-	return e.evaluateExpressionWithContext(withParams(ctx, params), expr, b, nil), true
+	return e.evaluateExpressionWithContext(admission, withParams(ctx, params), expr, b, nil), true
 }
 
-func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(admission admittedRelationshipStatement, ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
 	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
 		ctx = withQueryParams(ctx, params)
 	}
@@ -882,7 +882,7 @@ func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context
 		values[name] = node
 	}
 	bindParameterRow(ctx, pipelineRow(values))
-	return e.evaluateMatchRowPredicate(ctx, expr, values)
+	return e.evaluateMatchRowPredicate(admission, ctx, expr, values)
 }
 
 func (e *StorageExecutor) compareNodeIDs(leftID, rightID string, op string) bool {

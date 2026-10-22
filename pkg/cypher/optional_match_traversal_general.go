@@ -133,7 +133,7 @@ func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.
 // introduced variables — with none, the optional match is a row-preserving
 // no-op). An unbound variable is an independent node scan: each row joins
 // with every matching node, or carries a null binding when nothing matches.
-func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+func (e *StorageExecutor) applySingleNodeOptionalClause(admission admittedRelationshipStatement, ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
 	// Each candidate row counts against the statement's memory limit before
 	// it is kept (#1343).
 	retention := newMemoryRetention(ctx)
@@ -142,7 +142,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 	if group == "" {
 		return rows, nil
 	}
-	np := e.parseNodePattern(ctx, group)
+	np := e.parseNodePattern(admission, ctx, group)
 	varName := np.variable
 	if varName == "" {
 		varName = traversalAnonVar
@@ -151,7 +151,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 	}
 	propertyExpressions := nodePatternPropertyExpressions(group)
 
-	candidates, err := e.loadNodesWithTemporalViewport(ctx, np.labels)
+	candidates, err := e.loadNodesWithTemporalViewport(admission, ctx, np.labels)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 		for _, node := range candidates {
 			propertyMatch := true
 			for name, expression := range propertyExpressions {
-				expected, resolved, err := e.evaluateRowValue(expression, scope)
+				expected, resolved, err := e.evaluateRowValue(admission, expression, scope)
 				if err != nil {
 					return nil, err
 				}
@@ -180,7 +180,7 @@ func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, row
 				continue
 			}
 			cand := extendTraversalRow(row, varName, node, "", nil)
-			if !e.traversalOptionalWhereMatches(ctx, clause.where, cand) {
+			if !e.traversalOptionalWhereMatches(admission, ctx, clause.where, cand) {
 				continue
 			}
 			cand.optionalMatched = true
@@ -248,7 +248,7 @@ func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 // shared-variable bindings agree by identity, and left rows with no agreeing
 // candidate are preserved with null bindings for the new variables — the
 // Apply + Optional contract.
-func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+func (e *StorageExecutor) applyGeneralOptionalClause(admission admittedRelationshipStatement, ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
 	// Each candidate row counts against the statement's memory limit before
 	// it is kept (#1343).
 	retention := newMemoryRetention(ctx)
@@ -279,7 +279,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		if !patternVariableBoundToNull(scope, allVars) {
 			var handled bool
 			var err error
-			matched, handled, err = e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
+			matched, handled, err = e.pipelineApplyMatch(admission, withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
 			if err != nil {
 				return nil, err
 			}

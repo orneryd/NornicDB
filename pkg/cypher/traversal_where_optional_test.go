@@ -105,8 +105,10 @@ func TestTraversalStartPropertyScanPushdown_Equality(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(
-		context.Background(),
+	fixtureAdmission1819Context, fixtureAdmission1819 := expressionTestContext(context.Background(), "node.originalText = 'Get it delivered'")
+	_ = fixtureAdmission1819Context
+	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(fixtureAdmission1819,
+		fixtureAdmission1819Context,
 		nodePatternInfo{variable: "node", labels: []string{"OriginalText"}},
 		"node.originalText = 'Get it delivered'",
 	)
@@ -136,8 +138,10 @@ func TestTraversalStartPropertyScanPushdown_IsNotNull(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(
-		context.Background(),
+	fixtureAdmission1820Context, fixtureAdmission1820 := expressionTestContext(context.Background(), "node.sourceId IS NOT NULL")
+	_ = fixtureAdmission1820Context
+	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(fixtureAdmission1820,
+		fixtureAdmission1820Context,
 		nodePatternInfo{variable: "node", labels: []string{"OriginalText"}},
 		"node.sourceId IS NOT NULL",
 	)

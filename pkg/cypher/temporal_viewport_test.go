@@ -37,7 +37,9 @@ func TestCollectNodesWithStreaming_RespectsTemporalViewport(t *testing.T) {
 	exec := NewStorageExecutor(probe)
 	ctx := WithTemporalViewport(context.Background(), AsOfTemporalViewport(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)))
 
-	nodes, err := exec.collectNodesWithStreaming(ctx, []string{"Doc"}, nil, "n", "", -1)
+	fixtureAdmission1479Context, fixtureAdmission1479 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1479Context
+	nodes, err := exec.collectNodesWithStreaming(fixtureAdmission1479, fixtureAdmission1479Context, []string{"Doc"}, nil, "n", "", -1)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	assert.Equal(t, "nornic:visible", string(nodes[0].ID))

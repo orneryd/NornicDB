@@ -80,12 +80,16 @@ func TestIndexSeekConstant(t *testing.T) {
 	exec, _ := newUnitExecutor(t)
 	ctx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{"x": "a"})
 	for expr, want := range map[string]interface{}{"toUpper($x)": "A", "[1, 2]": []interface{}{int64(1), int64(2)}, "'s'": "s", "1 + 2": int64(3)} {
-		value, ok := exec.indexSeekConstant(ctx, expr)
+		fixtureAdmission989Context, fixtureAdmission989 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission989Context
+		value, ok := exec.indexSeekConstant(fixtureAdmission989, fixtureAdmission989Context, expr)
 		require.True(t, ok, expr)
 		require.Equal(t, want, value, expr)
 	}
 	for _, expr := range []string{"", "p.b", "[p.b]", "unknownFn(1)", "'n1' OR"} {
-		_, ok := exec.indexSeekConstant(ctx, expr)
+		fixtureAdmission990Context, fixtureAdmission990 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission990Context
+		_, ok := exec.indexSeekConstant(fixtureAdmission990, fixtureAdmission990Context, expr)
 		require.False(t, ok, expr)
 	}
 }

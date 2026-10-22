@@ -319,13 +319,19 @@ func TestIssue894TraversalPathAggregateDistinct(t *testing.T) {
 		sort.Slice(rows, func(i, j int) bool { return fmt.Sprint(rows[i]) < fmt.Sprint(rows[j]) })
 		return rows
 	}
-	result, err := exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", nil, -1)
+	fixtureAdmission684Context, fixtureAdmission684 := traversalTestContext(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}})
+	_ = fixtureAdmission684
+	result, err := exec.executeMatchWithRelationshipsWithPathSeeded(fixtureAdmission684, fixtureAdmission684Context, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "y"}}}, sorted(result.Rows))
-	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", nil, -1)
+	fixtureAdmission685Context, fixtureAdmission685 := traversalTestContext(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}})
+	_ = fixtureAdmission685
+	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(fixtureAdmission685, fixtureAdmission685Context, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), []interface{}{"x"}}, {int64(4), []interface{}{"y"}}}, sorted(result.Rows))
-	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}}, nil, nil, "", nil, -1)
+	fixtureAdmission686Context, fixtureAdmission686 := traversalTestContext(ctx, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}})
+	_ = fixtureAdmission686
+	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(fixtureAdmission686, fixtureAdmission686Context, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}}, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "x", "y"}}}, sorted(result.Rows))
 }

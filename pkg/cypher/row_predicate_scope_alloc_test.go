@@ -11,7 +11,9 @@ import (
 func TestCompiledNodeWhereFilterDoesNotAllocatePerCandidate(t *testing.T) {
 	exec := &StorageExecutor{}
 	ctx := withQueryParams(context.Background(), map[string]interface{}{"asset": "wanted"})
-	filter, ok := exec.getCompiledSimpleWhere(ctx, "n", "n.asset_id = $asset")
+	fixtureAdmission1390Context, fixtureAdmission1390 := expressionTestContext(ctx, "n.asset_id = $asset")
+	_ = fixtureAdmission1390Context
+	filter, ok := exec.getCompiledSimpleWhere(fixtureAdmission1390, fixtureAdmission1390Context, "n", "n.asset_id = $asset")
 	require.True(t, ok)
 	node := &storage.Node{ID: "candidate", Properties: map[string]interface{}{"asset_id": "wanted"}}
 	require.True(t, filter(node))

@@ -272,16 +272,32 @@ func TestEvaluateRelationshipPatternInWhere_BareDirected(t *testing.T) {
 	orphan := getNodeByName("orphan")
 	peer := getNodeByName("peer")
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)-->()"))
+	fixtureAdmission1522Context, fixtureAdmission1522 := traversalTestContext(context.Background(), "(n)-->()", "", nil)
+	_ = fixtureAdmission1522Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1522, fixtureAdmission1522Context, connected, "n", "(n)-->()"))
+	fixtureAdmission1523Context, fixtureAdmission1523 := traversalTestContext(context.Background(), "(n)-->()", "", nil)
+	_ = fixtureAdmission1523Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1523, fixtureAdmission1523Context, orphan, "n", "(n)-->()"))
+	fixtureAdmission1524Context, fixtureAdmission1524 := traversalTestContext(context.Background(), "(n)-->()", "", nil)
+	_ = fixtureAdmission1524Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1524, fixtureAdmission1524Context, peer, "n", "(n)-->()"))
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)<--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)<--()"))
+	fixtureAdmission1525Context, fixtureAdmission1525 := traversalTestContext(context.Background(), "(n)<--()", "", nil)
+	_ = fixtureAdmission1525Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1525, fixtureAdmission1525Context, peer, "n", "(n)<--()"))
+	fixtureAdmission1526Context, fixtureAdmission1526 := traversalTestContext(context.Background(), "(n)<--()", "", nil)
+	_ = fixtureAdmission1526Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1526, fixtureAdmission1526Context, connected, "n", "(n)<--()"))
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)--()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)--()"))
+	fixtureAdmission1527Context, fixtureAdmission1527 := traversalTestContext(context.Background(), "(n)--()", "", nil)
+	_ = fixtureAdmission1527Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1527, fixtureAdmission1527Context, connected, "n", "(n)--()"))
+	fixtureAdmission1528Context, fixtureAdmission1528 := traversalTestContext(context.Background(), "(n)--()", "", nil)
+	_ = fixtureAdmission1528Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1528, fixtureAdmission1528Context, peer, "n", "(n)--()"))
+	fixtureAdmission1529Context, fixtureAdmission1529 := traversalTestContext(context.Background(), "(n)--()", "", nil)
+	_ = fixtureAdmission1529Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1529, fixtureAdmission1529Context, orphan, "n", "(n)--()"))
 }
 
 func TestCheckSubqueryMatch_BareBody(t *testing.T) {
@@ -300,7 +316,9 @@ func TestCheckSubqueryMatch_BareBody(t *testing.T) {
 	connected := getNodeByName("connected")
 	orphan := getNodeByName("orphan")
 	subqueryExists := func(node *storage.Node, body string) bool {
-		value, ok := exec.evaluateRowSubqueryValue(ctx, "EXISTS", body, map[string]interface{}{"n": node})
+		fixtureAdmission922Context, fixtureAdmission922 := expressionTestContext(ctx, "EXISTS"+" { "+body+" }")
+		_ = fixtureAdmission922
+		value, ok := exec.evaluateRowSubqueryValue(fixtureAdmission922, fixtureAdmission922Context, "EXISTS", body, map[string]interface{}{"n": node})
 		return ok && value == true
 	}
 

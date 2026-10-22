@@ -39,7 +39,7 @@ func transactionScriptShape(cypher string) bool {
 // - BEGIN TRANSACTION ... COMMIT
 // - BEGIN ... COMMIT (shorthand)
 // - BEGIN TRANSACTION ... CASE WHEN ... THEN ROLLBACK ELSE RETURN ... COMMIT
-func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeTransactionScript(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	trimmed := strings.TrimSpace(cypher)
 	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "BEGIN") {
@@ -57,7 +57,7 @@ func (e *StorageExecutor) executeTransactionScript(ctx context.Context, cypher s
 
 	// CASE rollback script form.
 	if strings.HasPrefix(upperASCII(strings.TrimSpace(bodyAfterBegin)), "CALL") && strings.Contains(upperASCII(bodyAfterBegin), "CASE") {
-		return e.executeCaseRollbackTransactionScript(ctx, bodyAfterBegin)
+		return e.executeCaseRollbackTransactionScript(admission, ctx, bodyAfterBegin)
 	}
 
 	// Generic BEGIN ... <query> ... COMMIT|ROLLBACK.
@@ -123,7 +123,7 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 	}
 }
 
-func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Context, scriptBody string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCaseRollbackTransactionScript(admission admittedRelationshipStatement, ctx context.Context, scriptBody string) (*ExecuteResult, error) {
 	upper := upperASCII(scriptBody)
 	caseIdx := strings.Index(upper, "CASE")
 	if caseIdx <= 0 {
@@ -152,7 +152,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	rollbackRequired := false
 	for _, row := range callResult.Rows {
 		nodes, rels := buildRowGraphContext(callResult.Columns, row)
-		shouldRollback, err := e.evaluateConditionExpression(ctx, conditionExpr, nodes, rels)
+		shouldRollback, err := e.evaluateConditionExpression(admission, ctx, conditionExpr, nodes, rels)
 		if err != nil {
 			return nil, e.abortTransaction(ctx, err)
 		}
@@ -165,7 +165,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return e.handleRollback()
 	}
 
-	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)
+	projected, err := e.projectTransactionReturn(admission, ctx, callResult, returnExpr)
 	if err != nil {
 		return nil, e.abortTransaction(ctx, err)
 	}
@@ -176,7 +176,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	return projected, nil
 }
 
-func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectTransactionReturn(admission admittedRelationshipStatement, ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(input.Rows))
 	for _, row := range input.Rows {
 		rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
@@ -184,7 +184,7 @@ func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *E
 	if strings.TrimSpace(returnExpr) == "" {
 		returnExpr = "*"
 	}
-	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnExpr)
+	projected, err := e.projectMergeReturn(admission, ctx, rows, "RETURN "+returnExpr)
 	if err != nil {
 		return nil, err
 	}
@@ -219,8 +219,8 @@ func buildRowValueMap(cols []string, row []interface{}) map[string]interface{} {
 	return out
 }
 
-func (e *StorageExecutor) evaluateConditionExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (bool, error) {
-	v := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+func (e *StorageExecutor) evaluateConditionExpression(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (bool, error) {
+	v := e.evaluateExpressionWithContext(admission, ctx, expr, nodes, rels)
 	switch b := v.(type) {
 	case bool:
 		return b, nil
