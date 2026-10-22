@@ -1900,7 +1900,6 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
-
 	var req TransactionRequest
 	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
 		s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
@@ -1922,7 +1921,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txSession.ID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(txSession.Expires),
+			Expires: transactionExpires(txSession.ExpiresAt()),
 		},
 	}
 
@@ -1930,7 +1929,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, txSession, req.Statements, &response) {
 			s.rollbackFailedTransaction(r.Context(), txSession, &response)
 		}
-		response.Transaction.Expires = transactionExpires(txSession.Expires)
+		response.Transaction.Expires = transactionExpires(txSession.ExpiresAt())
 	}
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
@@ -1944,33 +1943,48 @@ func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Reque
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
-
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
-	if !ok || tx == nil || tx.Database != dbName {
+	// Keep the early not-found response for unknown IDs. This pointer is only
+	// used for the immutable database check; the request acquires a lease after
+	// body decoding and revalidates expiry before executing anything.
+	if tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims)); !ok || tx == nil || tx.Database != dbName {
 		s.writeNeo4jTransactionNotFound(w, r)
 		return
 	}
 
 	var req TransactionRequest
 	if err := s.readTransactionRequest(r, &req); err != nil {
-		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
+		lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+		if !ok {
+			return
+		}
+		_ = s.txSessions.RollbackAndDelete(r.Context(), lease.Session)
+		lease.Release()
 		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+	if !ok {
+		return
+	}
+	defer lease.Release()
+	tx := lease.Session
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
 		Errors:  make([]QueryError, 0),
 		Commit:  s.transactionCommitURL(r, dbName, txID),
 		Transaction: &TransactionInfo{
-			Expires: transactionExpires(tx.Expires),
+			Expires: transactionExpires(tx.ExpiresAt()),
 		},
 	}
 
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
 		s.rollbackFailedTransaction(r.Context(), tx, &response)
 	}
-	response.Transaction.Expires = transactionExpires(tx.Expires)
+	if len(req.Statements) == 0 {
+		s.txSessions.Touch(tx)
+	}
+	response.Transaction.Expires = transactionExpires(tx.ExpiresAt())
 
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	s.writeJSON(w, http.StatusOK, response)
@@ -1984,6 +1998,10 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
+	if tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims)); !ok || tx == nil || tx.Database != dbName {
+		s.writeNeo4jTransactionNotFound(w, r)
+		return
+	}
 
 	response := TransactionResponse{
 		Results:       make([]QueryResult, 0),
@@ -1991,18 +2009,23 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 		LastBookmarks: []string{s.generateBookmark()},
 	}
 
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, claims))
-	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jTransactionNotFound(w, r)
-		return
-	}
-
 	var req TransactionRequest
 	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
-		_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
+		lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+		if !ok {
+			return
+		}
+		_ = s.txSessions.RollbackAndDelete(r.Context(), lease.Session)
+		lease.Release()
 		s.writeNeo4jInvalidTransactionBody(w, r, err)
 		return
 	}
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, claims))
+	if !ok {
+		return
+	}
+	defer lease.Release()
+	tx := lease.Session
 
 	// Execute optional final statements in transaction context first.
 	if s.executeTxStatements(r.Context(), r.Header.Get("Authorization"), claims, dbName, tx, req.Statements, &response) {
@@ -2024,13 +2047,13 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tx, ok := s.txSessions.GetForOwner(txID, transactionOwnerKey(r, getClaims(r)))
-	if !ok || tx == nil || tx.Database != dbName {
-		s.writeNeo4jTransactionNotFound(w, r)
+	lease, ok := s.leaseTransactionOrNotFound(w, r, dbName, txID, transactionOwnerKey(r, getClaims(r)))
+	if !ok {
 		return
 	}
+	defer lease.Release()
 
-	_ = s.txSessions.RollbackAndDelete(r.Context(), tx)
+	_ = s.txSessions.RollbackAndDelete(r.Context(), lease.Session)
 
 	response := TransactionResponse{
 		Results: make([]QueryResult, 0),
@@ -2038,4 +2061,18 @@ func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Reques
 	}
 	s.applyMVCCPressureWarnings(w, dbName, &response)
 	s.writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) leaseTransactionOrNotFound(w http.ResponseWriter, r *http.Request, dbName, txID, owner string) (*txsession.Lease, bool) {
+	lease, ok := s.txSessions.AcquireForOwner(txID, owner)
+	if !ok || lease == nil {
+		s.writeNeo4jTransactionNotFound(w, r)
+		return nil, false
+	}
+	if lease.Session.Database != dbName {
+		lease.Release()
+		s.writeNeo4jTransactionNotFound(w, r)
+		return nil, false
+	}
+	return lease, true
 }

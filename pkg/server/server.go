@@ -677,11 +677,9 @@ type Server struct {
 
 	httpServer *http.Server
 	listener   net.Listener
-	// requestsCtx is the parent context handed to every inbound HTTP request
-	// via http.Server.BaseContext. Cancelled at the start of Stop() so any
-	// long-running handler (Cypher traversals, etc.) can unwind promptly
-	// instead of holding shutdown open until ReadTimeout/WriteTimeout fires.
-	requestsCtx       context.Context
+	// lifecycleMu serializes Start with Stop so shutdown cannot consume the
+	// request cancellation function before Start publishes it.
+	lifecycleMu       sync.Mutex
 	cancelRequestsCtx context.CancelFunc
 
 	// httpMetrics is the Plan-04-02 HTTP catalog bag (D-02 typed handle DI).
@@ -1922,6 +1920,9 @@ func (s *Server) getHeimdallHandler() *heimdall.Handler {
 //	If TLSCertFile and TLSKeyFile are configured, the server automatically
 //	starts with HTTPS. Otherwise, it uses HTTP.
 func (s *Server) Start() error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	if s.closed.Load() {
 		return ErrServerClosed
 	}
@@ -1949,7 +1950,10 @@ func (s *Server) Start() error {
 	// re-propagating (T-04-08).
 	instrumented := instrumentedMux(mux, s.httpMetrics)
 
-	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
+	// Keep the request context local for BaseContext. The cancel function is
+	// published under lifecycleMu, which Stop uses before consuming it.
+	requestsCtx, cancelRequestsCtx := context.WithCancel(context.Background())
+	s.cancelRequestsCtx = cancelRequestsCtx
 	s.httpServer = &http.Server{
 		Handler:      instrumented,
 		ReadTimeout:  s.config.ReadTimeout,
@@ -1960,7 +1964,7 @@ func (s *Server) Start() error {
 		// handlers see ctx.Err() != nil on their next cancellation probe and
 		// unwind, so http.Server.Shutdown returns instead of waiting on a
 		// long-running BFS.
-		BaseContext: func(net.Listener) context.Context { return s.requestsCtx },
+		BaseContext: func(net.Listener) context.Context { return requestsCtx },
 	}
 
 	// Configure HTTP/2 (always enabled, backwards compatible with HTTP/1.1)
@@ -2011,8 +2015,23 @@ func (s *Server) Start() error {
 
 // Stop gracefully shuts down the server.
 func (s *Server) Stop(ctx context.Context) (err error) {
+	s.lifecycleMu.Lock()
 	if !s.closed.CompareAndSwap(false, true) {
+		s.lifecycleMu.Unlock()
 		return nil // Already closed
+	}
+	cancelRequestsCtx := s.cancelRequestsCtx
+	httpServer := s.httpServer
+	s.lifecycleMu.Unlock()
+
+	// Cancel in-flight work before draining explicit transactions. The
+	// transaction manager waits for any leased request before rolling it back.
+	if cancelRequestsCtx != nil {
+		cancelRequestsCtx()
+	}
+	var txSessionErr error
+	if s.txSessions != nil {
+		txSessionErr = s.txSessions.CloseContext(ctx)
 	}
 
 	// Cancel the background embedder initialisation now and wait for it
@@ -2037,17 +2056,8 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 		s.rateLimiter.Stop()
 	}
 
-	if s.httpServer == nil {
-		return nil
-	}
-
-	// Cancel the BaseContext handed to all in-flight requests so handlers that
-	// honour ctx (Cypher BFS / shortestPath traversals, etc.) abandon work
-	// and let http.Server.Shutdown drain promptly. Without this, an unbounded
-	// shortestPath traversal could hold shutdown open for the duration of the
-	// configured WriteTimeout.
-	if s.cancelRequestsCtx != nil {
-		s.cancelRequestsCtx()
+	if httpServer == nil {
+		return txSessionErr
 	}
 
 	// Hard-bound shutdown: even if net/http Shutdown fails to return at ctx deadline
@@ -2055,23 +2065,26 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	// can exit deterministically.
 	shutdownDone := make(chan error, 1)
 	go func() {
-		shutdownDone <- s.httpServer.Shutdown(ctx)
+		shutdownDone <- httpServer.Shutdown(ctx)
 	}()
 
 	select {
 	case err := <-shutdownDone:
 		if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
-			_ = s.httpServer.Close()
+			_ = httpServer.Close()
 		}
-		return err
+		return errors.Join(txSessionErr, err)
 	case <-ctx.Done():
-		_ = s.httpServer.Close()
-		return ctx.Err()
+		_ = httpServer.Close()
+		return errors.Join(txSessionErr, ctx.Err())
 	}
 }
 
 // Addr returns the server's listen address.
 func (s *Server) Addr() string {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	if s.listener != nil {
 		return s.listener.Addr().String()
 	}
