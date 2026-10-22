@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ func (r bridgeFirstReranker) Rerank(_ context.Context, _ string, candidates []se
 		}
 		ranked = append(ranked, search.RerankResult{ID: candidate.ID, Content: candidate.Content, OriginalRank: index + 1, FinalScore: score})
 	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
 	return ranked, nil
 }
 

@@ -115,10 +115,12 @@ func TestCrossEncoderMinScore(t *testing.T) {
 	results, err := ce.Rerank(context.Background(), "query", candidates)
 	require.NoError(t, err)
 
-	// Only 2 results should pass MinScore filter
-	assert.Len(t, results, 2)
+	// Preserve the complete raw batch so Service validates before filtering.
+	assert.Len(t, results, 3)
 	assert.Equal(t, "1", results[0].ID)
 	assert.Equal(t, "2", results[1].ID)
+	assert.False(t, results[0].Filtered)
+	assert.True(t, results[2].Filtered)
 }
 
 func TestCrossEncoderHuggingFaceFormat(t *testing.T) {
@@ -320,8 +322,13 @@ func TestCrossEncoderAdditionalAPIResponseBranches(t *testing.T) {
 		candidates := []RerankCandidate{{ID: "a", Content: "alpha", Score: 0.7}}
 		ce := NewCrossEncoder(&CrossEncoderConfig{Enabled: true, APIURL: server.URL, Timeout: time.Second})
 		out, err := ce.Rerank(context.Background(), "query", candidates)
-		require.ErrorContains(t, err, "unable to parse rerank response")
+		require.ErrorContains(t, err, "rerank response contains no valid results")
 		assert.Nil(t, out)
+		svc := NewService(nil)
+		svc.SetReranker(ce)
+		out, err = svc.RerankCandidates(context.Background(), "query", candidates, nil)
+		require.ErrorContains(t, err, "rerank failed")
+		require.Nil(t, out)
 
 		badURL := NewCrossEncoder(&CrossEncoderConfig{Enabled: true, APIURL: "://bad-url", Timeout: time.Second})
 		out, err = badURL.Rerank(context.Background(), "query", candidates)
@@ -355,6 +362,28 @@ func TestCrossEncoder_NameEnabledConfigAndAvailability(t *testing.T) {
 
 	ce.config.Enabled = false
 	assert.False(t, ce.IsAvailable(context.Background()))
+}
+
+func TestRerankCandidatesCompletesValidPartialProviderOrder(t *testing.T) {
+	svc := NewService(nil)
+	svc.SetReranker(&testReranker{
+		enabled: true,
+		results: []RerankResult{{
+			ID: "c", Content: "gamma", OriginalRank: 3, NewRank: 1,
+			BiScore: 0.7, CrossScore: 0.9, FinalScore: 0.9,
+		}},
+	})
+	candidates := []RerankCandidate{
+		{ID: "a", Content: "alpha", Score: 0.9},
+		{ID: "b", Content: "beta", Score: 0.8},
+		{ID: "c", Content: "gamma", Score: 0.7},
+	}
+
+	results, err := svc.RerankCandidates(context.Background(), "query", candidates, nil)
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+	require.Equal(t, []string{"c", "a", "b"}, []string{results[0].ID, results[1].ID, results[2].ID})
+	require.Equal(t, []int{1, 2, 3}, []int{results[0].NewRank, results[1].NewRank, results[2].NewRank})
 }
 
 func TestLLMReranker_DefaultsAndPassThrough(t *testing.T) {
@@ -397,34 +426,53 @@ func TestLLMReranker_BuildPromptAndParseResponse(t *testing.T) {
 	assert.Contains(t, prompt, "abcde")
 	assert.False(t, strings.Contains(prompt, "abcdefg"))
 
-	order, scores := parseLLMRerankResponse(`{"ranked":[{"index":2,"score":0.7},{"index":1,"score":0.5}]}`, 3)
+	order, scores, err := parseLLMRerankResponse(`{"ranked":[{"index":2,"score":0.7},{"index":1,"score":0.5}]}`, 3)
+	require.NoError(t, err)
 	require.Equal(t, []int{2, 1}, order)
 	require.InDelta(t, 0.7, scores[2], 1e-9)
 
-	order, scores = parseLLMRerankResponse(`{"order":[1,0,1],"scores":[0.8,0.4,0.1]}`, 3)
+	order, scores, err = parseLLMRerankResponse(`{"order":[1,0],"scores":[0.8,0.4]}`, 3)
+	require.NoError(t, err)
 	require.Equal(t, []int{1, 0}, order)
 	require.InDelta(t, 0.8, scores[1], 1e-9)
 	require.InDelta(t, 0.4, scores[0], 1e-9)
 
-	order, scores = parseLLMRerankResponse("ranks 2 then 0 then 2", 3)
-	require.Equal(t, []int{2, 0}, order)
+	order, scores, err = parseLLMRerankResponse("ranks 2 then 0", 3)
+	require.Error(t, err)
+	require.Nil(t, order)
 	require.Nil(t, scores)
 
-	order, scores = parseLLMRerankResponse("no ranking", 3)
+	order, scores, err = parseLLMRerankResponse(`{"order":[1,0,1],"scores":[0.8,0.4,0.1]}`, 3)
+	require.Error(t, err)
+	require.Nil(t, order)
+	require.Nil(t, scores)
+
+	order, scores, err = parseLLMRerankResponse("ranks 2 then 0 then 2", 3)
+	require.Error(t, err)
+	require.Nil(t, order)
+	require.Nil(t, scores)
+
+	order, scores, err = parseLLMRerankResponse("ranks -1 then 0", 3)
+	require.Error(t, err)
+	require.Nil(t, order)
+	require.Nil(t, scores)
+
+	order, scores, err = parseLLMRerankResponse("no ranking", 3)
+	require.Error(t, err)
 	require.Nil(t, order)
 	require.Nil(t, scores)
 }
 
-// When the LLM scores every candidate below MinScore, they keep their order:
-// the rerank ran, and found nothing to promote.
-func TestLLMReranker_AllBelowMinScoreKeepsOrder(t *testing.T) {
+// Filtering is applied only after Service validates the complete raw batch.
+func TestLLMReranker_AllBelowMinScoreStaysVisibleForValidation(t *testing.T) {
 	r := NewLLMReranker(&LLMRerankerConfig{Enabled: true, Timeout: time.Second, MinScore: 0.5}, func(context.Context, string) (string, error) {
 		return `{"ranked":[{"index":1,"score":0.2},{"index":0,"score":0.1}]}`, nil
 	})
 	out, err := r.Rerank(context.Background(), "q", []RerankCandidate{{ID: "a", Content: "alpha", Score: 0.8}, {ID: "b", Content: "beta", Score: 0.6}})
 	require.NoError(t, err)
-	require.Equal(t, []string{"a", "b"}, []string{out[0].ID, out[1].ID})
-	assert.Equal(t, 0.8, out[0].FinalScore)
+	require.Equal(t, []string{"b", "a"}, []string{out[0].ID, out[1].ID})
+	assert.True(t, out[0].Filtered)
+	assert.True(t, out[1].Filtered)
 }
 
 func TestLLMReranker_RerankScoredFilteredAndFallbacks(t *testing.T) {
@@ -450,28 +498,40 @@ func TestLLMReranker_RerankScoredFilteredAndFallbacks(t *testing.T) {
 	out, err := r.Rerank(context.Background(), "query-long", cands)
 	require.NoError(t, err)
 	require.NotEmpty(t, gotPrompt)
-	require.Len(t, out, 1)
+	require.Len(t, out, 2)
 	assert.Equal(t, "b", out[0].ID)
 	assert.Equal(t, 1, out[0].NewRank)
+	assert.False(t, out[0].Filtered)
+	assert.True(t, out[1].Filtered)
 
-	// A malformed response is an error.
+	// The explicit rerank API has an error channel, so malformed provider
+	// output returns the canonical owner failure instead of fallback rows.
 	rBad := NewLLMReranker(cfg, func(ctx context.Context, prompt string) (string, error) {
 		return "{}", nil
 	})
 	out, err = rBad.Rerank(context.Background(), "q", cands[:2])
-	require.ErrorContains(t, err, "unable to parse rerank response")
-	assert.Nil(t, out)
+	require.ErrorContains(t, err, "rerank response contains no valid results")
+	require.Nil(t, out)
+	svc := NewService(nil)
+	svc.SetReranker(rBad)
+	out, err = svc.RerankCandidates(context.Background(), "q", cands[:2], nil)
+	require.ErrorContains(t, err, "rerank failed")
+	require.Nil(t, out)
 
-	// So is an order that names no candidate.
+	// So does an order that names no candidate.
 	rOutOfRange := NewLLMReranker(cfg, func(ctx context.Context, prompt string) (string, error) {
 		return `{"order":[7,9]}`, nil
 	})
 	out, err = rOutOfRange.Rerank(context.Background(), "q", cands[:2])
-	require.ErrorContains(t, err, "unable to parse rerank response")
-	assert.Nil(t, out)
+	require.ErrorContains(t, err, "rerank response contains invalid results")
+	require.Nil(t, out)
+	svc.SetReranker(rOutOfRange)
+	out, err = svc.RerankCandidates(context.Background(), "q", cands[:2], nil)
+	require.ErrorContains(t, err, "rerank failed")
+	require.Nil(t, out)
 }
 
-func TestLLMReranker_RerankOrderFillsOmittedAndErrorFallback(t *testing.T) {
+func TestLLMReranker_RerankOrderPreservesRawSubsetAndErrorFallback(t *testing.T) {
 	cfg := &LLMRerankerConfig{
 		Enabled:       true,
 		Timeout:       time.Second,
@@ -490,12 +550,9 @@ func TestLLMReranker_RerankOrderFillsOmittedAndErrorFallback(t *testing.T) {
 	var nilCtx context.Context
 	out, err := r.Rerank(nilCtx, " query ", cands)
 	require.NoError(t, err)
-	require.Len(t, out, 3)
+	require.Len(t, out, 2)
 	assert.Equal(t, "c", out[0].ID)
 	assert.Equal(t, "a", out[1].ID)
-	assert.Equal(t, "b", out[2].ID)
-	assert.Equal(t, 3, out[2].NewRank)
-	assert.Equal(t, cands[1].Score, out[2].FinalScore)
 	assert.Greater(t, out[0].FinalScore, out[1].FinalScore)
 
 	out, err = r.Rerank(context.Background(), "query", nil)
