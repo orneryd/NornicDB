@@ -163,6 +163,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -663,7 +664,9 @@ type Server struct {
 	mcpServer *mcp.Server
 
 	// Heimdall - AI assistant for database management
-	heimdallHandler *heimdall.Handler
+	heimdallHandler   *heimdall.Handler
+	heimdallPluginsMu sync.Mutex
+	heimdallSubsystem *heimdall.SubsystemManager
 
 	// GraphQL handler for GraphQL API
 	graphqlHandler *graphql.Handler
@@ -1356,6 +1359,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerHeimdallInitializationFailedEvent(err,
 						"check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR"))
+				s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 				return
 			}
 			if baseExec := db.GetCypherExecutor(); baseExec != nil {
@@ -1364,7 +1368,6 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 			// Create database router wrapper for Heimdall (multi-db aware)
 			dbRouter := newHeimdallDBRouter(db, dbManager, featuresConfig)
-			s.heimdallCacheRouter = dbRouter
 			metricsReader := &heimdallMetricsReader{}
 			handler := heimdall.NewHandler(manager, heimdallCfg, dbRouter, metricsReader)
 			handler.SetLocalizer(s.localizer)
@@ -1395,26 +1398,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				Metrics:  metricsReader,
 				Heimdall: heimdallInvoker, // Now plugins can call p.ctx.Heimdall.SendPrompt()
 			}
-			subsystemMgr.SetContext(subsystemCtx)
-
-			// Load plugins from configured directories.
-			if config.PluginsDir != "" {
-				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerAPOCPluginsLoadingEvent(config.PluginsDir))
-				if err := nornicdb.LoadPluginsFromDir(config.PluginsDir, &subsystemCtx); err != nil {
-					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAPOCPluginsLoadFailedEvent(config.PluginsDir, err))
-				}
-			}
-			if config.HeimdallPluginsDir != "" && config.HeimdallPluginsDir != config.PluginsDir {
-				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsLoadingEvent(config.HeimdallPluginsDir))
-				if err := nornicdb.LoadPluginsFromDir(config.HeimdallPluginsDir, &subsystemCtx); err != nil {
-					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerHeimdallPluginsLoadFailedEvent(config.HeimdallPluginsDir, err))
-				}
-			} else if config.HeimdallPluginsDir == "" {
-				s.logEvent(context.Background(), slog.LevelDebug, localization.ServerHeimdallPluginsDirectoryEmptyEvent())
-			} else {
-				s.logEvent(context.Background(), slog.LevelDebug,
-					localization.ServerHeimdallPluginsDirectoryDuplicateEvent(config.HeimdallPluginsDir, config.PluginsDir))
-			}
+			s.loadHeimdallPlugins(subsystemCtx, mcpServer)
 
 			s.setHeimdallHandler(handler)
 
@@ -1432,6 +1416,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			}
 		}()
 	} else {
+		s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 		s.logEvent(context.Background(), slog.LevelInfo,
 			localization.ServerHeimdallDisabledEvent("heimdall", "NORNICDB_HEIMDALL_ENABLED"))
 	}
@@ -2014,10 +1999,12 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 		return nil // Already closed
 	}
 
+	defer func() {
+		if shutdownErr := s.stopHeimdallPlugins(); shutdownErr != nil {
+			err = errors.Join(err, shutdownErr)
+		}
+	}()
 	s.statementCacheIndex.Close()
-	if s.heimdallCacheRouter != nil {
-		s.heimdallCacheRouter.Close()
-	}
 	s.executorCache.Clear()
 	// Cancel the background embedder initialisation now and wait for it
 	// before returning, so it can't install an embedder (or log) after Stop.

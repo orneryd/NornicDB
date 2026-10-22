@@ -1,6 +1,6 @@
-//go:build cgo && !nolocalllm && (darwin || linux) && !windows
+//go:build cgo && !nolocalllm && (darwin || linux) && !windows && !yzma
 
-package heimdall
+package local
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,16 +32,17 @@ func TestCGOGeneratorLoader_Registered(t *testing.T) {
 	// Check by seeing if it returns a different error than the stub
 
 	// First, save current loader
-	originalLoader := generatorLoader
-	defer func() { generatorLoader = originalLoader }()
+	originalLoader := heimdall.SetGeneratorLoader(cgoGeneratorLoader)
+	heimdall.SetGeneratorLoader(originalLoader)
+	defer heimdall.SetGeneratorLoader(originalLoader)
 
-	// The default stub returns "SLM generation requires CGO build"
+	// The default stub returns "local inference backend unavailable"
 	// The CGO loader should return a different error (file not found)
-	_, err := generatorLoader("/nonexistent/model.gguf", 0, 8192, 8192, 1)
+	_, err := originalLoader("/nonexistent/model.gguf", 0, 8192, 8192, 1)
 
 	// If CGO loader is registered, error should be about file not found, not about CGO
 	if err != nil {
-		assert.NotContains(t, err.Error(), "requires CGO build",
+		assert.NotContains(t, err.Error(), "local inference backend unavailable",
 			"CGO loader should be registered, not the stub")
 	}
 }
@@ -82,7 +84,7 @@ func TestCGOGenerator_Generate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	params := GenerateParams{
+	params := heimdall.GenerateParams{
 		MaxTokens:   50, // Small for fast test
 		Temperature: 0.1,
 		TopP:        0.9,
@@ -114,7 +116,7 @@ func TestCGOGenerator_GenerateStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	params := GenerateParams{
+	params := heimdall.GenerateParams{
 		MaxTokens:   20,
 		Temperature: 0.1,
 		TopP:        0.9,
@@ -149,7 +151,7 @@ func TestCGOGenerator_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	params := GenerateParams{
+	params := heimdall.GenerateParams{
 		MaxTokens:   100,
 		Temperature: 0.1,
 	}

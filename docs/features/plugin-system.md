@@ -86,12 +86,12 @@ NORNICDB_PLUGINS_DIR=/opt/nornicdb/plugins
 # Heimdall plugin directory (coding-agent plugins)
 NORNICDB_HEIMDALL_PLUGINS_DIR=/opt/nornicdb/heimdall-plugins
 
-# Enable Heimdall (required for Heimdall plugins; env overrides config file)
+# Enable the optional agentic harness/inference (plugins also load when false)
 NORNICDB_HEIMDALL_ENABLED=true
 NORNICDB_MODELS_DIR=/opt/nornicdb/models
 ```
 
-**Important:** Heimdall plugins require an initialized Heimdall subsystem context (Bifrost, DB reader, invoker). If Heimdall is disabled, Heimdall plugins are **skipped and not started** — this prevents background goroutines from running when `heimdall.enabled: false`.
+**Important:** The server supplies a plugin context even when `heimdall.enabled: false`. Configured plugins initialize and start, and opted-in MCP tools remain available without the agentic harness or a model. Embedded callers that have not supplied a subsystem context defer Heimdall plugin loading until that context is available. Failed starts are unregistered; server shutdown stops and shuts down its plugins.
 
 ### Docker Example
 
