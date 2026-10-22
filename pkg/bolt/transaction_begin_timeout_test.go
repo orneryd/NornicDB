@@ -151,7 +151,7 @@ func TestBoltExpiredBeginCleanupFailureClosesAndQuarantines(t *testing.T) {
 				ReadBufferSize:  8192,
 				WriteBufferSize: 8192,
 			}, executor)
-			port := startBoltTestServer(t, server)
+			port := startBoltTestServer(t, server, rollbackShutdownCheck(t, tt.rollbackErr, tt.rollbackPanic))
 			conn := openBoltTestConn(t, port)
 			require.NoError(t, SendBegin(t, conn, map[string]any{"tx_timeout": int64(50)}))
 			select {

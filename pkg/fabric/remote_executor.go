@@ -331,12 +331,13 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
 	// The sub-transaction ends with its transaction, after the statement or
-	// APPLY batch that enlisted it has returned and cancelled ctx. BindContext
-	// keeps the transaction owner's lifetime and values, not the statement's
-	// cancellation; endWithin bounds the remote terminal request.
+	// APPLY batch that enlisted it has returned and cancelled ctx. The
+	// transaction owns commit; rollback cleanup remains independent of its
+	// cancellation. The existing remote terminal owner bounds both.
 	terminalCtx := fabricTx.BindContext(ctx)
+	rollbackCtx := context.WithoutCancel(ctx)
 	commitFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, true) }
-	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, false) }
+	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(rollbackCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
 		_ = handle.end(ctx, false)
 		return nil, err

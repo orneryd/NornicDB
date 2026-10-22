@@ -650,18 +650,18 @@ func (s *Server) logSlowQuery(query string, params map[string]interface{}, durat
 	// per Phase 2 D-04c. The full slow-query observability pipeline (with
 	// AST literal redactor + plan_hash) lands in Plan 02-03 (cypher wave).
 	if s.slowQueryLogger != nil {
-		s.slowQueryLogger.Println(logMsg)
+		s.shutdown.addError(s.slowQueryLogger.Output(2, logMsg))
 	} else {
 		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSlowQueryEvent(logMsg))
 	}
 }
 
 func (s *Server) logAudit(r *http.Request, userID, eventType string, success bool, details string) {
-	if s.audit == nil {
+	logger := s.auditLogger()
+	if logger == nil {
 		return
 	}
-
-	s.audit.Log(audit.Event{
+	s.shutdown.addError(logger.Log(audit.Event{
 		Timestamp:   time.Now(),
 		Type:        audit.EventType(eventType),
 		UserID:      userID,
@@ -670,18 +670,19 @@ func (s *Server) logAudit(r *http.Request, userID, eventType string, success boo
 		Success:     success,
 		Reason:      details,
 		RequestPath: r.URL.Path,
-	})
+	}))
 }
 
 func (s *Server) logMVCCSnapshotExpiration(session *txsession.Session, err error) {
-	if s.audit == nil || session == nil || err == nil {
+	logger := s.auditLogger()
+	if logger == nil || session == nil || err == nil {
 		return
 	}
 	expirationKind := "graceful"
 	if errors.Is(err, storage.ErrMVCCSnapshotHardExpired) {
 		expirationKind = "hard"
 	}
-	s.audit.Log(audit.Event{
+	s.shutdown.addError(logger.Log(audit.Event{
 		Timestamp:  time.Now(),
 		Type:       audit.EventSnapshotExpired,
 		UserID:     session.Owner,
@@ -695,5 +696,5 @@ func (s *Server) logMVCCSnapshotExpiration(session *txsession.Session, err error
 			"expiration_kind": expirationKind,
 			"database":        session.Database,
 		},
-	})
+	}))
 }

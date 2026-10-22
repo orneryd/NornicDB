@@ -381,7 +381,7 @@ type StorageExecutor struct {
 	searchDatabase string
 
 	// inferenceManager optionally provides LLM inference for db.infer.
-	inferenceManager InferenceManager
+	inferenceManager *inferenceManagerBinding
 
 	// localizationRenderer renders descriptor-backed metadata using request context.
 	localizationRenderer ProcedureMetadataRenderer
@@ -769,6 +769,7 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
 		hotPathTraceState:              &hotPathTraceState{},
 		queryEmbedder:                  &QueryEmbedderBinding{},
+		inferenceManager:               &inferenceManagerBinding{},
 		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
 		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
 		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
@@ -1194,12 +1195,17 @@ func (e *StorageExecutor) shareSearchFor(target *StorageExecutor, database strin
 
 // SetInferenceManager sets the inference manager used by db.infer.
 func (e *StorageExecutor) SetInferenceManager(mgr InferenceManager) {
-	e.inferenceManager = mgr
+	e.inferenceManager.current.Store(&inferenceManagerState{manager: mgr})
 }
 
 // GetInferenceManager returns the configured inference manager.
 func (e *StorageExecutor) GetInferenceManager() InferenceManager {
-	return e.inferenceManager
+	if e.inferenceManager != nil {
+		if state := e.inferenceManager.current.Load(); state != nil {
+			return state.manager
+		}
+	}
+	return nil
 }
 
 // SetVectorRegistry allows wiring a shared index registry (e.g., per database).

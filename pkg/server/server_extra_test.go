@@ -2055,12 +2055,12 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	dbName := server.dbManager.DefaultDatabaseName()
 
-	tx, err := server.txSessions.Open(context.Background(), dbName)
+	tx, err := server.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	assert.NoError(t, err)
 	if err != nil {
 		return
 	}
-	defer server.txSessions.RollbackAndDelete(context.Background(), tx)
+	defer func() { _ = tx.RollbackAndDelete(context.Background()); tx.Release() }()
 
 	// 1) Mutation without claims => forbidden.
 	resp := &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
@@ -2092,12 +2092,12 @@ func TestExecuteTxStatementsAdditionalBranches(t *testing.T) {
 	assert.NotEmpty(t, resp.Errors)
 
 	// 5) Read statement success path appends result.
-	fresh, err := server.txSessions.Open(context.Background(), dbName)
+	fresh, err := server.txSessions.OpenRequestForOwner(context.Background(), dbName, "")
 	assert.NoError(t, err)
 	if err != nil {
 		return
 	}
-	defer server.txSessions.RollbackAndDelete(context.Background(), fresh)
+	defer func() { _ = fresh.RollbackAndDelete(context.Background()); fresh.Release() }()
 	resp = &TransactionResponse{Results: make([]QueryResult, 0), Errors: make([]QueryError, 0)}
 	server.executeTxStatements(context.Background(), "", &auth.JWTClaims{Roles: []string{"viewer"}}, dbName, fresh, []StatementRequest{
 		{Statement: "RETURN 1 AS n"},

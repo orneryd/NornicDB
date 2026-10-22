@@ -10,30 +10,61 @@ type fabricTransactionContextKey struct{}
 type recordBindingsContextKey struct{}
 type transactionLifetimeContextKey struct{}
 
-// WithTransactionLifetime carries the protocol-owned transaction lifetime on a
-// statement context. Request/statement cancellation still governs query work;
-// participant completion belongs to lifetime instead.
+// WithTransactionLifetime binds the immutable protocol owner before BEGIN.
+// Statements keep their own cancellation; participant commit uses this owner.
 func WithTransactionLifetime(ctx, lifetime context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if lifetime == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, transactionLifetimeContextKey{}, lifetime)
 }
 
-func transactionLifetime(ctx context.Context) context.Context {
-	if lifetime, ok := ctx.Value(transactionLifetimeContextKey{}).(context.Context); ok {
-		return transactionLifetimeValues{Context: context.WithoutCancel(ctx), lifetime: lifetime}
+// TransactionLifetimeFromContext returns the owner captured at protocol BEGIN.
+func TransactionLifetimeFromContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return nil
 	}
-	return ctx
+	lifetime, _ := ctx.Value(transactionLifetimeContextKey{}).(context.Context)
+	return lifetime
 }
 
-// Keep request identity/tracing values while only the owner controls lifetime.
-type transactionLifetimeValues struct {
+// transactionLifetime keeps embedded BEGIN cancellation when no protocol
+// lifetime was supplied; protocol callers use the same completion wrapper.
+func transactionLifetime(ctx context.Context) context.Context {
+	if TransactionLifetimeFromContext(ctx) == nil {
+		return ctx
+	}
+	return TransactionCompletionContext(ctx)
+}
+
+// TransactionCompletionContext retains statement identity/tracing values while
+// taking cancellation only from the transaction's owner. With no protocol owner
+// it preserves the existing detached completion contract for embedded callers.
+// Rollback cleanup uses its own independent context, even after this owner ends.
+func TransactionCompletionContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifetime := TransactionLifetimeFromContext(ctx)
+	values := context.WithoutCancel(ctx)
+	if lifetime == nil {
+		return values
+	}
+	return transactionCompletionContext{Context: values, lifetime: lifetime}
+}
+
+type transactionCompletionContext struct {
 	context.Context
 	lifetime context.Context
 }
 
-func (c transactionLifetimeValues) Deadline() (time.Time, bool) { return c.lifetime.Deadline() }
-func (c transactionLifetimeValues) Done() <-chan struct{}       { return c.lifetime.Done() }
-func (c transactionLifetimeValues) Err() error                  { return c.lifetime.Err() }
-func (c transactionLifetimeValues) AfterFunc(f func()) func() bool {
+func (c transactionCompletionContext) Deadline() (time.Time, bool) { return c.lifetime.Deadline() }
+func (c transactionCompletionContext) Done() <-chan struct{}       { return c.lifetime.Done() }
+func (c transactionCompletionContext) Err() error                  { return c.lifetime.Err() }
+func (c transactionCompletionContext) AfterFunc(f func()) func() bool {
 	return context.AfterFunc(c.lifetime, f)
 }
 

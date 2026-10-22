@@ -10,6 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 type SearchContinuationMode string
@@ -87,7 +88,7 @@ type continuationRegistry interface {
 }
 
 type cachedTextPreparation struct {
-	chunkOnce sync.Once
+	chunkOnce util.OnceCompletion
 	chunks    []string
 	chunkErr  error
 
@@ -360,7 +361,7 @@ func (p *cachedTextPreparation) chunker(chunkQuery ChunkQueryFunc) ChunkQueryFun
 		return nil
 	}
 	return func(ctx context.Context, query string) ([]string, error) {
-		p.chunkOnce.Do(func() {
+		p.chunkOnce.Run(func() {
 			p.chunks, p.chunkErr = chunkQuery(ctx, query)
 			p.chunks = append([]string(nil), p.chunks...)
 		})

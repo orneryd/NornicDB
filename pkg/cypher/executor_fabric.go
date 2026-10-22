@@ -73,6 +73,9 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 }
 
 func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, preparation ...*fabricPreparedExec) (*ExecuteResult, error) {
+	if !autoCommit && e.txContext != nil {
+		ctx = fabric.WithTransactionLifetime(ctx, e.txContext.lifetime)
+	}
 	if tx == nil {
 		tx = fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
 	}

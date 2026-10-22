@@ -14,7 +14,7 @@ import (
 
 func TestCourseChangeServerLifetime(t *testing.T) {
 	server, auth := setupTestServer(t)
-	lifetime := server.requestsCtx
+	lifetime := server.shutdown.workContext
 	server.config.Port = 0
 	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "lifetimeleaf"}))
 	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "lifetimecomp", []multidb.ConstituentRef{{Alias: "leaf", DatabaseName: "lifetimeleaf", Type: "local", AccessMode: "read_write"}}))

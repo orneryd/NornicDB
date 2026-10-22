@@ -169,6 +169,7 @@ type DB struct {
 	remoteCredentialKeySource string
 	mu                        sync.RWMutex
 	closed                    bool
+	opened                    bool // only a published DB may write the clean marker
 
 	closeDone chan struct{}
 	closeErr  error
@@ -197,9 +198,15 @@ type DB struct {
 	defaultSearchMetrics *observability.SearchMetrics
 	searchContinuationMu sync.Mutex
 	searchContinuation   *resultstream.Registry
-	// searchServiceCreationMu serializes the "create and insert" path in GetOrCreateSearchService
-	// so only one goroutine creates a service per dbName at a time, avoiding RWMutex contention deadlock.
+	// searchClosing seals constructor enrollment under searchServicesMu.
+	// Constructors use the existing DB bgWg; publication remains in searchServices.
+	searchClosing bool
+	// The existing native generation fence has one lifetime retirement phase.
 	searchServiceCreationMu sync.Mutex
+	searchRetiring          bool            // searchServicesMu
+	searchConstructing      int             // admitted preparation; searchServicesMu
+	searchConstructionDone  chan struct{}   // closes when that admission population completes
+	searchRetirementDone    chan struct{}   // actual retirement completion
 	searchReranker          search.Reranker // Optional Stage-2 reranker for hybrid search
 
 	// Per-database inference engines (topology, Kalman, etc.).
@@ -272,7 +279,9 @@ type DB struct {
 	// Per-DB embedder registry: keyed by embedConfigKey(cfg). Used by EmbedQueryForDB when embedConfigForDB is set.
 	embedderRegistryMu sync.RWMutex
 	embedderRegistry   map[string]embed.Embedder
-	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
+	ownedProviders     []*providerResource // protected by mu; released after workers join
+	ownedWorkErr       error               // lifetime completion outcomes; ownedWorkMu
+	ownedWorkMu        sync.Mutex          // accumulator publication, independent of host registry admission
 	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
 	defaultEmbedConfig *embed.Config       // protected by embedderRegistryMu; owns failure diagnostics
@@ -291,7 +300,7 @@ type DB struct {
 
 	lifecycleManager  *lifecycle.MVCCLifecycleManager
 	retentionManager  *retention.Manager
-	onRetentionAction func(action, recordID, category string)
+	onRetentionAction func(action, recordID, category string) error
 }
 
 // DbConfigResolver returns effective embedding dimensions and search min similarity for a database.
@@ -604,7 +613,7 @@ type DatabaseAndStorage struct {
 //   - Search system keeps the catalog updated
 //
 // You just add books and search - the rest happens automatically!
-func Open(dataDir string, config *Config) (*DB, error) {
+func Open(dataDir string, config *Config) (opened *DB, openErr error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -673,6 +682,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		searchWarmupReady:      make(chan struct{}),
 	}
 	db.remoteCredentialKey, db.remoteCredentialKeySource = config.RemoteCredentialEncryptionKey()
+	// Every construction failure enters the same retirement owner as Close.
+	// Register each acquired component before the next fallible start site.
+	defer func() {
+		if openErr != nil {
+			openErr = errors.Join(openErr, db.Close())
+		}
+	}()
+
 	if limit := config.Memory.ApplicationSoftMax; limit > 0 {
 		headroom := max(int64(128<<20), limit/10)
 		db.memoryPolicy = memory.NewPolicy(limit, headroom, 2*time.Second, memory.CgroupSample, time.Now,
@@ -813,8 +830,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				return nil, localizedError(localization.NornicDBCorePersistentStorageOpenFailed(err), err)
 			}
 		}
+		db.baseStorage = badgerEngine
 		if err := db.upgradeRelationshipSnapshots(config.Database.AllowStorageUpgrade, nil); err != nil {
-			_ = badgerEngine.Close()
 			return nil, fmt.Errorf("upgrading search snapshots: %w", err)
 		}
 		if config.Database.MVCCLifecycleEnabled {
@@ -895,10 +912,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if err := db.storage.DeleteNode(storage.NodeID(record.ID)); err != nil {
 					return err
 				}
-				if db.onRetentionAction != nil {
-					db.onRetentionAction("RETENTION_DELETE", record.ID, string(record.Category))
-				}
-				return nil
+				return db.retentionAuditOutcome("RETENTION_DELETE", record.ID, string(record.Category))
 			})
 			rm.SetArchiveCallback(func(record *retention.DataRecord, archivePath string) error {
 				node, err := db.storage.GetNode(storage.NodeID(record.ID))
@@ -916,10 +930,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if err := os.WriteFile(archiveFile, data, 0644); err != nil {
 					return err
 				}
-				if db.onRetentionAction != nil {
-					db.onRetentionAction("RETENTION_ARCHIVE", record.ID, string(record.Category))
-				}
-				return nil
+				return db.retentionAuditOutcome("RETENTION_ARCHIVE", record.ID, string(record.Category))
 			})
 
 			db.retentionManager = rm
@@ -929,18 +940,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Initialize WAL for durability (uses batch sync mode by default for better performance)
 		wal, err := storage.NewWAL(walConfig.Dir, walConfig)
 		if err != nil {
-			badgerEngine.Close()
 			return nil, localizedError(localization.NornicDBCoreWALInitializeFailed(err), err)
 		}
 		db.wal = wal
 
 		// Wrap storage with WAL for durability
 		walEngine := storage.NewWALEngine(badgerEngine, wal)
+		db.baseStorage = walEngine
 
 		// Replay accepted semantic transactions and buffered ACKs before traffic.
 		// Semantic records can precede physical publication in either mode.
 		if recovered, recErr := storage.RecoverBufferedCommitsAtOpen(badgerEngine, wal); recErr != nil {
-			_ = walEngine.Close()
 			return nil, fmt.Errorf("failed to replay accepted commits from WAL: %w", recErr)
 		} else if recovered > 0 {
 			fmt.Printf("♻️  Recovered %d accepted commits from the WAL\n", recovered)
@@ -992,7 +1002,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// and routes ALL writes through a Replicator, while reads remain local.
 		baseStorage, err = db.maybeEnableReplication(baseStorage)
 		if err != nil {
-			_ = db.baseStorage.Close()
 			return nil, err
 		}
 
@@ -1002,7 +1011,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		db.storage = storage.NewNamespacedEngine(baseStorage, selectedDefaultDBName)
 		if config.Memory.DecayEnabled {
 			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, selectedDefaultDBName); err != nil {
-				_ = db.baseStorage.Close()
 				return nil, err
 			}
 		}
@@ -1017,7 +1025,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Optionally wrap base storage with replication.
 		replicated, err := db.maybeEnableReplication(baseStorage)
 		if err != nil {
-			_ = db.baseStorage.Close()
 			return nil, err
 		}
 		baseStorage = replicated
@@ -1027,7 +1034,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		db.storage = storage.NewNamespacedEngine(baseStorage, selectedDefaultDBName)
 		if config.Memory.DecayEnabled {
 			if err := maybeBootstrapDefaultKnowledgePolicy(db.LifetimeContext(), baseStorage, selectedDefaultDBName); err != nil {
-				_ = db.baseStorage.Close()
 				return nil, err
 			}
 		}
@@ -1062,7 +1068,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if db.config.Server.StemmerPluginsDir != "" {
 		diagnostics, err := stemmer.LoadDirBestEffort(db.config.Server.StemmerPluginsDir)
 		if err != nil {
-			_ = db.baseStorage.Close()
 			return nil, fmt.Errorf("loading stemmer plugins: %w", err)
 		}
 		for _, diagnostic := range diagnostics {
@@ -1071,7 +1076,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		selectedStemmer := stemmer.NormalizeSelection(db.config.Memory.SearchBM25Stemmer)
 		if selectedStemmer != stemmer.NoneID {
 			if _, ok := stemmer.Lookup(selectedStemmer); !ok {
-				_ = db.baseStorage.Close()
 				return nil, fmt.Errorf("configured stemmer %q is unavailable after loading plugins", selectedStemmer)
 			}
 		}
@@ -1197,10 +1201,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		db.inferenceServices = make(map[string]*inference.Engine)
 		// Eagerly create default DB inference for parity with prior behavior.
 		if _, err := db.getOrCreateInferenceService(db.defaultDatabaseName(), db.storage); err != nil {
-			db.mu.Lock()
-			db.closed = true
-			db.mu.Unlock()
-			_ = db.closeInternal()
 			return nil, localizedError(localization.NornicDBCoreInferenceInitializeFailed(err), err)
 		}
 	}
@@ -1299,10 +1299,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			NamespaceReset: db.dropSearchForPrefix,
 		})
 		if err != nil {
-			db.mu.Lock()
-			db.closed = true
-			db.mu.Unlock()
-			_ = db.closeInternal()
 			return nil, fmt.Errorf("subscribing search to storage events: %w", err)
 		}
 	}
@@ -1467,6 +1463,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Publish process-wide transaction defaults only after every fallible open
 	// step succeeded. A failed second Open must not reset a serving DB's limits.
 	cypher.ConfigureTransactionMemory(config.Memory.TransactionTotalMax, cypher.TransactionMemoryLimits{TransactionMax: config.Memory.TransactionMax})
+	db.opened = true
 	return db, nil
 }
 
@@ -1643,9 +1640,20 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	if embedder == nil {
 		return false
 	}
+	// Metadata is provider code too. Enroll before invoking it, then keep the
+	// same DB retention through publication so Close cannot dispose the model
+	// between an unlocked metadata call and installing the queue binding.
+	finish, retained := db.RetainBackground()
+	if !retained {
+		// Preserve the existing rejected-provider disposal contract.
+		_, _ = db.OwnEmbedder(embedder)
+		return false
+	}
+	defer finish()
 	if _, accepted := db.OwnEmbedder(embedder); !accepted {
 		return false
 	}
+	model, dimensions := embedder.Model(), embedder.Dimensions()
 
 	// Publication callbacks can acquire db.mu. Wait for their provider/write
 	// barrier BEFORE holding db.mu, then recheck the queue under the lifecycle
@@ -1702,7 +1710,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		}
 		db.embedQueue.setEmbedderUnderWriteBarrier(embedder)
 		log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
-			embedder.Model(), embedder.Dimensions())
+			model, dimensions)
 		db.mu.Unlock()
 		db.registerDefaultEmbedder(embedder)
 		db.refreshEmbedFailureRedactor()
@@ -1751,7 +1759,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 	}
 
 	log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
-		embedder.Model(), embedder.Dimensions())
+		model, dimensions)
 
 	db.mu.Unlock()
 	db.registerDefaultEmbedder(embedder)
@@ -1941,7 +1949,7 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 	if entry != nil && entry.svc == svc && entry.buildDone != nil {
 		ranInitial := false
 		var initialErr error
-		entry.buildOnce.Do(func() {
+		entry.buildOnce.Run(func() {
 			ranInitial = true
 			initialErr = db.runInitialSearchIndexBuild(entry, ctx)
 		})
@@ -1950,6 +1958,8 @@ func (db *DB) BuildSearchIndexes(ctx context.Context) error {
 		}
 		select {
 		case <-entry.buildDone:
+		case <-svc.LifetimeContext().Done():
+			return svc.LifetimeContext().Err()
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -2003,19 +2013,28 @@ func (db *DB) StopEmbedQueue() {
 // startBackgroundTask tracks DB-owned goroutines and prevents new tracked tasks
 // from being launched once shutdown has started.
 func (db *DB) startBackgroundTask(fn func()) bool {
+	release, accepted := db.RetainBackground()
+	if !accepted {
+		return false
+	}
+	go func() { defer release(); fn() }()
+	return true
+}
+
+// RetainBackground enrolls construction before it can run. The returned release
+// belongs to actual completion, never a caller deadline. RunBackgroundTask and
+// service construction share this same DB wait group and admission boundary.
+func (db *DB) RetainBackground() (release func(), accepted bool) {
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
-		return false
+		return func() {}, false
 	}
 	db.bgWg.Add(1)
 	db.mu.RUnlock()
 
-	go func() {
-		defer db.bgWg.Done()
-		fn()
-	}()
-	return true
+	var once sync.Once
+	return func() { once.Do(db.bgWg.Done) }, true
 }
 
 // RunBackgroundTask runs fn in a goroutine that Close waits for, so work
@@ -2033,7 +2052,33 @@ func (db *DB) GetRetentionManager() *retention.Manager {
 
 // SetRetentionAuditCallback installs a callback invoked after retention archive/delete actions.
 func (db *DB) SetRetentionAuditCallback(fn func(action, recordID, category string)) {
+	if fn == nil {
+		db.SetRetentionAuditOutcomeCallback(nil)
+		return
+	}
+	db.SetRetentionAuditOutcomeCallback(func(action, recordID, category string) error { fn(action, recordID, category); return nil })
+}
+
+// SetRetentionAuditOutcomeCallback installs the error-producing audit consumer.
+// Native enforcement receives its result, and DB.Close retains outcomes from
+// scheduled enforcement before releasing the DB's background lifetime.
+func (db *DB) SetRetentionAuditOutcomeCallback(fn func(action, recordID, category string) error) {
+	db.mu.Lock()
 	db.onRetentionAction = fn
+	db.mu.Unlock()
+}
+func (db *DB) retentionAuditOutcome(action, recordID, category string) error {
+	db.mu.RLock()
+	fn := db.onRetentionAction
+	db.mu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	err := fn(action, recordID, category)
+	if err != nil {
+		db.recordBackgroundError(fmt.Errorf("retention audit %s %s: %w", action, recordID, err))
+	}
+	return err
 }
 
 // EmbedQueueStats returns statistics about the async embedding queue.

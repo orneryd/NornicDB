@@ -11,6 +11,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/internal/rerankwire"
@@ -52,8 +53,32 @@ func DefaultLocalRerankerConfig() *LocalRerankerConfig {
 
 // LocalReranker performs Stage-2 reranking using a local GGUF reranker model.
 type LocalReranker struct {
-	scorer RerankScorer
-	cfg    *LocalRerankerConfig
+	scorer   RerankScorer
+	cfg      *LocalRerankerConfig
+	mu       sync.RWMutex
+	lifetime func(context.Context) (context.Context, func(), error)
+}
+
+// UnderlyingScorer identifies the resource adopted by the DB's provider owner.
+func (r *LocalReranker) UnderlyingScorer() RerankScorer { return r.scorer }
+
+// SetLifetime binds every resolver/scorer alias to the canonical DB admission.
+func (r *LocalReranker) SetLifetime(use func(context.Context) (context.Context, func(), error)) {
+	r.mu.Lock()
+	r.lifetime = use
+	r.mu.Unlock()
+}
+func (r *LocalReranker) beginUse(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.mu.RLock()
+	use := r.lifetime
+	r.mu.RUnlock()
+	if use != nil {
+		return use(ctx)
+	}
+	return ctx, func() {}, nil
 }
 
 // NewLocalReranker creates a reranker that uses the given scorer (e.g. *localllm.RerankerModel).
@@ -74,7 +99,12 @@ func (r *LocalReranker) IsAvailable(ctx context.Context) bool {
 	if !r.Enabled() {
 		return false
 	}
-	_, err := r.scorer.Score(ctx, "health", "check")
+	ctx, finish, err := r.beginUse(ctx)
+	if err != nil {
+		return false
+	}
+	defer finish()
+	_, err = r.scorer.Score(ctx, "health", "check")
 	return err == nil
 }
 
@@ -91,6 +121,11 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, finish, useErr := r.beginUse(ctx)
+	if useErr != nil {
+		return nil, useErr
+	}
+	defer finish()
 
 	maxCandidates := r.cfg.MaxCandidates
 	if maxCandidates <= 0 {

@@ -311,8 +311,8 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 			// participant completion to server lifetime and admitting terminal
 			// commits through the transaction phase owner.
 			ctx, cancel := txphase.WithExecutionDeadline(r.Context(), txTimeout)
-			if s.requestsCtx != nil {
-				ctx = fabric.WithTransactionLifetime(ctx, s.requestsCtx)
+			if s.shutdown.workContext != nil {
+				ctx = fabric.WithTransactionLifetime(ctx, s.shutdown.workContext)
 			}
 			defer cancel()
 			txWrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -331,7 +331,7 @@ func (s *Server) requestTimeoutMiddleware(next http.Handler) http.Handler {
 func serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Request, timeout time.Duration, message string) {
 	// Retain before TimeoutHandler starts its goroutine, even if cancellation
 	// wins before the worker is scheduled. The worker releases on return/panic.
-	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
+	next = retainServerHandler(memory.WireRequestFromContext(r.Context()).RetainHandler(next), r)
 	http.TimeoutHandler(next, timeout, message).ServeHTTP(w, r)
 }
 
@@ -339,7 +339,9 @@ func serveRequestTimeout(next http.Handler, w http.ResponseWriter, r *http.Reque
 // transaction handler remains retained. After COMMIT admission, it waits for
 // the storage outcome instead of replacing that result with a timeout.
 func (s *Server) serveTransactionRequest(next http.Handler, w http.ResponseWriter, r *http.Request) {
-	next = memory.WireRequestFromContext(r.Context()).RetainHandler(next)
+	// The phase owner controls when the caller may stop waiting. The shared
+	// handler owner retains this real worker before it can be dispatched.
+	next = retainServerHandler(memory.WireRequestFromContext(r.Context()).RetainHandler(next), r)
 	response := &transactionResponseWriter{header: make(http.Header)}
 	done := make(chan struct{})
 	panicCh := make(chan any, 1)
