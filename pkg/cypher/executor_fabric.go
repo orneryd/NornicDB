@@ -225,7 +225,7 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 		if err != nil {
 			return "", false
 		}
-		provider, ok := engine.(storage.GraphMutationVersionProvider)
+		provider, ok := storage.ViewMetadataForEngine[storage.GraphMutationVersionProvider](engine)
 		if !ok {
 			return "", false
 		}
@@ -492,12 +492,12 @@ func sameSourceID(a interface{}, b interface{}) bool {
 }
 
 func (e *StorageExecutor) currentDatabaseName() string {
-	if composite, ok := e.storage.(interface{ CompositeName() string }); ok {
+	if composite, ok := viewMetadataForExecutor[interface{ CompositeName() string }](e); ok {
 		if name := strings.TrimSpace(composite.CompositeName()); name != "" {
 			return name
 		}
 	}
-	if ns, ok := e.storage.(interface{ Namespace() string }); ok {
+	if ns, ok := viewMetadataForExecutor[interface{ Namespace() string }](e); ok {
 		if name := strings.TrimSpace(ns.Namespace()); name != "" {
 			return name
 		}

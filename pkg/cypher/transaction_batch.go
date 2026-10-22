@@ -8,7 +8,7 @@ import "context"
 // outer transaction advances through storage's existing snapshot owner.
 func (e *StorageExecutor) executeTransactionBatch(ctx context.Context, clause string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	base := e
-	outer, _ := e.storage.(*transactionStorageWrapper)
+	outer, _ := viewMetadataForExecutor[*transactionStorageWrapper](e)
 	if outer != nil {
 		if outer.tx.OperationCount() > 0 || outer.tx.HasKnowledgePolicyChanges() {
 			return nil, transactionalCallContextError("transactional CALL cannot follow statement writes")
@@ -18,7 +18,7 @@ func (e *StorageExecutor) executeTransactionBatch(ctx context.Context, clause st
 	changed := false
 	result, err := base.executeWithImplicitTransactionCallback(ctx, clause, upperASCII(clause), func(batchCtx context.Context, batchExec *StorageExecutor) (*ExecuteResult, error) {
 		result, err := execute(batchCtx, batchExec)
-		if wrapper, ok := batchExec.storage.(*transactionStorageWrapper); ok {
+		if wrapper, ok := viewMetadataForExecutor[*transactionStorageWrapper](batchExec); ok {
 			changed = wrapper.tx.OperationCount() > 0 || wrapper.tx.HasKnowledgePolicyChanges()
 		}
 		return result, err

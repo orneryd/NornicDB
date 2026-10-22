@@ -163,7 +163,7 @@ var (
 // RelationshipEndpointVisible forwards to the underlying engine; WAL adds no
 // overlay.
 func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
-	if checker, ok := w.engine.(RelationshipEndpointChecker); ok {
+	if checker, ok := ReadCapabilityForEngine[RelationshipEndpointChecker](w.engine); ok {
 		return checker.RelationshipEndpointVisible(id)
 	}
 	return false, false
@@ -171,7 +171,7 @@ func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bo
 
 // OutgoingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
 func (w *WALEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	if reader, ok := w.engine.(EdgeHeaderReader); ok {
+	if reader, ok := ReadCapabilityForEngine[EdgeHeaderReader](w.engine); ok {
 		return reader.OutgoingEdgeHeaders(nodeID)
 	}
 	return nil, false, nil
@@ -179,7 +179,7 @@ func (w *WALEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
 
 // IncomingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.
 func (w *WALEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	if reader, ok := w.engine.(EdgeHeaderReader); ok {
+	if reader, ok := ReadCapabilityForEngine[EdgeHeaderReader](w.engine); ok {
 		return reader.IncomingEdgeHeaders(nodeID)
 	}
 	return nil, false, nil
@@ -197,7 +197,7 @@ func (w *WALEngine) GetNodeProjected(id NodeID, properties []string) (*Node, err
 // composite constituent scan share this tail, so reader preference and error
 // propagation cannot drift between wrappers.
 func getNodeProjectedThrough(engine Engine, id NodeID, properties []string) (*Node, error) {
-	if reader, ok := engine.(NodeProjectionReader); ok {
+	if reader, ok := ReadCapabilityForEngine[NodeProjectionReader](engine); ok {
 		return reader.GetNodeProjected(id, properties)
 	}
 	node, err := engine.GetNode(id)
@@ -210,37 +210,37 @@ func getNodeProjectedThrough(engine Engine, id NodeID, properties []string) (*No
 // Event-callback registration forwards. WAL does not translate IDs, so the
 // callback receives exactly what the inner engine emits.
 func (w *WALEngine) OnNodeCreated(callback NodeEventCallback) {
-	if notifier, ok := w.engine.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](w.engine); ok {
 		notifier.OnNodeCreated(callback)
 	}
 }
 
 func (w *WALEngine) OnNodeUpdated(callback NodeEventCallback) {
-	if notifier, ok := w.engine.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](w.engine); ok {
 		notifier.OnNodeUpdated(callback)
 	}
 }
 
 func (w *WALEngine) OnNodeDeleted(callback NodeDeleteCallback) {
-	if notifier, ok := w.engine.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](w.engine); ok {
 		notifier.OnNodeDeleted(callback)
 	}
 }
 
 func (w *WALEngine) OnEdgeCreated(callback EdgeEventCallback) {
-	if notifier, ok := w.engine.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](w.engine); ok {
 		notifier.OnEdgeCreated(callback)
 	}
 }
 
 func (w *WALEngine) OnEdgeUpdated(callback EdgeEventCallback) {
-	if notifier, ok := w.engine.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](w.engine); ok {
 		notifier.OnEdgeUpdated(callback)
 	}
 }
 
 func (w *WALEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
-	if notifier, ok := w.engine.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](w.engine); ok {
 		notifier.OnEdgeDeleted(callback)
 	}
 }

@@ -184,7 +184,7 @@ var ErrReadSnapshotUnsupported = errors.New("storage: read snapshots are not sup
 // OpenReadSnapshot opens a read snapshot of engine, or returns
 // ErrReadSnapshotUnsupported when engine has no ReadSnapshotter.
 func OpenReadSnapshot(ctx context.Context, engine any) (ReadSnapshotView, error) {
-	if snapshotter, ok := engine.(ReadSnapshotter); ok {
+	if snapshotter, ok := ReadCapabilityForEngine[ReadSnapshotter](engine); ok {
 		return snapshotter.OpenReadSnapshot(ctx)
 	}
 	return nil, ErrReadSnapshotUnsupported

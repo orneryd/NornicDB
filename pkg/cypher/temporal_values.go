@@ -258,7 +258,7 @@ func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) t
 				return transaction.StartTime.UTC()
 			}
 		}
-		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		if wrapper, ok := storage.ViewMetadataForEngine[*transactionStorageWrapper](e.storage); ok {
 			return wrapper.tx.StartTime.UTC()
 		}
 	}

@@ -1334,7 +1334,7 @@ func (s *Server) entityDatabase(dbName string, nodeID storage.NodeID, edgeID sto
 	if err != nil {
 		return dbName
 	}
-	composite, ok := engine.(*storage.CompositeEngine)
+	composite, ok := storage.ViewMetadataForEngine[*storage.CompositeEngine](engine)
 	if !ok {
 		return dbName
 	}

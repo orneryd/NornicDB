@@ -24,7 +24,7 @@ type queryProjectionScopeLink struct {
 // Release exactly once with defer; contexts borrowed from it must not outlive it.
 // For example: ctx, release := BeginQueryRevealScopeContext(ctx, engine, false).
 func BeginQueryRevealScopeContext(ctx context.Context, engine Engine, reveal bool) (context.Context, func()) {
-	be, _ := UnwrapEngine(engine).(*BadgerEngine)
+	be, _ := OwnedCapability[*BadgerEngine](UnwrapEngine(engine))
 	if be == nil {
 		return ctx, func() {}
 	}

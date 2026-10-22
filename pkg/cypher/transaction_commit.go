@@ -31,12 +31,12 @@ func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *stor
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
-		if committer, ok := engine.(interface {
+		if committer, ok := storage.OwnedCapability[interface {
 			CommitTransaction(context.Context, *storage.BadgerTransaction) error
-		}); ok {
+		}](engine); ok {
 			return committer.CommitTransaction(ctx, tx)
 		}
-		wrapper, ok := engine.(storage.EngineUnwrapper)
+		wrapper, ok := storage.OwnedCapability[storage.EngineUnwrapper](engine)
 		if !ok {
 			break
 		}

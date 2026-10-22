@@ -65,11 +65,11 @@ func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) 
 
 // queryNodeReader is the shared read decision for point reads and MATCH scans.
 func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNodeReader {
-	if wrapper, ok := store.(*transactionStorageWrapper); ok {
+	if wrapper, ok := storage.ViewMetadataForEngine[*transactionStorageWrapper](store); ok {
 		return wrapper
 	}
 	if e != nil && e.readOnlyQueryNodes {
-		reader, _ := store.(storage.QueryNodeReader)
+		reader, _ := storage.ReadCapabilityForEngine[storage.QueryNodeReader](store)
 		return reader
 	}
 	return nil
@@ -95,7 +95,7 @@ func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
 	if info == nil || !info.IsReadOnly || info.IsWriteQuery || !info.HasMatch || info.HasCall {
 		return false
 	}
-	_, ok := e.storage.(storage.QueryNodeReader)
+	_, ok := storage.ReadCapabilityForEngine[storage.QueryNodeReader](e.storage)
 	return ok
 }
 
@@ -106,10 +106,10 @@ type materializedAccessRecorder interface {
 // recordMaterializedResultAccess records an access (ON ACCESS policies) for
 // every node and relationship a result returns.
 func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) {
-	if result == nil {
+	if !resultHasMaterializedEntities(result) {
 		return
 	}
-	recorder, ok := e.storage.(materializedAccessRecorder)
+	recorder, ok := storage.ReadCapabilityForEngine[materializedAccessRecorder](e.storage)
 	if !ok || recorder == nil {
 		return
 	}

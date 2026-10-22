@@ -58,7 +58,7 @@ func StreamEdgesByType(ctx context.Context, engine Engine, edgeType string, visi
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if streamer, ok := engine.(EdgeTypeStreamer); ok {
+	if streamer, ok := ReadCapabilityForEngine[EdgeTypeStreamer](engine); ok {
 		return streamer.StreamEdgesByType(ctx, edgeType, visit)
 	}
 	return visitEdgeSlice(ctx, engine.GetEdgesByType, edgeType, visit)
@@ -74,7 +74,7 @@ func streamEdgesByTypeInScope(ctx context.Context, engine Engine, scope, edgeTyp
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if scoped, ok := engine.(ScopedEdgeTypeStreamer); ok {
+	if scoped, ok := ReadCapabilityForEngine[ScopedEdgeTypeStreamer](engine); ok {
 		return scoped.StreamEdgesByTypeInScope(ctx, scope, edgeType, visit)
 	}
 	return StreamEdgesByType(ctx, engine, edgeType, visit)

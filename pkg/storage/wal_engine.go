@@ -61,7 +61,7 @@ type WALEngine struct {
 
 // ListNamespaces returns known namespaces from the wrapped engine, if supported.
 func (w *WALEngine) ListNamespaces() []string {
-	if lister, ok := w.engine.(NamespaceLister); ok {
+	if lister, ok := ViewMetadataForEngine[NamespaceLister](w.engine); ok {
 		return lister.ListNamespaces()
 	}
 	return nil
@@ -69,7 +69,7 @@ func (w *WALEngine) ListNamespaces() []string {
 
 // IsCurrentTemporalNode delegates current-version checks to the wrapped engine when supported.
 func (w *WALEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error) {
-	if provider, ok := w.engine.(TemporalCurrentNodeEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[TemporalCurrentNodeEngine](w.engine); ok {
 		return provider.IsCurrentTemporalNode(node, asOf)
 	}
 	return true, nil
@@ -77,7 +77,7 @@ func (w *WALEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, err
 
 // RebuildTemporalIndexes delegates temporal index rebuild to the wrapped engine when supported.
 func (w *WALEngine) RebuildTemporalIndexes(ctx context.Context) error {
-	if maint, ok := w.engine.(TemporalMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[TemporalMaintenanceEngine](w.engine); ok {
 		return maint.RebuildTemporalIndexes(ctx)
 	}
 	return nil
@@ -85,7 +85,7 @@ func (w *WALEngine) RebuildTemporalIndexes(ctx context.Context) error {
 
 // ConsumeCleanShutdownMarker delegates startup recovery state to storage.
 func (w *WALEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
-	if provider, ok := w.engine.(StartupMaintenanceStateEngine); ok {
+	if provider, ok := OwnedCapability[StartupMaintenanceStateEngine](w.engine); ok {
 		return provider.ConsumeCleanShutdownMarker(ctx)
 	}
 	return false, ErrNotImplemented
@@ -93,7 +93,7 @@ func (w *WALEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error
 
 // MarkCleanShutdown delegates the durable shutdown boundary to storage.
 func (w *WALEngine) MarkCleanShutdown(ctx context.Context) error {
-	if provider, ok := w.engine.(StartupMaintenanceStateEngine); ok {
+	if provider, ok := OwnedCapability[StartupMaintenanceStateEngine](w.engine); ok {
 		return provider.MarkCleanShutdown(ctx)
 	}
 	return ErrNotImplemented
@@ -101,7 +101,7 @@ func (w *WALEngine) MarkCleanShutdown(ctx context.Context) error {
 
 // PruneTemporalHistory delegates temporal pruning to the wrapped engine when supported.
 func (w *WALEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPruneOptions) (int64, error) {
-	if maint, ok := w.engine.(TemporalMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[TemporalMaintenanceEngine](w.engine); ok {
 		return maint.PruneTemporalHistory(ctx, opts)
 	}
 	return 0, nil
@@ -109,7 +109,7 @@ func (w *WALEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPrune
 
 // RebuildMVCCHeads delegates MVCC head rebuild to the wrapped engine when supported.
 func (w *WALEngine) RebuildMVCCHeads(ctx context.Context) error {
-	if maint, ok := w.engine.(MVCCMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[MVCCMaintenanceEngine](w.engine); ok {
 		return maint.RebuildMVCCHeads(ctx)
 	}
 	return ErrNotImplemented
@@ -117,7 +117,7 @@ func (w *WALEngine) RebuildMVCCHeads(ctx context.Context) error {
 
 // PruneMVCCVersions delegates MVCC pruning to the wrapped engine when supported.
 func (w *WALEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
-	if maint, ok := w.engine.(MVCCMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[MVCCMaintenanceEngine](w.engine); ok {
 		return maint.PruneMVCCVersions(ctx, opts)
 	}
 	return 0, ErrNotImplemented
@@ -125,7 +125,7 @@ func (w *WALEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions
 
 // GetNodeLatestEffective delegates MVCC latest-effective reads to the wrapped engine when supported.
 func (w *WALEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
-	if provider, ok := w.engine.(MVCCLatestEffectiveEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCLatestEffectiveEngine](w.engine); ok {
 		return provider.GetNodeLatestEffective(id)
 	}
 	return w.engine.GetNode(id)
@@ -133,7 +133,7 @@ func (w *WALEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 
 // GetEdgeLatestEffective delegates MVCC latest-effective edge reads to the wrapped engine when supported.
 func (w *WALEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
-	if provider, ok := w.engine.(MVCCLatestEffectiveEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCLatestEffectiveEngine](w.engine); ok {
 		return provider.GetEdgeLatestEffective(id)
 	}
 	return w.engine.GetEdge(id)
@@ -141,7 +141,7 @@ func (w *WALEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 
 // GetNodeLatestVisible delegates latest-visible node reads when supported.
 func (w *WALEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
-	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](w.engine); ok {
 		return provider.GetNodeLatestVisible(id)
 	}
 	return w.GetNodeLatestEffective(id)
@@ -149,7 +149,7 @@ func (w *WALEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 
 // GetEdgeLatestVisible delegates latest-visible edge reads when supported.
 func (w *WALEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](w.engine); ok {
 		return provider.GetEdgeLatestVisible(id)
 	}
 	return w.GetEdgeLatestEffective(id)
@@ -157,7 +157,7 @@ func (w *WALEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 
 // GetNodeVisibleAt delegates snapshot-visible node reads when supported.
 func (w *WALEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](w.engine); ok {
 		return provider.GetNodeVisibleAt(id, version)
 	}
 	return nil, ErrNotImplemented
@@ -165,7 +165,7 @@ func (w *WALEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, err
 
 // GetEdgeVisibleAt delegates snapshot-visible edge reads when supported.
 func (w *WALEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
-	if provider, ok := w.engine.(MVCCVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](w.engine); ok {
 		return provider.GetEdgeVisibleAt(id, version)
 	}
 	return nil, ErrNotImplemented
@@ -173,7 +173,7 @@ func (w *WALEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, err
 
 // GetNodesByLabelVisibleAt delegates snapshot-visible label queries when supported.
 func (w *WALEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](w.engine); ok {
 		return provider.GetNodesByLabelVisibleAt(label, version)
 	}
 	return nil, ErrNotImplemented
@@ -181,7 +181,7 @@ func (w *WALEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) 
 
 // GetOutgoingEdgesVisibleAt delegates snapshot-visible outgoing adjacency queries when supported.
 func (w *WALEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](w.engine); ok {
 		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
 	}
 	return nil, ErrNotImplemented
@@ -189,7 +189,7 @@ func (w *WALEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion
 
 // GetIncomingEdgesVisibleAt delegates snapshot-visible incoming adjacency queries when supported.
 func (w *WALEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](w.engine); ok {
 		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
 	}
 	return nil, ErrNotImplemented
@@ -197,7 +197,7 @@ func (w *WALEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion
 
 // GetEdgesByTypeVisibleAt delegates snapshot-visible edge-type queries when supported.
 func (w *WALEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](w.engine); ok {
 		return provider.GetEdgesByTypeVisibleAt(edgeType, version)
 	}
 	return nil, ErrNotImplemented
@@ -205,7 +205,7 @@ func (w *WALEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion
 
 // GetEdgesBetweenVisibleAt delegates snapshot-visible topology queries when supported.
 func (w *WALEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	if provider, ok := w.engine.(MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](w.engine); ok {
 		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)
 	}
 	return nil, ErrNotImplemented
@@ -213,7 +213,7 @@ func (w *WALEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCC
 
 // RegisterSnapshotReader delegates snapshot-reader registration when supported.
 func (w *WALEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
-	if lce, ok := w.engine.(MVCCLifecycleEngine); ok {
+	if lce, ok := ReadCapabilityForEngine[MVCCLifecycleEngine](w.engine); ok {
 		return lce.RegisterSnapshotReader(info)
 	}
 	return func() {}
@@ -221,7 +221,7 @@ func (w *WALEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
 
 // LifecycleStatus delegates lifecycle status when supported.
 func (w *WALEngine) LifecycleStatus() map[string]interface{} {
-	if lce, ok := w.engine.(MVCCLifecycleEngine); ok {
+	if lce, ok := ReadCapabilityForEngine[MVCCLifecycleEngine](w.engine); ok {
 		return lce.LifecycleStatus()
 	}
 	return map[string]interface{}{"enabled": false}
@@ -229,7 +229,7 @@ func (w *WALEngine) LifecycleStatus() map[string]interface{} {
 
 // TriggerPruneNow delegates lifecycle prune-now when supported.
 func (w *WALEngine) TriggerPruneNow(ctx context.Context) error {
-	if lce, ok := w.engine.(MVCCLifecycleEngine); ok {
+	if lce, ok := OwnedCapability[MVCCLifecycleEngine](w.engine); ok {
 		return lce.TriggerPruneNow(ctx)
 	}
 	return nil
@@ -237,21 +237,21 @@ func (w *WALEngine) TriggerPruneNow(ctx context.Context) error {
 
 // PauseLifecycle delegates lifecycle pause when supported.
 func (w *WALEngine) PauseLifecycle() {
-	if lce, ok := w.engine.(MVCCLifecycleEngine); ok {
+	if lce, ok := OwnedCapability[MVCCLifecycleEngine](w.engine); ok {
 		lce.PauseLifecycle()
 	}
 }
 
 // ResumeLifecycle delegates lifecycle resume when supported.
 func (w *WALEngine) ResumeLifecycle() {
-	if lce, ok := w.engine.(MVCCLifecycleEngine); ok {
+	if lce, ok := OwnedCapability[MVCCLifecycleEngine](w.engine); ok {
 		lce.ResumeLifecycle()
 	}
 }
 
 // SetLifecycleSchedule delegates lifecycle cadence updates when supported.
 func (w *WALEngine) SetLifecycleSchedule(interval time.Duration) error {
-	if scheduler, ok := w.engine.(MVCCLifecycleScheduleEngine); ok {
+	if scheduler, ok := OwnedCapability[MVCCLifecycleScheduleEngine](w.engine); ok {
 		return scheduler.SetLifecycleSchedule(interval)
 	}
 	return nil
@@ -259,7 +259,7 @@ func (w *WALEngine) SetLifecycleSchedule(interval time.Duration) error {
 
 // TopLifecycleDebtKeys delegates lifecycle debt inspection when supported.
 func (w *WALEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
-	if provider, ok := w.engine.(MVCCLifecycleDebtEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCLifecycleDebtEngine](w.engine); ok {
 		return provider.TopLifecycleDebtKeys(limit)
 	}
 	return nil
@@ -267,7 +267,7 @@ func (w *WALEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
 
 // GetNodeCurrentHead delegates node head lookup when supported.
 func (w *WALEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
-	if provider, ok := w.engine.(MVCCHeadEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCHeadEngine](w.engine); ok {
 		return provider.GetNodeCurrentHead(id)
 	}
 	return MVCCHead{}, ErrNotImplemented
@@ -275,7 +275,7 @@ func (w *WALEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 
 // GetEdgeCurrentHead delegates edge head lookup when supported.
 func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
-	if provider, ok := w.engine.(MVCCHeadEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCHeadEngine](w.engine); ok {
 		return provider.GetEdgeCurrentHead(id)
 	}
 	return MVCCHead{}, ErrNotImplemented
@@ -287,11 +287,11 @@ func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
 		engine: engine,
 		wal:    wal,
 	}
-	w.keyRegistry, _ = engine.(PropertyKeyRegistry)
+	w.keyRegistry, _ = OwnedCapability[PropertyKeyRegistry](engine)
 	// Give write-behind enabled engines the WAL so buffered commits can be
 	// logged durably before their ACK (OpBufferedCommit replay on crash).
 	if wal != nil {
-		if setter, ok := engine.(interface{ SetBufferedCommitWAL(*WAL) }); ok {
+		if setter, ok := OwnedCapability[interface{ SetBufferedCommitWAL(*WAL) }](engine); ok {
 			setter.SetBufferedCommitWAL(wal)
 		}
 	}
@@ -316,7 +316,7 @@ func (w *WALEngine) GetInnerEngine() Engine {
 // RecordMaterializedAccess delegates result-materialization access recording to
 // the underlying engine, if supported.
 func (w *WALEngine) RecordMaterializedAccess(entityID string) {
-	if recorder, ok := w.engine.(interface{ RecordMaterializedAccess(string) }); ok {
+	if recorder, ok := ReadCapabilityForEngine[interface{ RecordMaterializedAccess(string) }](w.engine); ok {
 		recorder.RecordMaterializedAccess(entityID)
 	}
 }
@@ -448,7 +448,7 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	// OpBufferedCommit entries while their data still lives only in the
 	// in-memory buffer: the snapshot reads committed Badger state, and the
 	// truncation would otherwise delete the only durable copy.
-	if flusher, ok := w.engine.(interface{ FlushWriteBehind() error }); ok {
+	if flusher, ok := OwnedCapability[interface{ FlushWriteBehind() error }](w.engine); ok {
 		if err := flusher.FlushWriteBehind(); err != nil {
 			return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
 		}
@@ -508,7 +508,7 @@ func (w *WALEngine) LastWriteTime() time.Time {
 
 // getDatabaseName extracts the database name from the wrapped engine if it's a NamespacedEngine.
 func (w *WALEngine) getDatabaseName() string {
-	if namespacedEngine, ok := w.engine.(*NamespacedEngine); ok {
+	if namespacedEngine, ok := ViewMetadataForEngine[*NamespacedEngine](w.engine); ok {
 		return namespacedEngine.Namespace()
 	}
 	// Fallback to default if engine is not namespaced
@@ -630,7 +630,7 @@ func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 			return fmt.Errorf("wal: failed to log update_embedding: %w", err)
 		}
 	}
-	sidecar, ok := w.engine.(EmbeddingSidecarUpdater)
+	sidecar, ok := OwnedCapability[EmbeddingSidecarUpdater](w.engine)
 	if !ok {
 		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", w.engine)
 	}
@@ -640,7 +640,7 @@ func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 // StreamParkedEmbeddingFailures forwards the sidecar failure scan to the
 // wrapped engine.
 func (w *WALEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
-	if streamer, ok := w.engine.(EmbeddingFailureStreamer); ok {
+	if streamer, ok := ReadCapabilityForEngine[EmbeddingFailureStreamer](w.engine); ok {
 		return streamer.StreamParkedEmbeddingFailures(ctx, visit)
 	}
 	return 0, nil
@@ -856,7 +856,7 @@ func (w *WALEngine) GetNode(id NodeID) (*Node, error) {
 // GetQueryNode delegates the query-row node read (QueryNodeReader) when the
 // wrapped engine supports it, else reads the full node.
 func (w *WALEngine) GetQueryNode(id NodeID) (*Node, error) {
-	if reader, ok := w.engine.(QueryNodeReader); ok {
+	if reader, ok := ReadCapabilityForEngine[QueryNodeReader](w.engine); ok {
 		return reader.GetQueryNode(id)
 	}
 	return w.engine.GetNode(id)
@@ -866,7 +866,7 @@ func (w *WALEngine) GetQueryNode(id NodeID) (*Node, error) {
 // wrapped engine supports it. The full read fallback preserves compatibility
 // for engines that do not expose the optional projection contract.
 func (w *WALEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	if reader, ok := w.engine.(NodeWithoutEmbeddingsReader); ok {
+	if reader, ok := ReadCapabilityForEngine[NodeWithoutEmbeddingsReader](w.engine); ok {
 		return reader.GetNodeWithoutEmbeddings(id)
 	}
 	node, err := w.engine.GetNode(id)
@@ -888,7 +888,7 @@ func (w *WALEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 // StreamNodesByLabelProjected delegates projected label scans to the underlying engine.
 func (w *WALEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	if reader, ok := w.engine.(ProjectedLabelNodeReader); ok {
+	if reader, ok := ReadCapabilityForEngine[ProjectedLabelNodeReader](w.engine); ok {
 		return reader.StreamNodesByLabelProjected(label, properties, visit)
 	}
 	return ErrNotImplemented
@@ -898,7 +898,7 @@ func (w *WALEngine) StreamNodesByLabelProjected(label string, properties []strin
 // engine when available. This keeps LIMIT + label paths fast without forcing
 // full node materialization.
 func (w *WALEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
-	if lookup, ok := w.engine.(LabelNodeIDLookupEngine); ok {
+	if lookup, ok := ReadCapabilityForEngine[LabelNodeIDLookupEngine](w.engine); ok {
 		return lookup.ForEachNodeIDByLabel(label, visit)
 	}
 	ids, err := NodeIDsByLabel(w.engine, label, 0)
@@ -946,7 +946,7 @@ func (w *WALEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 // BatchGetNodesWithoutEmbeddings forwards a batched embedding-free read
 // without materializing vectors in the WAL wrapper.
 func (w *WALEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error) {
-	reader, ok := w.engine.(BatchNodeWithoutEmbeddingsReader)
+	reader, ok := ReadCapabilityForEngine[BatchNodeWithoutEmbeddingsReader](w.engine)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -974,7 +974,7 @@ func (w *WALEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 // in reads (it only logs), so a forwarded call sees the same data as the
 // pair of single-direction methods.
 func (w *WALEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
-	if inner, ok := w.engine.(AdjacentEdgesEngine); ok {
+	if inner, ok := ReadCapabilityForEngine[AdjacentEdgesEngine](w.engine); ok {
 		return inner.GetAdjacentEdges(nodeID)
 	}
 	out, err := w.engine.GetOutgoingEdges(nodeID)
@@ -1035,7 +1035,7 @@ func (w *WALEngine) GetSchema() *SchemaManager {
 
 // GetSchemaForNamespace implements NamespaceSchemaProvider when the underlying engine supports it.
 func (w *WALEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
-	if p, ok := w.engine.(NamespaceSchemaProvider); ok {
+	if p, ok := ReadCapabilityForEngine[NamespaceSchemaProvider](w.engine); ok {
 		return p.GetSchemaForNamespace(namespace)
 	}
 	return w.engine.GetSchema()
@@ -1047,12 +1047,12 @@ func (w *WALEngine) NodeCount() (int64, error) {
 }
 
 func (w *WALEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := w.engine.(PrefixStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[PrefixStatsEngine](w.engine); ok {
 		return stats.NodeCountByPrefix(prefix)
 	}
 
 	// Correctness fallback (slower).
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](w.engine); ok {
 		var count int64
 		err := streamer.StreamNodes(context.Background(), func(node *Node) error {
 			if strings.HasPrefix(string(node.ID), prefix) {
@@ -1077,7 +1077,7 @@ func (w *WALEngine) NodeCountByPrefix(prefix string) (int64, error) {
 }
 
 func (w *WALEngine) NodeCountByLabel(label string) (int64, error) {
-	if stats, ok := w.engine.(LabelStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[LabelStatsEngine](w.engine); ok {
 		return stats.NodeCountByLabel(label)
 	}
 	nodes, err := w.engine.GetNodesByLabel(label)
@@ -1112,11 +1112,12 @@ func (w *WALEngine) NotePropertyKeysInNamespace(namespace string, properties map
 // PropertyKeyKnownInNamespace forwards the property-key lookup
 // (PropertyKeyRegistry).
 func (w *WALEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
-	return w.keyRegistry != nil && w.keyRegistry.PropertyKeyKnownInNamespace(namespace, name)
+	registry, ok := ReadCapabilityForEngine[NamespacePropertyKeyLookup](w.engine)
+	return ok && registry.PropertyKeyKnownInNamespace(namespace, name)
 }
 
 func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	if stats, ok := w.engine.(NamespaceLabelStatsProvider); ok {
+	if stats, ok := ReadCapabilityForEngine[NamespaceLabelStatsProvider](w.engine); ok {
 		return stats.NodeCountByLabelInNamespace(namespace, label)
 	}
 	nodes, err := w.engine.GetNodesByLabel(label)
@@ -1139,12 +1140,12 @@ func (w *WALEngine) EdgeCount() (int64, error) {
 }
 
 func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := w.engine.(PrefixStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[PrefixStatsEngine](w.engine); ok {
 		return stats.EdgeCountByPrefix(prefix)
 	}
 
 	// Correctness fallback (slower).
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](w.engine); ok {
 		var count int64
 		err := streamer.StreamEdges(context.Background(), func(edge *Edge) error {
 			if strings.HasPrefix(string(edge.ID), prefix) {
@@ -1187,7 +1188,7 @@ func (w *WALEngine) GetWAL() *WAL {
 
 // FindNodeNeedingEmbedding delegates to underlying engine if it supports it.
 func (w *WALEngine) FindNodeNeedingEmbedding() *Node {
-	if finder, ok := w.engine.(interface{ FindNodeNeedingEmbedding() *Node }); ok {
+	if finder, ok := ReadCapabilityForEngine[interface{ FindNodeNeedingEmbedding() *Node }](w.engine); ok {
 		return finder.FindNodeNeedingEmbedding()
 	}
 	return nil
@@ -1195,7 +1196,7 @@ func (w *WALEngine) FindNodeNeedingEmbedding() *Node {
 
 // RefreshPendingEmbeddingsIndex delegates to underlying engine if it supports it.
 func (w *WALEngine) RefreshPendingEmbeddingsIndex() int {
-	if mgr, ok := w.engine.(interface{ RefreshPendingEmbeddingsIndex() int }); ok {
+	if mgr, ok := OwnedCapability[interface{ RefreshPendingEmbeddingsIndex() int }](w.engine); ok {
 		return mgr.RefreshPendingEmbeddingsIndex()
 	}
 	return 0
@@ -1203,21 +1204,21 @@ func (w *WALEngine) RefreshPendingEmbeddingsIndex() int {
 
 // MarkNodeEmbedded delegates to underlying engine if it supports it.
 func (w *WALEngine) MarkNodeEmbedded(nodeID NodeID) {
-	if mgr, ok := w.engine.(interface{ MarkNodeEmbedded(NodeID) }); ok {
+	if mgr, ok := OwnedCapability[interface{ MarkNodeEmbedded(NodeID) }](w.engine); ok {
 		mgr.MarkNodeEmbedded(nodeID)
 	}
 }
 
 // AddToPendingEmbeddings delegates to underlying engine if it supports it.
 func (w *WALEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	if mgr, ok := w.engine.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
+	if mgr, ok := OwnedCapability[interface{ AddToPendingEmbeddings(NodeID) }](w.engine); ok {
 		mgr.AddToPendingEmbeddings(nodeID)
 	}
 }
 
 // PendingEmbeddingsCount delegates to underlying engine if it supports it.
 func (w *WALEngine) PendingEmbeddingsCount() int {
-	if mgr, ok := w.engine.(interface{ PendingEmbeddingsCount() int }); ok {
+	if mgr, ok := ReadCapabilityForEngine[interface{ PendingEmbeddingsCount() int }](w.engine); ok {
 		return mgr.PendingEmbeddingsCount()
 	}
 	return 0
@@ -1225,7 +1226,7 @@ func (w *WALEngine) PendingEmbeddingsCount() int {
 
 // IterateNodes delegates to underlying engine if it supports streaming iteration.
 func (w *WALEngine) IterateNodes(fn func(*Node) bool) error {
-	if iterator, ok := w.engine.(interface{ IterateNodes(func(*Node) bool) error }); ok {
+	if iterator, ok := ReadCapabilityForEngine[interface{ IterateNodes(func(*Node) bool) error }](w.engine); ok {
 		return iterator.IterateNodes(fn)
 	}
 	return fmt.Errorf("underlying engine does not support IterateNodes")
@@ -1276,7 +1277,7 @@ func (w *WALEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Context, pr
 
 // StreamEdges implements StreamingEngine.StreamEdges by delegating to the underlying engine.
 func (w *WALEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](w.engine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
 	// Fallback: load all edges
@@ -1297,7 +1298,7 @@ func (w *WALEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) 
 
 // StreamNodeChunks implements StreamingEngine.StreamNodeChunks by delegating to the underlying engine.
 func (w *WALEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
-	if streamer, ok := w.engine.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](w.engine); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, fn)
 	}
 	// Fallback: use StreamNodes to build chunks

@@ -13,7 +13,7 @@ func (n *NamespacedEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, erro
 // embeddingMetaOf is the node's embedding metadata from engine: its
 // metadata-only read when it has one, else the full node's.
 func embeddingMetaOf(engine Engine, id NodeID) (map[string]any, error) {
-	if reader, ok := engine.(NodeEmbeddingMetaReader); ok {
+	if reader, ok := ReadCapabilityForEngine[NodeEmbeddingMetaReader](engine); ok {
 		return reader.GetNodeEmbeddingMeta(id)
 	}
 	node, err := engine.GetNode(id)

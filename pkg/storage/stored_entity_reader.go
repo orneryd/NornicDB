@@ -43,21 +43,7 @@ type ScopedStoredEntityReader interface {
 // (composite and remote databases); integrity work then reads through the
 // Engine methods, all the engine can give.
 func StoredReader(engine Engine) (reader StoredEntityReader, ok bool) {
-	for engine != nil {
-		if reader, ok := engine.(StoredEntityReader); ok {
-			return reader, true
-		}
-		unwrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		inner := unwrapper.GetInnerEngine()
-		if inner == engine {
-			return nil, false
-		}
-		engine = inner
-	}
-	return nil, false
+	return ReadCapabilityForEngine[StoredEntityReader](engine)
 }
 
 // GetStoredNode reads node id for integrity work: the stored node when engine
@@ -249,24 +235,7 @@ func (w *WALEngine) StreamStoredEdgesByTypeInScope(ctx context.Context, scope, e
 // StoredReader does. ok is false at a stored reader without scoped scans
 // (NamespacedEngine) and at an engine that cannot read hidden entities.
 func storedScopeReader(engine Engine) (ScopedStoredEntityReader, bool) {
-	for engine != nil {
-		if scoped, ok := engine.(ScopedStoredEntityReader); ok {
-			return scoped, true
-		}
-		if _, ok := engine.(StoredEntityReader); ok {
-			return nil, false
-		}
-		unwrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		inner := unwrapper.GetInnerEngine()
-		if inner == engine {
-			return nil, false
-		}
-		engine = inner
-	}
-	return nil, false
+	return ReadCapabilityForEngine[ScopedStoredEntityReader](engine)
 }
 
 // getStoredNodesByLabelInScope is the scoped stored label scan of an inner
@@ -293,7 +262,7 @@ func streamStoredNodesByLabelProjectedInScope(engine Engine, scope, label string
 	if reader, ok := StoredReader(engine); ok {
 		return reader.StreamStoredNodesByLabelProjected(label, properties, visit)
 	}
-	if _, ok := engine.(ScopedLabelNodeReader); ok {
+	if _, ok := ReadCapabilityForEngine[ScopedLabelNodeReader](engine); ok {
 		return streamNodesByLabelProjectedInScope(engine, scope, label, properties, visit)
 	}
 	return streamNodesByLabelForValidation(engine, label, properties, visit)

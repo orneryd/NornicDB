@@ -32,7 +32,7 @@ func (b *BadgerEngine) CountPendingEmbeddingIDs(accept func([]byte) bool) int {
 // CountPendingEmbeddingIDs preserves the storage capability's fallback for
 // engines without a durable pending index, using selection's eligibility rule.
 func CountPendingEmbeddingIDs(engine Engine, accept func([]byte) bool) int {
-	if counter, ok := engine.(PendingEmbeddingCounter); ok {
+	if counter, ok := ReadCapabilityForEngine[PendingEmbeddingCounter](engine); ok {
 		return counter.CountPendingEmbeddingIDs(accept)
 	}
 	count := 0

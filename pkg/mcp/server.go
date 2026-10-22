@@ -766,7 +766,7 @@ func (s *Server) DefaultDatabaseName() string {
 	if s.db == nil {
 		return ""
 	}
-	if ns, ok := s.db.GetStorage().(*storage.NamespacedEngine); ok && ns != nil {
+	if ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](s.db.GetStorage()); ok && ns != nil {
 		return ns.Namespace()
 	}
 	return ""
@@ -833,7 +833,7 @@ func (s *Server) storageForContext(ctx context.Context) (storage.Engine, error) 
 		return store, nil
 	}
 	// If the DB's storage is namespaced, reuse its inner engine for other databases.
-	if ns, ok := store.(*storage.NamespacedEngine); ok {
+	if ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](store); ok {
 		if ns.Namespace() == dbName {
 			return store, nil
 		}

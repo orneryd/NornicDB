@@ -19,7 +19,7 @@ import (
 // transaction that reads by an indexed property doesn't scan the label.
 func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) []storage.NodeID {
 	ids := schema.PropertyIndexLookup(label, property, value)
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+	if wrapper, transactional := storage.ViewMetadataForEngine[*transactionStorageWrapper](engine); transactional {
 		return wrapper.tx.MergePendingPropertyMatches(ids, label, property, value)
 	}
 	return ids
@@ -36,7 +36,7 @@ func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, va
 	} else {
 		ids = idx.LookupPrefix(values...)
 	}
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+	if wrapper, transactional := storage.ViewMetadataForEngine[*transactionStorageWrapper](engine); transactional {
 		return wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values)
 	}
 	return ids
@@ -48,10 +48,10 @@ func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, va
 // that carry an indexed label. A committed lookup is complete only when an
 // indexed label covers the namespace; transaction reads use the merged scan.
 func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool {
-	if _, transactional := engine.(*transactionStorageWrapper); transactional {
+	if _, transactional := storage.ViewMetadataForEngine[*transactionStorageWrapper](engine); transactional {
 		return false
 	}
-	stats, supported := engine.(storage.LabelStatsEngine)
+	stats, supported := storage.ReadCapabilityForEngine[storage.LabelStatsEngine](engine)
 	if !supported || len(labels) == 0 {
 		return false
 	}
@@ -75,7 +75,7 @@ func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool 
 // transaction's merged label scan instead. A transaction that has written no
 // nodes reads the index, as an auto-commit statement does.
 func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional && wrapper.tx.HasPendingNodeMutations() {
+	if wrapper, transactional := storage.ViewMetadataForEngine[*transactionStorageWrapper](engine); transactional && wrapper.tx.HasPendingNodeMutations() {
 		return nil
 	}
 	return engine.GetSchema()
@@ -121,10 +121,10 @@ type transactionStorageWrapper struct {
 // stored a value under name (storage.PropertyKeyLookup), from the engine the
 // transaction reads through.
 func (w *transactionStorageWrapper) PropertyKeyKnown(name string) bool {
-	if lookup, ok := w.underlying.(storage.PropertyKeyLookup); ok {
+	if lookup, ok := storage.ReadCapabilityForEngine[storage.PropertyKeyLookup](w.underlying); ok {
 		return lookup.PropertyKeyKnown(name)
 	}
-	registry, ok := w.underlying.(storage.PropertyKeyRegistry)
+	registry, ok := storage.ReadCapabilityForEngine[storage.NamespacePropertyKeyLookup](w.underlying)
 	return ok && registry.PropertyKeyKnownInNamespace(w.namespace, name)
 }
 
@@ -550,7 +550,7 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabel(label string, visit fun
 		return nil
 	}
 	if !w.tx.HasPendingNodeMutations() {
-		if lookup, ok := w.underlying.(storage.LabelNodeIDLookupEngine); ok {
+		if lookup, ok := storage.ReadCapabilityForEngine[storage.LabelNodeIDLookupEngine](w.underlying); ok {
 			return lookup.ForEachNodeIDByLabel(label, visit)
 		}
 	}
@@ -665,7 +665,7 @@ func (w *transactionStorageWrapper) GetEdgesByType(edgeType string) ([]*storage.
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
-	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](w.underlying); ok {
 		nodes, err := provider.GetNodesByLabelVisibleAt(label, version)
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return nodes, err
@@ -676,7 +676,7 @@ func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, versi
 }
 
 func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
+	provider, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](w.underlying)
 	if !ok {
 		return nil, storage.ErrNotImplemented
 	}
@@ -691,7 +691,7 @@ func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(nodeID storage.Nod
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
+	provider, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](w.underlying)
 	if !ok {
 		return nil, storage.ErrNotImplemented
 	}
@@ -706,7 +706,7 @@ func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.Nod
 }
 
 func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](w.underlying); ok {
 		edges, err := provider.GetEdgesByTypeVisibleAt(edgeType, version)
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return edges, err
@@ -717,7 +717,7 @@ func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, ver
 }
 
 func (w *transactionStorageWrapper) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
+	provider, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](w.underlying)
 	if !ok {
 		return nil, storage.ErrNotImplemented
 	}
@@ -947,7 +947,7 @@ func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node)
 }
 
 func (w *transactionStorageWrapper) underlyingIsNamespaced() bool {
-	scoped, ok := w.underlying.(interface{ Namespace() string })
+	scoped, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](w.underlying)
 	return ok && w.namespace != "" && scoped.Namespace() == w.namespace
 }
 
@@ -990,9 +990,9 @@ func (w *transactionStorageWrapper) countersDescribeTransaction() bool {
 // NodeCountByLabel is the transaction-visible count of nodes with label.
 func (w *transactionStorageWrapper) NodeCountByLabel(label string) (int64, error) {
 	if w.countersDescribeTransaction() {
-		if counter, ok := w.underlying.(interface {
+		if counter, ok := storage.ReadCapabilityForEngine[interface {
 			NodeCountByLabel(string) (int64, error)
-		}); ok {
+		}](w.underlying); ok {
 			delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
 			if tracked || !w.tx.HasPendingNodeMutations() {
 				count, err := counter.NodeCountByLabel(label)

@@ -52,22 +52,8 @@ func EnsureNodeIDDatabasePrefixForEngine(engine Engine, id NodeID) NodeID {
 }
 
 func namespaceForEngine(engine Engine) string {
-	visited := make(map[Engine]bool)
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-
-		if provider, ok := engine.(interface{ Namespace() string }); ok {
-			if namespace := provider.Namespace(); namespace != "" {
-				return namespace
-			}
-		}
-
-		switch wrapper := engine.(type) {
-		case EngineUnwrapper:
-			engine = wrapper.GetInnerEngine()
-		default:
-			engine = nil
-		}
+	if provider, ok := ViewMetadataForEngine[interface{ Namespace() string }](engine); ok {
+		return provider.Namespace()
 	}
 	return ""
 }

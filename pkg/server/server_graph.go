@@ -1193,11 +1193,11 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 }
 
 func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
-	provider, ok := engine.(storage.MVCCVisibilityEngine)
+	provider, ok := storage.ReadCapabilityForEngine[storage.MVCCVisibilityEngine](engine)
 	if !ok {
 		return graphCollection{}, storage.ErrNotImplemented
 	}
-	indexed, ok := engine.(storage.MVCCIndexedVisibilityEngine)
+	indexed, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](engine)
 	if !ok {
 		return graphCollection{}, storage.ErrNotImplemented
 	}

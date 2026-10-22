@@ -67,7 +67,7 @@ func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID 
 		}
 		return nil, edges, err
 	}
-	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
+	if adjacent, ok := storage.ReadCapabilityForEngine[storage.AdjacentEdgesEngine](store); ok {
 		out, in, err := adjacent.GetAdjacentEdges(nodeID)
 		if err == nil {
 			err = ctx.Err()

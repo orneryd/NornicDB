@@ -129,7 +129,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		return nil, err
 	}
 
-	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
+	if temporalLookup, ok := storage.ReadCapabilityForEngine[storage.TemporalLookupEngine](e.storage); ok && !hasSnapshot {
 		node, err := temporalLookup.GetTemporalNodeAsOf(label, keyProp, keyValue, validFromProp, validToProp, asOf)
 		if err != nil {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
@@ -249,7 +249,7 @@ func temporalNodesByLabel(engine storage.Engine, label string, version storage.M
 	if !hasSnapshot {
 		return engine.GetNodesByLabel(label)
 	}
-	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := storage.ReadCapabilityForEngine[storage.MVCCIndexedVisibilityEngine](engine); ok {
 		return provider.GetNodesByLabelVisibleAt(label, version)
 	}
 	return nil, storage.ErrNotImplemented

@@ -467,7 +467,7 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor storage.NodeID) string {
 	db := e.executionDatabaseName(ctx)
 	if e.dbManager != nil && e.dbManager.IsCompositeDatabase(db) {
-		if composite, ok := e.storage.(*storage.CompositeEngine); ok {
+		if composite, ok := storage.ViewMetadataForEngine[*storage.CompositeEngine](e.storage); ok {
 			if constituent := composite.ConstituentDatabaseForNode(anchor); constituent != "" {
 				return constituent
 			}

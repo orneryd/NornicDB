@@ -302,7 +302,7 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	// CRITICAL: Only store prefixed IDs in nodeToConstituent (we always use prefixed storage now)
 	// Get the actual prefixed ID from the engine (NamespacedEngine returns unprefixed)
 	actualPrefixedID := nodeID
-	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+	if namespacedEngine, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 		// NamespacedEngine.CreateNode returns unprefixed, but we need the prefixed ID
 		// Reconstruct it by prefixing the returned ID
 		actualPrefixedID = namespacedEngine.prefixNodeID(nodeID)
@@ -463,7 +463,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	// Try to find the constituent for start node by checking all constituents
 	// (since we don't know which namespace the node belongs to)
 	for _, engine := range c.constituents {
-		if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+		if namespacedEngine, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 			prefixedStartID := namespacedEngine.prefixNodeID(edge.StartNode)
 			if constituent, found := c.nodeToConstituent[prefixedStartID]; found {
 				startConstituent = constituent
@@ -475,7 +475,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 
 	// Try to find the constituent for end node
 	for _, engine := range c.constituents {
-		if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
+		if namespacedEngine, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 			prefixedEndID := namespacedEngine.prefixNodeID(edge.EndNode)
 			if constituent, found := c.nodeToConstituent[prefixedEndID]; found {
 				endConstituent = constituent
@@ -708,7 +708,7 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 		if err != nil {
 			return err
 		}
-		reader, ok := engine.(ProjectedLabelNodeReader)
+		reader, ok := ReadCapabilityForEngine[ProjectedLabelNodeReader](engine)
 		if !ok {
 			return ErrNotImplemented
 		}
@@ -1493,7 +1493,7 @@ func (c *CompositeEngine) StreamNodes(ctx context.Context, fn func(node *Node) e
 			continue
 		}
 
-		if streamer, ok := engine.(StreamingEngine); ok {
+		if streamer, ok := ReadCapabilityForEngine[StreamingEngine](engine); ok {
 			if err := streamer.StreamNodes(ctx, fn); err != nil {
 				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
@@ -1525,7 +1525,7 @@ func (c *CompositeEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) e
 			continue
 		}
 
-		if streamer, ok := engine.(StreamingEngine); ok {
+		if streamer, ok := ReadCapabilityForEngine[StreamingEngine](engine); ok {
 			if err := streamer.StreamEdges(ctx, fn); err != nil {
 				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
@@ -1557,7 +1557,7 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 			continue
 		}
 
-		if streamer, ok := engine.(StreamingEngine); ok {
+		if streamer, ok := ReadCapabilityForEngine[StreamingEngine](engine); ok {
 			if err := streamer.StreamNodeChunks(ctx, chunkSize, fn); err != nil {
 				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}

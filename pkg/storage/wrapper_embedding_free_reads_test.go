@@ -291,8 +291,10 @@ func newEngineWithoutEmbeddingFreeReads(t *testing.T) Engine {
 func BenchmarkNamespacedWALBatchNodeReads(b *testing.B) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, badger.Close()) })
 	walLog, err := NewWAL(b.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, walLog.Close()) })
 	wal := NewWALEngine(badger, walLog)
 	tenant := NewNamespacedEngine(wal, "benchmark")
 

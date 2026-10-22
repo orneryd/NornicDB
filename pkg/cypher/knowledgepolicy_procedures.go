@@ -11,7 +11,7 @@ import (
 
 func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error) {
 	var transaction *storage.BadgerTransaction
-	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+	if wrapper, ok := storage.ViewMetadataForEngine[*transactionStorageWrapper](e.storage); ok {
 		transaction = wrapper.tx
 	} else if e.txContext != nil && e.txContext.active {
 		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)

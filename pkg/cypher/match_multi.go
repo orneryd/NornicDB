@@ -627,7 +627,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 ) error {
 	store := e.getStorage(ctx)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	checker, canCheckViewport := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](store)
 	hideSystemNodes := shouldHideSystemNodes(store)
 	visited := 0
 	var whereFilter FilterFunc
@@ -692,7 +692,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// proportional to the matching label, applies residual predicates before
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
-		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
+		if reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedLabelNodeReader](store); ok {
 			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
 				return nil
@@ -802,7 +802,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		}
 		return err
 	}
-	if streamer, ok := store.(storage.StreamingEngine); ok {
+	if streamer, ok := storage.ReadCapabilityForEngine[storage.StreamingEngine](store); ok {
 		err = streamer.StreamNodes(ctx, collect)
 		if err == storage.ErrIterationStopped {
 			err = nil
@@ -898,7 +898,7 @@ func shouldHideSystemNodes(engine storage.Engine) bool {
 	// Allow system nodes to be queried when the active database is system.
 	// For all other databases, hide internal nodes (labels starting with "_")
 	// to avoid leaking metadata into normal user queries.
-	if namespaced, ok := engine.(*storage.NamespacedEngine); ok {
+	if namespaced, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](engine); ok {
 		return namespaced.Namespace() != "system"
 	}
 	return true
@@ -1527,7 +1527,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)
-	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+	checker, _ := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](e.getStorage(ctx))
 	paths := e.traverseGraphSequential(ctx, match, []*storage.Node{start}, viewport, checker)
 	end, bound := nodes[match.EndNode.variable]
 	for _, path := range paths {

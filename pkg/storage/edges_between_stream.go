@@ -24,7 +24,7 @@ type EdgesBetweenMatcher interface {
 // MatchEdgesBetween is engine's EdgesBetweenMatcher, or GetEdgesBetween and
 // the same filter for an engine without one: both give the same edges.
 func MatchEdgesBetween(engine Engine, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
+	if matcher, ok := ReadCapabilityForEngine[EdgesBetweenMatcher](engine); ok {
 		return matcher.MatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
 	edges, err := engine.GetEdgesBetween(startID, endID)

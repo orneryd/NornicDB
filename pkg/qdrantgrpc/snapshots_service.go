@@ -265,7 +265,7 @@ func (s *SnapshotsService) CreateFull(ctx context.Context, req *qpb.CreateFullSn
 	snapshotPath := filepath.Join(fullSnapshotDir, snapshotName)
 
 	// Try to use BadgerEngine.Backup if available.
-	if badger, ok := s.baseStorage.(interface{ Backup(string) error }); ok {
+	if badger, ok := storage.OwnedCapability[interface{ Backup(string) error }](s.baseStorage); ok {
 		if err := badger.Backup(snapshotPath); err != nil {
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.Internal, localization.QdrantCreateBackupFailed(err))
 		}

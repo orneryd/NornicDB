@@ -126,7 +126,7 @@ func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, quer
 		return nil, err
 	}
 	namespace := ""
-	if scoped, ok := system.(interface{ Namespace() string }); ok {
+	if scoped, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](system); ok {
 		namespace = scoped.Namespace()
 	}
 	separator := ""

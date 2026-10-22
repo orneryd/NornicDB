@@ -7,7 +7,7 @@ import (
 )
 
 func (e *StorageExecutor) storageFast() (engine storage.Engine, idPrefix string) {
-	if ns, ok := e.storage.(*storage.NamespacedEngine); ok {
+	if ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](e.storage); ok {
 		// NamespacedEngine uses ":" as the separator today.
 		return ns.GetInnerEngine(), ns.Namespace() + ":"
 	}
