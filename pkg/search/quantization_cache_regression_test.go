@@ -73,7 +73,8 @@ func TestSearchCacheSeparatesQuantizationControlsBothOrders(t *testing.T) {
 				require.InDelta(t, wantA, first.Results[0].Score, 1e-6)
 				cached, err := svc.Search(context.Background(), "", query, &a)
 				require.NoError(t, err)
-				require.Same(t, first, cached, "prove the real result cache is active")
+				require.Equal(t, first, cached, "the real result cache preserves the response value")
+				require.NotSame(t, first, cached, "cache reads return caller-owned responses")
 				second, err := svc.Search(context.Background(), "", query, &b)
 				require.NoError(t, err)
 				require.Len(t, second.Results, 1)
@@ -81,7 +82,8 @@ func TestSearchCacheSeparatesQuantizationControlsBothOrders(t *testing.T) {
 				require.NotSame(t, first, second, "different ANN controls must execute their own public search")
 				again, err := svc.Search(context.Background(), "", query, &a)
 				require.NoError(t, err)
-				require.Same(t, first, again)
+				require.Equal(t, first, again)
+				require.NotSame(t, first, again)
 			})
 		}
 	}
