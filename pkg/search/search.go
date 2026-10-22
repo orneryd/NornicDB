@@ -2155,9 +2155,17 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
+	// Cancel the admitted base build before lifecycle cancellation wakes its
+	// NODE waiters. The lifecycle AfterFunc runs asynchronously; a woken waiter
+	// can otherwise release the build's gate before that callback cancels it.
+	s.baseBuildControlMu.Lock()
+	if s.baseBuildCancel != nil {
+		s.baseBuildCancel()
+	}
 	if s.lifecycleCancel != nil {
 		s.lifecycleCancel()
 	}
+	s.baseBuildControlMu.Unlock()
 	s.continuationMu.Lock()
 	if s.continuationRegistry != nil && s.continuationOwned {
 		s.continuationRegistry.Close()

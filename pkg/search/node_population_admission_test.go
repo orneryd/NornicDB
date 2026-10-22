@@ -249,6 +249,26 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 	}
 }
 
+func TestCloseCancelsAdmittedBaseBuildBeforeLifecycleWaiters(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	svc := configureNodeAdmissionService(t, engine, t.TempDir(), "v2", nil)
+	// Inspect the admitted operation's context at the instant shutdown wakes
+	// lifecycle waiters. This controls the ordering without depending on when
+	// context.AfterFunc's goroutine happens to run.
+	buildCtx, release, err := svc.ownBaseBuildContext(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(release)
+	cancelLifecycle := svc.lifecycleCancel
+	var buildErrorWhenWaitersWake error
+	svc.lifecycleCancel = func() {
+		buildErrorWhenWaitersWake = buildCtx.Err()
+		cancelLifecycle()
+	}
+	require.NoError(t, svc.Close())
+	require.ErrorIs(t, buildErrorWhenWaitersWake, context.Canceled)
+}
+
 func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
 	for _, closeOwner := range []bool{false, true} {
 		t.Run(fmt.Sprint("close=", closeOwner), func(t *testing.T) {
