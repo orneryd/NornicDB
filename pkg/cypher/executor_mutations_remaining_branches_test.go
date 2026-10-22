@@ -126,7 +126,7 @@ func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET n += props", getParamsFromContext(ctx))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// The source's type is known before the statement runs (Neo4j 5.26.30).
 	_, err = exec.Execute(ctx, "MATCH (n:P) WITH n, 1 AS props SET n += props", getParamsFromContext(ctx))
