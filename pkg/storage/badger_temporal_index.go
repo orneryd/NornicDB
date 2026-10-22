@@ -674,6 +674,14 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The index is replaced wholesale from the stored nodes: a maintenance
+	// write (beginMaintenanceWrite), so every write-behind commit
+	// acknowledged before it is applied first and no write runs across it.
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
 	// The index is cleared and refilled below: until that finishes no
 	// constraint's index may be trusted to be complete.
 	b.temporalIndexReady.Store(false)
@@ -692,10 +700,12 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		return err
 	}
 	asOf := time.Now().UTC()
-	if err := StreamStoredNodes(ctx, b, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+	// The store's own nodes, every one (no decay filter): StreamStoredNodes on b.
+	if err := b.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		maintenancePause(pauseTemporalRebuildNode)
 		return b.withUpdate(func(txn *badger.Txn) error {
 			return b.rebuildTemporalNodeInTxn(txn, node, asOf)
 		})

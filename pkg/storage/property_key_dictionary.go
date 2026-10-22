@@ -432,6 +432,21 @@ func (d *propertyKeyDictionary) markPersisted(drain propKeyTxnDrain) {
 
 // discardTxnCounters drops staged counter state for a rolled-back txn.
 // Safe to call multiple times.
+// moveTxnCounters re-stages from's counters and pending entries against to,
+// a Badger transaction just opened (nothing is staged against it yet).
+func (d *propertyKeyDictionary) moveTxnCounters(from, to *badger.Txn) {
+	d.txnMu.Lock()
+	if state, ok := d.txnCounters[from]; ok {
+		delete(d.txnCounters, from)
+		d.txnCounters[to] = state
+	}
+	if pending, ok := d.txnPendingForward[from]; ok {
+		delete(d.txnPendingForward, from)
+		d.txnPendingForward[to] = pending
+	}
+	d.txnMu.Unlock()
+}
+
 func (d *propertyKeyDictionary) discardTxnCounters(txn *badger.Txn) {
 	d.txnMu.Lock()
 	delete(d.txnCounters, txn)

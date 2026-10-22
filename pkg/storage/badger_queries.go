@@ -4,6 +4,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -1645,16 +1646,56 @@ func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID
 
 // selfHealEdgeBetweenIndexes repairs lookup indexes discovered through a
 // fallback read, preventing ready-marker drift from becoming a correctness bug.
+// betweenSelfHealHook lets storage tests interpose between a fallback read
+// and the self-heal it starts; production leaves it nil.
+var (
+	betweenSelfHealHook   func()
+	betweenSelfHealHookMu sync.RWMutex
+)
+
+func setBetweenSelfHealHook(hook func()) (restore func()) {
+	betweenSelfHealHookMu.Lock()
+	previous := betweenSelfHealHook
+	betweenSelfHealHook = hook
+	betweenSelfHealHookMu.Unlock()
+	return func() {
+		betweenSelfHealHookMu.Lock()
+		betweenSelfHealHook = previous
+		betweenSelfHealHookMu.Unlock()
+	}
+}
+
 func (b *BadgerEngine) selfHealEdgeBetweenIndexes(edges []*Edge) error {
 	if len(edges) > edgeBetweenSelfHealMaxEdges {
 		edges = edges[:edgeBetweenSelfHealMaxEdges]
 	}
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	betweenSelfHealHookMu.RLock()
+	hook := betweenSelfHealHook
+	betweenSelfHealHookMu.RUnlock()
+	if hook != nil {
+		hook()
+	}
+	// The fallback read ran before: a relationship may have been deleted or
+	// moved since. The heal is ordered after the relationships' acknowledged
+	// write-behind commits and writes only what is stored now, read again in
+	// its own transaction.
+	var e writtenEntities
+	for _, edge := range edges {
+		e.edge(edge)
+	}
+	err := b.withOrderedEntityUpdate(e, func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue
 			}
-			if err := b.writeEdgeBetweenIndexesInTxn(txn, edge); err != nil {
+			current, err := b.edgeFromTxn(txn, edge.ID)
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := b.writeEdgeBetweenIndexesInTxn(txn, current); err != nil {
 				return err
 			}
 		}

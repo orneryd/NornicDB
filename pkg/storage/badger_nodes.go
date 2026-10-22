@@ -31,11 +31,11 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return "", barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if node == nil {
 		return "", ErrInvalidData
 	}
@@ -72,6 +72,17 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	var image *Node
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		if orderErr != nil {
+			releaseUniqueLocks()
+			return "", orderErr
+		}
+		defer order.release()
+	}
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -389,11 +400,11 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -431,6 +442,16 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	var embeddingsToPersist [][]float32
 	var written []byte
 	var image *Node
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -683,11 +704,11 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -702,6 +723,15 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		if err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {
+			return err
+		}
+		defer order.release()
+	}
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {

@@ -516,6 +516,10 @@ func (b *BadgerEngine) ensureEdgeTypeCounts() error {
 	if err := b.foldAllEdgeTypeCountDeltas(); err != nil {
 		return err
 	}
+	// Verification and rebuild rewrite the base keys: they hold the count
+	// lock, as every rewrite of them does (rebuildAuthoritativeEdgeTypeCountsLocked).
+	b.edgeTypeCountWriteMu.Lock()
+	defer b.edgeTypeCountWriteMu.Unlock()
 	ready, err := b.edgeTypeCountReady()
 	if err != nil {
 		return err

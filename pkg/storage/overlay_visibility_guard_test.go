@@ -18,7 +18,9 @@ import (
 // write-behind buffer's bodies without overlay_visibility.go, each for a
 // reason that is not a read.
 var overlayBodyReadersOutsideComposition = map[string]string{
-	"BadgerEngine.replayWriteBehind": "the flush: lands a drained generation's commits in storage",
+	"BadgerEngine.replayWriteBehind":       "the flush: lands a drained generation's commits in storage",
+	"BadgerEngine.FlushWriteBehind":        "captures the generations rotated before the flush, to wait for their delivery",
+	"BadgerTransaction.settleBufferedNode": "asks whether the buffer holds the node, to land it first",
 }
 
 // Every read that merges the write-behind overlay with storage takes the

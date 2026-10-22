@@ -19,6 +19,22 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		return false, nil
 	}
 
+	if b.writeBehind != nil {
+		// Its notifications are delivered once the order is released.
+		defer b.completeCommitNotification(b.holdPublication())
+		// The rewrite is ordered after the acknowledged commits of the
+		// entity (orderAfterBufferedCommits): it rescores the newest body.
+		entities := writtenEntities{nodes: []NodeID{NodeID(entityID)}}
+		if isEdge {
+			entities = writtenEntities{edges: []EdgeID{EdgeID(entityID)}}
+		}
+		var order orderHold
+		_, err := b.orderAfterBufferedCommits(&order, entities)
+		if err != nil {
+			return false, err
+		}
+		defer order.release()
+	}
 	becameSuppressed := false
 	var nodeChanged *Node
 	var edgeChanged *Edge

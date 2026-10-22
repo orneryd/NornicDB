@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -40,18 +41,25 @@ type storedRecordScan struct {
 // batches. visit returns how many writes it made and whether the record
 // counts as processed; the scan returns the processed count and logs it
 // every scan.logEvery records.
+//
+// The rebuild runs while the engine serves writes, and every write keeps its
+// own index entries. A chunk's transaction tracks the records it reads: one
+// that a write committed over in the meantime fails with a conflict, writes
+// nothing, and is read again, halved so it finishes ahead of further writes.
 func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan storedRecordScan, visit func(txn *badger.Txn, key, value []byte) (writes int, processed bool, err error)) (int, error) {
 	prefix := scan.keyPrefix
 	if len(prefix) == 0 {
 		prefix = []byte{scan.prefix}
 	}
 	processed := 0
+	batchSize := scan.batchSize
 	var cursor []byte
 	for {
 		if err := ctx.Err(); err != nil {
 			return processed, err
 		}
-		done := false
+		counted := 0
+		var next []byte
 		err := b.withUpdate(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			defer it.Close()
@@ -60,41 +68,42 @@ func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan sto
 				start = prefix
 			}
 			writes := 0
-			for it.Seek(start); it.ValidForPrefix(prefix); it.Next() {
+			for it.Seek(start); it.ValidForPrefix(prefix) && writes < batchSize; it.Next() {
 				item := it.Item()
 				key := item.KeyCopy(nil)
 				if err := item.Value(func(value []byte) error {
-					n, counted, err := visit(txn, key, value)
+					n, ok, err := visit(txn, key, value)
 					writes += n
-					if counted {
-						processed++
-						if scan.log != nil && scan.logEvery > 0 && processed%scan.logEvery == 0 {
-							scan.log.Info(scan.message, scan.unit, processed)
-						}
+					if ok {
+						counted++
 					}
 					return err
 				}); err != nil {
 					return err
 				}
-				if writes >= scan.batchSize {
-					it.Next()
-					if it.ValidForPrefix(prefix) {
-						cursor = append([]byte(nil), it.Item().Key()...)
-					} else {
-						done = true
-					}
-					return nil
-				}
 			}
-			done = true
+			if it.ValidForPrefix(prefix) {
+				next = it.Item().KeyCopy(nil)
+			}
+			maintenancePause(pauseIndexBackfillChunk)
 			return nil
 		})
+		if errors.Is(err, badger.ErrConflict) {
+			batchSize = max(1, batchSize/2)
+			continue
+		}
 		if err != nil {
 			return processed, err
 		}
-		if done {
+		batchSize = scan.batchSize
+		if scan.log != nil && scan.logEvery > 0 && (processed+counted)/scan.logEvery > processed/scan.logEvery {
+			scan.log.Info(scan.message, scan.unit, processed+counted)
+		}
+		processed += counted
+		if next == nil {
 			return processed, nil
 		}
+		cursor = next
 	}
 }
 

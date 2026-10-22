@@ -401,6 +401,18 @@ func (b *BadgerEngine) adjCacheInvalidateForEdge(edge *Edge) {
 	b.adjCacheMu.Unlock()
 }
 
+// adjCacheInvalidateNode drops one node's cached adjacency, both directions.
+func (b *BadgerEngine) adjCacheInvalidateNode(id NodeID) {
+	if id == "" {
+		return
+	}
+	b.adjCacheMu.Lock()
+	b.adjCacheGen.advance()
+	delete(b.outgoingAdjCache, id)
+	delete(b.incomingAdjCache, id)
+	b.adjCacheMu.Unlock()
+}
+
 // adjCacheInvalidateAll clears the entire adjacency cache. Used by edge
 // deletion paths that can't cheaply enumerate the affected node IDs. An
 // empty cache is left as it is: a commit that deletes many edges calls this

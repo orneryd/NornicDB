@@ -202,6 +202,19 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 func (b *BadgerEngine) Close() error {
 	b.closeMu.Lock()
 	defer b.closeMu.Unlock()
+	// Reject new writers first, then wait for every admitted one to finish,
+	// so the final drain below meets every acknowledged commit: a listener
+	// it delivers that writes again observes ErrStorageClosed instead of
+	// being acknowledged into a generation nothing drains.
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil
+	}
+	b.closing = true
+	b.mu.Unlock()
+	b.writeBarrier.Lock()
+	b.writeBarrier.Unlock()
 	// Stop the background backfills before taking the write barrier: they
 	// write through withUpdate and must not be left waiting on a barrier
 	// this goroutine holds while it waits for them to stop.
@@ -219,6 +232,9 @@ func (b *BadgerEngine) Close() error {
 		}
 		b.writeBehind.Close()
 	}
+	// The suppressions the deletes so far ended are deleted before the store
+	// closes (forgetManualSuppression).
+	b.endSuppressions()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
@@ -259,6 +275,9 @@ func (b *BadgerEngine) Close() error {
 	// new notifications can start: BulkDeleteNodes adds them under mu only
 	// when the engine is not closed.
 	b.txnWG.Wait()
+	// Deliver what is ready but undelivered (a replay queues its events for
+	// whoever retired it) before waiting for every reserved notification.
+	b.drainCommitNotifications()
 	b.notifyWG.Wait()
 
 	// Fold any derived-count deltas the last commits left behind so a clean

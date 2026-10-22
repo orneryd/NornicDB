@@ -113,25 +113,63 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 	if engine == nil || schema == nil {
 		return nil
 	}
+	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
 	for _, c := range constraints {
 		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
 			continue
 		}
-		empty, err := labelHasNoNodes(engine, c.Label)
-		if err != nil {
-			return err
-		}
-		if !empty {
-			badgerEngine, ok := UnwrapEngine(engine).(*BadgerEngine)
-			if !ok {
-				schema.markTemporalIndexCreated(c, false)
-				continue
-			}
-			if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+		if badgerEngine == nil {
+			empty, err := labelHasNoNodes(engine, c.Label)
+			if err != nil {
 				return err
 			}
+			schema.markTemporalIndexCreated(c, empty)
+			continue
 		}
-		schema.markTemporalIndexCreated(c, true)
+		if err := badgerEngine.markNewTemporalConstraint(engine, schema, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// markNewTemporalConstraint decides whether the label has nodes, writes
+// their history entries, and records the index complete, as one maintenance
+// write over the engine's database (beginMaintenanceWrite): every
+// write-behind commit acknowledged before it is applied first, so a node of
+// the label still in the buffer is seen and backfilled, and no write runs
+// across it.
+func (b *BadgerEngine) markNewTemporalConstraint(engine Engine, schema *SchemaManager, c Constraint) error {
+	lifecycle, err := b.beginMaintenanceWrite(engineScope(engine))
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
+	empty, err := labelHasNoNodes(engine, c.Label)
+	if err != nil {
+		return err
+	}
+	if !empty {
+		if err := b.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+			return err
+		}
+	}
+	schema.markTemporalIndexCreated(c, true)
+	return nil
+}
+
+// engineScope is the database a scoped wrapper of the engine serves, or nil
+// (the whole store) for an unscoped engine.
+func engineScope(engine Engine) []string {
+	for current := engine; current != nil; {
+		if scoped, ok := current.(interface{ Namespace() string }); ok {
+			return []string{scoped.Namespace()}
+		}
+		wrapper, ok := current.(EngineUnwrapper)
+		if !ok {
+			return nil
+		}
+		current = wrapper.GetInnerEngine()
 	}
 	return nil
 }

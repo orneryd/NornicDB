@@ -120,11 +120,11 @@ func TestWriteBehindMemoryReservationSurvivesReplayFailure(t *testing.T) {
 	defer buffer.Close()
 	buffer.AppendCommit(bufferedCommit{memoryLease: lease, ops: []Operation{{}}})
 	buffer.rotate()
-	buffer.drainOne()
+	buffer.drainOne(true, nil)
 	require.ErrorIs(t, buffer.LastErr(), applyErr)
 	require.EqualValues(t, 1024, policy.Reserved(), "failed replay retains its payload")
 	applyErr = nil
-	buffer.drainOne()
+	buffer.drainOne(true, nil)
 	require.NoError(t, buffer.LastErr())
 	require.Zero(t, policy.Reserved(), "successful retirement releases the payload")
 }

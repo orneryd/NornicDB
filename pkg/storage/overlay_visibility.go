@@ -91,6 +91,25 @@ func (b *BadgerEngine) bufferedAdjacency(w *WriteBehindBuffer, v readVisibility,
 	return b.visibleBufferedEdges(v, live), suppressed, nodeDeleted
 }
 
+// commitsSince visits the operations of each commit the buffer acknowledged
+// after since and has not applied yet, newest first within a generation,
+// until visit returns false.
+func (w *WriteBehindBuffer) commitsSince(since MVCCVersion, visit func(MVCCVersion, []Operation) bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	for _, buf := range append([]*CommitBuffer{w.active}, w.draining...) {
+		for i := len(buf.commits) - 1; i >= 0; i-- {
+			c := &buf.commits[i]
+			if c.version.Compare(since) <= 0 {
+				break
+			}
+			if !visit(c.version, c.ops) {
+				return
+			}
+		}
+	}
+}
+
 // bufferedLiveAdjacency is the overlay's live adjacency index of id for a
 // read with visibility v, without the buffer's global tombstones.
 func (b *BadgerEngine) bufferedLiveAdjacency(w *WriteBehindBuffer, v readVisibility, id NodeID, outgoing bool) []*Edge {

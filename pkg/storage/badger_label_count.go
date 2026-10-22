@@ -547,6 +547,10 @@ func (b *BadgerEngine) ensureLabelCounts() error {
 	if err := b.foldAllLabelCountDeltas(); err != nil {
 		return err
 	}
+	// Verification and rebuild rewrite the base keys: they hold the count
+	// lock, as every rewrite of them does (rebuildAuthoritativeLabelCountsLocked).
+	b.labelCountWriteMu.Lock()
+	defer b.labelCountWriteMu.Unlock()
 	ready, err := b.labelCountReady()
 	if err != nil {
 		return err

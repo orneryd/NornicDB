@@ -1027,11 +1027,27 @@ func (b *BadgerEngine) latestEdgeMVCCVersionInTxn(txn *badger.Txn, id EdgeID) (m
 	return b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, maxMVCCVersion())
 }
 
+// withOrderedEntityUpdate is withUpdate for a write of e's MVCC records,
+// ordered after every write-behind commit of them acknowledged before it
+// (orderAfterBufferedCommits), so no replay lands over it; the drained
+// commits' notifications are delivered once the order is released.
+func (b *BadgerEngine) withOrderedEntityUpdate(e writtenEntities, fn func(txn *badger.Txn) error) error {
+	if b.writeBehind != nil {
+		var order orderHold
+		if _, err := b.orderAfterBufferedCommits(&order, e); err != nil {
+			return err
+		}
+		defer b.drainCommitNotifications()
+		defer order.release()
+	}
+	return b.withUpdate(fn)
+}
+
 func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(writtenEntities{nodes: []NodeID{node.ID}}, func(txn *badger.Txn) error {
 		if err := b.writeNodeMVCCVersionInTxn(txn, node, version); err != nil {
 			return err
 		}
@@ -1040,7 +1056,7 @@ func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error 
 }
 
 func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(writtenEntities{nodes: []NodeID{id}}, func(txn *badger.Txn) error {
 		if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
 			return err
 		}
@@ -1052,7 +1068,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 	if edge == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(writtenEntities{edges: []EdgeID{edge.ID}}, func(txn *badger.Txn) error {
 		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
 			return err
 		}
@@ -1061,7 +1077,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 }
 
 func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(writtenEntities{edges: []EdgeID{id}}, func(txn *badger.Txn) error {
 		if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
 			return err
 		}
@@ -1070,13 +1086,13 @@ func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error
 }
 
 func (b *BadgerEngine) UpdateNodeCurrentHead(id NodeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(writtenEntities{nodes: []NodeID{id}}, func(txn *badger.Txn) error {
 		return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
 	})
 }
 
 func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(writtenEntities{edges: []EdgeID{id}}, func(txn *badger.Txn) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
 	})
 }
@@ -1532,10 +1548,19 @@ func nextScanStart(key []byte) []byte {
 	return append(append([]byte(nil), key...), 0x00)
 }
 
+// RebuildMVCCHeads rebuilds every MVCC head from the stored versions and
+// bodies. It replaces the heads wholesale, so it runs as a maintenance write
+// (beginMaintenanceWrite): no write runs across it, and every write-behind
+// commit acknowledged before it is applied first.
 func (b *BadgerEngine) RebuildMVCCHeads(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
 	if err := b.clearBadgerPrefix(ctx, prefixMVCCNodeHead); err != nil {
 		return err
 	}
@@ -2082,7 +2107,11 @@ func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOpti
 				backoff := 50 * time.Microsecond
 				for {
 					var keyDeleted int64
-					err = b.withUpdate(func(update *badger.Txn) error {
+					// Ordered after the entity's acknowledged write-behind commits:
+					// one not yet applied is drained first, so the prune reads the
+					// entity's latest head (a tombstone it would reclaim may have
+					// been written over), and none lands over it afterwards.
+					err = b.withOrderedEntityUpdate(b.mvccLogicalEntities(previous), func(update *badger.Txn) error {
 						var pruneErr error
 						keyDeleted, pruneErr = b.pruneMVCCKeyspaceInTxn(ctx, update, previous, effectiveOpts, false)
 						return pruneErr
