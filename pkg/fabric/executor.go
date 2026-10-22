@@ -7,10 +7,13 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -31,6 +34,24 @@ type FabricExecutor struct {
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
 	union                  UnionContract
+	codec                  RemoteValueCodec
+}
+
+// RemoteValueCodec is the Cypher executor's view of the values a remote
+// participant exchanges with it, for Bolt and HTTP alike. Values reach a
+// participant as statement parameters, which the remote transport sends as
+// their Cypher types (storage.RemoteParameterValue).
+type RemoteValueCodec struct {
+	// Import returns an error for a row value no remote participant may
+	// import, such as a node (Neo4j's 22N16).
+	Import func(value interface{}) error
+	// Decode returns the value a remote participant's result value denotes.
+	Decode func(value interface{}) (interface{}, error)
+}
+
+// SetRemoteValueCodec installs the Cypher executor's remote value codec.
+func (e *FabricExecutor) SetRemoteValueCodec(codec RemoteValueCodec) {
+	e.codec = codec
 }
 
 // UnionContract is the Cypher executor's UNION semantics for the branches
@@ -155,12 +176,28 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if e.remote == nil {
 			return nil, 0, fmt.Errorf("remote executor not configured")
 		}
-		res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
+		query, remoteParams, scoped, err := e.remoteImportStatement(f, params, recordBindings)
 		if err != nil {
 			return nil, 0, err
 		}
+		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken)
+		if err != nil {
+			return nil, 0, err
+		}
+		if res != nil && len(scoped) > 0 {
+			dropResultColumns(res, scoped)
+		}
 		if res != nil && len(res.Columns) == 0 {
 			res.Columns = inferReturnColumnsFromQuery(f.Query)
+		}
+		if res != nil && e.codec.Decode != nil {
+			for _, row := range res.Rows {
+				for i, value := range row {
+					if row[i], err = e.codec.Decode(value); err != nil {
+						return nil, 0, err
+					}
+				}
+			}
 		}
 		return res, 128, nil
 
@@ -196,8 +233,22 @@ func (e *FabricExecutor) executeRows(ctx context.Context, tx *FabricTransaction,
 		if res == nil {
 			return nil, wrapPipelineIterator(ctx, NewResultRowIterator(nil), 64), nil
 		}
-		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), 64), nil
+		rows := wrapPipelineIterator(ctx, NewResultRowIterator(res), 64)
+		if res.RowWrapper {
+			rows = rowWrapperRows{rows}
+		}
+		return res.Columns, rows, nil
 	}
+}
+
+// rowWrapperRows carries the RowWrapper mark of a result through the row
+// iterators APPLY inputs and UNION branches are read with.
+type rowWrapperRows struct{ RowIterator }
+
+// isRowWrapperRows reports whether it is the rows of a RowWrapper result.
+func isRowWrapperRows(it RowIterator) bool {
+	_, wrapper := it.(rowWrapperRows)
+	return wrapper
 }
 
 func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) RowIterator {
@@ -275,8 +326,9 @@ func materializeIterator(columns []string, it RowIterator) (*ResultStream, error
 		return nil, err
 	}
 	return &ResultStream{
-		Columns: append([]string(nil), columns...),
-		Rows:    rows,
+		Columns:    append([]string(nil), columns...),
+		Rows:       rows,
+		RowWrapper: isRowWrapperRows(it),
 	}, nil
 }
 
@@ -294,33 +346,13 @@ func inferReturnColumnsFromQuery(query string) []string {
 	// Strip top-level ORDER BY / SKIP / LIMIT tails.
 	end := len(clause)
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(clause); i++ {
-		ch := clause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := clause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -396,33 +428,13 @@ func splitTopLevelCSV(s string) []string {
 	var parts []string
 	start := 0
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := s[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -472,6 +484,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	if err != nil {
 		return nil, fmt.Errorf("apply input failed: %w", err)
 	}
+	inputWrapper := isRowWrapperRows(inputIter)
 	if inputIter == nil {
 		inputIter = NewResultRowIterator(nil)
 	}
@@ -489,7 +502,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	// The remaining paths execute correlated CALL bodies per outer record. Their
 	// lookup rewrites do not apply to the outer continuation above, nor to
 	// OPTIONAL or unit CALL, whose input rows the per-row merge below keeps.
-	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil && !f.Optional && !f.Unit {
+	if execFrag, ok := f.Inner.(*FragmentExec); ok && execFrag.Graph == nil && !f.Optional && !f.Unit && !f.Scoped {
 		// Streaming fast path: avoid full outer materialization when correlated
 		// batched row lookup rewrite can consume the iterator directly.
 		if streamed, handled, err := e.tryExecuteApplyBatchedLookupRowsIter(ctx, tx, inputCols, inputIter, execFrag, params, authToken); handled {
@@ -545,9 +558,12 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	for inputIter.Next() {
 		inputRow := inputIter.Row()
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
+		if f.Scoped {
+			mergedBind = scopedBindings(mergedBind, f.Scope)
+		}
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
-		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && !f.Optional && !f.Unit && execFrag.Graph == nil {
+		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && !f.Optional && !f.Unit && !f.Scoped && execFrag.Graph == nil {
 			if cols, projected, ok := projectSimpleReturnFromRow(execFrag.Query, inputCols, inputRow); ok {
 				if len(result.Columns) == 0 {
 					result.Columns = cols
@@ -585,8 +601,16 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		if len(result.Columns) == 0 {
 			if f.Projection {
 				result.Columns = append([]string(nil), innerResult.Columns...)
+				result.RowWrapper = innerResult.RowWrapper
 			} else {
-				result.Columns = combineColumns(inputCols, innerResult.Columns)
+				outerCols, innerCols := inputCols, innerResult.Columns
+				if inputWrapper {
+					outerCols = nil
+				}
+				if innerResult.RowWrapper {
+					innerCols = nil
+				}
+				result.Columns = combineColumns(outerCols, innerCols)
 			}
 		}
 		if len(innerResult.Rows) == 0 {
@@ -629,6 +653,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
+	keysParam, keyAlias := freeName("__fabric_apply_keys", trimmed, params), freeName("__fabric_apply_key", trimmed)
 	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
@@ -685,7 +710,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	rewritten.WriteString(matchVar)
 	rewritten.WriteByte('.')
 	rewritten.WriteString(matchProp)
-	rewritten.WriteString(" IN $__fabric_apply_keys")
+	rewritten.WriteString(" IN $" + keysParam)
 	if otherWhere != "" {
 		rewritten.WriteString(" AND ")
 		rewritten.WriteString(otherWhere)
@@ -694,7 +719,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	rewritten.WriteString(matchVar)
 	rewritten.WriteByte('.')
 	rewritten.WriteString(matchProp)
-	rewritten.WriteString(" AS __fabric_apply_key")
+	rewritten.WriteString(" AS " + keyAlias)
 	for _, item := range returnItems {
 		rewritten.WriteString(", ")
 		rewritten.WriteString(matchVar)
@@ -743,7 +768,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 			for k, v := range params {
 				batchParams[k] = v
 			}
-			batchParams["__fabric_apply_keys"] = keys
+			batchParams[keysParam] = keys
 
 			batchFrag := *inner
 			batchFrag.Query = lookupQuery
@@ -753,7 +778,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 			}
 
 			batchIdx := buildColumnIndex(batchResult.Columns)
-			keyColIdx, okKey := batchIdx["__fabric_apply_key"]
+			keyColIdx, okKey := batchIdx[keyAlias]
 			if !okKey {
 				return fmt.Errorf("batched APPLY row lookup produced unexpected columns: %v", batchResult.Columns)
 			}
@@ -865,6 +890,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
+	keysParam, keyAlias := freeName("__fabric_apply_keys", trimmed, params), freeName("__fabric_apply_key", trimmed)
 	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
@@ -960,7 +986,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 			rewritten.WriteString(matchVar)
 			rewritten.WriteByte('.')
 			rewritten.WriteString(matchProp)
-			rewritten.WriteString(" IN $__fabric_apply_keys")
+			rewritten.WriteString(" IN $" + keysParam)
 			if otherWhere != "" {
 				rewritten.WriteString(" AND ")
 				rewritten.WriteString(otherWhere)
@@ -969,7 +995,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 			rewritten.WriteString(matchVar)
 			rewritten.WriteByte('.')
 			rewritten.WriteString(matchProp)
-			rewritten.WriteString(" AS __fabric_apply_key, collect(")
+			rewritten.WriteString(" AS " + keyAlias + ", collect(")
 			rewritten.WriteString(collectExp)
 			rewritten.WriteString(") AS ")
 			rewritten.WriteString(outAlias)
@@ -978,7 +1004,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 			for k, v := range params {
 				batchParams[k] = v
 			}
-			batchParams["__fabric_apply_keys"] = chunk
+			batchParams[keysParam] = chunk
 
 			batchFrag := *inner
 			batchFrag.Query = rewritten.String()
@@ -993,7 +1019,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 			}
 
 			batchIdx := buildColumnIndex(batchResult.Columns)
-			keyColIdx, okKey := batchIdx["__fabric_apply_key"]
+			keyColIdx, okKey := batchIdx[keyAlias]
 			valColIdx, okVal := batchIdx[outAlias]
 			if !okKey || !okVal {
 				select {
@@ -1062,6 +1088,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
+	keysParam, keyAlias := freeName("__fabric_apply_keys", trimmed, params), freeName("__fabric_apply_key", trimmed)
 	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
@@ -1158,7 +1185,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 			rewritten.WriteString(matchVar)
 			rewritten.WriteByte('.')
 			rewritten.WriteString(matchProp)
-			rewritten.WriteString(" IN $__fabric_apply_keys")
+			rewritten.WriteString(" IN $" + keysParam)
 			if otherWhere != "" {
 				rewritten.WriteString(" AND ")
 				rewritten.WriteString(otherWhere)
@@ -1167,7 +1194,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 			rewritten.WriteString(matchVar)
 			rewritten.WriteByte('.')
 			rewritten.WriteString(matchProp)
-			rewritten.WriteString(" AS __fabric_apply_key")
+			rewritten.WriteString(" AS " + keyAlias)
 			for _, item := range countItems {
 				rewritten.WriteString(", ")
 				rewritten.WriteString(item.expr)
@@ -1178,7 +1205,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 			for k, v := range params {
 				batchParams[k] = v
 			}
-			batchParams["__fabric_apply_keys"] = chunk
+			batchParams[keysParam] = chunk
 
 			batchFrag := *inner
 			batchFrag.Query = rewritten.String()
@@ -1193,7 +1220,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 			}
 
 			batchIdx := buildColumnIndex(batchResult.Columns)
-			keyColIdx, ok := batchIdx["__fabric_apply_key"]
+			keyColIdx, ok := batchIdx[keyAlias]
 			if !ok {
 				select {
 				case errCh <- fmt.Errorf("batched APPLY count lookup produced unexpected columns: %v", batchResult.Columns):
@@ -1250,6 +1277,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	return result, true, nil
 }
 
+// applyLookupKeyString is the key correlating an outer row's lookup value
+// with the rows a batched lookup returned for it: numbers are keyed by Cypher
+// equality (convert's equivalence keys), whichever participant or transport
+// produced them.
 func applyLookupKeyString(v interface{}) string {
 	switch x := v.(type) {
 	case nil:
@@ -1259,11 +1290,18 @@ func applyLookupKeyString(v interface{}) string {
 	case []byte:
 		return "s:" + normalizeLookupString(string(x))
 	case int:
-		return fmt.Sprintf("i:%d", x)
+		return convert.IntegerEquivalenceKey(int64(x))
+	case int32:
+		return convert.IntegerEquivalenceKey(int64(x))
 	case int64:
-		return fmt.Sprintf("i64:%d", x)
+		return convert.IntegerEquivalenceKey(x)
+	case uint64:
+		return convert.UnsignedEquivalenceKey(x)
+	case float32:
+		return convert.FloatEquivalenceKey(float64(x))
 	case float64:
-		return fmt.Sprintf("f:%g", x)
+		// Cypher equality: 42 and 42.0 are one key, NaN matches nothing.
+		return convert.FloatEquivalenceKey(x)
 	case bool:
 		if x {
 			return "b:1"
@@ -1300,6 +1338,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
+	keysParam, keyAlias := freeName("__fabric_apply_keys", trimmed, params), freeName("__fabric_apply_key", trimmed)
 	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
@@ -1347,7 +1386,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	rewritten.WriteString(matchVar)
 	rewritten.WriteByte('.')
 	rewritten.WriteString(matchProp)
-	rewritten.WriteString(" IN $__fabric_apply_keys")
+	rewritten.WriteString(" IN $" + keysParam)
 	if otherWhere != "" {
 		rewritten.WriteString(" AND ")
 		rewritten.WriteString(otherWhere)
@@ -1356,7 +1395,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	rewritten.WriteString(matchVar)
 	rewritten.WriteByte('.')
 	rewritten.WriteString(matchProp)
-	rewritten.WriteString(" AS __fabric_apply_key")
+	rewritten.WriteString(" AS " + keyAlias)
 	for _, item := range returnItems {
 		rewritten.WriteString(", ")
 		rewritten.WriteString(matchVar)
@@ -1403,7 +1442,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 			for k, v := range params {
 				batchParams[k] = v
 			}
-			batchParams["__fabric_apply_keys"] = keys
+			batchParams[keysParam] = keys
 
 			batchFrag := *inner
 			batchFrag.Query = lookupQuery
@@ -1413,7 +1452,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 			}
 
 			batchIdx := buildColumnIndex(batchResult.Columns)
-			keyColIdx, okKey := batchIdx["__fabric_apply_key"]
+			keyColIdx, okKey := batchIdx[keyAlias]
 			if !okKey {
 				return fmt.Errorf("batched APPLY row lookup produced unexpected columns: %v", batchResult.Columns)
 			}
@@ -1465,7 +1504,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 						for k, v := range params {
 							batchParams[k] = v
 						}
-						batchParams["__fabric_apply_keys"] = keys
+						batchParams[keysParam] = keys
 
 						batchFrag := *inner
 						batchFrag.Query = lookupQuery
@@ -1475,7 +1514,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 						}
 
 						batchIdx := buildColumnIndex(batchResult.Columns)
-						keyColIdx, okKey := batchIdx["__fabric_apply_key"]
+						keyColIdx, okKey := batchIdx[keyAlias]
 						if !okKey {
 							return fmt.Errorf("batched APPLY row lookup produced unexpected columns: %v", batchResult.Columns)
 						}
@@ -1779,33 +1818,13 @@ func firstToken(s string) (token string, rest string) {
 
 func indexTopLevelKeyword(s string, keyword string) int {
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := s[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -1923,33 +1942,13 @@ func splitTopLevelAnd(whereClause string) []string {
 	parts := make([]string, 0, 4)
 	start := 0
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(whereClause); i++ {
-		ch := whereClause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(whereClause, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := whereClause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -1983,37 +1982,14 @@ func splitTopLevelAnd(whereClause string) []string {
 }
 
 func splitTopLevelEquality(expr string) (lhs, rhs string, ok bool) {
-	inSingle, inDouble, inBacktick := false, false, false
 	paren, bracket, brace := 0, 0, 0
 	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(expr, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := expr[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(':
 			paren++
 			continue
@@ -2078,36 +2054,9 @@ func containsStandaloneIdentifier(s, ident string) bool {
 	if ident == "" || len(s) < len(ident) {
 		return false
 	}
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i+len(ident) <= len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		if ch == '\'' {
-			inSingle = true
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
 		if s[i:i+len(ident)] != ident {
@@ -2417,33 +2366,13 @@ func splitTopLevelResultModifiers(clause string) (projection string, modifiers s
 	projection = strings.TrimSpace(clause)
 	modifiers = ""
 	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(clause); i++ {
-		ch := clause[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
+			i = next - 1
 			continue
 		}
+		ch := clause[i]
 		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
 		case '(':
 			paren++
 		case ')':
@@ -2986,28 +2915,33 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 		rows = append(rows, m)
 	}
 
+	if inputResult.RowWrapper {
+		return nil, false, nil
+	}
+	inputNames := make(map[string]interface{}, len(inputResult.Columns))
+	for _, col := range inputResult.Columns {
+		inputNames[col] = nil
+	}
+	rowsParam, rowVar := freeName("__fabric_apply_rows", trimmed, params), freeName("__fabric_row", trimmed, inputNames)
 	projections := make([]string, 0, len(inputResult.Columns))
 	for _, col := range inputResult.Columns {
 		col = strings.TrimSpace(col)
 		if col == "" {
 			continue
 		}
-		if strings.HasPrefix(col, "__fabric_") {
-			continue
-		}
 		quotedCol := quoteCypherIdentifier(col)
-		projections = append(projections, "__fabric_row."+quotedCol+" AS "+quotedCol)
+		projections = append(projections, rowVar+"."+quotedCol+" AS "+quotedCol)
 	}
 	if len(projections) == 0 {
 		return nil, false, nil
 	}
 
-	rewritten := "UNWIND $__fabric_apply_rows AS __fabric_row WITH " + strings.Join(projections, ", ") + " " + trimmed
+	rewritten := "UNWIND $" + rowsParam + " AS " + rowVar + " WITH " + strings.Join(projections, ", ") + " " + trimmed
 	mergedParams := make(map[string]interface{}, util.SafePreallocSum(len(params), 1))
 	for k, v := range params {
 		mergedParams[k] = v
 	}
-	mergedParams["__fabric_apply_rows"] = rows
+	mergedParams[rowsParam] = rows
 
 	copied := *inner
 	copied.Query = rewritten
@@ -3015,12 +2949,13 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	if err != nil {
 		return nil, true, err
 	}
-	if res != nil && len(res.Columns) == 1 && res.Columns[0] == "__fabric_row" {
+	if res != nil && len(res.Columns) == 1 && res.Columns[0] == rowVar {
 		// Fallback: when pipeline execution leaks the wrapper row map column,
 		// apply structural in-memory projection from the original inner query.
 		if projected, ok := executeCollectedMapJoinFlatProjection(inputResult, trimmed); ok {
 			return projected, true, nil
 		}
+		res.RowWrapper = true
 	}
 	return res, true, nil
 }
@@ -3162,6 +3097,154 @@ func fragmentHasStaticImports(fragment Fragment) bool {
 	}
 }
 
+// scopedBindings keeps the variables a CALL scope clause imports.
+func scopedBindings(bindings map[string]interface{}, scope []string) map[string]interface{} {
+	kept := make(map[string]interface{}, len(scope))
+	for _, name := range scope {
+		if name == "*" {
+			return bindings
+		}
+		if value, ok := bindings[name]; ok {
+			kept[name] = value
+		}
+	}
+	return kept
+}
+
+// remoteImportStatement is the statement and parameters a remote participant
+// runs f with. The remote statement cannot see the row, so each variable f
+// imports that the row binds is projected ahead of f's own clauses from a
+// parameter of its own, under a name free in the statement and among the
+// parameters (freeName): WITH $__fabric_import_0 AS x WITH x ... An
+// importing WITH * imports every row variable. Variables a scope clause
+// imports stay visible throughout the body, so a scoped fragment runs in that
+// scope on the remote too: WITH $__fabric_import_0 AS x CALL (x) { ... }
+// RETURN *. scoped is then the imported variables, which the caller drops
+// from the result. Imported values and the caller's parameters alike are
+// sent as parameters, which the remote transport writes as their Cypher
+// types; a fragment that imports nothing runs as it is.
+func (e *FabricExecutor) remoteImportStatement(f *FragmentExec, params, record map[string]interface{}) (query string, out map[string]interface{}, scoped []string, err error) {
+	imports := f.ScopeImports
+	if len(imports) == 0 {
+		imports = importColumnsFromFragment(f.Input)
+	}
+	names := importedNames(imports, record)
+	if len(names) == 0 {
+		return f.Query, params, nil, nil
+	}
+	out = make(map[string]interface{}, len(params)+len(names))
+	for key, value := range params {
+		out[key] = value
+	}
+	var head strings.Builder
+	head.WriteString("WITH ")
+	for i, name := range names {
+		value := record[name]
+		if e.codec.Import != nil {
+			if err := e.codec.Import(value); err != nil {
+				return "", nil, nil, err
+			}
+		}
+		parameter := freeName("__fabric_import_"+strconv.Itoa(i), f.Query, out)
+		out[parameter] = value
+		if i > 0 {
+			head.WriteString(", ")
+		}
+		head.WriteString("$" + parameter + " AS " + quoteCypherIdentifier(name))
+	}
+	body := strings.TrimSpace(f.Query)
+	if len(f.ScopeImports) == 0 {
+		return head.String() + " " + body, out, nil, nil
+	}
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = quoteCypherIdentifier(name)
+	}
+	return head.String() + " CALL (" + strings.Join(quoted, ", ") + ") { " + body + " } RETURN *", out, names, nil
+}
+
+// importedNames is the variables a fragment imports that the row binds, in a
+// stable order. An importing WITH * imports every row variable.
+func importedNames(imports []string, record map[string]interface{}) []string {
+	if len(imports) == 0 || len(record) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(imports))
+	seen := make(map[string]bool, len(imports))
+	for _, name := range imports {
+		if name != "*" {
+			if _, bound := record[name]; bound && !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+			continue
+		}
+		for key := range record {
+			if !seen[key] {
+				seen[key] = true
+				names = append(names, key)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// freeName is a name for a value Fabric adds to a statement: base, or else
+// base_1, base_2 and so on, the first that occurs nowhere in text, so no
+// variable, alias or parameter written there can be that name, and that names
+// none of taken (parameters or row variables already bound).
+func freeName(base, text string, taken ...map[string]interface{}) string {
+	for n := 0; ; n++ {
+		name := base
+		if n > 0 {
+			name += "_" + strconv.Itoa(n)
+		}
+		if strings.Contains(text, name) {
+			continue
+		}
+		free := true
+		for _, names := range taken {
+			if _, used := names[name]; used {
+				free = false
+				break
+			}
+		}
+		if free {
+			return name
+		}
+	}
+}
+
+// dropResultColumns removes columns from a result and its rows.
+func dropResultColumns(res *ResultStream, columns []string) {
+	drop := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		drop[column] = true
+	}
+	keep := make([]int, 0, len(res.Columns))
+	kept := make([]string, 0, len(res.Columns))
+	for i, column := range res.Columns {
+		if !drop[column] {
+			keep = append(keep, i)
+			kept = append(kept, column)
+		}
+	}
+	if len(kept) == len(res.Columns) {
+		return
+	}
+	for r, row := range res.Rows {
+		projected := make([]interface{}, len(keep))
+		for i, index := range keep {
+			if index < len(row) {
+				projected[i] = row[index]
+			}
+		}
+		res.Rows[r] = projected
+	}
+	res.Columns = kept
+}
+
 func rewriteLeadingWithImports(query string, importCols []string) string {
 	if len(importCols) == 0 {
 		return query
@@ -3260,53 +3343,13 @@ func replaceStandaloneVar(s, ident, replacement string) string {
 	}
 	var b strings.Builder
 	b.Grow(len(s) + 8)
-	inSingle := false
-	inDouble := false
-	inBacktick := false
 	for i := 0; i < len(s); {
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			b.WriteString(s[i:next])
+			i = next
+			continue
+		}
 		ch := s[i]
-		switch {
-		case inSingle:
-			b.WriteByte(ch)
-			if ch == '\'' {
-				inSingle = false
-			}
-			i++
-			continue
-		case inDouble:
-			b.WriteByte(ch)
-			if ch == '"' {
-				inDouble = false
-			}
-			i++
-			continue
-		case inBacktick:
-			b.WriteByte(ch)
-			if ch == '`' {
-				inBacktick = false
-			}
-			i++
-			continue
-		}
-
-		if ch == '\'' {
-			inSingle = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '"' {
-			inDouble = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
-		if ch == '`' {
-			inBacktick = true
-			b.WriteByte(ch)
-			i++
-			continue
-		}
 
 		if i+len(ident) <= len(s) && s[i:i+len(ident)] == ident {
 			prevOK := i == 0 || (!isIdentChar(s[i-1]) && s[i-1] != '.')
@@ -3334,47 +3377,21 @@ func findLeadingWithClauseEnd(query string) (int, bool) {
 	}
 	i += len("WITH")
 	i = skipLeadingSpace(query, i)
+	return nextTopLevelClause(query, i), true
+}
 
+// nextTopLevelClause returns the start of the first clause keyword at or
+// after from that is outside brackets, quoted text and comments, len(query)
+// if none.
+func nextTopLevelClause(query string, from int) int {
 	depth := 0
-	inSingle := false
-	inDouble := false
-	inBacktick := false
-
-	for idx := i; idx < len(query); idx++ {
-		ch := query[idx]
-
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				if idx+1 < len(query) && query[idx+1] == '\'' {
-					idx++
-					continue
-				}
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
+	for idx := from; idx < len(query); idx++ {
+		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
+			idx = next - 1
 			continue
 		}
-
+		ch := query[idx]
 		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
 		case '(', '[', '{':
 			depth++
 			continue
@@ -3386,11 +3403,21 @@ func findLeadingWithClauseEnd(query string) (int, bool) {
 		}
 
 		if depth == 0 && isCypherClauseStart(query, idx) {
-			return idx, true
+			return idx
 		}
 	}
+	return len(query)
+}
 
-	return len(query), true
+// projectionModifierAt reports whether a WITH or RETURN projection's WHERE,
+// ORDER BY, SKIP or LIMIT starts at idx.
+func projectionModifierAt(query string, idx int) bool {
+	for _, kw := range [...]string{"WHERE", "ORDER BY", "SKIP", "LIMIT"} {
+		if hasKeywordAt(query, idx, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCypherClauseStart(query string, idx int) bool {
@@ -3533,14 +3560,15 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 // A branch without column metadata returned no rows and has nothing to match,
 // and the pipeline's row wrapper column is resolved after execution.
 func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowIterator, rhsCols []string, rhs RowIterator) ([]string, RowIterator, error) {
-	cols := f.Columns
+	lhsWrapper, rhsWrapper := isRowWrapperRows(lhs), isRowWrapperRows(rhs)
+	cols, wrapper := f.Columns, false
 	if len(cols) == 0 {
-		cols = lhsCols
+		cols, wrapper = lhsCols, lhsWrapper
 		if len(cols) == 0 {
-			cols = rhsCols
+			cols, wrapper = rhsCols, rhsWrapper
 		}
 	}
-	if e.union.ColumnOrder != nil && len(lhsCols) > 0 && len(rhsCols) > 0 && !isFabricRowWrapper(lhsCols) && !isFabricRowWrapper(rhsCols) {
+	if e.union.ColumnOrder != nil && len(lhsCols) > 0 && len(rhsCols) > 0 && !lhsWrapper && !rhsWrapper {
 		order, sameNames := e.union.ColumnOrder(lhsCols, rhsCols)
 		if !sameNames {
 			_ = lhs.Close()
@@ -3566,6 +3594,9 @@ func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowI
 			distinct.(*distinctRowIterator).added = e.union.NewDistinct()
 		}
 		out = distinct
+	}
+	if wrapper {
+		out = rowWrapperRows{out}
 	}
 	return cols, out, nil
 }
@@ -3643,12 +3674,6 @@ func (e *FabricExecutor) executeUnionParallel(ctx context.Context, tx *FabricTra
 	return materializeIterator(cols, out)
 }
 
-// isFabricRowWrapper reports whether columns are the APPLY pipeline's single
-// row map column (executeApplyAsPipeline).
-func isFabricRowWrapper(columns []string) bool {
-	return len(columns) == 1 && columns[0] == "__fabric_row"
-}
-
 func fragmentContainsWrite(fragment Fragment) bool {
 	switch f := fragment.(type) {
 	case *FragmentExec:
@@ -3666,21 +3691,16 @@ func fragmentContainsWrite(fragment Fragment) bool {
 	}
 }
 
-// combineColumns merges two column lists, deduplicating names.
+// combineColumns merges two column lists, deduplicating names. Every column
+// is a query's own, whatever its name.
 func combineColumns(outer, inner []string) []string {
 	seen := make(map[string]bool, len(outer))
 	result := make([]string, 0, util.SafePreallocSum(len(outer), len(inner)))
 	for _, col := range outer {
-		if strings.HasPrefix(col, "__fabric_") {
-			continue
-		}
 		seen[col] = true
 		result = append(result, col)
 	}
 	for _, col := range inner {
-		if strings.HasPrefix(col, "__fabric_") {
-			continue
-		}
 		if !seen[col] {
 			result = append(result, col)
 		}

@@ -5,6 +5,7 @@ import (
 	"hash/maphash"
 	"math"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -65,7 +66,7 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 	}
 	if number, ok := cypherFloatValue(value); ok {
 		if math.IsNaN(number) {
-			return cypherNaNKey(nanKeys.Add(1)), true
+			return cypherNaNKey(convert.NextNaNKey()), true
 		}
 		if number == math.Trunc(number) {
 			if number >= -0x1p63 && number < 0x1p63 {

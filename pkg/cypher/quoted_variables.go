@@ -7,6 +7,8 @@ import (
 	"hash/fnv"
 	"sort"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Backtick-quoted variables (#734).
@@ -222,12 +224,12 @@ func (names *quotedVariableNames) parameterName(name string) string {
 }
 
 // isPlainVariableName reports whether name can be written without quotes
-// as a variable: an identifier that isn't a Cypher keyword, and without a
-// '$', which only Cypher 5 reads inside a name (Cypher 25 starts a
-// parameter there).
+// as a variable: an identifier that isn't a Cypher keyword or a literal word
+// (NaN and Infinity read as their float), and without a '$', which only
+// Cypher 5 reads inside a name (Cypher 25 starts a parameter there).
 func isPlainVariableName(name string) bool {
 	_, end, ok := scanIdentifierToken(name, 0)
-	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && strings.IndexByte(name, '$') < 0
+	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
@@ -257,7 +259,14 @@ func scanQuotedTokens(query string) []quotedToken {
 		case '\'', '"':
 			i = skipQuotedText(query, i)
 			continue
-		case '(', '[', '{':
+		case '(':
+			if scoped, end, ok := appendScopeClauseTokens(query, i, tokens); ok {
+				tokens = scoped
+				i = end
+				continue
+			}
+			brackets = append(brackets, c)
+		case '[', '{':
 			brackets = append(brackets, c)
 		case ')', ']', '}':
 			if len(brackets) > 0 {
@@ -292,6 +301,72 @@ func scanQuotedTokens(query string) []quotedToken {
 		i++
 	}
 	return tokens
+}
+
+// appendScopeClauseTokens appends to tokens the variables of the CALL scope
+// clause whose '(' is at open, and returns the index past its ')'; ok is
+// false when open doesn't start one. Every item of a scope clause is a
+// variable: a backtick-quoted name, or an unquoted word that only a quoted
+// name can be as a variable (null, true, NaN), which, as in Neo4j, stands for
+// the variable of that name the statement binds quoted (WITH 1 AS `null`
+// CALL (null) { … }).
+func appendScopeClauseTokens(query string, open int, tokens []quotedToken) ([]quotedToken, int, bool) {
+	if !strings.EqualFold(previousWord(query, open), "CALL") {
+		return tokens, 0, false
+	}
+	closing := -1
+	for i := open + 1; i < len(query) && closing < 0; {
+		if end := queryCommentEnd(query, i); end >= 0 {
+			i = end
+			continue
+		}
+		c := query[i]
+		switch {
+		case c == ')':
+			closing = i
+		case cyphertext.IsBacktick(c):
+			_, end, ok := scanSymbolicName(query, i)
+			if !ok {
+				return tokens, 0, false
+			}
+			i = end
+			continue
+		case cyphertext.IsQuote(c), c == '(', c == '[', c == '{':
+			return tokens, 0, false
+		}
+		i++
+	}
+	if closing < 0 {
+		return tokens, 0, false
+	}
+	if next, _ := nextSignificant(query, closing+1); next != '{' {
+		return tokens, 0, false
+	}
+	for i := open + 1; i < closing; {
+		if end := queryCommentEnd(query, i); end >= 0 {
+			i = end
+			continue
+		}
+		switch c := query[i]; {
+		case cyphertext.IsBacktick(c):
+			written, end, _ := scanSymbolicName(query, i)
+			tokens = append(tokens, quotedToken{start: i, end: end, written: written, name: symbolicNameValue(written), variable: true})
+			i = end
+			continue
+		case isIdentStartByte(c):
+			end := i
+			for end < closing && isIdentByte(query[end]) {
+				end++
+			}
+			if word := query[i:end]; !isPlainVariableName(word) {
+				tokens = append(tokens, quotedToken{start: i, end: end, written: word, name: word, variable: true})
+			}
+			i = end
+			continue
+		}
+		i++
+	}
+	return tokens, closing + 1, true
 }
 
 // classifyQuotedToken decides from its surroundings whether a quoted name is

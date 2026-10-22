@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
@@ -1280,23 +1282,7 @@ func queryWhitespaceAt(query string, index int) int {
 // query[index], or -1 when none starts there. A line comment ends before
 // its line break.
 func queryCommentEnd(query string, index int) int {
-	if index+1 >= len(query) || query[index] != '/' {
-		return -1
-	}
-	switch query[index+1] {
-	case '/':
-		end := index + 2
-		for end < len(query) && query[end] != '\n' && query[end] != '\r' {
-			end++
-		}
-		return end
-	case '*':
-		if close := strings.Index(query[index+2:], "*/"); close >= 0 {
-			return index + 2 + close + 2
-		}
-		return len(query)
-	}
-	return -1
+	return cyphertext.CommentEnd(query, index)
 }
 
 // queryGapEnd returns the end of the run of whitespace and comments that
@@ -2047,21 +2033,7 @@ func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
 	if start < 0 || start >= len(query) || query[start] != quote {
 		return start, false
 	}
-	for index := start + 1; index < len(query); index++ {
-		if query[index] == '\\' && quote != '`' && index+1 < len(query) {
-			index++
-			continue
-		}
-		if query[index] != quote {
-			continue
-		}
-		if index+1 < len(query) && query[index+1] == quote {
-			index++
-			continue
-		}
-		return index + 1, true
-	}
-	return len(query), false
+	return cyphertext.ScanQuotedText(query, start)
 }
 
 func scanIdentifierToken(text string, start int) (string, int, bool) {

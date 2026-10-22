@@ -548,10 +548,10 @@ type callSubqueryScopeClause struct {
 // importing-WITH and implicit imports are resolved by their existing owners.
 func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
 	trimmed := strings.TrimSpace(cypher)
-	if findKeywordIndex(trimmed, "CALL") != 0 {
+	if !startsWithKeywordFold(trimmed, "CALL") {
 		return callSubqueryScopeClause{}
 	}
-	idx := skipSpaces(trimmed, len("CALL"))
+	idx := queryGapEnd(trimmed, len("CALL"))
 	offset := strings.Index(cypher, trimmed)
 	scope := callSubqueryScopeClause{bodyOffset: offset + idx}
 	if idx >= len(trimmed) || trimmed[idx] != '(' {
@@ -563,21 +563,18 @@ func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
 	}
 	scope.scoped = true
 	scope.text = strings.TrimSpace(trimmed[idx+1 : close])
-	scope.bodyOffset = offset + skipSpaces(trimmed, close+1)
-	if scope.text == "*" {
+	scope.bodyOffset = offset + queryGapEnd(trimmed, close+1)
+	names, err := callScopeClauseVariables(scope.text)
+	if err != nil {
+		// An invalid clause imports nothing; validateCallSubqueryScopes
+		// reports the reader's error.
+		scope.invalid, scope.names = true, []string{}
 		return scope
 	}
-	parts := splitProcedureTopLevelComma(scope.text)
-	scope.names = make([]string, 0, len(parts))
-	for _, part := range parts {
-		if simpleSemanticIdentifier(part) == "" && scope.text != "" {
-			scope.invalid = true
-		}
-		name := strings.Trim(strings.TrimSpace(part), "`")
-		if isSimpleIdentifier(name) {
-			scope.names = append(scope.names, name)
-		}
+	if len(names) == 1 && names[0] == "*" {
+		return scope
 	}
+	scope.names = names
 	return scope
 }
 

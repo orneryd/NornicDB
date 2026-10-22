@@ -544,7 +544,8 @@ func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	query := "RETURN sourceId, textKey, originalText, language, translatedText"
 	stream := &fabric.ResultStream{
-		Columns: []string{"__fabric_row"},
+		Columns:    []string{"__fabric_row"},
+		RowWrapper: true,
 		Rows: [][]interface{}{
 			{
 				map[interface{}]interface{}{

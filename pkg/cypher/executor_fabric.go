@@ -158,6 +158,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	fabricExecutor.SetUnionContract(fabricUnionContract)
+	fabricExecutor.SetRemoteValueCodec(fabricRemoteValueCodec)
 	fabricExecutor.SetConcurrentExecution(autoCommit)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
@@ -373,6 +374,22 @@ var fabricUnionContract = fabric.UnionContract{
 	},
 }
 
+// fabricSingleGraphStatement is cypher without the USE clauses the Fabric
+// planner reads (FabricPlanner.SingleGraphStatement): the one statement whose
+// variable scopes are checked, as Neo4j checks a composite statement's, before
+// any part of it plans or runs. A statement the planner can't read is checked
+// as it is, and planning reports the error.
+func fabricSingleGraphStatement(cypher string) string {
+	planner := fabric.NewFabricPlanner(nil)
+	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
+	planner.SetCallImportReader(callSubqueryImportedVariables)
+	statement, err := planner.SingleGraphStatement(cypher)
+	if err != nil {
+		return cypher
+	}
+	return statement
+}
+
 func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
 	if e.fabricPlanCache != nil {
 		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
@@ -383,6 +400,7 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	planner := fabric.NewFabricPlanner(catalog)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
+	planner.SetCallImportReader(callSubqueryImportedVariables)
 	fragment, err := planner.Plan(cypher, sessionDB)
 	if err != nil {
 		return nil, err
@@ -394,7 +412,7 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 }
 
 func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) {
-	if stream == nil || len(stream.Columns) != 1 || stream.Columns[0] != "__fabric_row" || len(stream.Rows) == 0 {
+	if stream == nil || !stream.RowWrapper || len(stream.Columns) != 1 || len(stream.Rows) == 0 {
 		return
 	}
 	inferred := e.inferTopLevelReturnColumns(cypher)

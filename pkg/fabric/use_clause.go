@@ -3,6 +3,7 @@ package fabric
 import (
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -96,7 +97,7 @@ func ParseUseClause(query string, inSubquery bool) (clause UseClause, remaining 
 		// GRAPH is the keyword when a name follows it that is not a clause
 		// keyword; otherwise it is the graph's name.
 		after := skipSpacesAndComments(trimmed, next)
-		if after < len(trimmed) && (trimmed[after] == '`' || isNameStart(trimmed[after])) {
+		if after < len(trimmed) && (cyphertext.IsBacktick(trimmed[after]) || isNameStart(trimmed[after])) {
 			if follow, _, ok := scanWord(trimmed, after); !ok || !isUseClauseFollower(follow, inSubquery) {
 				start = after
 			}
@@ -149,7 +150,7 @@ func scanGraphReference(s string, start int) (UseClause, int, error) {
 	i := start
 	quoted := false
 	for {
-		if i < len(s) && s[i] == '`' {
+		if i < len(s) && cyphertext.IsBacktick(s[i]) {
 			part, next, ok := scanBacktickName(s, i)
 			if !ok {
 				return UseClause{}, start, useSyntaxError(localization.CypherCommandRoutingUseInvalidGraphReference("`"))
@@ -306,20 +307,11 @@ func scanWord(s string, i int) (string, int, bool) {
 // scanBacktickName reads the backtick-quoted name at start (“ escapes a
 // backtick) and returns it without the quotes and where it ends.
 func scanBacktickName(s string, start int) (string, int, bool) {
-	var b strings.Builder
-	for i := start + 1; i < len(s); i++ {
-		if s[i] != '`' {
-			b.WriteByte(s[i])
-			continue
-		}
-		if i+1 < len(s) && s[i+1] == '`' {
-			b.WriteByte('`')
-			i++
-			continue
-		}
-		return b.String(), i + 1, true
+	end, closed := cyphertext.ScanQuotedText(s, start)
+	if !closed || !cyphertext.IsBacktick(s[start]) {
+		return "", start, false
 	}
-	return "", start, false
+	return strings.ReplaceAll(s[start+1:end-1], "``", "`"), end, true
 }
 
 // isNameStart reports whether b starts an unquoted name: a letter, '_' or a
@@ -344,6 +336,11 @@ func statementsAfter(rest string) int {
 		if i >= len(rest) {
 			break
 		}
+		if end, quoted := cyphertext.SkipToken(rest, i); quoted {
+			content = true
+			i = end
+			continue
+		}
 		switch rest[i] {
 		case ';':
 			if content {
@@ -352,8 +349,6 @@ func statementsAfter(rest string) int {
 			content = false
 			i++
 			continue
-		case '\'', '"', '`':
-			i = skipQuoted(rest, i)
 		}
 		content = true
 		i++
@@ -395,9 +390,11 @@ func skipSpacesAndComments(s string, i int) int {
 func matchingParen(s string, open int) (int, bool) {
 	depth := 0
 	for i := open; i < len(s); i++ {
+		if end, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = end - 1
+			continue
+		}
 		switch s[i] {
-		case '\'', '"', '`':
-			i = skipQuoted(s, i)
 		case '(':
 			depth++
 		case ')':
@@ -410,26 +407,6 @@ func matchingParen(s string, open int) (int, bool) {
 	return -1, false
 }
 
-// skipQuoted returns the index of the quote closing the quoted text that
-// starts at i (len(s) if unterminated).
-func skipQuoted(s string, i int) int {
-	quote := s[i]
-	for j := i + 1; j < len(s); j++ {
-		if quote != '`' && s[j] == '\\' {
-			j++
-			continue
-		}
-		if s[j] == quote {
-			if quote == '`' && j+1 < len(s) && s[j+1] == '`' {
-				j++
-				continue
-			}
-			return j
-		}
-	}
-	return len(s)
-}
-
 // splitArguments splits a function call's argument text at top-level
 // commas and trims each argument.
 func splitArguments(text string) []string {
@@ -439,9 +416,11 @@ func splitArguments(text string) []string {
 	var args []string
 	depth, start := 0, 0
 	for i := 0; i < len(text); i++ {
+		if end, quoted := cyphertext.SkipToken(text, i); quoted {
+			i = end - 1
+			continue
+		}
 		switch text[i] {
-		case '\'', '"', '`':
-			i = skipQuoted(text, i)
 		case '(', '[', '{':
 			depth++
 		case ')', ']', '}':
@@ -465,24 +444,24 @@ func doubleQuoteStringLiterals(expression string) string {
 	var b strings.Builder
 	for i := 0; i < len(expression); i++ {
 		c := expression[i]
-		if c != '\'' && c != '"' && c != '`' {
+		if !cyphertext.IsQuote(c) {
 			b.WriteByte(c)
 			continue
 		}
-		end := skipQuoted(expression, i)
-		if end >= len(expression) {
+		end, closed := cyphertext.ScanQuotedText(expression, i)
+		if !closed {
 			b.WriteString(expression[i:])
 			break
 		}
-		if c == '\'' {
-			body := expression[i+1 : end]
+		if cyphertext.IsSingleQuote(c) {
+			body := expression[i+1 : end-1]
 			b.WriteByte('"')
 			b.WriteString(strings.ReplaceAll(body, `"`, `\"`))
 			b.WriteByte('"')
 		} else {
-			b.WriteString(expression[i : end+1])
+			b.WriteString(expression[i:end])
 		}
-		i = end
+		i = end - 1
 	}
 	return b.String()
 }

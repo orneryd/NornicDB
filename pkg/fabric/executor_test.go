@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 // mockCypherExecutor is a test double for CypherExecutor.
@@ -606,6 +608,17 @@ func TestSplitTopLevelEquality_AndApplyLookupKeyString(t *testing.T) {
 	if applyLookupKeyString("42") == applyLookupKeyString(int64(42)) {
 		t.Fatalf("expected string and int64 lookup keys to remain type-distinct")
 	}
+	// Numbers are keyed by Cypher equality, whatever their Go type.
+	for _, equal := range [][2]interface{}{{int64(42), 42.0}, {42, int64(42)}, {int64(0), math.Copysign(0, -1)}, {uint64(7), int64(7)}, {float32(2.5), 2.5}} {
+		if applyLookupKeyString(equal[0]) != applyLookupKeyString(equal[1]) {
+			t.Fatalf("expected %T %v and %T %v to share a lookup key", equal[0], equal[0], equal[1], equal[1])
+		}
+	}
+	for _, distinct := range [][2]interface{}{{int64(9007199254740993), 9007199254740992.0}, {2.5, int64(2)}, {math.NaN(), math.NaN()}} {
+		if applyLookupKeyString(distinct[0]) == applyLookupKeyString(distinct[1]) {
+			t.Fatalf("expected %v and %v to have distinct lookup keys", distinct[0], distinct[1])
+		}
+	}
 }
 
 func TestProjectSimpleReturnFromRow(t *testing.T) {
@@ -1156,9 +1169,9 @@ func TestApplyLookupKeyString_Semantics(t *testing.T) {
 	if applyLookupKeyString(int64(99)) == applyLookupKeyString(int64(100)) {
 		t.Fatalf("expected numeric keys to remain distinct")
 	}
-	// Floats should remain distinct from integer representations.
-	if applyLookupKeyString(float64(42)) == applyLookupKeyString(int64(42)) {
-		t.Fatalf("expected float64/int64 lookup keys to remain type-distinct")
+	// A float equal to an integer shares its key, as Cypher's = holds.
+	if applyLookupKeyString(float64(42)) != applyLookupKeyString(int64(42)) {
+		t.Fatalf("expected float64/int64 lookup keys of equal numbers to match")
 	}
 }
 
@@ -1632,17 +1645,12 @@ func TestParseSimpleOrderByClause_DescAsc(t *testing.T) {
 	}
 }
 
-func TestCombineColumns_FiltersInternalColumns(t *testing.T) {
-	outer := []string{"a", "__fabric_key"}
-	inner := []string{"b", "__fabric_row"}
-	combined := combineColumns(outer, inner)
-	for _, col := range combined {
-		if strings.HasPrefix(col, "__fabric_") {
-			t.Fatalf("expected __fabric_ columns to be filtered, found %q", col)
-		}
-	}
-	if len(combined) != 2 || combined[0] != "a" || combined[1] != "b" {
-		t.Fatalf("expected [a b], got %v", combined)
+// A column is the query's own whatever its name; the APPLY pipeline's row
+// wrapper is a marked result (ResultStream.RowWrapper), not a column name.
+func TestCombineColumns_KeepsQueryColumns(t *testing.T) {
+	combined := combineColumns([]string{"a", "__fabric_key"}, []string{"b", "__fabric_row"})
+	if strings.Join(combined, ",") != "a,__fabric_key,b,__fabric_row" {
+		t.Fatalf("expected every query column, got %v", combined)
 	}
 }
 
@@ -2110,7 +2118,7 @@ func TestExecuteApplyAsPipeline_SimpleWithContinuation(t *testing.T) {
 	}
 }
 
-func TestExecuteApplyAsPipeline_FabricColumnsFiltered(t *testing.T) {
+func TestExecuteApplyAsPipeline_FabricNamedColumnsProjected(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	capture := &pipelineCaptureCypherExecutor{}
@@ -2130,9 +2138,9 @@ func TestExecuteApplyAsPipeline_FabricColumnsFiltered(t *testing.T) {
 	if !used {
 		t.Fatal("expected pipeline to be used")
 	}
-	// __fabric_key should be filtered from projections.
-	if strings.Contains(capture.lastQuery, "__fabric_key") {
-		t.Fatalf("expected __fabric_ columns filtered, got %q", capture.lastQuery)
+	// A query column is projected whatever its name.
+	if !strings.Contains(capture.lastQuery, "__fabric_row.__fabric_key AS __fabric_key") {
+		t.Fatalf("expected the __fabric_key query column projected, got %q", capture.lastQuery)
 	}
 }
 
@@ -3615,16 +3623,17 @@ func TestExecuteApplyAsPipeline_NonSimpleColumnName(t *testing.T) {
 	}
 }
 
-func TestExecuteApplyAsPipeline_AllFabricColumns(t *testing.T) {
+func TestExecuteApplyAsPipeline_RowWrapperInput(t *testing.T) {
 	exec := NewFabricExecutor(NewCatalog(), nil, nil)
 	input := &ResultStream{
-		Columns: []string{"__fabric_key"}, // All columns are __fabric_ prefixed.
-		Rows:    [][]interface{}{{"v"}},
+		Columns:    []string{"__fabric_row"},
+		Rows:       [][]interface{}{{"v"}},
+		RowWrapper: true, // The pipeline's own row wrapper.
 	}
 	inner := &FragmentExec{Query: "WITH x AS y MATCH (n) RETURN n"}
 	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
 	if used {
-		t.Fatal("expected all-fabric columns to prevent pipeline")
+		t.Fatal("expected the row wrapper input to prevent pipeline")
 	}
 }
 
@@ -4640,4 +4649,56 @@ func TestPopulateFromManager_WithAliases(t *testing.T) {
 	if local.DBName != "mydb" {
 		t.Fatalf("expected mydb, got %s", local.DBName)
 	}
+}
+
+// Fabric's own names in a pipeline rewrite never take a name the statement
+// or its caller uses: a query column or caller parameter spelled like them
+// keeps its value.
+func TestExecuteApplyAsPipeline_PrivateNamesAreFree(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db1", &LocationLocal{DBName: "db1"})
+	capture := &pipelineCaptureCypherExecutor{}
+	exec := NewFabricExecutor(catalog, NewLocalFragmentExecutor(capture, func(string) (storage.Engine, error) { return &mockEngine{}, nil }), nil)
+	input := &ResultStream{Columns: []string{"a", "__fabric_row"}, Rows: [][]interface{}{{1, 2}}}
+	inner := &FragmentExec{Query: "RETURN a + __fabric_row AS x", GraphName: "db1"}
+	params := map[string]interface{}{"__fabric_apply_rows": "caller"}
+	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, params, "")
+	if err != nil || !used {
+		t.Fatalf("expected the projection pipeline: used=%v err=%v", used, err)
+	}
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows_1 AS __fabric_row_1 WITH __fabric_row_1.a AS a, __fabric_row_1.__fabric_row AS __fabric_row RETURN a + __fabric_row AS x" {
+		t.Fatalf("unexpected pipeline query: %s", capture.lastQuery)
+	}
+	if capture.lastParams["__fabric_apply_rows"] != "caller" {
+		t.Fatalf("expected the caller's parameter kept, got %#v", capture.lastParams["__fabric_apply_rows"])
+	}
+}
+
+// A remote fragment binds what it imports from parameters of its own; a
+// scope clause's imports run in that scope on the remote.
+func TestRemoteImportStatementNamesAndScope(t *testing.T) {
+	e := &FabricExecutor{}
+	record := map[string]interface{}{"x": int64(1), "__fabric_import_0": int64(2)}
+
+	f := &FragmentExec{Query: "WITH x RETURN x + $__fabric_import_0 AS v", Input: &FragmentInit{ImportColumns: []string{"x"}}}
+	query, params, scoped, err := e.remoteImportStatement(f, map[string]interface{}{"__fabric_import_0_1": "caller"}, record)
+	require.NoError(t, err)
+	require.Nil(t, scoped)
+	require.Equal(t, "WITH $__fabric_import_0_2 AS x WITH x RETURN x + $__fabric_import_0 AS v", query)
+	require.Equal(t, map[string]interface{}{"__fabric_import_0_1": "caller", "__fabric_import_0_2": int64(1)}, params)
+
+	f = &FragmentExec{Query: "WITH * RETURN __fabric_import_0 + x AS v", Input: &FragmentInit{ImportColumns: []string{"*"}}}
+	query, _, _, err = e.remoteImportStatement(f, nil, record)
+	require.NoError(t, err)
+	require.Equal(t, "WITH $__fabric_import_0_1 AS __fabric_import_0, $__fabric_import_1 AS x WITH * RETURN __fabric_import_0 + x AS v", query)
+
+	f = &FragmentExec{Query: "WITH 10 AS y RETURN x + y AS v", ScopeImports: []string{"x"}}
+	query, _, scoped, err = e.remoteImportStatement(f, nil, record)
+	require.NoError(t, err)
+	require.Equal(t, "WITH $__fabric_import_0 AS x CALL (x) { WITH 10 AS y RETURN x + y AS v } RETURN *", query)
+	require.Equal(t, []string{"x"}, scoped)
+	res := &ResultStream{Columns: []string{"v", "x"}, Rows: [][]interface{}{{int64(11), int64(1)}}}
+	dropResultColumns(res, scoped)
+	require.Equal(t, []string{"v"}, res.Columns)
+	require.Equal(t, [][]interface{}{{int64(11)}}, res.Rows)
 }
