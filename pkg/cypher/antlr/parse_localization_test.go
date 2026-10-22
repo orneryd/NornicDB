@@ -3,12 +3,41 @@ package antlr
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
+
+func TestParseEntrypointNestedDiagnosticsUseBoundaryLocale(t *testing.T) {
+	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
+	require.NoError(t, err)
+	for _, query := range []string{"MATCH (", "RETURN 1 'private-diagnostic-literal' @"} {
+		_, parseErr := Parse(query)
+		for _, err := range []error{parseErr, Validate(query), ValidateContext(context.Background(), query)} {
+			var typed *localization.LocalizedError
+			require.ErrorAs(t, err, &typed)
+			for locale, prefix := range map[string]string{"en-US": "syntax error: line ", "es-ES": "error de sintaxis: línea ", "en-XA": "[!! syntax error: [!! line "} {
+				ctx := localization.WithPreferences(context.Background(), language.MustParse(locale))
+				text, _, renderErr := typed.Render(ctx, manager)
+				require.NoError(t, renderErr)
+				require.True(t, strings.HasPrefix(text, prefix), "%s: %s", locale, text)
+				if locale == "es-ES" {
+					require.Contains(t, text, "entrada inesperada")
+					require.NotContains(t, text, "unexpected input")
+				}
+				require.NotContains(t, text, "private-diagnostic-literal")
+			}
+			// Reusing pooled validators must not overwrite a returned diagnostic.
+			before := fmt.Sprint(typed.Message.Data)
+			require.Error(t, Validate("RETURN ("))
+			require.Equal(t, before, fmt.Sprint(typed.Message.Data))
+		}
+	}
+}
 
 func requireANTLRLocalizedError(t *testing.T, err error, messageID localization.MessageID, text string) *localization.LocalizedError {
 	t.Helper()
@@ -35,7 +64,7 @@ func TestParseEntrypointErrorsHaveLocalizedIdentity(t *testing.T) {
 		require.NotNil(t, result)
 		require.NotEmpty(t, result.Errors)
 		localizedErr := requireANTLRLocalizedError(t, err, localization.MessageCypherANTLRParseSyntaxError, "syntax error: "+result.Errors[0])
-		require.Equal(t, result.Errors[0], localizedErr.Message.Data["Detail"])
+		require.Equal(t, result.Errors[0], fmt.Sprint(localizedErr.Message.Data["Detail"]))
 	})
 
 	t.Run("Validate empty query", func(t *testing.T) {
@@ -46,8 +75,7 @@ func TestParseEntrypointErrorsHaveLocalizedIdentity(t *testing.T) {
 	t.Run("Validate syntax error", func(t *testing.T) {
 		err := Validate("MATCH (")
 		localizedErr := requireANTLRLocalizedError(t, err, localization.MessageCypherANTLRValidateSyntaxError, err.Error())
-		detail, ok := localizedErr.Message.Data["Detail"].(string)
-		require.True(t, ok)
+		detail := fmt.Sprint(localizedErr.Message.Data["Detail"])
 		require.Equal(t, "syntax error: "+detail, err.Error())
 	})
 }

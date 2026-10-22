@@ -213,6 +213,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypheradmin.variable_not_defined", Constructor: "CypherAdminVariableNotDefined", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cypherantlr.parse_empty_query", Constructor: "CypherANTLRParseEmptyQuery", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherantlr.parse_syntax_error", Constructor: "CypherANTLRParseSyntaxError", Fields: []string{"Detail"}, PluralForms: []string{"other"}},
+	{ID: "cypherantlr.unexpected_input", Constructor: "CypherANTLRUnexpectedInput", Fields: []string{"Column", "Line"}, PluralForms: []string{"other"}},
 	{ID: "cypherantlr.validate_empty_query", Constructor: "CypherANTLRValidateEmptyQuery", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherantlr.validate_syntax_error", Constructor: "CypherANTLRValidateSyntaxError", Fields: []string{"Detail"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.call_tail_limit_invalid", Constructor: "CypherCommandRoutingCallTailLimitInvalid", Fields: []string{"Token"}, PluralForms: []string{"other"}},

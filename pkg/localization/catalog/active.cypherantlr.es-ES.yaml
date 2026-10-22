@@ -10,3 +10,6 @@
 - id: cypherantlr.validate_syntax_error
   description: Error de sintaxis de ANTLR Validate. Detail no se traduce.
   other: "error de sintaxis: {{.Detail}}"
+- id: cypherantlr.unexpected_input
+  description: Ubicación de sintaxis ANTLR sin tokens ni fragmentos de la consulta.
+  other: "línea {{.Line}}:{{.Column}} entrada inesperada"

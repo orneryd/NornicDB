@@ -46,7 +46,7 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		t.Fatal("server readiness failed")
 	}
 	ready()
-	request := func(t *testing.T, label, query string, wantError bool) {
+	request := func(t *testing.T, label, query string, wantError bool) []byte {
 		t.Helper()
 		status, data, err := investigationHTTP(base, "system", query, "")
 		var body investigationResponse
@@ -57,6 +57,25 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		if bytes.Contains(data, []byte(investigationPass)) {
 			t.Error(label + " disclosed a synthetic password; value withheld")
 		}
+		return data
+	}
+	assertAliasStored := func(dbName, wantedAlias string) {
+		t.Helper()
+		data := request(t, "SHOW constituents", "SHOW CONSTITUENTS FOR COMPOSITE DATABASE "+dbName, false)
+		var body investigationResponse
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal("constituent response could not be decoded")
+		}
+		for _, result := range body.Results {
+			for _, item := range result.Data {
+				for _, value := range item.Row {
+					if alias, ok := value.(string); ok && alias == wantedAlias {
+						return
+					}
+				}
+			}
+		}
+		t.Fatal("valid remote alias was not persisted; details withheld")
 	}
 	checkDuplicatePassword := func() {
 		t.Helper()
@@ -81,7 +100,8 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 				declaration := " FOR DATABASE nornic AT '" + endpoint + "'" + suffix + " TYPE remote ACCESS read"
 				request(t, "ALTER ADD", "ALTER COMPOSITE DATABASE "+db+" ADD ALIAS r"+declaration, false)
 				request(t, "CREATE remote", "CREATE COMPOSITE DATABASE "+db+"_create ALIAS r"+declaration, false)
-				request(t, "SHOW constituents", "SHOW CONSTITUENTS FOR COMPOSITE DATABASE "+db, false)
+				assertAliasStored(db, "r")
+				assertAliasStored(db+"_create", "r")
 				request(t, "EXPLAIN", "EXPLAIN CREATE COMPOSITE DATABASE "+db+"_plan ALIAS r"+declaration, false)
 				request(t, "duplicate ADD error", "ALTER COMPOSITE DATABASE "+db+" ADD ALIAS r"+declaration, true)
 				request(t, "unsupported SET error", "ALTER COMPOSITE DATABASE "+db+" SET ALIAS r AT '"+endpoint+"'", true)
@@ -95,10 +115,10 @@ func TestReviewR2AlterWireResponse(t *testing.T) {
 		stop = investigationStart(t, binary, serverDir, hp, bp, false, "antlr")
 		ready()
 		checkDuplicatePassword()
-		// The existing remote-DDL grammar gap is not part of this correction.
-		// Exercise real rejection output and catalog display after native setup.
+		// The composite grammar now accepts the AT constituent form. Keep checking
+		// that its response and later catalog display stay safe.
 		for _, command := range []string{"CREATE COMPOSITE DATABASE wire_rejected ALIAS r FOR DATABASE nornic", "ALTER COMPOSITE DATABASE wire_http_uri ADD ALIAS rejected FOR DATABASE nornic"} {
-			request(t, "ANTLR AT rejection", command+" AT 'http://admin:"+investigationPass+"@127.0.0.1:1' TYPE remote ACCESS read", true)
+			request(t, "ANTLR AT accepted", command+" AT 'http://admin:"+investigationPass+"@127.0.0.1:1' TYPE remote ACCESS read", false)
 			request(t, "ANTLR unexpected URI rejection", command+" 'http://admin:"+investigationPass+"@127.0.0.1:1'", true)
 		}
 	}

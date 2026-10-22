@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -185,10 +186,34 @@ func (m *Manager) Render(ctx context.Context, message Message) (string, language
 		preferences = []language.Tag{m.DefaultTag()}
 	}
 	match := m.Match(preferences...)
+	// Render structured diagnostic data with the same boundary preferences as
+	// its outer message. Never replace the source data: errors can be rendered
+	// again in another language, including concurrently.
+	data := message.Data
+	for key, value := range message.Data {
+		sequence, ok := value.(MessageSequence)
+		if !ok {
+			continue
+		}
+		copy := make(map[string]any, len(data))
+		for k, v := range data {
+			copy[k] = v
+		}
+		data = copy
+		parts := make([]string, len(sequence.Messages))
+		for i, diagnostic := range sequence.Messages {
+			text, _, err := m.Render(ctx, diagnostic)
+			if err != nil {
+				return "", match.Tag, err
+			}
+			parts[i] = text
+		}
+		data[key] = strings.Join(parts, sequence.Separator)
+	}
 	localizer := i18n.NewLocalizer(m.bundle, match.Tag.String())
 	text, renderedTag, err := localizer.LocalizeWithTag(&i18n.LocalizeConfig{
 		MessageID:    string(message.ID),
-		TemplateData: message.Data,
+		TemplateData: data,
 		PluralCount:  message.PluralCount,
 	})
 	if err != nil {
@@ -202,7 +227,7 @@ func (m *Manager) Render(ctx context.Context, message Message) (string, language
 		fallback := i18n.NewLocalizer(m.bundle, SourceLanguage)
 		text, fallbackErr := fallback.Localize(&i18n.LocalizeConfig{
 			MessageID:    string(message.ID),
-			TemplateData: message.Data,
+			TemplateData: data,
 			PluralCount:  message.PluralCount,
 		})
 		if fallbackErr != nil {

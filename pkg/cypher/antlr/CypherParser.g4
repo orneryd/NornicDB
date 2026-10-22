@@ -93,7 +93,7 @@ queryPrefix
 showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
             | showConstraintKind? (CONSTRAINTS | CONSTRAINT) | CONSTRAINT CONTRACTS | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
-            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL
+            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | compositeConstituents FOR COMPOSITE DATABASE qualifiedName | USERS | CURRENT USER | ALL
             | (TRANSACTION | TRANSACTIONS) (expression (COMMA expression)*)?
             | (SETTING | SETTINGS) (expression (COMMA expression)*)?
             | (DEFAULT | HOME) DATABASE
@@ -122,16 +122,53 @@ terminateCommand
 
 administrationCommand
     : CREATE (OR REPLACE)? DATABASE name (IF NOT EXISTS)?
-    | CREATE (OR REPLACE)? COMPOSITE DATABASE name (IF NOT EXISTS)? (ALIAS name FOR DATABASE qualifiedName)*
-    | DROP COMPOSITE? DATABASE name (IF EXISTS)?
+    | CREATE (OR REPLACE)? COMPOSITE DATABASE qualifiedName (IF NOT EXISTS)? compositeConstituent*
+    | DROP COMPOSITE? DATABASE qualifiedName (IF EXISTS)?
     | CREATE ALIAS qualifiedName (IF NOT EXISTS)? FOR DATABASE qualifiedName
     | DROP ALIAS qualifiedName (IF EXISTS)? (FOR DATABASE)?
-    | ALTER COMPOSITE DATABASE name (ADD ALIAS qualifiedName FOR DATABASE qualifiedName | DROP ALIAS qualifiedName)
+    | ALTER COMPOSITE DATABASE qualifiedName (ADD compositeConstituent | DROP ALIAS qualifiedName)
+    ;
+
+// Inline constituents and ALTER ... ADD are NornicDB extensions to Neo4j
+// 5.26's separate CREATE ALIAS command. Both use parseConstituentFromTokens
+// for semantics, including order-independent options and localized errors.
+compositeConstituent
+    : ALIAS compositeValue FOR DATABASE compositeValue compositeConstituentOption*
+    ;
+
+compositeConstituentOption
+    : compositeAt compositeValue
+    | USER compositeValue
+    | compositePassword compositeValue
+    | compositeOidc compositeCredential compositeForwarding
+    | compositeSecret compositeRef compositeValue
+    | TYPE compositeValue
+    | compositeAccess compositeValue
+    ;
+
+compositeValue
+    : qualifiedName
+    | STRING_LITERAL
+    | CHAR_LITERAL
+    | numLit
+    | parameter
     ;
 
 qualifiedName
-    : name (DOT name)*
+    : name ((DOT | SUB) (name | INTEGER))*
     ;
+
+// These words are contextual to composite administration. Keep them as ID in
+// the shared lexer: its other consumers include native statement redaction.
+compositeAt : {p.compositeKeyword("AT")}? ID;
+compositePassword : {p.compositeKeyword("PASSWORD")}? ID;
+compositeOidc : {p.compositeKeyword("OIDC")}? ID;
+compositeCredential : {p.compositeKeyword("CREDENTIAL")}? ID;
+compositeForwarding : {p.compositeKeyword("FORWARDING")}? ID;
+compositeSecret : {p.compositeKeyword("SECRET")}? ID;
+compositeRef : {p.compositeKeyword("REF")}? ID;
+compositeAccess : {p.compositeKeyword("ACCESS")}? ID;
+compositeConstituents : {p.compositeKeyword("CONSTITUENTS")}? ID;
 
 // Schema commands (DROP INDEX, CREATE INDEX, etc.)
 schemaCommand

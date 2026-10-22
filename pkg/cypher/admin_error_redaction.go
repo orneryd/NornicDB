@@ -7,15 +7,13 @@ import (
 )
 
 // Admin handlers can embed an unparsed suffix in a name or a manager error.
-// Retain the original command's PASSWORD literal before alias whitespace
-// compaction or OPTIONS splitting destroys that context. Other literals retain
-// their ordinary diagnostics. Only RedactError projects the diagnostic,
-// including URI credentials, localized data and encoded forms.
+// Retain literal and URL credential spans before alias whitespace compaction
+// or OPTIONS splitting destroys that context.
 func redactAdminCommandError(query string, retErr *error) {
 	if *retErr == nil {
 		return
 	}
-	var values []string
+	values := observability.ContextCredentials(query)
 	for offset := 0; offset < len(query); {
 		// Use a raw, boundary-checked search here. A malformed quoted prefix can
 		// make the normal Cypher keyword scanner treat the rest of the command as
@@ -32,50 +30,80 @@ func redactAdminCommandError(query string, retErr *error) {
 		if i >= len(query) {
 			break
 		}
-		// An invalid value can itself be PASSWORD. Keep that next keyword
-		// visible so PASSWORD PASSWORD 'value' still supplies its literal.
+		// An invalid value can itself be PASSWORD. Continue scanning there so
+		// PASSWORD PASSWORD 'value' still supplies its literal for redaction.
 		offset = i
-		quote := query[i]
-		if quote != '\'' && quote != '"' {
-			continue
+		from := startsWithKeywordFold(query[i:], "FROM")
+		if from {
+			i = queryGapEnd(query, i+len("FROM"))
 		}
-		end, closed := scanCypherQuotedText(query, i, quote)
-		valueStart := i + 1
-		valueEnd := end
-		if closed {
-			valueEnd--
-		}
-		redactionValues := []string{query[valueStart:valueEnd]}
-		combinedEnd := valueEnd
-		groupEnd := end
-		for closed {
-			next := queryGapEnd(query, groupEnd)
-			if next >= len(query) || !isCypherStringQuoteByte(query[next]) {
+		for slot := 0; slot < 2 && i < len(query); slot++ {
+			// A malformed duplicate PASSWORD value can be followed by the
+			// actual quoted value. Skip each duplicate keyword so the following
+			// value is included in the redaction set too.
+			if !from && startsWithKeywordFold(query[i:], "PASSWORD") {
+				i = queryGapEnd(query, i+len("PASSWORD"))
+				slot--
+				continue
+			}
+			if query[i] == '\'' || query[i] == '"' {
+				start := i + 1
+				end, closed := scanCypherQuotedText(query, i, query[i])
+				bodyEnd := end
+				if closed {
+					bodyEnd--
+				}
+				redactionValues := []string{query[start:bodyEnd]}
+				combinedEnd := bodyEnd
+				groupEnd := end
+				for closed {
+					next := queryGapEnd(query, groupEnd)
+					if next >= len(query) || !isCypherStringQuoteByte(query[next]) {
+						break
+					}
+					nextEnd, nextClosed := scanCypherQuotedText(query, next, query[next])
+					if !nextClosed {
+						break
+					}
+					redactionValues = append(redactionValues, query[next+1:nextEnd-1])
+					combinedEnd = nextEnd - 1
+					groupEnd = nextEnd
+				}
+				if groupEnd != end {
+					// Invalid adjacent tokens are redacted both as individual
+					// pieces and as the original joined span.
+					redactionValues = append(redactionValues, query[start:combinedEnd])
+				}
+				values = append(values, redactionValues...)
+				for _, value := range redactionValues {
+					compacted := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(value)
+					if compacted != value {
+						values = append(values, compacted)
+					}
+				}
+				i = groupEnd
+			} else {
+				start := i
+				for i < len(query) && !isWhitespace(query[i]) && query[i] != ';' {
+					i++
+				}
+				value := query[start:i]
+				values = append(values, value)
+				compacted := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(value)
+				if compacted != value {
+					values = append(values, compacted)
+				}
+			}
+			if !from {
 				break
 			}
-			nextEnd, nextClosed := scanCypherQuotedText(query, next, query[next])
-			if !nextClosed {
+			i = queryGapEnd(query, i)
+			if !startsWithKeywordFold(query[i:], "TO") {
 				break
 			}
-			redactionValues = append(redactionValues, query[next+1:nextEnd-1])
-			combinedEnd = nextEnd - 1
-			groupEnd = nextEnd
+			i = queryGapEnd(query, i+len("TO"))
 		}
-		if groupEnd != end {
-			// Invalid adjacent literals must be redacted as one original span
-			// as well as by their individual pieces.
-			redactionValues = append(redactionValues, query[valueStart:combinedEnd])
-		}
-		values = append(values, redactionValues...)
-		// CREATE/DROP ALIAS historically remove these four whitespace bytes
-		// from their whole suffix, including any supplied literal password.
-		for _, value := range redactionValues {
-			compacted := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(value)
-			if compacted != value {
-				values = append(values, compacted)
-			}
-		}
-		offset = groupEnd
+		offset = i
 	}
 	*retErr = observability.RedactError(*retErr, values...)
 }

@@ -176,7 +176,7 @@ func LexContext(ctx context.Context, query string) (tokens []antlr.Token, err er
 		// Check once more at EOF instead of polling again for every token.
 		token := lexer.NextToken()
 		if len(listener.errors) != 0 {
-			return nil, fmt.Errorf("invalid Cypher token: %s", listener.errors[0])
+			return nil, fmt.Errorf("invalid Cypher token: %s", listener.errors[0].Fallback)
 		}
 		if token == nil || token.GetTokenType() == antlr.TokenEOF {
 			return tokens, ctx.Err()
