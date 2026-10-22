@@ -46,7 +46,7 @@ type TraversalContext struct {
 	minHops          int
 	maxHops          int
 	usedEdges        map[storage.EdgeID]bool
-	paths            []PathResult
+	nodeProperties   []string                         // nil requires full entities; otherwise only demanded fields
 	nodeCache        map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
 	limit            int                              // OPTIMIZATION: Early termination limit (0 = no limit)
 	resultCount      int                              // Count of results found so far
@@ -75,7 +75,7 @@ type TraversalContext struct {
 	// endpointsNeedOnlyLabels is set when the nodes the traversal reaches
 	// need only their labels checked: a labelled, property-less endpoint
 	// with no path variable exposing it (traversalEndpointsNeedOnlyLabels).
-	// The traversal then reads ID + labels without decoding properties.
+	// The traversal retains ID + labels after the canonical visibility read.
 	endpointsNeedOnlyLabels bool
 	// relationshipsNeedOnlyHeaders is set when nothing in the statement reads
 	// the relationships' properties (traversalRelationshipsNeedOnlyHeaders).
@@ -88,8 +88,7 @@ type TraversalContext struct {
 // traversalEndpointsNeedOnlyExist reports whether the nodes a traversal
 // reaches are needed only to exist and be visible: the end node is anonymous
 // with no labels or property map, and no path variable exposes the nodes.
-// The traversal then asks storage whether each one is visible
-// (storage.RelationshipEndpointChecker) instead of reading it.
+// The traversal checks canonical query visibility before retaining a header.
 func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
 	if match.IntermediateNode {
 		return false
@@ -102,8 +101,8 @@ func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
 // reaches need only their labels checked: a labelled endpoint with no inline
 // property map, no path variable exposing the node, and either an anonymous
 // endpoint variable or a named one whose properties no later clause reads
-// (match.UnusedPropertyVariables). The traversal then reads ID + labels
-// without decoding properties (#1110).
+// (match.UnusedPropertyVariables). The traversal retains ID + labels after
+// checking canonical query visibility (#1110).
 func traversalEndpointsNeedOnlyLabels(match *TraversalMatch) bool {
 	if match.IntermediateNode {
 		return false
@@ -312,6 +311,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// direct callers supply the RETURN items themselves.
 	if readTail != nil {
 		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, readTail)
+		if !matches.IsChained && matches.PathVariable == "" {
+			matches.endpointProperties = traversalSourceProperties(matches.EndNode, whereClause, readTail, "")
+		}
 	} else {
 		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariables(matches, returnItems, whereClause)
 	}
@@ -1180,6 +1182,10 @@ type TraversalMatch struct {
 	// variable is treated as property-read (the safe fallback). Computed by
 	// the planner in executeMatchWithRelationshipsWithPathSeeded.
 	UnusedPropertyVariables map[string]bool
+	// endpointProperties is the read-only tail's projection for a single
+	// segment's cached nodes. nil preserves complete entities for unknown
+	// tails, path values, writes and intermediate chain bindings.
+	endpointProperties []string
 	// IntermediateNode marks a chained segment whose end node is an
 	// intermediate binding of the chain rather than the pattern's final
 	// endpoint. Its properties may be read by a later segment (a zero-length
@@ -1594,7 +1600,7 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			return
 		}
 		seen[id] = true
-		if node, getErr := e.newRelationshipEndpointReader(store).read(id, nil); getErr == nil && node != nil {
+		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil); getErr == nil && node != nil {
 			nodes = append(nodes, node)
 		}
 	}
@@ -1719,6 +1725,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			cancelCtx:                    ctx,
 			repeatable:                   repeatableElements(ctx),
 			endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+			nodeProperties:               match.endpointProperties,
 			endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
@@ -1791,6 +1798,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					cancelCtx:                    ctx,
 					repeatable:                   repeatableElements(ctx),
 					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+					nodeProperties:               match.endpointProperties,
 					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
@@ -2024,6 +2032,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	// planner's endpoint/relationship read analysis so the header and
 	// labels-only fast paths apply to chained patterns too (#1110).
 	ctx.endpointsNeedOnlyExist = traversalEndpointsNeedOnlyExist(match)
+	ctx.nodeProperties = match.endpointProperties
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
 	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
@@ -2064,27 +2073,15 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextNodeID storage.NodeID) (*storage.Node, bool) {
 	nextNode := ctx.nodeCache[nextNodeID]
 	if nextNode == nil {
-		if ctx.endpointsNeedOnlyExist && !ctx.temporalViewport.Enabled() {
-			if checker, ok := e.storage.(storage.RelationshipEndpointChecker); ok {
-				if visible, answered := checker.RelationshipEndpointVisible(nextNodeID); answered {
-					if !visible {
-						return nil, false
-					}
-					if !shouldHideSystemNodes(e.storage) {
-						// The endpoint body is not exposed by this pattern.
-						nextNode = &storage.Node{ID: nextNodeID}
-						ctx.nodeCache[nextNodeID] = nextNode
-						return nextNode, true
-					}
-				}
-			}
+		properties := ctx.nodeProperties
+		if ctx.temporalViewport.Enabled() {
+			properties = nil
 		}
-		var properties []string
 		if (ctx.endpointsNeedOnlyLabels || ctx.endpointsNeedOnlyExist) && !ctx.temporalViewport.Enabled() {
 			properties = []string{}
 		}
 		var err error
-		nextNode, err = e.newRelationshipEndpointReader(e.storage).read(nextNodeID, properties)
+		nextNode, err = e.newRelationshipEndpointReader(e.storage).readRetained(nextNodeID, properties)
 		if err != nil || nextNode == nil {
 			return nil, false
 		}

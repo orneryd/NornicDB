@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -186,14 +187,25 @@ func apocMapConstructor(name string) cypherfn.Func {
 		}
 		switch name {
 		case "apoc.map.frompairs":
+			// A value whose type becomes known only in the row (including a
+			// WITH-bound parameter) retains the signature's SyntaxError.
+			if isAllStringList(values[0]) {
+				return nil, typeNameMismatchError("List<List<T>>", "List<String>")
+			}
 			pairs, err := readList(values[0])
 			if err != nil {
 				return out, nil // retain the native non-list shorthand
 			}
 			for _, pair := range pairs {
-				items, err := readList(pair)
-				if err != nil {
-					return nil, err
+				items, ok := cypherListValue(pair)
+				if !ok {
+					// Neo4j's ANY-to-list argument coercion wraps a map as a
+					// singleton pair. Scalar values cannot be coerced to a list.
+					if value, mapped := apocMapValue(pair); mapped {
+						items = []interface{}{value}
+					} else {
+						return nil, apocMapArgumentTypeError(name, "List", pair)
+					}
 				}
 				if len(items) == 0 || items[0] == nil {
 					continue
@@ -202,7 +214,7 @@ func apocMapConstructor(name string) cypherfn.Func {
 				if len(items) > 1 {
 					value = items[1]
 				}
-				out[fmt.Sprint(items[0])] = value
+				out[apocObjectString(items[0])] = value
 			}
 		case "apoc.map.fromlists":
 			keys, err := readList(values[0])
@@ -281,4 +293,32 @@ func apocMapConstructor(name string) cypherfn.Func {
 		}
 		return out, nil
 	}
+}
+
+// APOC map keys use Java Object.toString, including Map's {key=value}
+// spelling. Keep nested map/list formatting at this value boundary.
+func apocObjectString(value interface{}) string {
+	if value == nil {
+		return "null"
+	}
+	if m, ok := apocMapValue(value); ok {
+		keys := make([]string, 0, len(m))
+		for key := range m {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, key := range keys {
+			parts[i] = key + "=" + apocObjectString(m[key])
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
+	if list, ok := cypherListValue(value); ok {
+		parts := make([]string, len(list))
+		for i, item := range list {
+			parts[i] = apocObjectString(item)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	}
+	return fmt.Sprint(value)
 }
