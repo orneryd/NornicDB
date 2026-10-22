@@ -343,10 +343,11 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 
 func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {
 	// Wrap with middleware (order matters: outermost runs first)
-	// Security middleware validates all tokens, URLs, and headers FIRST
+	// Metadata admission encloses the entire chain, before any application
+	// middleware can parse request-derived bytes. Body guards stay in workers.
 	securityMiddleware := security.NewSecurityMiddleware()
 	securityMiddleware.SetLocalizer(s.localizer)
-	handler := securityMiddleware.ValidateRequest(next)
+	handler := securityMiddleware.ValidateRequest(s.bodyAdmissionMiddleware(next))
 	handler = s.corsMiddleware(handler)
 	handler = s.rateLimitMiddleware(handler) // Rate limit after CORS preflight
 	handler = s.requestTimeoutMiddleware(handler)
@@ -359,5 +360,7 @@ func (s *Server) wrapWithMiddleware(next http.Handler) http.Handler {
 	// Authenticate proxy metadata before base-path and other middleware consume it.
 	handler = s.trustedProxyMiddleware(handler)
 
-	return handler
+	// Include tracing propagation at this same ingress boundary. Start mounts
+	// this assembled handler without adding any application wrapper outside it.
+	return s.metadataAdmissionMiddleware(instrumentedMux(handler, s.httpMetrics))
 }

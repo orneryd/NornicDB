@@ -786,6 +786,10 @@ type MemoryConfig struct {
 	// ApplicationSoftMax is the opt-in application memory-pressure threshold in
 	// bytes. Zero leaves application admission and pressure cancellation off.
 	ApplicationSoftMax int64
+	// RecoveryIntervalMS and RecoveryRearmMS configure sampler-only heap recovery.
+	// Both are positive milliseconds; rearm must be at least the interval.
+	RecoveryIntervalMS int64
+	RecoveryRearmMS    int64
 	// TransactionMax is Neo4j's db.memory.transaction.max: the estimated
 	// memory, in bytes, one transaction may use (0 = unlimited). A
 	// database's own setting overrides it.
@@ -1409,6 +1413,13 @@ func LoadFromEnv() *Config {
 //
 // Returns nil if configuration is valid, or an error describing the problem.
 func (c *Config) Validate() error {
+	// Legacy embedded literals omit both fields; Open supplies their defaults.
+	// File/environment parsing rejects explicit zero values before this point.
+	if c.Memory.RecoveryIntervalMS != 0 || c.Memory.RecoveryRearmMS != 0 {
+		if err := ValidateMemoryRecoveryTimings(c.Memory.RecoveryIntervalMS, c.Memory.RecoveryRearmMS); err != nil {
+			return err
+		}
+	}
 	if _, err := localization.NormalizeLanguage(c.Localization.Language); err != nil {
 		return fmt.Errorf("localization.language: %w", err)
 	}
@@ -1730,6 +1741,8 @@ type YAMLConfig struct {
 		RuntimeLimit                 string  `yaml:"runtime_limit"`
 		GoRuntimeLimit               string  `yaml:"go_runtime_limit_bytes"`
 		ApplicationSoftMax           string  `yaml:"application_soft_max"`
+		RecoveryIntervalMS           *string `yaml:"recovery_interval_ms"`
+		RecoveryRearmMS              *string `yaml:"recovery_rearm_ms"`
 		TransactionMax               string  `yaml:"transaction_max"`
 		TransactionTotalMax          string  `yaml:"transaction_total_max"`
 		GCPercent                    int     `yaml:"gc_percent"`
@@ -2119,6 +2132,8 @@ func LoadDefaults() *Config {
 	config.Memory.KmeansClusterInterval = 15 * time.Minute // timer-based clustering every 15 min (skips if no changes)
 	config.Memory.RuntimeLimitStr = RuntimeLimitAuto
 	config.Memory.RuntimeLimit = 0
+	config.Memory.RecoveryIntervalMS = DefaultMemoryRecoveryIntervalMS
+	config.Memory.RecoveryRearmMS = DefaultMemoryRecoveryRearmMS
 	config.Memory.TransactionMax = 0
 	config.Memory.TransactionTotalMax = 0
 	config.Memory.GCPercent = 100
@@ -2798,6 +2813,24 @@ func applyEnvVars(config *Config) error {
 			return fmt.Errorf("invalid NORNICDB_MEMORY_APPLICATION_SOFT_MAX value %q: %w", v, err)
 		}
 		config.Memory.ApplicationSoftMax = limit
+	}
+	for _, setting := range []struct {
+		name  string
+		value *int64
+	}{
+		{"NORNICDB_MEMORY_RECOVERY_INTERVAL_MS", &config.Memory.RecoveryIntervalMS},
+		{"NORNICDB_MEMORY_RECOVERY_REARM_MS", &config.Memory.RecoveryRearmMS},
+	} {
+		if raw := getEnv(setting.name, ""); raw != "" {
+			value, err := parseMemoryRecoveryMS(setting.name, raw)
+			if err != nil {
+				return err
+			}
+			*setting.value = value
+		}
+	}
+	if err := ValidateMemoryRecoveryTimings(config.Memory.RecoveryIntervalMS, config.Memory.RecoveryRearmMS); err != nil {
+		return err
 	}
 	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_MAX", ""); v != "" {
 		limit, err := ParseByteSize(v)
@@ -3817,6 +3850,20 @@ func LoadFromFile(configPath string) (*Config, error) {
 			return nil, fmt.Errorf("invalid memory.application_soft_max value %q: %w", yamlCfg.Memory.ApplicationSoftMax, err)
 		}
 		config.Memory.ApplicationSoftMax = limit
+	}
+	if yamlCfg.Memory.RecoveryIntervalMS != nil {
+		value, err := parseMemoryRecoveryMS("memory.recovery_interval_ms", *yamlCfg.Memory.RecoveryIntervalMS)
+		if err != nil {
+			return nil, err
+		}
+		config.Memory.RecoveryIntervalMS = value
+	}
+	if yamlCfg.Memory.RecoveryRearmMS != nil {
+		value, err := parseMemoryRecoveryMS("memory.recovery_rearm_ms", *yamlCfg.Memory.RecoveryRearmMS)
+		if err != nil {
+			return nil, err
+		}
+		config.Memory.RecoveryRearmMS = value
 	}
 	if yamlCfg.Memory.TransactionMax != "" {
 		limit, err := ParseByteSize(yamlCfg.Memory.TransactionMax)

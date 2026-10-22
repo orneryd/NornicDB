@@ -714,19 +714,6 @@ func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbN
 
 // handleTransactionEndpoint routes transaction-related requests
 func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Request, dbName string, remaining []string) {
-	if r.Method == http.MethodPost {
-		// A bare explicit COMMIT finishes already accepted work and remains
-		// available during pressure. All other POSTs admit their decode and
-		// response lifetime before reading the request body.
-		bareCommit := len(remaining) == 2 && remaining[1] == "commit" && r.ContentLength == 0
-		if !bareCommit {
-			lease, ok := s.admitTransactionRequest(w, r)
-			if !ok {
-				return
-			}
-			defer lease.Release()
-		}
-	}
 	switch {
 	case len(remaining) == 0:
 		// POST /db/{dbName}/tx - open new transaction
@@ -770,21 +757,13 @@ func (s *Server) handleTransactionEndpoint(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *Server) admitTransactionRequest(w http.ResponseWriter, r *http.Request) (*memory.Lease, bool) {
-	if s.memoryPolicy == nil {
-		return nil, true
-	}
-	lease, err := s.memoryPolicy.ReserveWireRequest(r.ContentLength, s.config.MaxRequestSize)
-	if err == nil {
-		return lease, true
-	}
+func (s *Server) writeRequestAdmissionError(w http.ResponseWriter, r *http.Request, err error) {
 	message := localization.ApplicationMemoryPressure()
 	if errors.Is(err, memory.ErrStaleSample) {
 		message = localization.ApplicationMemoryUnavailable()
 	}
 	s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable,
 		"Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
-	return nil, false
 }
 
 // TransactionRequest follows Neo4j HTTP API format exactly.

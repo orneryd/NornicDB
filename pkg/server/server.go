@@ -180,7 +180,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -1945,22 +1944,14 @@ func (s *Server) Start() error {
 	started := time.Now()
 	s.started.Store(&started)
 
-	// Build router
+	// Build the complete application handler, including instrumentation inside
+	// metadata admission. The outer protocol selector permits only bounded
+	// setup before it; body-bearing upgrade proposals remain ordinary HTTP/1.
 	mux := s.buildRouter()
-
-	// Plan 04-02 D-03: instrumentedMux is the SOLE HTTP observation
-	// chokepoint per AGENTS.md §7 DRY. It wraps mux.ServeHTTP, reading
-	// `r.Pattern` post-dispatch (Go 1.22+ stdlib field) so path_template
-	// values come from the closed route table — never from r.URL.Path
-	// (cardinality bomb). Nil-safe: when s.httpMetrics is nil (test
-	// fixtures, pre-Phase-4 callers), the wrapper is a pass-through.
-	// Panic-safe: handler panics still emit a 5xx observation before
-	// re-propagating (T-04-08).
-	instrumented := instrumentedMux(mux, s.httpMetrics)
 
 	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
 	s.httpServer = &http.Server{
-		Handler:      instrumented,
+		Handler:      mux,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
@@ -1988,9 +1979,8 @@ func (s *Server) Start() error {
 	} else {
 		// HTTP mode: Use h2c (HTTP/2 cleartext) for backwards compatibility
 		// h2c allows HTTP/2 over plain TCP, falling back to HTTP/1.1 for older clients
-		// Wrap the INSTRUMENTED mux (not bare mux) so observation runs
-		// inside the h2c transport adapter (Plan 04-02 D-03).
-		s.httpServer.Handler = h2c.NewHandler(instrumented, http2Config)
+		// Select the transport before any adapter can buffer an initial body.
+		s.httpServer.Handler = newCleartextHTTPHandler(mux, http2Config)
 		s.logEvent(context.Background(), slog.LevelInfo,
 			localization.ServerHTTP2EnabledEvent("h2c_cleartext", "http/1.1"))
 	}

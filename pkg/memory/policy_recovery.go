@@ -3,9 +3,14 @@ package memory
 import (
 	"runtime/debug"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/config"
 )
 
-const pressureRecoveryInterval = 5 * time.Second
+const (
+	pressureRecoveryInterval      = time.Duration(config.DefaultMemoryRecoveryIntervalMS) * time.Millisecond
+	pressureRecoveryRetryInterval = time.Duration(config.DefaultMemoryRecoveryRearmMS) * time.Millisecond
+)
 
 // pressureRecovery belongs to Policy.mu. Physical admission can otherwise
 // deadlock after rejected work: GC has collected its objects, but Go's
@@ -18,6 +23,8 @@ type pressureRecovery struct {
 	released  uint64
 	attempt   uint64
 	reclaim   func()
+	interval  time.Duration
+	rearm     time.Duration
 }
 
 func releaseHeapPages() { debug.FreeOSMemory() }
@@ -36,25 +43,29 @@ func (p *Policy) availableLocked() int64 {
 }
 
 // reclaimPressure runs only from the sampler, never in a request or under the
-// admission mutex. At most one attempt runs at once, no more than once in five
-// seconds. After the first attempt, completed admitted work must release a
-// lease before another is eligible. Rejected retries alone cannot cause an
-// endless GC loop under sustained live or external cgroup pressure.
+// admission mutex. At most one attempt runs at once, spaced by the configured
+// interval when admitted work releases a lease. Without a release, a later
+// attempt requires the configured rearm duration since the previous start, so unleased
+// allocations cannot permanently exhaust recovery. Rejected requests never
+// collect or shorten either cooldown under sustained physical pressure.
 func (p *Policy) reclaimPressure() bool {
 	if p == nil || p.limit <= 0 {
 		return false
 	}
 	p.mu.Lock()
 	r := &p.recovery
+	now := p.now()
+	elapsed := now.Sub(r.last)
 	if !r.pressure || r.running || p.sampledAt.IsZero() || p.availableLocked() > p.headroom ||
-		(r.attempted && (r.released == r.attempt || p.now().Sub(r.last) < pressureRecoveryInterval)) {
+		(r.attempted && (elapsed < r.interval ||
+			(r.released == r.attempt && elapsed < r.rearm))) {
 		p.mu.Unlock()
 		return false
 	}
 	r.running = true
 	r.attempted = true
 	r.attempt = r.released
-	r.last = p.now()
+	r.last = now
 	p.mu.Unlock()
 
 	r.reclaim()
