@@ -48,6 +48,11 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		// this text before returning (monster retest part 3).
 		return e.validateStaticPaginationExpressions(cypher)
 	}
+	// Column names belong to the written statement, before the scope walk
+	// compares canonical binding identities or stops at a dynamic YIELD.
+	if err := e.validateDuplicateReturnColumnName(cypher, names); err != nil {
+		return err
+	}
 	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
 	}
@@ -92,9 +97,6 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 			"InvalidAggregation",
 			"aggregate expressions are not allowed inside list-comprehension predicates or projections",
 		)
-	}
-	if err := e.validateDuplicateReturnColumnName(cypher, names); err != nil {
-		return err
 	}
 	if clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher); ok {
 		pendingUpdate := false
@@ -212,155 +214,42 @@ func projectionHasEmptyItem(items string) bool {
 // same column name. names, when the statement was canonicalized, gives the
 // items as the client wrote them, which name the columns.
 func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names *quotedVariableNames) error {
-	if duplicate := e.duplicateReturnColumnName(cypher, names); duplicate != "" {
+	if names != nil {
+		// Restore once, including nested CALL bodies. Distinct written
+		// expressions can canonicalize to the same binding expression.
+		cypher = names.restoreStatementText(cypher)
+	}
+	if duplicate := e.duplicateReturnColumnName(cypher); duplicate != "" {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"ColumnNameConflict",
 			"Multiple RETURN items project the same column name: "+duplicate,
 		)
 	}
+	// Uniqueness is syntax, independent of an inferred row schema. A dynamic
+	// YIELD may stop the type walk, but cannot hide a malformed nested RETURN.
+	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
+		if !startsWithCallSubquery(cypher[position:]) {
+			continue
+		}
+		body, _, _, _ := e.parseCallSubquery(cypher[position:])
+		if body != "" {
+			if err := e.validateDuplicateReturnColumnName(body, nil); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
-// validateCallSubqueryScopes applies the update-clause scope check
-// (validateSetSemanticScopes: SET, REMOVE, DELETE) to the body of every
-// top-level CALL { … } and CALL (vars) { … } subquery, recursively for nested
-// subqueries. A body sees only what it imports, as in Neo4j: an importing WITH
-// at its start, or the variables of CALL (vars), which are checked as a
-// leading WITH vars. An undefined variable in a subquery update clause is
-// therefore rejected before any route runs the subquery. CALL (*) and a body
-// starting with WITH * import the whole outer scope and are not checked here.
+// validateCallSubqueryScopes uses the shared semantic scope owner for CALL
+// imports, nested bodies and mutation clause scopes, before physical routing.
 func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
 	if !containsFold(cypher, "CALL") {
 		return nil
 	}
-	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		index := skipSpaces(cypher, position+len("CALL"))
-		imports := ""
-		scoped := false
-		if index < len(cypher) && cypher[index] == '(' {
-			closeParen := findMatchingCallParen(cypher, index)
-			if closeParen < 0 {
-				continue
-			}
-			imports = strings.TrimSpace(cypher[index+1 : closeParen])
-			scoped = true
-			if imports != "" && imports != "*" {
-				for _, name := range splitTopLevelComma(imports) {
-					if simpleSemanticIdentifier(strings.TrimSpace(name)) == "" {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-							"CALL imports must contain only variable names")
-					}
-				}
-			}
-			index = skipSpaces(cypher, closeParen+1)
-		}
-		if index >= len(cypher) || cypher[index] != '{' {
-			continue // a procedure call
-		}
-		closeBrace := e.findMatchingBrace(cypher, index)
-		if closeBrace < 0 {
-			continue
-		}
-		body := strings.TrimSpace(cypher[index+1 : closeBrace])
-		if stripped, finishes := stripUnionBranchFinishes(body); finishes {
-			body = stripped
-		}
-		// A RETURN inside the body projects its columns too: two items of
-		// one name are as malformed there as at the top level.
-		if err := e.validateDuplicateReturnColumnName(body, nil); err != nil {
-			return err
-		}
-		// An unscoped body's branches (the body, or each UNION branch)
-		// import with their own leading WITH (#907). A branch that imports
-		// nothing still sees the outer variables it reads, a NornicDB
-		// extension over Neo4j 5.26 (which rejects them): only a leading
-		// WITH that reads no outer variable at all is checked here.
-		if !scoped {
-			outer := func(variable string) bool { return isIdentifierReferenced(cypher[:position], variable) }
-			branches := []string{body}
-			if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
-				branches = unionBranches
-			}
-			for index, branch := range branches {
-				// A malformed import is reported where the CALL runs.
-				if _, importing, _ := branchLeadingWithImport(branch, outer, false); !importing {
-					// A leading WITH that imports nothing is the branch's first
-					// clause: any variable it reads is undefined there.
-					if err := leadingWithUndefinedVariable(branch); err != nil {
-						return err
-					}
-					continue
-				}
-				// The import form is checked on the first branch only, as
-				// before: a later branch's importing WITH may carry WHERE or an
-				// alias (WITH x WHERE x IS NOT NULL), which NornicDB runs as a
-				// projection over its implicit imports (an extension; Neo4j
-				// 5.26 rejects it).
-				if index > 0 {
-					continue
-				}
-				if clauses, ok := splitPipelineClauses(branch); ok && len(clauses) > 0 {
-					projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
-					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0 {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-							"Importing WITH must contain only simple references to outside variables")
-					}
-				}
-			}
-		}
-		if imports == "*" || startsWithKeywordFold(body, "WITH *") {
-			continue
-		}
-		var retained []string
-		if scoped && imports != "" {
-			for _, name := range splitTopLevelComma(imports) {
-				retained = append(retained, normalizeProjectionColumnName(strings.TrimSpace(name)))
-			}
-			body = "WITH " + imports + " " + body
-		}
-		if body == "" {
-			continue
-		}
-		// A body that imports nothing (CALL () { … }) sees no outer
-		// variable: it is checked as a statement of its own.
-		if scoped && imports == "" {
-			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
-				return err
-			}
-		}
-		if err := e.validateSetSemanticScopes(body, retained...); err != nil {
-			return err
-		}
-		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
-			return err
-		}
-	}
-	return nil
+	return e.validateMatchSemanticScopes(cypher, cypher25)
 }
-
-// leadingWithUndefinedVariable is "Variable `x` not defined" for a subquery
-// branch whose leading WITH imports nothing but reads a variable
-// (MATCH (:P) CALL { WITH seed RETURN seed }): as its first clause, nothing
-// before it in the branch defines one (#907).
-func leadingWithUndefinedVariable(branch string) error {
-	branch = strings.TrimSpace(branch)
-	if !startsWithKeywordFold(branch, "WITH") {
-		return nil
-	}
-	clause, _ := leadingWithClause(branch)
-	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	for _, item := range splitTopLevelComma(projection) {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-		for _, variable := range expressionFreeVariables(expression) {
-			if !isSemanticLiteralWord(variable) {
-				return createUndefinedVariableError(variable)
-			}
-		}
-	}
-	return nil
-}
-
 func hasUnexpectedIdentifierAfterNumber(expression string) bool {
 	for index := 0; index < len(expression); index++ {
 		if end, skipped := skipCypherLexicalToken(expression, index); skipped {
@@ -703,7 +592,7 @@ func validateExistsSubqueryClauseComposition(cypher string) error {
 	return nil
 }
 
-func (e *StorageExecutor) duplicateReturnColumnName(cypher string, names *quotedVariableNames) string {
+func (e *StorageExecutor) duplicateReturnColumnName(cypher string) string {
 	returnPositions := findAllTopLevelPipelineKeywordPositions(cypher, "RETURN")
 	unionPositions := append(
 		findAllTopLevelPipelineKeywordPositions(cypher, "UNION"),
@@ -720,9 +609,6 @@ func (e *StorageExecutor) duplicateReturnColumnName(cypher string, names *quoted
 			}
 		}
 		body := strings.TrimSpace(cypher[position+len("RETURN") : end])
-		if names != nil {
-			body = strings.TrimSpace(names.originalText(position+len("RETURN"), end))
-		}
 		seen := make(map[string]struct{})
 		for _, item := range e.parseReturnItems(body) {
 			name := item.alias
