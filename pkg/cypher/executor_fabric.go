@@ -123,6 +123,8 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
+	fabricExecutor.SetUnionContract(fabricUnionContract)
+	fabricExecutor.SetConcurrentExecution(autoCommit)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
@@ -139,7 +141,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		}
 		return nil, fabricGraphReferenceError(err)
 	}
-	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows)
+	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
 	if autoCommit {
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
@@ -339,6 +341,24 @@ func fabricFragmentHasRemoteTarget(catalog *fabric.Catalog, f fabric.Fragment) b
 	}
 }
 
+// fabricUnionContract gives the UNION branches Fabric combines the semantics
+// executeUnionBranches gives a UNION on one graph.
+var fabricUnionContract = fabric.UnionContract{
+	ColumnOrder:  unionColumnOrder,
+	ColumnsError: unionColumnsError,
+	NewDistinct: func() func(row []interface{}) bool {
+		seen := make(map[string]bool)
+		return func(row []interface{}) bool {
+			key := cypherValueKey(row, cypherEquivalenceContract)
+			if seen[key] {
+				return true
+			}
+			seen[key] = true
+			return false
+		}
+	},
+}
+
 func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
 	if e.fabricPlanCache != nil {
 		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
@@ -347,6 +367,8 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	}
 
 	planner := fabric.NewFabricPlanner(catalog)
+	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
+	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
 	fragment, err := planner.Plan(cypher, sessionDB)
 	if err != nil {
 		return nil, err
@@ -833,6 +855,9 @@ func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expression
 // not resolve with its Neo4j status: a graph that doesn't exist is
 // DatabaseNotFound "Graph not found: <name>".
 func fabricGraphReferenceError(err error) error {
+	if errors.Is(err, fabric.ErrMixedUnion) {
+		return unionMixedError()
+	}
 	var notFound *fabric.GraphNotFoundError
 	if errors.As(err, &notFound) {
 		return localizedStatusError("Neo.ClientError.Database.DatabaseNotFound", "DatabaseNotFound", localization.CypherCommandRoutingGraphNotFound(notFound.Name))
