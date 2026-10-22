@@ -612,6 +612,23 @@ func (a *memoryAccount) growValue(value interface{}) error {
 	return a.grow(estimateValueBytes(value))
 }
 
+// growTuple spends extra bytes plus the estimated size of each of values: a
+// DISTINCT or grouping index retains the tuple's values themselves.
+func (a *memoryAccount) growTuple(values []interface{}, extra int64) error {
+	if a.scope == nil {
+		return nil
+	}
+	if err := a.grow(extra); err != nil {
+		return err
+	}
+	for _, value := range values {
+		if err := a.growValue(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *memoryAccount) refill(n int64) error {
 	need := n - a.credit
 	ahead := a.spent

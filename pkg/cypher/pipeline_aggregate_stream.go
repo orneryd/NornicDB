@@ -103,11 +103,9 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		return group
 	}
-	groups := make(map[string]*pipelineAggregateGroup)
-	grouping := struct {
-		ordered      []*pipelineAggregateGroup
-		stringGroups map[string]*pipelineAggregateGroup
-	}{ordered: make([]*pipelineAggregateGroup, 0)}
+	var grouping cypherValueIndex
+	ordered := make([]*pipelineAggregateGroup, 0)
+	values := make([]interface{}, 0, groupingCount)
 	// run is the aggregation's state the row callback updates: whether every
 	// row was valid, and the memory its new groups take (#1343).
 	run := pipelineAggregateRun{valid: true, memory: memoryAccount{scope: memory}, rows: rowEstimator{known: memory.knownLists()}}
@@ -125,13 +123,8 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				return false
 			}
 		}
-		key := ""
-		lookup := groups
+		values = values[:0]
 		if !allAggregates {
-			var parts []string
-			if groupingCount > 1 {
-				parts = make([]string, 0, len(projections))
-			}
 			for _, projection := range projections {
 				if projection.isAggr {
 					continue
@@ -142,34 +135,18 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 					run.valid = false
 					return false
 				}
-				if groupingCount == 1 {
-					if text, ok := value.(string); ok {
-						key = text
-						if grouping.stringGroups == nil {
-							grouping.stringGroups = make(map[string]*pipelineAggregateGroup)
-						}
-						lookup = grouping.stringGroups
-					} else {
-						key = cypherValueKey(value, cypherEquivalenceContract)
-					}
-				} else {
-					parts = append(parts, cypherValueKey(value, cypherEquivalenceContract))
-				}
-			}
-			if groupingCount > 1 {
-				key = strings.Join(parts, "\x1f")
+				values = append(values, value)
 			}
 		}
-		group := lookup[key]
-		if group == nil {
-			if run.memory.grow(run.rows.bytes(row)+int64(len(key))+int64(len(templates))*aggregateStateBytes) != nil {
+		position, exists := grouping.addTupleByContract(values, cypherEquivalenceContract)
+		if !exists {
+			if run.memory.growTuple(values, run.rows.bytes(row)+int64(len(templates))*aggregateStateBytes) != nil {
 				run.valid = false
 				return false
 			}
-			group = newGroup(row)
-			lookup[key] = group
-			grouping.ordered = append(grouping.ordered, group)
+			ordered = append(ordered, newGroup(row))
 		}
+		group := ordered[position]
 		for index := range group.projections {
 			for offset := range group.projections[index].states {
 				if !group.projections[index].states[offset].add(ctx, e, row) {
@@ -183,10 +160,10 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	if !completed || !run.valid {
 		return nil, false
 	}
-	if len(grouping.ordered) == 0 && allAggregates {
-		grouping.ordered = append(grouping.ordered, newGroup(nil))
+	if len(ordered) == 0 && allAggregates {
+		ordered = append(ordered, newGroup(nil))
 	}
-	return grouping.ordered, true
+	return ordered, true
 }
 
 func cartesianAggregateWorkers(rows, complexity, cores int) int {
@@ -374,7 +351,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		group   *pipelineAggregateGroup
 		ordinal int
 	}
-	groups := make(map[string]*mergedGroup)
+	var groups cypherValueIndex
 	var ordered []*mergedGroup
 	for _, partition := range partitions {
 		if partition.err != nil {
@@ -389,24 +366,24 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 				node, _ := partial.first[pattern.variable].(*storage.Node)
 				ordinal = ordinal*len(pattern.nodes) + positions[index][node]
 			}
-			var parts []string
+			var parts []interface{}
 			for _, projection := range plan.projections {
 				if !projection.isAggr {
 					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, partial.first)
 					if !ok {
 						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
 					}
-					parts = append(parts, cypherValueKey(value, cypherEquivalenceContract))
+					parts = append(parts, value)
 				}
 			}
-			key := strings.Join(parts, "\x1f")
-			merged := groups[key]
-			if merged == nil {
+			position, exists := groups.addTupleByContract(parts, cypherEquivalenceContract)
+			var merged *mergedGroup
+			if !exists {
 				merged = &mergedGroup{group: partial, ordinal: ordinal}
-				groups[key] = merged
 				ordered = append(ordered, merged)
 				continue
 			}
+			merged = ordered[position]
 			group := merged.group
 			if ordinal < merged.ordinal {
 				merged.ordinal = ordinal
@@ -452,7 +429,7 @@ func (group *pipelineAggregateGroup) value(ctx context.Context, executor *Storag
 type pipelineAggregateState struct {
 	name, expression string
 	distinct         bool
-	seen             map[string]struct{}
+	seen             cypherValueIndex
 	count            int64
 	integerTotal     int64
 	floatingTotal    float64
@@ -517,17 +494,12 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		return true
 	}
 	if state.distinct {
-		if state.seen == nil {
-			state.seen = make(map[string]struct{})
-		}
-		key := cypherValueKey(value, cypherEquivalenceContract)
-		if _, exists := state.seen[key]; exists {
+		if _, exists := state.seen.addByContract(value, cypherEquivalenceContract); exists {
 			return true
 		}
 		if state.memory.growValue(value) != nil {
 			return false
 		}
-		state.seen[key] = struct{}{}
 	}
 	switch state.name {
 	case "count":
