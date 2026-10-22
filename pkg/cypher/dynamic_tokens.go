@@ -87,21 +87,21 @@ func tokenNameError(name string) error {
 // dynamicTokenValue evaluates the expression of a dynamic label or property
 // key in a row's context, as SET evaluates a value: a parameter that wasn't
 // supplied is an error (requireSetParameter).
-func (e *StorageExecutor) dynamicTokenValue(ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels)
+func (e *StorageExecutor) dynamicTokenValue(admission admittedRelationshipStatement, ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+	return e.evaluateSetExpressionWithContext(admission, ctx, expression, nodes, rels)
 }
 
 // chainLabelNames resolves the items of a SET or REMOVE label chain
 // (setLabelChainItems) to label names, in order: a $(expr) item names what
 // its value names (dynamicLabelNames).
-func (e *StorageExecutor) chainLabelNames(ctx context.Context, items []labelChainItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge) ([]string, error) {
+func (e *StorageExecutor) chainLabelNames(admission admittedRelationshipStatement, ctx context.Context, items []labelChainItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge) ([]string, error) {
 	names := make([]string, 0, len(items))
 	for _, item := range items {
 		if item.expression == "" {
 			names = append(names, item.name)
 			continue
 		}
-		value, err := e.dynamicTokenValue(ctx, item.expression, nodes, rels)
+		value, err := e.dynamicTokenValue(admission, ctx, item.expression, nodes, rels)
 		if err != nil {
 			return nil, err
 		}
@@ -117,8 +117,8 @@ func (e *StorageExecutor) chainLabelNames(ctx context.Context, items []labelChai
 // dynamicPropertyKeyOf evaluates the key expression of n[expr] for a SET
 // (removing false) or a REMOVE (removing true) and reads it as a property key
 // (dynamicPropertyKey).
-func (e *StorageExecutor) dynamicPropertyKeyOf(ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, removing bool) (string, error) {
-	value, err := e.dynamicTokenValue(ctx, expression, nodes, rels)
+func (e *StorageExecutor) dynamicPropertyKeyOf(admission admittedRelationshipStatement, ctx context.Context, expression string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, removing bool) (string, error) {
+	value, err := e.dynamicTokenValue(admission, ctx, expression, nodes, rels)
 	if err != nil {
 		return "", err
 	}
@@ -434,7 +434,7 @@ func hasDynamicToken(text string) bool {
 // the row's context: a node gets every label ($(e), $all(e); an empty list
 // none), a relationship exactly one type, or Neo4j's ExecutionFailed. A
 // property map's text is left as it is.
-func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, error) {
+func (e *StorageExecutor) resolveRowDynamicTokens(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, error) {
 	var out strings.Builder
 	out.Grow(len(pattern))
 	last, brackets := 0, 0
@@ -459,7 +459,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 			if closing < 0 {
 				return pattern, nil
 			}
-			value, err := e.dynamicTokenValue(ctx, pattern[open+1:closing], nodes, rels)
+			value, err := e.dynamicTokenValue(admission, ctx, pattern[open+1:closing], nodes, rels)
 			if err != nil {
 				return "", err
 			}

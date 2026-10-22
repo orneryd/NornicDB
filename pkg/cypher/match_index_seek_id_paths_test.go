@@ -24,49 +24,67 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	nodes, used, err := exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "")
+	fixtureAdmission1284Context, fixtureAdmission1284 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1284Context
+	nodes, used, err := exec.tryCollectNodesFromIDEquality(fixtureAdmission1284, fixtureAdmission1284Context, nodePatternInfo{variable: "n"}, "")
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) == 'person-1'")
+	fixtureAdmission1285Context, fixtureAdmission1285 := expressionTestContext(ctx, "id(n) == 'person-1'")
+	_ = fixtureAdmission1285Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1285, fixtureAdmission1285Context, nodePatternInfo{variable: "n"}, "id(n) == 'person-1'")
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "m"}, "id(n) = 'person-1'")
+	fixtureAdmission1286Context, fixtureAdmission1286 := expressionTestContext(ctx, "id(n) = 'person-1'")
+	_ = fixtureAdmission1286Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1286, fixtureAdmission1286Context, nodePatternInfo{variable: "m"}, "id(n) = 'person-1'")
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) = 1")
+	fixtureAdmission1287Context, fixtureAdmission1287 := expressionTestContext(ctx, "id(n) = 1")
+	_ = fixtureAdmission1287Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1287, fixtureAdmission1287Context, nodePatternInfo{variable: "n"}, "id(n) = 1")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) = 'missing'")
+	fixtureAdmission1288Context, fixtureAdmission1288 := expressionTestContext(ctx, "id(n) = 'missing'")
+	_ = fixtureAdmission1288Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1288, fixtureAdmission1288Context, nodePatternInfo{variable: "n"}, "id(n) = 'missing'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) = 'person-1'")
+	fixtureAdmission1289Context, fixtureAdmission1289 := expressionTestContext(ctx, "id(n) = 'person-1'")
+	_ = fixtureAdmission1289Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1289, fixtureAdmission1289Context, nodePatternInfo{variable: "n"}, "id(n) = 'person-1'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = '4:nornic:person-1'")
+	fixtureAdmission1290Context, fixtureAdmission1290 := expressionTestContext(ctx, "elementId(n) = '4:nornic:person-1'")
+	_ = fixtureAdmission1290Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1290, fixtureAdmission1290Context, nodePatternInfo{variable: "n"}, "elementId(n) = '4:nornic:person-1'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n", labels: []string{"Movie"}}, "id(n) = 'person-1'")
+	fixtureAdmission1291Context, fixtureAdmission1291 := expressionTestContext(ctx, "id(n) = 'person-1'")
+	_ = fixtureAdmission1291Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1291, fixtureAdmission1291Context, nodePatternInfo{variable: "n", labels: []string{"Movie"}}, "id(n) = 'person-1'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n", properties: map[string]interface{}{"role": "support"}}, "id(n) = 'person-1'")
+	fixtureAdmission1292Context, fixtureAdmission1292 := expressionTestContext(ctx, "id(n) = 'person-1'")
+	_ = fixtureAdmission1292Context
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(fixtureAdmission1292, fixtureAdmission1292Context, nodePatternInfo{variable: "n", properties: map[string]interface{}{"role": "support"}}, "id(n) = 'person-1'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
@@ -112,8 +130,10 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(
-		ctx,
+	fixtureAdmission1293Context, fixtureAdmission1293 := expressionTestContext(ctx, "(id(n) = 'n1' OR id(n) = 'n2')")
+	_ = fixtureAdmission1293Context
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(fixtureAdmission1293,
+		fixtureAdmission1293Context,
 		nodePatternInfo{variable: "n"},
 		"(id(n) = 'n1' OR id(n) = 'n2')",
 		nil,
@@ -124,8 +144,10 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
 	require.Equal(t, storage.NodeID("n2"), nodes[1].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(
-		ctx,
+	fixtureAdmission1294Context, fixtureAdmission1294 := expressionTestContext(ctx, "(n.k = 'v1' OR id(n) = 'n1')")
+	_ = fixtureAdmission1294Context
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(fixtureAdmission1294,
+		fixtureAdmission1294Context,
 		nodePatternInfo{variable: "n"},
 		"(n.k = 'v1' OR id(n) = 'n1')",
 		nil,
@@ -134,8 +156,10 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(
-		ctx,
+	fixtureAdmission1295Context, fixtureAdmission1295 := expressionTestContext(ctx, "(id(n) = 'n1' AND true)")
+	_ = fixtureAdmission1295Context
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(fixtureAdmission1295,
+		fixtureAdmission1295Context,
 		nodePatternInfo{variable: "n", labels: []string{"Movie"}},
 		"(id(n) = 'n1' AND true)",
 		nil,
@@ -160,22 +184,30 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, used, err := exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", nil)
+	fixtureAdmission1296Context, fixtureAdmission1296 := expressionTestContext(ctx, "id(n) IN $ids")
+	_ = fixtureAdmission1296Context
+	nodes, used, err := exec.tryCollectNodesFromIDIn(fixtureAdmission1296, fixtureAdmission1296Context, nodePatternInfo{variable: "n"}, "id(n) IN $ids", nil)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"other": []interface{}{"p1"}})
+	fixtureAdmission1297Context, fixtureAdmission1297 := expressionTestContext(ctx, "id(n) IN $ids")
+	_ = fixtureAdmission1297Context
+	nodes, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1297, fixtureAdmission1297Context, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"other": []interface{}{"p1"}})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": "p1"})
+	fixtureAdmission1298Context, fixtureAdmission1298 := expressionTestContext(ctx, "id(n) IN $ids")
+	_ = fixtureAdmission1298Context
+	nodes, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1298, fixtureAdmission1298Context, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": "p1"})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
+	fixtureAdmission1299Context, fixtureAdmission1299 := expressionTestContext(ctx, "elementId(n) IN $ids")
+	_ = fixtureAdmission1299Context
+	nodes, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1299, fixtureAdmission1299Context,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}, properties: map[string]interface{}{"kind": "human"}},
 		"elementId(n) IN $ids",
 		map[string]interface{}{"ids": []interface{}{"p1", "4:nornic:p2", "p1", "", 7}},
@@ -186,7 +218,9 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	require.Equal(t, storage.NodeID("p1"), nodes[0].ID)
 	require.Equal(t, storage.NodeID("p2"), nodes[1].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
+	fixtureAdmission1300Context, fixtureAdmission1300 := expressionTestContext(ctx, "id(n) IN $ids")
+	_ = fixtureAdmission1300Context
+	nodes, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1300, fixtureAdmission1300Context,
 		nodePatternInfo{variable: "n", labels: []string{"Movie"}, properties: map[string]interface{}{"kind": "human"}},
 		"id(n) IN $ids",
 		map[string]interface{}{"ids": []interface{}{"p1", "m1"}},
@@ -198,18 +232,26 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	// A constant list seeks too: a literal, as a substituted parameter
 	// arrives (#940); null selects nothing; a non-list is left to the
 	// evaluator.
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "(id(n) IN ['p2', 'm1', 'missing'])", nil)
+	fixtureAdmission1301Context, fixtureAdmission1301 := expressionTestContext(ctx, "(id(n) IN ['p2', 'm1', 'missing'])")
+	_ = fixtureAdmission1301Context
+	nodes, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1301, fixtureAdmission1301Context, nodePatternInfo{variable: "n"}, "(id(n) IN ['p2', 'm1', 'missing'])", nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	require.ElementsMatch(t, []storage.NodeID{"p2", "m1"}, []storage.NodeID{nodes[0].ID, nodes[1].ID})
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN null", nil)
+	fixtureAdmission1302Context, fixtureAdmission1302 := expressionTestContext(ctx, "id(n) IN null")
+	_ = fixtureAdmission1302Context
+	nodes, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1302, fixtureAdmission1302Context, nodePatternInfo{variable: "n"}, "id(n) IN null", nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
-	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN 'p1'", nil)
+	fixtureAdmission1303Context, fixtureAdmission1303 := expressionTestContext(ctx, "id(n) IN 'p1'")
+	_ = fixtureAdmission1303Context
+	_, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1303, fixtureAdmission1303Context, nodePatternInfo{variable: "n"}, "id(n) IN 'p1'", nil)
 	require.NoError(t, err)
 	require.False(t, used)
-	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN n.ids", nil)
+	fixtureAdmission1304Context, fixtureAdmission1304 := expressionTestContext(ctx, "id(n) IN n.ids")
+	_ = fixtureAdmission1304Context
+	_, used, err = exec.tryCollectNodesFromIDIn(fixtureAdmission1304, fixtureAdmission1304Context, nodePatternInfo{variable: "n"}, "id(n) IN n.ids", nil)
 	require.NoError(t, err)
 	require.False(t, used, "a list read from the node itself isn't constant")
 

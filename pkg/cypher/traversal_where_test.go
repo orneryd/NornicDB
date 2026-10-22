@@ -152,7 +152,9 @@ func TestParseTraversalPatternStateMachine(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.parseTraversalPatternStateMachine(ctx, tt.pattern)
+			fixtureAdmission939Context, fixtureAdmission939 := traversalTestContext(ctx, tt.pattern, "", nil)
+			_ = fixtureAdmission939Context
+			result := exec.parseTraversalPatternStateMachine(fixtureAdmission939, fixtureAdmission939Context, tt.pattern)
 
 			if tt.expectNil {
 				assert.Nil(t, result)
@@ -387,7 +389,9 @@ func TestEvaluateWhereOnPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := exec.evaluateWhereOnPath(ctx, tt.whereClause, pathContext)
+			fixtureAdmission1006Context, fixtureAdmission1006 := expressionTestContext(ctx, tt.whereClause)
+			_ = fixtureAdmission1006Context
+			result := exec.evaluateWhereOnPath(fixtureAdmission1006, fixtureAdmission1006Context, tt.whereClause, pathContext)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -442,22 +446,30 @@ func TestFilterPathsByWhere(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("filter by end node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "i.name = 'Informal Register (tú)'", nil)
+		fixtureAdmission1520Context, fixtureAdmission1520 := expressionTestContext(ctx, "i.name = 'Informal Register (tú)'")
+		_ = fixtureAdmission1520Context
+		filtered := exec.filterPathsByWhere(fixtureAdmission1520, fixtureAdmission1520Context, paths, matches, "i.name = 'Informal Register (tú)'", nil)
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("filter by start node property", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score < 90", nil)
+		fixtureAdmission1521Context, fixtureAdmission1521 := expressionTestContext(ctx, "e.score < 90")
+		_ = fixtureAdmission1521Context
+		filtered := exec.filterPathsByWhere(fixtureAdmission1521, fixtureAdmission1521Context, paths, matches, "e.score < 90", nil)
 		assert.Len(t, filtered, 1)
 	})
 
 	t.Run("no filter", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "", nil)
+		fixtureAdmission1522Context, fixtureAdmission1522 := expressionTestContext(ctx, "")
+		_ = fixtureAdmission1522Context
+		filtered := exec.filterPathsByWhere(fixtureAdmission1522, fixtureAdmission1522Context, paths, matches, "", nil)
 		assert.Len(t, filtered, 2)
 	})
 
 	t.Run("filter all out", func(t *testing.T) {
-		filtered := exec.filterPathsByWhere(ctx, paths, matches, "e.score > 100", nil)
+		fixtureAdmission1523Context, fixtureAdmission1523 := expressionTestContext(ctx, "e.score > 100")
+		_ = fixtureAdmission1523Context
+		filtered := exec.filterPathsByWhere(fixtureAdmission1523, fixtureAdmission1523Context, paths, matches, "e.score > 100", nil)
 		assert.Len(t, filtered, 0)
 	})
 }

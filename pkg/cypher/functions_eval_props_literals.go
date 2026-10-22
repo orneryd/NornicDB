@@ -7,7 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
+func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	lowerExpr string,
@@ -116,14 +116,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// Only a complete list literal enters the checked list-value boundary.
 	// Subscripts and expressions over lists stay with the row evaluator.
 	if isListLiteral(expr) {
-		value, err := e.checkedPropertyExpression(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		value, err := e.checkedPropertyExpression(admission, ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		recordExpressionFailure(ctx, err)
 		return value
 	}
 
 	// Map literal {key: value}
 	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		value, err := e.parseProperties(ctx, expr)
+		value, err := e.parseProperties(admission, ctx, expr)
 		recordExpressionFailure(ctx, err)
 		return value
 	}

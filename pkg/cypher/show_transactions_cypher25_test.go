@@ -38,7 +38,9 @@ func TestCypher25ShowTransactions(t *testing.T) {
 	tx := runningTransactions.begin(ctx, "cypher25tx")
 	defer runningTransactions.end(tx)
 	for _, version := range []string{"5", "25"} {
-		result, err = exec.executeShowTransactions(withCypherVersion(ctx, "CYPHER "+version+" RETURN 1"), "SHOW TRANSACTIONS")
+		fixtureAdmission1808Context, fixtureAdmission1808 := statementTestContext(withCypherVersion(ctx, "CYPHER "+version+" RETURN 1"), "SHOW TRANSACTIONS")
+		_ = fixtureAdmission1808Context
+		result, err = exec.executeShowTransactions(fixtureAdmission1808, fixtureAdmission1808Context, "SHOW TRANSACTIONS")
 		require.NoError(t, err)
 		require.NotEmpty(t, result.Rows)
 		require.Equal(t, len(result.Columns), len(result.Rows[0]))

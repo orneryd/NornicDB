@@ -10,7 +10,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeKnowledgePolicyDDL(fixtureAdmission1010 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	_ = ctx
 	cmd, ok, err := ParseKnowledgePolicyDDL(cypher)
 	if err != nil {

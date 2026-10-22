@@ -54,14 +54,14 @@ import (
 // the node / relationship) is written, and a null value removes the key.
 // Row bindings from UNWIND / WITH are visible in the value scope.
 // Non-map values are an error (setSourceMap).
-func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
+func (e *StorageExecutor) applySetMapMergeToNode(admission admittedRelationshipStatement, ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
 	if node == nil {
 		return nil
 	}
 	if err := requireSetParameter(ctx, rightExpr); err != nil {
 		return err
 	}
-	props, err := e.setSourceMap(ctx, rightExpr, "+=", nodes, rels)
+	props, err := e.setSourceMap(admission, ctx, rightExpr, "+=", nodes, rels)
 	if err != nil {
 		return err
 	}
@@ -371,7 +371,7 @@ type setEntityState struct {
 // first written first, appended to states (a caller's buffer). A run on a variable bound to null does nothing; a
 // run on a variable that names no entity reports ok false. On an error,
 // every entity is restored to its state before the clause.
-func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes map[string]*storage.Node, rels map[string]*storage.Edge, isNull func(variable string) bool, states []setEntityState) ([]setEntityState, bool, error) {
+func (e *StorageExecutor) applySetRuns(admission admittedRelationshipStatement, ctx context.Context, runs []setRun, nodes map[string]*storage.Node, rels map[string]*storage.Edge, isNull func(variable string) bool, states []setEntityState) ([]setEntityState, bool, error) {
 	for _, run := range runs {
 		node, relationship := nodes[run.variable], rels[run.variable]
 		if node == nil && relationship == nil {
@@ -402,9 +402,9 @@ func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes
 		var written int
 		var err error
 		if node != nil {
-			written, err = e.applySetToNodeWithContext(ctx, node, run.variable, run.text, nodes, rels)
+			written, err = e.applySetToNodeWithContext(admission, ctx, node, run.variable, run.text, nodes, rels)
 		} else {
-			written, err = e.applySetToRelationshipWithContext(ctx, relationship, run.variable, run.text, nodes, rels)
+			written, err = e.applySetToRelationshipWithContext(admission, ctx, relationship, run.variable, run.text, nodes, rels)
 		}
 		states[target].written += written
 		if err != nil {

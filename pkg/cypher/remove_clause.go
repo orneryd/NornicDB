@@ -63,7 +63,7 @@ func parseRemoveItems(body string) ([]removeItem, error) {
 // relationship is a TypeError (labelTargetTypeError). A removed property
 // counts in properties_set when the entity had it, a removed label in
 // labels_removed.
-func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
+func (e *StorageExecutor) pipelineApplyRemove(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
 	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
 	if err != nil {
 		return err
@@ -94,7 +94,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if entity == nil {
 					continue
 				}
-				if err := e.removeFromNode(rowCtx, store, entity, item, nodes, rels, result.Stats); err != nil {
+				if err := e.removeFromNode(admission, rowCtx, store, entity, item, nodes, rels, result.Stats); err != nil {
 					return err
 				}
 				if result.Stats.PropertiesSet != propertiesBefore || result.Stats.LabelsRemoved != labelsBefore {
@@ -107,7 +107,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if len(item.labels) > 0 {
 					return labelTargetTypeError("Relationship")
 				}
-				if err := e.removeProperty(rowCtx, entity.Properties, item, nodes, rels, result.Stats); err != nil {
+				if err := e.removeProperty(admission, rowCtx, entity.Properties, item, nodes, rels, result.Stats); err != nil {
 					return err
 				}
 				if result.Stats.PropertiesSet != propertiesBefore {
@@ -145,11 +145,11 @@ func appendTouchedEntity(touched []interface{}, entity interface{}) []interface{
 
 // removeFromNode applies one REMOVE item to node: its labels (checked
 // against the label policies) or one property.
-func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engine, node *storage.Node, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
+func (e *StorageExecutor) removeFromNode(admission admittedRelationshipStatement, ctx context.Context, store storage.Engine, node *storage.Node, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
 	if len(item.labels) == 0 {
-		return e.removeProperty(ctx, node.Properties, item, nodes, rels, stats)
+		return e.removeProperty(admission, ctx, node.Properties, item, nodes, rels, stats)
 	}
-	labels, err := e.chainLabelNames(ctx, item.labels, nodes, rels)
+	labels, err := e.chainLabelNames(admission, ctx, item.labels, nodes, rels)
 	if err != nil {
 		return err
 	}
@@ -169,10 +169,10 @@ func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engi
 
 // removeProperty removes the property one REMOVE item names (n.p, or the
 // value of n[expr]) from properties.
-func (e *StorageExecutor) removeProperty(ctx context.Context, properties map[string]interface{}, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
+func (e *StorageExecutor) removeProperty(admission admittedRelationshipStatement, ctx context.Context, properties map[string]interface{}, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
 	name := item.property
 	if item.key != "" {
-		key, err := e.dynamicPropertyKeyOf(ctx, item.key, nodes, rels, true)
+		key, err := e.dynamicPropertyKeyOf(admission, ctx, item.key, nodes, rels, true)
 		if err != nil {
 			return err
 		}

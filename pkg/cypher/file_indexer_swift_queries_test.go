@@ -301,18 +301,24 @@ func TestReduceExpressionWithAliasListContext(t *testing.T) {
 	nodes := map[string]*storage.Node{}
 	ctx := withValueBindings(context.Background(), map[string]interface{}{"file_tags": []any{"existing"}})
 
-	combined := exec.evaluateExpressionWithContext(ctx, "file_tags + ['hello']", nodes, map[string]*storage.Edge{})
+	fixtureAdmission347Context, fixtureAdmission347 := expressionTestContext(ctx, "file_tags + ['hello']")
+	_ = fixtureAdmission347
+	combined := exec.evaluateExpressionWithContext(fixtureAdmission347, fixtureAdmission347Context, "file_tags + ['hello']", nodes, map[string]*storage.Edge{})
 	combinedList, ok := combined.([]interface{})
 	require.True(t, ok, "expected combined list expression to evaluate to list, got %T (%v)", combined, combined)
 	assert.ElementsMatch(t, []interface{}{"existing", "hello"}, combinedList)
 
-	got := exec.evaluateExpressionWithContext(ctx, expr, nodes, map[string]*storage.Edge{})
+	fixtureAdmission348Context, fixtureAdmission348 := expressionTestContext(ctx, expr)
+	_ = fixtureAdmission348
+	got := exec.evaluateExpressionWithContext(fixtureAdmission348, fixtureAdmission348Context, expr, nodes, map[string]*storage.Edge{})
 	list, ok := got.([]interface{})
 	require.True(t, ok, "expected reduce expression to evaluate to list, got %T (%v)", got, got)
 	assert.ElementsMatch(t, []interface{}{"existing", "hello"}, list)
 
 	condCtx := withValueBindings(context.Background(), map[string]interface{}{"acc": []any{"existing"}, "t": "hello"})
-	cond := exec.evaluateExpressionWithContext(condCtx, "t IN acc", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	fixtureAdmission349Context, fixtureAdmission349 := expressionTestContext(condCtx, "t IN acc")
+	_ = fixtureAdmission349
+	cond := exec.evaluateExpressionWithContext(fixtureAdmission349, fixtureAdmission349Context, "t IN acc", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	condBool, ok := cond.(bool)
 	require.True(t, ok, "expected boolean for IN condition, got %T (%v)", cond, cond)
 	assert.False(t, condBool)

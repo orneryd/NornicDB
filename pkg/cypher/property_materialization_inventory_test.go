@@ -112,7 +112,9 @@ func TestPropertyMaterializationCheckedResults(t *testing.T) {
 		for _, compiled := range []bool{false, true} {
 			rowValueProgramsDisabled.Store(!compiled)
 			for i := 0; i < 3; i++ {
-				value, err := e.checkedPropertyExpression(context.Background(), expr, row)
+				fixtureAdmission1768Context, fixtureAdmission1768 := expressionTestContext(context.Background(), expr)
+				_ = fixtureAdmission1768Context
+				value, err := e.checkedPropertyExpression(fixtureAdmission1768, fixtureAdmission1768Context, expr, row)
 				require.Error(t, err, expr)
 				require.Nil(t, value, expr)
 			}
@@ -121,7 +123,9 @@ func TestPropertyMaterializationCheckedResults(t *testing.T) {
 	rowValueProgramsDisabled.Store(false)
 	nullEntities := entityRow(context.Background(), map[string]*storage.Node{"optionalNode": nil}, map[string]*storage.Edge{"optionalRel": nil})
 	for _, expr := range []string{"optionalNode", "optionalNode.x", "optionalRel", "optionalRel.x"} {
-		value, err := e.checkedPropertyExpression(context.Background(), expr, nullEntities)
+		fixtureAdmission1769Context, fixtureAdmission1769 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission1769Context
+		value, err := e.checkedPropertyExpression(fixtureAdmission1769, fixtureAdmission1769Context, expr, nullEntities)
 		require.NoError(t, err, expr)
 		require.Nil(t, value, expr)
 	}
@@ -134,7 +138,9 @@ func TestPropertyMaterializationCheckedResults(t *testing.T) {
 		{"coalesce(7, properties(v))", int64(7)},
 		{"date(null)", nil}, {"datetime(null)", nil}, {"duration(null)", nil},
 	} {
-		value, err := e.checkedPropertyExpression(context.Background(), tc.expr, row)
+		fixtureAdmission1770Context, fixtureAdmission1770 := expressionTestContext(context.Background(), tc.expr)
+		_ = fixtureAdmission1770Context
+		value, err := e.checkedPropertyExpression(fixtureAdmission1770, fixtureAdmission1770Context, tc.expr, row)
 		require.NoError(t, err, tc.expr)
 		require.Equal(t, tc.want, value, tc.expr)
 	}
@@ -159,14 +165,18 @@ func TestPropertyMaterializationSharedReaders(t *testing.T) {
 	}
 	for _, expr := range []string{"[1.0,2.0]", "$vector"} {
 		evalCtx := withExpressionFailureSlot(withParams(ctx, map[string]interface{}{"vector": []float32{1, 2}}))
-		vector, ok := e.resolveCosineQueryVector(evalCtx, expr)
+		fixtureAdmission1771Context, fixtureAdmission1771 := expressionTestContext(evalCtx, expr)
+		_ = fixtureAdmission1771Context
+		vector, ok := e.resolveCosineQueryVector(fixtureAdmission1771, fixtureAdmission1771Context, expr)
 		require.True(t, ok)
 		require.Equal(t, []float32{1, 2}, vector)
 		require.NoError(t, getExpressionFailure(evalCtx))
 	}
 	for _, expr := range []string{"unknown_vector()", "unbound.value", "properties(1)"} {
 		evalCtx := withExpressionFailureSlot(ctx)
-		_, ok := e.resolveCosineQueryVector(evalCtx, expr)
+		fixtureAdmission1772Context, fixtureAdmission1772 := expressionTestContext(evalCtx, expr)
+		_ = fixtureAdmission1772Context
+		_, ok := e.resolveCosineQueryVector(fixtureAdmission1772, fixtureAdmission1772Context, expr)
 		require.False(t, ok)
 		require.Error(t, getExpressionFailure(evalCtx), expr)
 	}

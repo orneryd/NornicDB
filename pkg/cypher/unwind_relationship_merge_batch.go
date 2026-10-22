@@ -54,7 +54,7 @@ type nodeBatchMatchKey struct {
 	prop  string
 }
 
-func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
+func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(admission admittedRelationshipStatement,
 	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
 ) (*ExecuteResult, bool, error) {
 	plan, ok := parseUnwindRelationshipMergeBatchPlan(restQuery, unwindVar)
@@ -73,7 +73,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, plan.matches)
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(admission, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -81,7 +81,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		return nil, false, nil
 	}
 	ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
-	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	result, handled, err := e.executeUnwindRowsPipeline(admission, ctx, unwindVar, items, restQuery)
 	if handled && err == nil {
 		e.markUnwindRelationshipMergeBatchUsed()
 	}
@@ -390,7 +390,7 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(admission admittedRelationshipStatement, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
@@ -404,7 +404,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 		distinct := make(map[string]interface{}, len(rows))
 		for _, match := range group {
 			for _, row := range rows {
-				if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
+				if value, ok := e.evaluateRelationshipBatchLookupExpr(admission, match, row); ok {
 					distinct[propEqKeyBatch(value)] = value
 				}
 			}
@@ -494,16 +494,16 @@ func nodeBatchMatchesValue(node *storage.Node, key nodeBatchMatchKey, value inte
 	return propEqKeyBatch(nodeValue) == propEqKeyBatch(value)
 }
 
-func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
-	value, ok := e.evaluateRelationshipBatchLookupExpr(match, row)
+func (e *StorageExecutor) lookupRelationshipBatchMatchedNode(admission admittedRelationshipStatement, index map[nodeBatchMatchKey]map[string]*storage.Node, match matchClauseSpec, row map[string]interface{}) *storage.Node {
+	value, ok := e.evaluateRelationshipBatchLookupExpr(admission, match, row)
 	if !ok {
 		return nil
 	}
 	return index[nodeBatchMatchKey{label: match.label, prop: match.propName}][propEqKeyBatch(value)]
 }
 
-func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {
-	return e.evaluateBatchLookupExpr(match, row, row)
+func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(admission admittedRelationshipStatement, match matchClauseSpec, row map[string]interface{}) (interface{}, bool) {
+	return e.evaluateBatchLookupExpr(admission, match, row, row)
 }
 
 // normalizeRelationshipBatchRowProperties builds the property map written by
@@ -576,7 +576,7 @@ func buildRelationshipBatchReturnRow(row map[string]interface{}, returns []rowFi
 	return out
 }
 
-func lookupRelationshipBatchExistingEdge(
+func (run relationshipEntityExecution) lookupRelationshipBatchExistingEdge(
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
@@ -608,6 +608,19 @@ func lookupRelationshipBatchExistingEdge(
 	}
 	scannedPairs[pairKey] = struct{}{}
 	return existingByKey[edgeKey], nil
+}
+
+func lookupRelationshipBatchExistingEdge(
+	store storage.Engine,
+	startID storage.NodeID,
+	endID storage.NodeID,
+	merge relationshipMergeSpec,
+	row map[string]interface{},
+	edgeKey string,
+	existingByKey map[string]*storage.Edge,
+	scannedPairs map[string]struct{},
+) (*storage.Edge, error) {
+	return relationshipStorageExecution().lookupRelationshipBatchExistingEdge(store, startID, endID, merge, row, edgeKey, existingByKey, scannedPairs)
 }
 
 func relationshipBatchEdgeKeyFromRow(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, row map[string]interface{}) string {

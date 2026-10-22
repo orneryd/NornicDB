@@ -21,8 +21,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -103,6 +105,9 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	var fixtureAdmission6 admittedRelationshipStatement
+	ctx, fixtureAdmission6 = compileRelationshipStatement(ctx, query, nil)
+	_ = fixtureAdmission6
 	if indexASCIIFold(query, "shortestpath") >= 0 {
 		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
@@ -113,6 +118,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
 	plan.Mode = ModeExplain
+	e.annotateRelationshipSeekPlan(ctx, query, plan)
 	result := &ExecuteResult{
 		Columns: columns,
 		Rows:    [][]interface{}{},
@@ -129,6 +135,9 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	var fixtureAdmission7 admittedRelationshipStatement
+	ctx, fixtureAdmission7 = compileRelationshipStatement(ctx, query, nil)
+	_ = fixtureAdmission7
 	// Build the plan first
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
@@ -141,6 +150,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	// the cache would otherwise be mutated by attachPlanMetadata below,
 	// leaking plan metadata into ordinary cached reads of the same query.
 	ctx = context.WithValue(ctx, profileExecutionKey{}, true)
+	ctx = withRelationshipSeekProfile(ctx)
 
 	// Execute the actual query to collect statistics
 	startTime := time.Now()
@@ -162,6 +172,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 
 	// Calculate total DB hits (estimate based on operations)
 	plan.TotalDBHits = e.estimateDBHits(plan.Root)
+	e.annotateRelationshipSeekPlan(ctx, query, plan)
 
 	// TRC-16: emit per-operator spans with estimated/actual rows.
 	emitOperatorSpans(ctx, plan.Root)
@@ -850,23 +861,66 @@ func neo4jPlanOperatorMap(op *PlanOperator, profile bool) map[string]any {
 // formatPlan formats the execution plan as a string (tree visualization)
 func formatPlan(plan *ExecutionPlan) string {
 	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
-	sb.WriteString(fmt.Sprintf("| %-60s |\n", fmt.Sprintf("%s %s", plan.Mode, "Query Plan")))
-	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
+	lines := 4 + 2*planOperatorCount(plan.Root)
+	if plan.Mode == ModeProfile {
+		lines += 4
+	}
+	sb.Grow(lines * 66)
+	var buffer [256]byte
+	writePlanBorder(&sb)
+	line := append(buffer[:0], string(plan.Mode)...)
+	line = append(line, " Query Plan"...)
+	writePlanLine(&sb, line, 60)
+	writePlanBorder(&sb)
 
 	if plan.Mode == ModeProfile {
-		sb.WriteString(fmt.Sprintf("| Total Time: %-47s |\n", plan.TotalTime.String()))
-		sb.WriteString(fmt.Sprintf("| Total Rows: %-47d |\n", plan.TotalRows))
-		sb.WriteString(fmt.Sprintf("| Total DB Hits: %-44d |\n", plan.TotalDBHits))
-		sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
+		line = append(buffer[:0], "Total Time: "...)
+		line = append(line, plan.TotalTime.String()...)
+		writePlanLine(&sb, line, 59)
+		line = append(buffer[:0], "Total Rows: "...)
+		line = strconv.AppendInt(line, plan.TotalRows, 10)
+		writePlanLine(&sb, line, 59)
+		line = append(buffer[:0], "Total DB Hits: "...)
+		line = strconv.AppendInt(line, plan.TotalDBHits, 10)
+		writePlanLine(&sb, line, 59)
+		writePlanBorder(&sb)
 	}
 
 	formatOperator(&sb, plan.Root, 0, plan.Mode == ModeProfile)
 
-	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
+	writePlanBorder(&sb)
 
 	return sb.String()
+}
+
+func planOperatorCount(op *PlanOperator) int {
+	if op == nil {
+		return 0
+	}
+	count := 1
+	for _, child := range op.Children {
+		count += planOperatorCount(child)
+	}
+	return count
+}
+
+func writePlanBorder(sb *strings.Builder) {
+	sb.WriteString("+-")
+	for i := 0; i < 60; i++ {
+		sb.WriteByte('-')
+	}
+	sb.WriteString("-+\n")
+}
+
+// The plan renderer owns the final string. Write each line into that builder
+// without allocating intermediate strings for every field of every access site.
+func writePlanLine(sb *strings.Builder, line []byte, padding int) {
+	sb.WriteString("| ")
+	sb.Write(line)
+	for width := utf8.RuneCount(line); width < padding; width++ {
+		sb.WriteByte(' ')
+	}
+	sb.WriteString(" |\n")
 }
 
 // formatOperator formats a single operator in the plan tree
@@ -875,30 +929,43 @@ func formatOperator(sb *strings.Builder, op *PlanOperator, depth int, showStats 
 		return
 	}
 
-	indent := strings.Repeat("  ", depth)
-	prefix := "+-"
+	var buffer [256]byte
+	line := buffer[:0]
 	if depth > 0 {
-		prefix = "|" + indent + "+-"
+		line = append(line, '|')
+		for i := 0; i < depth; i++ {
+			line = append(line, "  "...)
+		}
 	}
 
 	// Operator line
-	line := fmt.Sprintf("%s %s", prefix, op.OperatorType)
+	line = append(line, "+- "...)
+	line = append(line, op.OperatorType...)
 	if op.Description != "" && op.Description != op.OperatorType {
-		line += fmt.Sprintf(" (%s)", truncate(op.Description, 40))
+		line = append(line, " ("...)
+		line = append(line, truncate(op.Description, 40)...)
+		line = append(line, ')')
 	}
-
-	sb.WriteString(fmt.Sprintf("| %-60s |\n", line))
+	writePlanLine(sb, line, 60)
+	line = buffer[:0]
+	for i := 0; i < depth; i++ {
+		line = append(line, "  "...)
+	}
 
 	// Statistics line for PROFILE mode
 	if showStats {
-		statsLine := fmt.Sprintf("%s|   Est: %d, Actual: %d, Hits: %d",
-			indent, op.EstimatedRows, op.ActualRows, op.DBHits)
-		sb.WriteString(fmt.Sprintf("| %-60s |\n", statsLine))
+		line = append(line, "|   Est: "...)
+		line = strconv.AppendInt(line, op.EstimatedRows, 10)
+		line = append(line, ", Actual: "...)
+		line = strconv.AppendInt(line, op.ActualRows, 10)
+		line = append(line, ", Hits: "...)
+		line = strconv.AppendInt(line, op.DBHits, 10)
 	} else {
 		// Just show estimates for EXPLAIN
-		statsLine := fmt.Sprintf("%s|   Estimated Rows: %d", indent, op.EstimatedRows)
-		sb.WriteString(fmt.Sprintf("| %-60s |\n", statsLine))
+		line = append(line, "|   Estimated Rows: "...)
+		line = strconv.AppendInt(line, op.EstimatedRows, 10)
 	}
+	writePlanLine(sb, line, 60)
 
 	// Format children
 	for _, child := range op.Children {

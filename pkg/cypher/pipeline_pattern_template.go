@@ -30,8 +30,8 @@ func (e *StorageExecutor) pipelinePropertyExpressions(props string) ([]pipelineP
 
 // evaluatePipelineProperties evaluates pattern predicates for a row without
 // dropping null-valued equality constraints. Failed evaluation returns an error.
-func (e *StorageExecutor) evaluatePipelineProperties(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, error) {
-	return e.materializePropertyExpressions(ctx, expressions, row, true, false)
+func (e *StorageExecutor) evaluatePipelineProperties(admission admittedRelationshipStatement, ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow) (map[string]interface{}, error) {
+	return e.materializePropertyExpressions(admission, ctx, expressions, row, true, false)
 }
 
 type pipelineNodeMatchTemplate struct {
@@ -75,11 +75,11 @@ func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineN
 
 // node returns the row's node pattern, ok false when the row takes the
 // general route.
-func (t *pipelineNodeMatchTemplate) node(ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool, error) {
+func (t *pipelineNodeMatchTemplate) node(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, row pipelineRow) (nodePatternInfo, bool, error) {
 	if !t.usable {
 		return nodePatternInfo{}, false, nil
 	}
-	props, err := e.evaluatePipelineProperties(ctx, t.properties, row)
+	props, err := e.evaluatePipelineProperties(admission, ctx, t.properties, row)
 	if err != nil {
 		return nodePatternInfo{}, true, err
 	}
@@ -142,7 +142,7 @@ func (e *StorageExecutor) pipelineMergeTemplateFor(clause string) *pipelineMerge
 
 // pattern returns the row's relationship pattern, ok false when the row
 // takes the general route because syntax or endpoint bindings are unsupported.
-func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool, error) {
+func (t *pipelineMergeTemplate) pattern(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, row pipelineRow) (*mergeRelationshipPattern, *storage.Node, *storage.Node, bool, error) {
 	if !t.usable {
 		return nil, nil, nil, false, nil
 	}
@@ -151,7 +151,7 @@ func (t *pipelineMergeTemplate) pattern(ctx context.Context, e *StorageExecutor,
 	if startNode == nil || endNode == nil {
 		return nil, nil, nil, false, nil
 	}
-	props, err := e.evaluatePipelineProperties(ctx, t.properties, row)
+	props, err := e.evaluatePipelineProperties(admission, ctx, t.properties, row)
 	if err != nil {
 		return nil, nil, nil, true, err
 	}

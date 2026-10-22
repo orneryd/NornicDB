@@ -25,7 +25,9 @@ func TestCreateConstraint_RelationshipCardinalityAndPolicyBranches(t *testing.T)
 		"CREATE CONSTRAINT IF NOT EXISTS FOR (:Team)-[r:CANNOT_EDIT]->(:Secret) REQUIRE DISALLOWED",
 	}
 	for _, q := range queries {
-		_, err := exec.executeCreateConstraint(ctx, q)
+		fixtureAdmission1430Context, fixtureAdmission1430 := statementTestContext(ctx, q)
+		_ = fixtureAdmission1430Context
+		_, err := exec.executeCreateConstraint(fixtureAdmission1430, fixtureAdmission1430Context, q)
 		require.NoError(t, err, q)
 	}
 
@@ -87,11 +89,15 @@ func TestCreateConstraint_RelationshipCardinalityInvalidCount(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_rel_ext_err"))
 	ctx := context.Background()
 
-	_, err := exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_out IF NOT EXISTS FOR ()-[r:KNOWS]->() REQUIRE MAX COUNT 0")
+	fixtureAdmission1431Context, fixtureAdmission1431 := statementTestContext(ctx, "CREATE CONSTRAINT bad_out IF NOT EXISTS FOR ()-[r:KNOWS]->() REQUIRE MAX COUNT 0")
+	_ = fixtureAdmission1431Context
+	_, err := exec.executeCreateConstraint(fixtureAdmission1431, fixtureAdmission1431Context, "CREATE CONSTRAINT bad_out IF NOT EXISTS FOR ()-[r:KNOWS]->() REQUIRE MAX COUNT 0")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAX COUNT must be a positive integer")
 
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_in IF NOT EXISTS FOR ()<-[r:KNOWS]-() REQUIRE MAX COUNT -1")
+	fixtureAdmission1432Context, fixtureAdmission1432 := statementTestContext(ctx, "CREATE CONSTRAINT bad_in IF NOT EXISTS FOR ()<-[r:KNOWS]-() REQUIRE MAX COUNT -1")
+	_ = fixtureAdmission1432Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1432, fixtureAdmission1432Context, "CREATE CONSTRAINT bad_in IF NOT EXISTS FOR ()<-[r:KNOWS]-() REQUIRE MAX COUNT -1")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid cardinality require clause")
 }

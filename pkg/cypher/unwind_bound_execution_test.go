@@ -64,7 +64,9 @@ func TestUnwind_MergeStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_unwind"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeRequiredPipeline(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row})")
+	fixtureAdmission927Context, fixtureAdmission927 := statementTestContext(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row})")
+	_ = fixtureAdmission927
+	_, err := exec.executeRequiredPipeline(fixtureAdmission927, fixtureAdmission927Context, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row})")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }
@@ -73,7 +75,9 @@ func TestUnwind_MergeChainStopsWithinRowAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_chain"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeRequiredPipeline(ctx, "UNWIND [1] AS row MERGE (a:CancelChainA {value: row}) MERGE (b:CancelChainB {value: row}) RETURN count(b) AS count")
+	fixtureAdmission928Context, fixtureAdmission928 := statementTestContext(ctx, "UNWIND [1] AS row MERGE (a:CancelChainA {value: row}) MERGE (b:CancelChainB {value: row}) RETURN count(b) AS count")
+	_ = fixtureAdmission928
+	_, err := exec.executeRequiredPipeline(fixtureAdmission928, fixtureAdmission928Context, "UNWIND [1] AS row MERGE (a:CancelChainA {value: row}) MERGE (b:CancelChainB {value: row}) RETURN count(b) AS count")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }
@@ -82,7 +86,9 @@ func TestUnwind_ProjectedMergeStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_projected_unwind"), cancel: cancel}
 	exec := NewStorageExecutor(store)
-	_, err := exec.executeRequiredPipeline(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row}) RETURN n.value AS value")
+	fixtureAdmission929Context, fixtureAdmission929 := statementTestContext(ctx, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row}) RETURN n.value AS value")
+	_ = fixtureAdmission929
+	_, err := exec.executeRequiredPipeline(fixtureAdmission929, fixtureAdmission929Context, "UNWIND [1, 2] AS row MERGE (n:CancelUnwind {value: row}) RETURN n.value AS value")
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, store.creates)
 }

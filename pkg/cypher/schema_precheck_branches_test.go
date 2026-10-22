@@ -37,14 +37,18 @@ func TestExecuteSchemaCommand_PrecheckBranches(t *testing.T) {
 	t.Run("composite root returns not allowed error", func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_exec_comp")
 		exec := NewStorageExecutor(&compositeEngineWrapper{Engine: base, composite: true})
-		_, err := exec.executeSchemaCommand(ctx, "CREATE INDEX idx FOR (n:Person) ON (n.name)")
+		fixtureAdmission1542Context, fixtureAdmission1542 := statementTestContext(ctx, "CREATE INDEX idx FOR (n:Person) ON (n.name)")
+		_ = fixtureAdmission1542Context
+		_, err := exec.executeSchemaCommand(fixtureAdmission1542, fixtureAdmission1542Context, "CREATE INDEX idx FOR (n:Person) ON (n.name)")
 		require.Error(t, err)
 		require.ErrorContains(t, err, "Schema DDL on composite databases requires a constituent target")
 	})
 
 	t.Run("unknown schema command path", func(t *testing.T) {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "schema_exec_unknown"))
-		_, err := exec.executeSchemaCommand(ctx, "SHOW INDEXES")
+		fixtureAdmission1543Context, fixtureAdmission1543 := statementTestContext(ctx, "SHOW INDEXES")
+		_ = fixtureAdmission1543Context
+		_, err := exec.executeSchemaCommand(fixtureAdmission1543, fixtureAdmission1543Context, "SHOW INDEXES")
 		require.EqualError(t, err, "unknown schema command: SHOW INDEXES")
 	})
 }

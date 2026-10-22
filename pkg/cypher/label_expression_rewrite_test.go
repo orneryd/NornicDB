@@ -401,8 +401,14 @@ func TestLabelExpressionsInInternalStatementsAndCase(t *testing.T) {
 	require.Contains(t, err.Error(), "Mixing label expression symbols")
 
 	rels := map[string]*storage.Edge{"r": {Type: "S"}}
-	require.True(t, exec.evaluateCondition(ctx, "r:R|S", nil, rels))
-	require.False(t, exec.evaluateCondition(ctx, "r:!S", nil, rels))
+	fixtureAdmission1274Context, fixtureAdmission1274 := expressionTestContext(ctx, "r:R|S")
+	_ = fixtureAdmission1274Context
+	require.True(t, exec.evaluateCondition(fixtureAdmission1274, fixtureAdmission1274Context, "r:R|S", nil, rels))
+	fixtureAdmission1275Context, fixtureAdmission1275 := expressionTestContext(ctx, "r:!S")
+	_ = fixtureAdmission1275Context
+	require.False(t, exec.evaluateCondition(fixtureAdmission1275, fixtureAdmission1275Context, "r:!S", nil, rels))
 	nodes := map[string]*storage.Node{"n": {Labels: []string{"A"}}}
-	require.True(t, exec.evaluateCondition(ctx, "n:A&!B", nodes, nil))
+	fixtureAdmission1276Context, fixtureAdmission1276 := expressionTestContext(ctx, "n:A&!B")
+	_ = fixtureAdmission1276Context
+	require.True(t, exec.evaluateCondition(fixtureAdmission1276, fixtureAdmission1276Context, "n:A&!B", nodes, nil))
 }

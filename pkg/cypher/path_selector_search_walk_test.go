@@ -68,30 +68,40 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	}
 	s1, s3, s4 := byID(exec, 1), byID(exec, 3), byID(exec, 4)
 	walk := [][]*storage.Edge{{edge(exec, s1, s3), edge(exec, s3, s4)}}
-	bindFor := func(exec *StorageExecutor, plan *selectedPathPlan) func(pathSearchPath) (pipelineRow, bool) {
+	bindFor := func(statement admittedRelationshipStatement, exec *StorageExecutor, plan *selectedPathPlan) func(pathSearchPath) (pipelineRow, bool) {
 		return func(path pathSearchPath) (pipelineRow, bool) {
-			return exec.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
+			return exec.bindSelectedPath(statement, ctx, plan, plan.forward, false, pipelineRow{}, path)
 		}
 	}
 	plus, _, ok := compileSelectedPathPlan("(a)(()-[:T]->())+(b)", "p", "", nil)
 	require.True(t, ok)
-	rows, ok := exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, plus))
+	fixtureAdmission1733Context, fixtureAdmission1733 := statementTestContext(ctx, ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1733Context
+	rows, ok := exec.relationshipExecutionFor(fixtureAdmission1733, fixtureAdmission1733Context, "(a)(()-[:T]->())+(b)", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(fixtureAdmission1733, exec, plus))
 	require.True(t, ok)
 	require.Len(t, rows, 1)
 	// A walk the pattern doesn't take or bind, a node that doesn't load and
 	// a failed batch read leave the pair to the general search.
-	_, ok = exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false,
+	fixtureAdmission1734Context, fixtureAdmission1734 := statementTestContext(ctx, ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1734Context
+	_, ok = exec.relationshipExecutionFor(fixtureAdmission1734, fixtureAdmission1734Context, "(a)(()-[:T]->())+(b)", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false,
 		func(pathSearchPath) (pipelineRow, bool) { return nil, false })
 	require.False(t, ok)
 	three, _, ok := compileSelectedPathPlan("(a)(()-[:T]->()){3}(b)", "p", "", nil)
 	require.True(t, ok)
-	_, ok = exec.newPathSearch(ctx, three.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, three))
+	fixtureAdmission1735Context, fixtureAdmission1735 := statementTestContext(ctx, ("MATCH "+("(a)(()-[:T]->()){3}(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1735Context
+	_, ok = exec.relationshipExecutionFor(fixtureAdmission1735, fixtureAdmission1735Context, "(a)(()-[:T]->()){3}(b)", "").newPathSearch(ctx, three.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(fixtureAdmission1735, exec, three))
 	require.False(t, ok)
 	dangling := [][]*storage.Edge{{{ID: "dangling", Type: "T", StartNode: s1.ID, EndNode: "missing"}, {ID: "back", Type: "T", StartNode: "missing", EndNode: s4.ID}}}
-	_, ok = exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, dangling, false, bindFor(exec, plus))
+	fixtureAdmission1736Context, fixtureAdmission1736 := statementTestContext(ctx, ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1736Context
+	_, ok = exec.relationshipExecutionFor(fixtureAdmission1736, fixtureAdmission1736Context, "(a)(()-[:T]->())+(b)", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, dangling, false, bindFor(fixtureAdmission1736, exec, plus))
 	require.False(t, ok)
 	failing := NewStorageExecutor(&failingBatchEngine{Engine: exec.storage})
-	_, ok = failing.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(failing, plus))
+	fixtureAdmission1737Context, fixtureAdmission1737 := statementTestContext(ctx, ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1737Context
+	_, ok = failing.relationshipExecutionFor(fixtureAdmission1737, fixtureAdmission1737Context, "(a)(()-[:T]->())+(b)", "").newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(fixtureAdmission1737, failing, plus))
 	require.False(t, ok)
 	result, err := failing.Execute(ctx, "MATCH (a:S {id: 1}), (b:S {id: 4}) MATCH p = shortestPath((a)-[:T*]->(b)) RETURN length(p) AS l", nil)
 	require.NoError(t, err)
@@ -105,7 +115,9 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	// A cancelled search ends within the level it is extending.
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	search := exec.newPathSearch(cancelled, plus.forward, pipelineRow{}, -1, s1)
+	fixtureAdmission1738Context, fixtureAdmission1738 := statementTestContext(cancelled, ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1738Context
+	search := exec.relationshipExecutionFor(fixtureAdmission1738, fixtureAdmission1738Context, "(a)(()-[:T]->())+(b)", "").newPathSearch(cancelled, plus.forward, pipelineRow{}, -1, s1)
 	side := search.newWalkSide(s1.ID, "outgoing", true)
 	for len(side.frontier) < 300 {
 		side.frontier = append(side.frontier, s1.ID)

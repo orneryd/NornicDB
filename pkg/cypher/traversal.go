@@ -130,7 +130,8 @@ func traversalRelationshipsNeedOnlyHeaders(match *TraversalMatch) bool {
 // in direction ("outgoing" or "incoming"): headers when the statement needs
 // no relationship properties and storage can list them, full relationships
 // otherwise.
-func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
+func (run relationshipAccessExecution) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
+	e := run.executor
 	if reader, ok := e.storage.(storage.EdgeHeaderReader); ok && ctx.relationshipsNeedOnlyHeaders {
 		var edges []*storage.Edge
 		var answered bool
@@ -184,11 +185,7 @@ type RelationshipPattern struct {
 }
 
 // parseRelationshipPattern parses patterns like -[r:TYPE {props}]->
-func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern string) (*RelationshipPattern, error) {
-	return readRelationshipPattern(ctx, pattern, e.parsePropertyMap)
-}
-
-func readRelationshipPattern(ctx context.Context, pattern string, properties patternPropertyReader) (*RelationshipPattern, error) {
+func (e patternSyntaxReader) parseRelationshipPattern(ctx context.Context, pattern string) (*RelationshipPattern, error) {
 	result := &RelationshipPattern{
 		Direction:  "both",
 		MinHops:    1,
@@ -257,7 +254,7 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 		// [r {name: 'value'}] and [r:TYPE {name: 'value'}].
 		if declaration.properties != "" {
 			var err error
-			result.Properties, err = properties(ctx, declaration.properties, true)
+			result.Properties, err = e.parsePropertyMap(ctx, declaration.properties, true)
 			if err != nil {
 				return nil, err
 			}
@@ -276,7 +273,7 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 // endpoint and walks backwards, instead of expanding the pattern over every
 // relationship in the store and joining the bound value afterward. seedNodes
 // (start-side) takes priority when both are supplied.
-func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(admission admittedRelationshipStatement, ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -286,7 +283,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	defer collector.close()
 
 	// Parse the pattern: (a:Label)-[r:TYPE]->(b:Label)
-	matches := e.parseTraversalPattern(ctx, pattern)
+	matches := e.parseTraversalPattern(admission, ctx, pattern)
 	if matches == nil {
 		if err := getExpressionFailure(ctx); err != nil {
 			return nil, err
@@ -296,6 +293,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
 		matches.boundEndNodeID = endSeedNodes[0].ID
 	}
+	execution := e.relationshipExecutionFor(admission, ctx, pattern, whereClause)
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
 		result.Columns = append(result.Columns, item.column())
@@ -327,7 +325,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// A plain relationship count is answered from the counters when they can
 	// (relationshipCountFromStore decides), instead of materializing paths.
 	if whereClause == "" && pathVariable == "" && len(returnItems) == 1 {
-		if count, ok, err := e.relationshipCountFromStore(ctx, matches, returnItems[0]); ok {
+		if count, ok, err := execution.count(ctx, matches, returnItems[0]); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -345,7 +343,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
 	if whereClause == "" && pathVariable == "" {
-		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
+		if rows, ok, err := execution.aggregate(ctx, matches, returnItems); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -368,7 +366,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		// MATCH (o)-[:R]->(t) WHERE elementId(o) = '...'
 		// This avoids traversing from all start nodes for single-node lookups.
 		if matches.StartNode.variable != "" {
-			if nodes, used, idxErr := e.tryCollectNodesFromIDEqualityCompound(ctx, matches.StartNode, whereClause, nil); idxErr == nil && used {
+			if nodes, used, idxErr := e.tryCollectNodesFromIDEqualityCompound(admission, ctx, matches.StartNode, whereClause, nil); idxErr == nil && used {
 				optimizedStartNodes = nodes
 				usedPropertyIndex = true
 			}
@@ -376,7 +374,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 		// Prefer indexed start-node pruning for simple property predicates.
 		if matches.StartNode.variable != "" && len(optimizedStartNodes) == 0 {
-			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, matches.StartNode, whereClause); idxErr == nil && used {
+			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(admission, ctx, matches.StartNode, whereClause); idxErr == nil && used {
 				optimizedStartNodes = nodes
 				usedPropertyIndex = true
 			}
@@ -395,7 +393,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			// traversal anchored by an IN-list seeds from the property index
 			// instead of scanning every node of the label.
 			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(ctx, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr == nil && used {
+				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(admission, ctx, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr == nil && used {
 					optimizedStartNodes = nodes
 					usedPropertyIndex = true
 				}
@@ -406,7 +404,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			// start nodes in patterns like:
 			//   MATCH (n:Label)-[:R]->(m) WHERE n.prop = 'x' RETURN ...
 			if !usedPropertyIndex {
-				if nodes, used, scanErr := e.tryCollectNodesFromStartPropertyScan(ctx, matches.StartNode, whereClause); scanErr == nil && used {
+				if nodes, used, scanErr := e.tryCollectNodesFromStartPropertyScan(admission, ctx, matches.StartNode, whereClause); scanErr == nil && used {
 					optimizedStartNodes = nodes
 				}
 			}
@@ -414,46 +412,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 
 	}
 
-	// Execute traversal with optimized start nodes if available
-	var paths []PathResult
-	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
-		// Final even when empty: a bound end node with no qualifying path must
-		// not fall through to the store-wide scan below.
-		paths = endSeededPaths
-	} else if len(optimizedStartNodes) > 0 {
-		// Use optimized start nodes for non-chained traversal. Chained traversal uses
-		// segment-aware expansion; feeding it through traverseGraphSequential can break
-		// semantics because it ignores segment topology.
-		if matches.IsChained && len(matches.Segments) > 1 {
-			paths = e.traverseChainedGraph(ctx, matches, optimizedStartNodes)
-		} else {
-			viewport, _ := TemporalViewportFromContext(ctx)
-			checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-			paths = e.traverseGraphSequential(ctx, matches, optimizedStartNodes, viewport, checker)
-		}
-		// Still need to apply WHERE clause filter (in case there are other conditions)
-		if whereClause != "" {
-			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
-		}
-	} else if matches.TraversalLimit > 0 && !matches.IsChained && len(matches.StartNode.properties) == 0 {
-		viewport, _ := TemporalViewportFromContext(ctx)
-		checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-		var streamed bool
-		var streamErr error
-		paths, streamed, streamErr = e.traverseGraphWithStreamingStartNodes(ctx, matches, viewport, checker)
-		if streamErr != nil {
-			return nil, streamErr
-		}
-		if !streamed {
-			paths = e.traverseGraph(ctx, matches)
-		}
-	} else {
-		// Normal traversal from all matching nodes
-		paths = e.traverseGraph(ctx, matches)
-		// Apply WHERE clause filter if present
-		if whereClause != "" {
-			paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
-		}
+	paths, accessErr := execution.paths(ctx, matches, seedNodes, endSeedNodes, optimizedStartNodes)
+	if accessErr != nil {
+		return nil, accessErr
 	}
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
@@ -471,7 +432,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				pathContext := e.buildPathContext(path, matches)
 				rows = append(rows, traversalOptRow{values: e.pathContextValues(pathContext)})
 			}
-			aggregated, err := e.aggregateTraversalOptionalRows(ctx, rows, returnItems)
+			aggregated, err := e.aggregateTraversalOptionalRows(admission, ctx, rows, returnItems)
 			if err != nil {
 				return nil, err
 			}
@@ -522,30 +483,30 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			for i, item := range returnItems {
 				switch {
 				case isAggregateFuncName(item.expr, "count"):
-					row[i] = e.aggregatePathCount(ctx, paths, matches, item.expr)
+					row[i] = e.aggregatePathCount(admission, ctx, paths, matches, item.expr)
 
 				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(ctx, paths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathSum(admission, ctx, paths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(ctx, paths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathAvg(admission, ctx, paths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), false)
+					row[i] = e.aggregatePathMinMax(admission, ctx, paths, matches, extractFuncInner(item.expr), false)
 
 				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
+					row[i] = e.aggregatePathMinMax(admission, ctx, paths, matches, extractFuncInner(item.expr), true)
 
 				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
-					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
+					row[i] = e.aggregatePathCollect(admission, ctx, paths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
-					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, false)
+					row[i] = e.aggregatePathCollect(admission, ctx, paths, matches, item.expr, false)
 
 				default:
 					if len(paths) > 0 {
 						context := e.buildPathContext(paths[0], matches)
-						row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
+						row[i] = e.evaluateExpressionWithPathContext(admission, ctx, item.expr, context)
 					} else {
 						row[i] = nil
 					}
@@ -568,7 +529,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			// Build group key from non-aggregation columns
 			for i, item := range returnItems {
 				if !isAggFlags[i] { // Use pre-computed flag
-					val := e.evaluateExpressionWithPathContext(ctx, item.expr, context)
+					val := e.evaluateExpressionWithPathContext(admission, ctx, item.expr, context)
 					keyParts = append(keyParts, val)
 				}
 			}
@@ -596,30 +557,30 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				// Aggregation function - aggregate over this group
 				switch {
 				case isAggregateFuncName(item.expr, "count"):
-					row[i] = e.aggregatePathCount(ctx, groupPaths, matches, item.expr)
+					row[i] = e.aggregatePathCount(admission, ctx, groupPaths, matches, item.expr)
 
 				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(ctx, groupPaths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathSum(admission, ctx, groupPaths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(ctx, groupPaths, matches, extractFuncInner(item.expr))
+					row[i] = e.aggregatePathAvg(admission, ctx, groupPaths, matches, extractFuncInner(item.expr))
 
 				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), false)
+					row[i] = e.aggregatePathMinMax(admission, ctx, groupPaths, matches, extractFuncInner(item.expr), false)
 
 				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
+					row[i] = e.aggregatePathMinMax(admission, ctx, groupPaths, matches, extractFuncInner(item.expr), true)
 
 				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
-					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
+					row[i] = e.aggregatePathCollect(admission, ctx, groupPaths, matches, item.expr, true)
 
 				case isAggregateFuncName(item.expr, "collect"):
-					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, false)
+					row[i] = e.aggregatePathCollect(admission, ctx, groupPaths, matches, item.expr, false)
 
 				default:
 					if len(groupPaths) > 0 {
 						context := e.buildPathContext(groupPaths[0], matches)
-						row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
+						row[i] = e.evaluateExpressionWithPathContext(admission, ctx, item.expr, context)
 					} else {
 						row[i] = nil
 					}
@@ -633,7 +594,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	}
 
 	// Build result rows (non-aggregation)
-	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, earlyLimit); err != nil {
+	if err := collector.appendPathRows(admission, e, ctx, paths, matches, returnItems, earlyLimit); err != nil {
 		return nil, err
 	}
 
@@ -706,7 +667,7 @@ func (c *traversalResultCollector) appendRows(rows [][]interface{}) error {
 	return nil
 }
 
-func (c *traversalResultCollector) appendPathRows(e *StorageExecutor, ctx context.Context, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) error {
+func (c *traversalResultCollector) appendPathRows(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) error {
 	for _, path := range paths {
 		if rowLimit >= 0 && len(c.result.Rows) >= rowLimit {
 			break
@@ -718,7 +679,7 @@ func (c *traversalResultCollector) appendPathRows(e *StorageExecutor, ctx contex
 			if isLengthPathExpr(item.expr) {
 				row[i] = int64(context.pathLength)
 			} else {
-				row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
+				row[i] = e.evaluateExpressionWithPathContext(admission, ctx, item.expr, context)
 			}
 		}
 		if err := c.appendRow(row); err != nil {
@@ -735,12 +696,12 @@ const (
 	traversalEndSeed
 )
 
-func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int, seedSide traversalSeedSide) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(admission admittedRelationshipStatement, ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int, seedSide traversalSeedSide) (*ExecuteResult, bool, error) {
 	if limit <= 0 || strings.TrimSpace(orderExpr) == "" {
 		return nil, false, nil
 	}
 
-	matches := e.parseTraversalPattern(ctx, pattern)
+	matches := e.parseTraversalPattern(admission, ctx, pattern)
 	if matches == nil || (seedSide == traversalEndSeed && matches.IsChained) {
 		return nil, false, nil
 	}
@@ -751,14 +712,14 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		if !matches.IsChained && strings.TrimSpace(matches.StartNode.variable) == "" {
 			return nil, false, nil
 		}
-		seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, matches.StartNode, whereClause, orderExpr, limit)
+		seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(admission, ctx, matches.StartNode, whereClause, orderExpr, limit)
 		if err != nil {
 			return nil, true, err
 		}
 		if !used {
 			return nil, false, nil
 		}
-		result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
+		result, err := e.executeMatchWithRelationshipsWithPathSeeded(admission, ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
 		if err != nil {
 			return nil, true, err
 		}
@@ -780,12 +741,12 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 	}
 
 	seedLimit := topKSeedLimit(limit)
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit)
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(admission, ctx, matches.EndNode, seedWhere, orderExpr, seedLimit)
 	if err != nil {
 		return nil, true, err
 	}
 	if !used {
-		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit); err != nil {
+		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(admission, ctx, matches.EndNode, seedWhere, orderExpr, seedLimit); err != nil {
 			return nil, true, err
 		}
 		if !used {
@@ -802,24 +763,22 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		return result, true, nil
 	}
 
-	reversed := reverseTraversalMatch(matches)
-	if reversed == nil {
-		return nil, false, nil
-	}
-
+	execution := e.relationshipExecutionFor(admission, ctx, pattern, whereClause)
 	paths := make([]PathResult, 0, util.SafePreallocCap(len(seedNodes)))
 	for _, endNode := range seedNodes {
-		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
-		for _, reversedPath := range reversedPaths {
-			path := reversePathResult(reversedPath)
-			if whereClause != "" && !e.evaluateWhereOnPath(ctx, whereClause, e.buildPathContext(path, matches)) {
+		seededPaths, accessErr := execution.paths(ctx, matches, nil, []*storage.Node{endNode}, nil)
+		if accessErr != nil {
+			return nil, true, accessErr
+		}
+		for _, path := range seededPaths {
+			if whereClause != "" && !e.evaluateWhereOnPath(admission, ctx, whereClause, e.buildPathContext(path, matches)) {
 				continue
 			}
 			paths = append(paths, path)
 			if len(paths) >= limit {
 				collector := newTraversalResultCollector(ctx, result)
 				defer collector.close()
-				if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, limit); err != nil {
+				if err := collector.appendPathRows(admission, e, ctx, paths, matches, returnItems, limit); err != nil {
 					return nil, true, err
 				}
 				e.markTraversalEndSeedTopKUsed()
@@ -834,7 +793,7 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 
 	collector := newTraversalResultCollector(ctx, result)
 	defer collector.close()
-	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, limit); err != nil {
+	if err := collector.appendPathRows(admission, e, ctx, paths, matches, returnItems, limit); err != nil {
 		return nil, true, err
 	}
 	e.markTraversalEndSeedTopKUsed()
@@ -893,7 +852,8 @@ func referencesTraversalVariable(expr string, variable string) bool {
 // clause. seeded reports whether this path ran; when it did, the returned
 // paths are final even if empty. The caller is responsible for having checked
 // the end node's own labels and inline properties.
-func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
+func (run relationshipAccessExecution) traverseFromEndSeeds(ctx context.Context, matches *TraversalMatch, startSeedNodes, endSeedNodes []*storage.Node, whereClause string) (paths []PathResult, seeded bool) {
+	e := run.executor
 	if len(startSeedNodes) > 0 || len(endSeedNodes) == 0 || matches.IsChained {
 		return nil, false
 	}
@@ -903,12 +863,12 @@ func (e *StorageExecutor) traverseFromEndSeeds(ctx context.Context, matches *Tra
 	}
 	paths = make([]PathResult, 0, util.SafePreallocCap(len(endSeedNodes)))
 	for _, endNode := range endSeedNodes {
-		for _, reversedPath := range e.traverseFromNode(ctx, endNode, reversed) {
+		for _, reversedPath := range run.traverseFromNode(ctx, endNode, reversed) {
 			paths = append(paths, reversePathResult(reversedPath))
 		}
 	}
 	if whereClause != "" {
-		paths = e.filterPathsByWhere(ctx, paths, matches, whereClause, nil)
+		paths = e.filterPathsByWhere(run.statement(), ctx, paths, matches, whereClause, nil)
 	}
 	return paths, true
 }
@@ -955,7 +915,7 @@ func topKSeedLimit(limit int) int {
 	return seedLimit
 }
 
-func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
+func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(admission admittedRelationshipStatement,
 	ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
@@ -966,7 +926,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 		return nil, false, nil
 	}
 
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
+	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(admission, ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
 	if err != nil || !used {
 		return nil, used, err
 	}
@@ -985,7 +945,7 @@ func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
 // on the traversal start variable:
 //   - <startVar>.<prop> = <value>
 //   - <startVar>.<prop> IS NOT NULL
-func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(admission admittedRelationshipStatement, ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
 	if strings.TrimSpace(nodePattern.variable) == "" || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
@@ -1002,7 +962,7 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 			return nil, false, nil
 		}
 	}
-	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+	nodes, _, err := e.collectPipelineInitialNodeCandidates(admission, ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	if err != nil {
 		return nil, true, err
 	}
@@ -1010,7 +970,7 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 	filtered := nodes[:0]
 	for _, node := range nodes {
 		values[nodePattern.variable] = node
-		if e.evaluateRowPredicate(ctx, whereClause, values) {
+		if e.evaluateRowPredicate(admission, ctx, whereClause, values) {
 			filtered = append(filtered, node)
 		}
 	}
@@ -1022,13 +982,13 @@ func isLengthPathExpr(expr string) bool {
 	return matchFuncStartAndSuffix(expr, "length") && strings.Contains(lowerASCII(expr), "path")
 }
 
-func (e *StorageExecutor) aggregatePathSum(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
+func (e *StorageExecutor) aggregatePathSum(admission admittedRelationshipStatement, ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
 	var sumInt int64
 	var sumFloat float64
 	hasFloat := false
 	for _, path := range paths {
 		bindings := e.buildPathContext(path, matches)
-		value := e.evaluateExpressionWithPathContext(ctx, inner, bindings)
+		value := e.evaluateExpressionWithPathContext(admission, ctx, inner, bindings)
 		floating, integer, isInteger, numeric := pipelineAggregateNumber(value)
 		if !numeric {
 			continue
@@ -1046,12 +1006,12 @@ func (e *StorageExecutor) aggregatePathSum(ctx context.Context, paths []PathResu
 	return sumInt
 }
 
-func (e *StorageExecutor) aggregatePathAvg(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
+func (e *StorageExecutor) aggregatePathAvg(admission admittedRelationshipStatement, ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
 	sum := 0.0
 	count := 0
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
+		val := e.evaluateExpressionWithPathContext(admission, ctx, inner, context)
 		if f, ok := toFloat64(val); ok {
 			sum += f
 			count++
@@ -1063,12 +1023,12 @@ func (e *StorageExecutor) aggregatePathAvg(ctx context.Context, paths []PathResu
 	return sum / float64(count)
 }
 
-func (e *StorageExecutor) aggregatePathMinMax(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string, wantMax bool) interface{} {
+func (e *StorageExecutor) aggregatePathMinMax(admission admittedRelationshipStatement, ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string, wantMax bool) interface{} {
 	var best interface{}
 	hasBest := false
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
+		val := e.evaluateExpressionWithPathContext(admission, ctx, inner, context)
 		if val == nil {
 			continue
 		}
@@ -1093,7 +1053,7 @@ func (e *StorageExecutor) aggregatePathMinMax(ctx context.Context, paths []PathR
 	return best
 }
 
-func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string) int64 {
+func (e *StorageExecutor) aggregatePathCount(admission admittedRelationshipStatement, ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string) int64 {
 	inner := strings.TrimSpace(extractFuncInner(expr))
 	if inner == "*" {
 		return int64(len(paths))
@@ -1103,7 +1063,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 	var count int64
 	for _, path := range paths {
 		pathContext := e.buildPathContext(path, matches)
-		value := e.evaluateExpressionWithPathContext(ctx, inner, pathContext)
+		value := e.evaluateExpressionWithPathContext(admission, ctx, inner, pathContext)
 		if value == nil {
 			continue
 		}
@@ -1119,7 +1079,7 @@ func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathRe
 	return count
 }
 
-func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
+func (e *StorageExecutor) aggregatePathCollect(admission admittedRelationshipStatement, ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
 	inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
 	if distinct {
 		inner, _ = cutDistinctArgument(inner)
@@ -1133,7 +1093,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 		seen := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
-			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
+			val := e.evaluateExpressionWithPathContext(admission, ctx, inner, context)
 			if val == nil {
 				continue
 			}
@@ -1150,7 +1110,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 	} else {
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
-			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
+			val := e.evaluateExpressionWithPathContext(admission, ctx, inner, context)
 			if memory.growValue(val) != nil {
 				break
 			}
@@ -1165,9 +1125,10 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 
 // TraversalMatch represents a parsed traversal pattern
 type TraversalMatch struct {
-	StartNode    nodePatternInfo
-	EndNode      nodePatternInfo
-	Relationship RelationshipPattern
+	accessPattern string // original program template, retained by parsed-pattern caches
+	StartNode     nodePatternInfo
+	EndNode       nodePatternInfo
+	Relationship  RelationshipPattern
 	// For chained patterns like (a)-[:R1]->(b)-[:R2]->(c), we store intermediate segments
 	IntermediateNodes []nodePatternInfo
 	Segments          []TraversalSegment // All segments in the chain
@@ -1206,28 +1167,31 @@ type TraversalSegment struct {
 // A pattern with a quantified path pattern (((x)-->(y))+) is none: only
 // the clause pipeline runs one (quantified_path_pattern.go).
 // Uses a state machine instead of regex to properly handle parentheses in property values
-func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
-	return e.readTraversalPattern(ctx, pattern, e.parsePropertyMap)
-}
-
-// Structural admission uses the same string reader without evaluating values.
-func (e *StorageExecutor) parseTraversalPatternStructure(ctx context.Context, pattern string) *TraversalMatch {
-	return e.readTraversalPattern(ctx, pattern, patternPropertyKeys)
-}
-
-func (e *StorageExecutor) readTraversalPattern(ctx context.Context, pattern string, properties patternPropertyReader) *TraversalMatch {
+func (e patternSyntaxReader) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
 	if hasQuantifiedGroup(pattern) {
 		return nil
 	}
+	source := pattern
 	pattern = normalizeAnonymousTraversalRelationships(pattern)
-	// First check if this is a chained pattern (has multiple relationship segments)
+	var match *TraversalMatch
 	if e.isChainedPattern(pattern) {
-		return e.readChainedTraversalPattern(ctx, pattern, properties)
+		match = e.parseChainedTraversalPattern(ctx, pattern)
+	} else {
+		match = e.parseTraversalPatternStateMachine(ctx, pattern)
 	}
-	return e.readTraversalPatternStateMachine(ctx, pattern, properties)
+	if match != nil {
+		match.accessPattern = source
+	}
+	return match
 }
 
 func normalizeAnonymousTraversalRelationships(pattern string) string {
+	// Every bare-edge spelling below contains "--". Bracketed relationships
+	// without that marker are already canonical; keep their source unchanged
+	// without walking quoted tokens or allocating a replacement for each row.
+	if !strings.Contains(pattern, "--") {
+		return pattern
+	}
 	var normalized strings.Builder
 	normalized.Grow(len(pattern) + 8)
 	for index := 0; index < len(pattern); {
@@ -1260,7 +1224,7 @@ func normalizeAnonymousTraversalRelationships(pattern string) string {
 
 // isChainedPattern checks if a pattern has multiple relationship segments
 // e.g., (a)<-[:R1]-(b)-[:R2]->(c) or (a)-[:R1]->(b)-[:R2]->(c)
-func (e *StorageExecutor) isChainedPattern(pattern string) bool {
+func (e patternSyntaxReader) isChainedPattern(pattern string) bool {
 	// Count relationship patterns by counting ]-
 	// A chained pattern has at least 2 relationship segments
 	count := 0
@@ -1274,11 +1238,7 @@ func (e *StorageExecutor) isChainedPattern(pattern string) bool {
 }
 
 // parseChainedTraversalPattern parses multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
-func (e *StorageExecutor) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
-	return e.readChainedTraversalPattern(ctx, pattern, e.parsePropertyMap)
-}
-
-func (e *StorageExecutor) readChainedTraversalPattern(ctx context.Context, pattern string, properties patternPropertyReader) *TraversalMatch {
+func (e patternSyntaxReader) parseChainedTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
 	result := &TraversalMatch{
 		IsChained:         true,
 		Segments:          []TraversalSegment{},
@@ -1404,7 +1364,7 @@ func (e *StorageExecutor) readChainedTraversalPattern(ctx context.Context, patte
 	var allNodes []nodePatternInfo
 	for _, part := range parts {
 		nodeStr := strings.Trim(part.nodeStr, "()")
-		node, err := readNodePattern(ctx, nodeStr, properties)
+		node, err := e.parseNodePattern(ctx, nodeStr)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -1419,7 +1379,7 @@ func (e *StorageExecutor) readChainedTraversalPattern(ctx context.Context, patte
 			continue
 		}
 
-		relationship, err := readRelationshipPattern(ctx, relStr, properties)
+		relationship, err := e.parseRelationshipPattern(ctx, relStr)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -1455,11 +1415,7 @@ func (e *StorageExecutor) readChainedTraversalPattern(ctx context.Context, patte
 
 // parseTraversalPatternStateMachine parses patterns with a state machine
 // to properly handle parentheses and special characters inside quoted property values.
-func (e *StorageExecutor) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
-	return e.readTraversalPatternStateMachine(ctx, pattern, e.parsePropertyMap)
-}
-
-func (e *StorageExecutor) readTraversalPatternStateMachine(ctx context.Context, pattern string, properties patternPropertyReader) *TraversalMatch {
+func (e patternSyntaxReader) parseTraversalPatternStateMachine(ctx context.Context, pattern string) *TraversalMatch {
 	// Find the boundaries of (startNode), -[rel]->, and (endNode)
 	// respecting quotes and nested parentheses
 
@@ -1506,17 +1462,17 @@ func (e *StorageExecutor) readTraversalPatternStateMachine(ctx context.Context, 
 	}
 	endNodeStr := pattern[endStart+1 : endEnd]
 
-	start, err := readNodePattern(ctx, startNodeStr, properties)
+	start, err := e.parseNodePattern(ctx, startNodeStr)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
-	end, err := readNodePattern(ctx, endNodeStr, properties)
+	end, err := e.parseNodePattern(ctx, endNodeStr)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
-	relationship, err := readRelationshipPattern(ctx, relStr, properties)
+	relationship, err := e.parseRelationshipPattern(ctx, relStr)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
@@ -1536,22 +1492,23 @@ func findMatchingParen(s string, startIdx int) int {
 }
 
 // parseNodePatternFromString parses n:Label {props} from a string
-func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s string) (nodePatternInfo, error) {
+func (e patternSyntaxReader) parseNodePatternFromString(ctx context.Context, s string) (nodePatternInfo, error) {
 	return e.parseNodePattern(ctx, s)
 }
 
 // traverseGraph executes the traversal and returns all matching paths
-func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMatch) []PathResult {
+func (run relationshipAccessExecution) traverseGraph(ctx context.Context, match *TraversalMatch) []PathResult {
+	e := run.executor
 	viewport, _ := TemporalViewportFromContext(ctx)
 	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
 	// Handle chained patterns differently (multi-segment traversal)
 	if match.IsChained && len(match.Segments) > 1 {
-		return e.traverseChainedGraph(ctx, match, nil)
+		return run.traverseChainedGraph(ctx, match, nil)
 	}
 
-	startNodes, seeded, err := e.relationshipTypeSeedNodes(ctx, match)
+	startNodes, seeded, err := run.relationshipTypeSeedNodes(ctx, match)
 	if !seeded && err == nil {
-		startNodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+		startNodes, _, err = e.collectPipelineInitialNodeCandidates(run.statement(), ctx, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -1575,10 +1532,10 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	// Keep traversal single-threaded when early LIMIT short-circuiting is active so
 	// we can stop globally once enough paths are found.
 	if config.Enabled && len(startNodes) >= config.MinBatchSize && match.TraversalLimit <= 0 {
-		return e.traverseGraphParallel(ctx, match, startNodes, config, viewport, checker)
+		return run.traverseGraphParallel(ctx, match, startNodes, config, viewport, checker)
 	}
 
-	return e.traverseGraphSequential(ctx, match, startNodes, viewport, checker)
+	return run.traverseGraphSequential(ctx, match, startNodes, viewport, checker)
 }
 
 // relationshipTypeSeedNodes is the start nodes of a one-hop match whose start
@@ -1588,7 +1545,8 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // would read and decode every node, for a relationship among a few. seeded is
 // false for any other match, which collectPipelineInitialNodeCandidates seeds.
 // The traversal still checks the whole pattern from each start node.
-func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
+func (run relationshipAccessExecution) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
+	e := run.executor
 	relationship := match.Relationship
 	if planTraversalScan(match).access != traversalTypeScan {
 		return nil, false, nil
@@ -1627,12 +1585,13 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 	return nodes, true, nil
 }
 
-func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
+func (run relationshipAccessExecution) traverseGraphWithStreamingStartNodes(
 	ctx context.Context,
 	match *TraversalMatch,
 	viewport TemporalViewport,
 	checker temporalCurrentNodeChecker,
 ) ([]PathResult, bool, error) {
+	e := run.executor
 	store := e.getStorage(ctx)
 	labels := match.StartNode.labels
 	var stream func(func(*storage.Node) error) error
@@ -1678,7 +1637,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 
 		limitedMatch := *match
 		limitedMatch.TraversalLimit = remaining
-		found := e.traverseGraphSequential(ctx, &limitedMatch, []*storage.Node{node}, viewport, checker)
+		found := run.traverseGraphSequential(ctx, &limitedMatch, []*storage.Node{node}, viewport, checker)
 		paths = append(paths, found...)
 		remaining -= len(found)
 		if remaining <= 0 {
@@ -1693,7 +1652,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 }
 
 // traverseGraphSequential performs sequential traversal from start nodes
-func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
+func (run relationshipAccessExecution) traverseGraphSequential(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
 	var results []PathResult
 	remaining := -1
 	if match.TraversalLimit > 0 {
@@ -1730,7 +1689,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
 
-		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+		paths := run.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 		traversalCtx.memory.close()
 		results = append(results, paths...)
 		if remaining > 0 {
@@ -1746,7 +1705,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 
 // traverseGraphParallel performs parallel traversal from multiple start nodes
 // Each goroutine gets its own TraversalContext to avoid data races
-func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, config ParallelConfig, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
+func (run relationshipAccessExecution) traverseGraphParallel(ctx context.Context, match *TraversalMatch, startNodes []*storage.Node, config ParallelConfig, viewport TemporalViewport, checker temporalCurrentNodeChecker) []PathResult {
 	numWorkers := config.MaxWorkers
 	if numWorkers > len(startNodes) {
 		numWorkers = len(startNodes)
@@ -1803,7 +1762,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
 
-				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+				paths := run.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 				workerPaths = append(workerPaths, paths...)
 			}
 
@@ -1828,7 +1787,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 
 // traverseChainedGraph handles multi-segment patterns like (a)<-[:R1]-(b)-[:R2]->(c)
 // It traverses each segment sequentially, joining results where intermediate nodes match
-func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *TraversalMatch, seedNodes []*storage.Node) []PathResult {
+func (run relationshipAccessExecution) traverseChainedGraph(ctx context.Context, match *TraversalMatch, seedNodes []*storage.Node) []PathResult {
 	if len(match.Segments) == 0 {
 		return nil
 	}
@@ -1853,10 +1812,10 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	var currentPaths []PathResult
 	if len(seedNodes) > 0 {
 		for _, startNode := range seedNodes {
-			currentPaths = append(currentPaths, e.traverseFromNode(ctx, startNode, simpleMatch)...)
+			currentPaths = append(currentPaths, run.traverseFromNode(ctx, startNode, simpleMatch)...)
 		}
 	} else {
-		currentPaths = e.traverseGraph(ctx, simpleMatch)
+		currentPaths = run.traverseGraph(ctx, simpleMatch)
 	}
 	repeats := chainRepeatedNodes(match.Segments)
 	kept := currentPaths[:0]
@@ -1894,7 +1853,7 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 			}
 
 			// Traverse from the last node
-			segPaths := e.traverseFromNode(ctx, lastNode, segMatch)
+			segPaths := run.traverseFromNode(ctx, lastNode, segMatch)
 
 			// Join paths: combine current path with each segment path
 			for _, segPath := range segPaths {
@@ -2000,7 +1959,8 @@ func pathResultsReuseRelationship(left, right PathResult) bool {
 }
 
 // traverseFromNode traverses from a specific node rather than finding start nodes by label
-func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
+func (run relationshipAccessExecution) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
+	e := run.executor
 	// Verify the start node matches the expected pattern (labels and properties)
 	if len(match.StartNode.labels) > 0 {
 		found := false
@@ -2035,7 +1995,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	ctx.nodeProperties = match.endpointProperties
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
-	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+	return run.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 }
 
 // newTraversalContext is the depth-first search state for relationship
@@ -2095,7 +2055,7 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 }
 
 // findPaths performs DFS to find all paths matching the pattern
-func (e *StorageExecutor) findPaths(
+func (run relationshipAccessExecution) findPaths(
 	ctx *TraversalContext,
 	currentNode *storage.Node,
 	pathNodes []*storage.Node,
@@ -2103,6 +2063,7 @@ func (e *StorageExecutor) findPaths(
 	depth int,
 	endPattern *nodePatternInfo,
 ) []PathResult {
+	e := run.executor
 	var results []PathResult
 
 	// Every frame and sibling expansion must observe cancellation. Sampling
@@ -2152,9 +2113,9 @@ func (e *StorageExecutor) findPaths(
 	var edges []*storage.Edge
 	switch ctx.direction {
 	case "outgoing":
-		edges = e.traversalEdges(ctx, currentNode.ID, true)
+		edges = run.traversalEdges(ctx, currentNode.ID, true)
 	case "incoming":
-		edges = e.traversalEdges(ctx, currentNode.ID, false)
+		edges = run.traversalEdges(ctx, currentNode.ID, false)
 	case "both":
 		var err error
 		edges, err = undirectedIncidentEdges(e.storage, currentNode.ID)
@@ -2225,7 +2186,7 @@ func (e *StorageExecutor) findPaths(
 		copy(newPathEdges, pathEdges)
 		newPathEdges[len(pathEdges)] = edge
 
-		subPaths := e.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
+		subPaths := run.findPaths(ctx, nextNode, newPathNodes, newPathEdges, depth+1, endPattern)
 		results = append(results, subPaths...)
 
 		// Unmark for sibling paths.
@@ -2418,7 +2379,8 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 }
 
 // getRelType gets the type of a relationship - used for type(r) function
-func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
+func (run relationshipEntityExecution) getRelType(relID storage.EdgeID) string {
+	e := run.executor
 	edge, err := e.storage.GetEdge(relID)
 	if err != nil || edge == nil {
 		return ""
@@ -2426,12 +2388,16 @@ func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
 	return edge.Type
 }
 
+func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
+	return e.relationshipEntityExecution().getRelType(relID)
+}
+
 // filterPathsByWhere filters paths based on a WHERE clause condition.
 // This evaluates conditions like "i.name = 'value'" against each path's
 // context. extra merges the row's other bindings into the context, so a
 // predicate can also reference seed-row variables beyond the path endpoints
 // (#581: WHERE length(p) > limit.n).
-func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathResult, matches *TraversalMatch, whereClause string, extra map[string]interface{}) []PathResult {
+func (e *StorageExecutor) filterPathsByWhere(admission admittedRelationshipStatement, ctx context.Context, paths []PathResult, matches *TraversalMatch, whereClause string, extra map[string]interface{}) []PathResult {
 	if whereClause == "" {
 		return paths
 	}
@@ -2454,7 +2420,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 		}
 		values := e.pathContextValues(context)
 		bindParameterRow(ctx, values)
-		if where.holds(e, ctx, values) {
+		if where.holds(admission, e, ctx, values) {
 			filtered = append(filtered, path)
 		}
 	}
@@ -2463,8 +2429,18 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 
 // evaluateWhereOnPath evaluates a WHERE condition against a path context.
 // Handles conditions like: i.name = 'value', e.score < 90, etc.
-func (e *StorageExecutor) evaluateWhereOnPath(ctx context.Context, whereClause string, pathCtx PathContext) bool {
+func (e *StorageExecutor) evaluateWhereOnPath(admission admittedRelationshipStatement, ctx context.Context, whereClause string, pathCtx PathContext) bool {
 	values := e.pathContextValues(pathCtx)
 	bindParameterRow(ctx, values)
-	return e.evaluateRowPredicate(ctx, strings.TrimSpace(whereClause), values)
+	return e.evaluateRowPredicate(admission, ctx, strings.TrimSpace(whereClause), values)
+}
+
+// readRelationshipPattern supplies a phase to the existing shared grammar.
+func readRelationshipPattern(ctx context.Context, pattern string, properties patternPropertyReader) (*RelationshipPattern, error) {
+	return (patternSyntaxReader{parsePropertyMap: properties}).parseRelationshipPattern(ctx, pattern)
+}
+
+// Inspection has no input row and evaluates no property expressions.
+func (e *StorageExecutor) parseTraversalPatternStructure(ctx context.Context, pattern string) *TraversalMatch {
+	return (patternSyntaxReader{parsePropertyMap: patternPropertyKeys}).parseTraversalPattern(ctx, pattern)
 }

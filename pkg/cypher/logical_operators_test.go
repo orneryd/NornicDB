@@ -228,10 +228,16 @@ func TestLogicalOperatorsPredicateReading(t *testing.T) {
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "logical_conditions"))
 	ctx := withExpressionFailureSlot(withValueBindings(context.Background(), map[string]interface{}{"f": false, "i": int64(1), "l": []interface{}{int64(1), nil}}))
-	require.False(t, exec.evaluateCondition(ctx, "2 IN l", nil, nil))
-	require.Nil(t, exec.conditionValue(ctx, "2 IN l", nil, nil))
+	fixtureAdmission1277Context, fixtureAdmission1277 := expressionTestContext(ctx, "2 IN l")
+	_ = fixtureAdmission1277Context
+	require.False(t, exec.evaluateCondition(fixtureAdmission1277, fixtureAdmission1277Context, "2 IN l", nil, nil))
+	fixtureAdmission1278Context, fixtureAdmission1278 := expressionTestContext(ctx, "2 IN l")
+	_ = fixtureAdmission1278Context
+	require.Nil(t, exec.conditionValue(fixtureAdmission1278, fixtureAdmission1278Context, "2 IN l", nil, nil))
 	require.NoError(t, getExpressionFailure(ctx))
-	require.False(t, exec.evaluateCondition(ctx, "f OR i", nil, nil))
+	fixtureAdmission1279Context, fixtureAdmission1279 := expressionTestContext(ctx, "f OR i")
+	_ = fixtureAdmission1279Context
+	require.False(t, exec.evaluateCondition(fixtureAdmission1279, fixtureAdmission1279Context, "f OR i", nil, nil))
 	code, _ := nornicerrors.Neo4jStatus(getExpressionFailure(ctx))
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 
@@ -296,14 +302,18 @@ func TestEvaluateLogicalExpressionHoldsOperandErrors(t *testing.T) {
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "logical_holds"))
 	ctx := withExpressionFailureSlot(withValueBindings(context.Background(), map[string]interface{}{"f": false, "i": int64(1)}))
-	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "f OR i", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission693Context, fixtureAdmission693 := expressionTestContext(ctx, "f OR i")
+	_ = fixtureAdmission693
+	require.Nil(t, exec.evaluateExpressionWithContextFull(fixtureAdmission693, fixtureAdmission693Context, "f OR i", nil, nil, nil, nil, nil, 0))
 	code, _ := nornicerrors.Neo4jStatus(getExpressionFailure(ctx))
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 
 	// A CASE WHEN the row evaluator can't read as a value (EXISTS { … })
 	// is evaluated as a predicate.
 	node := &storage.Node{ID: "lonely", Labels: []string{"C"}}
-	value, ok, err := exec.evaluateRowCaseExpression("CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END", map[string]interface{}{"n": node})
+	fixtureAdmission694Context, fixtureAdmission694 := expressionTestRow(context.Background(), "CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END", map[string]interface{}{"n": node})
+	_ = fixtureAdmission694
+	value, ok, err := exec.evaluateRowCaseExpression(fixtureAdmission694, "CASE WHEN EXISTS { (n)-->() } THEN 1 ELSE 0 END", fixtureAdmission694Context)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int64(0), value)

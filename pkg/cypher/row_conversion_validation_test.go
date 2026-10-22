@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -13,9 +14,11 @@ func TestConversionRejectsInvalidTypedValuesInsideListComprehension(t *testing.T
 		"values": []interface{}{true, []interface{}{}},
 	}
 
-	_, _, err := executor.evaluateRowValue(
+	fixtureAdmission839Context, fixtureAdmission839 := expressionTestRow(context.Background(), "[value IN values | toBoolean(value)]", row)
+	_ = fixtureAdmission839
+	_, _, err := executor.evaluateRowValue(fixtureAdmission839,
 		"[value IN values | toBoolean(value)]",
-		row,
+		fixtureAdmission839Context,
 	)
 	require.Error(t, err)
 	var semanticError *SemanticError

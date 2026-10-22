@@ -109,11 +109,11 @@ func TestBoundNodeLookupShape(t *testing.T) {
 	require.NoError(t, err)
 	s, err := exec.storage.GetNode("s1")
 	require.NoError(t, err)
-	ctx := context.Background()
-	count, ok := exec.boundNodeLookupCount(ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o}, false)
+	ctx, admission := expressionTestContext(context.Background(), "COUNT { MATCH (s:S {id: o.ref}) }")
+	count, ok := exec.boundNodeLookupCount(admission, ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o}, false)
 	require.True(t, ok)
 	require.Equal(t, int64(1), count)
-	_, ok = exec.boundNodeLookupCount(ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o, "s": s}, false)
+	_, ok = exec.boundNodeLookupCount(admission, ctx, "MATCH (s:S {id: o.ref})", map[string]interface{}{"o": o, "s": s}, false)
 	require.False(t, ok, "a bound variable is a join, the pipeline's")
 }
 

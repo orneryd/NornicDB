@@ -103,7 +103,9 @@ func TestRowPropertyAccessOnNullEntity(t *testing.T) {
 		{"n": (*storage.Edge)(nil)},
 		{"n": nil},
 	} {
-		value, ok, err := exec.evaluateRowValue("n.x", row)
+		fixtureAdmission277Context, fixtureAdmission277 := expressionTestRow(context.Background(), "n.x", row)
+		_ = fixtureAdmission277
+		value, ok, err := exec.evaluateRowValue(fixtureAdmission277, "n.x", fixtureAdmission277Context)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Nil(t, value)

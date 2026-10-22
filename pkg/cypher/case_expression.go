@@ -706,16 +706,16 @@ func caseVariableScopeOpensAt(expr string, open int) bool {
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
-func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateCaseExpression(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	parsed, err := parseCaseExpression(expr)
 	if err != nil {
 		return nil
 	}
 	value, _, err := runCaseExpression(parsed, cypherVersionFromContext(ctx) == "25", func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
 		if part == caseWhen && !parsed.isSimple {
-			return e.conditionValue(ctx, text, nodes, rels), true, nil
+			return e.conditionValue(admission, ctx, text, nodes, rels), true, nil
 		}
-		return e.evaluateExpressionWithContextFull(ctx, text, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+		return e.evaluateExpressionWithContextFull(admission, ctx, text, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
 	})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -726,8 +726,8 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 // evaluateCondition reports whether a CASE WHEN (or WITH … WHERE) condition
 // holds: its value read as a predicate (cypherPredicateTruth), so a
 // non-predicate value is a TypeError, recorded on ctx (#907).
-func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	truth, err := cypherPredicateTruth(e.conditionValue(ctx, condition, nodes, rels))
+func (e *StorageExecutor) evaluateCondition(admission admittedRelationshipStatement, ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
+	truth, err := cypherPredicateTruth(e.conditionValue(admission, ctx, condition, nodes, rels))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -738,13 +738,13 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 // conditionValue is the value of a condition (evaluateCondition): OR, XOR,
 // AND and NOT as everywhere (evaluateLogicalExpression), then the
 // predicates conditions read directly, then any other expression.
-func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+func (e *StorageExecutor) conditionValue(admission admittedRelationshipStatement, ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	condition = strings.TrimSpace(condition)
 	upper := upperASCII(condition)
 
 	if value, logical, _, err := evaluateLogicalExpression(condition, func(operand string) (interface{}, bool, error) {
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
-			return e.conditionValue(ctx, operand, nodes, rels)
+			return e.conditionValue(admission, ctx, operand, nodes, rels)
 		})
 	}); logical {
 		if err != nil {
@@ -755,7 +755,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 	}
 
 	resolveComparisonOperand := func(operand string) interface{} {
-		return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
+		return e.evaluateExpressionWithContext(admission, ctx, operand, nodes, rels)
 	}
 	// IN and NOT IN are unknown for a null in the list (x IN [1, null]).
 	if indexASCIIFold(condition, " in ") >= 0 {
@@ -765,7 +765,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 	}
 	if result, matched, _, err := evaluateComparisonChain(condition, func(operand string) (interface{}, bool, error) {
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
-			return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
+			return e.evaluateExpressionWithContext(admission, ctx, operand, nodes, rels)
 		})
 	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25"); matched {
 		if err != nil {
@@ -778,12 +778,12 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 	// Handle IS NULL / IS NOT NULL
 	if strings.HasSuffix(upper, " IS NULL") {
 		expr := strings.TrimSpace(condition[:len(condition)-8])
-		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+		val := e.evaluateExpressionWithContext(admission, ctx, expr, nodes, rels)
 		return nullEvaluationHandler(false).evaluate(val)
 	}
 	if strings.HasSuffix(upper, " IS NOT NULL") {
 		expr := strings.TrimSpace(condition[:len(condition)-12])
-		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+		val := e.evaluateExpressionWithContext(admission, ctx, expr, nodes, rels)
 		return nullEvaluationHandler(true).evaluate(val)
 	}
 
@@ -794,7 +794,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 		{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains},
 	} {
 		if left, right, ok := splitByOperatorOutsideCase(condition, p.operator, true, true); ok {
-			return rowStringPredicateValue(e.evaluateExpressionWithContext(ctx, left, nodes, rels), e.evaluateExpressionWithContext(ctx, right, nodes, rels), p.match)
+			return rowStringPredicateValue(e.evaluateExpressionWithContext(admission, ctx, left, nodes, rels), e.evaluateExpressionWithContext(admission, ctx, right, nodes, rels), p.match)
 		}
 	}
 
@@ -808,7 +808,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 		}
 	}
 
-	return e.evaluateExpressionWithContext(ctx, condition, nodes, rels)
+	return e.evaluateExpressionWithContext(admission, ctx, condition, nodes, rels)
 }
 
 // findTopLevelKeyword finds a keyword at the top level (not inside parentheses or strings)

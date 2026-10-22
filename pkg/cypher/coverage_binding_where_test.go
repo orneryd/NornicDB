@@ -256,39 +256,65 @@ func TestEvaluateBindingWhere_AndOrNotAndStringPredicates(t *testing.T) {
 	b := binding{"a": alice, "b": bob}
 
 	t.Run("empty clause is true", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "", nil))
+		fixtureAdmission196Context, fixtureAdmission196 := expressionTestContext(ctx, "")
+		_ = fixtureAdmission196
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission196, fixtureAdmission196Context, b, "", nil))
 	})
 
 	t.Run("AND composition", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 30 AND b.age = 25", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 30 AND b.age = 99", nil))
+		fixtureAdmission197Context, fixtureAdmission197 := expressionTestContext(ctx, "a.age = 30 AND b.age = 25")
+		_ = fixtureAdmission197
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission197, fixtureAdmission197Context, b, "a.age = 30 AND b.age = 25", nil))
+		fixtureAdmission198Context, fixtureAdmission198 := expressionTestContext(ctx, "a.age = 30 AND b.age = 99")
+		_ = fixtureAdmission198
+		require.False(t, e.evaluateBindingWhereGeneric(fixtureAdmission198, fixtureAdmission198Context, b, "a.age = 30 AND b.age = 99", nil))
 	})
 
 	t.Run("OR composition", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 99 OR b.age = 25", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a.age = 99 OR b.age = 99", nil))
+		fixtureAdmission199Context, fixtureAdmission199 := expressionTestContext(ctx, "a.age = 99 OR b.age = 25")
+		_ = fixtureAdmission199
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission199, fixtureAdmission199Context, b, "a.age = 99 OR b.age = 25", nil))
+		fixtureAdmission200Context, fixtureAdmission200 := expressionTestContext(ctx, "a.age = 99 OR b.age = 99")
+		_ = fixtureAdmission200
+		require.False(t, e.evaluateBindingWhereGeneric(fixtureAdmission200, fixtureAdmission200Context, b, "a.age = 99 OR b.age = 99", nil))
 	})
 
 	t.Run("NOT inversion", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "NOT a.age = 99", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "NOT a.age = 30", nil))
+		fixtureAdmission201Context, fixtureAdmission201 := expressionTestContext(ctx, "NOT a.age = 99")
+		_ = fixtureAdmission201
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission201, fixtureAdmission201Context, b, "NOT a.age = 99", nil))
+		fixtureAdmission202Context, fixtureAdmission202 := expressionTestContext(ctx, "NOT a.age = 30")
+		_ = fixtureAdmission202
+		require.False(t, e.evaluateBindingWhereGeneric(fixtureAdmission202, fixtureAdmission202Context, b, "NOT a.age = 30", nil))
 	})
 
 	t.Run("STARTS WITH literal", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name STARTS WITH 'Al'", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name STARTS WITH 'Bo'", nil))
+		fixtureAdmission203Context, fixtureAdmission203 := expressionTestContext(ctx, "a.name STARTS WITH 'Al'")
+		_ = fixtureAdmission203
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission203, fixtureAdmission203Context, b, "a.name STARTS WITH 'Al'", nil))
+		fixtureAdmission204Context, fixtureAdmission204 := expressionTestContext(ctx, "a.name STARTS WITH 'Bo'")
+		_ = fixtureAdmission204
+		require.False(t, e.evaluateBindingWhereGeneric(fixtureAdmission204, fixtureAdmission204Context, b, "a.name STARTS WITH 'Bo'", nil))
 	})
 
 	t.Run("ENDS WITH literal", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name ENDS WITH 'ice'", nil))
+		fixtureAdmission205Context, fixtureAdmission205 := expressionTestContext(ctx, "a.name ENDS WITH 'ice'")
+		_ = fixtureAdmission205
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission205, fixtureAdmission205Context, b, "a.name ENDS WITH 'ice'", nil))
 	})
 
 	t.Run("CONTAINS literal", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a.name CONTAINS 'lic'", nil))
+		fixtureAdmission206Context, fixtureAdmission206 := expressionTestContext(ctx, "a.name CONTAINS 'lic'")
+		_ = fixtureAdmission206
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission206, fixtureAdmission206Context, b, "a.name CONTAINS 'lic'", nil))
 	})
 
 	t.Run("identity comparison via <> between two node variables", func(t *testing.T) {
-		require.True(t, e.evaluateBindingWhereGeneric(ctx, b, "a <> b", nil))
-		require.False(t, e.evaluateBindingWhereGeneric(ctx, b, "a <> a", nil))
+		fixtureAdmission207Context, fixtureAdmission207 := expressionTestContext(ctx, "a <> b")
+		_ = fixtureAdmission207
+		require.True(t, e.evaluateBindingWhereGeneric(fixtureAdmission207, fixtureAdmission207Context, b, "a <> b", nil))
+		fixtureAdmission208Context, fixtureAdmission208 := expressionTestContext(ctx, "a <> a")
+		_ = fixtureAdmission208
+		require.False(t, e.evaluateBindingWhereGeneric(fixtureAdmission208, fixtureAdmission208Context, b, "a <> a", nil))
 	})
 }

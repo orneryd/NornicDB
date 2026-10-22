@@ -37,7 +37,9 @@ func TestRegression_MatchCreateNewNodeWithRelationshipToExisting(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Session {id:'sid'})", nil)
 	require.NoError(t, err)
 
-	combos, _, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (s:Session {id:'sid'})")
+	fixtureAdmission831Context, fixtureAdmission831 := statementTestContext(ctx, "MATCH (s:Session {id:'sid'})")
+	_ = fixtureAdmission831
+	combos, _, err := exec.pipelineApplyMatch(fixtureAdmission831, fixtureAdmission831Context, []pipelineRow{{}}, "MATCH (s:Session {id:'sid'})")
 	require.NoError(t, err)
 	require.Len(t, combos, 1)
 	require.NotNil(t, combos[0]["s"])

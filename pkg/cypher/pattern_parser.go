@@ -87,11 +87,7 @@ func containsReservedKeyword(s string) bool {
 //
 //	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
-func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) (nodePatternInfo, error) {
-	return readNodePattern(ctx, pattern, e.parsePropertyMap)
-}
-
-func readNodePattern(ctx context.Context, pattern string, properties patternPropertyReader) (nodePatternInfo, error) {
+func (e patternSyntaxReader) parseNodePattern(ctx context.Context, pattern string) (nodePatternInfo, error) {
 	head, props := splitNodePatternProperties(pattern)
 	info := nodePatternInfo{labels: []string{}}
 	if props == "" {
@@ -99,7 +95,7 @@ func readNodePattern(ctx context.Context, pattern string, properties patternProp
 		info.properties = make(map[string]interface{})
 	} else {
 		var err error
-		info.properties, err = properties(ctx, props, true)
+		info.properties, err = e.parsePropertyMap(ctx, props, true)
 		if err != nil {
 			return nodePatternInfo{}, err
 		}
@@ -149,12 +145,12 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //
 //	parseProperties("{tags: ['a', 'b'], active: true}")
 //	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
-func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) (map[string]interface{}, error) {
-	return e.parsePropertyMap(ctx, propsStr, false)
+func (e *StorageExecutor) parseProperties(admission admittedRelationshipStatement, ctx context.Context, propsStr string) (map[string]interface{}, error) {
+	return e.parsePropertyMap(admission, ctx, propsStr, false)
 }
 
-func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) (map[string]interface{}, error) {
-	return e.materializePropertyMap(ctx, propsStr, e.fabricRecordBindings, retainNull, false)
+func (e *StorageExecutor) parsePropertyMap(admission admittedRelationshipStatement, ctx context.Context, propsStr string, retainNull bool) (map[string]interface{}, error) {
+	return e.materializePropertyMap(admission, ctx, propsStr, e.fabricRecordBindings, retainNull, false)
 }
 
 func normalizePropertyKey(key string) string {
@@ -211,12 +207,12 @@ func isBackslashEscaped(s string, idx int) bool {
 //	parsePropertyValue("30")       // int64(30)
 //	parsePropertyValue("true")     // true
 //	parsePropertyValue("[1, 2]")   // []interface{}{int64(1), int64(2)}
-func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr string) (interface{}, error) {
-	return e.checkedPropertyExpression(ctx, valueStr, e.fabricRecordBindings)
+func (e *StorageExecutor) parsePropertyValue(admission admittedRelationshipStatement, ctx context.Context, valueStr string) (interface{}, error) {
+	return e.checkedPropertyExpression(admission, ctx, valueStr, e.fabricRecordBindings)
 }
 
-func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr string) (interface{}, bool) {
-	return e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
+func (e *StorageExecutor) evaluateScalarPropertyExpression(admission admittedRelationshipStatement, ctx context.Context, expr string) (interface{}, bool) {
+	return e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
 }
 
 func (e *StorageExecutor) evaluateArithmeticLookupResult(op byte, left interface{}, leftOK bool, right interface{}, rightOK bool) (interface{}, bool) {
@@ -259,8 +255,8 @@ type invalidPropertyValue struct {
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
-func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) ([]interface{}, error) {
-	value, err := e.checkedPropertyExpression(ctx, arrayStr, e.fabricRecordBindings)
+func (e *StorageExecutor) parseArrayValue(admission admittedRelationshipStatement, ctx context.Context, arrayStr string) ([]interface{}, error) {
+	value, err := e.checkedPropertyExpression(admission, ctx, arrayStr, e.fabricRecordBindings)
 	if err != nil {
 		return nil, err
 	}
@@ -362,4 +358,9 @@ func nodePatternStructure(pattern string) nodePatternInfo {
 	head, _ := splitNodePatternProperties(pattern)
 	variable, labels, err := parseNodeHead(head)
 	return nodePatternInfo{variable: variable, labels: labels, labelErr: err}
+}
+
+// readNodePattern chooses a property phase for the existing shared grammar.
+func readNodePattern(ctx context.Context, pattern string, properties patternPropertyReader) (nodePatternInfo, error) {
+	return (patternSyntaxReader{parsePropertyMap: properties}).parseNodePattern(ctx, pattern)
 }

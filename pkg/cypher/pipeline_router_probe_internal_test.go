@@ -28,7 +28,9 @@ func TestPipelineReportsUnknownCallInMiddle(t *testing.T) {
 	_, ok := canExecuteAsPipeline(q)
 	require.True(t, ok)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	_, err := exec.executeRequiredPipeline(context.Background(), q)
+	fixtureAdmission812Context, fixtureAdmission812 := statementTestContext(context.Background(), q)
+	_ = fixtureAdmission812
+	_, err := exec.executeRequiredPipeline(fixtureAdmission812, fixtureAdmission812Context, q)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Procedure.ProcedureNotFound")
 	persisted, err := exec.Execute(context.Background(), "MATCH (n:Y) RETURN count(n)", nil)

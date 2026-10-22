@@ -86,7 +86,9 @@ func TestDecayScore_DecayedNode(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1260Context, fixtureAdmission1260 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1260Context
+	result := exec.evalDecayScore(fixtureAdmission1260, fixtureAdmission1260Context, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -104,7 +106,9 @@ func TestDecayScore_RecentNode(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1261Context, fixtureAdmission1261 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1261Context
+	result := exec.evalDecayScore(fixtureAdmission1261, fixtureAdmission1261Context, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -122,7 +126,9 @@ func TestDecayScore_NoDecayFact(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1262Context, fixtureAdmission1262 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1262Context
+	result := exec.evalDecayScore(fixtureAdmission1262, fixtureAdmission1262Context, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -140,7 +146,9 @@ func TestDecayScore_UnmatchedLabel(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1263Context, fixtureAdmission1263 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1263Context
+	result := exec.evalDecayScore(fixtureAdmission1263, fixtureAdmission1263Context, "decayScore(n)", nodes, rels)
 	score, ok := result.(float64)
 	if !ok {
 		t.Fatalf("expected float64, got %T", result)
@@ -158,7 +166,9 @@ func TestDecay_ReturnsMap(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
+	fixtureAdmission1264Context, fixtureAdmission1264 := expressionTestContext(ctx, "decay(n)")
+	_ = fixtureAdmission1264Context
+	result := exec.evalDecay(fixtureAdmission1264, fixtureAdmission1264Context, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -183,7 +193,9 @@ func TestDecay_NoDecayReason(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
+	fixtureAdmission1265Context, fixtureAdmission1265 := expressionTestContext(ctx, "decay(n)")
+	_ = fixtureAdmission1265Context
+	result := exec.evalDecay(fixtureAdmission1265, fixtureAdmission1265Context, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -208,7 +220,9 @@ func TestDecay_UsesResolvedFunctionAndFloor(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecay(ctx, "decay(n)", nodes, rels)
+	fixtureAdmission1266Context, fixtureAdmission1266 := expressionTestContext(ctx, "decay(n)")
+	_ = fixtureAdmission1266Context
+	result := exec.evalDecay(fixtureAdmission1266, fixtureAdmission1266Context, "decay(n)", nodes, rels)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -236,9 +250,13 @@ func TestDecay_ScoreMatchesDecayScore(t *testing.T) {
 	statement := time.Now().UTC()
 	ctx := context.WithValue(context.Background(), temporalStatementTimeKey{}, statement)
 
-	dsResult := exec.evalDecayScore(ctx, "decayScore(n)", nodes, rels)
+	fixtureAdmission1267Context, fixtureAdmission1267 := expressionTestContext(ctx, "decayScore(n)")
+	_ = fixtureAdmission1267Context
+	dsResult := exec.evalDecayScore(fixtureAdmission1267, fixtureAdmission1267Context, "decayScore(n)", nodes, rels)
 	time.Sleep(10 * time.Millisecond)
-	dResult := exec.evalDecay(ctx, "decay(n)", nodes, rels)
+	fixtureAdmission1268Context, fixtureAdmission1268 := expressionTestContext(ctx, "decay(n)")
+	_ = fixtureAdmission1268Context
+	dResult := exec.evalDecay(fixtureAdmission1268, fixtureAdmission1268Context, "decay(n)", nodes, rels)
 
 	dsScore, _ := dsResult.(float64)
 	dMap, _ := dResult.(map[string]interface{})
@@ -353,7 +371,9 @@ func TestDecayScore_UnknownOptionKey(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	result := exec.evalDecayScore(ctx, "decayScore(n, {badKey: 'x'})", nodes, rels)
+	fixtureAdmission1269Context, fixtureAdmission1269 := expressionTestContext(ctx, "decayScore(n, {badKey: 'x'})")
+	_ = fixtureAdmission1269Context
+	result := exec.evalDecayScore(fixtureAdmission1269, fixtureAdmission1269Context, "decayScore(n, {badKey: 'x'})", nodes, rels)
 	if result != nil {
 		t.Errorf("expected nil for unknown option key, got %v", result)
 	}

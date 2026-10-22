@@ -107,15 +107,21 @@ func TestKnowledgePolicyProcedureErrorsPreserveMachineData(t *testing.T) {
 
 func TestKnowledgePolicyExecutionAndFunctionErrorsHaveTypedIdentity(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	_, err := exec.executeKnowledgePolicyDDL(context.Background(), "MATCH (n) RETURN n")
+	fixtureAdmission1644Context, fixtureAdmission1644 := statementTestContext(context.Background(), "MATCH (n) RETURN n")
+	_ = fixtureAdmission1644Context
+	_, err := exec.executeKnowledgePolicyDDL(fixtureAdmission1644, fixtureAdmission1644Context, "MATCH (n) RETURN n")
 	localizedErr := requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyUnsupportedCommand, "unsupported knowledge policy command: MATCH (n) RETURN n")
 	require.Equal(t, "MATCH (n) RETURN n", localizedErr.Message.Data["Command"])
 
-	_, err = validateDecayOptions(context.Background(), "42", nil, nil, exec)
+	fixtureAdmission1900Context, fixtureAdmission1900 := expressionTestContext(context.Background(), "42")
+	_ = fixtureAdmission1900Context
+	_, err = validateDecayOptions(fixtureAdmission1900, fixtureAdmission1900Context, "42", nil, nil, exec)
 	localizedErr = requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyDecayOptionsMapRequired, "decayScore/decay options must be a map, got int64")
 	require.Equal(t, "int64", localizedErr.Message.Data["ValueType"])
 
-	_, err = validateDecayOptions(context.Background(), "{badKey: 'x'}", nil, nil, exec)
+	fixtureAdmission1901Context, fixtureAdmission1901 := expressionTestContext(context.Background(), "{badKey: 'x'}")
+	_ = fixtureAdmission1901Context
+	_, err = validateDecayOptions(fixtureAdmission1901, fixtureAdmission1901Context, "{badKey: 'x'}", nil, nil, exec)
 	localizedErr = requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyUnknownDecayOption, `unknown decay option key: "badKey"`)
 	require.Equal(t, "badKey", localizedErr.Message.Data["Option"])
 }

@@ -113,7 +113,9 @@ func BenchmarkBoundOneHopRelationshipPatternPredicate(b *testing.B) {
 		"source": nodes.Rows[0][0].(*storage.Node),
 		"target": nodes.Rows[0][1].(*storage.Node),
 	}
-	predicate := exec.getCompiledBindingWhere(ctx, `(source)-[:T]->(target)`)
+	fixtureAdmission1667Context, fixtureAdmission1667 := expressionTestContext(ctx, `(source)-[:T]->(target)`)
+	_ = fixtureAdmission1667Context
+	predicate := exec.getCompiledBindingWhere(fixtureAdmission1667, fixtureAdmission1667Context, `(source)-[:T]->(target)`)
 
 	b.ReportAllocs()
 	b.ResetTimer()

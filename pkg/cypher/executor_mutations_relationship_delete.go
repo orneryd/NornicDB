@@ -8,7 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
+func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(admission admittedRelationshipStatement,
 	ctx context.Context,
 	matchSegment string,
 	cypher string,
@@ -80,21 +80,21 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		whereClause = strings.TrimSpace(pseudo[whereIdx+len("WHERE") : returnIdx])
 	}
 
-	rowCtx, sourceText, err := e.preparePatternRow(ctx, clauses[0], nil)
+	rowCtx, sourceText, err := e.preparePatternRow(admission, ctx, clauses[0], nil)
 	if err != nil {
 		return nil, true, err
 	}
-	sourcePattern, err = e.parseNodePattern(rowCtx, sourceText)
+	sourcePattern, err = e.parseNodePattern(admission, rowCtx, sourceText)
 	if err != nil {
 		return nil, true, err
 	}
-	sources, err := e.collectBoundRelationshipDeleteSources(rowCtx, sourcePattern, inTransactionWrapper)
+	sources, err := e.collectBoundRelationshipDeleteSources(admission, rowCtx, sourcePattern, inTransactionWrapper)
 	if err != nil {
 		return nil, true, err
 	}
 	if len(sources) == 0 {
 		result := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-		e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
+		e.applyDeleteReturnProjection(admission, result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 		return result, true, nil
 	}
 
@@ -106,11 +106,11 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if source == nil {
 			continue
 		}
-		rowCtx, rowPattern, err := e.preparePatternRow(ctx, relPatternText, map[string]interface{}{sourcePattern.variable: source})
+		rowCtx, rowPattern, err := e.preparePatternRow(admission, ctx, relPatternText, map[string]interface{}{sourcePattern.variable: source})
 		if err != nil {
 			return nil, true, err
 		}
-		rowMatch := e.parseTraversalPattern(rowCtx, rowPattern)
+		rowMatch := e.parseTraversalPattern(admission, rowCtx, rowPattern)
 		if failure := getExpressionFailure(rowCtx); failure != nil {
 			return nil, true, failure
 		}
@@ -147,7 +147,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 				if rowMatch.EndNode.variable != "" {
 					pathCtx.nodes[rowMatch.EndNode.variable] = target
 				}
-				if !e.evaluateWhereOnPath(rowCtx, whereClause, pathCtx) {
+				if !e.evaluateWhereOnPath(admission, rowCtx, whereClause, pathCtx) {
 					continue
 				}
 			}
@@ -175,18 +175,18 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			e.notifyEdgeMutated(string(edgeID))
 		}
 	}
-	e.applyDeleteReturnProjection(result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
+	e.applyDeleteReturnProjection(admission, result, cypher, deleteVar, singleDeleteProjectionInfo(deleteVar, deleteProjectionRelationship))
 	return result, true, nil
 }
 
-func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Context, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
+func (e *StorageExecutor) collectBoundRelationshipDeleteSources(admission admittedRelationshipStatement, ctx context.Context, sourcePattern nodePatternInfo, inTransactionWrapper bool) ([]*storage.Node, error) {
 	if !inTransactionWrapper {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreaming(admission, ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}
 
 	store := e.getStorage(ctx)
 	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || !txWrapper.tx.HasPendingNodeMutations() {
-		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
+		return e.collectNodesWithStreaming(admission, ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}
 
 	var nodes []*storage.Node
@@ -220,7 +220,7 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 	return filtered, nil
 }
 
-func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+func (run relationshipEntityExecution) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	var edges []*storage.Edge
 	switch direction {
 	case "outgoing":
@@ -248,6 +248,10 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 		edges = append(edges, incoming...)
 	}
 	return edges, nil
+}
+
+func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+	return e.relationshipEntityExecution().boundRelationshipDeleteCandidateEdges(store, nodeID, direction)
 }
 
 func parseBoundRelationshipDeleteWithLimitSegment(matchSegment, deleteVar string) (string, int, bool) {

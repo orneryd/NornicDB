@@ -70,7 +70,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 // (shortestPathsBetween, #863). The value evaluator and the row evaluator
 // (WHERE) both call it. handled=false lets the ordinary evaluator report its
 // own error when the argument is not a traversal pattern.
-func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateShortestPathValue(admission admittedRelationshipStatement, ctx context.Context, funcName, pattern string, nodes map[string]*storage.Node) (interface{}, bool, error) {
 	match := e.parseTraversalPatternStructure(ctx, pattern)
 	if match == nil {
 		return nil, false, nil
@@ -78,12 +78,12 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 	if err := shortestPathPatternError(funcName, pattern, match); err != nil {
 		return nil, true, err
 	}
-	rowCtx, prepared, err := e.preparePatternRow(ctx, pattern, entityRow(ctx, nodes, nil))
+	rowCtx, prepared, err := e.preparePatternRow(admission, ctx, pattern, entityRow(ctx, nodes, nil))
 	if err != nil {
 		return nil, true, err
 	}
 	ctx, pattern = rowCtx, prepared
-	match = e.parseTraversalPattern(ctx, pattern)
+	match = e.parseTraversalPattern(admission, ctx, pattern)
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, true, failure
 	}
@@ -109,7 +109,7 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 		return nil, true, nil
 	}
 	row := pipelineRow{startVariable: start, endVariable: end}
-	rows, err := e.shortestPathsBetween(ctx, &shortestPathMatch{findAll: findAll, traversal: match, plan: plan}, start, end, row)
+	rows, err := e.shortestPathsBetween(admission, ctx, &shortestPathMatch{findAll: findAll, traversal: match, pattern: pattern, plan: plan}, start, end, row)
 	if err != nil {
 		return nil, true, err
 	}

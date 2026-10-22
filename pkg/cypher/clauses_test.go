@@ -2310,7 +2310,9 @@ func TestExecuteUnionDirect(t *testing.T) {
 
 	t.Run("union_all_combines_all", func(t *testing.T) {
 		// Using direct execution since the main Execute router might not route to executeUnion
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true)
+		fixtureAdmission159Context, fixtureAdmission159 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name")
+		_ = fixtureAdmission159
+		result, err := e.executeUnion(fixtureAdmission159, fixtureAdmission159Context, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2320,7 +2322,9 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_distinct_removes_duplicates", func(t *testing.T) {
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false)
+		fixtureAdmission160Context, fixtureAdmission160 := statementTestContext(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age")
+		_ = fixtureAdmission160
+		result, err := e.executeUnion(fixtureAdmission160, fixtureAdmission160Context, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2331,14 +2335,18 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", false)
+		fixtureAdmission161Context, fixtureAdmission161 := statementTestContext(ctx, "MATCH (n) RETURN n")
+		_ = fixtureAdmission161
+		_, err := e.executeUnion(fixtureAdmission161, fixtureAdmission161Context, "MATCH (n) RETURN n", false)
 		if err == nil {
 			t.Error("Expected error for missing UNION clause")
 		}
 	})
 
 	t.Run("union_all_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", true)
+		fixtureAdmission162Context, fixtureAdmission162 := statementTestContext(ctx, "MATCH (n) RETURN n")
+		_ = fixtureAdmission162
+		_, err := e.executeUnion(fixtureAdmission162, fixtureAdmission162Context, "MATCH (n) RETURN n", true)
 		if err == nil {
 			t.Error("Expected error for missing UNION ALL clause")
 		}
@@ -2347,7 +2355,9 @@ func TestExecuteUnionDirect(t *testing.T) {
 	t.Run("union_column_mismatch", func(t *testing.T) {
 		// This might or might not error depending on implementation
 		// Just ensure it doesn't panic
-		_, _ = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
+		fixtureAdmission163Context, fixtureAdmission163 := statementTestContext(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b")
+		_ = fixtureAdmission163
+		_, _ = e.executeUnion(fixtureAdmission163, fixtureAdmission163Context, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
 	})
 }
 
@@ -2449,7 +2459,9 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	e := NewStorageExecutor(store)
 
 	t.Run("match_all_by_label", func(t *testing.T) {
-		matches, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person)")
+		fixtureAdmission164Context, fixtureAdmission164 := statementTestContext(ctx, "MATCH (p:Person)")
+		_ = fixtureAdmission164
+		matches, handled, err := e.pipelineApplyMatch(fixtureAdmission164, fixtureAdmission164Context, []pipelineRow{{}}, "MATCH (p:Person)")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2462,7 +2474,9 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_with_where", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person) WHERE p.age = 30")
+		fixtureAdmission165Context, fixtureAdmission165 := statementTestContext(ctx, "MATCH (p:Person) WHERE p.age = 30")
+		_ = fixtureAdmission165
+		matches, _, err := e.pipelineApplyMatch(fixtureAdmission165, fixtureAdmission165Context, []pipelineRow{{}}, "MATCH (p:Person) WHERE p.age = 30")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2472,7 +2486,9 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_with_property_filter", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:Person {name: 'Alice'})")
+		fixtureAdmission166Context, fixtureAdmission166 := statementTestContext(ctx, "MATCH (p:Person {name: 'Alice'})")
+		_ = fixtureAdmission166
+		matches, _, err := e.pipelineApplyMatch(fixtureAdmission166, fixtureAdmission166Context, []pipelineRow{{}}, "MATCH (p:Person {name: 'Alice'})")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2482,7 +2498,9 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_no_results", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (p:NonExistent)")
+		fixtureAdmission167Context, fixtureAdmission167 := statementTestContext(ctx, "MATCH (p:NonExistent)")
+		_ = fixtureAdmission167
+		matches, _, err := e.pipelineApplyMatch(fixtureAdmission167, fixtureAdmission167Context, []pipelineRow{{}}, "MATCH (p:NonExistent)")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2492,7 +2510,9 @@ func TestExecuteMatchForContextDirect(t *testing.T) {
 	})
 
 	t.Run("match_all_nodes_no_label", func(t *testing.T) {
-		matches, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH (n)")
+		fixtureAdmission168Context, fixtureAdmission168 := statementTestContext(ctx, "MATCH (n)")
+		_ = fixtureAdmission168
+		matches, _, err := e.pipelineApplyMatch(fixtureAdmission168, fixtureAdmission168Context, []pipelineRow{{}}, "MATCH (n)")
 		if err != nil {
 			t.Fatalf("executeMatchForContext failed: %v", err)
 		}
@@ -2526,7 +2546,9 @@ func TestExecuteMergeWithContextDirect(t *testing.T) {
 		}
 		relContext := map[string]*storage.Edge{}
 
-		result, err := e.executeMergeWithContext(ctx, "MERGE (t:Target {name: 'NewTarget'})", nodeContext, relContext)
+		fixtureAdmission1053Context, fixtureAdmission1053 := statementTestContext(ctx, "MERGE (t:Target {name: 'NewTarget'})")
+		_ = fixtureAdmission1053Context
+		result, err := e.executeMergeWithContext(fixtureAdmission1053, fixtureAdmission1053Context, "MERGE (t:Target {name: 'NewTarget'})", nodeContext, relContext)
 		if err != nil {
 			t.Fatalf("executeMergeWithContext failed: %v", err)
 		}
@@ -2543,7 +2565,9 @@ func TestExecuteMergeWithContextDirect(t *testing.T) {
 
 		e := NewStorageExecutor(store)
 
-		result, err := e.executeMergeWithContext(ctx, "MERGE (t:Target {name: 'NewTarget'})", map[string]*storage.Node{}, map[string]*storage.Edge{})
+		fixtureAdmission1054Context, fixtureAdmission1054 := statementTestContext(ctx, "MERGE (t:Target {name: 'NewTarget'})")
+		_ = fixtureAdmission1054Context
+		result, err := e.executeMergeWithContext(fixtureAdmission1054, fixtureAdmission1054Context, "MERGE (t:Target {name: 'NewTarget'})", map[string]*storage.Node{}, map[string]*storage.Edge{})
 		if err != nil {
 			t.Fatalf("executeMergeWithContext failed: %v", err)
 		}
@@ -2997,7 +3021,9 @@ func TestShowConstraints_WithSchemaConstraintsAndPropertyTypes(t *testing.T) {
 		t.Fatalf("failed to add property type constraint: %v", err)
 	}
 
-	result, err := e.executeShowConstraints(ctx, "SHOW CONSTRAINTS")
+	fixtureAdmission1055Context, fixtureAdmission1055 := statementTestContext(ctx, "SHOW CONSTRAINTS")
+	_ = fixtureAdmission1055Context
+	result, err := e.executeShowConstraints(fixtureAdmission1055, fixtureAdmission1055Context, "SHOW CONSTRAINTS")
 	if err != nil {
 		t.Fatalf("executeShowConstraints failed: %v", err)
 	}
@@ -3193,7 +3219,9 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// DISTINCT UNION should dedupe.
-	res, err := e.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false)
+	fixtureAdmission169Context, fixtureAdmission169 := statementTestContext(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x")
+	_ = fixtureAdmission169
+	res, err := e.executeUnion(fixtureAdmission169, fixtureAdmission169Context, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false)
 	if err != nil {
 		t.Fatalf("distinct UNION failed: %v", err)
 	}
@@ -3202,7 +3230,9 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// UNION ALL should keep duplicates.
-	res, err = e.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true)
+	fixtureAdmission170Context, fixtureAdmission170 := statementTestContext(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x")
+	_ = fixtureAdmission170
+	res, err = e.executeUnion(fixtureAdmission170, fixtureAdmission170Context, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true)
 	if err != nil {
 		t.Fatalf("UNION ALL failed: %v", err)
 	}
@@ -3211,7 +3241,9 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Mismatched column counts must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
+	fixtureAdmission171Context, fixtureAdmission171 := statementTestContext(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b")
+	_ = fixtureAdmission171
+	_, err = e.executeUnion(fixtureAdmission171, fixtureAdmission171Context, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
 	if err == nil {
 		t.Fatal("expected mismatched-column UNION error")
 	}
@@ -3220,13 +3252,17 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Missing UNION separator must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x", false)
+	fixtureAdmission172Context, fixtureAdmission172 := statementTestContext(ctx, "RETURN 1 AS x")
+	_ = fixtureAdmission172
+	_, err = e.executeUnion(fixtureAdmission172, fixtureAdmission172Context, "RETURN 1 AS x", false)
 	if err == nil {
 		t.Fatal("expected UNION not found error")
 	}
 
 	// Error in a child query must be wrapped with query index.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x UNION MATCH (n", false)
+	fixtureAdmission173Context, fixtureAdmission173 := statementTestContext(ctx, "RETURN 1 AS x UNION MATCH (n")
+	_ = fixtureAdmission173
+	_, err = e.executeUnion(fixtureAdmission173, fixtureAdmission173Context, "RETURN 1 AS x UNION MATCH (n", false)
 	if err == nil {
 		t.Fatal("expected wrapped error from second UNION query")
 	}
@@ -3288,8 +3324,10 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("expected node in row[0][0], got %#v", aliceRes.Rows[0][0])
 	}
 
-	outPattern := e.parseOptionalRelPattern(ctx, "(a)-[r:KNOWS]->(b:Person {name:'bob'})")
-	outRelated := e.sharedOptionalExpansionForTest(alice, outPattern)
+	fixtureAdmission1056Context, fixtureAdmission1056 := traversalTestContext(ctx, "(a)-[r:KNOWS]->(b:Person {name:'bob'})", "", nil)
+	_ = fixtureAdmission1056Context
+	outPattern := e.parseOptionalRelPattern(fixtureAdmission1056, fixtureAdmission1056Context, "(a)-[r:KNOWS]->(b:Person {name:'bob'})")
+	outRelated := e.sharedOptionalExpansionForTest(e.relationshipExecutionFor(fixtureAdmission1056, fixtureAdmission1056Context, "(a)-[r:KNOWS]->(b:Person {name:'bob'})", ""), alice, outPattern)
 	if len(outRelated) != 1 {
 		t.Fatalf("outgoing related len = %d, want 1", len(outRelated))
 	}
@@ -3297,15 +3335,18 @@ func TestCompoundOptionalMatchAndFindRelatedNodes_Branches(t *testing.T) {
 		t.Fatalf("unexpected outgoing related node: %#v", outRelated[0].node.Properties)
 	}
 
-	inPattern := e.parseOptionalRelPattern(ctx, "(a)<-[r:KNOWS]-(b:Person)")
-	inRelated := e.sharedOptionalExpansionForTest(alice, inPattern)
+	fixtureAdmission1057Context, fixtureAdmission1057 := traversalTestContext(ctx, "(a)<-[r:KNOWS]-(b:Person)", "", nil)
+	_ = fixtureAdmission1057Context
+	inPattern := e.parseOptionalRelPattern(fixtureAdmission1057, fixtureAdmission1057Context, "(a)<-[r:KNOWS]-(b:Person)")
+	inRelated := e.sharedOptionalExpansionForTest(e.relationshipExecutionFor(fixtureAdmission1057, fixtureAdmission1057Context, "(a)<-[r:KNOWS]-(b:Person)", ""), alice, inPattern)
 	if len(inRelated) != 0 {
 		t.Fatalf("incoming related len = %d, want 0", len(inRelated))
 	}
 
 	// both-direction with wrong type should filter to zero.
 	bothWrongType := optionalRelPattern{direction: "both", relType: "LIKES", targetProps: map[string]interface{}{}}
-	bothRelated := e.sharedOptionalExpansionForTest(alice, bothWrongType)
+	bothContext, bothStatement := traversalTestContext(ctx, "(a)-[:LIKES]-(b)", "", nil)
+	bothRelated := e.sharedOptionalExpansionForTest(e.relationshipExecutionFor(bothStatement, bothContext, "(a)-[:LIKES]-(b)", ""), alice, bothWrongType)
 	if len(bothRelated) != 0 {
 		t.Fatalf("both-direction wrong-type related len = %d, want 0", len(bothRelated))
 	}

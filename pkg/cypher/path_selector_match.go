@@ -100,20 +100,20 @@ func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pat
 // row: the selector's paths for each start and end node pair, filtered by
 // the clause's path conjuncts. An OPTIONAL MATCH keeps a row that selects
 // nothing, with the clause's new variables null.
-func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, rows []pipelineRow, m *shortestPathMatch, optional bool) ([]pipelineRow, error) {
+func (e *StorageExecutor) pipelineApplySelectedPathMatch(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, m *shortestPathMatch, optional bool) ([]pipelineRow, error) {
 	count, err := pathSelectorCount(ctx, m.selector.count)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		selected, err := e.selectPaths(ctx, m, row, count)
+		selected, err := e.selectPaths(admission, ctx, m, row, count)
 		if err != nil {
 			return nil, err
 		}
 		found := 0
 		for _, bound := range selected {
-			if m.postWhere != "" && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
+			if m.postWhere != "" && !e.evaluateWithWhereCondition(admission, ctx, m.postWhere, map[string]interface{}(bound)) {
 				if err := getExpressionFailure(ctx); err != nil {
 					return nil, err
 				}

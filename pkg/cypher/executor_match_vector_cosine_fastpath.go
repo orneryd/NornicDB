@@ -33,7 +33,7 @@ type parsedSimpleMatchRelationshipPattern struct {
 //
 // It requires a matching VECTOR index on (Label, prop) using cosine similarity.
 // If any requirement is not met, it cleanly falls back to normal Cypher execution.
-func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+func (e *StorageExecutor) tryFastPathMatchVectorCosine(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
 	trimmed := strings.TrimSpace(cypher)
 	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
 		return nil, false
@@ -147,9 +147,9 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	candidateLimit := chooseVectorCandidateLimit(limit, needsExactCandidates)
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
-		nodeScores, ok = e.fetchCosineNodeScoresNoIndexExact(ctx, label, vectorProp, int(^uint(0)>>1), queryExpr, orderDesc)
+		nodeScores, ok = e.fetchCosineNodeScoresNoIndexExact(admission, ctx, label, vectorProp, int(^uint(0)>>1), queryExpr, orderDesc)
 	} else {
-		nodeScores, ok = e.fetchCosineNodeScores(ctx, indexName, candidateLimit, queryExpr, orderDesc, projectedProps)
+		nodeScores, ok = e.fetchCosineNodeScores(admission, ctx, indexName, candidateLimit, queryExpr, orderDesc, projectedProps)
 	}
 	if !ok {
 		return nil, false
@@ -157,7 +157,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 
 	if len(matchProps) > 0 {
 		var propertyErr error
-		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(ctx, matchPart)
+		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(admission, ctx, matchPart)
 		if propertyErr != nil {
 			recordExpressionFailure(ctx, propertyErr)
 			return nil, true
@@ -173,7 +173,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	hasMatchProps := len(matchProps) > 0
 	var preWhereFilter func(*storage.Node) bool
 	if preWhereClause != "" && preWhereNotNullProp == "" {
-		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
+		preWhereFilter = e.compileNodeWhereFilter(admission, ctx, varName, preWhereClause)
 	}
 	for _, hit := range nodeScores {
 		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
@@ -197,7 +197,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 				row[i] = hit.score
 				continue
 			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, nil)
+			row[i] = e.evaluateExpressionWithContext(admission, ctx, item.expr, nodeCtx, nil)
 		}
 		rows = append(rows, row)
 		if len(rows) >= limit {
@@ -217,7 +217,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 //	RETURN ...
 //	ORDER BY <scoreAlias> DESC|ASC
 //	LIMIT <k>
-func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
 	trimmed := strings.TrimSpace(cypher)
 	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
 		return nil, false
@@ -323,7 +323,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	scoreOp := ""
 	scoreCmp := float64(0)
 	if postWhereClause != "" {
-		op, cmp, ok := e.parseScoreComparisonPredicate(ctx, postWhereClause, scoreRef)
+		op, cmp, ok := e.parseScoreComparisonPredicate(admission, ctx, postWhereClause, scoreRef)
 		if !ok {
 			return nil, false
 		}
@@ -390,19 +390,19 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	var nodeScores []vectorNodeScore
 	if needsExactCandidates {
 		if preWhereClause != "" && preWhereNotNullProp == "" {
-			preWhereFilter := e.compileNodeWhereFilter(ctx, varName, preWhereClause)
+			preWhereFilter := e.compileNodeWhereFilter(admission, ctx, varName, preWhereClause)
 			exactProjectedProps := projectedProps
 			if projectionOK {
 				exactProjectedProps = appendProjectedProperty(exactProjectedProps, vectorProp)
 			}
-			nodeScores, ok = e.fetchCosineNodeScoresNoIndexExactFiltered(ctx, label, vectorProp, limit, queryExpr, orderDesc, exactProjectedProps, preWhereFilter)
+			nodeScores, ok = e.fetchCosineNodeScoresNoIndexExactFiltered(admission, ctx, label, vectorProp, limit, queryExpr, orderDesc, exactProjectedProps, preWhereFilter)
 		} else {
-			nodeScores, ok = e.fetchCosineNodeScoresNoIndexExact(ctx, label, vectorProp, int(^uint(0)>>1), queryExpr, orderDesc)
+			nodeScores, ok = e.fetchCosineNodeScoresNoIndexExact(admission, ctx, label, vectorProp, int(^uint(0)>>1), queryExpr, orderDesc)
 		}
 	} else if hasIndex {
-		nodeScores, ok = e.fetchCosineNodeScores(ctx, indexName, candidateLimit, queryExpr, orderDesc, projectedProps)
+		nodeScores, ok = e.fetchCosineNodeScores(admission, ctx, indexName, candidateLimit, queryExpr, orderDesc, projectedProps)
 	} else {
-		nodeScores, ok = e.fetchCosineNodeScoresNoIndexExact(ctx, label, vectorProp, candidateLimit, queryExpr, orderDesc)
+		nodeScores, ok = e.fetchCosineNodeScoresNoIndexExact(admission, ctx, label, vectorProp, candidateLimit, queryExpr, orderDesc)
 	}
 	if !ok {
 		return nil, false
@@ -410,7 +410,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 
 	if len(matchProps) > 0 {
 		var propertyErr error
-		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(ctx, preWithSegment)
+		ctx, matchProps, propertyErr = e.preparePatternNodeProperties(admission, ctx, preWithSegment)
 		if propertyErr != nil {
 			recordExpressionFailure(ctx, propertyErr)
 			return nil, true
@@ -420,7 +420,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	nodeCtx := map[string]*storage.Node{varName: nil}
 	var preWhereFilter func(*storage.Node) bool
 	if preWhereClause != "" && preWhereNotNullProp == "" {
-		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
+		preWhereFilter = e.compileNodeWhereFilter(admission, ctx, varName, preWhereClause)
 	}
 	for _, hit := range nodeScores {
 		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
@@ -449,7 +449,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 				row[i] = hit.score
 				continue
 			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, nil)
+			row[i] = e.evaluateExpressionWithContext(admission, ctx, item.expr, nodeCtx, nil)
 		}
 		rows = append(rows, row)
 		if len(rows) >= limit {
@@ -461,16 +461,16 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	return &ExecuteResult{Columns: columns, Rows: rows, Stats: &QueryStats{}}, true
 }
 
-func (e *StorageExecutor) fetchCosineNodeScoresNoIndexExact(ctx context.Context, label string, property string, limit int, queryExpr string, orderDesc bool) ([]vectorNodeScore, bool) {
-	queryVector, ok := e.resolveCosineQueryVector(ctx, queryExpr)
+func (e *StorageExecutor) fetchCosineNodeScoresNoIndexExact(admission admittedRelationshipStatement, ctx context.Context, label string, property string, limit int, queryExpr string, orderDesc bool) ([]vectorNodeScore, bool) {
+	queryVector, ok := e.resolveCosineQueryVector(admission, ctx, queryExpr)
 	if !ok || len(queryVector) == 0 {
 		return nil, false
 	}
 	return e.fetchCosineNodeScoresExact(ctx, label, property, "cosine", limit, queryVector, orderDesc, len(queryVector))
 }
 
-func (e *StorageExecutor) fetchCosineNodeScoresNoIndexExactFiltered(ctx context.Context, label string, property string, limit int, queryExpr string, orderDesc bool, projectedProps []string, filter func(*storage.Node) bool) ([]vectorNodeScore, bool) {
-	queryVector, ok := e.resolveCosineQueryVector(ctx, queryExpr)
+func (e *StorageExecutor) fetchCosineNodeScoresNoIndexExactFiltered(admission admittedRelationshipStatement, ctx context.Context, label string, property string, limit int, queryExpr string, orderDesc bool, projectedProps []string, filter func(*storage.Node) bool) ([]vectorNodeScore, bool) {
+	queryVector, ok := e.resolveCosineQueryVector(admission, ctx, queryExpr)
 	if !ok || len(queryVector) == 0 {
 		return nil, false
 	}
@@ -511,288 +511,6 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 	out := candidates.scores
 	sort.Slice(out, func(i, j int) bool { return vectorNodeScoreBetter(out[i], out[j], orderDesc) })
 	return out, true
-}
-
-// tryFastPathMatchRelationshipVectorCosine handles relationship direct-return shape:
-//
-//	MATCH ()-[e:TYPE]->()
-//	RETURN ..., vector.similarity.cosine(e.<prop>, <query>) AS <scoreAlias>, ...
-//	ORDER BY <scoreAlias> DESC|ASC
-//	LIMIT <k>
-func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
-	trimmed := strings.TrimSpace(cypher)
-	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
-		return nil, false
-	}
-	for _, kw := range []string{
-		"SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
-		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
-	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
-			return nil, false
-		}
-	}
-
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	orderIdx := findKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
-	if returnIdx <= 0 || orderIdx <= returnIdx || limitIdx <= orderIdx {
-		return nil, false
-	}
-
-	matchSegment := strings.TrimSpace(trimmed[len("MATCH"):returnIdx])
-	preWhereClause := ""
-	if preWhereIdx := findKeywordIndex(matchSegment, "WHERE"); preWhereIdx > 0 {
-		preWhereClause = strings.TrimSpace(matchSegment[preWhereIdx+len("WHERE"):])
-		matchSegment = strings.TrimSpace(matchSegment[:preWhereIdx])
-		if preWhereClause == "" {
-			return nil, false
-		}
-	}
-
-	pattern, ok := e.parseSimpleMatchRelationshipPattern(matchSegment)
-	if !ok || strings.TrimSpace(pattern.relVar) == "" || strings.TrimSpace(pattern.relType) == "" {
-		return nil, false
-	}
-
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(returnPart)
-	if len(returnItems) == 0 {
-		return nil, false
-	}
-
-	cosineIdx, vectorProp, queryExpr, scoreRef, ok := parseCosineReturnShape(returnItems, pattern.relVar)
-	if !ok {
-		return nil, false
-	}
-
-	orderPart := strings.TrimSpace(trimmed[orderIdx+len("ORDER BY") : limitIdx])
-	orderDesc, ok := parseOrderByScoreDirection(orderPart, scoreRef)
-	if !ok {
-		return nil, false
-	}
-
-	limitPart := strings.TrimSpace(trimmed[limitIdx+len("LIMIT"):])
-	limit, ok := parseFastPathLimit(ctx, limitPart)
-	if !ok || limit < 0 {
-		return nil, false
-	}
-
-	columns := make([]string, len(returnItems))
-	for i, item := range returnItems {
-		columns[i] = item.column()
-	}
-	if limit == 0 {
-		e.markCosineVectorIndexFastPathUsed()
-		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
-	}
-
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
-	if !hasIndex {
-		return nil, false
-	}
-
-	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "")
-	edgeScores, ok := e.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
-	if !ok {
-		return nil, false
-	}
-
-	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
-	nodeCtx := make(map[string]*storage.Node, 2)
-	edgeCtx := make(map[string]*storage.Edge, 1)
-	for _, hit := range edgeScores {
-		edge := hit.edge
-		if edge == nil && hit.edgeID != "" {
-			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
-			if err != nil || edge == nil {
-				continue
-			}
-		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
-			continue
-		}
-		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
-			continue
-		}
-
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if i == cosineIdx {
-				row[i] = hit.score
-				continue
-			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, edgeCtx)
-		}
-		rows = append(rows, row)
-		if len(rows) >= limit {
-			break
-		}
-	}
-
-	e.markCosineVectorIndexFastPathUsed()
-	return &ExecuteResult{Columns: columns, Rows: rows, Stats: &QueryStats{}}, true
-}
-
-// tryFastPathMatchWithRelationshipVectorCosineProjection handles Graphiti relationship shape:
-//
-//	MATCH (n)-[e:TYPE]->(m) [WHERE ...]
-//	WITH [DISTINCT] e[, n, m], vector.similarity.cosine(e.<prop>, <query>) AS <scoreAlias>
-//	[WHERE <scoreAlias> <op> <number|$param>]
-//	RETURN ...
-//	ORDER BY <scoreAlias> DESC|ASC
-//	LIMIT <k>
-func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
-	trimmed := strings.TrimSpace(cypher)
-	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
-		return nil, false
-	}
-	for _, kw := range []string{
-		"SKIP", "UNWIND", "OPTIONAL MATCH", "CALL",
-		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
-	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
-			return nil, false
-		}
-	}
-
-	withIdx := findKeywordIndex(trimmed, "WITH")
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	orderIdx := findKeywordIndex(trimmed, "ORDER BY")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
-	if withIdx <= 0 || returnIdx <= withIdx || orderIdx <= returnIdx || limitIdx <= orderIdx {
-		return nil, false
-	}
-
-	preWithSegment := strings.TrimSpace(trimmed[len("MATCH"):withIdx])
-	preWhereClause := ""
-	if preWhereIdx := findKeywordIndex(preWithSegment, "WHERE"); preWhereIdx > 0 {
-		preWhereClause = strings.TrimSpace(preWithSegment[preWhereIdx+len("WHERE"):])
-		preWithSegment = strings.TrimSpace(preWithSegment[:preWhereIdx])
-		if preWhereClause == "" {
-			return nil, false
-		}
-	}
-
-	pattern, ok := e.parseSimpleMatchRelationshipPattern(preWithSegment)
-	if !ok || strings.TrimSpace(pattern.relVar) == "" || strings.TrimSpace(pattern.relType) == "" {
-		return nil, false
-	}
-
-	withToReturn := strings.TrimSpace(trimmed[withIdx+len("WITH") : returnIdx])
-	postWhereClause := ""
-	withProjectionRaw := withToReturn
-	if postWhereIdx := findKeywordIndex(withToReturn, "WHERE"); postWhereIdx > 0 {
-		postWhereClause = strings.TrimSpace(withToReturn[postWhereIdx+len("WHERE"):])
-		withProjectionRaw = strings.TrimSpace(withToReturn[:postWhereIdx])
-		if postWhereClause == "" {
-			return nil, false
-		}
-	}
-
-	withProjection, _ := cutDistinct(withProjectionRaw)
-	withItems := e.parseReturnItems(withProjection)
-	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
-		return nil, false
-	}
-
-	_, vectorProp, queryExpr, scoreRef, ok := parseCosineReturnShape(withItems, pattern.relVar)
-	if !ok || scoreRef == "" {
-		return nil, false
-	}
-
-	scoreOp := ""
-	scoreCmp := float64(0)
-	if postWhereClause != "" {
-		op, cmp, ok := e.parseScoreComparisonPredicate(ctx, postWhereClause, scoreRef)
-		if !ok {
-			return nil, false
-		}
-		scoreOp = op
-		scoreCmp = cmp
-	}
-
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(returnPart)
-	if len(returnItems) == 0 {
-		return nil, false
-	}
-
-	orderPart := strings.TrimSpace(trimmed[orderIdx+len("ORDER BY") : limitIdx])
-	orderDesc, ok := parseOrderByScoreDirection(orderPart, scoreRef)
-	if !ok {
-		return nil, false
-	}
-
-	limitPart := strings.TrimSpace(trimmed[limitIdx+len("LIMIT"):])
-	limit, ok := parseFastPathLimit(ctx, limitPart)
-	if !ok || limit < 0 {
-		return nil, false
-	}
-
-	columns := make([]string, len(returnItems))
-	for i, item := range returnItems {
-		columns[i] = item.column()
-	}
-	if limit == 0 {
-		e.markCosineVectorIndexFastPathUsed()
-		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
-	}
-
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
-	if !hasIndex {
-		return nil, false
-	}
-
-	candidateLimit := chooseVectorCandidateLimit(limit, preWhereClause != "" || scorePredicateRejectsLeadingResults(orderDesc, scoreOp))
-	edgeScores, ok := e.fetchCosineRelationshipScores(ctx, indexName, candidateLimit, queryExpr, orderDesc)
-	if !ok {
-		return nil, false
-	}
-
-	rows := make([][]interface{}, 0, util.SafePreallocCap(len(edgeScores)))
-	nodeCtx := make(map[string]*storage.Node, 2)
-	edgeCtx := make(map[string]*storage.Edge, 1)
-	scoreExprIsAlias := make([]bool, len(returnItems))
-	for i := range returnItems {
-		scoreExprIsAlias[i] = strings.EqualFold(strings.TrimSpace(returnItems[i].expr), scoreRef)
-	}
-	for _, hit := range edgeScores {
-		edge := hit.edge
-		if edge == nil && hit.edgeID != "" {
-			var err error
-			edge, err = e.storage.GetEdge(hit.edgeID)
-			if err != nil || edge == nil {
-				continue
-			}
-		}
-		if !e.buildRelationshipContextInto(pattern, edge, nodeCtx, edgeCtx) {
-			continue
-		}
-		if preWhereClause != "" && !evaluateExpressionBoolWithContext(e, ctx, preWhereClause, nodeCtx, edgeCtx) {
-			continue
-		}
-		if scoreOp != "" && !compareScore(hit.score, scoreOp, scoreCmp) {
-			continue
-		}
-
-		row := make([]interface{}, len(returnItems))
-		for i, item := range returnItems {
-			if scoreExprIsAlias[i] {
-				row[i] = hit.score
-				continue
-			}
-			row[i] = e.evaluateExpressionWithContext(ctx, item.expr, nodeCtx, edgeCtx)
-		}
-		rows = append(rows, row)
-		if len(rows) >= limit {
-			break
-		}
-	}
-
-	e.markCosineVectorIndexFastPathUsed()
-	return &ExecuteResult{Columns: columns, Rows: rows, Stats: &QueryStats{}}, true
 }
 
 type vectorNodeScore struct {
@@ -840,24 +558,23 @@ type vectorEdgeScore struct {
 	score  float64
 }
 
-func (e *StorageExecutor) tryFastPathAnyMatchVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
-	if result, handled := e.tryFastPathMatchVectorCosine(ctx, cypher, upperQuery); handled {
+func (e *StorageExecutor) tryFastPathAnyMatchVectorCosine(admission admittedRelationshipStatement, ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
+	if result, handled := e.tryFastPathMatchVectorCosine(admission, ctx, cypher, upperQuery); handled {
 		return result, true
 	}
-	if result, handled := e.tryFastPathMatchWithVectorCosineProjection(ctx, cypher, upperQuery); handled {
+	if result, handled := e.tryFastPathMatchWithVectorCosineProjection(admission, ctx, cypher, upperQuery); handled {
 		return result, true
 	}
-	if result, handled := e.tryFastPathMatchRelationshipVectorCosine(ctx, cypher, upperQuery); handled {
-		return result, true
-	}
-	if result, handled := e.tryFastPathMatchWithRelationshipVectorCosineProjection(ctx, cypher, upperQuery); handled {
-		return result, true
+	if execution, ok := e.relationshipExecutionForQuery(admission, ctx, cypher); ok {
+		if result, handled := execution.vector(ctx, cypher); handled {
+			return result, true
+		}
 	}
 	return nil, false
 }
 
-func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool, projectedProps []string) ([]vectorNodeScore, bool) {
-	queryVector, ok := e.resolveCosineQueryVector(ctx, queryExpr)
+func (e *StorageExecutor) fetchCosineNodeScores(admission admittedRelationshipStatement, ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool, projectedProps []string) ([]vectorNodeScore, bool) {
+	queryVector, ok := e.resolveCosineQueryVector(admission, ctx, queryExpr)
 	if !ok || len(queryVector) == 0 {
 		return nil, false
 	}
@@ -1206,66 +923,6 @@ func scoreVectorForFastPath(queryVector []float32, embedding []float32, similari
 	}
 }
 
-func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
-	vec, ok := e.resolveCosineQueryVector(ctx, queryExpr)
-	if !ok || len(vec) == 0 {
-		return nil, false
-	}
-	var targetRelType, targetProperty string
-	similarityFunc := "cosine"
-	if schema := e.storage.GetSchema(); schema != nil {
-		if vectorIdx, exists := schema.GetVectorIndex(indexName); exists {
-			targetRelType = vectorIdx.Label
-			targetProperty = vectorIdx.Property
-			similarityFunc = vectorIdx.SimilarityFunc
-		}
-	}
-	if svc := e.search(); orderDesc && svc != nil && targetProperty != "" && svc.HasRelationshipVectorEntries(targetRelType, targetProperty) {
-		hits, err := svc.VectorQueryRelationships(ctx, vec, search.RelationshipVectorQuerySpec{
-			IndexName:  indexName,
-			Type:       targetRelType,
-			Property:   targetProperty,
-			Similarity: similarityFunc,
-			Limit:      limit,
-		})
-		if err == nil {
-			out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(hits)))
-			for _, hit := range hits {
-				out = append(out, vectorEdgeScore{edgeID: storage.EdgeID(hit.ID), score: hit.Score})
-			}
-			return out, true
-		}
-	}
-	edges, err := e.storage.AllEdges()
-	if err != nil {
-		return nil, false
-	}
-	out := make([]vectorEdgeScore, 0, util.SafePreallocCap(len(edges)))
-	for _, edge := range edges {
-		if targetRelType != "" && edge.Type != targetRelType {
-			continue
-		}
-		if targetProperty == "" {
-			continue
-		}
-		score, ok := scoreVectorForFastPath(vec, toFloat32Slice(edge.Properties[targetProperty]), similarityFunc)
-		if !ok {
-			continue
-		}
-		out = append(out, vectorEdgeScore{edge: edge, score: score})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if orderDesc {
-			return out[i].score > out[j].score
-		}
-		return out[i].score < out[j].score
-	})
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	return out, true
-}
-
 func parseCosineReturnShape(items []returnItem, varName string) (cosineIdx int, vectorProp string, queryExpr string, scoreRef string, ok bool) {
 	cosineIdx = -1
 	for i, item := range items {
@@ -1419,8 +1076,8 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 	return matches[0], true
 }
 
-func (e *StorageExecutor) buildNegatedCosineQueryExpr(ctx context.Context, queryExpr string) (string, bool) {
-	vector, ok := e.resolveCosineQueryVector(ctx, queryExpr)
+func (e *StorageExecutor) buildNegatedCosineQueryExpr(admission admittedRelationshipStatement, ctx context.Context, queryExpr string) (string, bool) {
+	vector, ok := e.resolveCosineQueryVector(admission, ctx, queryExpr)
 	if !ok || len(vector) == 0 {
 		return "", false
 	}
@@ -1434,12 +1091,16 @@ func (e *StorageExecutor) buildNegatedCosineQueryExpr(ctx context.Context, query
 	return formatInlineFloat32Vector(vector), true
 }
 
-func (e *StorageExecutor) resolveCosineQueryVector(ctx context.Context, queryExpr string) ([]float32, bool) {
-	value, err := e.parseValue(ctx, strings.TrimSpace(queryExpr))
+func (e *StorageExecutor) resolveCosineQueryVector(admission admittedRelationshipStatement, ctx context.Context, queryExpr string) ([]float32, bool) {
+	value, err := e.parseValue(admission, ctx, strings.TrimSpace(queryExpr))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
 	}
+	return e.cosineQueryVectorValue(ctx, value)
+}
+
+func (e *StorageExecutor) cosineQueryVectorValue(ctx context.Context, value interface{}) ([]float32, bool) {
 	if text, isText := value.(string); isText {
 		if strings.TrimSpace(text) == "" || e.queryEmbedderForStatement(ctx) == nil {
 			return nil, false
@@ -1570,8 +1231,8 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 	return true
 }
 
-func evaluateExpressionBoolWithContext(e *StorageExecutor, ctx context.Context, expr string, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
-	raw := e.evaluateExpressionWithContext(ctx, expr, nodeCtx, edgeCtx)
+func evaluateExpressionBoolWithContext(admission admittedRelationshipStatement, e *StorageExecutor, ctx context.Context, expr string, nodeCtx map[string]*storage.Node, edgeCtx map[string]*storage.Edge) bool {
+	raw := e.evaluateExpressionWithContext(admission, ctx, expr, nodeCtx, edgeCtx)
 	if b, ok := raw.(bool); ok {
 		return b
 	}
@@ -1605,7 +1266,7 @@ func parseFastPathPropertyNotNullPredicate(whereClause string, variable string) 
 	return prop, true
 }
 
-func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whereClause string, scoreAlias string) (string, float64, bool) {
+func (e *StorageExecutor) parseScoreComparisonPredicate(admission admittedRelationshipStatement, ctx context.Context, whereClause string, scoreAlias string) (string, float64, bool) {
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return "", 0, false
@@ -1655,7 +1316,7 @@ func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whe
 		return "", 0, false
 	}
 
-	raw, err := e.parseValue(ctx, cmpExpr)
+	raw, err := e.parseValue(admission, ctx, cmpExpr)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return "", 0, false

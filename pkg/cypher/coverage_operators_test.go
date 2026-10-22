@@ -476,7 +476,9 @@ func TestResolveCosineQueryVector_AllNonEmbedderArms(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("float32 slice literal as []", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, "[0.1, 0.2, 0.3]")
+		fixtureAdmission1556Context, fixtureAdmission1556 := expressionTestContext(ctx, "[0.1, 0.2, 0.3]")
+		_ = fixtureAdmission1556Context
+		got, ok := e.resolveCosineQueryVector(fixtureAdmission1556, fixtureAdmission1556Context, "[0.1, 0.2, 0.3]")
 		require.True(t, ok)
 		require.Len(t, got, 3)
 		// Values should match within float32 precision.
@@ -484,19 +486,25 @@ func TestResolveCosineQueryVector_AllNonEmbedderArms(t *testing.T) {
 	})
 
 	t.Run("empty literal vector returns empty,false", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, "[]")
+		fixtureAdmission1557Context, fixtureAdmission1557 := expressionTestContext(ctx, "[]")
+		_ = fixtureAdmission1557Context
+		got, ok := e.resolveCosineQueryVector(fixtureAdmission1557, fixtureAdmission1557Context, "[]")
 		require.False(t, ok)
 		require.Empty(t, got)
 	})
 
 	t.Run("empty string returns nil,false (no embedder)", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, `""`)
+		fixtureAdmission1558Context, fixtureAdmission1558 := expressionTestContext(ctx, `""`)
+		_ = fixtureAdmission1558Context
+		got, ok := e.resolveCosineQueryVector(fixtureAdmission1558, fixtureAdmission1558Context, `""`)
 		require.False(t, ok)
 		require.Nil(t, got)
 	})
 
 	t.Run("non-empty string with no embedder returns nil,false", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, `"some query text"`)
+		fixtureAdmission1559Context, fixtureAdmission1559 := expressionTestContext(ctx, `"some query text"`)
+		_ = fixtureAdmission1559Context
+		got, ok := e.resolveCosineQueryVector(fixtureAdmission1559, fixtureAdmission1559Context, `"some query text"`)
 		require.False(t, ok)
 		require.Nil(t, got)
 	})
@@ -511,13 +519,17 @@ func TestBuildNegatedCosineQueryExpr(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty resolved vector returns false", func(t *testing.T) {
-		got, ok := e.buildNegatedCosineQueryExpr(ctx, `""`)
+		fixtureAdmission1560Context, fixtureAdmission1560 := expressionTestContext(ctx, `""`)
+		_ = fixtureAdmission1560Context
+		got, ok := e.buildNegatedCosineQueryExpr(fixtureAdmission1560, fixtureAdmission1560Context, `""`)
 		require.False(t, ok)
 		require.Empty(t, got)
 	})
 
 	t.Run("populated vector emits negated literal", func(t *testing.T) {
-		got, ok := e.buildNegatedCosineQueryExpr(ctx, "[0.1, -0.2, 0.3]")
+		fixtureAdmission1561Context, fixtureAdmission1561 := expressionTestContext(ctx, "[0.1, -0.2, 0.3]")
+		_ = fixtureAdmission1561Context
+		got, ok := e.buildNegatedCosineQueryExpr(fixtureAdmission1561, fixtureAdmission1561Context, "[0.1, -0.2, 0.3]")
 		require.True(t, ok)
 		// formatInlineFloat32Vector emits "[a,b,c]" with shortest float form.
 		require.True(t, strings.HasPrefix(got, "["))
@@ -534,7 +546,8 @@ func TestBuildNegatedCosineQueryExpr(t *testing.T) {
 func TestPR1632SymbolicOperatorSourceWidth(t *testing.T) {
 	e := freshExecutorForOperators(t)
 	for _, expression := range []string{"x :: INTEGER", "x   :: INTEGER", "x    ::    INTEGER", "x   IS  ::  INTEGER"} {
-		value, ok, err := e.evaluateRowValue(expression, map[string]interface{}{"x": int64(1)})
+		_, admission := expressionTestContext(context.Background(), expression)
+		value, ok, err := e.evaluateRowValue(admission, expression, map[string]interface{}{"x": int64(1)})
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, true, value, expression)

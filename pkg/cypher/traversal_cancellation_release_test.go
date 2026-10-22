@@ -70,7 +70,14 @@ func TestReleasePlainTraversalCancellation(t *testing.T) {
 				}
 				exec := NewStorageExecutor(engine)
 				state := exec.newTraversalContext(ctx, root, &RelationshipPattern{Direction: direction, MinHops: 1, MaxHops: 3})
-				paths := exec.findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
+				pattern := "()-[*1..3]-()"
+				if direction == "incoming" {
+					pattern = "()<-[*1..3]-()"
+				} else if direction == "outgoing" {
+					pattern = "()-[*1..3]->()"
+				}
+				fixtureContext, fixtureStatement := traversalTestContext(ctx, pattern, "", nil)
+				paths := exec.relationshipExecutionFor(fixtureStatement, fixtureContext, pattern, "").findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
 				if at < 0 {
 					require.Equal(t, 1024, len(paths))
 					require.NoError(t, ctx.Err())

@@ -68,13 +68,24 @@ func TestKnowledgePolicyExecuteDDL_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	_, err := exec.executeKnowledgePolicyDDL(ctx, "MATCH (n) RETURN n")
+	fixtureAdmission1236Context, fixtureAdmission1236 := statementTestContext(ctx, "MATCH (n) RETURN n")
+	_ = fixtureAdmission1236Context
+	_, err := exec.executeKnowledgePolicyDDL(fixtureAdmission1236, fixtureAdmission1236Context, "MATCH (n) RETURN n")
 	require.EqualError(t, err, "unsupported knowledge policy command: MATCH (n) RETURN n")
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE bad OPTIONS { function: 'bogus', scope: 'NODE', scoreFrom: 'CREATED' }`)
+	fixtureAdmission1237Context, fixtureAdmission1237 := statementTestContext(ctx, `CREATE DECAY PROFILE bad OPTIONS { function: 'bogus', scope: 'NODE', scoreFrom: 'CREATED' }`)
+	_ = fixtureAdmission1237Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1237, fixtureAdmission1237Context, `CREATE DECAY PROFILE bad OPTIONS { function: 'bogus', scope: 'NODE', scoreFrom: 'CREATED' }`)
 	require.ErrorContains(t, err, "invalid decay function")
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE base OPTIONS {
+	fixtureAdmission1238Context, fixtureAdmission1238 := statementTestContext(ctx, `CREATE DECAY PROFILE base OPTIONS {
+		halfLifeSeconds: 3600,
+		function: 'none',
+		scope: 'NODE',
+		scoreFrom: 'CREATED'
+	}`)
+	_ = fixtureAdmission1238Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1238, fixtureAdmission1238Context, `CREATE DECAY PROFILE base OPTIONS {
 		halfLifeSeconds: 3600,
 		function: 'none',
 		scope: 'NODE',
@@ -82,15 +93,23 @@ func TestKnowledgePolicyExecuteDDL_Branches(t *testing.T) {
 	}`)
 	require.NoError(t, err)
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE base_binding FOR (n:Fact) APPLY {
+	fixtureAdmission1239Context, fixtureAdmission1239 := statementTestContext(ctx, `CREATE DECAY PROFILE base_binding FOR (n:Fact) APPLY {
+		DECAY PROFILE 'base'
+	}`)
+	_ = fixtureAdmission1239Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1239, fixtureAdmission1239Context, `CREATE DECAY PROFILE base_binding FOR (n:Fact) APPLY {
 		DECAY PROFILE 'base'
 	}`)
 	require.NoError(t, err)
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `ALTER DECAY PROFILE base SET OPTIONS { enabled: false }`)
+	fixtureAdmission1240Context, fixtureAdmission1240 := statementTestContext(ctx, `ALTER DECAY PROFILE base SET OPTIONS { enabled: false }`)
+	_ = fixtureAdmission1240Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1240, fixtureAdmission1240Context, `ALTER DECAY PROFILE base SET OPTIONS { enabled: false }`)
 	require.NoError(t, err)
 
-	showDecay, err := exec.executeKnowledgePolicyDDL(ctx, `SHOW DECAY PROFILES`)
+	fixtureAdmission1241Context, fixtureAdmission1241 := statementTestContext(ctx, `SHOW DECAY PROFILES`)
+	_ = fixtureAdmission1241Context
+	showDecay, err := exec.executeKnowledgePolicyDDL(fixtureAdmission1241, fixtureAdmission1241Context, `SHOW DECAY PROFILES`)
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "name", "scope", "target", "profileRef", "enabled"}, showDecay.Columns)
 	require.Len(t, showDecay.Rows, 2)
@@ -106,33 +125,54 @@ func TestKnowledgePolicyExecuteDDL_Branches(t *testing.T) {
 	require.Equal(t, "Fact", rowsByName["base_binding"][3])
 	require.Equal(t, "base", rowsByName["base_binding"][4])
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE PROMOTION PROFILE boost OPTIONS {
+	fixtureAdmission1242Context, fixtureAdmission1242 := statementTestContext(ctx, `CREATE PROMOTION PROFILE boost OPTIONS {
+		scope: 'NODE',
+		multiplier: 1.5,
+		scoreFloor: 0.1,
+		scoreCap: 0.9
+	}`)
+	_ = fixtureAdmission1242Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1242, fixtureAdmission1242Context, `CREATE PROMOTION PROFILE boost OPTIONS {
 		scope: 'NODE',
 		multiplier: 1.5,
 		scoreFloor: 0.1,
 		scoreCap: 0.9
 	}`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `ALTER PROMOTION PROFILE boost SET OPTIONS { multiplier: 1.2, enabled: false }`)
+	fixtureAdmission1243Context, fixtureAdmission1243 := statementTestContext(ctx, `ALTER PROMOTION PROFILE boost SET OPTIONS { multiplier: 1.2, enabled: false }`)
+	_ = fixtureAdmission1243Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1243, fixtureAdmission1243Context, `ALTER PROMOTION PROFILE boost SET OPTIONS { multiplier: 1.2, enabled: false }`)
 	require.NoError(t, err)
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY {
+	fixtureAdmission1244Context, fixtureAdmission1244 := statementTestContext(ctx, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY {
+		ON ACCESS {
+			SET n.accessCount = n.accessCount + 1
+		}
+	}`)
+	_ = fixtureAdmission1244Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1244, fixtureAdmission1244Context, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY {
 		ON ACCESS {
 			SET n.accessCount = n.accessCount + 1
 		}
 	}`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `ALTER PROMOTION POLICY fact_promote SET OPTIONS { enabled: false }`)
+	fixtureAdmission1245Context, fixtureAdmission1245 := statementTestContext(ctx, `ALTER PROMOTION POLICY fact_promote SET OPTIONS { enabled: false }`)
+	_ = fixtureAdmission1245Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1245, fixtureAdmission1245Context, `ALTER PROMOTION POLICY fact_promote SET OPTIONS { enabled: false }`)
 	require.NoError(t, err)
 
-	showPromotionProfiles, err := exec.executeKnowledgePolicyDDL(ctx, `SHOW PROMOTION PROFILES`)
+	fixtureAdmission1246Context, fixtureAdmission1246 := statementTestContext(ctx, `SHOW PROMOTION PROFILES`)
+	_ = fixtureAdmission1246Context
+	showPromotionProfiles, err := exec.executeKnowledgePolicyDDL(fixtureAdmission1246, fixtureAdmission1246Context, `SHOW PROMOTION PROFILES`)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "scope", "multiplier", "scoreFloor", "scoreCap", "enabled"}, showPromotionProfiles.Columns)
 	require.Len(t, showPromotionProfiles.Rows, 1)
 	require.Equal(t, "boost", showPromotionProfiles.Rows[0][0])
 	require.Equal(t, "NODE", showPromotionProfiles.Rows[0][1])
 
-	showPolicies, err := exec.executeKnowledgePolicyDDL(ctx, `SHOW PROMOTION POLICIES`)
+	fixtureAdmission1247Context, fixtureAdmission1247 := statementTestContext(ctx, `SHOW PROMOTION POLICIES`)
+	_ = fixtureAdmission1247Context
+	showPolicies, err := exec.executeKnowledgePolicyDDL(fixtureAdmission1247, fixtureAdmission1247Context, `SHOW PROMOTION POLICIES`)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "scope", "target", "enabled", "whenClauses", "onAccessMutations"}, showPolicies.Columns)
 	require.Len(t, showPolicies.Rows, 1)
@@ -140,13 +180,21 @@ func TestKnowledgePolicyExecuteDDL_Branches(t *testing.T) {
 	require.Equal(t, "Fact", showPolicies.Rows[0][2])
 	require.EqualValues(t, int64(1), showPolicies.Rows[0][5])
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `DROP PROMOTION POLICY IF EXISTS fact_promote`)
+	fixtureAdmission1248Context, fixtureAdmission1248 := statementTestContext(ctx, `DROP PROMOTION POLICY IF EXISTS fact_promote`)
+	_ = fixtureAdmission1248Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1248, fixtureAdmission1248Context, `DROP PROMOTION POLICY IF EXISTS fact_promote`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `DROP PROMOTION PROFILE IF EXISTS boost`)
+	fixtureAdmission1249Context, fixtureAdmission1249 := statementTestContext(ctx, `DROP PROMOTION PROFILE IF EXISTS boost`)
+	_ = fixtureAdmission1249Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1249, fixtureAdmission1249Context, `DROP PROMOTION PROFILE IF EXISTS boost`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `DROP DECAY PROFILE IF EXISTS base_binding`)
+	fixtureAdmission1250Context, fixtureAdmission1250 := statementTestContext(ctx, `DROP DECAY PROFILE IF EXISTS base_binding`)
+	_ = fixtureAdmission1250Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1250, fixtureAdmission1250Context, `DROP DECAY PROFILE IF EXISTS base_binding`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `DROP DECAY PROFILE IF EXISTS base`)
+	fixtureAdmission1251Context, fixtureAdmission1251 := statementTestContext(ctx, `DROP DECAY PROFILE IF EXISTS base`)
+	_ = fixtureAdmission1251Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1251, fixtureAdmission1251Context, `DROP DECAY PROFILE IF EXISTS base`)
 	require.NoError(t, err)
 }
 
@@ -192,18 +240,31 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{"missing-entity"})
 	require.EqualError(t, err, "knowledge policy binding table unavailable")
 
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE base OPTIONS {
+	fixtureAdmission1252Context, fixtureAdmission1252 := statementTestContext(ctx, `CREATE DECAY PROFILE base OPTIONS {
+		halfLifeSeconds: 3600,
+		function: 'none',
+		scope: 'NODE',
+		scoreFrom: 'CREATED'
+	}`)
+	_ = fixtureAdmission1252Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1252, fixtureAdmission1252Context, `CREATE DECAY PROFILE base OPTIONS {
 		halfLifeSeconds: 3600,
 		function: 'none',
 		scope: 'NODE',
 		scoreFrom: 'CREATED'
 	}`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE base_binding FOR (n:Fact) APPLY { DECAY PROFILE 'base' }`)
+	fixtureAdmission1253Context, fixtureAdmission1253 := statementTestContext(ctx, `CREATE DECAY PROFILE base_binding FOR (n:Fact) APPLY { DECAY PROFILE 'base' }`)
+	_ = fixtureAdmission1253Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1253, fixtureAdmission1253Context, `CREATE DECAY PROFILE base_binding FOR (n:Fact) APPLY { DECAY PROFILE 'base' }`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE PROMOTION PROFILE boost OPTIONS { scope: 'NODE', multiplier: 1.1, scoreFloor: 0.1, scoreCap: 0.9 }`)
+	fixtureAdmission1254Context, fixtureAdmission1254 := statementTestContext(ctx, `CREATE PROMOTION PROFILE boost OPTIONS { scope: 'NODE', multiplier: 1.1, scoreFloor: 0.1, scoreCap: 0.9 }`)
+	_ = fixtureAdmission1254Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1254, fixtureAdmission1254Context, `CREATE PROMOTION PROFILE boost OPTIONS { scope: 'NODE', multiplier: 1.1, scoreFloor: 0.1, scoreCap: 0.9 }`)
 	require.NoError(t, err)
-	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY { ON ACCESS { SET n.accessCount = n.accessCount + 1 } }`)
+	fixtureAdmission1255Context, fixtureAdmission1255 := statementTestContext(ctx, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY { ON ACCESS { SET n.accessCount = n.accessCount + 1 } }`)
+	_ = fixtureAdmission1255Context
+	_, err = exec.executeKnowledgePolicyDDL(fixtureAdmission1255, fixtureAdmission1255Context, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY { ON ACCESS { SET n.accessCount = n.accessCount + 1 } }`)
 	require.NoError(t, err)
 
 	profiles, err := exec.callNornicDbKnowledgePolicyProfiles()
@@ -282,14 +343,20 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 
 	require.Equal(t, map[string]interface{}{"targetId": "abc", "targetScope": "NODE"}, minimalPolicyMap("abc"))
 
-	property, err := validateDecayOptions(context.Background(), "{property: 'title'}", nil, nil, exec)
+	fixtureAdmission1897Context, fixtureAdmission1897 := expressionTestContext(context.Background(), "{property: 'title'}")
+	_ = fixtureAdmission1897Context
+	property, err := validateDecayOptions(fixtureAdmission1897, fixtureAdmission1897Context, "{property: 'title'}", nil, nil, exec)
 	require.NoError(t, err)
 	require.Equal(t, "title", property)
 
-	_, err = validateDecayOptions(context.Background(), "{other: 'x'}", nil, nil, exec)
+	fixtureAdmission1898Context, fixtureAdmission1898 := expressionTestContext(context.Background(), "{other: 'x'}")
+	_ = fixtureAdmission1898Context
+	_, err = validateDecayOptions(fixtureAdmission1898, fixtureAdmission1898Context, "{other: 'x'}", nil, nil, exec)
 	require.EqualError(t, err, `unknown decay option key: "other"`)
 
-	_, err = validateDecayOptions(context.Background(), "42", nil, nil, exec)
+	fixtureAdmission1899Context, fixtureAdmission1899 := expressionTestContext(context.Background(), "42")
+	_ = fixtureAdmission1899Context
+	_, err = validateDecayOptions(fixtureAdmission1899, fixtureAdmission1899Context, "42", nil, nil, exec)
 	require.ErrorContains(t, err, "decayScore/decay options must be a map")
 
 	require.Equal(t, "NODE", bindingScope(knowledgepolicy.DecayProfileBinding{}))
@@ -305,14 +372,20 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	require.Equal(t, "A:B", promotionPolicyTarget(knowledgepolicy.PromotionPolicyDef{TargetLabels: []string{"A", "B"}}))
 
 	// Unknown function call branch.
-	v, handled := exec.evaluateKnowledgePolicyFunction(context.Background(), "noop(n)", "noop(n)", map[string]*storage.Node{"n": node}, map[string]*storage.Edge{"r": edge})
+	fixtureAdmission1641Context, fixtureAdmission1641 := expressionTestContext(context.Background(), "noop(n)")
+	_ = fixtureAdmission1641Context
+	v, handled := exec.evaluateKnowledgePolicyFunction(fixtureAdmission1641, fixtureAdmission1641Context, "noop(n)", "noop(n)", map[string]*storage.Node{"n": node}, map[string]*storage.Edge{"r": edge})
 	require.False(t, handled)
 	require.Nil(t, v)
 
 	// Memory engine has no decay context, so decay helpers return neutral fallback values.
-	decayScore := exec.evalDecayScore(context.Background(), "decayScore(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	fixtureAdmission1642Context, fixtureAdmission1642 := expressionTestContext(context.Background(), "decayScore(n, {unknown:'x'})")
+	_ = fixtureAdmission1642Context
+	decayScore := exec.evalDecayScore(fixtureAdmission1642, fixtureAdmission1642Context, "decayScore(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
 	require.Equal(t, 1.0, decayScore)
-	decay := exec.evalDecay(context.Background(), "decay(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	fixtureAdmission1643Context, fixtureAdmission1643 := expressionTestContext(context.Background(), "decay(n, {unknown:'x'})")
+	_ = fixtureAdmission1643Context
+	decay := exec.evalDecay(fixtureAdmission1643, fixtureAdmission1643Context, "decay(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
 	require.Equal(t, map[string]interface{}{"score": 1.0, "applies": false, "reason": "no BadgerEngine"}, decay)
 
 	// Policy fallbacks on missing entity and missing argument.

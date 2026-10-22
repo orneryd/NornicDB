@@ -87,6 +87,8 @@ func executeAllowingInternalFunctions(ctx context.Context, exec *StorageExecutor
 // and the statement error it records.
 func evaluateInternalFunction(exec *StorageExecutor, call string) (interface{}, error) {
 	ctx := withExpressionFailureSlot(context.Background())
-	value := exec.evaluateExpressionWithContext(ctx, call, nil, nil)
+	fixtureAdmission684Context, fixtureAdmission684 := expressionTestContext(ctx, call)
+	_ = fixtureAdmission684
+	value := exec.evaluateExpressionWithContext(fixtureAdmission684, fixtureAdmission684Context, call, nil, nil)
 	return value, getExpressionFailure(ctx)
 }

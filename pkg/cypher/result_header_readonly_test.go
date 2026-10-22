@@ -50,7 +50,8 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, plan, afterPlan, "header facts must not alter planning")
 		require.NoError(t, exec.validateSyntax(ctx, query, false))
-		require.NoError(t, exec.validateSemanticScopes(ctx, query))
+		_, admission := statementTestContext(ctx, query)
+		require.NoError(t, exec.validateSemanticScopes(admission, ctx, query))
 		for _, prefix := range []string{"", "PROFILE "} {
 			result, err := exec.Execute(ctx, prefix+query, nil)
 			require.NoError(t, err)

@@ -84,8 +84,8 @@ func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []node
 // predicate evaluator: the post-WITH WHERE position evaluates identically to
 // every other WHERE position (null drops the row, AND/OR precedence and IS
 // NULL forms come from the one owner) instead of a local text splitter.
-func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
-	return e.evaluateRowPredicate(ctx, whereClause, values)
+func (e *StorageExecutor) evaluateWhereOnComputedRow(admission admittedRelationshipStatement, ctx context.Context, whereClause string, values map[string]interface{}) bool {
+	return e.evaluateRowPredicate(admission, ctx, whereClause, values)
 }
 
 // evaluateExpressionFromValues evaluates an expression over a computed values
@@ -98,8 +98,8 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 //
 // The result reader preserves resolution separately from the value. This
 // compatibility wrapper records an unsuccessful evaluation as a statement error.
-func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
-	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
+func (e *StorageExecutor) evaluateExpressionFromValues(admission admittedRelationshipStatement, expr string, values map[string]interface{}) interface{} {
+	return e.evaluateExpressionFromValuesContext(admission, rowStatementContextOrBackground(values), expr, values)
 }
 
 // evaluateRowFallback is the row evaluator's fallback to the shared
@@ -107,7 +107,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 // argument error), which the shared evaluator records as the statement error
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
-func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowFallback(admission admittedRelationshipStatement, expr string, values map[string]interface{}) (interface{}, bool, error) {
 	parent := rowStatementContextOrBackground(values)
 	state, _ := parent.Value(rowFallbackExpressionKey{}).(rowFallbackState)
 	if state.depth >= maxRowFallbackDepth {
@@ -119,14 +119,14 @@ func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]int
 	if rowIsCypher25(values) {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	return e.evaluateExpressionFromValuesResult(ctx, expr, values)
+	return e.evaluateExpressionFromValuesResult(admission, ctx, expr, values)
 }
 
 // evaluateExpressionFromValuesContext is evaluateExpressionFromValues with
 // the evaluation context: expression failures are recorded on ctx.
-func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateExpressionFromValuesContext(admission admittedRelationshipStatement, ctx context.Context, expr string, values map[string]interface{}) interface{} {
 	ctx = withExpressionFailureSlot(ctx)
-	value, resolved, err := e.evaluateExpressionFromValuesResult(ctx, expr, values)
+	value, resolved, err := e.evaluateExpressionFromValuesResult(admission, ctx, expr, values)
 	value, err = checkedPropertyResult(ctx, expr, value, resolved, err)
 	recordExpressionFailure(ctx, err)
 	return value
@@ -134,7 +134,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 
 // Legacy and row callers share an explicit result, never source text as a value.
 // Pattern syntax can be unhandled; it is not a scalar value or successful NULL.
-func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateExpressionFromValuesResult(admission admittedRelationshipStatement, ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
@@ -164,15 +164,17 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 	}
 	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
-			return e.evaluateRowValueText(expr, values)
+			return e.evaluateRowValueText(admission, expr, values)
 		}
 	}
-	if containsRelationshipPattern(expr) || startsWithRelationshipFragment(expr) {
+	// A scalar containing an executable subquery belongs to the shared
+	// evaluator; its nested relationship syntax is not a raw fragment.
+	if (containsRelationshipPattern(expr) && !mayContainSubqueryExpression(expr)) || startsWithRelationshipFragment(expr) {
 		return nil, false, nil
 	}
 	ctx = withValueBindings(ctx, values)
 	nodes, rels := entityScopesFromValues(values)
-	return e.evaluateContextExpressionResult(ctx, expr, nodes, rels)
+	return e.evaluateContextExpressionResult(admission, ctx, expr, nodes, rels)
 }
 
 // entityScopesFromValues extracts the *storage.Node and *storage.Edge entries of
@@ -205,19 +207,19 @@ func entityScopesFromValues(values map[string]interface{}) (map[string]*storage.
 	return nodes, rels
 }
 
-func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateCaseExpressionFromValues(admission admittedRelationshipStatement, expr string, values map[string]interface{}) interface{} {
 	// The shared CASE evaluator resolves non-entity variables through the
 	// context value bindings, so the values scope is passed the same way as
 	// every other scope instead of using a parallel evaluator.
-	return e.evaluateCaseExpression(withValueBindings(context.Background(), values), expr, nil, nil, nil, nil, nil, 0)
+	return e.evaluateCaseExpression(admission, withValueBindings(rowStatementContextOrBackground(values), values), expr, nil, nil, nil, nil, nil, 0)
 }
 
 // evaluateConditionFromValues evaluates a boolean condition over a computed
 // values scope. It delegates to the shared condition evaluator with the values
 // carried as context bindings, mirroring how the main expression evaluator
 // resolves non-entity variables.
-func (e *StorageExecutor) evaluateConditionFromValues(condition string, values map[string]interface{}) bool {
-	return e.evaluateCondition(withValueBindings(context.Background(), values), condition, nil, nil)
+func (e *StorageExecutor) evaluateConditionFromValues(admission admittedRelationshipStatement, condition string, values map[string]interface{}) bool {
+	return e.evaluateCondition(admission, withValueBindings(rowStatementContextOrBackground(values), values), condition, nil, nil)
 }
 
 func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
@@ -225,8 +227,8 @@ func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
 }
 
 // evaluateMapLiteralFromValues evaluates a map literal using computed values
-func (e *StorageExecutor) evaluateMapLiteralFromValues(ctx context.Context, expr string, values map[string]interface{}) (map[string]interface{}, error) {
-	return e.materializePropertyMap(ctx, expr, values, true, true)
+func (e *StorageExecutor) evaluateMapLiteralFromValues(admission admittedRelationshipStatement, ctx context.Context, expr string, values map[string]interface{}) (map[string]interface{}, error) {
+	return e.materializePropertyMap(admission, ctx, expr, values, true, true)
 }
 
 // executeMatchWithClause handles MATCH ... WHERE ... WITH ... RETURN queries

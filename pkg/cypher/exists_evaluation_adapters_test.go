@@ -19,7 +19,8 @@ func TestExistsSubqueryEvaluationOwnerLegacyAdapter(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	for _, key := range []string{"present", "missing", "present"} {
 		ctx := withExpressionFailureSlot(withParams(context.Background(), map[string]any{"key": key}))
-		value := e.evaluateExpressionWithContextFullFunctions(ctx, "exists((n)-[:REL {key:$key}]->())", nodes, nil, nil, nil, nil, 0)
+		ctx, admission := expressionTestContext(ctx, "exists((n)-[:REL {key:$key}]->())")
+		value := e.evaluateExpressionWithContextFullFunctions(admission, ctx, "exists((n)-[:REL {key:$key}]->())", nodes, nil, nil, nil, nil, 0)
 		require.NoError(t, getExpressionFailure(ctx))
 		require.Equal(t, key == "present", value)
 	}
@@ -30,15 +31,16 @@ func TestExistsSubqueryEvaluationOwnerLegacyAdapter(t *testing.T) {
 func TestExistsSubqueryEvaluationOwnerCompiledContextAndErrors(t *testing.T) {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "exists_compiled"))
 	expression := "COLLECT { RETURN 1 / 0 AS invalid }"
+	_, admission := expressionTestContext(context.Background(), expression)
 	root, _ := (&rowValueCompiler{}).compile(expression)
 	row := map[string]any{}
-	want, wantOK, wantErr := e.evaluateRowValueText(expression, row)
-	value, resolved, err := root.eval(e, row, nil)
+	want, wantOK, wantErr := e.evaluateRowValueText(admission, expression, row)
+	value, resolved, err := root.eval(admission, e, row, nil)
 	require.Equal(t, want, value)
 	require.Equal(t, wantOK, resolved)
 	require.Equal(t, wantErr, err)
 	row[rowStatementContextKey] = withExpressionFailureSlot(context.Background())
-	_, _, err = root.eval(e, row, nil)
+	_, _, err = root.eval(admission, e, row, nil)
 	require.Error(t, err, "an inner arithmetic error must reach the caller")
 }
 
@@ -54,7 +56,8 @@ func TestExistsSubqueryEvaluationOwnerMemoryBudget(t *testing.T) {
 		tracker := newTestMemoryTracker("exists_budget")
 		t.Cleanup(tracker.end)
 		ctx := withExpressionFailureSlot(context.WithValue(context.Background(), memoryScopeKey{}, &tracker.root))
-		value, resolved, evalErr := e.rowSubqueryValue(ctx, "EXISTS", "MATCH (s:Source {id:key})", map[string]any{"key": "present"})
+		ctx, admission := expressionTestContext(ctx, "EXISTS { MATCH (s:Source {id:key}) }")
+		value, resolved, evalErr := e.rowSubqueryValue(admission, ctx, "EXISTS", "MATCH (s:Source {id:key})", map[string]any{"key": "present"})
 		require.NoError(t, evalErr)
 		require.True(t, resolved)
 		if limit == 1 {

@@ -13,7 +13,7 @@ const relationshipSearchRequestKey = "\x00relationships"
 
 // callDbRetrieveRelationships searches relationships as db.retrieve searches
 // nodes (#1065), with db.retrieve's request (ragProcedureRequest).
-func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbRetrieveRelationships(admission admittedRelationshipStatement, ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	req, err := ragProcedureRequest("db.retrieveRelationships", args)
 	if err != nil {
 		return nil, err
@@ -24,7 +24,7 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 		marked[key] = value
 	}
 	marked[relationshipSearchRequestKey] = true
-	return e.runSearchRequest(ctx, marked, false, false)
+	return e.runSearchRequest(admission, ctx, marked, false, false)
 }
 
 // relationshipSearchResult is a relationship search's rows: each matching

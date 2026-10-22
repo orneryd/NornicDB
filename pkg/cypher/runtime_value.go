@@ -33,9 +33,9 @@ func runtimeRowResult(value interface{}, resolved bool, err error) (interface{},
 
 // checkedPropertyExpression is the consumer boundary for property materializing
 // adapters. Errors and unhandled expressions cannot be stored as NULL or text.
-func (e *StorageExecutor) checkedPropertyExpression(ctx context.Context, expr string, row pipelineRow) (interface{}, error) {
+func (e *StorageExecutor) checkedPropertyExpression(admission admittedRelationshipStatement, ctx context.Context, expr string, row pipelineRow) (interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
-	value, resolved := e.evaluateRowExpressionWithContext(ctx, expr, row)
+	value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, expr, row)
 	return checkedPropertyResult(ctx, expr, value, resolved, nil)
 }
 
@@ -63,12 +63,12 @@ func unresolvedExpressionError(expr string) error {
 // No partial map escapes on error. Only CREATE's successful NULL fields are omitted.
 // orderedValue retains HTTP traversal metadata for a map that is an expression
 // value. Private pattern/property bags never escape as that map value.
-func (e *StorageExecutor) materializePropertyMap(ctx context.Context, text string, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
+func (e *StorageExecutor) materializePropertyMap(admission admittedRelationshipStatement, ctx context.Context, text string, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
 	expressions, err := parsePropertyExpressions(text)
 	if err != nil {
 		return nil, err
 	}
-	return e.materializePropertyExpressions(ctx, expressions, row, retainNull, orderedValue)
+	return e.materializePropertyExpressions(admission, ctx, expressions, row, retainNull, orderedValue)
 }
 
 type propertyExpressionPlan struct {
@@ -101,10 +101,10 @@ func parsePropertyExpressions(text string) ([]pipelinePropertyExpression, error)
 
 // materializePropertyExpressions adapts text expressions to the same checked
 // materializer used by compiled maps. Only syntax plans, never values, are cached.
-func (e *StorageExecutor) materializePropertyExpressions(ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
+func (e *StorageExecutor) materializePropertyExpressions(admission admittedRelationshipStatement, ctx context.Context, expressions []pipelinePropertyExpression, row pipelineRow, retainNull, orderedValue bool) (map[string]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	return materializePropertyEntries(ctx, expressions, retainNull, orderedValue, func(index int) (interface{}, bool, error) {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, expressions[index].expr, row)
+		value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, expressions[index].expr, row)
 		return value, resolved, nil
 	})
 }

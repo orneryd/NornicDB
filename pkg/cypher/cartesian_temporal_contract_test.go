@@ -72,7 +72,8 @@ func testCartesianTemporalContractCases(t *testing.T) {
 					variable string
 					nodes    []*storage.Node
 				}{{"a", []*storage.Node{left}}, {"b", []*storage.Node{right}}}
-				filtered := exec.applyCartesianWherePushdown(ctx, matches, "a.t = b.t")
+				predicateContext, statement := expressionTestContext(ctx, "a.t = b.t")
+				filtered := exec.applyCartesianWherePushdown(statement, predicateContext, matches, "a.t = b.t")
 				require.Len(t, filtered[0].nodes, 1)
 				require.Len(t, filtered[1].nodes, 1)
 			}

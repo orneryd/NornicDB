@@ -191,12 +191,16 @@ func TestRuntimeMapContractEvaluation(t *testing.T) {
 		t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
 		for round := 0; round < 3; round++ {
 			for _, expr := range []string{"v", "m.v", "properties(v)", "v{.*}", "CASE WHEN true THEN v ELSE {} END", "head([v])"} {
-				value, resolved, err := e.evaluateRowValue(expr, row)
+				fixtureAdmission850Context, fixtureAdmission850 := expressionTestRow(context.Background(), expr, row)
+				_ = fixtureAdmission850
+				value, resolved, err := e.evaluateRowValue(fixtureAdmission850, expr, fixtureAdmission850Context)
 				require.NoError(t, err, expr)
 				require.True(t, resolved, expr)
 				require.Nil(t, value, expr)
 			}
-			value, resolved, err := e.evaluateRowValue("coalesce(m.v,v,{fallback:1})", row)
+			fixtureAdmission851Context, fixtureAdmission851 := expressionTestRow(context.Background(), "coalesce(m.v,v,{fallback:1})", row)
+			_ = fixtureAdmission851
+			value, resolved, err := e.evaluateRowValue(fixtureAdmission851, "coalesce(m.v,v,{fallback:1})", fixtureAdmission851Context)
 			require.NoError(t, err)
 			require.True(t, resolved)
 			require.Equal(t, map[string]interface{}{"fallback": int64(1)}, value)
@@ -253,7 +257,9 @@ func TestRuntimeMapContractDynamicCompiledResults(t *testing.T) {
 				rowValueProgramsDisabled.Store(disabled)
 				for round := 0; round < 3; round++ {
 					for _, expr := range forms {
-						value, resolved, err := e.evaluateRowValue(expr, row)
+						fixtureAdmission852Context, fixtureAdmission852 := expressionTestRow(context.Background(), expr, row)
+						_ = fixtureAdmission852
+						value, resolved, err := e.evaluateRowValue(fixtureAdmission852, expr, fixtureAdmission852Context)
 						require.NoError(t, err, "expr=%s text=%v round=%d", expr, disabled, round)
 						require.True(t, resolved, "expr=%s text=%v round=%d", expr, disabled, round)
 						require.Equal(t, tc.want, value, "expr=%s text=%v round=%d", expr, disabled, round)

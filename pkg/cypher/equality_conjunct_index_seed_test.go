@@ -200,7 +200,9 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	pattern := nodePatternInfo{labels: []string{"FnProbe"}, variable: "n"}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, pattern, "")
+		fixtureAdmission1163Context, fixtureAdmission1163 := expressionTestContext(ctx, "")
+		_ = fixtureAdmission1163Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1163, fixtureAdmission1163Context, pattern, "")
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -208,8 +210,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("simple equality still seeds", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0000"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.repo_id = $repo_id")
+		fixtureAdmission1164Context, fixtureAdmission1164 := expressionTestContext(pctx, "n.repo_id = $repo_id")
+		_ = fixtureAdmission1164Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1164,
+			fixtureAdmission1164Context, pattern, "n.repo_id = $repo_id")
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -217,8 +221,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("AND-conjunct param equality seeds", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0001", "generation_id": "gen-2"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern,
+		fixtureAdmission1165Context, fixtureAdmission1165 := expressionTestContext(pctx, "n.repo_id = $repo_id AND n.evidence_source = 'projector/canonical' AND n.generation_id <> $generation_id")
+		_ = fixtureAdmission1165Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1165,
+			fixtureAdmission1165Context, pattern,
 			"n.repo_id = $repo_id AND n.evidence_source = 'projector/canonical' AND n.generation_id <> $generation_id")
 		require.NoError(t, err)
 		require.True(t, used)
@@ -226,8 +232,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	})
 
 	t.Run("AND-conjunct literal equality seeds", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			ctx, pattern,
+		fixtureAdmission1166Context, fixtureAdmission1166 := expressionTestContext(ctx, "n.evidence_source = 'projector/canonical' AND n.generation_id <> 'gen-2' AND n.repo_id = 'repo-0000'")
+		_ = fixtureAdmission1166Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1166,
+			fixtureAdmission1166Context, pattern,
 			"n.evidence_source = 'projector/canonical' AND n.generation_id <> 'gen-2' AND n.repo_id = 'repo-0000'")
 		require.NoError(t, err)
 		require.True(t, used, "literal equality conjunct on an indexed property must seed")
@@ -236,8 +244,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("non-indexed equality conjunct is skipped", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-0000"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern,
+		fixtureAdmission1167Context, fixtureAdmission1167 := expressionTestContext(pctx, "n.uid = 'fn-0000-0000' AND n.repo_id = $repo_id")
+		_ = fixtureAdmission1167Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1167,
+			fixtureAdmission1167Context, pattern,
 			"n.uid = 'fn-0000-0000' AND n.repo_id = $repo_id")
 		require.NoError(t, err)
 		require.True(t, used, "second conjunct on an indexed property must seed")
@@ -245,8 +255,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 	})
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			ctx, pattern, "() AND n.repo_id = 'repo-0000'")
+		fixtureAdmission1168Context, fixtureAdmission1168 := expressionTestContext(ctx, "() AND n.repo_id = 'repo-0000'")
+		_ = fixtureAdmission1168Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1168,
+			fixtureAdmission1168Context, pattern, "() AND n.repo_id = 'repo-0000'")
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 10)
@@ -254,8 +266,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("no indexed conjunct falls back", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"generation_id": "gen-2"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.generation_id <> $generation_id AND n.uid <> 'x'")
+		fixtureAdmission1169Context, fixtureAdmission1169 := expressionTestContext(pctx, "n.generation_id <> $generation_id AND n.uid <> 'x'")
+		_ = fixtureAdmission1169Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1169,
+			fixtureAdmission1169Context, pattern, "n.generation_id <> $generation_id AND n.uid <> 'x'")
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -263,8 +277,10 @@ func TestTryCollectNodesFromPropertyIndexEqualityCompound(t *testing.T) {
 
 	t.Run("no match still reports used", func(t *testing.T) {
 		pctx := withEqualityParams(ctx, map[string]interface{}{"repo_id": "repo-no-such"})
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(
-			pctx, pattern, "n.repo_id = $repo_id AND n.generation_id <> 'gen-2'")
+		fixtureAdmission1170Context, fixtureAdmission1170 := expressionTestContext(pctx, "n.repo_id = $repo_id AND n.generation_id <> 'gen-2'")
+		_ = fixtureAdmission1170Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexEqualityCompound(fixtureAdmission1170,
+			fixtureAdmission1170Context, pattern, "n.repo_id = $repo_id AND n.generation_id <> 'gen-2'")
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Empty(t, nodes)

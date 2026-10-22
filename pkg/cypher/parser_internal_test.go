@@ -185,7 +185,9 @@ func TestPatternParserHelpers(t *testing.T) {
 	t.Run("parseProperties handles nested values and malformed pairs", func(t *testing.T) {
 		ctx := context.Background()
 
-		props := parsedTestValue(exec.parseProperties(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", 'key:key': 'value', title: toUpper('friend')}`))
+		fixtureAdmission1696Context, fixtureAdmission1696 := expressionTestContext(ctx, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", 'key:key': 'value', title: toUpper('friend')}`)
+		_ = fixtureAdmission1696Context
+		props := parsedTestValue(exec.parseProperties(fixtureAdmission1696, fixtureAdmission1696Context, `{name: 'Alice', age: 30, active: true, tags: ['a', 'b'], meta: {score: 1}, "quoted key": "ok", 'key:key': 'value', title: toUpper('friend')}`))
 		assert.Equal(t, "Alice", props["name"])
 		assert.Equal(t, int64(30), props["age"])
 		assert.Equal(t, true, props["active"])
@@ -196,35 +198,63 @@ func TestPatternParserHelpers(t *testing.T) {
 		assert.Equal(t, "FRIEND", props["title"])
 		_, exists := props["invalid"]
 		assert.False(t, exists)
-		assert.Empty(t, parsedTestValue(exec.parseProperties(ctx, " { } ")))
+		fixtureAdmission1697Context, fixtureAdmission1697 := expressionTestContext(ctx, " { } ")
+		_ = fixtureAdmission1697Context
+		assert.Empty(t, parsedTestValue(exec.parseProperties(fixtureAdmission1697, fixtureAdmission1697Context, " { } ")))
 	})
 
 	t.Run("parsePropertyValue covers literals functions and invalid values", func(t *testing.T) {
 		ctx := context.Background()
-		_, parseErr := exec.parsePropertyValue(ctx, "")
+		fixtureAdmission1362Context, fixtureAdmission1362 := expressionTestContext(ctx, "")
+		_ = fixtureAdmission1362Context
+		_, parseErr := exec.parsePropertyValue(fixtureAdmission1362, fixtureAdmission1362Context, "")
 		assert.Error(t, parseErr)
-		assert.Nil(t, parsedTestValue(exec.parsePropertyValue(ctx, "null")))
-		assert.Equal(t, "it's", parsedTestValue(exec.parsePropertyValue(ctx, "'it''s'")))
-		assert.Equal(t, `a "quote"`, parsedTestValue(exec.parsePropertyValue(ctx, `"a \"quote\""`)))
-		assert.Equal(t, true, parsedTestValue(exec.parsePropertyValue(ctx, "true")))
-		assert.Equal(t, int64(42), parsedTestValue(exec.parsePropertyValue(ctx, "42")))
-		assert.Equal(t, 3.5, parsedTestValue(exec.parsePropertyValue(ctx, "3.5")))
-		assert.Equal(t, []interface{}{int64(1), map[string]interface{}{"x": int64(2)}, []interface{}{"a", "b"}}, parsedTestValue(exec.parsePropertyValue(ctx, `[1, {x: 2}, ['a', 'b']]`)))
-		assert.Equal(t, map[string]interface{}{"nested": "ok"}, parsedTestValue(exec.parsePropertyValue(ctx, `{nested: 'ok'}`)))
-		assert.Equal(t, "HELLO", parsedTestValue(exec.parsePropertyValue(ctx, `toUpper('hello')`)))
+		fixtureAdmission1363Context, fixtureAdmission1363 := expressionTestContext(ctx, "null")
+		_ = fixtureAdmission1363Context
+		assert.Nil(t, parsedTestValue(exec.parsePropertyValue(fixtureAdmission1363, fixtureAdmission1363Context, "null")))
+		fixtureAdmission1364Context, fixtureAdmission1364 := expressionTestContext(ctx, "'it''s'")
+		_ = fixtureAdmission1364Context
+		assert.Equal(t, "it's", parsedTestValue(exec.parsePropertyValue(fixtureAdmission1364, fixtureAdmission1364Context, "'it''s'")))
+		fixtureAdmission1365Context, fixtureAdmission1365 := expressionTestContext(ctx, `"a \"quote\""`)
+		_ = fixtureAdmission1365Context
+		assert.Equal(t, `a "quote"`, parsedTestValue(exec.parsePropertyValue(fixtureAdmission1365, fixtureAdmission1365Context, `"a \"quote\""`)))
+		fixtureAdmission1366Context, fixtureAdmission1366 := expressionTestContext(ctx, "true")
+		_ = fixtureAdmission1366Context
+		assert.Equal(t, true, parsedTestValue(exec.parsePropertyValue(fixtureAdmission1366, fixtureAdmission1366Context, "true")))
+		fixtureAdmission1367Context, fixtureAdmission1367 := expressionTestContext(ctx, "42")
+		_ = fixtureAdmission1367Context
+		assert.Equal(t, int64(42), parsedTestValue(exec.parsePropertyValue(fixtureAdmission1367, fixtureAdmission1367Context, "42")))
+		fixtureAdmission1368Context, fixtureAdmission1368 := expressionTestContext(ctx, "3.5")
+		_ = fixtureAdmission1368Context
+		assert.Equal(t, 3.5, parsedTestValue(exec.parsePropertyValue(fixtureAdmission1368, fixtureAdmission1368Context, "3.5")))
+		fixtureAdmission1369Context, fixtureAdmission1369 := expressionTestContext(ctx, `[1, {x: 2}, ['a', 'b']]`)
+		_ = fixtureAdmission1369Context
+		assert.Equal(t, []interface{}{int64(1), map[string]interface{}{"x": int64(2)}, []interface{}{"a", "b"}}, parsedTestValue(exec.parsePropertyValue(fixtureAdmission1369, fixtureAdmission1369Context, `[1, {x: 2}, ['a', 'b']]`)))
+		fixtureAdmission1370Context, fixtureAdmission1370 := expressionTestContext(ctx, `{nested: 'ok'}`)
+		_ = fixtureAdmission1370Context
+		assert.Equal(t, map[string]interface{}{"nested": "ok"}, parsedTestValue(exec.parsePropertyValue(fixtureAdmission1370, fixtureAdmission1370Context, `{nested: 'ok'}`)))
+		fixtureAdmission1371Context, fixtureAdmission1371 := expressionTestContext(ctx, `toUpper('hello')`)
+		_ = fixtureAdmission1371Context
+		assert.Equal(t, "HELLO", parsedTestValue(exec.parsePropertyValue(fixtureAdmission1371, fixtureAdmission1371Context, `toUpper('hello')`)))
 
-		_, parseErr = exec.parsePropertyValue(ctx, "foo:bar")
+		fixtureAdmission1372Context, fixtureAdmission1372 := expressionTestContext(ctx, "foo:bar")
+		_ = fixtureAdmission1372Context
+		_, parseErr = exec.parsePropertyValue(fixtureAdmission1372, fixtureAdmission1372Context, "foo:bar")
 		require.Error(t, parseErr)
 	})
 
 	t.Run("parseNodePattern extracts variable labels and properties", func(t *testing.T) {
 		ctx := context.Background()
-		info := parsedTestValue(exec.parseNodePattern(ctx, `(n:Person:Employee {name: 'Alice', score: 3})`))
+		fixtureAdmission1373Context, fixtureAdmission1373 := nodePatternTestContext(ctx, `(n:Person:Employee {name: 'Alice', score: 3})`)
+		_ = fixtureAdmission1373Context
+		info := parsedTestValue(exec.parseNodePattern(fixtureAdmission1373, fixtureAdmission1373Context, `(n:Person:Employee {name: 'Alice', score: 3})`))
 		assert.Equal(t, "n", info.variable)
 		assert.Equal(t, []string{"Person", "Employee"}, info.labels)
 		assert.Equal(t, map[string]interface{}{"name": "Alice", "score": int64(3)}, info.properties)
 
-		info = parsedTestValue(exec.parseNodePattern(ctx, `(:OnlyLabel)`))
+		fixtureAdmission1374Context, fixtureAdmission1374 := nodePatternTestContext(ctx, `(:OnlyLabel)`)
+		_ = fixtureAdmission1374Context
+		info = parsedTestValue(exec.parseNodePattern(fixtureAdmission1374, fixtureAdmission1374Context, `(:OnlyLabel)`))
 		assert.Equal(t, "", info.variable)
 		assert.Equal(t, []string{"OnlyLabel"}, info.labels)
 		assert.Empty(t, info.properties)

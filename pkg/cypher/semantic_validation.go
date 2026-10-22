@@ -12,8 +12,8 @@ import (
 // under the text the client wrote: statements that differ only in quoting
 // canonicalize alike but can validate differently (their column names
 // differ).
-func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
-	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
+func (e *StorageExecutor) validateSemanticScopes(admission admittedRelationshipStatement, ctx context.Context, cypher string) error {
+	if err := e.validateTransactionalCalls(admission, ctx, cypher, nil); err != nil {
 		return err
 	}
 	names := quotedVariableNamesFor(ctx, cypher)
@@ -49,7 +49,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		// value-dependent: LIMIT 2-3 and LIMIT 5-1 share one canonical form,
 		// yet only the latter is a non-negative integer. Re-evaluate them on
 		// this text before returning (monster retest part 3).
-		return e.validateStaticPaginationExpressions(cypher)
+		return e.validateStaticPaginationExpressions(admission, cypher)
 	}
 	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
@@ -65,7 +65,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	}); err != nil {
 		return err
 	}
-	if err := e.validateStaticPaginationExpressions(cypher); err != nil {
+	if err := e.validateStaticPaginationExpressions(admission, cypher); err != nil {
 		return err
 	}
 	if err := validateWithProjectionSemantics(cypher); err != nil {

@@ -89,20 +89,32 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 					}
 					atBound = bound
 				})
-				search = e.newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
+				fixtureAdmission1703Context, fixtureAdmission1703 := statementTestContext(ctx, ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+				_ = fixtureAdmission1703Context
+				search = e.relationshipExecutionFor(fixtureAdmission1703, fixtureAdmission1703Context, pattern, "").newPathSearch(ctx, plan.forward, pipelineRow{}, 6, source)
 				bind := func(path pathSearchPath) (pipelineRow, bool) {
 					bound++
-					return e.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
+					fixtureAdmission1704Context, fixtureAdmission1704 := statementTestContext(ctx, ("MATCH "+(pattern))+"\n"+("MATCH "+(pattern)))
+					_ = fixtureAdmission1704Context
+					return e.bindSelectedPath(fixtureAdmission1704, fixtureAdmission1704Context, plan, plan.forward, false, pipelineRow{}, path)
 				}
 				switch mode {
 				case "one":
-					search.pair(source, target, 1, false, true, bind)
+					fixtureAdmission1705Context, fixtureAdmission1705 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1705Context
+					search.pair(fixtureAdmission1705, source, target, 1, false, true, bind)
 				case "pair":
-					search.pair(source, target, 1, true, true, bind)
+					fixtureAdmission1706Context, fixtureAdmission1706 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1706Context
+					search.pair(fixtureAdmission1706, source, target, 1, true, true, bind)
 				case "run":
-					search.run(source, 2, true, bind)
+					fixtureAdmission1707Context, fixtureAdmission1707 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1707Context
+					search.run(fixtureAdmission1707, source, 2, true, bind)
 				case "forward":
-					search.begin(source)
+					fixtureAdmission1708Context, fixtureAdmission1708 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1708Context
+					search.begin(fixtureAdmission1708, source)
 					w := &pathSearchWalks{forward: map[int32]int{}, preds: map[int32][]pathSearchHop{}, backward: map[pathSearchKey]int{}}
 					if len(search.levels) > 0 {
 						for _, entry := range search.levels[0].entries {
@@ -110,15 +122,25 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 							w.frontier = append(w.frontier, entry.product)
 						}
 					}
-					search.expandForward(w)
+					fixtureAdmission1709Context, fixtureAdmission1709 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1709Context
+					search.expandForward(fixtureAdmission1709, w)
 				case "backward":
-					search.begin(source)
+					fixtureAdmission1710Context, fixtureAdmission1710 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1710Context
+					search.begin(fixtureAdmission1710, source)
 					key := pathSearchKey{node: target.ID, slot: int32(plan.forward.final)}
 					w := &pathSearchWalks{backward: map[pathSearchKey]int{key: 0}, nodes: map[pathSearchKey]*storage.Node{key: target}, succs: map[pathSearchKey][]pathSearchBack{}, back: []pathSearchKey{key}, forward: map[int32]int{}}
-					search.expandBackward(w)
+					fixtureAdmission1711Context, fixtureAdmission1711 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1711Context
+					search.expandBackward(fixtureAdmission1711, w)
 				case "trace":
-					search.begin(source)
-					for depth := 0; depth < 3 && search.ctx.Err() == nil && search.nextLevel(); depth++ {
+					fixtureAdmission1712Context, fixtureAdmission1712 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1712Context
+					search.begin(fixtureAdmission1712, source)
+					fixtureAdmission1713Context, fixtureAdmission1713 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+					_ = fixtureAdmission1713Context
+					for depth := 0; depth < 3 && search.ctx.Err() == nil && search.nextLevel(fixtureAdmission1713); depth++ {
 					}
 					if len(search.levels) > 1 {
 						search.trace(len(search.levels)-1, 0, 1, func(path pathSearchPath) bool { _, ok := bind(path); return ok })
@@ -143,14 +165,20 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
 		require.True(t, ok)
 		var paths []pathSearchPath
-		s := e.newPathSearch(base, plan.forward, pipelineRow{}, 4, source)
-		s.pair(source, target, 1, true, false, func(path pathSearchPath) (pipelineRow, bool) { paths = append(paths, path); return pipelineRow{}, true })
+		fixtureAdmission1714Context, fixtureAdmission1714 := statementTestContext(base, ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1714Context
+		s := e.relationshipExecutionFor(fixtureAdmission1714, fixtureAdmission1714Context, pattern, "").newPathSearch(base, plan.forward, pipelineRow{}, 4, source)
+		fixtureAdmission1715Context, fixtureAdmission1715 := statementTestContext(context.Background(), ("MATCH "+(pattern))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1715Context
+		s.pair(fixtureAdmission1715, source, target, 1, true, false, func(path pathSearchPath) (pipelineRow, bool) { paths = append(paths, path); return pipelineRow{}, true })
 		require.NotEmpty(t, paths)
 		for _, path := range paths {
 			for _, reversed := range []bool{false, true} {
 				for budget := 1; budget <= 100; budget++ {
 					ctx := newCheckpointContext(budget, nil)
-					_, ok := e.bindSelectedPath(ctx, plan, plan.forward, reversed, pipelineRow{}, path)
+					fixtureAdmission1716Context, fixtureAdmission1716 := statementTestContext(ctx, ("MATCH "+(pattern))+"\n"+("MATCH "+(pattern)))
+					_ = fixtureAdmission1716Context
+					_, ok := e.bindSelectedPath(fixtureAdmission1716, fixtureAdmission1716Context, plan, plan.forward, reversed, pipelineRow{}, path)
 					if ctx.Context.Err() != nil {
 						require.False(t, ok)
 					} else {
@@ -160,7 +188,9 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 				}
 			}
 			for _, value := range []interface{}{nil, []interface{}{}, []interface{}{&storage.Edge{ID: "other"}, &storage.Edge{ID: "other2"}}} {
-				_, ok := e.bindSelectedPath(base, plan, plan.forward, false, pipelineRow{"r": value}, path)
+				fixtureAdmission1717Context, fixtureAdmission1717 := statementTestContext(base, ("MATCH "+(pattern))+"\n"+("MATCH "+(pattern)))
+				_ = fixtureAdmission1717Context
+				_, ok := e.bindSelectedPath(fixtureAdmission1717, fixtureAdmission1717Context, plan, plan.forward, false, pipelineRow{"r": value}, path)
 				require.False(t, ok)
 			}
 		}
@@ -197,9 +227,15 @@ func TestSelectedPathUniformEligibilityAndTrailFallback(t *testing.T) {
 		if repeat {
 			searchCtx = withRepeatableElements(ctx)
 		}
-		s := e.newPathSearch(searchCtx, plan.forward, pipelineRow{}, 2, source)
-		paths := s.pair(source, source, 1, true, true, func(path pathSearchPath) (pipelineRow, bool) {
-			return e.bindSelectedPath(searchCtx, plan, plan.forward, false, pipelineRow{}, path)
+		fixtureAdmission1718Context, fixtureAdmission1718 := statementTestContext(searchCtx, ("MATCH "+("(a)-[:T]-(x)-[:T]-(b)"))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1718Context
+		s := e.relationshipExecutionFor(fixtureAdmission1718, fixtureAdmission1718Context, "(a)-[:T]-(x)-[:T]-(b)", "").newPathSearch(searchCtx, plan.forward, pipelineRow{}, 2, source)
+		fixtureAdmission1719Context, fixtureAdmission1719 := statementTestContext(context.Background(), ("MATCH "+("(a)-[:T]-(x)-[:T]-(b)"))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1719Context
+		paths := s.pair(fixtureAdmission1719, source, source, 1, true, true, func(path pathSearchPath) (pipelineRow, bool) {
+			fixtureAdmission1720Context, fixtureAdmission1720 := statementTestContext(searchCtx, ("MATCH "+("(a)-[:T]-(x)-[:T]-(b)"))+"\n"+("MATCH "+("(a)-[:T]-(x)-[:T]-(b)")))
+			_ = fixtureAdmission1720Context
+			return e.bindSelectedPath(fixtureAdmission1720, fixtureAdmission1720Context, plan, plan.forward, false, pipelineRow{}, path)
 		})
 		if repeat {
 			require.Len(t, paths, 1)
@@ -222,8 +258,9 @@ func TestSelectedPathZeroCounterGuard(t *testing.T) {
 	a := *plan.forward
 	a.counters = append([]pathSearchCounter(nil), a.counters...)
 	a.counters[0].max = 0
-	s := e.newPathSearch(ctx, &a, pipelineRow{}, 0, source)
-	s.begin(source)
+	zeroContext, zeroStatement := traversalTestContext(ctx, "(a)(()-[:T]->()){0,1}(b)", "", nil)
+	s := e.relationshipExecutionFor(zeroStatement, zeroContext, "(a)(()-[:T]->()){0,1}(b)", "").newPathSearch(ctx, &a, pipelineRow{}, 0, source)
+	s.begin(zeroStatement, source)
 	require.Len(t, s.levels[0].entries, 1)
 	require.Equal(t, a.final, s.products[s.levels[0].entries[0].product].slot)
 	path, ok := a.walkPath(source, nil)

@@ -24,7 +24,9 @@ func TestCorrelatedCallEscapedIdentifierScopeParity(t *testing.T) {
 			clauses, ok := canExecuteAsPipeline(canonical)
 			require.True(t, ok)
 			// Bypass executePipeline and every statement shortcut entirely.
-			general, handled, err := exec.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
+			fixtureAdmission184Context, fixtureAdmission184 := statementTestContext(ctx, canonical)
+			_ = fixtureAdmission184Context
+			general, handled, err := exec.runPipelineClauseRows(fixtureAdmission184, fixtureAdmission184Context, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
 			require.NoError(t, err)
 			require.True(t, handled)
 			public, err := exec.Execute(ctx, query, nil)

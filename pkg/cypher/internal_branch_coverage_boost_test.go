@@ -30,7 +30,9 @@ func TestEvaluateWithWhere_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, edge)
 
-	ok, err := exec.evaluateWithWhere(ctx, "age = 42", map[string]interface{}{
+	fixtureAdmission669Context, fixtureAdmission669 := expressionTestContext(ctx, "age = 42")
+	_ = fixtureAdmission669
+	ok, err := exec.evaluateWithWhere(fixtureAdmission669, fixtureAdmission669Context, "age = 42", map[string]interface{}{
 		"n":   node,
 		"r":   edge,
 		"age": int64(42),
@@ -38,16 +40,22 @@ func TestEvaluateWithWhere_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = exec.evaluateWithWhere(ctx, "n.name = 'Alice'", map[string]interface{}{"n": node})
+	fixtureAdmission670Context, fixtureAdmission670 := expressionTestContext(ctx, "n.name = 'Alice'")
+	_ = fixtureAdmission670
+	ok, err = exec.evaluateWithWhere(fixtureAdmission670, fixtureAdmission670Context, "n.name = 'Alice'", map[string]interface{}{"n": node})
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = exec.evaluateWithWhere(ctx, "n.name", map[string]interface{}{"n": node})
+	fixtureAdmission671Context, fixtureAdmission671 := expressionTestContext(ctx, "n.name")
+	_ = fixtureAdmission671
+	ok, err = exec.evaluateWithWhere(fixtureAdmission671, fixtureAdmission671Context, "n.name", map[string]interface{}{"n": node})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected Boolean")
 	require.False(t, ok)
 
-	ok, err = exec.evaluateWithWhere(ctx, "   ", map[string]interface{}{"n": node})
+	fixtureAdmission672Context, fixtureAdmission672 := expressionTestContext(ctx, "   ")
+	_ = fixtureAdmission672
+	ok, err = exec.evaluateWithWhere(fixtureAdmission672, fixtureAdmission672Context, "   ", map[string]interface{}{"n": node})
 	require.NoError(t, err)
 	require.True(t, ok)
 }
@@ -62,22 +70,30 @@ func TestApplyUnwindMergeChainEdgeSetAssignment_Branches(t *testing.T) {
 		return row[expr]
 	}
 
-	changed, err := sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
+	fixtureAdmission1617Context, fixtureAdmission1617 := statementTestContext(context.Background(), "RETURN "+("props"))
+	_ = fixtureAdmission1617Context
+	changed, err := sharedSetAssignmentForTest(fixtureAdmission1617, edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 2, changed)
 	require.Equal(t, "v", edge.Properties["k"])
 	require.EqualValues(t, 1, edge.Properties["n"])
 
-	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
+	fixtureAdmission1618Context, fixtureAdmission1618 := statementTestContext(context.Background(), "RETURN "+("props"))
+	_ = fixtureAdmission1618Context
+	changed, err = sharedSetAssignmentForTest(fixtureAdmission1618, edge, unwindSimpleSetAssignment{mergeMap: true, expr: "props"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 0, changed)
 
-	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{prop: "name", expr: "name"}, rowValues, resolver, &setWrites{})
+	fixtureAdmission1619Context, fixtureAdmission1619 := statementTestContext(context.Background(), "RETURN "+("name"))
+	_ = fixtureAdmission1619Context
+	changed, err = sharedSetAssignmentForTest(fixtureAdmission1619, edge, unwindSimpleSetAssignment{prop: "name", expr: "name"}, rowValues, resolver, &setWrites{})
 	require.NoError(t, err)
 	require.Equal(t, 1, changed)
 	require.Equal(t, "primary", edge.Properties["name"])
 
-	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "bad"}, map[string]interface{}{"bad": int64(5)}, resolver, &setWrites{})
+	fixtureAdmission1620Context, fixtureAdmission1620 := statementTestContext(context.Background(), "RETURN "+("bad"))
+	_ = fixtureAdmission1620Context
+	changed, err = sharedSetAssignmentForTest(fixtureAdmission1620, edge, unwindSimpleSetAssignment{mergeMap: true, expr: "bad"}, map[string]interface{}{"bad": int64(5)}, resolver, &setWrites{})
 	require.Error(t, err)
 	require.Equal(t, 0, changed)
 }
@@ -150,8 +166,10 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, ok, err := exec.collectDeleteWithLimitCandidates(
-		ctx,
+	fixtureAdmission1621Context, fixtureAdmission1621 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.name = $name")
+	_ = fixtureAdmission1621Context
+	nodes, ok, err := exec.collectDeleteWithLimitCandidates(fixtureAdmission1621,
+		fixtureAdmission1621Context,
 		"MATCH (n:Person) WHERE n.name = $name",
 		"n",
 		10,
@@ -162,8 +180,10 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("a"), nodes[0].ID)
 
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+	fixtureAdmission1622Context, fixtureAdmission1622 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.tag IN $tags")
+	_ = fixtureAdmission1622Context
+	nodes, ok, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1622,
+		fixtureAdmission1622Context,
 		"MATCH (n:Person) WHERE n.tag IN $tags",
 		"n",
 		10,
@@ -173,8 +193,10 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, nodes, 2)
 
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+	fixtureAdmission1623Context, fixtureAdmission1623 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.tag IN $tags")
+	_ = fixtureAdmission1623Context
+	nodes, ok, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1623,
+		fixtureAdmission1623Context,
 		"MATCH (n:Person) WHERE n.tag IN $tags",
 		"n",
 		10,
@@ -184,8 +206,10 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, nodes)
 
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+	fixtureAdmission1624Context, fixtureAdmission1624 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.name <> 'alice'")
+	_ = fixtureAdmission1624Context
+	nodes, ok, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1624,
+		fixtureAdmission1624Context,
 		"MATCH (n:Person) WHERE n.name <> 'alice'",
 		"n",
 		10,
@@ -195,8 +219,10 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, nodes)
 
-	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
-		ctx,
+	fixtureAdmission1625Context, fixtureAdmission1625 := statementTestContext(ctx, "MATCH (:Person) WHERE n.name = 'alice'")
+	_ = fixtureAdmission1625Context
+	nodes, ok, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1625,
+		fixtureAdmission1625Context,
 		"MATCH (:Person) WHERE n.name = 'alice'",
 		"n",
 		10,
@@ -295,11 +321,21 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 	)
 
 	varMap := map[string]interface{}{"s": aNode}
-	require.Equal(t, "B", exec.resolveReturnExprFromVarMap(ctx, "t.name", varMap, "t", "r", &storage.Node{ID: "t", Properties: map[string]interface{}{"name": "B"}}, abEdge))
-	require.EqualValues(t, 5, exec.resolveReturnExprFromVarMap(ctx, "r.w", varMap, "t", "r", nil, abEdge))
-	require.Equal(t, "A", exec.resolveReturnExprFromVarMap(ctx, "s.name", varMap, "t", "r", nil, nil))
-	require.Equal(t, aNode, exec.resolveReturnExprFromVarMap(ctx, "s", varMap, "t", "r", nil, nil))
-	require.EqualValues(t, 7, exec.resolveReturnExprFromVarMap(ctx, "7", varMap, "t", "r", nil, nil))
+	fixtureAdmission1229Context, fixtureAdmission1229 := expressionTestContext(ctx, "t.name")
+	_ = fixtureAdmission1229Context
+	require.Equal(t, "B", exec.resolveReturnExprFromVarMap(fixtureAdmission1229, fixtureAdmission1229Context, "t.name", varMap, "t", "r", &storage.Node{ID: "t", Properties: map[string]interface{}{"name": "B"}}, abEdge))
+	fixtureAdmission1230Context, fixtureAdmission1230 := expressionTestContext(ctx, "r.w")
+	_ = fixtureAdmission1230Context
+	require.EqualValues(t, 5, exec.resolveReturnExprFromVarMap(fixtureAdmission1230, fixtureAdmission1230Context, "r.w", varMap, "t", "r", nil, abEdge))
+	fixtureAdmission1231Context, fixtureAdmission1231 := expressionTestContext(ctx, "s.name")
+	_ = fixtureAdmission1231Context
+	require.Equal(t, "A", exec.resolveReturnExprFromVarMap(fixtureAdmission1231, fixtureAdmission1231Context, "s.name", varMap, "t", "r", nil, nil))
+	fixtureAdmission1232Context, fixtureAdmission1232 := expressionTestContext(ctx, "s")
+	_ = fixtureAdmission1232Context
+	require.Equal(t, aNode, exec.resolveReturnExprFromVarMap(fixtureAdmission1232, fixtureAdmission1232Context, "s", varMap, "t", "r", nil, nil))
+	fixtureAdmission1233Context, fixtureAdmission1233 := expressionTestContext(ctx, "7")
+	_ = fixtureAdmission1233Context
+	require.EqualValues(t, 7, exec.resolveReturnExprFromVarMap(fixtureAdmission1233, fixtureAdmission1233Context, "7", varMap, "t", "r", nil, nil))
 
 	require.Equal(t, "node:a", joinedValueKey(aNode))
 	require.Equal(t, "node:nil", joinedValueKey((*storage.Node)(nil)))
@@ -327,8 +363,10 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 		"p": []string{"x", "y"},
 	})
 
-	propertiesSet, err := exec.applySetToRelationshipWithContext(
-		ctxWithParams,
+	fixtureAdmission1626Context, fixtureAdmission1626 := statementTestContext(ctxWithParams, "r += $m, r.tags = $p, r.owner = n.name, other.k = 1")
+	_ = fixtureAdmission1626Context
+	propertiesSet, err := exec.applySetToRelationshipWithContext(fixtureAdmission1626,
+		fixtureAdmission1626Context,
 		edge,
 		"r",
 		"r += $m, r.tags = $p, r.owner = n.name, other.k = 1",
@@ -376,7 +414,9 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	require.Equal(t, 15, idx)
 
 	cache := map[string]map[string]interface{}{"s1": {"x": "cached"}}
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, "MATCH (seed:Seed)", "seed", "s1", "x", cache)
+	fixtureAdmission673Context, fixtureAdmission673 := statementTestContext(ctx, "MATCH (seed:Seed)")
+	_ = fixtureAdmission673
+	val, found, err := exec.resolveCorrelatedImportValue(fixtureAdmission673, fixtureAdmission673Context, "MATCH (seed:Seed)", "seed", "s1", "x", cache)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "cached", val)
@@ -385,8 +425,10 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	cache = map[string]map[string]interface{}{}
-	val, found, err = exec.resolveCorrelatedImportValue(
-		ctx,
+	fixtureAdmission674Context, fixtureAdmission674 := statementTestContext(ctx, "MATCH (seed:Seed {v:'vv'}) WITH seed, seed.v AS x")
+	_ = fixtureAdmission674
+	val, found, err = exec.resolveCorrelatedImportValue(fixtureAdmission674,
+		fixtureAdmission674Context,
 		"MATCH (seed:Seed {v:'vv'}) WITH seed, seed.v AS x",
 		"seed",
 		"s1",
@@ -398,7 +440,9 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	require.Equal(t, "vv", val)
 	require.Equal(t, "vv", cache["s1"]["x"])
 
-	_, _, err = exec.resolveCorrelatedImportValue(ctx, "MATCH (", "seed", "s1", "x", nil)
+	fixtureAdmission675Context, fixtureAdmission675 := statementTestContext(ctx, "MATCH (")
+	_ = fixtureAdmission675
+	_, _, err = exec.resolveCorrelatedImportValue(fixtureAdmission675, fixtureAdmission675Context, "MATCH (", "seed", "s1", "x", nil)
 	require.Error(t, err)
 }
 
@@ -409,8 +453,12 @@ func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// match_multi helpers
-	require.EqualValues(t, int64(5), exec.resolveWhereValue(ctx, "$v", map[string]interface{}{"v": int64(5)}))
-	require.Equal(t, "x", exec.resolveWhereValue(ctx, "'x'", nil))
+	fixtureAdmission1892Context, fixtureAdmission1892 := expressionTestContext(ctx, "$v")
+	_ = fixtureAdmission1892Context
+	require.EqualValues(t, int64(5), exec.resolveWhereValue(fixtureAdmission1892, fixtureAdmission1892Context, "$v", map[string]interface{}{"v": int64(5)}))
+	fixtureAdmission1893Context, fixtureAdmission1893 := expressionTestContext(ctx, "'x'")
+	_ = fixtureAdmission1893Context
+	require.Equal(t, "x", exec.resolveWhereValue(fixtureAdmission1893, fixtureAdmission1893Context, "'x'", nil))
 	for _, value := range []interface{}{nil, "abc", 1, int64(2), 3.5, true} {
 		require.Equal(t, cypherValueKey(value, cypherEquivalenceContract), cypherValueKey(value, cypherValueEqualityContract))
 	}
@@ -424,22 +472,38 @@ func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, pred(binding{"n": {ID: "n1", Properties: map[string]interface{}{"name": "a"}}}, nil))
 
-	val, ok := exec.resolveBindingFallbackValueWithOk(ctx, "$plain", nil, map[string]interface{}{"plain": "p"})
+	fixtureAdmission1234Context, fixtureAdmission1234 := expressionTestContext(ctx, "$plain")
+	_ = fixtureAdmission1234Context
+	val, ok := exec.resolveBindingFallbackValueWithOk(fixtureAdmission1234, fixtureAdmission1234Context, "$plain", nil, map[string]interface{}{"plain": "p"})
 	require.True(t, ok)
 	require.Equal(t, "p", val)
-	val, ok = exec.resolveBindingFallbackValueWithOk(ctx, "1 + 2", nil, nil)
+	fixtureAdmission1235Context, fixtureAdmission1235 := expressionTestContext(ctx, "1 + 2")
+	_ = fixtureAdmission1235Context
+	val, ok = exec.resolveBindingFallbackValueWithOk(fixtureAdmission1235, fixtureAdmission1235Context, "1 + 2", nil, nil)
 	require.True(t, ok)
 	require.EqualValues(t, int64(3), val)
 
 	// match_with_rel helpers
-	require.True(t, exec.evaluateConditionFromValues("x = 1 AND y IS NOT NULL", map[string]interface{}{"x": int64(1), "y": "ok"}))
-	require.True(t, exec.evaluateConditionFromValues("x = 1 OR y = 2", map[string]interface{}{"x": int64(9), "y": int64(2)}))
-	require.False(t, exec.evaluateConditionFromValues("NOT x = 1", map[string]interface{}{"x": int64(1)}))
+	fixtureAdmission676Context, fixtureAdmission676 := expressionTestRow(context.Background(), "x = 1 AND y IS NOT NULL", map[string]interface{}{"x": int64(1), "y": "ok"})
+	_ = fixtureAdmission676
+	require.True(t, exec.evaluateConditionFromValues(fixtureAdmission676, "x = 1 AND y IS NOT NULL", fixtureAdmission676Context))
+	fixtureAdmission677Context, fixtureAdmission677 := expressionTestRow(context.Background(), "x = 1 OR y = 2", map[string]interface{}{"x": int64(9), "y": int64(2)})
+	_ = fixtureAdmission677
+	require.True(t, exec.evaluateConditionFromValues(fixtureAdmission677, "x = 1 OR y = 2", fixtureAdmission677Context))
+	fixtureAdmission678Context, fixtureAdmission678 := expressionTestRow(context.Background(), "NOT x = 1", map[string]interface{}{"x": int64(1)})
+	_ = fixtureAdmission678
+	require.False(t, exec.evaluateConditionFromValues(fixtureAdmission678, "NOT x = 1", fixtureAdmission678Context))
 	// Undefined identifiers evaluate to Cypher null in the shared evaluator
 	// (legacy clone returned the raw text, which broke IS NULL semantics).
-	require.True(t, exec.evaluateConditionFromValues("missing IS NULL", map[string]interface{}{}))
-	require.False(t, exec.evaluateConditionFromValues("missing IS NOT NULL", map[string]interface{}{}))
-	require.True(t, exec.evaluateConditionFromValues("x <> 2", map[string]interface{}{"x": int64(1)}))
+	fixtureAdmission679Context, fixtureAdmission679 := expressionTestRow(context.Background(), "missing IS NULL", map[string]interface{}{})
+	_ = fixtureAdmission679
+	require.True(t, exec.evaluateConditionFromValues(fixtureAdmission679, "missing IS NULL", fixtureAdmission679Context))
+	fixtureAdmission680Context, fixtureAdmission680 := expressionTestRow(context.Background(), "missing IS NOT NULL", map[string]interface{}{})
+	_ = fixtureAdmission680
+	require.False(t, exec.evaluateConditionFromValues(fixtureAdmission680, "missing IS NOT NULL", fixtureAdmission680Context))
+	fixtureAdmission681Context, fixtureAdmission681 := expressionTestRow(context.Background(), "x <> 2", map[string]interface{}{"x": int64(1)})
+	_ = fixtureAdmission681
+	require.True(t, exec.evaluateConditionFromValues(fixtureAdmission681, "x <> 2", fixtureAdmission681Context))
 	lit, litOK := parseLiteralValueFromComputedRow(`"hello"`)
 	require.True(t, litOK)
 	require.Equal(t, "hello", lit)
@@ -491,7 +555,9 @@ func TestResolveCorrelatedImportValue_OptionalFallbackBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	outerPart := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, outerPart, "seed", "seed-1", "t", map[string]map[string]interface{}{})
+	fixtureAdmission682Context, fixtureAdmission682 := statementTestContext(ctx, outerPart)
+	_ = fixtureAdmission682
+	val, found, err := exec.resolveCorrelatedImportValue(fixtureAdmission682, fixtureAdmission682Context, outerPart, "seed", "seed-1", "t", map[string]map[string]interface{}{})
 	require.NoError(t, err)
 	require.True(t, found)
 	switch target := val.(type) {
@@ -522,7 +588,9 @@ func TestResolveCorrelatedImportValue_DoesNotLeakSingleMismatchedRow(t *testing.
 	// This outer query yields exactly one row for seed-b. Asking for seed-a must
 	// not return seed-b's imported value.
 	outerPart := "MATCH (seed:Seed {id:'seed-b'}) OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, outerPart, "seed", "seed-a", "t", nil)
+	fixtureAdmission683Context, fixtureAdmission683 := statementTestContext(ctx, outerPart)
+	_ = fixtureAdmission683
+	val, found, err := exec.resolveCorrelatedImportValue(fixtureAdmission683, fixtureAdmission683Context, outerPart, "seed", "seed-a", "t", nil)
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Nil(t, val)

@@ -16,9 +16,12 @@ func BenchmarkCreateConstraint(b *testing.B) {
 	ctx := context.Background()
 	cypher := "CREATE CONSTRAINT node_id_unique IF NOT EXISTS FOR (n:Node) REQUIRE n.id IS UNIQUE"
 
+	fixtureAdmission1786Context, fixtureAdmission1786 := statementTestContext(ctx, cypher)
 	b.ResetTimer()
+
+	_ = fixtureAdmission1786Context
 	for i := 0; i < b.N; i++ {
-		exec.executeCreateConstraint(ctx, cypher)
+		exec.executeCreateConstraint(fixtureAdmission1786, fixtureAdmission1786Context, cypher)
 	}
 }
 
@@ -31,9 +34,12 @@ func BenchmarkCreateIndex(b *testing.B) {
 	ctx := context.Background()
 	cypher := "CREATE INDEX user_email IF NOT EXISTS FOR (n:User) ON (n.email)"
 
+	fixtureAdmission1787Context, fixtureAdmission1787 := statementTestContext(ctx, cypher)
 	b.ResetTimer()
+
+	_ = fixtureAdmission1787Context
 	for i := 0; i < b.N; i++ {
-		exec.executeCreateIndex(ctx, cypher)
+		exec.executeCreateIndex(fixtureAdmission1787, fixtureAdmission1787Context, cypher)
 	}
 }
 
@@ -47,9 +53,12 @@ func BenchmarkCreateVectorIndex(b *testing.B) {
 	cypher := `CREATE VECTOR INDEX embedding_idx IF NOT EXISTS FOR (n:Document) ON (n.embedding) 
 		OPTIONS {indexConfig: {` + "`vector.dimensions`" + `: 1024, ` + "`vector.similarity_function`" + `: 'cosine'}}`
 
+	fixtureAdmission1788Context, fixtureAdmission1788 := statementTestContext(ctx, cypher)
 	b.ResetTimer()
+
+	_ = fixtureAdmission1788Context
 	for i := 0; i < b.N; i++ {
-		exec.executeCreateVectorIndex(ctx, cypher)
+		exec.executeCreateVectorIndex(fixtureAdmission1788, fixtureAdmission1788Context, cypher)
 	}
 }
 

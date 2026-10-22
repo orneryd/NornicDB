@@ -59,17 +59,24 @@ func TestPatternEdges(t *testing.T) {
 	rewritten, _, err := desugarLabelExpressions("MATCH p = SHORTEST 2 (a)-->+(b) RETURN p", nil, false)
 	require.NoError(t, err)
 	body := strings.TrimSuffix(strings.TrimPrefix(rewritten, "MATCH "), " RETURN p")
-	m, ok, err := exec.parseShortestPathMatch(ctx, body)
+	fixtureAdmission779Context, fixtureAdmission779 := statementTestContext(ctx, rewritten)
+	_ = fixtureAdmission779
+	m, ok, err := exec.parseShortestPathMatch(fixtureAdmission779, fixtureAdmission779Context, body)
 	require.NoError(t, err, body)
 	require.True(t, ok, body)
 	for _, row := range []pipelineRow{{"a": node(1), "b": node(5)}, {"a": node(1), "b": node(1)}} {
-		_, err = exec.pipelineApplyShortestPathMatch(cancelled, []pipelineRow{row}, m, false)
+		fixtureAdmission780Context, fixtureAdmission780 := shortestTestContext(cancelled, m)
+		_ = fixtureAdmission780
+		_, err = exec.pipelineApplyShortestPathMatch(fixtureAdmission780, fixtureAdmission780Context, []pipelineRow{row}, m, false)
 		require.ErrorIs(t, err, context.Canceled)
 	}
-	quantified, ok, err := parseQuantifiedPathMatch("(a:SP {id: 1})((x)-->(y))+(b)")
+	quantifiedPattern := "(a:SP {id: 1})((x)-->(y))+(b)"
+	quantified, ok, err := parseQuantifiedPathMatch(quantifiedPattern)
 	require.NoError(t, err)
 	require.True(t, ok)
-	_, err = exec.pipelineApplyQuantifiedPathMatch(cancelled, []pipelineRow{{}}, quantified)
+	fixtureAdmission781Context, fixtureAdmission781 := statementTestContext(cancelled, "MATCH "+quantifiedPattern)
+	_ = fixtureAdmission781
+	_, err = exec.pipelineApplyQuantifiedPathMatch(fixtureAdmission781, fixtureAdmission781Context, []pipelineRow{{}}, quantified)
 	require.ErrorIs(t, err, context.Canceled)
 
 	for _, text := range []string{"(a WHERE a.s = '[*]')-->(b)", "(a)-[r WHERE r.w * 2 > 1]->(b)", "(a)-[r {w: 2}]->(b)"} {
@@ -89,7 +96,9 @@ func TestPatternEdges(t *testing.T) {
 	// A pattern the selected path search can't read fails the step.
 	_, _, err = exec.parseSelectedPathMatch("(a) (b)", "p", nil, &pathSelector{}, "", nil)
 	require.Error(t, err)
-	err = exec.matchQuantifiedChain(ctx, "(a) (b)", "a", "", quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
+	fixtureAdmission782Context, fixtureAdmission782 := statementTestContext(ctx, "MATCH (a) (b)")
+	_ = fixtureAdmission782
+	err = exec.matchQuantifiedChain(fixtureAdmission782, fixtureAdmission782Context, "(a) (b)", "a", "", quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
 	require.Error(t, err)
 	require.False(t, parenthesisedPathAt("((a)", 0, 3))
 	require.False(t, parenthesisedPathAt("(  )", 0, 3))

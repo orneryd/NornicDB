@@ -227,7 +227,7 @@ func bareEndpointVariable(content string) (string, bool) {
 // plan, binding variables in nodes/edges. Unsupported syntax or endpoint scope
 // declines before evaluation. Once selected, evaluation errors are terminal.
 // Planning is atomic: any error rolls back this call's staged nodes and edges.
-func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
+func (t *pipelineCreateTemplate) plan(admission admittedRelationshipStatement, ctx context.Context, e *StorageExecutor, row pipelineRow, nodes map[string]*storage.Node, edges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, bool, error) {
 	if !t.usable {
 		return nil, false, nil
 	}
@@ -290,7 +290,7 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 		var props map[string]interface{}
 		if len(nodeTemplate.properties) > 0 {
 			var err error
-			props, err = e.evaluatePipelineProperties(ctx, nodeTemplate.properties, scope)
+			props, err = e.evaluatePipelineProperties(admission, ctx, nodeTemplate.properties, scope)
 			if err != nil {
 				rollback()
 				return nil, true, err
@@ -330,7 +330,7 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 		var props map[string]interface{}
 		if len(edgeTemplate.properties) > 0 {
 			var err error
-			props, err = e.evaluatePipelineProperties(ctx, edgeTemplate.properties, scope)
+			props, err = e.evaluatePipelineProperties(admission, ctx, edgeTemplate.properties, scope)
 			if err != nil {
 				rollback()
 				return nil, true, err

@@ -49,7 +49,9 @@ func TestFunctionId(t *testing.T) {
 	ctx := context.Background()
 
 	nodes := map[string]*storage.Node{"n": node}
-	result := e.evaluateExpressionWithContext(ctx, "id(n)", nodes, nil)
+	fixtureAdmission411Context, fixtureAdmission411 := expressionTestContext(ctx, "id(n)")
+	_ = fixtureAdmission411
+	result := e.evaluateExpressionWithContext(fixtureAdmission411, fixtureAdmission411Context, "id(n)", nodes, nil)
 
 	if result != "node-1" {
 		t.Errorf("id(n) = %v, want node-1", result)
@@ -63,7 +65,9 @@ func TestFunctionElementId(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "elementId(n)", nodes, nil)
+	fixtureAdmission412Context, fixtureAdmission412 := expressionTestContext(ctx, "elementId(n)")
+	_ = fixtureAdmission412
+	result := e.evaluateExpressionWithContext(fixtureAdmission412, fixtureAdmission412Context, "elementId(n)", nodes, nil)
 
 	expected := "4:test:node-1"
 	if result != expected {
@@ -78,7 +82,9 @@ func TestFunctionLabels(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "labels(n)", nodes, nil)
+	fixtureAdmission413Context, fixtureAdmission413 := expressionTestContext(ctx, "labels(n)")
+	_ = fixtureAdmission413
+	result := e.evaluateExpressionWithContext(fixtureAdmission413, fixtureAdmission413Context, "labels(n)", nodes, nil)
 
 	labels, ok := result.([]interface{})
 	if !ok {
@@ -99,7 +105,9 @@ func TestFunctionType(t *testing.T) {
 	rels := map[string]*storage.Edge{"r": rel}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "type(r)", nil, rels)
+	fixtureAdmission414Context, fixtureAdmission414 := expressionTestContext(ctx, "type(r)")
+	_ = fixtureAdmission414
+	result := e.evaluateExpressionWithContext(fixtureAdmission414, fixtureAdmission414Context, "type(r)", nil, rels)
 
 	if result != "KNOWS" {
 		t.Errorf("type(r) = %v, want KNOWS", result)
@@ -116,7 +124,9 @@ func TestFunctionKeys(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "keys(n)", nodes, nil)
+	fixtureAdmission415Context, fixtureAdmission415 := expressionTestContext(ctx, "keys(n)")
+	_ = fixtureAdmission415
+	result := e.evaluateExpressionWithContext(fixtureAdmission415, fixtureAdmission415Context, "keys(n)", nodes, nil)
 
 	keys, ok := result.([]interface{})
 	if !ok {
@@ -137,7 +147,9 @@ func TestFunctionProperties(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "properties(n)", nodes, nil)
+	fixtureAdmission416Context, fixtureAdmission416 := expressionTestContext(ctx, "properties(n)")
+	_ = fixtureAdmission416
+	result := e.evaluateExpressionWithContext(fixtureAdmission416, fixtureAdmission416Context, "properties(n)", nodes, nil)
 
 	props, ok := result.(map[string]interface{})
 	if !ok {
@@ -165,7 +177,9 @@ func TestFunctionCoalesce(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission417Context, fixtureAdmission417 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission417
+			result := e.evaluateExpressionWithContext(fixtureAdmission417, fixtureAdmission417Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -193,7 +207,9 @@ func TestFunctionExists(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission418Context, fixtureAdmission418 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission418
+			result := e.evaluateExpressionWithContext(fixtureAdmission418, fixtureAdmission418Context, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -240,7 +256,9 @@ func TestStringFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission419Context, fixtureAdmission419 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission419
+			result := e.evaluateExpressionWithContext(fixtureAdmission419, fixtureAdmission419Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -261,7 +279,9 @@ func TestSplitFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// Test with node properties
-	result := e.evaluateExpressionWithContext(ctx, "split(n.data, n.sep)", nodes, nil)
+	fixtureAdmission420Context, fixtureAdmission420 := expressionTestContext(ctx, "split(n.data, n.sep)")
+	_ = fixtureAdmission420
+	result := e.evaluateExpressionWithContext(fixtureAdmission420, fixtureAdmission420Context, "split(n.data, n.sep)", nodes, nil)
 	list, ok := result.([]interface{})
 	if !ok {
 		t.Fatalf("split should return list, got %T", result)
@@ -286,7 +306,9 @@ func TestCharLengthFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission421Context, fixtureAdmission421 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission421
+			result := e.evaluateExpressionWithContext(fixtureAdmission421, fixtureAdmission421Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -300,31 +322,45 @@ func TestFunctionEvaluator_ArrayIndexSliceAndMapLiteral(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 	// Array/string indexing paths
-	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext(ctx, "labels(n)[0]", nodes, nil))
-	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext(ctx, "labels(n)[-1]", nodes, nil))
+	fixtureAdmission400Context, fixtureAdmission400 := expressionTestContext(ctx, "labels(n)[0]")
+	_ = fixtureAdmission400Context
+	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext(fixtureAdmission400, fixtureAdmission400Context, "labels(n)[0]", nodes, nil))
+	fixtureAdmission401Context, fixtureAdmission401 := expressionTestContext(ctx, "labels(n)[-1]")
+	_ = fixtureAdmission401Context
+	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext(fixtureAdmission401, fixtureAdmission401Context, "labels(n)[-1]", nodes, nil))
 	assertEqual(t, "substring('abc',1,1)", "b", typedNumericRead(t, e, "RETURN substring('abc',1,1) AS v", nil))
 	_, err := e.Execute(ctx, "RETURN 'abc'[1] AS v", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Slice notation paths
-	s1 := e.evaluateExpressionWithContext(ctx, "labels(n)[..1]", nodes, nil)
+	fixtureAdmission425Context, fixtureAdmission425 := expressionTestContext(ctx, "labels(n)[..1]")
+	_ = fixtureAdmission425
+	s1 := e.evaluateExpressionWithContext(fixtureAdmission425, fixtureAdmission425Context, "labels(n)[..1]", nodes, nil)
 	list1, ok := s1.([]interface{})
 	if !ok || len(list1) != 1 || list1[0] != "Person" {
 		t.Fatalf("labels(n)[..1] = %v, want [Person]", s1)
 	}
 
-	s2 := e.evaluateExpressionWithContext(ctx, "labels(n)[1..]", nodes, nil)
+	fixtureAdmission426Context, fixtureAdmission426 := expressionTestContext(ctx, "labels(n)[1..]")
+	_ = fixtureAdmission426
+	s2 := e.evaluateExpressionWithContext(fixtureAdmission426, fixtureAdmission426Context, "labels(n)[1..]", nodes, nil)
 	list2, ok := s2.([]interface{})
 	if !ok || len(list2) != 1 || list2[0] != "Employee" {
 		t.Fatalf("labels(n)[1..] = %v, want [Employee]", s2)
 	}
 
 	// IN list must not be treated as indexing
-	assertEqual(t, "1 IN [1,2,3]", true, e.evaluateExpressionWithContext(ctx, "1 IN [1,2,3]", nil, nil))
+	fixtureAdmission427Context, fixtureAdmission427 := expressionTestContext(ctx, "1 IN [1,2,3]")
+	_ = fixtureAdmission427
+	assertEqual(t, "1 IN [1,2,3]", true, e.evaluateExpressionWithContext(fixtureAdmission427, fixtureAdmission427Context, "1 IN [1,2,3]", nil, nil))
 
 	// Parenthesized expression and map literal
-	assertEqual(t, "(1 + 2)", int64(3), e.evaluateExpressionWithContext(ctx, "(1 + 2)", nil, nil))
-	m := e.evaluateExpressionWithContext(ctx, "{x: 1, y: 'z'}", nil, nil)
+	fixtureAdmission428Context, fixtureAdmission428 := expressionTestContext(ctx, "(1 + 2)")
+	_ = fixtureAdmission428
+	assertEqual(t, "(1 + 2)", int64(3), e.evaluateExpressionWithContext(fixtureAdmission428, fixtureAdmission428Context, "(1 + 2)", nil, nil))
+	fixtureAdmission429Context, fixtureAdmission429 := expressionTestContext(ctx, "{x: 1, y: 'z'}")
+	_ = fixtureAdmission429
+	m := e.evaluateExpressionWithContext(fixtureAdmission429, fixtureAdmission429Context, "{x: 1, y: 'z'}", nil, nil)
 	mm, ok := m.(map[string]interface{})
 	if !ok {
 		t.Fatalf("map literal should return map, got %T", m)
@@ -355,29 +391,53 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 	rels := map[string]*storage.Edge{"r": rel}
 	ctx := context.Background()
 
-	assertEqual(t, "type(r)", "KNOWS", e.evaluateExpressionWithContext(ctx, "type(r)", nodes, rels))
-	assertEqual(t, "type({type:'KNOWS'})", nil, e.evaluateExpressionWithContext(ctx, "type({type:'KNOWS'})", nodes, rels))
-	assertEqual(t, "exists(n.missing)", false, e.evaluateExpressionWithContext(ctx, "exists(n.missing)", nodes, rels))
-	assertEqual(t, "head([])", nil, e.evaluateExpressionWithContext(ctx, "head([])", nodes, rels))
-	assertEqual(t, "last([])", nil, e.evaluateExpressionWithContext(ctx, "last([])", nodes, rels))
-	assertEqual(t, "reverse('stressed')", "desserts", e.evaluateExpressionWithContext(ctx, "reverse('stressed')", nodes, rels))
-	assertEqual(t, "indexOf([1,2,3], 9)", int64(-1), e.evaluateExpressionWithContext(ctx, "indexOf([1,2,3], 9)", nodes, rels))
-	assertEqual(t, "hasLabels(n, ['Person', 'Employee'])", true, e.evaluateExpressionWithContext(ctx, "hasLabels(n, ['Person', 'Employee'])", nodes, rels))
-	assertEqual(t, "hasLabels(n, ['Person', 'Missing'])", false, e.evaluateExpressionWithContext(ctx, "hasLabels(n, ['Person', 'Missing'])", nodes, rels))
+	fixtureAdmission430Context, fixtureAdmission430 := expressionTestContext(ctx, "type(r)")
+	_ = fixtureAdmission430
+	assertEqual(t, "type(r)", "KNOWS", e.evaluateExpressionWithContext(fixtureAdmission430, fixtureAdmission430Context, "type(r)", nodes, rels))
+	fixtureAdmission431Context, fixtureAdmission431 := expressionTestContext(ctx, "type({type:'KNOWS'})")
+	_ = fixtureAdmission431
+	assertEqual(t, "type({type:'KNOWS'})", nil, e.evaluateExpressionWithContext(fixtureAdmission431, fixtureAdmission431Context, "type({type:'KNOWS'})", nodes, rels))
+	fixtureAdmission432Context, fixtureAdmission432 := expressionTestContext(ctx, "exists(n.missing)")
+	_ = fixtureAdmission432
+	assertEqual(t, "exists(n.missing)", false, e.evaluateExpressionWithContext(fixtureAdmission432, fixtureAdmission432Context, "exists(n.missing)", nodes, rels))
+	fixtureAdmission433Context, fixtureAdmission433 := expressionTestContext(ctx, "head([])")
+	_ = fixtureAdmission433
+	assertEqual(t, "head([])", nil, e.evaluateExpressionWithContext(fixtureAdmission433, fixtureAdmission433Context, "head([])", nodes, rels))
+	fixtureAdmission434Context, fixtureAdmission434 := expressionTestContext(ctx, "last([])")
+	_ = fixtureAdmission434
+	assertEqual(t, "last([])", nil, e.evaluateExpressionWithContext(fixtureAdmission434, fixtureAdmission434Context, "last([])", nodes, rels))
+	fixtureAdmission435Context, fixtureAdmission435 := expressionTestContext(ctx, "reverse('stressed')")
+	_ = fixtureAdmission435
+	assertEqual(t, "reverse('stressed')", "desserts", e.evaluateExpressionWithContext(fixtureAdmission435, fixtureAdmission435Context, "reverse('stressed')", nodes, rels))
+	fixtureAdmission436Context, fixtureAdmission436 := expressionTestContext(ctx, "indexOf([1,2,3], 9)")
+	_ = fixtureAdmission436
+	assertEqual(t, "indexOf([1,2,3], 9)", int64(-1), e.evaluateExpressionWithContext(fixtureAdmission436, fixtureAdmission436Context, "indexOf([1,2,3], 9)", nodes, rels))
+	fixtureAdmission437Context, fixtureAdmission437 := expressionTestContext(ctx, "hasLabels(n, ['Person', 'Employee'])")
+	_ = fixtureAdmission437
+	assertEqual(t, "hasLabels(n, ['Person', 'Employee'])", true, e.evaluateExpressionWithContext(fixtureAdmission437, fixtureAdmission437Context, "hasLabels(n, ['Person', 'Employee'])", nodes, rels))
+	fixtureAdmission438Context, fixtureAdmission438 := expressionTestContext(ctx, "hasLabels(n, ['Person', 'Missing'])")
+	_ = fixtureAdmission438
+	assertEqual(t, "hasLabels(n, ['Person', 'Missing'])", false, e.evaluateExpressionWithContext(fixtureAdmission438, fixtureAdmission438Context, "hasLabels(n, ['Person', 'Missing'])", nodes, rels))
 
-	tail := e.evaluateExpressionWithContext(ctx, "tail([1])", nodes, rels)
+	fixtureAdmission439Context, fixtureAdmission439 := expressionTestContext(ctx, "tail([1])")
+	_ = fixtureAdmission439
+	tail := e.evaluateExpressionWithContext(fixtureAdmission439, fixtureAdmission439Context, "tail([1])", nodes, rels)
 	tailList, ok := tail.([]interface{})
 	if !ok || len(tailList) != 0 {
 		t.Fatalf("tail([1]) = %v, want []", tail)
 	}
 
-	sliced := e.evaluateExpressionWithContext(ctx, "slice([1, 2, 3, 4], -3, -1)", nodes, rels)
+	fixtureAdmission440Context, fixtureAdmission440 := expressionTestContext(ctx, "slice([1, 2, 3, 4], -3, -1)")
+	_ = fixtureAdmission440
+	sliced := e.evaluateExpressionWithContext(fixtureAdmission440, fixtureAdmission440Context, "slice([1, 2, 3, 4], -3, -1)", nodes, rels)
 	sliceList, ok := sliced.([]interface{})
 	if !ok || len(sliceList) != 2 || sliceList[0] != int64(2) || sliceList[1] != int64(3) {
 		t.Fatalf("slice([1,2,3,4], -3, -1) = %v, want [2,3]", sliced)
 	}
 
-	gotLength := e.evaluateExpressionWithContextFullFunctions(ctx,
+	fixtureAdmission441Context, fixtureAdmission441 := expressionTestContext(ctx, "length(p)")
+	_ = fixtureAdmission441
+	gotLength := e.evaluateExpressionWithContextFullFunctions(fixtureAdmission441, fixtureAdmission441Context,
 		"length(p)",
 		nodes,
 		rels,
@@ -388,7 +448,9 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 	)
 	assertEqual(t, "length(p)", int64(4), gotLength)
 
-	gotFallbackLength := e.evaluateExpressionWithContextFullFunctions(ctx, "length(route)", nodes, rels, nil, nil, nil, 6)
+	fixtureAdmission442Context, fixtureAdmission442 := expressionTestContext(ctx, "length(route)")
+	_ = fixtureAdmission442
+	gotFallbackLength := e.evaluateExpressionWithContextFullFunctions(fixtureAdmission442, fixtureAdmission442Context, "length(route)", nodes, rels, nil, nil, nil, 6)
 	assertEqual(t, "length(route)", int64(6), gotFallbackLength)
 }
 
@@ -408,26 +470,34 @@ func TestListFunctions(t *testing.T) {
 
 	// Test head
 	ctx := context.Background()
-	result := e.evaluateExpressionWithContext(ctx, "head([1, 2, 3])", nil, nil)
+	fixtureAdmission443Context, fixtureAdmission443 := expressionTestContext(ctx, "head([1, 2, 3])")
+	_ = fixtureAdmission443
+	result := e.evaluateExpressionWithContext(fixtureAdmission443, fixtureAdmission443Context, "head([1, 2, 3])", nil, nil)
 	if result != int64(1) {
 		t.Errorf("head([1,2,3]) = %v, want 1", result)
 	}
 
 	// Test last
-	result = e.evaluateExpressionWithContext(ctx, "last([1, 2, 3])", nil, nil)
+	fixtureAdmission444Context, fixtureAdmission444 := expressionTestContext(ctx, "last([1, 2, 3])")
+	_ = fixtureAdmission444
+	result = e.evaluateExpressionWithContext(fixtureAdmission444, fixtureAdmission444Context, "last([1, 2, 3])", nil, nil)
 	if result != int64(3) {
 		t.Errorf("last([1,2,3]) = %v, want 3", result)
 	}
 
 	// Test tail
-	tail := e.evaluateExpressionWithContext(ctx, "tail([1, 2, 3])", nil, nil)
+	fixtureAdmission445Context, fixtureAdmission445 := expressionTestContext(ctx, "tail([1, 2, 3])")
+	_ = fixtureAdmission445
+	tail := e.evaluateExpressionWithContext(fixtureAdmission445, fixtureAdmission445Context, "tail([1, 2, 3])", nil, nil)
 	tailList, ok := tail.([]interface{})
 	if !ok || len(tailList) != 2 {
 		t.Errorf("tail([1,2,3]) = %v, want [2,3]", tail)
 	}
 
 	// Test reverse
-	rev := e.evaluateExpressionWithContext(ctx, "reverse([1, 2, 3])", nil, nil)
+	fixtureAdmission446Context, fixtureAdmission446 := expressionTestContext(ctx, "reverse([1, 2, 3])")
+	_ = fixtureAdmission446
+	rev := e.evaluateExpressionWithContext(fixtureAdmission446, fixtureAdmission446Context, "reverse([1, 2, 3])", nil, nil)
 	revList, ok := rev.([]interface{})
 	if !ok || len(revList) != 3 {
 		t.Errorf("reverse([1,2,3]) failed")
@@ -450,7 +520,9 @@ func TestRangeFunction(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission447Context, fixtureAdmission447 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission447
+			result := e.evaluateExpressionWithContext(fixtureAdmission447, fixtureAdmission447Context, tt.expr, nil, nil)
 			list, ok := result.([]interface{})
 			if !ok {
 				t.Fatalf("%s should return list", tt.expr)
@@ -479,7 +551,9 @@ func TestSizeFunction(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission448Context, fixtureAdmission448 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission448
+			result := e.evaluateExpressionWithContext(fixtureAdmission448, fixtureAdmission448Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -517,7 +591,9 @@ func TestMathFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission449Context, fixtureAdmission449 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission449
+			result := e.evaluateExpressionWithContext(fixtureAdmission449, fixtureAdmission449Context, tt.expr, nil, nil)
 
 			if tt.delta > 0 {
 				resultF, ok := result.(float64)
@@ -560,7 +636,9 @@ func TestTrigFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission450Context, fixtureAdmission450 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission450
+			result := e.evaluateExpressionWithContext(fixtureAdmission450, fixtureAdmission450Context, tt.expr, nil, nil)
 			resultF, ok := result.(float64)
 			if !ok {
 				t.Fatalf("%s should return float64, got %T", tt.expr, result)
@@ -597,7 +675,9 @@ func TestHyperbolicFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission451Context, fixtureAdmission451 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission451
+			result := e.evaluateExpressionWithContext(fixtureAdmission451, fixtureAdmission451Context, tt.expr, nil, nil)
 			resultF, ok := result.(float64)
 			if !ok {
 				t.Fatalf("%s should return float64, got %T", tt.expr, result)
@@ -631,7 +711,9 @@ func TestPowerFunction(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission452Context, fixtureAdmission452 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission452
+			result := e.evaluateExpressionWithContext(fixtureAdmission452, fixtureAdmission452Context, tt.expr, nil, nil)
 			resultF, ok := result.(float64)
 			if !ok {
 				t.Fatalf("%s should return float64, got %T", tt.expr, result)
@@ -648,14 +730,18 @@ func TestMathConstants(t *testing.T) {
 	ctx := context.Background()
 
 	// Test pi()
-	pi := e.evaluateExpressionWithContext(ctx, "pi()", nil, nil)
+	fixtureAdmission453Context, fixtureAdmission453 := expressionTestContext(ctx, "pi()")
+	_ = fixtureAdmission453
+	pi := e.evaluateExpressionWithContext(fixtureAdmission453, fixtureAdmission453Context, "pi()", nil, nil)
 	piF, ok := pi.(float64)
 	if !ok || math.Abs(piF-math.Pi) > 0.0001 {
 		t.Errorf("pi() = %v, want %v", pi, math.Pi)
 	}
 
 	// Test e()
-	eVal := e.evaluateExpressionWithContext(ctx, "e()", nil, nil)
+	fixtureAdmission454Context, fixtureAdmission454 := expressionTestContext(ctx, "e()")
+	_ = fixtureAdmission454
+	eVal := e.evaluateExpressionWithContext(fixtureAdmission454, fixtureAdmission454Context, "e()", nil, nil)
 	eF, ok := eVal.(float64)
 	if !ok || math.Abs(eF-math.E) > 0.0001 {
 		t.Errorf("e() = %v, want %v", eVal, math.E)
@@ -667,7 +753,9 @@ func TestRandomFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Test rand() returns value between 0 and 1
-	result := e.evaluateExpressionWithContext(ctx, "rand()", nil, nil)
+	fixtureAdmission455Context, fixtureAdmission455 := expressionTestContext(ctx, "rand()")
+	_ = fixtureAdmission455
+	result := e.evaluateExpressionWithContext(fixtureAdmission455, fixtureAdmission455Context, "rand()", nil, nil)
 	randF, ok := result.(float64)
 	if !ok {
 		t.Fatalf("rand() should return float64")
@@ -677,7 +765,9 @@ func TestRandomFunctions(t *testing.T) {
 	}
 
 	// Test randomUUID() returns a string
-	uuid := e.evaluateExpressionWithContext(ctx, "randomUUID()", nil, nil)
+	fixtureAdmission456Context, fixtureAdmission456 := expressionTestContext(ctx, "randomUUID()")
+	_ = fixtureAdmission456
+	uuid := e.evaluateExpressionWithContext(fixtureAdmission456, fixtureAdmission456Context, "randomUUID()", nil, nil)
 	uuidStr, ok := uuid.(string)
 	if !ok {
 		t.Fatalf("randomUUID() should return string")
@@ -711,7 +801,9 @@ func TestTypeConversionFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission457Context, fixtureAdmission457 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission457
+			result := e.evaluateExpressionWithContext(fixtureAdmission457, fixtureAdmission457Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -743,7 +835,9 @@ func TestNullCheckFunctions(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission458Context, fixtureAdmission458 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission458
+			result := e.evaluateExpressionWithContext(fixtureAdmission458, fixtureAdmission458Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -760,25 +854,33 @@ func TestTimestampFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Test timestamp() returns a value
-	ts := e.evaluateExpressionWithContext(ctx, "timestamp()", nil, nil)
+	fixtureAdmission459Context, fixtureAdmission459 := expressionTestContext(ctx, "timestamp()")
+	_ = fixtureAdmission459
+	ts := e.evaluateExpressionWithContext(fixtureAdmission459, fixtureAdmission459Context, "timestamp()", nil, nil)
 	if ts == nil {
 		t.Error("timestamp() should return a value")
 	}
 
 	// Test datetime() returns a value
-	dt := e.evaluateExpressionWithContext(ctx, "datetime()", nil, nil)
+	fixtureAdmission460Context, fixtureAdmission460 := expressionTestContext(ctx, "datetime()")
+	_ = fixtureAdmission460
+	dt := e.evaluateExpressionWithContext(fixtureAdmission460, fixtureAdmission460Context, "datetime()", nil, nil)
 	if dt == nil {
 		t.Error("datetime() should return a value")
 	}
 
 	// Test date()
-	d := e.evaluateExpressionWithContext(ctx, "date()", nil, nil)
+	fixtureAdmission461Context, fixtureAdmission461 := expressionTestContext(ctx, "date()")
+	_ = fixtureAdmission461
+	d := e.evaluateExpressionWithContext(fixtureAdmission461, fixtureAdmission461Context, "date()", nil, nil)
 	if d == nil {
 		t.Error("date() should return a value")
 	}
 
 	// Test time()
-	tm := e.evaluateExpressionWithContext(ctx, "time()", nil, nil)
+	fixtureAdmission462Context, fixtureAdmission462 := expressionTestContext(ctx, "time()")
+	_ = fixtureAdmission462
+	tm := e.evaluateExpressionWithContext(fixtureAdmission462, fixtureAdmission462Context, "time()", nil, nil)
 	if tm == nil {
 		t.Error("time() should return a value")
 	}
@@ -809,19 +911,25 @@ func TestRelationshipFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Test startNode
-	result := e.evaluateExpressionWithContext(ctx, "startNode(r)", nodes, rels)
+	fixtureAdmission463Context, fixtureAdmission463 := expressionTestContext(ctx, "startNode(r)")
+	_ = fixtureAdmission463
+	result := e.evaluateExpressionWithContext(fixtureAdmission463, fixtureAdmission463Context, "startNode(r)", nodes, rels)
 	if result == nil {
 		t.Error("startNode(r) should return a value")
 	}
 
 	// Test endNode
-	result = e.evaluateExpressionWithContext(ctx, "endNode(r)", nodes, rels)
+	fixtureAdmission464Context, fixtureAdmission464 := expressionTestContext(ctx, "endNode(r)")
+	_ = fixtureAdmission464
+	result = e.evaluateExpressionWithContext(fixtureAdmission464, fixtureAdmission464Context, "endNode(r)", nodes, rels)
 	if result == nil {
 		t.Error("endNode(r) should return a value")
 	}
 
 	// Test type(r)
-	result = e.evaluateExpressionWithContext(ctx, "type(r)", nodes, rels)
+	fixtureAdmission465Context, fixtureAdmission465 := expressionTestContext(ctx, "type(r)")
+	_ = fixtureAdmission465
+	result = e.evaluateExpressionWithContext(fixtureAdmission465, fixtureAdmission465Context, "type(r)", nodes, rels)
 	if result != "KNOWS" {
 		t.Errorf("type(r) = %v, want KNOWS", result)
 	}
@@ -846,13 +954,17 @@ func TestVectorSimilarityFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Test cosine similarity of identical vectors = 1
-	result := e.evaluateExpressionWithContext(ctx, "vector.similarity.cosine(a.vec, b.vec)", nodes, nil)
+	fixtureAdmission466Context, fixtureAdmission466 := expressionTestContext(ctx, "vector.similarity.cosine(a.vec, b.vec)")
+	_ = fixtureAdmission466
+	result := e.evaluateExpressionWithContext(fixtureAdmission466, fixtureAdmission466Context, "vector.similarity.cosine(a.vec, b.vec)", nodes, nil)
 	if result == nil {
 		t.Error("vector.similarity.cosine should return a value")
 	}
 
 	// Test euclidean similarity
-	result = e.evaluateExpressionWithContext(ctx, "vector.similarity.euclidean(a.vec, b.vec)", nodes, nil)
+	fixtureAdmission467Context, fixtureAdmission467 := expressionTestContext(ctx, "vector.similarity.euclidean(a.vec, b.vec)")
+	_ = fixtureAdmission467
+	result = e.evaluateExpressionWithContext(fixtureAdmission467, fixtureAdmission467Context, "vector.similarity.euclidean(a.vec, b.vec)", nodes, nil)
 	if result == nil {
 		t.Error("vector.similarity.euclidean should return a value")
 	}
@@ -867,7 +979,9 @@ func TestSpatialFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Test point function
-	result := e.evaluateExpressionWithContext(ctx, "point({x: 1.0, y: 2.0})", nil, nil)
+	fixtureAdmission468Context, fixtureAdmission468 := expressionTestContext(ctx, "point({x: 1.0, y: 2.0})")
+	_ = fixtureAdmission468
+	result := e.evaluateExpressionWithContext(fixtureAdmission468, fixtureAdmission468Context, "point({x: 1.0, y: 2.0})", nil, nil)
 	if _, isPoint := result.(CypherPoint); !isPoint {
 		t.Fatalf("point() should return a point, got %T", result)
 	}
@@ -885,7 +999,9 @@ func TestSpatialFunctions(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"a": node1, "b": node2}
-	dist := e.evaluateExpressionWithContext(ctx, "distance(a.loc, b.loc)", nodes, nil)
+	fixtureAdmission469Context, fixtureAdmission469 := expressionTestContext(ctx, "distance(a.loc, b.loc)")
+	_ = fixtureAdmission469
+	dist := e.evaluateExpressionWithContext(fixtureAdmission469, fixtureAdmission469Context, "distance(a.loc, b.loc)", nodes, nil)
 	distF, ok := dist.(float64)
 	if !ok {
 		t.Fatalf("distance() should return float64, got %T", dist)
@@ -905,7 +1021,9 @@ func TestReduceFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// reduce(acc = 0, x IN [1,2,3] | acc + x) should return 6
-	result := e.evaluateExpressionWithContext(ctx, "reduce(acc = 0, x IN [1, 2, 3] | acc + x)", nil, nil)
+	fixtureAdmission470Context, fixtureAdmission470 := expressionTestContext(ctx, "reduce(acc = 0, x IN [1, 2, 3] | acc + x)")
+	_ = fixtureAdmission470
+	result := e.evaluateExpressionWithContext(fixtureAdmission470, fixtureAdmission470Context, "reduce(acc = 0, x IN [1, 2, 3] | acc + x)", nil, nil)
 	if result == nil {
 		t.Error("reduce should return a value")
 	}
@@ -941,7 +1059,9 @@ func TestFunctionPropertyAccess(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission471Context, fixtureAdmission471 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission471
+			result := e.evaluateExpressionWithContext(fixtureAdmission471, fixtureAdmission471Context, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -973,7 +1093,9 @@ func TestLiterals(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission472Context, fixtureAdmission472 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission472
+			result := e.evaluateExpressionWithContext(fixtureAdmission472, fixtureAdmission472Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -995,7 +1117,9 @@ func TestStringConcatenation(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "n.firstName + ' ' + n.lastName", nodes, nil)
+	fixtureAdmission473Context, fixtureAdmission473 := expressionTestContext(ctx, "n.firstName + ' ' + n.lastName")
+	_ = fixtureAdmission473
+	result := e.evaluateExpressionWithContext(fixtureAdmission473, fixtureAdmission473Context, "n.firstName + ' ' + n.lastName", nodes, nil)
 	if result != "John Doe" {
 		t.Errorf("concatenation = %v, want 'John Doe'", result)
 	}
@@ -1011,7 +1135,9 @@ func TestCountFunction(t *testing.T) {
 
 	// count(*) in expression context should NOT be evaluated here
 	// Aggregation functions must be handled by executeAggregation(ctx, ) or executeMatchWithRelationshipsWithPathSeeded()
-	result := e.evaluateExpressionWithContext(ctx, "count(*)", nil, nil)
+	fixtureAdmission474Context, fixtureAdmission474 := expressionTestContext(ctx, "count(*)")
+	_ = fixtureAdmission474
+	result := e.evaluateExpressionWithContext(fixtureAdmission474, fixtureAdmission474Context, "count(*)", nil, nil)
 	if result != nil {
 		t.Errorf("count(*) in expression context should return nil, got %v", result)
 	}
@@ -1019,7 +1145,9 @@ func TestCountFunction(t *testing.T) {
 	// count(n) also should NOT be evaluated in expression context
 	node := createTestNode(t, e, "node-1", []string{"Person"}, nil)
 	nodes := map[string]*storage.Node{"n": node}
-	result = e.evaluateExpressionWithContext(ctx, "count(n)", nodes, nil)
+	fixtureAdmission475Context, fixtureAdmission475 := expressionTestContext(ctx, "count(n)")
+	_ = fixtureAdmission475
+	result = e.evaluateExpressionWithContext(fixtureAdmission475, fixtureAdmission475Context, "count(n)", nodes, nil)
 	if result != nil {
 		t.Errorf("count(n) in expression context should return nil, got %v", result)
 	}
@@ -1062,7 +1190,9 @@ func TestOrNullVariants(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission476Context, fixtureAdmission476 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission476
+			result := e.evaluateExpressionWithContext(fixtureAdmission476, fixtureAdmission476Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -1086,7 +1216,9 @@ func TestListConversionFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// toIntegerList
-	result := e.evaluateExpressionWithContext(ctx, "toIntegerList(n.intList)", nodes, nil)
+	fixtureAdmission477Context, fixtureAdmission477 := expressionTestContext(ctx, "toIntegerList(n.intList)")
+	_ = fixtureAdmission477
+	result := e.evaluateExpressionWithContext(fixtureAdmission477, fixtureAdmission477Context, "toIntegerList(n.intList)", nodes, nil)
 	if intList, ok := result.([]interface{}); ok {
 		if len(intList) != 3 {
 			t.Errorf("toIntegerList should return 3 elements, got %d", len(intList))
@@ -1099,7 +1231,9 @@ func TestListConversionFunctions(t *testing.T) {
 	}
 
 	// toFloatList
-	result = e.evaluateExpressionWithContext(ctx, "toFloatList(n.floatList)", nodes, nil)
+	fixtureAdmission478Context, fixtureAdmission478 := expressionTestContext(ctx, "toFloatList(n.floatList)")
+	_ = fixtureAdmission478
+	result = e.evaluateExpressionWithContext(fixtureAdmission478, fixtureAdmission478Context, "toFloatList(n.floatList)", nodes, nil)
 	if floatList, ok := result.([]interface{}); ok {
 		if len(floatList) != 3 {
 			t.Errorf("toFloatList should return 3 elements")
@@ -1107,7 +1241,9 @@ func TestListConversionFunctions(t *testing.T) {
 	}
 
 	// toBooleanList
-	result = e.evaluateExpressionWithContext(ctx, "toBooleanList(n.boolList)", nodes, nil)
+	fixtureAdmission479Context, fixtureAdmission479 := expressionTestContext(ctx, "toBooleanList(n.boolList)")
+	_ = fixtureAdmission479
+	result = e.evaluateExpressionWithContext(fixtureAdmission479, fixtureAdmission479Context, "toBooleanList(n.boolList)", nodes, nil)
 	if boolList, ok := result.([]interface{}); ok {
 		if len(boolList) != 3 {
 			t.Errorf("toBooleanList should return 3 elements")
@@ -1118,7 +1254,9 @@ func TestListConversionFunctions(t *testing.T) {
 	}
 
 	// toStringList
-	result = e.evaluateExpressionWithContext(ctx, "toStringList(n.stringList)", nodes, nil)
+	fixtureAdmission480Context, fixtureAdmission480 := expressionTestContext(ctx, "toStringList(n.stringList)")
+	_ = fixtureAdmission480
+	result = e.evaluateExpressionWithContext(fixtureAdmission480, fixtureAdmission480Context, "toStringList(n.stringList)", nodes, nil)
 	if stringList, ok := result.([]interface{}); ok {
 		if len(stringList) != 3 {
 			t.Errorf("toStringList should return 3 elements")
@@ -1152,7 +1290,9 @@ func TestValueTypeFunction(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission481Context, fixtureAdmission481 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission481
+			result := e.evaluateExpressionWithContext(fixtureAdmission481, fixtureAdmission481Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1176,7 +1316,9 @@ func TestAggregationInExpressionContext(t *testing.T) {
 		t.Run(expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, expr, nodes, nil)
+			fixtureAdmission482Context, fixtureAdmission482 := expressionTestContext(ctx, expr)
+			_ = fixtureAdmission482
+			result := e.evaluateExpressionWithContext(fixtureAdmission482, fixtureAdmission482Context, expr, nodes, nil)
 			if result != int64(42) {
 				t.Errorf("%s = %v, want 42", expr, result)
 			}
@@ -1185,7 +1327,9 @@ func TestAggregationInExpressionContext(t *testing.T) {
 
 	// collect returns a list
 	ctx := context.Background()
-	result := e.evaluateExpressionWithContext(ctx, "collect(n.val)", nodes, nil)
+	fixtureAdmission483Context, fixtureAdmission483 := expressionTestContext(ctx, "collect(n.val)")
+	_ = fixtureAdmission483
+	result := e.evaluateExpressionWithContext(fixtureAdmission483, fixtureAdmission483Context, "collect(n.val)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 1 || list[0] != int64(42) {
 			t.Errorf("collect(n.val) = %v, want [42]", list)
@@ -1213,7 +1357,9 @@ func TestListPredicateFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// none() on empty list should return true
-	result := e.evaluateExpressionWithContext(ctx, "none(x IN n.empty WHERE true)", nodes, nil)
+	fixtureAdmission484Context, fixtureAdmission484 := expressionTestContext(ctx, "none(x IN n.empty WHERE true)")
+	_ = fixtureAdmission484
+	result := e.evaluateExpressionWithContext(fixtureAdmission484, fixtureAdmission484Context, "none(x IN n.empty WHERE true)", nodes, nil)
 	if result != true {
 		t.Errorf("none(x IN empty list) = %v, want true", result)
 	}
@@ -1225,13 +1371,19 @@ func TestListPredicateFunctions(t *testing.T) {
 	nodes2 := map[string]*storage.Node{"n": node2}
 
 	// all() should not crash even if predicate evaluation is limited
-	_ = e.evaluateExpressionWithContext(ctx, "all(x IN n.nums WHERE x = x)", nodes2, nil)
+	fixtureAdmission485Context, fixtureAdmission485 := expressionTestContext(ctx, "all(x IN n.nums WHERE x = x)")
+	_ = fixtureAdmission485
+	_ = e.evaluateExpressionWithContext(fixtureAdmission485, fixtureAdmission485Context, "all(x IN n.nums WHERE x = x)", nodes2, nil)
 
 	// any() should not crash
-	_ = e.evaluateExpressionWithContext(ctx, "any(x IN n.nums WHERE x = x)", nodes2, nil)
+	fixtureAdmission486Context, fixtureAdmission486 := expressionTestContext(ctx, "any(x IN n.nums WHERE x = x)")
+	_ = fixtureAdmission486
+	_ = e.evaluateExpressionWithContext(fixtureAdmission486, fixtureAdmission486Context, "any(x IN n.nums WHERE x = x)", nodes2, nil)
 
 	// single() should not crash
-	_ = e.evaluateExpressionWithContext(ctx, "single(x IN n.nums WHERE x = x)", nodes2, nil)
+	fixtureAdmission487Context, fixtureAdmission487 := expressionTestContext(ctx, "single(x IN n.nums WHERE x = x)")
+	_ = fixtureAdmission487
+	_ = e.evaluateExpressionWithContext(fixtureAdmission487, fixtureAdmission487Context, "single(x IN n.nums WHERE x = x)", nodes2, nil)
 }
 
 // ========================================
@@ -1247,7 +1399,9 @@ func TestFilterAndExtractFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Test extract() - transforms each element
-	result := e.evaluateExpressionWithContext(ctx, "extract(x IN n.nums | x)", nodes, nil)
+	fixtureAdmission488Context, fixtureAdmission488 := expressionTestContext(ctx, "extract(x IN n.nums | x)")
+	_ = fixtureAdmission488
+	result := e.evaluateExpressionWithContext(fixtureAdmission488, fixtureAdmission488Context, "extract(x IN n.nums | x)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 5 {
 			t.Errorf("extract should return 5 elements, got %d", len(list))
@@ -1257,7 +1411,9 @@ func TestFilterAndExtractFunctions(t *testing.T) {
 	}
 
 	// Test filter() - returns a list (predicate evaluation limited)
-	result = e.evaluateExpressionWithContext(ctx, "filter(x IN n.nums WHERE true)", nodes, nil)
+	fixtureAdmission489Context, fixtureAdmission489 := expressionTestContext(ctx, "filter(x IN n.nums WHERE true)")
+	_ = fixtureAdmission489
+	result = e.evaluateExpressionWithContext(fixtureAdmission489, fixtureAdmission489Context, "filter(x IN n.nums WHERE true)", nodes, nil)
 	_, ok := result.([]interface{})
 	if !ok {
 		t.Errorf("filter should return list, got %T", result)
@@ -1282,13 +1438,17 @@ func TestWithinBBoxFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// Point inside bbox
-	result := e.evaluateExpressionWithContext(ctx, "withinBBox(n.inside, n.ll, n.ur)", nodes, nil)
+	fixtureAdmission490Context, fixtureAdmission490 := expressionTestContext(ctx, "withinBBox(n.inside, n.ll, n.ur)")
+	_ = fixtureAdmission490
+	result := e.evaluateExpressionWithContext(fixtureAdmission490, fixtureAdmission490Context, "withinBBox(n.inside, n.ll, n.ur)", nodes, nil)
 	if result != true {
 		t.Errorf("withinBBox(inside) = %v, want true", result)
 	}
 
 	// Point outside bbox
-	result = e.evaluateExpressionWithContext(ctx, "withinBBox(n.outside, n.ll, n.ur)", nodes, nil)
+	fixtureAdmission491Context, fixtureAdmission491 := expressionTestContext(ctx, "withinBBox(n.outside, n.ll, n.ur)")
+	_ = fixtureAdmission491
+	result = e.evaluateExpressionWithContext(fixtureAdmission491, fixtureAdmission491Context, "withinBBox(n.outside, n.ll, n.ur)", nodes, nil)
 	if result != false {
 		t.Errorf("withinBBox(outside) = %v, want false", result)
 	}
@@ -1308,7 +1468,9 @@ func TestListComprehension(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 
 	// [x IN list | x] - identity transformation
-	result := e.evaluateExpressionWithContext(ctx, "[x IN n.nums | x]", nodes, nil)
+	fixtureAdmission492Context, fixtureAdmission492 := expressionTestContext(ctx, "[x IN n.nums | x]")
+	_ = fixtureAdmission492
+	result := e.evaluateExpressionWithContext(fixtureAdmission492, fixtureAdmission492Context, "[x IN n.nums | x]", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 3 {
 			t.Errorf("list comprehension should return 3 elements, got %d", len(list))
@@ -1329,7 +1491,9 @@ func TestSliceFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// slice(list, 1, 3)
-	result := e.evaluateExpressionWithContext(ctx, "slice(n.list, 1, 3)", nodes, nil)
+	fixtureAdmission493Context, fixtureAdmission493 := expressionTestContext(ctx, "slice(n.list, 1, 3)")
+	_ = fixtureAdmission493
+	result := e.evaluateExpressionWithContext(fixtureAdmission493, fixtureAdmission493Context, "slice(n.list, 1, 3)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 2 {
 			t.Errorf("slice(list, 1, 3) should return 2 elements, got %d", len(list))
@@ -1339,7 +1503,9 @@ func TestSliceFunction(t *testing.T) {
 	}
 
 	// slice(list, 2) - to end
-	result = e.evaluateExpressionWithContext(ctx, "slice(n.list, 2)", nodes, nil)
+	fixtureAdmission494Context, fixtureAdmission494 := expressionTestContext(ctx, "slice(n.list, 2)")
+	_ = fixtureAdmission494
+	result = e.evaluateExpressionWithContext(fixtureAdmission494, fixtureAdmission494Context, "slice(n.list, 2)", nodes, nil)
 	if list, ok := result.([]interface{}); ok {
 		if len(list) != 3 {
 			t.Errorf("slice(list, 2) should return 3 elements, got %d", len(list))
@@ -1360,13 +1526,17 @@ func TestIndexOfFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// Found
-	result := e.evaluateExpressionWithContext(ctx, "indexOf(n.list, 'b')", nodes, nil)
+	fixtureAdmission495Context, fixtureAdmission495 := expressionTestContext(ctx, "indexOf(n.list, 'b')")
+	_ = fixtureAdmission495
+	result := e.evaluateExpressionWithContext(fixtureAdmission495, fixtureAdmission495Context, "indexOf(n.list, 'b')", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("indexOf(list, 'b') = %v, want 1", result)
 	}
 
 	// Not found
-	result = e.evaluateExpressionWithContext(ctx, "indexOf(n.list, 'z')", nodes, nil)
+	fixtureAdmission496Context, fixtureAdmission496 := expressionTestContext(ctx, "indexOf(n.list, 'z')")
+	_ = fixtureAdmission496
+	result = e.evaluateExpressionWithContext(fixtureAdmission496, fixtureAdmission496Context, "indexOf(n.list, 'z')", nodes, nil)
 	if result != int64(-1) {
 		t.Errorf("indexOf(list, 'z') = %v, want -1", result)
 	}
@@ -1392,25 +1562,33 @@ func TestDegreeFunctions(t *testing.T) {
 	ctx := context.Background()
 
 	// Alice has 1 outgoing, 1 incoming = degree 2
-	result := e.evaluateExpressionWithContext(ctx, "degree(a)", nodes, nil)
+	fixtureAdmission497Context, fixtureAdmission497 := expressionTestContext(ctx, "degree(a)")
+	_ = fixtureAdmission497
+	result := e.evaluateExpressionWithContext(fixtureAdmission497, fixtureAdmission497Context, "degree(a)", nodes, nil)
 	if result != int64(2) {
 		t.Errorf("degree(a) = %v, want 2", result)
 	}
 
 	// Alice has 1 outgoing
-	result = e.evaluateExpressionWithContext(ctx, "outDegree(a)", nodes, nil)
+	fixtureAdmission498Context, fixtureAdmission498 := expressionTestContext(ctx, "outDegree(a)")
+	_ = fixtureAdmission498
+	result = e.evaluateExpressionWithContext(fixtureAdmission498, fixtureAdmission498Context, "outDegree(a)", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("outDegree(a) = %v, want 1", result)
 	}
 
 	// Alice has 1 incoming
-	result = e.evaluateExpressionWithContext(ctx, "inDegree(a)", nodes, nil)
+	fixtureAdmission499Context, fixtureAdmission499 := expressionTestContext(ctx, "inDegree(a)")
+	_ = fixtureAdmission499
+	result = e.evaluateExpressionWithContext(fixtureAdmission499, fixtureAdmission499Context, "inDegree(a)", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("inDegree(a) = %v, want 1", result)
 	}
 
 	// Bob has 0 outgoing, 1 incoming
-	result = e.evaluateExpressionWithContext(ctx, "degree(b)", nodes, nil)
+	fixtureAdmission500Context, fixtureAdmission500 := expressionTestContext(ctx, "degree(b)")
+	_ = fixtureAdmission500
+	result = e.evaluateExpressionWithContext(fixtureAdmission500, fixtureAdmission500Context, "degree(b)", nodes, nil)
 	if result != int64(1) {
 		t.Errorf("degree(b) = %v, want 1", result)
 	}
@@ -1430,13 +1608,17 @@ func TestHasLabelsFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// Has all labels (using property with list)
-	result := e.evaluateExpressionWithContext(ctx, "hasLabels(n, n.requiredLabels)", nodes, nil)
+	fixtureAdmission501Context, fixtureAdmission501 := expressionTestContext(ctx, "hasLabels(n, n.requiredLabels)")
+	_ = fixtureAdmission501
+	result := e.evaluateExpressionWithContext(fixtureAdmission501, fixtureAdmission501Context, "hasLabels(n, n.requiredLabels)", nodes, nil)
 	if result != true {
 		t.Errorf("hasLabels with matching labels = %v, want true", result)
 	}
 
 	// Missing a label
-	result = e.evaluateExpressionWithContext(ctx, "hasLabels(n, n.wrongLabels)", nodes, nil)
+	fixtureAdmission502Context, fixtureAdmission502 := expressionTestContext(ctx, "hasLabels(n, n.wrongLabels)")
+	_ = fixtureAdmission502
+	result = e.evaluateExpressionWithContext(fixtureAdmission502, fixtureAdmission502Context, "hasLabels(n, n.wrongLabels)", nodes, nil)
 	if result != false {
 		t.Errorf("hasLabels with missing label = %v, want false", result)
 	}
@@ -1459,7 +1641,9 @@ func TestHaversineDistance(t *testing.T) {
 	})
 
 	nodes := map[string]*storage.Node{"nyc": node1, "la": node2}
-	dist := e.evaluateExpressionWithContext(ctx, "distance(nyc.loc, la.loc)", nodes, nil)
+	fixtureAdmission503Context, fixtureAdmission503 := expressionTestContext(ctx, "distance(nyc.loc, la.loc)")
+	_ = fixtureAdmission503
+	dist := e.evaluateExpressionWithContext(fixtureAdmission503, fixtureAdmission503Context, "distance(nyc.loc, la.loc)", nodes, nil)
 
 	if dist == nil {
 		t.Fatal("haversine distance should return a value")
@@ -1485,25 +1669,33 @@ func TestCaseWhenExpression(t *testing.T) {
 	ctx := context.Background()
 
 	// Simple CASE expression
-	result := e.evaluateExpressionWithContext(ctx, "CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END", nil, nil)
+	fixtureAdmission504Context, fixtureAdmission504 := expressionTestContext(ctx, "CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END")
+	_ = fixtureAdmission504
+	result := e.evaluateExpressionWithContext(fixtureAdmission504, fixtureAdmission504Context, "CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END", nil, nil)
 	if result != "one" {
 		t.Errorf("CASE 1 WHEN 1 = %v, want 'one'", result)
 	}
 
 	// Searched CASE expression
-	result = e.evaluateExpressionWithContext(ctx, "CASE WHEN true THEN 'yes' ELSE 'no' END", nil, nil)
+	fixtureAdmission505Context, fixtureAdmission505 := expressionTestContext(ctx, "CASE WHEN true THEN 'yes' ELSE 'no' END")
+	_ = fixtureAdmission505
+	result = e.evaluateExpressionWithContext(fixtureAdmission505, fixtureAdmission505Context, "CASE WHEN true THEN 'yes' ELSE 'no' END", nil, nil)
 	if result != "yes" {
 		t.Errorf("CASE WHEN true = %v, want 'yes'", result)
 	}
 
 	// CASE with ELSE
-	result = e.evaluateExpressionWithContext(ctx, "CASE 3 WHEN 1 THEN 'one' ELSE 'other' END", nil, nil)
+	fixtureAdmission506Context, fixtureAdmission506 := expressionTestContext(ctx, "CASE 3 WHEN 1 THEN 'one' ELSE 'other' END")
+	_ = fixtureAdmission506
+	result = e.evaluateExpressionWithContext(fixtureAdmission506, fixtureAdmission506Context, "CASE 3 WHEN 1 THEN 'one' ELSE 'other' END", nil, nil)
 	if result != "other" {
 		t.Errorf("CASE 3 WHEN 1 = %v, want 'other'", result)
 	}
 
 	// CASE without matching WHEN (no ELSE)
-	result = e.evaluateExpressionWithContext(ctx, "CASE 5 WHEN 1 THEN 'one' END", nil, nil)
+	fixtureAdmission507Context, fixtureAdmission507 := expressionTestContext(ctx, "CASE 5 WHEN 1 THEN 'one' END")
+	_ = fixtureAdmission507
+	result = e.evaluateExpressionWithContext(fixtureAdmission507, fixtureAdmission507Context, "CASE 5 WHEN 1 THEN 'one' END", nil, nil)
 	if result != nil {
 		t.Errorf("CASE without match = %v, want nil", result)
 	}
@@ -1519,7 +1711,9 @@ func TestCaseWhenWithNode(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 
 	// CASE with property
-	result := e.evaluateExpressionWithContext(ctx, "CASE n.status WHEN 'active' THEN 'online' ELSE 'offline' END", nodes, nil)
+	fixtureAdmission508Context, fixtureAdmission508 := expressionTestContext(ctx, "CASE n.status WHEN 'active' THEN 'online' ELSE 'offline' END")
+	_ = fixtureAdmission508
+	result := e.evaluateExpressionWithContext(fixtureAdmission508, fixtureAdmission508Context, "CASE n.status WHEN 'active' THEN 'online' ELSE 'offline' END", nodes, nil)
 	if result != "online" {
 		t.Errorf("CASE n.status = %v, want 'online'", result)
 	}
@@ -1563,7 +1757,9 @@ func TestLogicalOperators(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission509Context, fixtureAdmission509 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission509
+			result := e.evaluateExpressionWithContext(fixtureAdmission509, fixtureAdmission509Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1614,7 +1810,9 @@ func TestComparisonOperators(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission510Context, fixtureAdmission510 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission510
+			result := e.evaluateExpressionWithContext(fixtureAdmission510, fixtureAdmission510Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1657,7 +1855,9 @@ func TestArithmeticOperators(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nil, nil)
+			fixtureAdmission511Context, fixtureAdmission511 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission511
+			result := e.evaluateExpressionWithContext(fixtureAdmission511, fixtureAdmission511Context, tt.expr, nil, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v (%T), want %v (%T)", tt.expr, result, result, tt.expected, tt.expected)
 			}
@@ -1675,13 +1875,17 @@ func TestArithmeticWithProperties(t *testing.T) {
 	ctx := context.Background()
 
 	// n.a * n.b
-	result := e.evaluateExpressionWithContext(ctx, "n.a * n.b", nodes, nil)
+	fixtureAdmission512Context, fixtureAdmission512 := expressionTestContext(ctx, "n.a * n.b")
+	_ = fixtureAdmission512
+	result := e.evaluateExpressionWithContext(fixtureAdmission512, fixtureAdmission512Context, "n.a * n.b", nodes, nil)
 	if result != int64(30) {
 		t.Errorf("n.a * n.b = %v, want 30", result)
 	}
 
 	// n.a - n.b
-	result = e.evaluateExpressionWithContext(ctx, "n.a - n.b", nodes, nil)
+	fixtureAdmission513Context, fixtureAdmission513 := expressionTestContext(ctx, "n.a - n.b")
+	_ = fixtureAdmission513
+	result = e.evaluateExpressionWithContext(fixtureAdmission513, fixtureAdmission513Context, "n.a - n.b", nodes, nil)
 	if result != int64(7) {
 		t.Errorf("n.a - n.b = %v, want 7", result)
 	}
@@ -1701,13 +1905,17 @@ func TestCombinedExpressions(t *testing.T) {
 	ctx := context.Background()
 
 	// Comparison with property
-	result := e.evaluateExpressionWithContext(ctx, "n.age > 18", nodes, nil)
+	fixtureAdmission514Context, fixtureAdmission514 := expressionTestContext(ctx, "n.age > 18")
+	_ = fixtureAdmission514
+	result := e.evaluateExpressionWithContext(fixtureAdmission514, fixtureAdmission514Context, "n.age > 18", nodes, nil)
 	if result != true {
 		t.Errorf("n.age > 18 = %v, want true", result)
 	}
 
 	// Multiple conditions with AND
-	result = e.evaluateExpressionWithContext(ctx, "n.age > 18 AND n.active = true", nodes, nil)
+	fixtureAdmission515Context, fixtureAdmission515 := expressionTestContext(ctx, "n.age > 18 AND n.active = true")
+	_ = fixtureAdmission515
+	result = e.evaluateExpressionWithContext(fixtureAdmission515, fixtureAdmission515Context, "n.age > 18 AND n.active = true", nodes, nil)
 	if result != true {
 		t.Errorf("n.age > 18 AND n.active = %v, want true", result)
 	}
@@ -1740,7 +1948,9 @@ func TestIsNullPredicates(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission516Context, fixtureAdmission516 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission516
+			result := e.evaluateExpressionWithContext(fixtureAdmission516, fixtureAdmission516Context, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1783,7 +1993,9 @@ func TestStringPredicates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission517Context, fixtureAdmission517 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission517
+			result := e.evaluateExpressionWithContext(fixtureAdmission517, fixtureAdmission517Context, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1819,7 +2031,9 @@ func TestInOperatorExpression(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission518Context, fixtureAdmission518 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission518
+			result := e.evaluateExpressionWithContext(fixtureAdmission518, fixtureAdmission518Context, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1854,7 +2068,9 @@ func TestBetweenOperator(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			result := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission519Context, fixtureAdmission519 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission519
+			result := e.evaluateExpressionWithContext(fixtureAdmission519, fixtureAdmission519Context, tt.expr, nodes, nil)
 			if result != tt.expected {
 				t.Errorf("%s = %v, want %v", tt.expr, result, tt.expected)
 			}
@@ -1875,7 +2091,9 @@ func TestApocMapMerge(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "apoc.map.merge(n.map1, n.map2)", nodes, nil)
+	fixtureAdmission520Context, fixtureAdmission520 := expressionTestContext(ctx, "apoc.map.merge(n.map1, n.map2)")
+	_ = fixtureAdmission520
+	result := e.evaluateExpressionWithContext(fixtureAdmission520, fixtureAdmission520Context, "apoc.map.merge(n.map1, n.map2)", nodes, nil)
 	if m, ok := result.(map[string]interface{}); ok {
 		// map2's "b" should override map1's "b"
 		if m["a"] != int64(1) {
@@ -1900,7 +2118,9 @@ func TestApocMapSetKey(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "apoc.map.setKey(n.myMap, 'b', 2)", nodes, nil)
+	fixtureAdmission521Context, fixtureAdmission521 := expressionTestContext(ctx, "apoc.map.setKey(n.myMap, 'b', 2)")
+	_ = fixtureAdmission521
+	result := e.evaluateExpressionWithContext(fixtureAdmission521, fixtureAdmission521Context, "apoc.map.setKey(n.myMap, 'b', 2)", nodes, nil)
 	if m, ok := result.(map[string]interface{}); ok {
 		if m["a"] != int64(1) {
 			t.Errorf("map should still have a=1, got %v", m["a"])
@@ -1922,7 +2142,9 @@ func TestApocMapRemoveKey(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, "apoc.map.removeKey(n.myMap, 'b')", nodes, nil)
+	fixtureAdmission522Context, fixtureAdmission522 := expressionTestContext(ctx, "apoc.map.removeKey(n.myMap, 'b')")
+	_ = fixtureAdmission522
+	result := e.evaluateExpressionWithContext(fixtureAdmission522, fixtureAdmission522Context, "apoc.map.removeKey(n.myMap, 'b')", nodes, nil)
 	if m, ok := result.(map[string]interface{}); ok {
 		if _, exists := m["b"]; exists {
 			t.Errorf("map should not have key 'b' after removeKey")
@@ -1968,7 +2190,9 @@ func TestFunctionAdditionalMathAndStringCoverage(t *testing.T) {
 		t.Run(tt.expr, func(t *testing.T) {
 			ctx := context.Background()
 
-			got := e.evaluateExpressionWithContext(ctx, tt.expr, nodes, nil)
+			fixtureAdmission523Context, fixtureAdmission523 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission523
+			got := e.evaluateExpressionWithContext(fixtureAdmission523, fixtureAdmission523Context, tt.expr, nodes, nil)
 			if got != tt.want {
 				t.Errorf("%s = %v, want %v", tt.expr, got, tt.want)
 			}
@@ -1981,7 +2205,9 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 	ctx := context.Background()
 
 	// linestring / polygon literals
-	line := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0}), point({x:1,y:1})])", nil, nil)
+	fixtureAdmission524Context, fixtureAdmission524 := expressionTestContext(ctx, "lineString([point({x:0,y:0}), point({x:1,y:1})])")
+	_ = fixtureAdmission524
+	line := e.evaluateExpressionWithContext(fixtureAdmission524, fixtureAdmission524Context, "lineString([point({x:0,y:0}), point({x:1,y:1})])", nil, nil)
 	lineMap, ok := line.(map[string]interface{})
 	if !ok {
 		t.Fatalf("lineString should return map, got %T", line)
@@ -1990,7 +2216,9 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 		t.Fatalf("lineString type = %v, want linestring", lineMap["type"])
 	}
 
-	poly := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nil, nil)
+	fixtureAdmission525Context, fixtureAdmission525 := expressionTestContext(ctx, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])")
+	_ = fixtureAdmission525
+	poly := e.evaluateExpressionWithContext(fixtureAdmission525, fixtureAdmission525Context, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nil, nil)
 	polyMap, ok := poly.(map[string]interface{})
 	if !ok {
 		t.Fatalf("polygon should return map, got %T", poly)
@@ -2000,10 +2228,14 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 	}
 
 	// insufficient points branches
-	if v := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0})])", nil, nil); v != nil {
+	fixtureAdmission526Context, fixtureAdmission526 := expressionTestContext(ctx, "lineString([point({x:0,y:0})])")
+	_ = fixtureAdmission526
+	if v := e.evaluateExpressionWithContext(fixtureAdmission526, fixtureAdmission526Context, "lineString([point({x:0,y:0})])", nil, nil); v != nil {
 		t.Fatalf("lineString with <2 points should be nil, got %v", v)
 	}
-	if v := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:1,y:1})])", nil, nil); v != nil {
+	fixtureAdmission527Context, fixtureAdmission527 := expressionTestContext(ctx, "polygon([point({x:0,y:0}), point({x:1,y:1})])")
+	_ = fixtureAdmission527
+	if v := e.evaluateExpressionWithContext(fixtureAdmission527, fixtureAdmission527Context, "polygon([point({x:0,y:0}), point({x:1,y:1})])", nil, nil); v != nil {
 		t.Fatalf("polygon with <3 points should be nil, got %v", v)
 	}
 
@@ -2020,17 +2252,23 @@ func TestFunctionAdditionalGeometryAndPathCoverage(t *testing.T) {
 		Relationships: pathEdges,
 		Length:        1,
 	}
-	gotNodes := e.evaluateExpressionWithContextFull(ctx, "nodes(p)", nil, nil, map[string]*PathResult{"p": path}, nil, nil, 0)
+	fixtureAdmission528Context, fixtureAdmission528 := expressionTestContext(ctx, "nodes(p)")
+	_ = fixtureAdmission528
+	gotNodes := e.evaluateExpressionWithContextFull(fixtureAdmission528, fixtureAdmission528Context, "nodes(p)", nil, nil, map[string]*PathResult{"p": path}, nil, nil, 0)
 	if arr, ok := gotNodes.([]interface{}); !ok || len(arr) != 2 {
 		t.Fatalf("nodes(p) expected 2 entries, got %T %#v", gotNodes, gotNodes)
 	}
 
 	// fallback via allPathNodes/allPathEdges
-	gotNodesFallback := e.evaluateExpressionWithContextFull(ctx, "nodes(p)", nil, nil, nil, nil, pathNodes, 0)
+	fixtureAdmission529Context, fixtureAdmission529 := expressionTestContext(ctx, "nodes(p)")
+	_ = fixtureAdmission529
+	gotNodesFallback := e.evaluateExpressionWithContextFull(fixtureAdmission529, fixtureAdmission529Context, "nodes(p)", nil, nil, nil, nil, pathNodes, 0)
 	if arr, ok := gotNodesFallback.([]interface{}); !ok || len(arr) != 2 {
 		t.Fatalf("nodes(p) fallback expected 2 entries, got %T %#v", gotNodesFallback, gotNodesFallback)
 	}
-	gotRelsFallback := e.evaluateExpressionWithContextFull(ctx, "relationships(p)", nil, nil, nil, pathEdges, nil, 0)
+	fixtureAdmission530Context, fixtureAdmission530 := expressionTestContext(ctx, "relationships(p)")
+	_ = fixtureAdmission530
+	gotRelsFallback := e.evaluateExpressionWithContextFull(fixtureAdmission530, fixtureAdmission530Context, "relationships(p)", nil, nil, nil, pathEdges, nil, 0)
 	if arr, ok := gotRelsFallback.([]interface{}); !ok || len(arr) != 1 || arr[0] != pathEdges[0] {
 		t.Fatalf("relationships(p) fallback expected 1 entry, got %T %#v", gotRelsFallback, gotRelsFallback)
 	}
@@ -2057,33 +2295,55 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 	ctx := context.Background()
 
 	// list/map helpers in evaluateExpressionWithContextFullFunctions.
-	assertEqual(t, "indexOf([10,20,30], 20)", int64(1), e.evaluateExpressionWithContext(ctx, "indexOf([10,20,30], 20)", nodes, nil))
-	gotRange := e.evaluateExpressionWithContext(ctx, "range(1,3)", nodes, nil)
+	fixtureAdmission531Context, fixtureAdmission531 := expressionTestContext(ctx, "indexOf([10,20,30], 20)")
+	_ = fixtureAdmission531
+	assertEqual(t, "indexOf([10,20,30], 20)", int64(1), e.evaluateExpressionWithContext(fixtureAdmission531, fixtureAdmission531Context, "indexOf([10,20,30], 20)", nodes, nil))
+	fixtureAdmission532Context, fixtureAdmission532 := expressionTestContext(ctx, "range(1,3)")
+	_ = fixtureAdmission532
+	gotRange := e.evaluateExpressionWithContext(fixtureAdmission532, fixtureAdmission532Context, "range(1,3)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3)}, gotRange) {
 		t.Fatalf("range(1,3) = %#v, want [1 2 3]", gotRange)
 	}
-	gotRangeNeg := e.evaluateExpressionWithContext(ctx, "range(5,1,-2)", nodes, nil)
+	fixtureAdmission533Context, fixtureAdmission533 := expressionTestContext(ctx, "range(5,1,-2)")
+	_ = fixtureAdmission533
+	gotRangeNeg := e.evaluateExpressionWithContext(fixtureAdmission533, fixtureAdmission533Context, "range(5,1,-2)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{int64(5), int64(3), int64(1)}, gotRangeNeg) {
 		t.Fatalf("range(5,1,-2) = %#v, want [5 3 1]", gotRangeNeg)
 	}
-	gotRangeZero := e.evaluateExpressionWithContext(ctx, "range(1,3,0)", nodes, nil)
+	fixtureAdmission534Context, fixtureAdmission534 := expressionTestContext(ctx, "range(1,3,0)")
+	_ = fixtureAdmission534
+	gotRangeZero := e.evaluateExpressionWithContext(fixtureAdmission534, fixtureAdmission534Context, "range(1,3,0)", nodes, nil)
 	if gotRangeZero != nil {
 		t.Fatalf("range(1,3,0) = %#v, want invalid evaluation", gotRangeZero)
 	}
-	gotSliceEmpty := e.evaluateExpressionWithContext(ctx, "slice([1,2,3], 2, 1)", nodes, nil)
+	fixtureAdmission535Context, fixtureAdmission535 := expressionTestContext(ctx, "slice([1,2,3], 2, 1)")
+	_ = fixtureAdmission535
+	gotSliceEmpty := e.evaluateExpressionWithContext(fixtureAdmission535, fixtureAdmission535Context, "slice([1,2,3], 2, 1)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{}, gotSliceEmpty) {
 		t.Fatalf("slice([1,2,3],2,1) = %#v, want []", gotSliceEmpty)
 	}
-	gotSliceNonList := e.evaluateExpressionWithContext(ctx, "slice('not-list', 0, 1)", nodes, nil)
+	fixtureAdmission536Context, fixtureAdmission536 := expressionTestContext(ctx, "slice('not-list', 0, 1)")
+	_ = fixtureAdmission536
+	gotSliceNonList := e.evaluateExpressionWithContext(fixtureAdmission536, fixtureAdmission536Context, "slice('not-list', 0, 1)", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{}, gotSliceNonList) {
 		t.Fatalf("slice('not-list',0,1) = %#v, want []", gotSliceNonList)
 	}
-	assertEqual(t, "inDegree(missing)", int64(0), e.evaluateExpressionWithContext(ctx, "inDegree(missing)", nodes, nil))
-	assertEqual(t, "outDegree(missing)", int64(0), e.evaluateExpressionWithContext(ctx, "outDegree(missing)", nodes, nil))
-	assertEqual(t, "hasLabels(a, 'bad')", false, e.evaluateExpressionWithContext(ctx, "hasLabels(a, 'bad')", nodes, nil))
-	assertEqual(t, "hasLabels(missing, ['Person'])", false, e.evaluateExpressionWithContext(ctx, "hasLabels(missing, ['Person'])", nodes, nil))
+	fixtureAdmission537Context, fixtureAdmission537 := expressionTestContext(ctx, "inDegree(missing)")
+	_ = fixtureAdmission537
+	assertEqual(t, "inDegree(missing)", int64(0), e.evaluateExpressionWithContext(fixtureAdmission537, fixtureAdmission537Context, "inDegree(missing)", nodes, nil))
+	fixtureAdmission538Context, fixtureAdmission538 := expressionTestContext(ctx, "outDegree(missing)")
+	_ = fixtureAdmission538
+	assertEqual(t, "outDegree(missing)", int64(0), e.evaluateExpressionWithContext(fixtureAdmission538, fixtureAdmission538Context, "outDegree(missing)", nodes, nil))
+	fixtureAdmission539Context, fixtureAdmission539 := expressionTestContext(ctx, "hasLabels(a, 'bad')")
+	_ = fixtureAdmission539
+	assertEqual(t, "hasLabels(a, 'bad')", false, e.evaluateExpressionWithContext(fixtureAdmission539, fixtureAdmission539Context, "hasLabels(a, 'bad')", nodes, nil))
+	fixtureAdmission540Context, fixtureAdmission540 := expressionTestContext(ctx, "hasLabels(missing, ['Person'])")
+	_ = fixtureAdmission540
+	assertEqual(t, "hasLabels(missing, ['Person'])", false, e.evaluateExpressionWithContext(fixtureAdmission540, fixtureAdmission540Context, "hasLabels(missing, ['Person'])", nodes, nil))
 
-	fromPairs := e.evaluateExpressionWithContext(ctx, "apoc.map.fromPairs([['a',1],['b',2]])", nodes, nil)
+	fixtureAdmission541Context, fixtureAdmission541 := expressionTestContext(ctx, "apoc.map.fromPairs([['a',1],['b',2]])")
+	_ = fixtureAdmission541
+	fromPairs := e.evaluateExpressionWithContext(fixtureAdmission541, fixtureAdmission541Context, "apoc.map.fromPairs([['a',1],['b',2]])", nodes, nil)
 	fromPairsMap, ok := fromPairs.(map[string]interface{})
 	if !ok {
 		t.Fatalf("fromPairs result type = %T, want map[string]interface{}", fromPairs)
@@ -2092,7 +2352,9 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 		t.Fatalf("unexpected fromPairs result: %#v", fromPairsMap)
 	}
 
-	clean := e.evaluateExpressionWithContext(ctx, "apoc.map.clean(a.cleanMap, ['b'], [null])", nodes, nil)
+	fixtureAdmission542Context, fixtureAdmission542 := expressionTestContext(ctx, "apoc.map.clean(a.cleanMap, ['b'], [null])")
+	_ = fixtureAdmission542
+	clean := e.evaluateExpressionWithContext(fixtureAdmission542, fixtureAdmission542Context, "apoc.map.clean(a.cleanMap, ['b'], [null])", nodes, nil)
 	cleanMap, ok := clean.(map[string]interface{})
 	if !ok {
 		t.Fatalf("clean result type = %T, want map[string]interface{}", clean)
@@ -2109,10 +2371,14 @@ func TestFunctionAdditionalListMapAndDegreeCoverage(t *testing.T) {
 		t.Fatalf("clean map should not contain key c: %#v", cleanMap)
 	}
 
-	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext(ctx, "apoc.map.fromPairs('bad')", nodes, nil)) {
+	fixtureAdmission543Context, fixtureAdmission543 := expressionTestContext(ctx, "apoc.map.fromPairs('bad')")
+	_ = fixtureAdmission543
+	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext(fixtureAdmission543, fixtureAdmission543Context, "apoc.map.fromPairs('bad')", nodes, nil)) {
 		t.Fatalf("apoc.map.fromPairs('bad') should return empty map")
 	}
-	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext(ctx, "apoc.map.clean('bad')", nodes, nil)) {
+	fixtureAdmission544Context, fixtureAdmission544 := expressionTestContext(ctx, "apoc.map.clean('bad')")
+	_ = fixtureAdmission544
+	if !reflect.DeepEqual(map[string]interface{}{}, e.evaluateExpressionWithContext(fixtureAdmission544, fixtureAdmission544Context, "apoc.map.clean('bad')", nodes, nil)) {
 		t.Fatalf("apoc.map.clean('bad') should return empty map")
 	}
 }
@@ -2145,33 +2411,47 @@ func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
 		"reduce(acc 0, x IN [1,2] | acc + x)", // malformed reduce syntax
 	}
 	for _, expr := range nilExprs {
-		if got := e.evaluateExpressionWithContext(ctx, expr, nodes, rels); got != nil {
+		fixtureAdmission545Context, fixtureAdmission545 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission545
+		if got := e.evaluateExpressionWithContext(fixtureAdmission545, fixtureAdmission545Context, expr, nodes, rels); got != nil {
 			t.Fatalf("%s should be nil, got %T %#v", expr, got, got)
 		}
 	}
 
 	// isNaN of a string is a type error in Neo4j; the expression evaluator
 	// reports errors as null.
-	if got := e.evaluateExpressionWithContext(ctx, "isNaN('x')", nodes, rels); got != nil {
+	fixtureAdmission546Context, fixtureAdmission546 := expressionTestContext(ctx, "isNaN('x')")
+	_ = fixtureAdmission546
+	if got := e.evaluateExpressionWithContext(fixtureAdmission546, fixtureAdmission546Context, "isNaN('x')", nodes, rels); got != nil {
 		t.Fatalf("isNaN('x') = %#v, want nil", got)
 	}
 	// isEmpty of a number is Neo4j's TypeError, null in this evaluator.
-	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(123)", nodes, rels); got != nil {
+	fixtureAdmission547Context, fixtureAdmission547 := expressionTestContext(ctx, "isEmpty(123)")
+	_ = fixtureAdmission547
+	if got := e.evaluateExpressionWithContext(fixtureAdmission547, fixtureAdmission547Context, "isEmpty(123)", nodes, rels); got != nil {
 		t.Fatalf("isEmpty(123) = %#v, want nil", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(NULL)", nodes, rels); got != nil {
+	fixtureAdmission548Context, fixtureAdmission548 := expressionTestContext(ctx, "isEmpty(NULL)")
+	_ = fixtureAdmission548
+	if got := e.evaluateExpressionWithContext(fixtureAdmission548, fixtureAdmission548Context, "isEmpty(NULL)", nodes, rels); got != nil {
 		t.Fatalf("isEmpty(NULL) = %#v, want nil (Neo4j)", got)
 	}
 
-	if got := e.evaluateExpressionWithContext(ctx, "coth(0)", nodes, rels); !math.IsNaN(got.(float64)) {
+	fixtureAdmission549Context, fixtureAdmission549 := expressionTestContext(ctx, "coth(0)")
+	_ = fixtureAdmission549
+	if got := e.evaluateExpressionWithContext(fixtureAdmission549, fixtureAdmission549Context, "coth(0)", nodes, rels); !math.IsNaN(got.(float64)) {
 		t.Fatalf("coth(0) should be NaN, got %#v", got)
 	}
 
 	// nodes()/relationships() empty fallback branches.
-	if got := e.evaluateExpressionWithContext(ctx, "nodes(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
+	fixtureAdmission550Context, fixtureAdmission550 := expressionTestContext(ctx, "nodes(missingPath)")
+	_ = fixtureAdmission550
+	if got := e.evaluateExpressionWithContext(fixtureAdmission550, fixtureAdmission550Context, "nodes(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("nodes(missingPath) = %#v, want []", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "relationships(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
+	fixtureAdmission551Context, fixtureAdmission551 := expressionTestContext(ctx, "relationships(missingPath)")
+	_ = fixtureAdmission551
+	if got := e.evaluateExpressionWithContext(fixtureAdmission551, fixtureAdmission551Context, "relationships(missingPath)", nodes, rels); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("relationships(missingPath) = %#v, want []", got)
 	}
 }
@@ -2194,9 +2474,11 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	eval := func(expr string, allEdges []*storage.Edge, allNodes []*storage.Node, pathLen int) interface{} {
 		ctx := context.Background()
 
-		return e.evaluateExpressionWithContextFullMath(ctx,
+		fixtureAdmission552Context, fixtureAdmission552 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission552
+		return e.evaluateExpressionWithContextFullFunctions(fixtureAdmission552, fixtureAdmission552Context,
 			expr,
-			strings.ToLower(expr),
+
 			nodes,
 			rels,
 			paths,
@@ -2324,10 +2606,14 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	if got := eval("point.contains(polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:2,y:2})]), point({x:1,y:1}))", nil, nil, 0); got != true {
 		t.Fatalf("point.contains(...) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContextFull(context.Background(), "vector.similarity.cosine([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
+	fixtureAdmission553Context, fixtureAdmission553 := expressionTestContext(context.Background(), "vector.similarity.cosine([1.0,0.0], [1.0,0.0])")
+	_ = fixtureAdmission553
+	if got := e.evaluateExpressionWithContextFull(fixtureAdmission553, fixtureAdmission553Context, "vector.similarity.cosine([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
 		t.Fatal("vector.similarity.cosine should not be nil")
 	}
-	if got := e.evaluateExpressionWithContextFull(context.Background(), "vector.similarity.euclidean([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
+	fixtureAdmission554Context, fixtureAdmission554 := expressionTestContext(context.Background(), "vector.similarity.euclidean([1.0,0.0], [1.0,0.0])")
+	_ = fixtureAdmission554
+	if got := e.evaluateExpressionWithContextFull(fixtureAdmission554, fixtureAdmission554Context, "vector.similarity.euclidean([1.0,0.0], [1.0,0.0])", nodes, rels, paths, nil, nil, 0); got == nil {
 		t.Fatal("vector.similarity.euclidean should not be nil")
 	}
 	if got := eval("all(x IN [1,2,3] WHERE x > 0)", nil, nil, 0); got != true {
@@ -2374,14 +2660,18 @@ func TestFunctionEvaluator_KalmanAdditionalBranches(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": n}
 	ctx := context.Background()
 
-	state := e.evaluateExpressionWithContext(ctx, "kalman.init()", nodes, nil)
+	fixtureAdmission555Context, fixtureAdmission555 := expressionTestContext(ctx, "kalman.init()")
+	_ = fixtureAdmission555
+	state := e.evaluateExpressionWithContext(fixtureAdmission555, fixtureAdmission555Context, "kalman.init()", nodes, nil)
 	stateStr, ok := state.(string)
 	if !ok || stateStr == "" {
 		t.Fatalf("kalman.init() should return non-empty state string, got %#v", state)
 	}
 	n.Properties["state"] = stateStr
 
-	processed := e.evaluateExpressionWithContext(ctx, "kalman.process(10, n.state)", nodes, nil)
+	fixtureAdmission556Context, fixtureAdmission556 := expressionTestContext(ctx, "kalman.process(10, n.state)")
+	_ = fixtureAdmission556
+	processed := e.evaluateExpressionWithContext(fixtureAdmission556, fixtureAdmission556Context, "kalman.process(10, n.state)", nodes, nil)
 	processedMap, ok := processed.(map[string]interface{})
 	if !ok || processedMap["state"] == nil || processedMap["value"] == nil {
 		t.Fatalf("kalman.process should return state/value map, got %#v", processed)
@@ -2390,36 +2680,52 @@ func TestFunctionEvaluator_KalmanAdditionalBranches(t *testing.T) {
 		n.Properties["state"] = gotState
 	}
 
-	if got := e.evaluateExpressionWithContext(ctx, "kalman.predict(n.state, 2)", nodes, nil); got == nil {
+	fixtureAdmission557Context, fixtureAdmission557 := expressionTestContext(ctx, "kalman.predict(n.state, 2)")
+	_ = fixtureAdmission557
+	if got := e.evaluateExpressionWithContext(fixtureAdmission557, fixtureAdmission557Context, "kalman.predict(n.state, 2)", nodes, nil); got == nil {
 		t.Fatalf("kalman.predict should not be nil")
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "kalman.state(n.state)", nodes, nil); got == nil {
+	fixtureAdmission558Context, fixtureAdmission558 := expressionTestContext(ctx, "kalman.state(n.state)")
+	_ = fixtureAdmission558
+	if got := e.evaluateExpressionWithContext(fixtureAdmission558, fixtureAdmission558Context, "kalman.state(n.state)", nodes, nil); got == nil {
 		t.Fatalf("kalman.state should not be nil")
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "kalman.reset(n.state)", nodes, nil); got == nil {
+	fixtureAdmission559Context, fixtureAdmission559 := expressionTestContext(ctx, "kalman.reset(n.state)")
+	_ = fixtureAdmission559
+	if got := e.evaluateExpressionWithContext(fixtureAdmission559, fixtureAdmission559Context, "kalman.reset(n.state)", nodes, nil); got == nil {
 		t.Fatalf("kalman.reset should not be nil")
 	}
 
-	vstate := e.evaluateExpressionWithContext(ctx, "kalman.velocity.init()", nodes, nil)
+	fixtureAdmission560Context, fixtureAdmission560 := expressionTestContext(ctx, "kalman.velocity.init()")
+	_ = fixtureAdmission560
+	vstate := e.evaluateExpressionWithContext(fixtureAdmission560, fixtureAdmission560Context, "kalman.velocity.init()", nodes, nil)
 	vstateStr, ok := vstate.(string)
 	if !ok || vstateStr == "" {
 		t.Fatalf("kalman.velocity.init() should return state string, got %#v", vstate)
 	}
 	n.Properties["vstate"] = vstateStr
-	if got := e.evaluateExpressionWithContext(ctx, "kalman.velocity.process(5, n.vstate)", nodes, nil); got == nil {
+	fixtureAdmission561Context, fixtureAdmission561 := expressionTestContext(ctx, "kalman.velocity.process(5, n.vstate)")
+	_ = fixtureAdmission561
+	if got := e.evaluateExpressionWithContext(fixtureAdmission561, fixtureAdmission561Context, "kalman.velocity.process(5, n.vstate)", nodes, nil); got == nil {
 		t.Fatalf("kalman.velocity.process should not be nil")
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "kalman.velocity.predict(n.vstate, 3)", nodes, nil); got == nil {
+	fixtureAdmission562Context, fixtureAdmission562 := expressionTestContext(ctx, "kalman.velocity.predict(n.vstate, 3)")
+	_ = fixtureAdmission562
+	if got := e.evaluateExpressionWithContext(fixtureAdmission562, fixtureAdmission562Context, "kalman.velocity.predict(n.vstate, 3)", nodes, nil); got == nil {
 		t.Fatalf("kalman.velocity.predict should not be nil")
 	}
 
-	astate := e.evaluateExpressionWithContext(ctx, "kalman.adaptive.init()", nodes, nil)
+	fixtureAdmission563Context, fixtureAdmission563 := expressionTestContext(ctx, "kalman.adaptive.init()")
+	_ = fixtureAdmission563
+	astate := e.evaluateExpressionWithContext(fixtureAdmission563, fixtureAdmission563Context, "kalman.adaptive.init()", nodes, nil)
 	astateStr, ok := astate.(string)
 	if !ok || astateStr == "" {
 		t.Fatalf("kalman.adaptive.init() should return state string, got %#v", astate)
 	}
 	n.Properties["astate"] = astateStr
-	if got := e.evaluateExpressionWithContext(ctx, "kalman.adaptive.process(5, n.astate)", nodes, nil); got == nil {
+	fixtureAdmission564Context, fixtureAdmission564 := expressionTestContext(ctx, "kalman.adaptive.process(5, n.astate)")
+	_ = fixtureAdmission564
+	if got := e.evaluateExpressionWithContext(fixtureAdmission564, fixtureAdmission564Context, "kalman.adaptive.process(5, n.astate)", nodes, nil); got == nil {
 		t.Fatalf("kalman.adaptive.process should not be nil")
 	}
 }
@@ -2434,10 +2740,18 @@ func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	assertEqual(t, "n.arrAny[1]", int64(8), e.evaluateExpressionWithContext(ctx, "n.arrAny[1]", nodes, nil))
-	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext(ctx, "n.arrAny[-1]", nodes, nil))
-	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext(ctx, "n.arrStr[0]", nodes, nil))
-	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext(ctx, "n.arrStr[-1]", nodes, nil))
+	fixtureAdmission402Context, fixtureAdmission402 := expressionTestContext(ctx, "n.arrAny[1]")
+	_ = fixtureAdmission402Context
+	assertEqual(t, "n.arrAny[1]", int64(8), e.evaluateExpressionWithContext(fixtureAdmission402, fixtureAdmission402Context, "n.arrAny[1]", nodes, nil))
+	fixtureAdmission403Context, fixtureAdmission403 := expressionTestContext(ctx, "n.arrAny[-1]")
+	_ = fixtureAdmission403Context
+	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext(fixtureAdmission403, fixtureAdmission403Context, "n.arrAny[-1]", nodes, nil))
+	fixtureAdmission422Context, fixtureAdmission422 := expressionTestContext(ctx, "n.arrStr[0]")
+	_ = fixtureAdmission422Context
+	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext(fixtureAdmission422, fixtureAdmission422Context, "n.arrStr[0]", nodes, nil))
+	fixtureAdmission423Context, fixtureAdmission423 := expressionTestContext(ctx, "n.arrStr[-1]")
+	_ = fixtureAdmission423Context
+	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext(fixtureAdmission423, fixtureAdmission423Context, "n.arrStr[-1]", nodes, nil))
 	assertEqual(t, "substring(n.text,1,1)", "e", typedNumericRead(t, e, "MATCH (n:Person) RETURN substring(n.text,1,1) AS v", nil))
 	assertEqual(t, "right(n.text,1)", "o", typedNumericRead(t, e, "MATCH (n:Person) RETURN right(n.text,1) AS v", nil))
 	for _, expression := range []string{"n.text[1]", "n.text[-1]"} {
@@ -2445,16 +2759,24 @@ func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 	}
 
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[99]", nodes, nil); got != nil {
+	fixtureAdmission571Context, fixtureAdmission571 := expressionTestContext(ctx, "n.arrAny[99]")
+	_ = fixtureAdmission571
+	if got := e.evaluateExpressionWithContext(fixtureAdmission571, fixtureAdmission571Context, "n.arrAny[99]", nodes, nil); got != nil {
 		t.Fatalf("n.arrAny[99] should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "1 IN [1,2,3]", nodes, nil); got != true {
+	fixtureAdmission572Context, fixtureAdmission572 := expressionTestContext(ctx, "1 IN [1,2,3]")
+	_ = fixtureAdmission572
+	if got := e.evaluateExpressionWithContext(fixtureAdmission572, fixtureAdmission572Context, "1 IN [1,2,3]", nodes, nil); got != true {
 		t.Fatalf("1 IN [1,2,3] should be true, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(7), int64(8)}, got) {
+	fixtureAdmission573Context, fixtureAdmission573 := expressionTestContext(ctx, "n.arrAny[..2]")
+	_ = fixtureAdmission573
+	if got := e.evaluateExpressionWithContext(fixtureAdmission573, fixtureAdmission573Context, "n.arrAny[..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(7), int64(8)}, got) {
 		t.Fatalf("n.arrAny[..2] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[1..]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(8), int64(9)}, got) {
+	fixtureAdmission574Context, fixtureAdmission574 := expressionTestContext(ctx, "n.arrAny[1..]")
+	_ = fixtureAdmission574
+	if got := e.evaluateExpressionWithContext(fixtureAdmission574, fixtureAdmission574Context, "n.arrAny[1..]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(8), int64(9)}, got) {
 		t.Fatalf("n.arrAny[1..] unexpected: %#v", got)
 	}
 }
@@ -2471,22 +2793,32 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	nodes := map[string]*storage.Node{"n": node}
 	ctx := context.Background()
 
-	if got := e.evaluateExpressionWithContextFullFunctions(ctx, "", nodes, nil, nil, nil, nil, 0); got != nil {
+	fixtureAdmission575Context, fixtureAdmission575 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission575
+	if got := e.evaluateExpressionWithContextFullFunctions(fixtureAdmission575, fixtureAdmission575Context, "", nodes, nil, nil, nil, nil, 0); got != nil {
 		t.Fatalf("empty expr should return nil, got %#v", got)
 	}
 
 	// Additional array-indexing/slicing branches.
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[-3..-1]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(2), int64(3)}, got) {
+	fixtureAdmission576Context, fixtureAdmission576 := expressionTestContext(ctx, "n.arrAny[-3..-1]")
+	_ = fixtureAdmission576
+	if got := e.evaluateExpressionWithContext(fixtureAdmission576, fixtureAdmission576Context, "n.arrAny[-3..-1]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(2), int64(3)}, got) {
 		t.Fatalf("n.arrAny[-3..-1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[-99..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2)}, got) {
+	fixtureAdmission577Context, fixtureAdmission577 := expressionTestContext(ctx, "n.arrAny[-99..2]")
+	_ = fixtureAdmission577
+	if got := e.evaluateExpressionWithContext(fixtureAdmission577, fixtureAdmission577Context, "n.arrAny[-99..2]", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2)}, got) {
 		t.Fatalf("n.arrAny[-99..2] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[3..1]", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
+	fixtureAdmission578Context, fixtureAdmission578 := expressionTestContext(ctx, "n.arrAny[3..1]")
+	_ = fixtureAdmission578
+	if got := e.evaluateExpressionWithContext(fixtureAdmission578, fixtureAdmission578Context, "n.arrAny[3..1]", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("n.arrAny[3..1] unexpected: %#v", got)
 	}
 	// Neo4j slices a non-list value as a list of that value (#907).
-	if got := e.evaluateExpressionWithContext(ctx, "n.text[..1]", nodes, nil); !reflect.DeepEqual([]interface{}{"xy"}, got) {
+	fixtureAdmission579Context, fixtureAdmission579 := expressionTestContext(ctx, "n.text[..1]")
+	_ = fixtureAdmission579
+	if got := e.evaluateExpressionWithContext(fixtureAdmission579, fixtureAdmission579Context, "n.text[..1]", nodes, nil); !reflect.DeepEqual([]interface{}{"xy"}, got) {
 		t.Fatalf("n.text[..1] unexpected: %#v", got)
 	}
 	// Neo4j list indices are integers, without implicit numeric-string coercion.
@@ -2499,137 +2831,219 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	// Scalar conversions.
-	if got := e.evaluateExpressionWithContext(ctx, "toInteger(2.9)", nodes, nil); got != int64(2) {
+	fixtureAdmission581Context, fixtureAdmission581 := expressionTestContext(ctx, "toInteger(2.9)")
+	_ = fixtureAdmission581
+	if got := e.evaluateExpressionWithContext(fixtureAdmission581, fixtureAdmission581Context, "toInteger(2.9)", nodes, nil); got != int64(2) {
 		t.Fatalf("toInteger(2.9) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toInteger('bad')", nodes, nil); got != nil {
+	fixtureAdmission582Context, fixtureAdmission582 := expressionTestContext(ctx, "toInteger('bad')")
+	_ = fixtureAdmission582
+	if got := e.evaluateExpressionWithContext(fixtureAdmission582, fixtureAdmission582Context, "toInteger('bad')", nodes, nil); got != nil {
 		t.Fatalf("toInteger('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toInt(3)", nodes, nil); got != int64(3) {
+	fixtureAdmission583Context, fixtureAdmission583 := expressionTestContext(ctx, "toInt(3)")
+	_ = fixtureAdmission583
+	if got := e.evaluateExpressionWithContext(fixtureAdmission583, fixtureAdmission583Context, "toInt(3)", nodes, nil); got != int64(3) {
 		t.Fatalf("toInt(3) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toInt('bad')", nodes, nil); got != nil {
+	fixtureAdmission584Context, fixtureAdmission584 := expressionTestContext(ctx, "toInt('bad')")
+	_ = fixtureAdmission584
+	if got := e.evaluateExpressionWithContext(fixtureAdmission584, fixtureAdmission584Context, "toInt('bad')", nodes, nil); got != nil {
 		t.Fatalf("toInt('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloat(2)", nodes, nil); got != float64(2) {
+	fixtureAdmission585Context, fixtureAdmission585 := expressionTestContext(ctx, "toFloat(2)")
+	_ = fixtureAdmission585
+	if got := e.evaluateExpressionWithContext(fixtureAdmission585, fixtureAdmission585Context, "toFloat(2)", nodes, nil); got != float64(2) {
 		t.Fatalf("toFloat(2) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloat('3.5')", nodes, nil); got != float64(3.5) {
+	fixtureAdmission586Context, fixtureAdmission586 := expressionTestContext(ctx, "toFloat('3.5')")
+	_ = fixtureAdmission586
+	if got := e.evaluateExpressionWithContext(fixtureAdmission586, fixtureAdmission586Context, "toFloat('3.5')", nodes, nil); got != float64(3.5) {
 		t.Fatalf("toFloat('3.5') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloat('bad')", nodes, nil); got != nil {
+	fixtureAdmission587Context, fixtureAdmission587 := expressionTestContext(ctx, "toFloat('bad')")
+	_ = fixtureAdmission587
+	if got := e.evaluateExpressionWithContext(fixtureAdmission587, fixtureAdmission587Context, "toFloat('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloat('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBoolean('TRUE')", nodes, nil); got != true {
+	fixtureAdmission588Context, fixtureAdmission588 := expressionTestContext(ctx, "toBoolean('TRUE')")
+	_ = fixtureAdmission588
+	if got := e.evaluateExpressionWithContext(fixtureAdmission588, fixtureAdmission588Context, "toBoolean('TRUE')", nodes, nil); got != true {
 		t.Fatalf("toBoolean('TRUE') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBoolean(1)", nodes, nil); got != true {
+	fixtureAdmission589Context, fixtureAdmission589 := expressionTestContext(ctx, "toBoolean(1)")
+	_ = fixtureAdmission589
+	if got := e.evaluateExpressionWithContext(fixtureAdmission589, fixtureAdmission589Context, "toBoolean(1)", nodes, nil); got != true {
 		t.Fatalf("toBoolean(1) should be true, got %#v", got)
 	}
 
 	// OrNull conversion variants.
-	if got := e.evaluateExpressionWithContext(ctx, "toIntegerOrNull('7')", nodes, nil); got != int64(7) {
+	fixtureAdmission590Context, fixtureAdmission590 := expressionTestContext(ctx, "toIntegerOrNull('7')")
+	_ = fixtureAdmission590
+	if got := e.evaluateExpressionWithContext(fixtureAdmission590, fixtureAdmission590Context, "toIntegerOrNull('7')", nodes, nil); got != int64(7) {
 		t.Fatalf("toIntegerOrNull('7') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toIntegerOrNull('bad')", nodes, nil); got != nil {
+	fixtureAdmission591Context, fixtureAdmission591 := expressionTestContext(ctx, "toIntegerOrNull('bad')")
+	_ = fixtureAdmission591
+	if got := e.evaluateExpressionWithContext(fixtureAdmission591, fixtureAdmission591Context, "toIntegerOrNull('bad')", nodes, nil); got != nil {
 		t.Fatalf("toIntegerOrNull('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloatOrNull('2.25')", nodes, nil); got != float64(2.25) {
+	fixtureAdmission592Context, fixtureAdmission592 := expressionTestContext(ctx, "toFloatOrNull('2.25')")
+	_ = fixtureAdmission592
+	if got := e.evaluateExpressionWithContext(fixtureAdmission592, fixtureAdmission592Context, "toFloatOrNull('2.25')", nodes, nil); got != float64(2.25) {
 		t.Fatalf("toFloatOrNull('2.25') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloatOrNull('bad')", nodes, nil); got != nil {
+	fixtureAdmission593Context, fixtureAdmission593 := expressionTestContext(ctx, "toFloatOrNull('bad')")
+	_ = fixtureAdmission593
+	if got := e.evaluateExpressionWithContext(fixtureAdmission593, fixtureAdmission593Context, "toFloatOrNull('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloatOrNull('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBooleanOrNull('false')", nodes, nil); got != false {
+	fixtureAdmission594Context, fixtureAdmission594 := expressionTestContext(ctx, "toBooleanOrNull('false')")
+	_ = fixtureAdmission594
+	if got := e.evaluateExpressionWithContext(fixtureAdmission594, fixtureAdmission594Context, "toBooleanOrNull('false')", nodes, nil); got != false {
 		t.Fatalf("toBooleanOrNull('false') = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBooleanOrNull('bad')", nodes, nil); got != nil {
+	fixtureAdmission595Context, fixtureAdmission595 := expressionTestContext(ctx, "toBooleanOrNull('bad')")
+	_ = fixtureAdmission595
+	if got := e.evaluateExpressionWithContext(fixtureAdmission595, fixtureAdmission595Context, "toBooleanOrNull('bad')", nodes, nil); got != nil {
 		t.Fatalf("toBooleanOrNull('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toStringOrNull(null)", nodes, nil); got != nil {
+	fixtureAdmission596Context, fixtureAdmission596 := expressionTestContext(ctx, "toStringOrNull(null)")
+	_ = fixtureAdmission596
+	if got := e.evaluateExpressionWithContext(fixtureAdmission596, fixtureAdmission596Context, "toStringOrNull(null)", nodes, nil); got != nil {
 		t.Fatalf("toStringOrNull(null) should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toStringOrNull(12)", nodes, nil); got != "12" {
+	fixtureAdmission597Context, fixtureAdmission597 := expressionTestContext(ctx, "toStringOrNull(12)")
+	_ = fixtureAdmission597
+	if got := e.evaluateExpressionWithContext(fixtureAdmission597, fixtureAdmission597Context, "toStringOrNull(12)", nodes, nil); got != "12" {
 		t.Fatalf("toStringOrNull(12) = %#v", got)
 	}
 
 	// List conversion functions.
-	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList(n.mixed)", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3), nil, int64(1), nil}, got) {
+	fixtureAdmission598Context, fixtureAdmission598 := expressionTestContext(ctx, "toIntegerList(n.mixed)")
+	_ = fixtureAdmission598
+	if got := e.evaluateExpressionWithContext(fixtureAdmission598, fixtureAdmission598Context, "toIntegerList(n.mixed)", nodes, nil); !reflect.DeepEqual([]interface{}{int64(1), int64(2), int64(3), nil, int64(1), nil}, got) {
 		t.Fatalf("toIntegerList(n.mixed) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toIntegerList('bad')", nodes, nil); got != nil {
+	fixtureAdmission599Context, fixtureAdmission599 := expressionTestContext(ctx, "toIntegerList('bad')")
+	_ = fixtureAdmission599
+	if got := e.evaluateExpressionWithContext(fixtureAdmission599, fixtureAdmission599Context, "toIntegerList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toIntegerList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloatList(n.mixedF)", nodes, nil); !reflect.DeepEqual([]interface{}{float64(1.25), float64(2), float64(3.5), nil, nil}, got) {
+	fixtureAdmission600Context, fixtureAdmission600 := expressionTestContext(ctx, "toFloatList(n.mixedF)")
+	_ = fixtureAdmission600
+	if got := e.evaluateExpressionWithContext(fixtureAdmission600, fixtureAdmission600Context, "toFloatList(n.mixedF)", nodes, nil); !reflect.DeepEqual([]interface{}{float64(1.25), float64(2), float64(3.5), nil, nil}, got) {
 		t.Fatalf("toFloatList(n.mixedF) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toFloatList('bad')", nodes, nil); got != nil {
+	fixtureAdmission601Context, fixtureAdmission601 := expressionTestContext(ctx, "toFloatList('bad')")
+	_ = fixtureAdmission601
+	if got := e.evaluateExpressionWithContext(fixtureAdmission601, fixtureAdmission601Context, "toFloatList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toFloatList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList(n.mixedB)", nodes, nil); !reflect.DeepEqual([]interface{}{true, false, nil, true}, got) {
+	fixtureAdmission602Context, fixtureAdmission602 := expressionTestContext(ctx, "toBooleanList(n.mixedB)")
+	_ = fixtureAdmission602
+	if got := e.evaluateExpressionWithContext(fixtureAdmission602, fixtureAdmission602Context, "toBooleanList(n.mixedB)", nodes, nil); !reflect.DeepEqual([]interface{}{true, false, nil, true}, got) {
 		t.Fatalf("toBooleanList(n.mixedB) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toBooleanList('bad')", nodes, nil); got != nil {
+	fixtureAdmission603Context, fixtureAdmission603 := expressionTestContext(ctx, "toBooleanList('bad')")
+	_ = fixtureAdmission603
+	if got := e.evaluateExpressionWithContext(fixtureAdmission603, fixtureAdmission603Context, "toBooleanList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toBooleanList('bad') should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toStringList([1, null, true])", nodes, nil); !reflect.DeepEqual([]interface{}{"1", nil, "true"}, got) {
+	fixtureAdmission604Context, fixtureAdmission604 := expressionTestContext(ctx, "toStringList([1, null, true])")
+	_ = fixtureAdmission604
+	if got := e.evaluateExpressionWithContext(fixtureAdmission604, fixtureAdmission604Context, "toStringList([1, null, true])", nodes, nil); !reflect.DeepEqual([]interface{}{"1", nil, "true"}, got) {
 		t.Fatalf("toStringList([1, null, true]) unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "toStringList('bad')", nodes, nil); got != nil {
+	fixtureAdmission605Context, fixtureAdmission605 := expressionTestContext(ctx, "toStringList('bad')")
+	_ = fixtureAdmission605
+	if got := e.evaluateExpressionWithContext(fixtureAdmission605, fixtureAdmission605Context, "toStringList('bad')", nodes, nil); got != nil {
 		t.Fatalf("toStringList('bad') should be nil, got %#v", got)
 	}
 
 	// Utility + aggregate-in-expression branches.
-	if got := e.evaluateExpressionWithContext(ctx, "valueType({k: 1})", nodes, nil); got != "MAP NOT NULL" {
+	fixtureAdmission606Context, fixtureAdmission606 := expressionTestContext(ctx, "valueType({k: 1})")
+	_ = fixtureAdmission606
+	if got := e.evaluateExpressionWithContext(fixtureAdmission606, fixtureAdmission606Context, "valueType({k: 1})", nodes, nil); got != "MAP NOT NULL" {
 		t.Fatalf("valueType({k:1}) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "valueType([1])", nodes, nil); got != "LIST<INTEGER NOT NULL> NOT NULL" {
+	fixtureAdmission607Context, fixtureAdmission607 := expressionTestContext(ctx, "valueType([1])")
+	_ = fixtureAdmission607
+	if got := e.evaluateExpressionWithContext(fixtureAdmission607, fixtureAdmission607Context, "valueType([1])", nodes, nil); got != "LIST<INTEGER NOT NULL> NOT NULL" {
 		t.Fatalf("valueType([1]) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "valueType(n)", nodes, nil); got != "NODE NOT NULL" {
+	fixtureAdmission608Context, fixtureAdmission608 := expressionTestContext(ctx, "valueType(n)")
+	_ = fixtureAdmission608
+	if got := e.evaluateExpressionWithContext(fixtureAdmission608, fixtureAdmission608Context, "valueType(n)", nodes, nil); got != "NODE NOT NULL" {
 		t.Fatalf("valueType(n) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "collect(null)", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
+	fixtureAdmission609Context, fixtureAdmission609 := expressionTestContext(ctx, "collect(null)")
+	_ = fixtureAdmission609
+	if got := e.evaluateExpressionWithContext(fixtureAdmission609, fixtureAdmission609Context, "collect(null)", nodes, nil); !reflect.DeepEqual([]interface{}{}, got) {
 		t.Fatalf("collect(null) unexpected: %#v", got)
 	}
 
 	// String helper nil/fallback branches.
 	for _, expr := range []string{"lower(1)", "upper(1)", "trim(1)", "ltrim(1)", "rtrim(1)"} {
-		if got := e.evaluateExpressionWithContext(ctx, expr, nodes, nil); got != nil {
+		fixtureAdmission610Context, fixtureAdmission610 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission610
+		if got := e.evaluateExpressionWithContext(fixtureAdmission610, fixtureAdmission610Context, expr, nodes, nil); got != nil {
 			t.Fatalf("%s should be nil, got %#v", expr, got)
 		}
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "replace('abc', 'a')", nodes, nil); got != nil {
+	fixtureAdmission611Context, fixtureAdmission611 := expressionTestContext(ctx, "replace('abc', 'a')")
+	_ = fixtureAdmission611
+	if got := e.evaluateExpressionWithContext(fixtureAdmission611, fixtureAdmission611Context, "replace('abc', 'a')", nodes, nil); got != nil {
 		t.Fatalf("replace with missing arg should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "split('a')", nodes, nil); got != nil {
+	fixtureAdmission612Context, fixtureAdmission612 := expressionTestContext(ctx, "split('a')")
+	_ = fixtureAdmission612
+	if got := e.evaluateExpressionWithContext(fixtureAdmission612, fixtureAdmission612Context, "split('a')", nodes, nil); got != nil {
 		t.Fatalf("split with missing delimiter should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "substring('abc', 99, 2)", nodes, nil); got != "" {
+	fixtureAdmission613Context, fixtureAdmission613 := expressionTestContext(ctx, "substring('abc', 99, 2)")
+	_ = fixtureAdmission613
+	if got := e.evaluateExpressionWithContext(fixtureAdmission613, fixtureAdmission613Context, "substring('abc', 99, 2)", nodes, nil); got != "" {
 		t.Fatalf("substring start >= len should be empty, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "substring('abc')", nodes, nil); got != nil {
+	fixtureAdmission614Context, fixtureAdmission614 := expressionTestContext(ctx, "substring('abc')")
+	_ = fixtureAdmission614
+	if got := e.evaluateExpressionWithContext(fixtureAdmission614, fixtureAdmission614Context, "substring('abc')", nodes, nil); got != nil {
 		t.Fatalf("substring with missing args should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "left('abc', 99)", nodes, nil); got != "abc" {
+	fixtureAdmission615Context, fixtureAdmission615 := expressionTestContext(ctx, "left('abc', 99)")
+	_ = fixtureAdmission615
+	if got := e.evaluateExpressionWithContext(fixtureAdmission615, fixtureAdmission615Context, "left('abc', 99)", nodes, nil); got != "abc" {
 		t.Fatalf("left('abc',99) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "left('abc')", nodes, nil); got != nil {
+	fixtureAdmission616Context, fixtureAdmission616 := expressionTestContext(ctx, "left('abc')")
+	_ = fixtureAdmission616
+	if got := e.evaluateExpressionWithContext(fixtureAdmission616, fixtureAdmission616Context, "left('abc')", nodes, nil); got != nil {
 		t.Fatalf("left with missing args should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "right('abc', 99)", nodes, nil); got != "abc" {
+	fixtureAdmission617Context, fixtureAdmission617 := expressionTestContext(ctx, "right('abc', 99)")
+	_ = fixtureAdmission617
+	if got := e.evaluateExpressionWithContext(fixtureAdmission617, fixtureAdmission617Context, "right('abc', 99)", nodes, nil); got != "abc" {
 		t.Fatalf("right('abc',99) = %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "right('abc')", nodes, nil); got != nil {
+	fixtureAdmission618Context, fixtureAdmission618 := expressionTestContext(ctx, "right('abc')")
+	_ = fixtureAdmission618
+	if got := e.evaluateExpressionWithContext(fixtureAdmission618, fixtureAdmission618Context, "right('abc')", nodes, nil); got != nil {
 		t.Fatalf("right with missing args should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "lpad('x', bad)", nodes, nil); got != nil {
+	fixtureAdmission619Context, fixtureAdmission619 := expressionTestContext(ctx, "lpad('x', bad)")
+	_ = fixtureAdmission619
+	if got := e.evaluateExpressionWithContext(fixtureAdmission619, fixtureAdmission619Context, "lpad('x', bad)", nodes, nil); got != nil {
 		t.Fatalf("lpad invalid length should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "rpad('x', bad)", nodes, nil); got != nil {
+	fixtureAdmission620Context, fixtureAdmission620 := expressionTestContext(ctx, "rpad('x', bad)")
+	_ = fixtureAdmission620
+	if got := e.evaluateExpressionWithContext(fixtureAdmission620, fixtureAdmission620Context, "rpad('x', bad)", nodes, nil); got != nil {
 		t.Fatalf("rpad invalid length should be nil, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "format()", nodes, nil); got != nil {
+	fixtureAdmission621Context, fixtureAdmission621 := expressionTestContext(ctx, "format()")
+	_ = fixtureAdmission621
+	if got := e.evaluateExpressionWithContext(fixtureAdmission621, fixtureAdmission621Context, "format()", nodes, nil); got != nil {
 		t.Fatalf("format() should be nil, got %#v", got)
 	}
 }
@@ -2675,24 +3089,36 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, expr := range nilExprs {
-		if got := e.evaluateExpressionWithContext(ctx, expr, nodes, nil); got != nil {
+		fixtureAdmission622Context, fixtureAdmission622 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission622
+		if got := e.evaluateExpressionWithContext(fixtureAdmission622, fixtureAdmission622Context, expr, nodes, nil); got != nil {
 			t.Fatalf("%s should be nil, got %#v", expr, got)
 		}
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))", nodes, nil); got != nil {
+	fixtureAdmission623Context, fixtureAdmission623 := expressionTestContext(ctx, "point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))")
+	_ = fixtureAdmission623
+	if got := e.evaluateExpressionWithContext(fixtureAdmission623, fixtureAdmission623Context, "point.withinBBox('bad', point({x:0,y:0}), point({x:1,y:1}))", nodes, nil); got != nil {
 		t.Fatalf("point.withinBBox with an argument that isn't a point should be nil (Neo4j), got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "point.withinDistance('bad', point({x:0,y:0}), 1)", nodes, nil); got != false {
+	fixtureAdmission624Context, fixtureAdmission624 := expressionTestContext(ctx, "point.withinDistance('bad', point({x:0,y:0}), 1)")
+	_ = fixtureAdmission624
+	if got := e.evaluateExpressionWithContext(fixtureAdmission624, fixtureAdmission624Context, "point.withinDistance('bad', point({x:0,y:0}), 1)", nodes, nil); got != false {
 		t.Fatalf("point.withinDistance invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "point.intersects(point({x:1,y:1}), 'bad')", nodes, nil); got != false {
+	fixtureAdmission625Context, fixtureAdmission625 := expressionTestContext(ctx, "point.intersects(point({x:1,y:1}), 'bad')")
+	_ = fixtureAdmission625
+	if got := e.evaluateExpressionWithContext(fixtureAdmission625, fixtureAdmission625Context, "point.intersects(point({x:1,y:1}), 'bad')", nodes, nil); got != false {
 		t.Fatalf("point.intersects invalid input should be false, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "point.contains('bad', point({x:1,y:1}))", nodes, nil); got != false {
+	fixtureAdmission626Context, fixtureAdmission626 := expressionTestContext(ctx, "point.contains('bad', point({x:1,y:1}))")
+	_ = fixtureAdmission626
+	if got := e.evaluateExpressionWithContext(fixtureAdmission626, fixtureAdmission626Context, "point.contains('bad', point({x:1,y:1}))", nodes, nil); got != false {
 		t.Fatalf("point.contains invalid input should be false, got %#v", got)
 	}
 
-	if got := e.evaluateExpressionWithContext(ctx, "isNaN('bad')", nodes, nil); got != nil {
+	fixtureAdmission627Context, fixtureAdmission627 := expressionTestContext(ctx, "isNaN('bad')")
+	_ = fixtureAdmission627
+	if got := e.evaluateExpressionWithContext(fixtureAdmission627, fixtureAdmission627Context, "isNaN('bad')", nodes, nil); got != nil {
 		t.Fatalf("isNaN('bad') should be nil, got %#v", got)
 	}
 	// A string literal in a list position is rejected before evaluation
@@ -2700,16 +3126,22 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 	// ['bad'], and 'bad' > 0 is null.
 	for _, function := range []string{"all", "any", "none", "single"} {
 		expression := function + "(x IN 'bad' WHERE x > 0)"
-		if got := e.evaluateExpressionWithContext(ctx, expression, nodes, nil); got != nil {
+		fixtureAdmission628Context, fixtureAdmission628 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission628
+		if got := e.evaluateExpressionWithContext(fixtureAdmission628, fixtureAdmission628Context, expression, nodes, nil); got != nil {
 			t.Fatalf("%s should be nil, got %#v", expression, got)
 		}
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
+	fixtureAdmission629Context, fixtureAdmission629 := expressionTestContext(ctx, "filter(x IN 'bad' WHERE x > 0)")
+	_ = fixtureAdmission629
+	if got := e.evaluateExpressionWithContext(fixtureAdmission629, fixtureAdmission629Context, "filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
 		t.Fatalf("filter invalid input should return empty list, got %#v", got)
 	}
 	// extract is the list comprehension [x IN list | x], which reads a value
 	// that isn't a list as a list of that one value, as UNWIND does.
-	if got := e.evaluateExpressionWithContext(ctx, "extract(x IN 'bad' | x)", nodes, nil); !reflect.DeepEqual(got, []interface{}{"bad"}) {
+	fixtureAdmission630Context, fixtureAdmission630 := expressionTestContext(ctx, "extract(x IN 'bad' | x)")
+	_ = fixtureAdmission630
+	if got := e.evaluateExpressionWithContext(fixtureAdmission630, fixtureAdmission630Context, "extract(x IN 'bad' | x)", nodes, nil); !reflect.DeepEqual(got, []interface{}{"bad"}) {
 		t.Fatalf("extract of a single value should return it as a list, got %#v", got)
 	}
 }
@@ -2727,19 +3159,25 @@ func TestFunctionEval_APOCCollectionsConvertMetaAndMapBranches(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	got := e.evaluateExpressionWithContext(ctx, "apoc.coll.pairs([1,2,3])", nodes, nil)
+	fixtureAdmission631Context, fixtureAdmission631 := expressionTestContext(ctx, "apoc.coll.pairs([1,2,3])")
+	_ = fixtureAdmission631
+	got := e.evaluateExpressionWithContext(fixtureAdmission631, fixtureAdmission631Context, "apoc.coll.pairs([1,2,3])", nodes, nil)
 	pairs, ok := got.([]interface{})
 	if !ok || len(pairs) != 3 {
 		t.Fatalf("apoc.coll.pairs returned %#v", got)
 	}
 
-	got = e.evaluateExpressionWithContext(ctx, "apoc.coll.zip([1,2], ['a','b'])", nodes, nil)
+	fixtureAdmission632Context, fixtureAdmission632 := expressionTestContext(ctx, "apoc.coll.zip([1,2], ['a','b'])")
+	_ = fixtureAdmission632
+	got = e.evaluateExpressionWithContext(fixtureAdmission632, fixtureAdmission632Context, "apoc.coll.zip([1,2], ['a','b'])", nodes, nil)
 	zipped, ok := got.([]interface{})
 	if !ok || len(zipped) != 2 {
 		t.Fatalf("apoc.coll.zip returned %#v", got)
 	}
 
-	got = e.evaluateExpressionWithContext(ctx, "apoc.coll.frequencies(['a','a','b'])", nodes, nil)
+	fixtureAdmission633Context, fixtureAdmission633 := expressionTestContext(ctx, "apoc.coll.frequencies(['a','a','b'])")
+	_ = fixtureAdmission633
+	got = e.evaluateExpressionWithContext(fixtureAdmission633, fixtureAdmission633Context, "apoc.coll.frequencies(['a','a','b'])", nodes, nil)
 	if !reflect.DeepEqual([]interface{}{
 		map[string]interface{}{"item": "a", "count": int64(2)},
 		map[string]interface{}{"item": "b", "count": int64(1)},
@@ -2747,61 +3185,91 @@ func TestFunctionEval_APOCCollectionsConvertMetaAndMapBranches(t *testing.T) {
 		t.Fatalf("apoc.coll.frequencies returned %#v", got)
 	}
 
-	if occ := e.evaluateExpressionWithContext(ctx, "apoc.coll.occurrences([1,2,2,3],2)", nodes, nil); occ != int64(2) {
+	fixtureAdmission634Context, fixtureAdmission634 := expressionTestContext(ctx, "apoc.coll.occurrences([1,2,2,3],2)")
+	_ = fixtureAdmission634
+	if occ := e.evaluateExpressionWithContext(fixtureAdmission634, fixtureAdmission634Context, "apoc.coll.occurrences([1,2,2,3],2)", nodes, nil); occ != int64(2) {
 		t.Fatalf("apoc.coll.occurrences returned %#v", occ)
 	}
-	if idx := e.evaluateExpressionWithContext(ctx, "apoc.coll.indexOf([1,2,3],2)", nodes, nil); idx != int64(1) {
+	fixtureAdmission635Context, fixtureAdmission635 := expressionTestContext(ctx, "apoc.coll.indexOf([1,2,3],2)")
+	_ = fixtureAdmission635
+	if idx := e.evaluateExpressionWithContext(fixtureAdmission635, fixtureAdmission635Context, "apoc.coll.indexOf([1,2,3],2)", nodes, nil); idx != int64(1) {
 		t.Fatalf("apoc.coll.indexOf returned %#v", idx)
 	}
-	if split := e.evaluateExpressionWithContext(ctx, "apoc.coll.split([1,2,3,2,4],2)", nodes, nil); split == nil {
+	fixtureAdmission636Context, fixtureAdmission636 := expressionTestContext(ctx, "apoc.coll.split([1,2,3,2,4],2)")
+	_ = fixtureAdmission636
+	if split := e.evaluateExpressionWithContext(fixtureAdmission636, fixtureAdmission636Context, "apoc.coll.split([1,2,3,2,4],2)", nodes, nil); split == nil {
 		t.Fatal("apoc.coll.split should return non-nil")
 	}
-	if part := e.evaluateExpressionWithContext(ctx, "apoc.coll.partition([1,2,3,4],2)", nodes, nil); part == nil {
+	fixtureAdmission637Context, fixtureAdmission637 := expressionTestContext(ctx, "apoc.coll.partition([1,2,3,4],2)")
+	_ = fixtureAdmission637
+	if part := e.evaluateExpressionWithContext(fixtureAdmission637, fixtureAdmission637Context, "apoc.coll.partition([1,2,3,4],2)", nodes, nil); part == nil {
 		t.Fatal("apoc.coll.partition should return non-nil")
 	}
 
-	got = e.evaluateExpressionWithContext(ctx, "apoc.convert.toJson({a: 1, b: 'x'})", nodes, nil)
+	fixtureAdmission638Context, fixtureAdmission638 := expressionTestContext(ctx, "apoc.convert.toJson({a: 1, b: 'x'})")
+	_ = fixtureAdmission638
+	got = e.evaluateExpressionWithContext(fixtureAdmission638, fixtureAdmission638Context, "apoc.convert.toJson({a: 1, b: 'x'})", nodes, nil)
 	if s, ok := got.(string); !ok || !strings.Contains(s, "\"a\":1") {
 		t.Fatalf("apoc.convert.toJson returned %#v", got)
 	}
 
-	if bad := e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonMap(42)", nodes, nil); bad != nil {
+	fixtureAdmission639Context, fixtureAdmission639 := expressionTestContext(ctx, "apoc.convert.fromJsonMap(42)")
+	_ = fixtureAdmission639
+	if bad := e.evaluateExpressionWithContext(fixtureAdmission639, fixtureAdmission639Context, "apoc.convert.fromJsonMap(42)", nodes, nil); bad != nil {
 		t.Fatalf("apoc.convert.fromJsonMap(non-string) should be nil, got %#v", bad)
 	}
-	if bad := e.evaluateExpressionWithContext(ctx, "apoc.convert.fromJsonList(42)", nodes, nil); bad != nil {
+	fixtureAdmission640Context, fixtureAdmission640 := expressionTestContext(ctx, "apoc.convert.fromJsonList(42)")
+	_ = fixtureAdmission640
+	if bad := e.evaluateExpressionWithContext(fixtureAdmission640, fixtureAdmission640Context, "apoc.convert.fromJsonList(42)", nodes, nil); bad != nil {
 		t.Fatalf("apoc.convert.fromJsonList(non-string) should be nil, got %#v", bad)
 	}
 
-	if typ := e.evaluateExpressionWithContext(ctx, "apoc.meta.type(42)", nodes, nil); typ != "INTEGER" {
+	fixtureAdmission641Context, fixtureAdmission641 := expressionTestContext(ctx, "apoc.meta.type(42)")
+	_ = fixtureAdmission641
+	if typ := e.evaluateExpressionWithContext(fixtureAdmission641, fixtureAdmission641Context, "apoc.meta.type(42)", nodes, nil); typ != "INTEGER" {
 		t.Fatalf("apoc.meta.type returned %#v", typ)
 	}
-	if isType := e.evaluateExpressionWithContext(ctx, "apoc.meta.isType(42,'INTEGER')", nodes, nil); isType != true {
+	fixtureAdmission642Context, fixtureAdmission642 := expressionTestContext(ctx, "apoc.meta.isType(42,'INTEGER')")
+	_ = fixtureAdmission642
+	if isType := e.evaluateExpressionWithContext(fixtureAdmission642, fixtureAdmission642Context, "apoc.meta.isType(42,'INTEGER')", nodes, nil); isType != true {
 		t.Fatalf("apoc.meta.isType should be true, got %#v", isType)
 	}
-	if isType := e.evaluateExpressionWithContext(ctx, "apoc.meta.isType(42,123)", nodes, nil); isType != false {
+	fixtureAdmission643Context, fixtureAdmission643 := expressionTestContext(ctx, "apoc.meta.isType(42,123)")
+	_ = fixtureAdmission643
+	if isType := e.evaluateExpressionWithContext(fixtureAdmission643, fixtureAdmission643Context, "apoc.meta.isType(42,123)", nodes, nil); isType != false {
 		t.Fatalf("apoc.meta.isType(non-string type) should be false, got %#v", isType)
 	}
 
-	got = e.evaluateExpressionWithContext(ctx, "apoc.map.merge({a:1}, {b:2})", nodes, nil)
+	fixtureAdmission644Context, fixtureAdmission644 := expressionTestContext(ctx, "apoc.map.merge({a:1}, {b:2})")
+	_ = fixtureAdmission644
+	got = e.evaluateExpressionWithContext(fixtureAdmission644, fixtureAdmission644Context, "apoc.map.merge({a:1}, {b:2})", nodes, nil)
 	merged, ok := got.(map[string]interface{})
 	if !ok || merged["a"] != int64(1) || merged["b"] != int64(2) {
 		t.Fatalf("apoc.map.merge returned %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "apoc.map.merge({a:1})", nodes, nil); !reflect.DeepEqual(got, map[string]interface{}{}) {
+	fixtureAdmission645Context, fixtureAdmission645 := expressionTestContext(ctx, "apoc.map.merge({a:1})")
+	_ = fixtureAdmission645
+	if got := e.evaluateExpressionWithContext(fixtureAdmission645, fixtureAdmission645Context, "apoc.map.merge({a:1})", nodes, nil); !reflect.DeepEqual(got, map[string]interface{}{}) {
 		t.Fatalf("apoc.map.merge missing arg should be empty map, got %#v", got)
 	}
 
-	got = e.evaluateExpressionWithContext(ctx, "apoc.map.fromPairs(n.pairs)", nodes, nil)
+	fixtureAdmission646Context, fixtureAdmission646 := expressionTestContext(ctx, "apoc.map.fromPairs(n.pairs)")
+	_ = fixtureAdmission646
+	got = e.evaluateExpressionWithContext(fixtureAdmission646, fixtureAdmission646Context, "apoc.map.fromPairs(n.pairs)", nodes, nil)
 	fromPairsMap, ok := got.(map[string]interface{})
 	if !ok || fmt.Sprint(fromPairsMap["k1"]) != "1" || fromPairsMap["k2"] != "v2" {
 		t.Fatalf("apoc.map.fromPairs returned %#v", got)
 	}
-	got = e.evaluateExpressionWithContext(ctx, "apoc.map.fromLists(['x','y'], [10,20])", nodes, nil)
+	fixtureAdmission647Context, fixtureAdmission647 := expressionTestContext(ctx, "apoc.map.fromLists(['x','y'], [10,20])")
+	_ = fixtureAdmission647
+	got = e.evaluateExpressionWithContext(fixtureAdmission647, fixtureAdmission647Context, "apoc.map.fromLists(['x','y'], [10,20])", nodes, nil)
 	fromListsMap, ok := got.(map[string]interface{})
 	if !ok || fmt.Sprint(fromListsMap["x"]) != "10" || fmt.Sprint(fromListsMap["y"]) != "20" {
 		t.Fatalf("apoc.map.fromLists returned %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "apoc.map.fromLists(['x'])", nodes, nil); got != nil {
+	fixtureAdmission648Context, fixtureAdmission648 := expressionTestContext(ctx, "apoc.map.fromLists(['x'])")
+	_ = fixtureAdmission648
+	if got := e.evaluateExpressionWithContext(fixtureAdmission648, fixtureAdmission648Context, "apoc.map.fromLists(['x'])", nodes, nil); got != nil {
 		t.Fatalf("apoc.map.fromLists missing args should be nil, got %#v", got)
 	}
 }
@@ -2826,63 +3294,97 @@ func TestFunctionEval_SpatialGeometryAndKalmanAdditionalBranches(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	if d := e.evaluateExpressionWithContext(ctx, "point.distance(point({x:0,y:0}), point({x:3,y:4}))", nodes, nil); d != float64(5) {
+	fixtureAdmission649Context, fixtureAdmission649 := expressionTestContext(ctx, "point.distance(point({x:0,y:0}), point({x:3,y:4}))")
+	_ = fixtureAdmission649
+	if d := e.evaluateExpressionWithContext(fixtureAdmission649, fixtureAdmission649Context, "point.distance(point({x:0,y:0}), point({x:3,y:4}))", nodes, nil); d != float64(5) {
 		t.Fatalf("point.distance cartesian returned %#v", d)
 	}
-	if d := e.evaluateExpressionWithContext(ctx, "point.distance(point({latitude:0,longitude:0}), point({latitude:0,longitude:1}))", nodes, nil); d == nil {
+	fixtureAdmission650Context, fixtureAdmission650 := expressionTestContext(ctx, "point.distance(point({latitude:0,longitude:0}), point({latitude:0,longitude:1}))")
+	_ = fixtureAdmission650
+	if d := e.evaluateExpressionWithContext(fixtureAdmission650, fixtureAdmission650Context, "point.distance(point({latitude:0,longitude:0}), point({latitude:0,longitude:1}))", nodes, nil); d == nil {
 		t.Fatal("point.distance lat/lon should not be nil")
 	}
 
-	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(point({x:1,y:1}), point({x:0,y:0}), point({x:2,y:2}))", nodes, nil); ok != true {
+	fixtureAdmission651Context, fixtureAdmission651 := expressionTestContext(ctx, "point.withinBBox(point({x:1,y:1}), point({x:0,y:0}), point({x:2,y:2}))")
+	_ = fixtureAdmission651
+	if ok := e.evaluateExpressionWithContext(fixtureAdmission651, fixtureAdmission651Context, "point.withinBBox(point({x:1,y:1}), point({x:0,y:0}), point({x:2,y:2}))", nodes, nil); ok != true {
 		t.Fatalf("point.withinBBox cartesian returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(point({latitude:1,longitude:1}), point({latitude:0,longitude:0}), point({latitude:2,longitude:2}))", nodes, nil); ok != true {
+	fixtureAdmission652Context, fixtureAdmission652 := expressionTestContext(ctx, "point.withinBBox(point({latitude:1,longitude:1}), point({latitude:0,longitude:0}), point({latitude:2,longitude:2}))")
+	_ = fixtureAdmission652
+	if ok := e.evaluateExpressionWithContext(fixtureAdmission652, fixtureAdmission652Context, "point.withinBBox(point({latitude:1,longitude:1}), point({latitude:0,longitude:0}), point({latitude:2,longitude:2}))", nodes, nil); ok != true {
 		t.Fatalf("point.withinBBox lat/lon returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext(ctx, "point.withinBBox(1,2,3)", nodes, nil); ok != nil {
+	fixtureAdmission653Context, fixtureAdmission653 := expressionTestContext(ctx, "point.withinBBox(1,2,3)")
+	_ = fixtureAdmission653
+	if ok := e.evaluateExpressionWithContext(fixtureAdmission653, fixtureAdmission653Context, "point.withinBBox(1,2,3)", nodes, nil); ok != nil {
 		t.Fatalf("point.withinBBox with arguments that aren't points should be nil (Neo4j), got %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}), 2)", nodes, nil); ok != true {
+	fixtureAdmission654Context, fixtureAdmission654 := expressionTestContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}), 2)")
+	_ = fixtureAdmission654
+	if ok := e.evaluateExpressionWithContext(fixtureAdmission654, fixtureAdmission654Context, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}), 2)", nodes, nil); ok != true {
 		t.Fatalf("point.withinDistance returned %#v", ok)
 	}
-	if ok := e.evaluateExpressionWithContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}))", nodes, nil); ok != false {
+	fixtureAdmission655Context, fixtureAdmission655 := expressionTestContext(ctx, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}))")
+	_ = fixtureAdmission655
+	if ok := e.evaluateExpressionWithContext(fixtureAdmission655, fixtureAdmission655Context, "point.withinDistance(point({x:1,y:1}), point({x:0,y:0}))", nodes, nil); ok != false {
 		t.Fatalf("point.withinDistance missing arg should be false, got %#v", ok)
 	}
 
-	poly := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nodes, nil)
+	fixtureAdmission656Context, fixtureAdmission656 := expressionTestContext(ctx, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])")
+	_ = fixtureAdmission656
+	poly := e.evaluateExpressionWithContext(fixtureAdmission656, fixtureAdmission656Context, "polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})])", nodes, nil)
 	if poly == nil {
 		t.Fatal("polygon literal should not be nil")
 	}
-	if badPoly := e.evaluateExpressionWithContext(ctx, "polygon([point({x:0,y:0}), point({x:1,y:0})])", nodes, nil); badPoly != nil {
+	fixtureAdmission657Context, fixtureAdmission657 := expressionTestContext(ctx, "polygon([point({x:0,y:0}), point({x:1,y:0})])")
+	_ = fixtureAdmission657
+	if badPoly := e.evaluateExpressionWithContext(fixtureAdmission657, fixtureAdmission657Context, "polygon([point({x:0,y:0}), point({x:1,y:0})])", nodes, nil); badPoly != nil {
 		t.Fatalf("polygon with <3 points should be nil, got %#v", badPoly)
 	}
-	if polyVar := e.evaluateExpressionWithContext(ctx, "polygon(n.polyPts)", nodes, nil); polyVar == nil {
+	fixtureAdmission658Context, fixtureAdmission658 := expressionTestContext(ctx, "polygon(n.polyPts)")
+	_ = fixtureAdmission658
+	if polyVar := e.evaluateExpressionWithContext(fixtureAdmission658, fixtureAdmission658Context, "polygon(n.polyPts)", nodes, nil); polyVar == nil {
 		t.Fatal("polygon(variable points) should not be nil")
 	}
 
-	if line := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0}), point({x:1,y:1})])", nodes, nil); line == nil {
+	fixtureAdmission659Context, fixtureAdmission659 := expressionTestContext(ctx, "lineString([point({x:0,y:0}), point({x:1,y:1})])")
+	_ = fixtureAdmission659
+	if line := e.evaluateExpressionWithContext(fixtureAdmission659, fixtureAdmission659Context, "lineString([point({x:0,y:0}), point({x:1,y:1})])", nodes, nil); line == nil {
 		t.Fatal("lineString literal should not be nil")
 	}
-	if lineVar := e.evaluateExpressionWithContext(ctx, "lineString(n.linePts)", nodes, nil); lineVar == nil {
+	fixtureAdmission660Context, fixtureAdmission660 := expressionTestContext(ctx, "lineString(n.linePts)")
+	_ = fixtureAdmission660
+	if lineVar := e.evaluateExpressionWithContext(fixtureAdmission660, fixtureAdmission660Context, "lineString(n.linePts)", nodes, nil); lineVar == nil {
 		t.Fatal("lineString(variable points) should not be nil")
 	}
-	if badLine := e.evaluateExpressionWithContext(ctx, "lineString([point({x:0,y:0})])", nodes, nil); badLine != nil {
+	fixtureAdmission661Context, fixtureAdmission661 := expressionTestContext(ctx, "lineString([point({x:0,y:0})])")
+	_ = fixtureAdmission661
+	if badLine := e.evaluateExpressionWithContext(fixtureAdmission661, fixtureAdmission661Context, "lineString([point({x:0,y:0})])", nodes, nil); badLine != nil {
 		t.Fatalf("lineString with <2 points should be nil, got %#v", badLine)
 	}
 
-	if hit := e.evaluateExpressionWithContext(ctx, "point.intersects(point({x:0.5,y:0.5}), polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})]))", nodes, nil); hit != true {
+	fixtureAdmission662Context, fixtureAdmission662 := expressionTestContext(ctx, "point.intersects(point({x:0.5,y:0.5}), polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})]))")
+	_ = fixtureAdmission662
+	if hit := e.evaluateExpressionWithContext(fixtureAdmission662, fixtureAdmission662Context, "point.intersects(point({x:0.5,y:0.5}), polygon([point({x:0,y:0}), point({x:2,y:0}), point({x:0,y:2})]))", nodes, nil); hit != true {
 		t.Fatalf("point.intersects should be true, got %#v", hit)
 	}
 
-	state := e.evaluateExpressionWithContext(ctx, "kalman.velocity.init(10, 2)", nodes, nil)
+	fixtureAdmission663Context, fixtureAdmission663 := expressionTestContext(ctx, "kalman.velocity.init(10, 2)")
+	_ = fixtureAdmission663
+	state := e.evaluateExpressionWithContext(fixtureAdmission663, fixtureAdmission663Context, "kalman.velocity.init(10, 2)", nodes, nil)
 	stateJSON, ok := state.(string)
 	if !ok || stateJSON == "" {
 		t.Fatalf("kalman.velocity.init returned %#v", state)
 	}
-	if p := e.evaluateExpressionWithContext(ctx, "kalman.velocity.process(12, '"+stateJSON+"')", nodes, nil); p == nil {
+	fixtureAdmission664Context, fixtureAdmission664 := expressionTestContext(ctx, "kalman.velocity.process(12, '"+stateJSON+"')")
+	_ = fixtureAdmission664
+	if p := e.evaluateExpressionWithContext(fixtureAdmission664, fixtureAdmission664Context, "kalman.velocity.process(12, '"+stateJSON+"')", nodes, nil); p == nil {
 		t.Fatal("kalman.velocity.process should not be nil")
 	}
-	if p := e.evaluateExpressionWithContext(ctx, "kalman.velocity.predict('"+stateJSON+"', 3)", nodes, nil); p == nil {
+	fixtureAdmission665Context, fixtureAdmission665 := expressionTestContext(ctx, "kalman.velocity.predict('"+stateJSON+"', 3)")
+	_ = fixtureAdmission665
+	if p := e.evaluateExpressionWithContext(fixtureAdmission665, fixtureAdmission665Context, "kalman.velocity.predict('"+stateJSON+"', 3)", nodes, nil); p == nil {
 		t.Fatal("kalman.velocity.predict should not be nil")
 	}
 }

@@ -97,6 +97,7 @@ type pathSearchEdgeKey struct {
 // pathSearch is the search of one selected pattern for one row.
 type pathSearch struct {
 	e          *StorageExecutor
+	access     *relationshipAccessExecution
 	ctx        context.Context
 	a          *pathSearchAutomaton
 	row        pipelineRow
@@ -131,13 +132,13 @@ type pathSearch struct {
 // newPathSearch starts a search over automaton a for row. Its state is
 // made when the search begins (begin), so the walk search of a uniform
 // pattern (uniformPair) doesn't pay for it.
-func (e *StorageExecutor) newPathSearch(ctx context.Context, a *pathSearchAutomaton, row pipelineRow, maxLength int, from *storage.Node) *pathSearch {
-	return &pathSearch{e: e, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx)}
+func (run relationshipAccessExecution) newPathSearch(ctx context.Context, a *pathSearchAutomaton, row pipelineRow, maxLength int, from *storage.Node) *pathSearch {
+	return &pathSearch{e: run.executor, access: &run, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx)}
 }
 
 // slotHolds reports whether node may take slot: the node a row binds to
 // the slot's variable, the slot's labels and its predicates.
-func (s *pathSearch) slotHolds(slot int, node *storage.Node) bool {
+func (s *pathSearch) slotHolds(admission admittedRelationshipStatement, slot int, node *storage.Node) bool {
 	held := &s.a.slots[slot]
 	if slot == s.a.final && (s.target != nil && node.ID != s.target.ID || s.ends != nil && !s.ends[node.ID]) {
 		return false
@@ -154,13 +155,13 @@ func (s *pathSearch) slotHolds(slot int, node *storage.Node) bool {
 			return false
 		}
 	}
-	return s.predicatesHold(held.variable, node, held.predicates)
+	return s.predicatesHold(admission, held.variable, node, held.predicates)
 }
 
 // chainHolds reports whether node may take every slot of chain.
-func (s *pathSearch) chainHolds(chain pathSearchChain, node *storage.Node) bool {
+func (s *pathSearch) chainHolds(admission admittedRelationshipStatement, chain pathSearchChain, node *storage.Node) bool {
 	for _, slot := range chain.slots {
-		if !s.slotHolds(slot, node) {
+		if !s.slotHolds(admission, slot, node) {
 			return false
 		}
 	}
@@ -168,7 +169,7 @@ func (s *pathSearch) chainHolds(chain pathSearchChain, node *storage.Node) bool 
 }
 
 // transitionHolds reports whether edge may take transition t.
-func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge) bool {
+func (s *pathSearch) transitionHolds(admission admittedRelationshipStatement, t *pathSearchTransition, edge *storage.Edge) bool {
 	if len(t.types) > 0 {
 		matched := false
 		for _, name := range t.types {
@@ -185,11 +186,11 @@ func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge
 			}
 		}
 	}
-	return s.predicatesHold(t.variable, edge, t.predicates)
+	return s.predicatesHold(admission, t.variable, edge, t.predicates)
 }
 
 // predicatesHold evaluates predicates with variable bound to value.
-func (s *pathSearch) predicatesHold(variable string, value interface{}, predicates []string) bool {
+func (s *pathSearch) predicatesHold(admission admittedRelationshipStatement, variable string, value interface{}, predicates []string) bool {
 	if len(predicates) == 0 {
 		return true
 	}
@@ -203,7 +204,7 @@ func (s *pathSearch) predicatesHold(variable string, value interface{}, predicat
 		s.scratch[variable] = value
 	}
 	for _, predicate := range predicates {
-		if !s.e.evaluateWithWhereCondition(s.ctx, predicate, s.scratch) {
+		if !s.e.evaluateWithWhereCondition(admission, s.ctx, predicate, s.scratch) {
 			return false
 		}
 	}
@@ -266,7 +267,7 @@ func (s *pathSearch) productCounts(node *storage.Node, slot int, counts string) 
 }
 
 // expand lists the steps from product p.
-func (s *pathSearch) expand(p int32) {
+func (s *pathSearch) expand(admission admittedRelationshipStatement, p int32) {
 	if s.ctx.Err() != nil || s.products[p].expanded {
 		return
 	}
@@ -291,11 +292,11 @@ func (s *pathSearch) expand(p int32) {
 			if s.ctx.Err() != nil {
 				return
 			}
-			if !s.transitionHolds(transition, edge) {
+			if !s.transitionHolds(admission, transition, edge) {
 				continue
 			}
 			next, ok := s.e.loadTraversalEndpointNode(s.traversal, otherEnd(edge, node.ID))
-			if !ok || !s.chainHolds(chain, next) {
+			if !ok || !s.chainHolds(admission, chain, next) {
 				continue
 			}
 			steps = append(steps, pathSearchStep{edge: edge, to: s.productCounts(next, chain.end, counts), move: int32(index)})
@@ -306,7 +307,7 @@ func (s *pathSearch) expand(p int32) {
 
 // begin makes the search's state and the first level: the products of the
 // source node.
-func (s *pathSearch) begin(source *storage.Node) {
+func (s *pathSearch) begin(admission admittedRelationshipStatement, source *storage.Node) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -322,7 +323,7 @@ func (s *pathSearch) begin(source *storage.Node) {
 		if s.ctx.Err() != nil {
 			return
 		}
-		if !s.chainHolds(chain, source) {
+		if !s.chainHolds(admission, chain, source) {
 			continue
 		}
 		// The chains from one slot end at distinct slots.
@@ -356,7 +357,7 @@ func (s *pathSearch) reachable(p int32, depth int) bool {
 // nextLevel adds the level one longer than the last: the products a path
 // (a walk that repeats no relationship) of that length reaches. It reports
 // whether there is one.
-func (s *pathSearch) nextLevel() bool {
+func (s *pathSearch) nextLevel(admission admittedRelationshipStatement) bool {
 	if s.ctx.Err() != nil {
 		return false
 	}
@@ -368,7 +369,7 @@ func (s *pathSearch) nextLevel() bool {
 			return false
 		}
 		entry := level.entries[entryIndex]
-		s.expand(entry.product)
+		s.expand(admission, entry.product)
 		for stepIndex, step := range s.products[entry.product].steps {
 			if s.ctx.Err() != nil {
 				return false
@@ -568,11 +569,11 @@ func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearc
 // run searches from source and returns the rows of the selected paths to
 // each end node; bind makes a path's row and reports whether the path
 // counts (holds the pattern's predicates that apply to whole paths).
-func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
+func (s *pathSearch) run(admission admittedRelationshipStatement, source *storage.Node, count int, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
 	if s.ctx.Err() != nil {
 		return nil
 	}
-	s.begin(source)
+	s.begin(admission, source)
 	if s.ctx.Err() != nil {
 		return nil
 	}
@@ -615,7 +616,7 @@ func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func
 				target.remaining -= found
 			}
 		}
-		if s.ctx.Err() != nil || s.done(targets) || s.maxLength >= 0 && depth >= s.maxLength || !s.nextLevel() {
+		if s.ctx.Err() != nil || s.done(targets) || s.maxLength >= 0 && depth >= s.maxLength || !s.nextLevel(admission) {
 			return rows
 		}
 	}

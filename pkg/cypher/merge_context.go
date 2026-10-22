@@ -216,7 +216,7 @@ func withMergeNodeAbsent(ctx context.Context) context.Context {
 // applies them), with the row's bound nodes and relationships: it binds what
 // it matched or created into nodeContext / relContext. Its stats report what
 // it created, which tells the caller whether ON CREATE or ON MATCH applies.
-func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeMergeWithContext(admission admittedRelationshipStatement, ctx context.Context, cypher string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
 	// The caller's finding applies to this MERGE's node pattern only, not to
 	// the clauses that follow it.
 	nodeKnownAbsent, _ := ctx.Value(mergeNodeAbsentKey{}).(bool)
@@ -237,11 +237,11 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	// A relationship pattern: (a)-[r:TYPE]->(b)
 	if containsRelationshipPattern(mergePattern) {
-		return e.executeMergeRelationshipWithContext(ctx, mergePattern, nodeContext, relContext)
+		return e.executeMergeRelationshipWithContext(admission, ctx, mergePattern, nodeContext, relContext)
 	}
 
 	// Parse node pattern
-	varName, labels, matchProps, err := e.parseMergeNodePattern(ctx, mergePattern, nodeContext, relContext)
+	varName, labels, matchProps, err := e.parseMergeNodePattern(admission, ctx, mergePattern, nodeContext, relContext)
 	if err != nil {
 		return nil, &classifiedCypherError{
 			cause:  err,
@@ -317,13 +317,13 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 // the parser leaves as its own text and that reads a bound variable's
 // property (a.id) is evaluated against the bound entities. Null values remain
 // in the map so the shared MERGE validator rejects them before matching.
-func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (map[string]interface{}, error) {
-	return e.materializePropertyMap(ctx, propsText, entityRow(ctx, nodeContext, relContext), true, false)
+func (e *StorageExecutor) parseMergeProperties(admission admittedRelationshipStatement, ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (map[string]interface{}, error) {
+	return e.materializePropertyMap(admission, ctx, propsText, entityRow(ctx, nodeContext, relContext), true, false)
 }
 
 // parseMergeNodePattern is parseMergePattern with the property map read by
 // parseMergeProperties.
-func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (string, []string, map[string]interface{}, error) {
+func (e *StorageExecutor) parseMergeNodePattern(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (string, []string, map[string]interface{}, error) {
 	pattern = strings.TrimSpace(pattern)
 	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
 		return "", nil, nil, localizedError(localization.CypherResidualMergePatternInvalid(pattern), nil)
@@ -333,14 +333,14 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 	if labelErr != nil {
 		return "", nil, nil, labelErr
 	}
-	properties, err := e.parseMergeProperties(ctx, props, nodeContext, relContext)
+	properties, err := e.parseMergeProperties(admission, ctx, props, nodeContext, relContext)
 	return variable, labels, properties, err
 }
 
 // executeMergeRelationshipWithContext runs a relationship MERGE pattern (see
 // executeMergeWithContext): it binds the relationship it matched or created,
 // and the endpoints, into relContext / nodeContext.
-func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeMergeRelationshipWithContext(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -348,7 +348,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	}
 	store := e.getStorage(ctx)
 
-	parsedPattern, err := e.parseMergeRelationshipPattern(ctx, pattern, nodeContext, relContext)
+	parsedPattern, err := e.parseMergeRelationshipPattern(admission, ctx, pattern, nodeContext, relContext)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +436,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 // several SET clauses (a SET b). It returns the number of properties written
 // by Neo4j's properties_set rule (setWrites), or an error for a value Cypher
 // cannot store (replacing with a non-map, a map or entity as a property value).
-func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+func (e *StorageExecutor) applySetToRelationshipWithContext(admission admittedRelationshipStatement, ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	if edge == nil || varName == "" {
 		return 0, nil
 	}
@@ -467,7 +467,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 			}
 			switch {
 			case operator == "=" && propName == "":
-				props, err := e.setSourceMap(ctx, right, "=", nodeContext, fullRelContext)
+				props, err := e.setSourceMap(admission, ctx, right, "=", nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
@@ -475,7 +475,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 				writes.mapEntries(edge.Properties, props, true)
 				edge.Properties = setPropertyMap(props)
 			case operator == "+=":
-				props, err := e.setSourceMap(ctx, right, "+=", nodeContext, fullRelContext)
+				props, err := e.setSourceMap(admission, ctx, right, "+=", nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
@@ -487,17 +487,17 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 				// Direct $param resolution (in setPropertyValue) preserves declared
 				// types (e.g. []string, []float64) end-to-end. The run's values
 				// are written together (setPropertyRun).
-				value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
+				value, err := e.setPropertyValue(admission, ctx, right, nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
 				run.add(propName, value)
 			case operator == "[]=":
-				key, err := e.dynamicPropertyKeyOf(ctx, propName, nodeContext, fullRelContext, false)
+				key, err := e.dynamicPropertyKeyOf(admission, ctx, propName, nodeContext, fullRelContext, false)
 				if err != nil {
 					return writes.count, err
 				}
-				value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
+				value, err := e.setPropertyValue(admission, ctx, right, nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
@@ -522,7 +522,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 // properties_set rule (setWrites), or an error for a value Cypher cannot
 // store (replacing with a non-map, a map or entity as a property value);
 // assignments are validated statically by validatePipelineSetAssignments.
-func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+func (e *StorageExecutor) applySetToNodeWithContext(admission admittedRelationshipStatement, ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	// Add current node to context for self-references
 	fullContext := make(map[string]*storage.Node)
 	for k, v := range nodeContext {
@@ -534,7 +534,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
 		writes.endRun()
-		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
+		if err := e.applyNodeSetClause(admission, ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
 			return writes.count, err
 		}
 	}
@@ -543,7 +543,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 // applyNodeSetClause applies the assignments of one SET clause that target
 // varName to node (applySetToNodeWithContext), recording what they write.
-func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites, run *setPropertyRun) error {
+func (e *StorageExecutor) applyNodeSetClause(admission admittedRelationshipStatement, ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites, run *setPropertyRun) error {
 	defer run.applyToNode(node, writes)
 	for _, assignment := range splitSetAssignments(setClause) {
 		assignment = strings.TrimSpace(assignment)
@@ -558,11 +558,11 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 		}
 		switch {
 		case operator == "+=":
-			if err := e.applySetMapMergeToNode(ctx, node, varName, right, fullContext, relContext, writes); err != nil {
+			if err := e.applySetMapMergeToNode(admission, ctx, node, varName, right, fullContext, relContext, writes); err != nil {
 				return err
 			}
 		case operator == "=" && propName == "":
-			props, err := e.setSourceMap(ctx, right, "=", fullContext, relContext)
+			props, err := e.setSourceMap(admission, ctx, right, "=", fullContext, relContext)
 			if err != nil {
 				return err
 			}
@@ -574,7 +574,7 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 			if err != nil {
 				return err
 			}
-			labels, err := e.chainLabelNames(ctx, items, fullContext, relContext)
+			labels, err := e.chainLabelNames(admission, ctx, items, fullContext, relContext)
 			if err != nil {
 				return err
 			}
@@ -584,11 +584,11 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 				}
 			}
 		case operator == "[]=":
-			key, err := e.dynamicPropertyKeyOf(ctx, propName, fullContext, relContext, false)
+			key, err := e.dynamicPropertyKeyOf(admission, ctx, propName, fullContext, relContext, false)
 			if err != nil {
 				return err
 			}
-			value, err := e.setPropertyValue(ctx, right, fullContext, relContext)
+			value, err := e.setPropertyValue(admission, ctx, right, fullContext, relContext)
 			if err != nil {
 				return err
 			}
@@ -597,7 +597,7 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 			// Direct $param resolution (in setPropertyValue) preserves declared
 			// types end-to-end. The run's values are written together
 			// (setPropertyRun).
-			value, err := e.setPropertyValue(ctx, right, fullContext, relContext)
+			value, err := e.setPropertyValue(admission, ctx, right, fullContext, relContext)
 			if err != nil {
 				return err
 			}
@@ -610,8 +610,8 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 // setPropertyValue evaluates the right-hand side of SET x.p = <expr>. A direct
 // $param keeps its declared Go type. A map, entity or nested list is rejected
 // with a TypeError, as in Neo4j (storablePropertyValue).
-func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
-	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+func (e *StorageExecutor) setPropertyValue(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+	value, err := e.evaluateSetExpressionWithContext(admission, ctx, expr, nodes, rels)
 	if err != nil {
 		return nil, err
 	}
@@ -626,8 +626,8 @@ func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nod
 // store. Both operators evaluate their source through the checked boundary;
 // every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
 // batch routes) calls this.
-func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
-	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+func (e *StorageExecutor) setSourceMap(admission admittedRelationshipStatement, ctx context.Context, expr, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
+	value, err := e.evaluateSetExpressionWithContext(admission, ctx, expr, nodes, rels)
 	if err != nil {
 		return nil, err
 	}
@@ -751,7 +751,7 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 // constructor's ArgumentError, a division by zero) is returned: it is the
 // statement's error, which a check of the value it left (null is not a map,
 // a list may not hold null) must not replace.
-func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+func (e *StorageExecutor) evaluateSetExpressionWithContext(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
 	if err := requireSetParameter(ctx, expr); err != nil {
 		return nil, err
 	}
@@ -761,7 +761,7 @@ func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, 
 	if value, resolved := resolveContextPathRef(ctx, expr); resolved {
 		return checkedPropertyResult(ctx, expr, value, true, nil)
 	}
-	return e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
+	return e.checkedPropertyExpression(admission, ctx, expr, entityRow(ctx, nodes, rels))
 }
 
 // mergeBindingRow is the row a MERGE's RETURN reads: the values bound in
@@ -804,18 +804,18 @@ func (e *StorageExecutor) mergeBindingRow(ctx context.Context, nodes map[string]
 // shared RETURN projection (pipelineApplyReturn), so DISTINCT, aggregation,
 // ORDER BY, SKIP and LIMIT apply over all the statement's rows (#640).
 // returnClause starts with RETURN.
-func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, returnClause string) (*ExecuteResult, error) {
-	return e.projectMergeReturnSource(ctx, rows, returnClause, pipelineRowsSource(rows))
+func (e *StorageExecutor) projectMergeReturn(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, returnClause string) (*ExecuteResult, error) {
+	return e.projectMergeReturnSource(admission, ctx, rows, returnClause, pipelineRowsSource(rows))
 }
 
-func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectMergeReturnSource(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
-	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(returnClause), source, preparedGroups...)
+	return e.projectMergeReturnPlan(admission, ctx, rows, returnClause, returnProjectionPlanFor(returnClause), source, preparedGroups...)
 }
 
-func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectMergeReturnPlan(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	priorFailure := getExpressionFailure(ctx)
-	result, handled := e.pipelineApplyReturnPlan(ctx, rows, plan, source, false, preparedGroups...)
+	result, handled := e.pipelineApplyReturnPlan(admission, ctx, rows, plan, source, false, preparedGroups...)
 	if failure := getExpressionFailure(ctx); failure != nil && (!handled || priorFailure == nil) {
 		return nil, failure
 	}

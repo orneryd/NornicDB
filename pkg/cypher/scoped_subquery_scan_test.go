@@ -33,7 +33,9 @@ func TestPatternMapsAreConstant(t *testing.T) {
 func TestChainVariablesBindEntities(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "chainvars"))
 	ctx := context.Background()
-	matches := exec.parseTraversalPattern(ctx, "(n)-[r:R]->(m)")
+	fixtureAdmission855Context, fixtureAdmission855 := traversalTestContext(ctx, "(n)-[r:R]->(m)", "", nil)
+	_ = fixtureAdmission855
+	matches := exec.parseTraversalPattern(fixtureAdmission855, fixtureAdmission855Context, "(n)-[r:R]->(m)")
 	require.NotNil(t, matches)
 	node, edge := &storage.Node{ID: "n1"}, &storage.Edge{ID: "e1"}
 	require.True(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node}))

@@ -372,17 +372,23 @@ func TestCypherTypeSystemNameWithArticle(t *testing.T) {
 // resolve leaves the call unresolved; a well-formed call returns the value.
 func TestRowGraphFunctionArguments(t *testing.T) {
 	exec := newCompositeFixture(t)
-	value, _, resolved, err := exec.evaluateRowGraphFunction("graph.propertiesByName", "1 / 0", map[string]interface{}{})
+	fixtureAdmission1854Context, fixtureAdmission1854 := expressionTestContext(context.Background(), "1 / 0")
+	_ = fixtureAdmission1854Context
+	value, _, resolved, err := exec.evaluateRowGraphFunction(fixtureAdmission1854, "graph.propertiesByName", "1 / 0", map[string]interface{}{})
 	require.Error(t, err)
 	require.False(t, resolved)
 	require.Nil(t, value)
-	value, _, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "missing", map[string]interface{}{})
+	fixtureAdmission1855Context, fixtureAdmission1855 := expressionTestContext(context.Background(), "missing")
+	_ = fixtureAdmission1855Context
+	value, _, resolved, err = exec.evaluateRowGraphFunction(fixtureAdmission1855, "graph.propertiesByName", "missing", map[string]interface{}{})
 	require.NoError(t, err)
 	require.False(t, resolved)
 	require.Nil(t, value)
 	graphs, composite := exec.CompositeGraphs()
 	require.True(t, composite)
-	value, _, resolved, err = exec.evaluateRowGraphFunction("graph.propertiesByName", "g", map[string]interface{}{"g": graphs[0]})
+	fixtureAdmission1856Context, fixtureAdmission1856 := expressionTestContext(context.Background(), "g")
+	_ = fixtureAdmission1856Context
+	value, _, resolved, err = exec.evaluateRowGraphFunction(fixtureAdmission1856, "graph.propertiesByName", "g", map[string]interface{}{"g": graphs[0]})
 	require.NoError(t, err)
 	require.True(t, resolved)
 	require.Equal(t, map[string]interface{}{}, value)

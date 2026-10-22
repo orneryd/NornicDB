@@ -93,9 +93,10 @@ type ProcedureMetadataRenderer interface {
 type ProcedureHandler func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error)
 
 type registeredProcedure struct {
-	Spec    ProcedureSpec
-	Handler ProcedureHandler
-	User    bool
+	Spec            ProcedureSpec
+	Handler         ProcedureHandler
+	admittedHandler admittedProcedureHandler
+	User            bool
 }
 
 // ProcedureRegistry resolves each built-in or user procedure by its exact
@@ -118,7 +119,7 @@ func NewProcedureRegistry() *ProcedureRegistry {
 	}
 }
 
-func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler ProcedureHandler) error {
+func (r *ProcedureRegistry) registerBuiltInEntry(spec ProcedureSpec, handler ProcedureHandler, admitted admittedProcedureHandler) error {
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
 	}
@@ -128,7 +129,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler, admittedHandler: admitted}
 	r.generation.Add(1)
 	return nil
 }

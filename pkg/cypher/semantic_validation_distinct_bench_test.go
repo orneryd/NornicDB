@@ -14,7 +14,11 @@ func BenchmarkSemanticValidationDistinctText(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		query := "MATCH (n:Person {id: " + strconv.Itoa(i) + "}) RETURN n.name"
-		if err := executor.validateSemanticScopes(ctx, query); err != nil {
+		// Each text is new; prepare its source outside validation measurement.
+		b.StopTimer()
+		fixtureContext, statement := statementTestContext(ctx, query)
+		b.StartTimer()
+		if err := executor.validateSemanticScopes(statement, fixtureContext, query); err != nil {
 			b.Fatal(err)
 		}
 	}

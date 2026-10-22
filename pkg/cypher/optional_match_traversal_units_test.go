@@ -57,9 +57,13 @@ func TestGh713TraversalProjectionUsesSharedFailureBoundary(t *testing.T) {
 				}
 				var value interface{}
 				if route == "compiled" {
-					value = exec.compileTraversalProjection(ctx, test.expression)(row)
+					fixtureAdmission768Context, fixtureAdmission768 := expressionTestContext(ctx, test.expression)
+					_ = fixtureAdmission768
+					value = exec.compileTraversalProjection(fixtureAdmission768, fixtureAdmission768Context, test.expression)(row)
 				} else {
-					value = exec.evaluateTraversalRowExpression(ctx, test.expression, row)
+					fixtureAdmission769Context, fixtureAdmission769 := expressionTestContext(ctx, test.expression)
+					_ = fixtureAdmission769
+					value = exec.evaluateTraversalRowExpression(fixtureAdmission769, fixtureAdmission769Context, test.expression, row)
 				}
 				require.Equal(t, test.value, value)
 				if test.code == "" {
@@ -130,8 +134,9 @@ func TestGh713AggregateNumberRejectsNonNumeric(t *testing.T) {
 
 func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 	t.Run("empty projection rejected", func(t *testing.T) {
+		_, emptyProjectionStatement := statementTestContext(context.Background(), "RETURN")
 		executor, ctx := newUnitExecutor(t)
-		rows, err := executor.aggregateTraversalOptionalRows(ctx, nil, nil)
+		rows, err := executor.aggregateTraversalOptionalRows(emptyProjectionStatement, ctx, nil, nil)
 		require.Nil(t, rows)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	})
@@ -141,16 +146,19 @@ func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 		plan := returnProjectionPlanFromItems(items)
 		require.True(t, plan.valid)
 		require.Equal(t, []string{"count(*)"}, plan.columns)
-		rows, err := executor.aggregateTraversalOptionalRows(ctx, []traversalOptRow{{values: map[string]interface{}{}}}, items)
+		fixtureAdmission1676Context, fixtureAdmission1676 := statementTestContext(ctx, "RETURN "+("count(*)"))
+		_ = fixtureAdmission1676Context
+		rows, err := executor.aggregateTraversalOptionalRows(fixtureAdmission1676, fixtureAdmission1676Context, []traversalOptRow{{values: map[string]interface{}{}}}, items)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{int64(1)}}, rows)
 	})
 	t.Run("expression failure preserved", func(t *testing.T) {
+		_, emptyProjectionStatement := statementTestContext(context.Background(), "RETURN")
 		executor, ctx := newUnitExecutor(t)
 		ctx = withExpressionFailureSlot(ctx)
 		failure := newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "invalid aggregate input")
 		recordExpressionFailure(ctx, failure)
-		rows, err := executor.aggregateTraversalOptionalRows(ctx, nil, nil)
+		rows, err := executor.aggregateTraversalOptionalRows(emptyProjectionStatement, ctx, nil, nil)
 		require.Nil(t, rows)
 		require.ErrorIs(t, err, failure)
 	})
@@ -184,9 +192,13 @@ func TestGh713PipelineSumNumericTypes(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			state := pipelineAggregateState{name: "sum", expression: "value", distinct: test.distinct}
 			for _, value := range test.values {
-				require.True(t, state.add(ctx, exec, pipelineRow{"value": value}))
+				fixtureAdmission1677Context, fixtureAdmission1677 := statementTestContext(ctx, "RETURN "+("value"))
+				_ = fixtureAdmission1677Context
+				require.True(t, state.add(fixtureAdmission1677, fixtureAdmission1677Context, exec, pipelineRow{"value": value}))
 			}
-			actual, ok := state.result(ctx, exec)
+			fixtureAdmission1678Context, fixtureAdmission1678 := statementTestContext(ctx, "RETURN "+("value"))
+			_ = fixtureAdmission1678Context
+			actual, ok := state.result(fixtureAdmission1678, fixtureAdmission1678Context, exec)
 			require.True(t, ok)
 			require.Equal(t, test.want, actual)
 		})
@@ -219,33 +231,51 @@ func TestIsSimpleTraversalIdentifier(t *testing.T) {
 func TestParseOptionalClauseEndpoints_ErrorsAndRelForms(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 
-	_, err := exec.parseOptionalClauseEndpoints(ctx, "no parens here")
+	fixtureAdmission1346Context, fixtureAdmission1346 := traversalTestContext(ctx, "no parens here", "", nil)
+	_ = fixtureAdmission1346Context
+	_, err := exec.parseOptionalClauseEndpoints(fixtureAdmission1346, fixtureAdmission1346Context, "no parens here")
 	require.Error(t, err, "no node endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a")
+	fixtureAdmission1347Context, fixtureAdmission1347 := traversalTestContext(ctx, "(a", "", nil)
+	_ = fixtureAdmission1347Context
+	_, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1347, fixtureAdmission1347Context, "(a")
 	require.Error(t, err, "unterminated source endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T]->")
+	fixtureAdmission1348Context, fixtureAdmission1348 := traversalTestContext(ctx, "(a)-[r:T]->", "", nil)
+	_ = fixtureAdmission1348Context
+	_, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1348, fixtureAdmission1348Context, "(a)-[r:T]->")
 	require.Error(t, err, "no target endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T]->(b")
+	fixtureAdmission1349Context, fixtureAdmission1349 := traversalTestContext(ctx, "(a)-[r:T]->(b", "", nil)
+	_ = fixtureAdmission1349Context
+	_, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1349, fixtureAdmission1349Context, "(a)-[r:T]->(b")
 	require.Error(t, err, "unterminated target endpoint")
 
-	eps, err := exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T {w:1}]->(b)")
+	fixtureAdmission1350Context, fixtureAdmission1350 := traversalTestContext(ctx, "(a)-[r:T {w:1}]->(b)", "", nil)
+	_ = fixtureAdmission1350Context
+	eps, err := exec.parseOptionalClauseEndpoints(fixtureAdmission1350, fixtureAdmission1350Context, "(a)-[r:T {w:1}]->(b)")
 	require.NoError(t, err)
 	require.Equal(t, "T", eps.relType, "props stripped from relationship type")
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T*1..2]->(b)")
+	fixtureAdmission1351Context, fixtureAdmission1351 := traversalTestContext(ctx, "(a)-[r:T*1..2]->(b)", "", nil)
+	_ = fixtureAdmission1351Context
+	eps, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1351, fixtureAdmission1351Context, "(a)-[r:T*1..2]->(b)")
 	require.NoError(t, err)
 	require.Equal(t, "T", eps.relType, "variable-length hops stripped from type")
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r*1..2]->(b)")
+	fixtureAdmission1352Context, fixtureAdmission1352 := traversalTestContext(ctx, "(a)-[r*1..2]->(b)", "", nil)
+	_ = fixtureAdmission1352Context
+	eps, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1352, fixtureAdmission1352Context, "(a)-[r*1..2]->(b)")
 	require.NoError(t, err)
 	require.Equal(t, "r", eps.relVar, "variable-length without type keeps the variable")
 	require.Empty(t, eps.relType)
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r]->(b)")
+	fixtureAdmission1353Context, fixtureAdmission1353 := traversalTestContext(ctx, "(a)-[r]->(b)", "", nil)
+	_ = fixtureAdmission1353Context
+	eps, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1353, fixtureAdmission1353Context, "(a)-[r]->(b)")
 	require.NoError(t, err)
 	require.Equal(t, "r", eps.relVar, "bare relationship variable")
 
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)<-[:T]-(b)")
+	fixtureAdmission1354Context, fixtureAdmission1354 := traversalTestContext(ctx, "(a)<-[:T]-(b)", "", nil)
+	_ = fixtureAdmission1354Context
+	eps, err = exec.parseOptionalClauseEndpoints(fixtureAdmission1354, fixtureAdmission1354Context, "(a)<-[:T]-(b)")
 	require.NoError(t, err)
 	require.Equal(t, "in", eps.direction)
 }
@@ -424,14 +454,22 @@ func TestParseTraversalAggregateCall_Forms(t *testing.T) {
 func TestTraversalAggAccum_NullAndDistinct(t *testing.T) {
 	executor, ctx := newUnitExecutor(t)
 	state := pipelineAggregateState{name: "collect", expression: "value", distinct: true}
-	require.True(t, state.add(ctx, executor, pipelineRow{"value": nil}))
-	values, ok := state.result(ctx, executor)
+	fixtureAdmission1679Context, fixtureAdmission1679 := statementTestContext(ctx, "RETURN "+("value"))
+	_ = fixtureAdmission1679Context
+	require.True(t, state.add(fixtureAdmission1679, fixtureAdmission1679Context, executor, pipelineRow{"value": nil}))
+	fixtureAdmission1680Context, fixtureAdmission1680 := statementTestContext(ctx, "RETURN "+("value"))
+	_ = fixtureAdmission1680Context
+	values, ok := state.result(fixtureAdmission1680, fixtureAdmission1680Context, executor)
 	require.True(t, ok)
 	require.Empty(t, values, "aggregates skip nulls")
 	for _, value := range []string{"x", "x", "y"} {
-		require.True(t, state.add(ctx, executor, pipelineRow{"value": value}))
+		fixtureAdmission1681Context, fixtureAdmission1681 := statementTestContext(ctx, "RETURN "+("value"))
+		_ = fixtureAdmission1681Context
+		require.True(t, state.add(fixtureAdmission1681, fixtureAdmission1681Context, executor, pipelineRow{"value": value}))
 	}
-	values, ok = state.result(ctx, executor)
+	fixtureAdmission1682Context, fixtureAdmission1682 := statementTestContext(ctx, "RETURN "+("value"))
+	_ = fixtureAdmission1682Context
+	values, ok = state.result(fixtureAdmission1682, fixtureAdmission1682Context, executor)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{"x", "y"}, values, "DISTINCT deduplicates")
 }
@@ -443,14 +481,20 @@ func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
 		if star {
 			state.expression = "*"
 			for row := int64(0); row < rows; row++ {
-				require.True(t, state.add(ctx, exec, pipelineRow{}))
+				fixtureAdmission1683Context, fixtureAdmission1683 := statementTestContext(ctx, "RETURN "+("value"))
+				_ = fixtureAdmission1683Context
+				require.True(t, state.add(fixtureAdmission1683, fixtureAdmission1683Context, exec, pipelineRow{}))
 			}
 		} else {
 			for _, value := range vals {
-				require.True(t, state.add(ctx, exec, pipelineRow{"value": value}))
+				fixtureAdmission1684Context, fixtureAdmission1684 := statementTestContext(ctx, "RETURN "+("value"))
+				_ = fixtureAdmission1684Context
+				require.True(t, state.add(fixtureAdmission1684, fixtureAdmission1684Context, exec, pipelineRow{"value": value}))
 			}
 		}
-		value, ok := state.result(ctx, exec)
+		fixtureAdmission1685Context, fixtureAdmission1685 := statementTestContext(ctx, "RETURN "+("value"))
+		_ = fixtureAdmission1685Context
+		value, ok := state.result(fixtureAdmission1685, fixtureAdmission1685Context, exec)
 		require.True(t, ok)
 		return value
 	}
@@ -466,7 +510,9 @@ func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
 	require.Equal(t, 2.5, fin("avg", []interface{}{int64(2), int64(3)}, false, 2))
 	for _, name := range []string{"sum", "avg"} {
 		state := pipelineAggregateState{name: name, expression: "value"}
-		require.False(t, state.add(ctx, exec, pipelineRow{"value": "abc"}), "%s of a non-numeric value is a TypeError, as in Neo4j", name)
+		fixtureAdmission1686Context, fixtureAdmission1686 := statementTestContext(ctx, "RETURN "+("value"))
+		_ = fixtureAdmission1686Context
+		require.False(t, state.add(fixtureAdmission1686, fixtureAdmission1686Context, exec, pipelineRow{"value": "abc"}), "%s of a non-numeric value is a TypeError, as in Neo4j", name)
 	}
 	require.Nil(t, fin("min", nil, false, 0))
 	require.EqualValues(t, 2, fin("min", []interface{}{int64(3), int64(2), int64(5)}, false, 3))
@@ -474,8 +520,12 @@ func TestFinalizeTraversalAggregate_AllFunctions(t *testing.T) {
 	require.Nil(t, fin("stdev", nil, false, 0), "stdev of empty input is null")
 	require.Equal(t, 0.0, fin("stdev", []interface{}{int64(4)}, false, 1), "stdev of one value is 0.0")
 	unknown := pipelineAggregateState{name: "unknownagg", expression: "value"}
-	require.False(t, unknown.add(ctx, exec, pipelineRow{"value": int64(1)}))
-	value, ok := unknown.result(ctx, exec)
+	fixtureAdmission1687Context, fixtureAdmission1687 := statementTestContext(ctx, "RETURN "+("value"))
+	_ = fixtureAdmission1687Context
+	require.False(t, unknown.add(fixtureAdmission1687, fixtureAdmission1687Context, exec, pipelineRow{"value": int64(1)}))
+	fixtureAdmission1688Context, fixtureAdmission1688 := statementTestContext(ctx, "RETURN "+("value"))
+	_ = fixtureAdmission1688Context
+	value, ok := unknown.result(fixtureAdmission1688, fixtureAdmission1688Context, exec)
 	require.False(t, ok, "unknown functions are not silently handled")
 	require.Nil(t, value)
 }
@@ -488,15 +538,21 @@ func TestStdevTraversalAggregateValues_Contract(t *testing.T) {
 			state.name = "stdevp"
 		}
 		for _, value := range values {
-			require.True(t, state.add(ctx, exec, pipelineRow{"value": value}))
+			fixtureAdmission1689Context, fixtureAdmission1689 := statementTestContext(ctx, "RETURN "+("value"))
+			_ = fixtureAdmission1689Context
+			require.True(t, state.add(fixtureAdmission1689, fixtureAdmission1689Context, exec, pipelineRow{"value": value}))
 		}
-		value, ok := state.result(ctx, exec)
+		fixtureAdmission1690Context, fixtureAdmission1690 := statementTestContext(ctx, "RETURN "+("value"))
+		_ = fixtureAdmission1690Context
+		value, ok := state.result(fixtureAdmission1690, fixtureAdmission1690Context, exec)
 		require.True(t, ok)
 		return value
 	}
 	require.Nil(t, deviation(nil, false), "no values: null (StdevFunction count==0)")
 	nonNumeric := pipelineAggregateState{name: "stdev", expression: "value"}
-	require.False(t, nonNumeric.add(ctx, exec, pipelineRow{"value": "x"}), "a non-numeric value is a TypeError, as in Neo4j")
+	fixtureAdmission1691Context, fixtureAdmission1691 := statementTestContext(ctx, "RETURN "+("value"))
+	_ = fixtureAdmission1691Context
+	require.False(t, nonNumeric.add(fixtureAdmission1691, fixtureAdmission1691Context, exec, pipelineRow{"value": "x"}), "a non-numeric value is a TypeError, as in Neo4j")
 	require.Equal(t, 0.0, deviation([]interface{}{int64(9)}, false), "single value: 0.0")
 	require.InDelta(t, 2.8284, deviation([]interface{}{int64(2), int64(6)}, false).(float64), 0.001, "sample divisor n-1")
 	require.InDelta(t, 2.0, deviation([]interface{}{int64(2), int64(6)}, true).(float64), 0.001, "population divisor n")
@@ -507,7 +563,9 @@ func TestTryCompileTraversalExpr_LiteralsAndFallbacks(t *testing.T) {
 	empty := traversalOptRow{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}}
 
 	eval := func(expr string) interface{} {
-		return exec.compileTraversalProjection(ctx, expr)(empty)
+		fixtureAdmission770Context, fixtureAdmission770 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission770
+		return exec.compileTraversalProjection(fixtureAdmission770, fixtureAdmission770Context, expr)(empty)
 	}
 	require.Equal(t, "lit", eval("'lit'"))
 	require.Equal(t, "dq", eval(`"dq"`))
@@ -517,13 +575,21 @@ func TestTryCompileTraversalExpr_LiteralsAndFallbacks(t *testing.T) {
 	require.EqualValues(t, 42, eval("42"))
 	require.Equal(t, 3.5, eval("3.5"))
 
-	_, ok := exec.tryCompileTraversalExpr(ctx, "")
+	fixtureAdmission1355Context, fixtureAdmission1355 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1355Context
+	_, ok := exec.tryCompileTraversalExpr(fixtureAdmission1355, fixtureAdmission1355Context, "")
 	require.False(t, ok, "empty expression is not compilable")
-	_, ok = exec.tryCompileTraversalExpr(ctx, "a + b")
+	fixtureAdmission1356Context, fixtureAdmission1356 := expressionTestContext(ctx, "a + b")
+	_ = fixtureAdmission1356Context
+	_, ok = exec.tryCompileTraversalExpr(fixtureAdmission1356, fixtureAdmission1356Context, "a + b")
 	require.False(t, ok, "operator expressions fall back to the evaluator")
-	_, ok = exec.tryCompileTraversalFunctionCall(ctx, "(x)")
+	fixtureAdmission1357Context, fixtureAdmission1357 := expressionTestContext(ctx, "(x)")
+	_ = fixtureAdmission1357Context
+	_, ok = exec.tryCompileTraversalFunctionCall(fixtureAdmission1357, fixtureAdmission1357Context, "(x)")
 	require.False(t, ok, "not a call")
-	_, ok = exec.tryCompileTraversalExpr(ctx, "CASE WHEN a THEN 1 ELSE 2 END")
+	fixtureAdmission1358Context, fixtureAdmission1358 := expressionTestContext(ctx, "CASE WHEN a THEN 1 ELSE 2 END")
+	_ = fixtureAdmission1358Context
+	_, ok = exec.tryCompileTraversalExpr(fixtureAdmission1358, fixtureAdmission1358Context, "CASE WHEN a THEN 1 ELSE 2 END")
 	require.False(t, ok, "CASE expressions are left to the evaluator")
 }
 
@@ -818,10 +884,14 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 				bindings = append(bindings, pipelineRowFromTraversalOptionalRow(row))
 			}
 			items := executor.parseReturnItems(test.expr + " AS value")
-			shared, err := executor.projectMergeReturn(ctx, bindings, "RETURN "+test.expr+" AS value")
+			fixtureAdmission1692Context, fixtureAdmission1692 := statementTestContext(ctx, "RETURN "+test.expr+" AS value")
+			_ = fixtureAdmission1692Context
+			shared, err := executor.projectMergeReturn(fixtureAdmission1692, fixtureAdmission1692Context, bindings, "RETURN "+test.expr+" AS value")
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{test.want}}, shared.Rows)
-			legacy, err := executor.aggregateTraversalOptionalRows(ctx, rows, items)
+			fixtureAdmission1908Context, fixtureAdmission1908 := statementTestContext(ctx, test.expr+" AS value")
+			_ = fixtureAdmission1908Context
+			legacy, err := executor.aggregateTraversalOptionalRows(fixtureAdmission1908, fixtureAdmission1908Context, rows, items)
 			require.NoError(t, err)
 			require.Equal(t, shared.Rows, legacy)
 		})
@@ -877,7 +947,9 @@ func TestFindAggregateSpans_NameWithoutCall(t *testing.T) {
 func TestApplySingleNodeOptionalClause_NoParenGroup(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 	rows := []traversalOptRow{{nodes: map[string]*storage.Node{"a": {ID: "n1"}}, rels: map[string]*storage.Edge{}}}
-	out, err := exec.applySingleNodeOptionalClause(ctx, rows, optionalMatchClause{pattern: "garbage"})
+	fixtureAdmission1693Context, fixtureAdmission1693 := statementTestContext(ctx, "MATCH "+("garbage"))
+	_ = fixtureAdmission1693Context
+	out, err := exec.applySingleNodeOptionalClause(fixtureAdmission1693, fixtureAdmission1693Context, rows, optionalMatchClause{pattern: "garbage"})
 	require.NoError(t, err)
 	require.Equal(t, rows, out, "a pattern without a node group passes rows through")
 }
@@ -885,12 +957,16 @@ func TestApplySingleNodeOptionalClause_NoParenGroup(t *testing.T) {
 func TestApplyGeneralOptionalClause_EdgeInputs(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 
-	out, err := exec.applyGeneralOptionalClause(ctx, nil, optionalMatchClause{pattern: "(x:L)-[:T]->(y:M)"})
+	fixtureAdmission1694Context, fixtureAdmission1694 := statementTestContext(ctx, "MATCH "+("(x:L)-[:T]->(y:M)"))
+	_ = fixtureAdmission1694Context
+	out, err := exec.applyGeneralOptionalClause(fixtureAdmission1694, fixtureAdmission1694Context, nil, optionalMatchClause{pattern: "(x:L)-[:T]->(y:M)"})
 	require.NoError(t, err)
 	require.Empty(t, out, "no left rows: nothing to join")
 
 	rows := []traversalOptRow{{nodes: map[string]*storage.Node{"a": {ID: "n1"}}, rels: map[string]*storage.Edge{}}}
-	out, err = exec.applyGeneralOptionalClause(ctx, rows, optionalMatchClause{pattern: "novars"})
+	fixtureAdmission1695Context, fixtureAdmission1695 := statementTestContext(ctx, "MATCH "+("novars"))
+	_ = fixtureAdmission1695Context
+	out, err = exec.applyGeneralOptionalClause(fixtureAdmission1695, fixtureAdmission1695Context, rows, optionalMatchClause{pattern: "novars"})
 	require.NoError(t, err)
 	require.Equal(t, rows, out, "a pattern with no variables and no node group passes rows through")
 }
@@ -899,7 +975,9 @@ func TestCompiledVarProjection_UnboundFallsBackToEvaluator(t *testing.T) {
 	exec, ctx := newUnitExecutor(t)
 	ctx = withExpressionFailureSlot(ctx)
 	row := traversalOptRow{nodes: map[string]*storage.Node{}, rels: map[string]*storage.Edge{}}
-	compiled := exec.compileTraversalProjection(ctx, "zzz.prop")(row)
+	fixtureAdmission1359Context, fixtureAdmission1359 := expressionTestContext(ctx, "zzz.prop")
+	_ = fixtureAdmission1359Context
+	compiled := exec.compileTraversalProjection(fixtureAdmission1359, fixtureAdmission1359Context, "zzz.prop")(row)
 	require.Nil(t, compiled, "an unbound variable projection must not return query text")
 	requireStatusCode(t, getExpressionFailure(ctx), "Neo.ClientError.Statement.SyntaxError")
 }
@@ -925,7 +1003,9 @@ func TestOptionalMatchAggregateCaseTreatsNullBindingAsNull(t *testing.T) {
 		nodes: map[string]*storage.Node{"n": nil},
 		rels:  map[string]*storage.Edge{},
 	}
-	require.True(t, exec.evaluateRowPredicate(ctx, "n IS NULL", pipelineRow{"n": nil}))
+	fixtureAdmission771Context, fixtureAdmission771 := expressionTestContext(ctx, "n IS NULL")
+	_ = fixtureAdmission771
+	require.True(t, exec.evaluateRowPredicate(fixtureAdmission771, fixtureAdmission771Context, "n IS NULL", pipelineRow{"n": nil}))
 	caseExpression := `CASE WHEN n IS NULL THEN null ELSE {value: n.value} END`
 	parsed, err := parseCaseExpression(caseExpression)
 	require.NoError(t, err)
@@ -933,7 +1013,9 @@ func TestOptionalMatchAggregateCaseTreatsNullBindingAsNull(t *testing.T) {
 	direct, evaluated := rowValue(t, exec, caseExpression, pipelineRow{"n": nil})
 	require.True(t, evaluated)
 	require.Nil(t, direct)
-	project := exec.compileTraversalProjection(ctx, caseExpression)
+	fixtureAdmission772Context, fixtureAdmission772 := expressionTestContext(ctx, caseExpression)
+	_ = fixtureAdmission772
+	project := exec.compileTraversalProjection(fixtureAdmission772, fixtureAdmission772Context, caseExpression)
 	require.Nil(t, project(row))
 }
 

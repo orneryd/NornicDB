@@ -50,7 +50,7 @@ func databaseOptionValue(key string, value interface{}) (string, error) {
 // splitDatabaseOptions cuts a CREATE DATABASE statement at its OPTIONS
 // clause (searched from from): the statement before it, and the options it
 // sets, validated. No clause is no options.
-func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher string, from int) (string, map[string]string, error) {
+func (e *StorageExecutor) splitDatabaseOptions(admission admittedRelationshipStatement, ctx context.Context, cypher string, from int) (string, map[string]string, error) {
 	at := keywordIndexFrom(cypher, "OPTIONS", from, defaultKeywordScanOpts())
 	if at < 0 {
 		return cypher, nil, nil
@@ -59,7 +59,7 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 	if !strings.HasPrefix(clause, "{") || !strings.HasSuffix(clause, "}") {
 		return "", nil, localizedError(localization.CypherAdminKeywordExpected("CREATE DATABASE", "OPTIONS { ... }"), nil)
 	}
-	fields, isMap := e.evaluateExpressionWithContext(ctx, clause, nil, nil).(map[string]interface{})
+	fields, isMap := e.evaluateExpressionWithContext(admission, ctx, clause, nil, nil).(map[string]interface{})
 	if !isMap {
 		return "", nil, localizedError(localization.CypherAdminKeywordExpected("CREATE DATABASE", "OPTIONS { ... }"), nil)
 	}
@@ -100,7 +100,7 @@ func (e *StorageExecutor) applyDatabaseOptions(name string, options map[string]s
 // value / REMOVE OPTION key, from the statement's text after DATABASE;
 // handled is false for another ALTER DATABASE form. A missing database is
 // a no-op with IF EXISTS.
-func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string, from int) (result *ExecuteResult, handled bool, err error) {
+func (e *StorageExecutor) alterDatabaseOption(admission admittedRelationshipStatement, ctx context.Context, cypher string, from int) (result *ExecuteResult, handled bool, err error) {
 	setAt := findMultiWordKeywordIndex(cypher[from:], "SET", "OPTION")
 	removeAt := findMultiWordKeywordIndex(cypher[from:], "REMOVE", "OPTION")
 	at, remove := setAt, false
@@ -130,7 +130,7 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 	}
 	value := ""
 	if !remove {
-		parsed, parseErr := e.parseValue(ctx, valueText)
+		parsed, parseErr := e.parseValue(admission, ctx, valueText)
 		if parseErr != nil {
 			return nil, true, parseErr
 		}

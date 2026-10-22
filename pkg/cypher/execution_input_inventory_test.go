@@ -2,9 +2,8 @@ package cypher
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"os"
+	"go/types"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -19,12 +18,14 @@ import (
 // and aliases. Casting an argument value back to executable text introduces a
 // dependency even when the handler's mode already forbids result caching.
 func TestExecutionInputRegistryInventory(t *testing.T) {
-	positions := token.NewFileSet()
-	packages, err := parser.ParseDir(positions, ".", func(info os.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
-	require.NoError(t, err)
-	methods := map[string]*ast.FuncDecl{}
+	positions, files, info := relationshipBoundarySource(t, "")
+	// Reuse invocation edges: constructing or registering a handler does not
+	// execute its body. Receiver names alone cannot distinguish those events.
+	functions, _ := relationshipBoundaryGraph(files, positions, info)
+	methods := map[*types.Func]*ast.FuncDecl{}
 	literals := map[string][]*ast.FuncLit{}
-	for filename, file := range packages["cypher"].Files {
+	for _, file := range files {
+		filename := positions.Position(file.Pos()).Filename
 		ast.Inspect(file, func(node ast.Node) bool {
 			if literal, ok := node.(*ast.FuncLit); ok {
 				literals[filepath.Base(filename)] = append(literals[filepath.Base(filename)], literal)
@@ -33,32 +34,25 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		})
 		for _, declaration := range file.Decls {
 			method, ok := declaration.(*ast.FuncDecl)
-			if !ok || method.Recv == nil {
+			if !ok || method.Body == nil {
 				continue
 			}
-			receiver, ok := method.Recv.List[0].Type.(*ast.StarExpr)
-			if !ok {
-				continue
-			}
-			if name, ok := receiver.X.(*ast.Ident); ok && name.Name == "StorageExecutor" {
-				methods[method.Name.Name] = method
-			}
+			object, _ := info.Defs[method.Name].(*types.Func)
+			methods[object] = method
 		}
 	}
-	callees := func(body ast.Node, receiver string) []string {
-		var names []string
+	callees := func(body ast.Node) []*types.Func {
+		var names []*types.Func
 		ast.Inspect(body, func(node ast.Node) bool {
+			if _, literal := node.(*ast.FuncLit); literal {
+				return false
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
-			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			object, ok := selector.X.(*ast.Ident)
-			if ok && object.Name == receiver {
-				names = append(names, selector.Sel.Name)
+			if target := relationshipBoundaryTarget(info, call.Fun); target != nil {
+				names = append(names, target)
 			}
 			return true
 		})
@@ -66,10 +60,13 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 	}
 	// Source-derived string-value adapters. Minimum argument count separates
 	// statistics collect/retrieve config from status/clear/stop and fixed calls.
-	rawText := map[string]int{}
+	rawText := map[*types.Func]int{}
 	for name, method := range methods {
 		variables := map[string]int{}
 		ast.Inspect(method.Body, func(node ast.Node) bool {
+			if _, literal := node.(*ast.FuncLit); literal {
+				return false
+			}
 			assignment, ok := node.(*ast.AssignStmt)
 			if !ok || len(assignment.Rhs) != 1 || len(assignment.Lhs) == 0 {
 				return true
@@ -95,6 +92,9 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 			return true
 		})
 		ast.Inspect(method.Body, func(node ast.Node) bool {
+			if _, literal := node.(*ast.FuncLit); literal {
+				return false
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -113,29 +113,35 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 			return true
 		})
 	}
-	var reachesText func(string, int, map[string]bool) bool
-	reachesText = func(name string, maxArgs int, visited map[string]bool) bool {
+	var reachesText func(*types.Func, int, map[*types.Func]bool) bool
+	var witness []string
+	reachesText = func(object *types.Func, maxArgs int, visited map[*types.Func]bool) bool {
+		name := object.Name()
 		if name == "executeUserStatement" || name == "compileNodeWhereFilter" || name == "compileRelationshipWhereFilter" {
+			witness = append(witness, relationshipBoundaryFunctionName(object))
 			return true
 		}
-		// Generic engines consume syntax already present in the outer text.
-		// Do not walk their downstream fanout as a handler dependency.
+		if minimum, adapter := rawText[object]; adapter && (maxArgs < 0 || maxArgs >= minimum) {
+			witness = append(witness, relationshipBoundaryFunctionName(object))
+			return true
+		}
+		// A proven string-value adapter remains a dependency regardless of
+		// its receiver or name. Only stop generic downstream fanout after it.
 		if strings.HasPrefix(name, "evaluate") || strings.HasPrefix(name, "parse") || name == "executeInternal" || name == "executeWithoutTransaction" {
 			return false
 		}
-		if minimum, adapter := rawText[name]; adapter && (maxArgs < 0 || maxArgs >= minimum) {
-			return true
-		}
-		if visited[name] {
+		if visited[object] {
 			return false
 		}
-		visited[name] = true
-		method := methods[name]
-		if method == nil || len(method.Recv.List[0].Names) == 0 {
+		visited[object] = true
+		function := functions[object]
+		if function == nil {
 			return false
 		}
-		for _, callee := range callees(method.Body, method.Recv.List[0].Names[0].Name) {
+
+		for callee := range function.calls {
 			if reachesText(callee, maxArgs, visited) {
+				witness = append(witness, function.name)
 				return true
 			}
 		}
@@ -147,7 +153,11 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		globalProcedureRegistry.mu.RLock()
 		procedure := globalProcedureRegistry.builtins[spec.Name]
 		globalProcedureRegistry.mu.RUnlock()
-		function := runtime.FuncForPC(reflect.ValueOf(procedure.Handler).Pointer())
+		handlerValue := reflect.ValueOf(procedure.Handler)
+		if procedure.admittedHandler != nil {
+			handlerValue = reflect.ValueOf(procedure.admittedHandler)
+		}
+		function := runtime.FuncForPC(handlerValue.Pointer())
 		source, line := function.FileLine(function.Entry())
 		var handler *ast.FuncLit
 		for _, literal := range literals[filepath.Base(source)] {
@@ -167,18 +177,19 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 			if !ok || kind.Name != "StorageExecutor" || len(parameter.Names) == 0 {
 				continue
 			}
-			for _, callee := range callees(handler.Body, parameter.Names[0].Name) {
-				if !reachesText(callee, spec.MaxArgs, map[string]bool{}) {
+			for _, callee := range callees(handler.Body) {
+				witness = nil
+				if !reachesText(callee, spec.MaxArgs, map[*types.Func]bool{}) {
 					continue
 				}
-				require.NotEmpty(t, spec.ResultCache.CypherInputs, "%s interprets text through %s", spec.Name, callee)
+				require.NotEmpty(t, spec.ResultCache.CypherInputs, "%s interprets text through %s via %v", spec.Name, callee, witness)
 				discovered = append(discovered, spec.Name)
 				break
 			}
 		}
 	}
-	require.GreaterOrEqual(t, len(discovered), 19)
 	t.Logf("source-derived executable-text procedures (%d): %v; string-value adapters: %v", len(discovered), discovered, rawText)
+	require.GreaterOrEqual(t, len(discovered), 19)
 	// Installation defers interpretation until a later custom procedure CALL.
 	for _, name := range []string{"apoc.custom.installProcedure", "apoc.custom.declareProcedure"} {
 		procedure, ok := globalProcedureRegistry.Get(name)

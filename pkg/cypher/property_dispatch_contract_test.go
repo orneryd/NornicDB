@@ -24,7 +24,9 @@ func TestPropertyDispatchApplicabilityAndResolution(t *testing.T) {
 		{"properties", "{}", true, true, false},
 		{"size", "[1]", true, true, false},
 	} {
-		_, handled, resolved, err := e.evaluateRowGraphFunction(tc.name, tc.argument, pipelineRow{})
+		fixtureAdmission1764Context, fixtureAdmission1764 := expressionTestContext(context.Background(), tc.argument)
+		_ = fixtureAdmission1764Context
+		_, handled, resolved, err := e.evaluateRowGraphFunction(fixtureAdmission1764, tc.name, tc.argument, pipelineRow{})
 		require.Equal(t, tc.handled, handled, tc.name+tc.argument)
 		require.Equal(t, tc.resolved, resolved, tc.name+tc.argument)
 		require.Equal(t, tc.failed, err != nil, tc.name+tc.argument)
@@ -95,18 +97,24 @@ func TestPropertyDispatchArgumentFailureBoundary(t *testing.T) {
 		{"properties(1)", false},
 		{"1 / 0", true},
 	} {
-		value, handled, resolved, err := e.evaluateRowGraphFunction("property_dispatch_discard_error", tc.argument, pipelineRow{})
+		fixtureAdmission1765Context, fixtureAdmission1765 := expressionTestContext(context.Background(), tc.argument)
+		_ = fixtureAdmission1765Context
+		value, handled, resolved, err := e.evaluateRowGraphFunction(fixtureAdmission1765, "property_dispatch_discard_error", tc.argument, pipelineRow{})
 		require.Nil(t, value)
 		require.True(t, handled)
 		require.False(t, resolved)
 		require.Equal(t, tc.failed, err != nil)
 	}
-	value, handled, resolved, err := e.evaluateRowGraphFunction("coalesce", "1, 1 / 0", pipelineRow{})
+	fixtureAdmission1766Context, fixtureAdmission1766 := expressionTestContext(context.Background(), "1, 1 / 0")
+	_ = fixtureAdmission1766Context
+	value, handled, resolved, err := e.evaluateRowGraphFunction(fixtureAdmission1766, "coalesce", "1, 1 / 0", pipelineRow{})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.True(t, resolved)
 	require.Equal(t, int64(1), value)
 	require.PanicsWithValue(t, "registry defect", func() {
-		_, _, _, _ = e.evaluateRowGraphFunction("property_dispatch_panic", "", pipelineRow{})
+		fixtureAdmission1767Context, fixtureAdmission1767 := expressionTestContext(context.Background(), "")
+		_ = fixtureAdmission1767Context
+		_, _, _, _ = e.evaluateRowGraphFunction(fixtureAdmission1767, "property_dispatch_panic", "", pipelineRow{})
 	})
 }

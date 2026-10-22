@@ -108,11 +108,15 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR b.age = 41": false,
 		"a.age = 30 XOR b.none = 1": false,
 	} {
-		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, clause)
+		fixtureAdmission783Context, fixtureAdmission783 := expressionTestContext(ctx, clause)
+		_ = fixtureAdmission783
+		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(fixtureAdmission783Context, clause)
 		require.True(t, ok, clause)
 		require.Equal(t, want, truth(bind, nil) == truthTrue, clause)
 	}
-	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR b.none = 1")
+	fixtureAdmission784Context, fixtureAdmission784 := expressionTestContext(ctx, "a.age = 30 XOR b.none = 1")
+	_ = fixtureAdmission784
+	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(fixtureAdmission784Context, "a.age = 30 XOR b.none = 1")
 	require.True(t, ok)
 	require.Equal(t, truthUnknown, truth(bind, nil))
 	for clause, want := range map[string]bool{
@@ -120,15 +124,21 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR (a)-[:XR]->(b)": true,
 		"a.age = 31 XOR (b)-[:XR]->(a)": false,
 	} {
-		predicate, ok := exec.tryCompileExecutorBindingWhere(ctx, clause)
+		fixtureAdmission785Context, fixtureAdmission785 := expressionTestContext(ctx, clause)
+		_ = fixtureAdmission785
+		predicate, ok := exec.tryCompileExecutorBindingWhere(fixtureAdmission785, fixtureAdmission785Context, clause)
 		require.True(t, ok, clause)
 		require.Equal(t, want, predicate(bind, nil), clause)
 	}
 	// An XOR whose operand neither compiler supports isn't compiled; the
 	// generic evaluator answers it.
-	_, ok = exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR (")
+	fixtureAdmission786Context, fixtureAdmission786 := expressionTestContext(ctx, "a.age = 30 XOR (")
+	_ = fixtureAdmission786
+	_, ok = exec.getCompiledBindingWhereTruthIfSupported(fixtureAdmission786Context, "a.age = 30 XOR (")
 	require.False(t, ok)
-	_, ok = exec.tryCompileExecutorBindingWhere(ctx, "a.age = 30 XOR (")
+	fixtureAdmission787Context, fixtureAdmission787 := expressionTestContext(ctx, "a.age = 30 XOR (")
+	_ = fixtureAdmission787
+	_, ok = exec.tryCompileExecutorBindingWhere(fixtureAdmission787, fixtureAdmission787Context, "a.age = 30 XOR (")
 	require.False(t, ok)
 }
 

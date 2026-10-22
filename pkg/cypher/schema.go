@@ -61,7 +61,7 @@ func isCompositeAllowedCommand(cypher string) bool {
 }
 
 // executeSchemaCommand handles CREATE CONSTRAINT and CREATE INDEX commands.
-func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeSchemaCommand(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
@@ -81,7 +81,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	upper := upperASCII(cypher)
 
 	// Order matters: check more specific patterns first
-	var run func(context.Context, string) (*ExecuteResult, error)
+	var run func(admittedRelationshipStatement, context.Context, string) (*ExecuteResult, error)
 	if strings.Contains(upper, "CREATE CONSTRAINT") {
 		run = e.executeCreateConstraint
 	} else if strings.Contains(upper, "DROP CONSTRAINT") {
@@ -103,7 +103,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	} else {
 		return nil, localizedError(localization.CypherSchemaUnknownCommand(cypher), nil)
 	}
-	result, err := e.countSchemaChanges(ctx, cypher, run)
+	result, err := e.countSchemaChanges(admission, ctx, cypher, run)
 	if err == nil {
 		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
 			err = wrapper.tx.StageSchemaChanges()
@@ -130,13 +130,13 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 // constraints_removed 1, and nothing for an IF [NOT] EXISTS that did nothing.
 // The counts are the difference in the schema's objects across the command
 // (SchemaObjectCounts), so every CREATE / DROP form is counted the same way.
-func (e *StorageExecutor) countSchemaChanges(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) countSchemaChanges(admission admittedRelationshipStatement, ctx context.Context, cypher string, run func(admittedRelationshipStatement, context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
-		return run(ctx, cypher)
+		return run(admission, ctx, cypher)
 	}
 	indexesBefore, constraintsBefore := schema.SchemaObjectCounts()
-	result, err := run(ctx, cypher)
+	result, err := run(admission, ctx, cypher)
 	if err != nil || result == nil {
 		return result, err
 	}
@@ -173,7 +173,7 @@ func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
 // Supported syntax (Neo4j 4.x):
 //
 //	CREATE CONSTRAINT FOR (n:Label) REQUIRE (n.first, n.last) IS UNIQUE
-func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateConstraint(fixtureAdmission1024 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	onPosition := keywordIndexFrom(cypher, "ON", 0, defaultKeywordScanOpts())
 	forPosition := keywordIndexFrom(cypher, "FOR", 0, defaultKeywordScanOpts())
 	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
@@ -525,7 +525,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 //
 //	DROP INDEX index_name
 //	DROP INDEX index_name IF EXISTS
-func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropIndex(fixtureAdmission1026 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
@@ -622,7 +622,7 @@ func (e *StorageExecutor) dropIndexByName(name string, ifExists bool) error {
 }
 
 // executeDropConstraint handles DROP CONSTRAINT commands.
-func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropConstraint(fixtureAdmission1025 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	trimmed := strings.TrimSpace(cypher)
 	upper := upperASCII(trimmed)
 	if !strings.HasPrefix(upper, "DROP CONSTRAINT") {
@@ -666,7 +666,7 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 //	CREATE INDEX IF NOT EXISTS FOR (n:Label) ON (n.prop1, n.prop2, n.prop3)
 //
 // Supports both single-property and composite (multi-property) indexes.
-func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateIndex(fixtureAdmission1032 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if parsed, err := e.parseCreateIndexDDL(cypher, "CREATE INDEX"); err == nil {
 		indexName := parsed.indexName
 		if indexName == "" {
@@ -733,13 +733,13 @@ func (e *StorageExecutor) executeCreateIndex(ctx context.Context, cypher string)
 // index is the default index CREATE INDEX makes, so the statement runs as
 // CREATE INDEX: single or composite properties, node or relationship
 // patterns, as SHOW INDEXES' createStatement writes it (#531, #530).
-func (e *StorageExecutor) executeCreateRangeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateRangeIndex(fixtureAdmission1029 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	start := findMultiWordKeywordIndex(cypher, "CREATE", "RANGE INDEX")
 	end, ok := keywordSpanAt(cypher, start, "CREATE RANGE INDEX")
 	if start < 0 || !ok {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE RANGE INDEX"), nil)
 	}
-	return e.executeCreateIndex(ctx, "CREATE INDEX"+cypher[end:])
+	return e.executeCreateIndex(fixtureAdmission1029, ctx, "CREATE INDEX"+cypher[end:])
 }
 
 type parsedCreateIndexDDL struct {
@@ -2299,7 +2299,7 @@ func (e *StorageExecutor) parseConstraintProperties(propertiesStr string) []stri
 // types — Neo4j allows `:R1|R2`); the runtime then scopes
 // db.index.fulltext.queryRelationships to those types instead of
 // scanning every edge.
-func (e *StorageExecutor) executeCreateFulltextIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateFulltextIndex(fixtureAdmission1027 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil, localizedError(localization.CypherSchemaManagerUnavailable(), nil)
@@ -2438,7 +2438,7 @@ func normalizeIdentifierToken(v string) string {
 //	CREATE VECTOR INDEX index_name IF NOT EXISTS
 //	FOR (n:Label) ON (n.property)
 //	OPTIONS {indexConfig: {`vector.dimensions`: 1024, `vector.similarity_function`: 'cosine'}}
-func (e *StorageExecutor) executeCreateVectorIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateVectorIndex(fixtureAdmission1028 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	parsed, err := e.parseCreateIndexDDL(cypher, "CREATE VECTOR INDEX")
 	if err != nil {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE VECTOR INDEX"), nil)

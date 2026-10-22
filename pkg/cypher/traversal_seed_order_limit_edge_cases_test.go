@@ -17,37 +17,51 @@ func TestTraversalSeedOrderLimit_EarlyExitGuards(t *testing.T) {
 
 	returnItems := []returnItem{{expr: "d.id"}}
 
-	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "r.name ASC", 0, traversalEndSeed)
+	fixtureAdmission909Context, fixtureAdmission909 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems)
+	_ = fixtureAdmission909Context
+	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission909, fixtureAdmission909Context, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "r.name ASC", 0, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "r.name ASC", 2, traversalEndSeed)
+	fixtureAdmission910Context, fixtureAdmission910 := traversalTestContext(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems)
+	_ = fixtureAdmission910Context
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission910, fixtureAdmission910Context, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "r.name ASC", 2, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "d.id = 'x'", returnItems, "", "r.name ASC", 2, traversalEndSeed)
+	fixtureAdmission911Context, fixtureAdmission911 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "d.id = 'x'", returnItems)
+	_ = fixtureAdmission911Context
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission911, fixtureAdmission911Context, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "d.id = 'x'", returnItems, "", "r.name ASC", 2, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name IS NOT NULL", returnItems, "", "x.name ASC", 2, traversalEndSeed)
+	fixtureAdmission912Context, fixtureAdmission912 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name IS NOT NULL", returnItems)
+	_ = fixtureAdmission912Context
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission912, fixtureAdmission912Context, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name IS NOT NULL", returnItems, "", "x.name ASC", 2, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "d.rank DESC", 0, traversalStartSeed)
+	fixtureAdmission913Context, fixtureAdmission913 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems)
+	_ = fixtureAdmission913Context
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission913, fixtureAdmission913Context, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "d.rank DESC", 0, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "d.rank DESC", 2, traversalStartSeed)
+	fixtureAdmission914Context, fixtureAdmission914 := traversalTestContext(ctx, "(:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems)
+	_ = fixtureAdmission914Context
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission914, fixtureAdmission914Context, "(:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "d.rank DESC", 2, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "", 2, traversalStartSeed)
+	fixtureAdmission915Context, fixtureAdmission915 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems)
+	_ = fixtureAdmission915Context
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission915, fixtureAdmission915Context, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "", 2, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
@@ -66,8 +80,10 @@ func TestTraversalEndSeedOrderLimit_IndexWindowDeclines(t *testing.T) {
 		_, err = exec.Execute(ctx, "CREATE INDEX idx_room_name_empty FOR (r:Room) ON (r.name)", nil)
 		require.NoError(t, err)
 
-		res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
-			ctx,
+		fixtureAdmission916Context, fixtureAdmission916 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name = 'missing'", []returnItem{{expr: "d.id", alias: "did"}})
+		_ = fixtureAdmission916Context
+		res, used, err := exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission916,
+			fixtureAdmission916Context,
 			"(d:Drawer)-[:IN_ROOM]->(r:Room)",
 			"r.name = 'missing'",
 			[]returnItem{{expr: "d.id", alias: "did"}},
@@ -105,8 +121,10 @@ func TestTraversalEndSeedOrderLimit_IndexWindowDeclines(t *testing.T) {
 		// No Drawer->Room edges exist, so traversal from end-seeded rooms yields no paths.
 		// With limit=1, seedLimit=200; when seedNodes >= seedLimit and produced paths < limit,
 		// helper intentionally returns (nil,false,nil) to fall back to full execution.
-		res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
-			ctx,
+		fixtureAdmission981Context, fixtureAdmission981 := traversalTestContext(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name IS NOT NULL", []returnItem{{expr: "d.id"}, {expr: "r.name"}})
+		_ = fixtureAdmission981Context
+		res, used, err := exec.tryExecuteTraversalSeedOrderLimit(fixtureAdmission981,
+			fixtureAdmission981Context,
 			"(d:Drawer)-[:IN_ROOM]->(r:Room)",
 			"r.name IS NOT NULL",
 			[]returnItem{{expr: "d.id"}, {expr: "r.name"}},
@@ -127,7 +145,9 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	nodes, used, err := exec.tryCollectTraversalStartSeedOrderNodes(ctx, nodePatternInfo{}, "", "d.rank DESC", 2)
+	fixtureAdmission1515Context, fixtureAdmission1515 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1515Context
+	nodes, used, err := exec.tryCollectTraversalStartSeedOrderNodes(fixtureAdmission1515, fixtureAdmission1515Context, nodePatternInfo{}, "", "d.rank DESC", 2)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
@@ -140,8 +160,10 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_drawer_rank_cov FOR (d:Drawer) ON (d.rank)", nil)
 	require.NoError(t, err)
 
-	nodes, used, err = exec.tryCollectTraversalStartSeedOrderNodes(
-		ctx,
+	fixtureAdmission1516Context, fixtureAdmission1516 := expressionTestContext(ctx, "d.rank IS NOT NULL")
+	_ = fixtureAdmission1516Context
+	nodes, used, err = exec.tryCollectTraversalStartSeedOrderNodes(fixtureAdmission1516,
+		fixtureAdmission1516Context,
 		nodePatternInfo{variable: "d", labels: []string{"Drawer"}},
 		"d.rank IS NOT NULL",
 		"d.rank DESC",
@@ -161,12 +183,16 @@ func TestTraversalStartPropertyScan_EmptyCandidateBranch(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name = 'x'")
+	fixtureAdmission1517Context, fixtureAdmission1517 := expressionTestContext(ctx, "n.name = 'x'")
+	_ = fixtureAdmission1517Context
+	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(fixtureAdmission1517, fixtureAdmission1517Context, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name = 'x'")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name IS NOT NULL")
+	fixtureAdmission1518Context, fixtureAdmission1518 := expressionTestContext(ctx, "n.name IS NOT NULL")
+	_ = fixtureAdmission1518Context
+	nodes, used, err = exec.tryCollectNodesFromStartPropertyScan(fixtureAdmission1518, fixtureAdmission1518Context, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name IS NOT NULL")
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)

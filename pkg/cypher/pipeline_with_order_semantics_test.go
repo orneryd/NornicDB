@@ -3,6 +3,7 @@ package cypher
 import (
 	"testing"
 
+	"context"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -65,15 +66,21 @@ func TestPipelineMinMaxUseCypherAggregateValueOrder(t *testing.T) {
 		{"x": []interface{}{int64(2)}},
 		{"x": []interface{}{int64(2), int64(1)}},
 	}
-	maximum, ok := executor.evaluatePipelineAggregate(rows, "max", "x", false)
+	fixtureAdmission1394Context, fixtureAdmission1394 := expressionTestContext(context.Background(), "x")
+	_ = fixtureAdmission1394Context
+	maximum, ok := executor.evaluatePipelineAggregate(fixtureAdmission1394, rows, "max", "x", false)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{int64(2), int64(1)}, maximum)
 
 	mixed := []pipelineRow{{"x": int64(1)}, {"x": "a"}, {"x": []interface{}{int64(1), int64(2)}}, {"x": 0.2}, {"x": "b"}}
-	maximum, ok = executor.evaluatePipelineAggregate(mixed, "max", "x", false)
+	fixtureAdmission1395Context, fixtureAdmission1395 := expressionTestContext(context.Background(), "x")
+	_ = fixtureAdmission1395Context
+	maximum, ok = executor.evaluatePipelineAggregate(fixtureAdmission1395, mixed, "max", "x", false)
 	require.True(t, ok)
 	require.Equal(t, int64(1), maximum)
-	minimum, ok := executor.evaluatePipelineAggregate(mixed, "min", "x", false)
+	fixtureAdmission1396Context, fixtureAdmission1396 := expressionTestContext(context.Background(), "x")
+	_ = fixtureAdmission1396Context
+	minimum, ok := executor.evaluatePipelineAggregate(fixtureAdmission1396, mixed, "min", "x", false)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{int64(1), int64(2)}, minimum)
 }

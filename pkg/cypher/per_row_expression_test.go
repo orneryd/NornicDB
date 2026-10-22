@@ -50,8 +50,12 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		"startNode(d)", "endNode(d)", "startNode(z)", "startNode(unbound)",
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
-		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
-		want, wantOK, wantErr := exec.evaluateRowFallback(expr, values)
+		fixtureAdmission790Context, fixtureAdmission790 := expressionTestRow(context.Background(), expr, values)
+		_ = fixtureAdmission790
+		got, gotOK, gotErr := exec.evaluateRowValue(fixtureAdmission790, expr, fixtureAdmission790Context)
+		fixtureAdmission996Context, fixtureAdmission996 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission996Context
+		want, wantOK, wantErr := exec.evaluateRowFallback(fixtureAdmission996, expr, values)
 		if gotErr != nil || wantErr != nil {
 			if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() {
 				t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
@@ -65,17 +69,25 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	// Wrong argument types must fail through the same shared contract in both
 	// evaluators; neither path may silently turn an ordinary value into null.
 	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
-		_, _, gotErr := exec.evaluateRowValue(expr, values)
-		_, _, wantErr := exec.evaluateRowFallback(expr, values)
+		fixtureAdmission791Context, fixtureAdmission791 := expressionTestRow(context.Background(), expr, values)
+		_ = fixtureAdmission791
+		_, _, gotErr := exec.evaluateRowValue(fixtureAdmission791, expr, fixtureAdmission791Context)
+		fixtureAdmission997Context, fixtureAdmission997 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission997Context
+		_, _, wantErr := exec.evaluateRowFallback(fixtureAdmission997, expr, values)
 		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
 			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
 			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
 		}
 	}
-	if node, _, _ := exec.evaluateRowValue("startNode(r)", values); node.(*storage.Node).ID != "a" {
+	fixtureAdmission792Context, fixtureAdmission792 := expressionTestRow(context.Background(), "startNode(r)", values)
+	_ = fixtureAdmission792
+	if node, _, _ := exec.evaluateRowValue(fixtureAdmission792, "startNode(r)", fixtureAdmission792Context); node.(*storage.Node).ID != "a" {
 		t.Fatalf("startNode(r) = %v", node)
 	}
-	if node, _, _ := exec.evaluateRowValue("endNode(d)", values); node != nil {
+	fixtureAdmission793Context, fixtureAdmission793 := expressionTestRow(context.Background(), "endNode(d)", values)
+	_ = fixtureAdmission793
+	if node, _, _ := exec.evaluateRowValue(fixtureAdmission793, "endNode(d)", fixtureAdmission793Context); node != nil {
 		t.Fatalf("endNode(d) of a missing node = %#v", node)
 	}
 
@@ -180,12 +192,15 @@ func TestRowValueProgramAdapterConsistency(t *testing.T) {
 	rows := rowValueCorpusRows(t, store)
 	for _, expr := range rowValueCorpus {
 		for index, row := range rows {
+			var fixtureAdmission794 admittedRelationshipStatement
+			row, fixtureAdmission794 = expressionTestRow(rowStatementContextOrBackground(row), expr, row)
+			_ = fixtureAdmission794
 			rowValueProgramsDisabled.Store(true)
-			want, wantOK, wantErr := exec.evaluateRowValue(expr, row)
+			want, wantOK, wantErr := exec.evaluateRowValue(fixtureAdmission794, expr, row)
 			rowValueProgramsDisabled.Store(false)
 			compiler := rowValueCompiler{}
 			root, _ := compiler.compile(expr)
-			got, gotOK, gotErr := root.eval(exec, row, nil)
+			got, gotOK, gotErr := root.eval(fixtureAdmission794, exec, row, nil)
 			if gotOK != wantOK || !sameRowValue(got, want) || (gotErr == nil) != (wantErr == nil) || gotErr != nil && gotErr.Error() != wantErr.Error() {
 				t.Errorf("%s (row %d): program %#v, %v, %v; text %#v, %v, %v", expr, index, got, gotOK, gotErr, want, wantOK, wantErr)
 			}
@@ -299,13 +314,19 @@ func TestRowPredicateProgramAdapterConsistency(t *testing.T) {
 	exec, store := perRowTestExecutor(t)
 	rows := rowValueCorpusRows(t, store)
 	evaluate := func(expr string, row map[string]interface{}, program bool) (bool, error) {
-		ctx := withExpressionFailureSlot(context.Background())
+		fixtureAdmission795Context, fixtureAdmission795 := expressionTestContext(context.Background(), expr)
+		_ = fixtureAdmission795
+		ctx := withExpressionFailureSlot(fixtureAdmission795Context)
 		if program {
-			return compileRowPredicateProgram(expr).holds(exec, ctx, row), getExpressionFailure(ctx)
+			fixtureAdmission1739Context, fixtureAdmission1739 := statementTestContext(ctx, "RETURN "+(expr))
+			_ = fixtureAdmission1739Context
+			return compileRowPredicateProgram(expr).holds(fixtureAdmission1739, exec, fixtureAdmission1739Context, row), getExpressionFailure(ctx)
 		}
 		rowValueProgramsDisabled.Store(true)
 		defer rowValueProgramsDisabled.Store(false)
-		return exec.evaluateRowPredicate(ctx, expr, row), getExpressionFailure(ctx)
+		fixtureAdmission977Context, fixtureAdmission977 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission977Context
+		return exec.evaluateRowPredicate(fixtureAdmission977, fixtureAdmission977Context, expr, row), getExpressionFailure(ctx)
 	}
 	for _, expr := range rowPredicateCorpus {
 		// CASE has a hand-written oracle in TestRowPredicateCaseExpectedResults:
@@ -438,12 +459,13 @@ func testRowValueProgramListAllocations(t *testing.T, exec *StorageExecutor, sto
 		return list
 	}
 	root, _ := (&rowValueCompiler{}).compile(expr)
+	_, statement := expressionTestContext(context.Background(), expr)
 	shortRow := map[string]interface{}{"r": edge, "$keys": keys(20)}
 	longRow := map[string]interface{}{"r": edge, "$keys": keys(200)}
 	evaluate := func(row map[string]interface{}) {
 		store.reads = 0
 		store.edgeReads = 0
-		if _, ok, err := root.eval(exec, row, nil); !ok || err != nil {
+		if _, ok, err := root.eval(statement, exec, row, nil); !ok || err != nil {
 			t.Fatalf("%s: unresolved or %v", expr, err)
 		}
 		if store.reads != reads {
@@ -484,14 +506,22 @@ func TestRowContextShapeForms(t *testing.T) {
 	}
 	ctx := context.Background()
 	for run := 0; run < 2; run++ {
-		if value := exec.evaluateExpressionWithContext(ctx, "any(k IN [1] WHERE datetime() IS NOT NULL)", map[string]*storage.Node{"n": node}, nil); value != true {
+		fixtureAdmission796Context, fixtureAdmission796 := expressionTestContext(ctx, "any(k IN [1] WHERE datetime() IS NOT NULL)")
+		_ = fixtureAdmission796
+		if value := exec.evaluateExpressionWithContext(fixtureAdmission796, fixtureAdmission796Context, "any(k IN [1] WHERE datetime() IS NOT NULL)", map[string]*storage.Node{"n": node}, nil); value != true {
 			t.Fatalf("run %d: any() with datetime() = %v", run, value)
 		}
 		failure := withExpressionFailureSlot(ctx)
-		if _, ok := exec.evaluateRowExpressionWithContext(failure, "substring(n.id, -1)", pipelineRow{"n": node}); ok || getExpressionFailure(failure) == nil {
+		fixtureAdmission797Context, fixtureAdmission797 := expressionTestContext(failure, "substring(n.id, -1)")
+		_ = fixtureAdmission797
+		if _, ok := exec.evaluateRowExpressionWithContext(fixtureAdmission797, fixtureAdmission797Context, "substring(n.id, -1)", pipelineRow{"n": node}); ok || getExpressionFailure(failure) == nil {
 			t.Fatalf("run %d: substring(n.id, -1) resolved without an error", run)
 		}
-		value, ok := exec.evaluateRowExpressionWithContext(ctx, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
+		fixtureAdmission798Context, fixtureAdmission798 := expressionTestContext(ctx, "[(n)-[:R]->(m) | m.id]")
+		_ = fixtureAdmission798
+		fixtureAdmission937Context, fixtureAdmission937 := expressionTestContext(fixtureAdmission798Context, "[(n)-[:R]->(m) | m.id]")
+		_ = fixtureAdmission937
+		value, ok := exec.evaluateRowExpressionWithContext(fixtureAdmission937, fixtureAdmission937Context, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
 		if !ok || !reflect.DeepEqual(value, []interface{}{"b"}) {
 			t.Fatalf("run %d: pattern comprehension = %v, %v", run, value, ok)
 		}

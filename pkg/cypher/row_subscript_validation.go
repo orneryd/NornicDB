@@ -53,10 +53,10 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineProjectionSubscripts(admission admittedRelationshipStatement, rows []pipelineRow, clause, keyword string) error {
 	for _, expression := range projectionExpressions(clause, keyword) {
 		for _, row := range rows {
-			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
+			if err := e.validateRowSubscriptTypes(admission, expression, row); err != nil {
 				return err
 			}
 		}
@@ -64,7 +64,7 @@ func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRo
 	return nil
 }
 
-func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validateRowSubscriptTypes(admission admittedRelationshipStatement, expression string, row pipelineRow) error {
 	expression = strings.TrimSpace(expression)
 	if !strings.HasSuffix(expression, "]") {
 		return nil
@@ -87,10 +87,10 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
-	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
+	if err := e.validateRowSubscriptTypes(admission, baseExpression, row); err != nil {
 		return err
 	}
-	base, baseOK, err := e.evaluateRowValue(baseExpression, row)
+	base, baseOK, err := e.evaluateRowValue(admission, baseExpression, row)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 			if boundExpression == "" {
 				continue
 			}
-			bound, ok, err := e.evaluateRowValue(boundExpression, row)
+			bound, ok, err := e.evaluateRowValue(admission, boundExpression, row)
 			if err != nil {
 				return err
 			}
@@ -118,7 +118,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		}
 		return nil
 	}
-	index, indexOK, err := e.evaluateRowValue(indexExpression, row)
+	index, indexOK, err := e.evaluateRowValue(admission, indexExpression, row)
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func mapElementAccessByNonStringError(value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineSizeArguments(admission admittedRelationshipStatement, rows []pipelineRow, clause, keyword string) error {
 	for _, expression := range projectionExpressions(clause, keyword) {
 		name, argument, functionCall := parseFunctionCallWS(expression)
 		if !functionCall || !strings.EqualFold(name, "size") {
@@ -364,7 +364,7 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 			continue
 		}
 		for _, row := range rows {
-			value, ok, err := e.evaluateRowValue(argument, row)
+			value, ok, err := e.evaluateRowValue(admission, argument, row)
 			if err != nil {
 				return err
 			}

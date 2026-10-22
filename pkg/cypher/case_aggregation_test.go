@@ -223,7 +223,9 @@ func TestEvaluateCaseExpressionDirectly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateCaseExpression(ctx, tt.expr, nodes, nil, nil, nil, nil, 0)
+			fixtureAdmission967Context, fixtureAdmission967 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission967Context
+			result := exec.evaluateCaseExpression(fixtureAdmission967, fixtureAdmission967Context, tt.expr, nodes, nil, nil, nil, nil, 0)
 			assert.Equal(t, tt.expected, result, "evaluateCaseExpression(ctx, %q)", tt.expr)
 		})
 	}
@@ -279,7 +281,9 @@ func TestEvaluateConditionContains(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateCondition(ctx, tt.condition, nodes, nil)
+			fixtureAdmission978Context, fixtureAdmission978 := expressionTestContext(ctx, tt.condition)
+			_ = fixtureAdmission978Context
+			result := exec.evaluateCondition(fixtureAdmission978, fixtureAdmission978Context, tt.condition, nodes, nil)
 			assert.Equal(t, tt.expected, result, "evaluateCondition(ctx, %q)", tt.condition)
 		})
 	}
@@ -410,7 +414,9 @@ func TestCaseConditionEvaluation(t *testing.T) {
 
 		// Test evaluateExpression directly (this is what resolveReturnItem calls)
 		expr := "CASE WHEN n.issues CONTAINS 'tú' THEN 'found' ELSE 'not found' END"
-		directResult := exec.evaluateExpression(ctx, expr, "n", testNode)
+		fixtureAdmission982Context, fixtureAdmission982 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission982Context
+		directResult := exec.evaluateExpression(fixtureAdmission982, fixtureAdmission982Context, expr, "n", testNode)
 		t.Logf("Direct evaluateExpression result: %v", directResult)
 		assert.Equal(t, "found", directResult, "Direct evaluateExpression should work")
 
@@ -496,7 +502,9 @@ func TestEvaluateCondition_OperatorAndPredicateMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		ctx := context.Background()
-		got := exec.evaluateCondition(ctx, tt.condition, nodes, nil)
+		fixtureAdmission979Context, fixtureAdmission979 := expressionTestContext(ctx, tt.condition)
+		_ = fixtureAdmission979Context
+		got := exec.evaluateCondition(fixtureAdmission979, fixtureAdmission979Context, tt.condition, nodes, nil)
 		assert.Equal(t, tt.expected, got, "condition=%q", tt.condition)
 	}
 }

@@ -72,8 +72,8 @@
     "sha256": "400b56ff355412fb8666d1165eb51d57a5baa17dd692e50c7637cf1fae32ed16"
   },
   "pkg/cypher/executor_mutations.go:collectDeleteWithLimitCandidates": {
-    "reason": "DELETE fast-route admission accepts its fixed native list shapes and otherwise declines to the shared pipeline. #1594 adds structural property inspection before row evaluation; no numeric/list conversion is implemented here.",
-    "sha256": "c48c98bea914784351535bfe91211e7d0df5ecdbe88d9af3b5ee0e6eb77fac1a"
+    "reason": "DELETE fast-route admission accepts its fixed native list shapes and otherwise declines to the shared pipeline. #1594 adds structural property inspection before row evaluation; no numeric/list conversion is implemented here. Typed relationship admission only adds a required parameter and forwards it to existing callees.",
+    "sha256": "e08d13395725ed9a95e9bed7db3a10972ac1e12ab3d0744e2bf89abab940d2df"
   },
   "pkg/cypher/executor_mutations_delete_guard.go:collectDeleteTargetValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",

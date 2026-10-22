@@ -31,7 +31,9 @@ func TestCypherCommandRoutingErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("CALL", func(t *testing.T) {
-		_, err := exec.executeCall(context.Background(), "CALL missing.procedure()")
+		fixtureAdmission1502Context, fixtureAdmission1502 := statementTestContext(context.Background(), "CALL missing.procedure()")
+		_ = fixtureAdmission1502Context
+		_, err := exec.executeCall(fixtureAdmission1502, fixtureAdmission1502Context, "CALL missing.procedure()")
 		require.EqualError(t, err, "Neo.ClientError.Procedure.ProcedureNotFound: There is no procedure with the name `missing.procedure` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.")
 		var semanticErr *SemanticError
 		require.ErrorAs(t, err, &semanticErr)

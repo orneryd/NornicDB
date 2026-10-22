@@ -84,7 +84,11 @@ func TestUnicodeNames(t *testing.T) {
 func TestUnicodeFabricBindingNames(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "unicode_fabric"))
 	exec.fabricRecordBindings = map[string]interface{}{"ñx": int64(7)}
-	require.Equal(t, int64(7), parsedTestValue(exec.parseValue(context.Background(), "ñx")))
-	_, parseErr := exec.parseValue(context.Background(), "1ñ")
+	fixtureAdmission1845Context, fixtureAdmission1845 := expressionTestContext(context.Background(), "ñx")
+	_ = fixtureAdmission1845Context
+	require.Equal(t, int64(7), parsedTestValue(exec.parseValue(fixtureAdmission1845, fixtureAdmission1845Context, "ñx")))
+	fixtureAdmission1846Context, fixtureAdmission1846 := expressionTestContext(context.Background(), "1ñ")
+	_ = fixtureAdmission1846Context
+	_, parseErr := exec.parseValue(fixtureAdmission1846, fixtureAdmission1846Context, "1ñ")
 	require.Error(t, parseErr)
 }

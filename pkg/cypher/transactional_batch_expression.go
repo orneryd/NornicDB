@@ -73,7 +73,7 @@ func scalarAdmissionVisitor(shape *scalarExpressionSyntax) cypherantlr.SyntaxVis
 // classifyTransactionalBatchExpression is the single semantic admission point
 // for execution and EXPLAIN. The shared type checker propagates parameter list
 // element types; union results such as CASE and coalesce remain runtime values.
-func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Context, spec *transactionBatchSpec, params map[string]interface{}) error {
+func (e *StorageExecutor) classifyTransactionalBatchExpression(admission admittedRelationshipStatement, ctx context.Context, spec *transactionBatchSpec, params map[string]interface{}) error {
 	var shape scalarExpressionSyntax
 	var err error
 	if syntax, found := spec.ExpressionSyntax(); found {
@@ -109,7 +109,7 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 		}
 	}
 	if spec.LiteralKind != "" {
-		_, err = e.resolveCallBatchSize(ctx, spec)
+		_, err = e.resolveCallBatchSize(admission, ctx, spec)
 	}
 	return err
 }

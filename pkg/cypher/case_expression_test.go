@@ -511,12 +511,24 @@ func TestListLiteralsAndComprehensions(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, want, result.Rows[0][0], query)
 	}
-	require.Equal(t, []interface{}{int64(1), int64(2)}, exec.evaluateExpressionWithContextFull(ctx, "[coalesce(null, 1), 2]", nil, nil, nil, nil, nil, 0))
-	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "[x IN null | x]", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(ctx, "[x IN 5]", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(ctx, "[x IN ['a', 'b'] WHERE x = 'a']", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(ctx, "[x IN 5 | x * 2]", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission136Context, fixtureAdmission136 := expressionTestContext(ctx, "[coalesce(null, 1), 2]")
+	_ = fixtureAdmission136
+	require.Equal(t, []interface{}{int64(1), int64(2)}, exec.evaluateExpressionWithContextFull(fixtureAdmission136, fixtureAdmission136Context, "[coalesce(null, 1), 2]", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission137Context, fixtureAdmission137 := expressionTestContext(ctx, "[x IN null | x]")
+	_ = fixtureAdmission137
+	require.Nil(t, exec.evaluateExpressionWithContextFull(fixtureAdmission137, fixtureAdmission137Context, "[x IN null | x]", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission138Context, fixtureAdmission138 := expressionTestContext(ctx, "[x IN 5]")
+	_ = fixtureAdmission138
+	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(fixtureAdmission138, fixtureAdmission138Context, "[x IN 5]", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission139Context, fixtureAdmission139 := expressionTestContext(ctx, "[x IN ['a', 'b'] WHERE x = 'a']")
+	_ = fixtureAdmission139
+	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(fixtureAdmission139, fixtureAdmission139Context, "[x IN ['a', 'b'] WHERE x = 'a']", nil, nil, nil, nil, nil, 0))
+	fixtureAdmission140Context, fixtureAdmission140 := expressionTestContext(ctx, "[x IN 5 | x * 2]")
+	_ = fixtureAdmission140
+	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(fixtureAdmission140, fixtureAdmission140Context, "[x IN 5 | x * 2]", nil, nil, nil, nil, nil, 0))
 	failureCtx := withExpressionFailureSlot(ctx)
-	_ = exec.evaluateExpressionWithContextFull(failureCtx, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0)
+	fixtureAdmission141Context, fixtureAdmission141 := expressionTestContext(failureCtx, "[r IN [{type: 'R'}] | type(r)]")
+	_ = fixtureAdmission141
+	_ = exec.evaluateExpressionWithContextFull(fixtureAdmission141, fixtureAdmission141Context, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0)
 	require.Error(t, getExpressionFailure(failureCtx), "ordinary maps are not relationships")
 }

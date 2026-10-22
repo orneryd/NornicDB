@@ -34,7 +34,9 @@ func TestExecutePipeline_DirectInvocation(t *testing.T) {
 		MATCH (p:Product {productID: prodRef.productID})
 		CREATE (o)-[:ORDERS {quantity: prodRef.quantity}]->(p)`
 
-	outcome := exec.executePipeline(ctx, q)
+	fixtureAdmission802Context, fixtureAdmission802 := statementTestContext(ctx, q)
+	_ = fixtureAdmission802
+	outcome := exec.executePipeline(fixtureAdmission802, fixtureAdmission802Context, q)
 	require.True(t, outcome.handled(), "executePipeline must accept this shape")
 	require.NoError(t, outcome.err, "executePipeline must not error")
 	require.NotNil(t, outcome.result)

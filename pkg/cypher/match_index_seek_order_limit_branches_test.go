@@ -32,7 +32,9 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE INDEX idx_person_rank FOR (n:Person) ON (n.rank)", nil)
 	require.NoError(t, err)
 
-	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "n.rank IS NOT NULL AND n.active = true", "n.rank DESC", 5)
+	fixtureAdmission1305Context, fixtureAdmission1305 := expressionTestContext(ctx, "n.rank IS NOT NULL AND n.active = true")
+	_ = fixtureAdmission1305Context
+	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexOrderLimit(fixtureAdmission1305, fixtureAdmission1305Context, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "n.rank IS NOT NULL AND n.active = true", "n.rank DESC", 5)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, nodes, 5)
@@ -40,12 +42,16 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 		require.EqualValues(t, 9-i, node.Properties["rank"])
 	}
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "", "n.rank DESC", 3)
+	fixtureAdmission1306Context, fixtureAdmission1306 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1306Context
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(fixtureAdmission1306, fixtureAdmission1306Context, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "", "n.rank DESC", 3)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, nodes)
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "", "n.rank DESC", 0)
+	fixtureAdmission1307Context, fixtureAdmission1307 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1307Context
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(fixtureAdmission1307, fixtureAdmission1307Context, nodePatternInfo{variable: "n", labels: []string{"Person"}}, "", "n.rank DESC", 0)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, nodes)
@@ -69,7 +75,9 @@ func TestTryCollectNodesFromPropertyIndexNotNullPaths(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexNotNullOrderLimit(context.Background(), nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL", "n.score DESC", 2)
+	fixtureAdmission1651Context, fixtureAdmission1651 := expressionTestContext(context.Background(), "n.score IS NOT NULL")
+	_ = fixtureAdmission1651Context
+	nodes, ok, err := exec.tryCollectNodesFromPropertyIndexNotNullOrderLimit(fixtureAdmission1651, fixtureAdmission1651Context, nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL", "n.score DESC", 2)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, nodes, 2)
@@ -81,7 +89,9 @@ func TestTryCollectNodesFromPropertyIndexNotNullPaths(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, nodes, 3)
 
-	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexNotNullOrderLimit(context.Background(), nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL", "n.id DESC", 2)
+	fixtureAdmission1652Context, fixtureAdmission1652 := expressionTestContext(context.Background(), "n.score IS NOT NULL")
+	_ = fixtureAdmission1652Context
+	nodes, ok, err = exec.tryCollectNodesFromPropertyIndexNotNullOrderLimit(fixtureAdmission1652, fixtureAdmission1652Context, nodePatternInfo{variable: "n", labels: []string{"Item"}}, "n.score IS NOT NULL", "n.id DESC", 2)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, nodes)

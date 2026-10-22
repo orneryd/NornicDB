@@ -32,11 +32,13 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 		require.NoError(t, store.CreateEdge(edge))
 	}
 
-	exists := func(row map[string]interface{}) bool {
-		value, recognized, err := exec.rowSubqueryValue(ctx, "EXISTS", `
+	existsBody := `
 		MATCH (fn)-[:RUNS_IN]->(o:Workload)
 		WHERE o.id <> w.id
-	`, row)
+	`
+	existsCtx, admission := expressionTestContext(ctx, "EXISTS { "+existsBody+" }")
+	exists := func(row map[string]interface{}) bool {
+		value, recognized, err := exec.rowSubqueryValue(admission, existsCtx, "EXISTS", existsBody, row)
 		require.NoError(t, err)
 		require.True(t, recognized)
 		return value.(bool)

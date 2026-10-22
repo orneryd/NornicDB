@@ -126,8 +126,8 @@ var showSingleDatabaseDefaultColumns = []string{"name", "type", "aliases", "acce
 
 // executeShowDefaultDatabase lists the default database. NornicDB has no
 // per-user home database, so SHOW HOME DATABASE lists the default one too.
-func (e *StorageExecutor) executeShowDefaultDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	all, err := e.executeShowDatabases(ctx, cypher)
+func (e *StorageExecutor) executeShowDefaultDatabase(fixtureAdmission1015 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
+	all, err := e.executeShowDatabases(fixtureAdmission1015, ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ var showUsersColumns = []string{"user", "roles", "passwordChangeRequired", "susp
 
 // executeShowUsers lists the user store (SHOW USERS) or the signed-in user
 // (SHOW CURRENT USER). home is null: NornicDB has no per-user home database.
-func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowUsers(fixtureAdmission1016 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	current, signedIn := authenticatedUserFromContext(ctx)
 	currentOnly := startsWithKeywords(cypher, "SHOW", "CURRENT USER")
 	var users []UserListing
@@ -570,7 +570,7 @@ func undefinedVariableError(expression string) (err error, undefined bool) {
 // (Neo4j 2026.09: SHOW lists nothing for it, TERMINATE reports it not
 // found); ids holds it as nil. A Cypher 5 statement keeps Neo4j 5.26's
 // TypeError.
-func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command string) ([]interface{}, bool, error) {
+func (e *StorageExecutor) transactionIDFilter(admission admittedRelationshipStatement, ctx context.Context, head, command string) ([]interface{}, bool, error) {
 	rest := strings.TrimSpace(head)
 	if startsWithKeywordFold(rest, command) {
 		rest = strings.TrimSpace(rest[len(command):])
@@ -584,7 +584,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	if rest == "" {
 		return nil, false, nil
 	}
-	value, ok := e.evaluateRowExpressionWithContext(ctx, rest, e.parameterRow(ctx))
+	value, ok := e.evaluateRowExpressionWithContext(admission, ctx, rest, e.parameterRow(ctx))
 	if !ok {
 		// Neo4j names the undefined variable an expression starts with, or
 		// the input that isn't an expression.
@@ -641,8 +641,8 @@ func (e *StorageExecutor) parameterRow(ctx context.Context) pipelineRow {
 // executeShowTransactions lists the running transactions. A Cypher 25
 // statement also has Neo4j 2026.09's currentQueryProgress column (null:
 // NornicDB has no running update counters).
-func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	ids, filtered, err := e.transactionIDFilter(ctx, cypher, "SHOW")
+func (e *StorageExecutor) executeShowTransactions(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
+	ids, filtered, err := e.transactionIDFilter(admission, ctx, cypher, "SHOW")
 	if err != nil {
 		return nil, err
 	}
@@ -743,8 +743,8 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 // executeTerminateTransactions terminates the named transactions: one row
 // per id with its username and "Transaction terminated." or "Transaction
 // not found.", as in Neo4j.
-func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	ids, filtered, err := e.transactionIDFilter(ctx, cypher, "TERMINATE")
+func (e *StorageExecutor) executeTerminateTransactions(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
+	ids, filtered, err := e.transactionIDFilter(admission, ctx, cypher, "TERMINATE")
 	if err != nil {
 		return nil, err
 	}

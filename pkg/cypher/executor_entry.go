@@ -433,7 +433,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).
 	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
-		return e.executeOnDatabase(ctx, useDB, cypher, params, false)
+		return e.executeOnDatabase(ctx, useDB, cypher, params)
 	}
 
 	// The quoted-variable and label-expression rewrites map the finished
@@ -463,13 +463,15 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			return nil, err
 		}
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
-		ctx = withQueryParams(ctx, mergedParams)
+		var fixtureAdmission1 admittedRelationshipStatement
+		ctx, fixtureAdmission1 = compileRelationshipStatement(ctx, cypher, nil, mergedParams)
+		_ = fixtureAdmission1
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
 			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
+			if err := e.validateSemanticScopes(fixtureAdmission1, ctx, modeQuery); err != nil {
 				return nil, err
 			}
 			if mode == ModeExplain {
@@ -554,7 +556,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
+			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
@@ -565,7 +567,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params)
 	}
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates the local evaluator reads. Route source Cypher first: remote
@@ -613,19 +615,18 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// embedded caller that already owns an active transaction keeps running
 	// the script on itself, where handleBegin fails as before.
 	if transactionScriptShape(cypher) {
+		ctx, scriptStatement := compileRelationshipStatement(ctx, cypher, nil, params)
 		if e.txContext != nil && e.txContext.active {
-			if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
+			if result, err := e.executeTransactionScript(scriptStatement, ctx, cypher); result != nil || err != nil {
 				return result, err
 			}
 		} else {
 			scriptExec := e.cloneForStorage(e.storage)
 			scriptExec.txContext = nil
-			if result, err := scriptExec.executeTransactionScript(ctx, cypher); result != nil || err != nil {
+			if result, err := scriptExec.executeTransactionScript(scriptStatement, ctx, cypher); result != nil || err != nil {
 				return result, err
 			}
 		}
-	} else if result, err := e.executeTransactionScript(ctx, cypher); result != nil || err != nil {
-		return result, err
 	}
 	if result, err := e.parseTransactionStatement(ctx, cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
@@ -724,8 +725,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it.
+	var fixtureAdmission2 admittedRelationshipStatement
+	ctx, fixtureAdmission2 = compileRelationshipStatement(ctx, cypher, nil, params)
+	_ = fixtureAdmission2
 	scopeText, _ := stripWithEmbeddingSuffix(cypher)
-	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
+	if err := e.validateSemanticScopes(fixtureAdmission2, ctx, scopeText); err != nil {
 		return nil, err
 	}
 	admission, admissionErr := e.admitBoundStatement(ctx, scopeText)
@@ -754,8 +758,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// This matches Neo4j's architecture where params are kept separate.
 
 	// Store params in context for handlers to use
-	ctx = withQueryParams(ctx, params)
-	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
+	if err := e.validateBoundParameterExpressions(fixtureAdmission2, ctx, cypher, params); err != nil {
 		return nil, err
 	}
 

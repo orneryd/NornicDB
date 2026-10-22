@@ -64,9 +64,15 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 		plan := planRowPredicate(predicate)
 		require.NotNil(t, plan, predicate)
 		require.True(t, plan.complete, predicate)
-		want := exec.evaluateRowPredicateText(ctx, predicate, row)
-		require.Equal(t, want, exec.evaluateRowPredicatePlan(ctx, plan, row), predicate)
-		require.Equal(t, want, exec.evaluateRowPredicate(ctx, predicate, row), predicate)
+		fixtureAdmission1000Context, fixtureAdmission1000 := expressionTestContext(ctx, predicate)
+		_ = fixtureAdmission1000Context
+		want := exec.evaluateRowPredicateText(fixtureAdmission1000, fixtureAdmission1000Context, predicate, row)
+		fixtureAdmission1797Context, fixtureAdmission1797 := statementTestContext(ctx, "RETURN "+(predicate))
+		_ = fixtureAdmission1797Context
+		require.Equal(t, want, exec.evaluateRowPredicatePlan(fixtureAdmission1797, fixtureAdmission1797Context, plan, row), predicate)
+		fixtureAdmission847Context, fixtureAdmission847 := expressionTestContext(ctx, predicate)
+		_ = fixtureAdmission847
+		require.Equal(t, want, exec.evaluateRowPredicate(fixtureAdmission847, fixtureAdmission847Context, predicate, row), predicate)
 	}
 
 	for _, predicate := range []string{
@@ -123,7 +129,9 @@ func TestUnwindMatchWhereBuildsRowsOnlyForMatches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "where"))
 	_, err := exec.Execute(ctx, "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2})", nil)
 	require.NoError(t, err)
-	matched, handled, err := exec.pipelineApplyInitialNodeMatch(ctx,
+	fixtureAdmission1401Context, fixtureAdmission1401 := statementTestContext(ctx, "MATCH p = (n:P) WHERE n.k = id AND p IS NOT NULL")
+	_ = fixtureAdmission1401Context
+	matched, handled, err := exec.pipelineApplyInitialNodeMatch(fixtureAdmission1401, fixtureAdmission1401Context,
 		[]pipelineRow{{"id": "b"}, {"id": "missing"}}, "MATCH p = (n:P) WHERE n.k = id AND p IS NOT NULL", pipelineMatchPhysicalHint{})
 	require.NoError(t, err)
 	require.True(t, handled)
@@ -187,9 +195,15 @@ func TestRowPredicateLiteralListMembershipIsPlanned(t *testing.T) {
 		plan := planRowPredicate(predicate)
 		require.NotNil(t, plan, predicate)
 		require.True(t, plan.complete, predicate)
-		want := exec.evaluateRowPredicateText(ctx, predicate, row)
-		require.Equal(t, want, exec.evaluateRowPredicatePlan(ctx, plan, row), predicate)
-		require.Equal(t, want, exec.evaluateRowPredicate(ctx, predicate, row), predicate)
+		fixtureAdmission1001Context, fixtureAdmission1001 := expressionTestContext(ctx, predicate)
+		_ = fixtureAdmission1001Context
+		want := exec.evaluateRowPredicateText(fixtureAdmission1001, fixtureAdmission1001Context, predicate, row)
+		fixtureAdmission1798Context, fixtureAdmission1798 := statementTestContext(ctx, "RETURN "+(predicate))
+		_ = fixtureAdmission1798Context
+		require.Equal(t, want, exec.evaluateRowPredicatePlan(fixtureAdmission1798, fixtureAdmission1798Context, plan, row), predicate)
+		fixtureAdmission848Context, fixtureAdmission848 := expressionTestContext(ctx, predicate)
+		_ = fixtureAdmission848
+		require.Equal(t, want, exec.evaluateRowPredicate(fixtureAdmission848, fixtureAdmission848Context, predicate, row), predicate)
 	}
 
 	for _, predicate := range []string{

@@ -19,19 +19,25 @@ func TestUnion_BoundContextResolvesBranchValues(t *testing.T) {
 		"flag": true,
 	})
 
-	res, err := exec.executeUnion(ctx, "RETURN x AS v UNION RETURN 2 AS v", false)
+	fixtureAdmission924Context, fixtureAdmission924 := statementTestContext(ctx, "RETURN x AS v UNION RETURN 2 AS v")
+	_ = fixtureAdmission924
+	res, err := exec.executeUnion(fixtureAdmission924, fixtureAdmission924Context, "RETURN x AS v UNION RETURN 2 AS v", false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"v"}, res.Columns)
 	require.Equal(t, [][]interface{}{{int64(7)}, {int64(2)}}, res.Rows)
 
 	// Compound expressions over bound values resolve through the row
 	// evaluator with the seeded scope.
-	res, err = exec.executeUnion(ctx, "RETURN x + 1 AS v UNION RETURN 0 AS v", false)
+	fixtureAdmission925Context, fixtureAdmission925 := statementTestContext(ctx, "RETURN x + 1 AS v UNION RETURN 0 AS v")
+	_ = fixtureAdmission925
+	res, err = exec.executeUnion(fixtureAdmission925, fixtureAdmission925Context, "RETURN x + 1 AS v UNION RETURN 0 AS v", false)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(8)}, {int64(0)}}, res.Rows)
 
 	// Property access on a bound map.
-	res, err = exec.executeUnion(ctx, "RETURN row.name AS v UNION RETURN 'z' AS v", false)
+	fixtureAdmission926Context, fixtureAdmission926 := statementTestContext(ctx, "RETURN row.name AS v UNION RETURN 'z' AS v")
+	_ = fixtureAdmission926
+	res, err = exec.executeUnion(fixtureAdmission926, fixtureAdmission926Context, "RETURN row.name AS v UNION RETURN 'z' AS v", false)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"ann"}, {"z"}}, res.Rows)
 

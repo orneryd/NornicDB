@@ -9,6 +9,22 @@ import (
 
 type preparedPatternRowKey struct{}
 
+// Keep native lowering paired with its original syntax. This is source
+// provenance only: the admitted statement still authorizes every access site.
+// The cached plan contains syntax; each reached row owns its context/values.
+type preparedPatternRowContext struct {
+	context.Context
+	plan      *patternRowPlan
+	statement admittedRelationshipStatement
+}
+
+func (row *preparedPatternRowContext) Value(key interface{}) interface{} {
+	if _, ok := key.(preparedPatternRowKey); ok {
+		return row
+	}
+	return row.Context.Value(key)
+}
+
 type patternRowMap struct {
 	text       string
 	keys       []string
@@ -16,6 +32,7 @@ type patternRowMap struct {
 }
 
 type patternRowPlan struct {
+	source  string
 	pattern string
 	maps    []patternRowMap
 	err     error
@@ -28,8 +45,8 @@ var patternRowPlans = newBoundedCache[string, *patternRowPlan](512, boundedCache
 // The shared element/map readers compile syntax once. The existing materializer
 // evaluates each map once per row; native parameters carry the values through
 // physical retries and MERGE lookup/create without another producer call.
-func (e *StorageExecutor) preparePatternRow(ctx context.Context, pattern string, row map[string]interface{}) (context.Context, string, error) {
-	if prepared, _ := ctx.Value(preparedPatternRowKey{}).(string); prepared == pattern {
+func (e *StorageExecutor) preparePatternRow(admission admittedRelationshipStatement, ctx context.Context, pattern string, row map[string]interface{}) (context.Context, string, error) {
+	if prepared, _ := ctx.Value(preparedPatternRowKey{}).(*preparedPatternRowContext); prepared != nil && prepared.statement.program == admission.program && prepared.plan.pattern == pattern {
 		return ctx, pattern, nil
 	}
 	if !strings.Contains(pattern, "{") || patternMapsAreConstant(pattern) {
@@ -75,7 +92,7 @@ func (e *StorageExecutor) preparePatternRow(ctx context.Context, pattern string,
 		params[name] = value
 	}
 	for _, properties := range plan.maps {
-		values, err := e.patternRowPropertyValues(rowCtx, properties.text)
+		values, err := e.patternRowPropertyValues(admission, rowCtx, properties.text)
 		if err != nil {
 			return ctx, pattern, err
 		}
@@ -84,13 +101,13 @@ func (e *StorageExecutor) preparePatternRow(ctx context.Context, pattern string,
 		}
 	}
 	rowCtx = withParams(rowCtx, params)
-	return context.WithValue(rowCtx, preparedPatternRowKey{}, plan.pattern), plan.pattern, nil
+	return &preparedPatternRowContext{Context: rowCtx, plan: plan, statement: admission}, plan.pattern, nil
 }
 
 // compilePatternRow uses the canonical element walk and property-key reader.
 // No property expression, bound row or runtime parameter value is evaluated.
 func (e *StorageExecutor) compilePatternRow(pattern string, reserved map[string]interface{}) *patternRowPlan {
-	plan := &patternRowPlan{pattern: pattern}
+	plan := &patternRowPlan{source: pattern, pattern: pattern}
 	var edits []labelRewriteEdit
 	nextBinding := 0
 	walk := labelExpressionRewriter{query: pattern}
@@ -150,8 +167,8 @@ func (e *StorageExecutor) patternRowPropertyKeys(text string) (map[string]interf
 	return patternPropertyKeys(context.Background(), text, true)
 }
 
-func (e *StorageExecutor) patternRowPropertyValues(ctx context.Context, text string) (map[string]interface{}, error) {
-	return e.parsePropertyMap(ctx, text, true)
+func (e *StorageExecutor) patternRowPropertyValues(admission admittedRelationshipStatement, ctx context.Context, text string) (map[string]interface{}, error) {
+	return e.parsePropertyMap(admission, ctx, text, true)
 }
 
 // A relationship template's property phase starts only with real endpoints.
@@ -164,12 +181,12 @@ func pipelineBoundMergeEndpoints(template *pipelineMergeTemplate, row pipelineRo
 	return start && end
 }
 
-func (e *StorageExecutor) preparePatternNodeProperties(ctx context.Context, pattern string) (context.Context, map[string]interface{}, error) {
-	rowCtx, prepared, err := e.preparePatternRow(ctx, pattern, nil)
+func (e *StorageExecutor) preparePatternNodeProperties(admission admittedRelationshipStatement, ctx context.Context, pattern string) (context.Context, map[string]interface{}, error) {
+	rowCtx, prepared, err := e.preparePatternRow(admission, ctx, pattern, nil)
 	if err != nil {
 		return ctx, nil, err
 	}
 	_, text := splitNodePatternProperties(prepared)
-	values, err := e.patternRowPropertyValues(rowCtx, text)
+	values, err := e.patternRowPropertyValues(admission, rowCtx, text)
 	return rowCtx, values, err
 }

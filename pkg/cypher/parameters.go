@@ -658,22 +658,34 @@ var paramRowsKey = paramRowsKeyType{}
 // queryParamsContext carries a query's parameters (paramsKey) and the
 // cache of their row values (paramRowsKey), computed on first use. It is
 // one context layer, so attaching parameters costs the single allocation
-// context.WithValue did.
+// context.WithValue did. Statement compilation can attach its immutable binding
+// to this same frame. The compact mutex/cache keeps that frame at the existing
+// allocation size; no second parameter reader or mutable source program is added.
 type queryParamsContext struct {
 	context.Context
 	params map[string]interface{}
-	once   sync.Once
+	mu     sync.Mutex
 	rows   map[string]interface{}
+
+	statement *relationshipStatementBinding
 }
 
-// Value answers paramsKey and paramRowsKey and defers every other key to
-// the parent context.
+// Value answers parameter keys and, when compiled, the statement's source keys.
+// All other values and cancellation remain with the parent context.
 func (c *queryParamsContext) Value(key any) any {
 	switch key {
 	case paramsKey:
 		return c.params
 	case paramRowsKey:
 		return c
+	}
+	if c.statement != nil {
+		switch key.(type) {
+		case relationshipStatementKey:
+			return c.statement
+		case relationshipAccessProgramKey:
+			return c.statement.program
+		}
 	}
 	return c.Context.Value(key)
 }
@@ -721,8 +733,13 @@ func parameterRowValues(ctx context.Context) map[string]interface{} {
 		return nil
 	}
 	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
-		cache.once.Do(func() { cache.rows = parameterRowsOf(params, cypher25) })
-		return cache.rows
+		cache.mu.Lock()
+		if cache.rows == nil {
+			cache.rows = parameterRowsOf(params, cypher25)
+		}
+		rows := cache.rows
+		cache.mu.Unlock()
+		return rows
 	}
 	return parameterRowsOf(params, cypher25)
 }

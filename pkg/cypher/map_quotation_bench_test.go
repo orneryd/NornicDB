@@ -32,15 +32,21 @@ func BenchmarkMapTextConsumers(b *testing.B) {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
+			fixtureAdmission1646Context, fixtureAdmission1646 := expressionTestContext(ctx, text)
+			fixtureAdmission1647Context, fixtureAdmission1647 := expressionTestContext(ctx, text)
 			b.ResetTimer()
+
+			_ = fixtureAdmission1646Context
+
+			_ = fixtureAdmission1647Context
 			for i := 0; i < b.N; i++ {
 				var err error
 				switch name {
 				case "context":
-					e.evaluateMapLiteralFull(ctx, text, nil, nil, nil, nil, nil, 0)
+					e.evaluateMapLiteralFull(fixtureAdmission1646, fixtureAdmission1646Context, text, nil, nil, nil, nil, nil, 0)
 					err = getExpressionFailure(ctx)
 				case "strict":
-					_, err = e.parseSetMergeMapLiteralStrict(ctx, text)
+					_, err = e.parseSetMergeMapLiteralStrict(fixtureAdmission1647, fixtureAdmission1647Context, text)
 				case "syntax":
 					err = validateMapLiteralSyntax(text)
 				case "cached_plan":

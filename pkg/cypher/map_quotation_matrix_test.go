@@ -50,19 +50,27 @@ func TestMapQuotationConsumers(t *testing.T) {
 						var err error
 						switch consumer {
 						case "context":
-							got = e.evaluateMapLiteralFull(ctx, tc.text, nil, nil, nil, nil, nil, 0)
+							fixtureAdmission974Context, fixtureAdmission974 := expressionTestContext(ctx, tc.text)
+							_ = fixtureAdmission974Context
+							got = e.evaluateMapLiteralFull(fixtureAdmission974, fixtureAdmission974Context, tc.text, nil, nil, nil, nil, nil, 0)
 							err = getExpressionFailure(ctx)
 						case "property-map":
-							got, err = e.materializePropertyMap(ctx, tc.text, nil, true, false)
+							fixtureAdmission1648Context, fixtureAdmission1648 := statementTestContext(ctx, tc.text)
+							_ = fixtureAdmission1648Context
+							got, err = e.materializePropertyMap(fixtureAdmission1648, fixtureAdmission1648Context, tc.text, nil, true, false)
 						case "set-strict":
-							got, err = e.parseSetMergeMapLiteralStrict(ctx, tc.text)
+							fixtureAdmission1649Context, fixtureAdmission1649 := expressionTestContext(ctx, tc.text)
+							_ = fixtureAdmission1649Context
+							got, err = e.parseSetMergeMapLiteralStrict(fixtureAdmission1649, fixtureAdmission1649Context, tc.text)
 						case "set-expressions":
 							var expressions map[string]string
 							expressions, err = parseSetMergeMapExpressionsStrict(tc.text)
 							result := make(map[string]interface{}, len(expressions))
 							for key, expression := range expressions {
 								var value interface{}
-								value, err = e.checkedPropertyExpression(ctx, expression, nil)
+								fixtureAdmission993Context, fixtureAdmission993 := expressionTestContext(ctx, expression)
+								_ = fixtureAdmission993Context
+								value, err = e.checkedPropertyExpression(fixtureAdmission993, fixtureAdmission993Context, expression, nil)
 								if err != nil {
 									break
 								}
@@ -76,17 +84,23 @@ func TestMapQuotationConsumers(t *testing.T) {
 							require.Equal(t, "n", target)
 							require.Empty(t, property)
 							require.Equal(t, "=", operator)
-							got, err = e.checkedPropertyExpression(ctx, expression, nil)
+							fixtureAdmission994Context, fixtureAdmission994 := expressionTestContext(ctx, expression)
+							_ = fixtureAdmission994Context
+							got, err = e.checkedPropertyExpression(fixtureAdmission994, fixtureAdmission994Context, expression, nil)
 						case "syntax-plan":
 							var plan []pipelinePropertyExpression
 							plan, err = parsePropertyExpressions(tc.text)
 							if err == nil {
-								got, err = e.materializePropertyExpressions(ctx, plan, nil, true, false)
+								fixtureAdmission1902Context, fixtureAdmission1902 := statementTestContext(ctx, "RETURN "+(tc.text))
+								_ = fixtureAdmission1902Context
+								got, err = e.materializePropertyExpressions(fixtureAdmission1902, fixtureAdmission1902Context, plan, nil, true, false)
 							}
 						case "pattern-template":
 							plan, matched := e.pipelinePropertyExpressions(tc.text)
 							require.True(t, matched)
-							got, err = e.evaluatePipelineProperties(ctx, plan, nil)
+							fixtureAdmission1903Context, fixtureAdmission1903 := statementTestContext(ctx, "RETURN "+(tc.text))
+							_ = fixtureAdmission1903Context
+							got, err = e.evaluatePipelineProperties(fixtureAdmission1903, fixtureAdmission1903Context, plan, nil)
 						case "literal-plan":
 							got = parseLiteralMapForPipeline(tc.text)
 							if !strings.Contains(tc.name, "/value0/") && !strings.Contains(tc.name, "/value1/") {
@@ -95,17 +109,23 @@ func TestMapQuotationConsumers(t *testing.T) {
 							}
 						case "row":
 							var resolved bool
-							got, resolved, err = e.evaluateRowValue(tc.text, nil)
+							fixtureAdmission695Context, fixtureAdmission695 := expressionTestRow(context.Background(), tc.text, nil)
+							_ = fixtureAdmission695
+							got, resolved, err = e.evaluateRowValue(fixtureAdmission695, tc.text, fixtureAdmission695Context)
 							require.True(t, resolved)
 						case "compiled":
 							compiler := rowValueCompiler{}
 							root, _ := compiler.compile(tc.text)
 							var resolved bool
-							got, resolved, err = root.eval(e, nil, nil)
+							fixtureAdmission1650Context, fixtureAdmission1650 := statementTestContext(context.Background(), "RETURN "+(tc.text))
+							_ = fixtureAdmission1650Context
+							got, resolved, err = root.eval(fixtureAdmission1650, e, nil, nil)
 							require.True(t, resolved)
 						case "map-projection":
 							var resolved bool
-							got, resolved, err = e.evaluateRowValue("base"+tc.text, map[string]interface{}{"base": map[string]interface{}{}})
+							fixtureAdmission696Context, fixtureAdmission696 := expressionTestRow(context.Background(), "base"+tc.text, map[string]interface{}{"base": map[string]interface{}{}})
+							_ = fixtureAdmission696
+							got, resolved, err = e.evaluateRowValue(fixtureAdmission696, "base"+tc.text, fixtureAdmission696Context)
 							require.True(t, resolved)
 						}
 						require.NoError(t, err, tc.text)
@@ -166,7 +186,9 @@ func TestMapQuotationFallbackIsBounded(t *testing.T) {
 	e := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, expr := range []string{"[1][0]]", "['escaped\\' quote'][0]]"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		value, err := e.checkedPropertyExpression(ctx, expr, nil)
+		fixtureAdmission995Context, fixtureAdmission995 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission995Context
+		value, err := e.checkedPropertyExpression(fixtureAdmission995, fixtureAdmission995Context, expr, nil)
 		require.Error(t, err, expr)
 		require.Nil(t, value)
 		require.Error(t, getExpressionFailure(ctx), expr)

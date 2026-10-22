@@ -1270,8 +1270,12 @@ func (e *StorageExecutor) notifyNodeMutated(nodeID string) {
 // mutation so relationship vector queries can use client-supplied vectors before
 // a full search warmup/build has run. Call it after deleting one too, so its
 // vectors leave search.
+func (run relationshipEntityExecution) notifyEdgeMutated(edgeID string) {
+	run.executor.refreshSearch("", storage.EdgeID(edgeID))
+}
+
 func (e *StorageExecutor) notifyEdgeMutated(edgeID string) {
-	e.refreshSearch("", storage.EdgeID(edgeID))
+	e.relationshipEntityExecution().notifyEdgeMutated(edgeID)
 }
 
 // refreshSearch has search read a node or relationship this statement changed.

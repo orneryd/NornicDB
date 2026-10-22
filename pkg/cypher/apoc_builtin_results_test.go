@@ -46,20 +46,28 @@ func TestBuiltInApocResultsMatchAPOC(t *testing.T) {
 		result, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
 		require.NoError(t, err, expression)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
-		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
+		fixtureAdmission10Context, fixtureAdmission10 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission10
+		require.Equal(t, want, exec.evaluateExpressionWithContext(fixtureAdmission10, fixtureAdmission10Context, expression, nil, nil), expression)
 	}
 	for expression, want := range map[string]interface{}{
 		"apoc.coll.flatten([[1, [2]], [3]])":       []interface{}{int64(1), []interface{}{int64(2)}, int64(3)},
 		"apoc.coll.flatten([[1, [2]], [3]], true)": []interface{}{int64(1), int64(2), int64(3)},
 	} {
-		value, ok, err := exec.evaluateRowValue(expression, nil)
+		fixtureAdmission11Context, fixtureAdmission11 := expressionTestRow(context.Background(), expression, nil)
+		_ = fixtureAdmission11
+		value, ok, err := exec.evaluateRowValue(fixtureAdmission11, expression, fixtureAdmission11Context)
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, want, value, expression)
 	}
-	_, ok, _ := exec.evaluateRowValue("apoc.coll.flatten([1], true, 3)", nil)
+	fixtureAdmission12Context, fixtureAdmission12 := expressionTestRow(context.Background(), "apoc.coll.flatten([1], true, 3)", nil)
+	_ = fixtureAdmission12
+	_, ok, _ := exec.evaluateRowValue(fixtureAdmission12, "apoc.coll.flatten([1], true, 3)", fixtureAdmission12Context)
 	require.False(t, ok)
-	require.Nil(t, exec.evaluateExpressionWithContext(ctx, "apoc.coll.flatten([1], true, 3)", nil, nil))
+	fixtureAdmission13Context, fixtureAdmission13 := expressionTestContext(ctx, "apoc.coll.flatten([1], true, 3)")
+	_ = fixtureAdmission13
+	require.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission13, fixtureAdmission13Context, "apoc.coll.flatten([1], true, 3)", nil, nil))
 }
 
 // apoc.cypher.runMany gives each statement's rows, numbered from 0, then a

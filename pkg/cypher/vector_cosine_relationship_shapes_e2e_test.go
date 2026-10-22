@@ -11,7 +11,7 @@ import (
 
 func TestE2E_VectorCosine_RelationshipProjectionFastPath_GraphitiShape(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
+	ns := &relationshipVectorReadCounter{Engine: storage.NewNamespacedEngine(base, "test")}
 	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 
@@ -36,6 +36,7 @@ func TestE2E_VectorCosine_RelationshipProjectionFastPath_GraphitiShape(t *testin
 
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
+	relationshipVectorIndexedFixture(t, exec, ns, 3)
 	probe, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_idx', 5, [1.0,0.0,0.0]) YIELD relationship, score RETURN relationship, score", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, probe.Rows)
@@ -47,6 +48,7 @@ WHERE score > $min
 RETURN e.uuid AS edge_uuid, n.uuid AS src_uuid, m.uuid AS dst_uuid, score
 ORDER BY score DESC
 LIMIT $limit`
+	ns.reset()
 	res, err := exec.Execute(ctx, query, map[string]interface{}{
 		"groups": []string{"g"},
 		"q":      []float64{1.0, 0.0, 0.0},
@@ -55,13 +57,15 @@ LIMIT $limit`
 	})
 	require.NoError(t, err)
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+	require.Zero(t, ns.edgeScans.Load(), "populated service must perform an index seek")
+	require.Positive(t, ns.edgeReads.Load(), "seek must hydrate indexed relationships")
 	require.Len(t, res.Rows, 2)
 	require.Equal(t, "e1", res.Rows[0][0])
 }
 
 func TestE2E_VectorCosine_RelationshipProjectionFastPath_DirectAnalog(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
+	ns := &relationshipVectorReadCounter{Engine: storage.NewNamespacedEngine(base, "test")}
 	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 
@@ -82,21 +86,25 @@ func TestE2E_VectorCosine_RelationshipProjectionFastPath_DirectAnalog(t *testing
 	}
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX rel_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
+	relationshipVectorIndexedFixture(t, exec, ns, 3)
 	probe, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('rel_idx', 5, [1.0,0.0,0.0]) YIELD relationship, score RETURN relationship, score", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, probe.Rows)
 
 	direct := "MATCH ()-[e:RELATES_TO]->() WITH e, vector.similarity.cosine(e.fact_embedding,$q) AS s RETURN e.uuid, s ORDER BY s DESC LIMIT 5"
+	ns.reset()
 	res, err := exec.Execute(ctx, direct, map[string]interface{}{"q": []float64{1.0, 0.0, 0.0}})
 	require.NoError(t, err)
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+	require.Zero(t, ns.edgeScans.Load(), "populated service must perform an index seek")
+	require.Positive(t, ns.edgeReads.Load(), "seek must hydrate indexed relationships")
 	require.Len(t, res.Rows, 2)
 	require.Equal(t, "r1", res.Rows[0][0])
 }
 
 func TestE2E_VectorCosine_RelationshipProjectionFastPath_ExplicitTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
+	ns := &relationshipVectorReadCounter{Engine: storage.NewNamespacedEngine(base, "test")}
 	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 
@@ -118,6 +126,7 @@ func TestE2E_VectorCosine_RelationshipProjectionFastPath_ExplicitTransaction(t *
 
 	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX rel_tx_idx FOR ()-[e:RELATES_TO]-() ON (e.fact_embedding) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
 	require.NoError(t, err)
+	relationshipVectorIndexedFixture(t, exec, ns, 3)
 
 	query := `MATCH (n:Entity)-[e:RELATES_TO]->(m:Entity)
 WITH DISTINCT e, n, m, vector.similarity.cosine(e.fact_embedding, $q) AS score
@@ -129,14 +138,39 @@ LIMIT $limit`
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
 
-	res, err := exec.Execute(ctx, query, map[string]interface{}{
-		"q":     []float64{1.0, 0.0, 0.0},
-		"min":   0.5,
-		"limit": 5,
-	})
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 3)
-	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath, "explicit transaction should route relationship cosine through vector-index fast path")
+	for _, mode := range []string{"EXPLAIN ", "", "PROFILE "} {
+		ns.reset()
+		res, err := exec.Execute(ctx, mode+query, map[string]interface{}{
+			"q":     []float64{1.0, 0.0, 0.0},
+			"min":   0.5,
+			"limit": 5,
+		})
+		require.NoError(t, err, mode)
+		// Transaction reads use the snapshot engine, below this outer observer.
+		// Assert isolation from autocommit rather than inventing point-read counts.
+		require.Zero(t, ns.edgeScans.Load(), "transaction must not scan the outer engine")
+		require.Zero(t, ns.edgeReads.Load(), "transaction must not hydrate from the outer engine")
+		require.Zero(t, ns.nodeReads.Load(), "transaction must not read outer-engine nodes")
+		if mode == "EXPLAIN " {
+			require.Empty(t, res.Rows)
+			require.False(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+		} else {
+			require.Len(t, res.Rows, 3)
+			require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath, mode)
+		}
+		if mode != "" {
+			root := res.Metadata["plan"].(*ExecutionPlan).Root
+			seek := relationshipPlanOperator(root, "RelationshipVectorIndexSeek")
+			require.NotNil(t, seek, mode)
+			if mode == "EXPLAIN " {
+				require.Equal(t, true, seek.Arguments["conditional"])
+			} else {
+				require.EqualValues(t, 1, seek.Arguments["indexLookups"])
+				require.EqualValues(t, 3, seek.ActualRows)
+				require.Positive(t, seek.DBHits)
+			}
+		}
+	}
 
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.NoError(t, err)

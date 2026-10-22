@@ -130,7 +130,7 @@ func (e *graphitiCopyCountingEngine) EdgeGetCount() int64 {
 
 func TestGraphitiScenarioE2E_LargePayloads(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "test")
+	ns := &relationshipVectorReadCounter{Engine: storage.NewNamespacedEngine(base, "test")}
 	exec := NewStorageExecutor(ns)
 	ctx := context.Background()
 
@@ -180,6 +180,7 @@ func TestGraphitiScenarioE2E_LargePayloads(t *testing.T) {
 	countChunks := mustCountRows(t, exec, ctx, "MATCH (c:Chunk {group_id: $g}) RETURN count(c)", map[string]interface{}{"g": graphitiGroupID})
 	require.Equal(t, int64(chunkCount), countChunks)
 
+	relationshipVectorIndexedFixture(t, exec, ns, dim)
 	res, err = exec.Execute(ctx, graphitiNodeSimilarityQuery, map[string]interface{}{
 		"group_id":      graphitiGroupID,
 		"search_vector": unitVectorF64(0, dim),
@@ -191,6 +192,7 @@ func TestGraphitiScenarioE2E_LargePayloads(t *testing.T) {
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath, "node similarity should route through vector-index fast path")
 	assertNonIncreasingScores(t, res.Rows, 1)
 
+	ns.reset()
 	res, err = exec.Execute(ctx, graphitiEdgeSimilarityQuery, map[string]interface{}{
 		"search_vector": unitVectorF64(0, dim),
 		"min_score":     -1.0,
@@ -199,6 +201,8 @@ func TestGraphitiScenarioE2E_LargePayloads(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath, "edge similarity should route through vector-index fast path")
+	require.Zero(t, ns.edgeScans.Load(), "populated service must perform an index seek")
+	require.Positive(t, ns.edgeReads.Load(), "seek must hydrate indexed relationships")
 	assertNonIncreasingScores(t, res.Rows, 2)
 
 	res, err = exec.Execute(ctx, graphitiChunkSimilarityQuery, map[string]interface{}{

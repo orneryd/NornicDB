@@ -9,12 +9,12 @@ import (
 // evaluateRowMathFunction evaluates scalar math functions for the converged
 // row-expression operator. The boolean results are (matched, resolved), which
 // lets the caller distinguish a non-math function from an invalid argument.
-func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
+func (e *StorageExecutor) evaluateRowMathFunction(admission admittedRelationshipStatement, function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	name := lowerASCII(function)
 	// Nested calls may contain commas without adding arguments to this call.
 	if fn, single := singleValueFunctions[name]; single && (strings.IndexByte(argument, ',') < 0 || len(splitTopLevelComma(argument)) == 1) {
 		// The argument's value goes straight to the one implementation.
-		value, resolved, err := e.evaluateRowValue(argument, values)
+		value, resolved, err := e.evaluateRowValue(admission, argument, values)
 		if err != nil || !resolved {
 			return nil, true, resolved, err
 		}
@@ -27,7 +27,7 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 	if !isSharedMathFunction(name) {
 		return nil, false, false, nil
 	}
-	value, _, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+	value, _, resolved, err := e.evaluateRowGraphFunction(admission, function, argument, values)
 	return value, true, resolved, err
 }
 

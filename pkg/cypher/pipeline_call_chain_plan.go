@@ -15,7 +15,7 @@ type pipelineCallChainPlan struct {
 
 // planPipelineCallChain consumes the shared effect/dependency contract. No
 // clause or expression representation has a separate planning path here.
-func (e *StorageExecutor) planPipelineCallChain(ctx context.Context, clauses []pipelineClause, start, maximumRows int) (pipelineCallChainPlan, error) {
+func (e *StorageExecutor) planPipelineCallChain(admission admittedRelationshipStatement, ctx context.Context, clauses []pipelineClause, start, maximumRows int) (pipelineCallChainPlan, error) {
 	plan := pipelineCallChainPlan{end: len(clauses)}
 	var writes stretchTokens
 	for index := start; index < len(clauses); index++ {
@@ -36,7 +36,7 @@ func (e *StorageExecutor) planPipelineCallChain(ctx context.Context, clauses []p
 			}
 			plan.operators = append(plan.operators, plannedCallChainOperator{index: index, pagination: pagination})
 		}
-		boundary, nextMaximum := e.pipelineClauseBoundary(ctx, effects, &writes, maximumRows)
+		boundary, nextMaximum := e.pipelineClauseBoundary(admission, ctx, effects, &writes, maximumRows)
 		if boundary {
 			plan.end = index
 			return plan, nil

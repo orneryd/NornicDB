@@ -252,7 +252,11 @@ func TestCypherHelpers_ExecuteCall_DoesNotMiscountArgsWithTailFunctions(t *testi
 	)
 	require.NoError(t, err)
 
-	res, err := exec.executeCall(ctx,
+	fixtureAdmission1092Context, fixtureAdmission1092 := statementTestContext(ctx, "CALL custom.echo('idx_original_text', 10, 'needle') "+
+		"YIELD value "+
+		"RETURN left('abcdef', 2) AS prefix, value")
+	_ = fixtureAdmission1092Context
+	res, err := exec.executeCall(fixtureAdmission1092, fixtureAdmission1092Context,
 		"CALL custom.echo('idx_original_text', 10, 'needle') "+
 			"YIELD value "+
 			"RETURN left('abcdef', 2) AS prefix, value",
@@ -394,14 +398,18 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 			{int64(7), nodes["n"]},
 		},
 	}
-	out, err := exec.projectTransactionReturn(ctx, input, "x AS val, n.name AS name")
+	fixtureAdmission1866Context, fixtureAdmission1866 := expressionTestContext(ctx, "x AS val, n.name AS name")
+	_ = fixtureAdmission1866Context
+	out, err := exec.projectTransactionReturn(fixtureAdmission1866, fixtureAdmission1866Context, input, "x AS val, n.name AS name")
 	require.NoError(t, err)
 	require.Equal(t, []string{"val", "name"}, out.Columns)
 	require.Len(t, out.Rows, 1)
 	require.Equal(t, int64(7), out.Rows[0][0])
 	require.Equal(t, "alice", out.Rows[0][1])
 
-	empty, err := exec.projectTransactionReturn(ctx, input, "")
+	fixtureAdmission1867Context, fixtureAdmission1867 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1867Context
+	empty, err := exec.projectTransactionReturn(fixtureAdmission1867, fixtureAdmission1867Context, input, "")
 	require.NoError(t, err)
 	require.Equal(t, []string{"n", "x"}, empty.Columns)
 	require.Len(t, empty.Rows, 1)
@@ -466,14 +474,18 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 	ctx := context.Background()
 
 	eval := func(expr string) interface{} {
-		return exec.evaluateExpressionWithContextFullOperators(ctx, expr, strings.ToLower(expr), nodes, nil, nil, nil, nil, 0)
+		fixtureAdmission240Context, fixtureAdmission240 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission240
+		return exec.evaluateExpressionWithContextFullOperators(fixtureAdmission240, fixtureAdmission240Context, expr, strings.ToLower(expr), nodes, nil, nil, nil, nil, 0)
 	}
 
 	assert.Equal(t, false, eval("NOT true"))
 	assert.Equal(t, true, eval("5 BETWEEN 1 AND 10"))
 	// Unsupported syntax is an evaluation error, never a string value.
 	invalidCtx := withExpressionFailureSlot(context.Background())
-	assert.Nil(t, exec.evaluateExpressionWithContextFullOperators(invalidCtx, "5 BETWEEN 1", "5 between 1", nodes, nil, nil, nil, nil, 0))
+	fixtureAdmission241Context, fixtureAdmission241 := expressionTestContext(invalidCtx, "5 BETWEEN 1")
+	_ = fixtureAdmission241
+	assert.Nil(t, exec.evaluateExpressionWithContextFullOperators(fixtureAdmission241, fixtureAdmission241Context, "5 BETWEEN 1", "5 between 1", nodes, nil, nil, nil, nil, 0))
 	require.Error(t, getExpressionFailure(invalidCtx))
 	assert.Equal(t, true, eval("1 = 1 AND 2 = 2"))
 	assert.Equal(t, true, eval("1 = 2 OR 2 = 2"))
@@ -504,34 +516,46 @@ func TestCypherHelpers_CallTxSetMetadata_SyntaxBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// No active transaction.
-	_, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
+	fixtureAdmission1093Context, fixtureAdmission1093 := statementTestContext(ctx, "CALL tx.setMetaData({app:'x'})")
+	_ = fixtureAdmission1093Context
+	_, err := exec.callTxSetMetadata(fixtureAdmission1093, fixtureAdmission1093Context, "CALL tx.setMetaData({app:'x'})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires an active transaction")
 
 	// Active tx with unsupported tx implementation.
 	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
+	fixtureAdmission1094Context, fixtureAdmission1094 := statementTestContext(ctx, "CALL tx.setMetaData({app:'x'})")
+	_ = fixtureAdmission1094Context
+	_, err = exec.callTxSetMetadata(fixtureAdmission1094, fixtureAdmission1094Context, "CALL tx.setMetaData({app:'x'})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction type not supported")
 
 	// Invalid syntax / missing payload branches.
 	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.meta({app:'x'})")
+	fixtureAdmission1095Context, fixtureAdmission1095 := statementTestContext(ctx, "CALL tx.meta({app:'x'})")
+	_ = fixtureAdmission1095Context
+	_, err = exec.callTxSetMetadata(fixtureAdmission1095, fixtureAdmission1095Context, "CALL tx.meta({app:'x'})")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid tx.setMetaData syntax")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData")
+	fixtureAdmission1096Context, fixtureAdmission1096 := statementTestContext(ctx, "CALL tx.setMetaData")
+	_ = fixtureAdmission1096Context
+	_, err = exec.callTxSetMetadata(fixtureAdmission1096, fixtureAdmission1096Context, "CALL tx.setMetaData")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires at least 1 arguments")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData()")
+	fixtureAdmission1097Context, fixtureAdmission1097 := statementTestContext(ctx, "CALL tx.setMetaData()")
+	_ = fixtureAdmission1097Context
+	_, err = exec.callTxSetMetadata(fixtureAdmission1097, fixtureAdmission1097Context, "CALL tx.setMetaData()")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires at least 1 arguments")
 
 	exec.txContext = nil
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
-	result, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({})")
+	fixtureAdmission1098Context, fixtureAdmission1098 := statementTestContext(ctx, "CALL tx.setMetaData({})")
+	_ = fixtureAdmission1098Context
+	result, err := exec.callTxSetMetadata(fixtureAdmission1098, fixtureAdmission1098Context, "CALL tx.setMetaData({})")
 	require.NoError(t, err)
 	require.Empty(t, result.Columns)
 	require.Empty(t, result.Rows)
@@ -550,13 +574,21 @@ func TestCypherHelpers_FindNodeByProperties_AndRangeIndex(t *testing.T) {
 	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40)}})
 	require.NoError(t, err)
 
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
+	fixtureAdmission1099Context, fixtureAdmission1099 := statementTestContext(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
+	_ = fixtureAdmission1099Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1099, fixtureAdmission1099Context, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")
+	fixtureAdmission1100Context, fixtureAdmission1100 := statementTestContext(ctx, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")
+	_ = fixtureAdmission1100Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1100, fixtureAdmission1100Context, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
+	fixtureAdmission1101Context, fixtureAdmission1101 := statementTestContext(ctx, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
+	_ = fixtureAdmission1101Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1101, fixtureAdmission1101Context, "CREATE RANGE INDEX idx_pair FOR (n:Person) ON (n.a, n.b)")
 	require.NoError(t, err)
-	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX nonsense")
+	fixtureAdmission1102Context, fixtureAdmission1102 := statementTestContext(ctx, "CREATE RANGE INDEX nonsense")
+	_ = fixtureAdmission1102Context
+	_, err = exec.executeCreateRangeIndex(fixtureAdmission1102, fixtureAdmission1102Context, "CREATE RANGE INDEX nonsense")
 	require.Error(t, err)
 }
 
@@ -680,7 +712,9 @@ func TestCypherHelpers_CartesianMatchAndAggregation(t *testing.T) {
 		{"a": {ID: "a3", Properties: map[string]interface{}{"name": "y"}}},
 	}
 	groupRes := &ExecuteResult{Columns: []string{"name", "cnt"}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	_, err = exec.sharedCartesianAggregationForTest(ctx, allMatches, []returnItem{{expr: "a.name", alias: "name"}, {expr: "COUNT(*)", alias: "cnt"}}, groupRes)
+	fixtureAdmission1573Context, fixtureAdmission1573 := statementTestContext(ctx, ("RETURN "+("a.name"))+"\n"+("RETURN "+("COUNT(*)")))
+	_ = fixtureAdmission1573Context
+	_, err = exec.sharedCartesianAggregationForTest(fixtureAdmission1573, fixtureAdmission1573Context, allMatches, []returnItem{{expr: "a.name", alias: "name"}, {expr: "COUNT(*)", alias: "cnt"}}, groupRes)
 	require.NoError(t, err)
 	require.Len(t, groupRes.Rows, 2)
 }
@@ -711,11 +745,18 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Invalid pattern branch for executeMatchWithRelationshipsWithPathSeeded.
-	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", nil, -1)
+	fixtureAdmission242Context, fixtureAdmission242 := traversalTestContext(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}})
+	_ = fixtureAdmission242
+	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(fixtureAdmission242, fixtureAdmission242Context, "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", nil, -1)
 	require.Error(t, err)
 
 	// Valid traversal branch.
-	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
+	fixtureAdmission243Context, fixtureAdmission243 := traversalTestContext(context.Background(), "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
+		{expr: "a.name", alias: "aName"},
+		{expr: "b.name", alias: "bName"},
+	})
+	_ = fixtureAdmission243
+	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(fixtureAdmission243, fixtureAdmission243Context, "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
 		{expr: "a.name", alias: "aName"},
 		{expr: "b.name", alias: "bName"},
 	}, nil, nil, "", nil, -1)
@@ -724,11 +765,15 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 
 	// Cover traverseGraphParallel directly with explicit worker config.
 	ctx := context.Background()
-	match := exec.parseTraversalPattern(ctx, "(a:A)-[r:KNOWS]->(b:B)")
+	fixtureAdmission244Context, fixtureAdmission244 := traversalTestContext(ctx, "(a:A)-[r:KNOWS]->(b:B)", "", nil)
+	_ = fixtureAdmission244
+	match := exec.parseTraversalPattern(fixtureAdmission244, fixtureAdmission244Context, "(a:A)-[r:KNOWS]->(b:B)")
 	require.NotNil(t, match)
 	startNodes, err := eng.GetNodesByLabel("A")
 	require.NoError(t, err)
-	paths := exec.traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
+	fixtureAdmission1574Context, fixtureAdmission1574 := statementTestContext(context.Background(), ("MATCH "+("(a:A)-[r:KNOWS]->(b:B)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1574Context
+	paths := exec.relationshipExecutionFor(fixtureAdmission1574, fixtureAdmission1574Context, "(a:A)-[r:KNOWS]->(b:B)", "").traverseGraphParallel(context.Background(), match, startNodes, ParallelConfig{
 		Enabled:      true,
 		MaxWorkers:   2,
 		MinBatchSize: 1,
@@ -808,7 +853,9 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		res, err := exec.executeCall(ctx, tc.query)
+		fixtureAdmission983Context, fixtureAdmission983 := statementTestContext(ctx, tc.query)
+		_ = fixtureAdmission983Context
+		res, err := exec.executeCall(fixtureAdmission983, fixtureAdmission983Context, tc.query)
 		if tc.expectErr {
 			require.Error(t, err, tc.query)
 		} else {
@@ -831,7 +878,9 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL db.stats.status()",
 		"CALL db.stats.stop('QUERIES')",
 	} {
-		result, err := exec.executeCall(ctx, query)
+		fixtureAdmission984Context, fixtureAdmission984 := statementTestContext(ctx, query)
+		_ = fixtureAdmission984Context
+		result, err := exec.executeCall(fixtureAdmission984, fixtureAdmission984Context, query)
 		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
 		if result != nil {
 			require.Empty(t, result.Rows)
@@ -904,7 +953,9 @@ func TestCypherHelpers_ExecuteCallFallbackDispatch(t *testing.T) {
 		"CALL db.txlog.entries(1, 10)",
 		"CALL db.txlog.byTxId('tx-1', 10)",
 	} {
-		result, err := exec.executeCall(ctx, query)
+		fixtureAdmission985Context, fixtureAdmission985 := statementTestContext(ctx, query)
+		_ = fixtureAdmission985Context
+		result, err := exec.executeCall(fixtureAdmission985, fixtureAdmission985Context, query)
 		require.ErrorContains(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
 		if result != nil {
 			require.Empty(t, result.Rows)
@@ -1151,7 +1202,9 @@ func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
 			base := newTestMemoryEngine(t)
 			eng := storage.NewNamespacedEngine(base, "test")
 			exec := NewStorageExecutor(eng)
-			_, err := exec.executeCreateConstraint(context.Background(), q)
+			fixtureAdmission1575Context, fixtureAdmission1575 := statementTestContext(context.Background(), q)
+			_ = fixtureAdmission1575Context
+			_, err := exec.executeCreateConstraint(fixtureAdmission1575, fixtureAdmission1575Context, q)
 			if strings.Contains(q, " ASSERT ") {
 				require.Error(t, err, q)
 				return
@@ -1163,24 +1216,36 @@ func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(eng)
-	_, err := exec.executeCreateConstraint(context.Background(), "CREATE CONSTRAINT bad syntax")
+	fixtureAdmission1576Context, fixtureAdmission1576 := statementTestContext(context.Background(), "CREATE CONSTRAINT bad syntax")
+	_ = fixtureAdmission1576Context
+	_, err := exec.executeCreateConstraint(fixtureAdmission1576, fixtureAdmission1576Context, "CREATE CONSTRAINT bad syntax")
 	require.Error(t, err)
 
-	_, err = exec.executeCreateConstraint(context.Background(), "CREATE CONSTRAINT c_type_bad IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: BOGUS")
+	fixtureAdmission1577Context, fixtureAdmission1577 := statementTestContext(context.Background(), "CREATE CONSTRAINT c_type_bad IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: BOGUS")
+	_ = fixtureAdmission1577Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1577, fixtureAdmission1577Context, "CREATE CONSTRAINT c_type_bad IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: BOGUS")
 	require.Error(t, err)
 
 	// Drop existing constraint path.
-	_, err = exec.executeCreateConstraint(context.Background(), "CREATE CONSTRAINT c_drop IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE")
+	fixtureAdmission1578Context, fixtureAdmission1578 := statementTestContext(context.Background(), "CREATE CONSTRAINT c_drop IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE")
+	_ = fixtureAdmission1578Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1578, fixtureAdmission1578Context, "CREATE CONSTRAINT c_drop IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE")
 	require.NoError(t, err)
-	_, err = exec.executeDropConstraint(context.Background(), "DROP CONSTRAINT c_drop")
+	fixtureAdmission1579Context, fixtureAdmission1579 := statementTestContext(context.Background(), "DROP CONSTRAINT c_drop")
+	_ = fixtureAdmission1579Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1579, fixtureAdmission1579Context, "DROP CONSTRAINT c_drop")
 	require.NoError(t, err)
 
 	// IF EXISTS swallow path.
-	_, err = exec.executeDropConstraint(context.Background(), "DROP CONSTRAINT c_missing IF EXISTS")
+	fixtureAdmission1580Context, fixtureAdmission1580 := statementTestContext(context.Background(), "DROP CONSTRAINT c_missing IF EXISTS")
+	_ = fixtureAdmission1580Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1580, fixtureAdmission1580Context, "DROP CONSTRAINT c_missing IF EXISTS")
 	require.NoError(t, err)
 
 	// Invalid drop syntax.
-	_, err = exec.executeDropConstraint(context.Background(), "DROP CONSTRAINT")
+	fixtureAdmission1581Context, fixtureAdmission1581 := statementTestContext(context.Background(), "DROP CONSTRAINT")
+	_ = fixtureAdmission1581Context
+	_, err = exec.executeDropConstraint(fixtureAdmission1581, fixtureAdmission1581Context, "DROP CONSTRAINT")
 	require.Error(t, err)
 
 	t.Run("constraint validation errors on existing data", func(t *testing.T) {
@@ -1194,13 +1259,17 @@ func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
 		require.NoError(t, err)
 		_, err = exec.Execute(ctx, "CREATE (:Person {email:'dup@example.com'})", nil)
 		require.NoError(t, err)
-		_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT c_dup IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE")
+		fixtureAdmission1104Context, fixtureAdmission1104 := statementTestContext(ctx, "CREATE CONSTRAINT c_dup IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE")
+		_ = fixtureAdmission1104Context
+		_, err = exec.executeCreateConstraint(fixtureAdmission1104, fixtureAdmission1104Context, "CREATE CONSTRAINT c_dup IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE")
 		require.Error(t, err)
 
 		// Wrong property type violates type constraint creation.
 		_, err = exec.Execute(ctx, "CREATE (:Typed {age:'bad'})", nil)
 		require.NoError(t, err)
-		_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT c_type_err IF NOT EXISTS FOR (n:Typed) REQUIRE n.age IS :: INTEGER")
+		fixtureAdmission1105Context, fixtureAdmission1105 := statementTestContext(ctx, "CREATE CONSTRAINT c_type_err IF NOT EXISTS FOR (n:Typed) REQUIRE n.age IS :: INTEGER")
+		_ = fixtureAdmission1105Context
+		_, err = exec.executeCreateConstraint(fixtureAdmission1105, fixtureAdmission1105Context, "CREATE CONSTRAINT c_type_err IF NOT EXISTS FOR (n:Typed) REQUIRE n.age IS :: INTEGER")
 		require.Error(t, err)
 	})
 
@@ -1209,8 +1278,10 @@ func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
 		eng := storage.NewNamespacedEngine(base, "test")
 		exec := NewStorageExecutor(eng)
 
-		_, err := exec.executeCreateConstraint(
-			context.Background(),
+		fixtureAdmission1582Context, fixtureAdmission1582 := statementTestContext(context.Background(), "CREATE CONSTRAINT c_temporal_bad IF NOT EXISTS FOR (n:Fact) REQUIRE (n.key, n.valid_from) IS TEMPORAL")
+		_ = fixtureAdmission1582Context
+		_, err := exec.executeCreateConstraint(fixtureAdmission1582,
+			fixtureAdmission1582Context,
 			"CREATE CONSTRAINT c_temporal_bad IF NOT EXISTS FOR (n:Fact) REQUIRE (n.key, n.valid_from) IS TEMPORAL",
 		)
 		require.Error(t, err)
@@ -1332,17 +1403,35 @@ func TestCypherHelpers_EvaluateWhereOnComputedRow(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score >= 9 AND age = 30", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "name = 'alice' OR age < 10", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <> 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age != 99", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score > 9", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "score < 10", values))
-	assert.True(t, exec.evaluateWhereOnComputedRow(ctx, "age <= 30", values))
-	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "score > 99", values))
+	fixtureAdmission1106Context, fixtureAdmission1106 := expressionTestContext(ctx, "score >= 9 AND age = 30")
+	_ = fixtureAdmission1106Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1106, fixtureAdmission1106Context, "score >= 9 AND age = 30", values))
+	fixtureAdmission1107Context, fixtureAdmission1107 := expressionTestContext(ctx, "name = 'alice' OR age < 10")
+	_ = fixtureAdmission1107Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1107, fixtureAdmission1107Context, "name = 'alice' OR age < 10", values))
+	fixtureAdmission1108Context, fixtureAdmission1108 := expressionTestContext(ctx, "age <> 99")
+	_ = fixtureAdmission1108Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1108, fixtureAdmission1108Context, "age <> 99", values))
+	fixtureAdmission1109Context, fixtureAdmission1109 := expressionTestContext(ctx, "age != 99")
+	_ = fixtureAdmission1109Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1109, fixtureAdmission1109Context, "age != 99", values))
+	fixtureAdmission1110Context, fixtureAdmission1110 := expressionTestContext(ctx, "score > 9")
+	_ = fixtureAdmission1110Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1110, fixtureAdmission1110Context, "score > 9", values))
+	fixtureAdmission1111Context, fixtureAdmission1111 := expressionTestContext(ctx, "score < 10")
+	_ = fixtureAdmission1111Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1111, fixtureAdmission1111Context, "score < 10", values))
+	fixtureAdmission1112Context, fixtureAdmission1112 := expressionTestContext(ctx, "age <= 30")
+	_ = fixtureAdmission1112Context
+	assert.True(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1112, fixtureAdmission1112Context, "age <= 30", values))
+	fixtureAdmission1113Context, fixtureAdmission1113 := expressionTestContext(ctx, "score > 99")
+	_ = fixtureAdmission1113Context
+	assert.False(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1113, fixtureAdmission1113Context, "score > 99", values))
 	// The shared predicate owner drops rows for unrecognized predicate text
 	// instead of the legacy permissive pass-through that admitted every row.
-	assert.False(t, exec.evaluateWhereOnComputedRow(ctx, "unsupported-clause", values))
+	fixtureAdmission1114Context, fixtureAdmission1114 := expressionTestContext(ctx, "unsupported-clause")
+	_ = fixtureAdmission1114Context
+	assert.False(t, exec.evaluateWhereOnComputedRow(fixtureAdmission1114, fixtureAdmission1114Context, "unsupported-clause", values))
 }
 
 func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
@@ -1358,28 +1447,72 @@ func TestCypherHelpers_EvaluateInnerWhereBranches(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "(n.age = 30)"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 30 AND n.name = 'alice'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99 OR n.name = 'alice'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "NOT n.age = 99"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.bio CONTAINS 'hello'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name STARTS WITH 'ali'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name ENDS WITH 'ice'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "'a' IN n.tags"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name IS NOT NULL"))
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NOT NULL"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.missing IS NULL"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "id(n) = 'n-123'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "elementId(n) = 'n-123'"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age >= 30"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age <= 30"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age > 29"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.age < 31"))
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", "n.name =~ 'a.*'"))
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "n.age = 99"))
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "x.age = 30")) // wrong variable branch
-	assert.True(t, exec.evaluateWhere(ctx, node, "n", ""))            // empty where clause includes
-	assert.False(t, exec.evaluateWhere(ctx, node, "n", "MALFORMED"))  // malformed non-empty clause excludes
+	fixtureAdmission245Context, fixtureAdmission245 := expressionTestContext(ctx, "(n.age = 30)")
+	_ = fixtureAdmission245
+	assert.True(t, exec.evaluateWhere(fixtureAdmission245, fixtureAdmission245Context, node, "n", "(n.age = 30)"))
+	fixtureAdmission246Context, fixtureAdmission246 := expressionTestContext(ctx, "n.age = 30 AND n.name = 'alice'")
+	_ = fixtureAdmission246
+	assert.True(t, exec.evaluateWhere(fixtureAdmission246, fixtureAdmission246Context, node, "n", "n.age = 30 AND n.name = 'alice'"))
+	fixtureAdmission247Context, fixtureAdmission247 := expressionTestContext(ctx, "n.age = 99 OR n.name = 'alice'")
+	_ = fixtureAdmission247
+	assert.True(t, exec.evaluateWhere(fixtureAdmission247, fixtureAdmission247Context, node, "n", "n.age = 99 OR n.name = 'alice'"))
+	fixtureAdmission248Context, fixtureAdmission248 := expressionTestContext(ctx, "NOT n.age = 99")
+	_ = fixtureAdmission248
+	assert.True(t, exec.evaluateWhere(fixtureAdmission248, fixtureAdmission248Context, node, "n", "NOT n.age = 99"))
+	fixtureAdmission249Context, fixtureAdmission249 := expressionTestContext(ctx, "n.bio CONTAINS 'hello'")
+	_ = fixtureAdmission249
+	assert.True(t, exec.evaluateWhere(fixtureAdmission249, fixtureAdmission249Context, node, "n", "n.bio CONTAINS 'hello'"))
+	fixtureAdmission250Context, fixtureAdmission250 := expressionTestContext(ctx, "n.name STARTS WITH 'ali'")
+	_ = fixtureAdmission250
+	assert.True(t, exec.evaluateWhere(fixtureAdmission250, fixtureAdmission250Context, node, "n", "n.name STARTS WITH 'ali'"))
+	fixtureAdmission251Context, fixtureAdmission251 := expressionTestContext(ctx, "n.name ENDS WITH 'ice'")
+	_ = fixtureAdmission251
+	assert.True(t, exec.evaluateWhere(fixtureAdmission251, fixtureAdmission251Context, node, "n", "n.name ENDS WITH 'ice'"))
+	fixtureAdmission252Context, fixtureAdmission252 := expressionTestContext(ctx, "'a' IN n.tags")
+	_ = fixtureAdmission252
+	assert.True(t, exec.evaluateWhere(fixtureAdmission252, fixtureAdmission252Context, node, "n", "'a' IN n.tags"))
+	fixtureAdmission253Context, fixtureAdmission253 := expressionTestContext(ctx, "n.name IS NOT NULL")
+	_ = fixtureAdmission253
+	assert.True(t, exec.evaluateWhere(fixtureAdmission253, fixtureAdmission253Context, node, "n", "n.name IS NOT NULL"))
+	fixtureAdmission254Context, fixtureAdmission254 := expressionTestContext(ctx, "n.missing IS NOT NULL")
+	_ = fixtureAdmission254
+	assert.False(t, exec.evaluateWhere(fixtureAdmission254, fixtureAdmission254Context, node, "n", "n.missing IS NOT NULL"))
+	fixtureAdmission255Context, fixtureAdmission255 := expressionTestContext(ctx, "n.missing IS NULL")
+	_ = fixtureAdmission255
+	assert.True(t, exec.evaluateWhere(fixtureAdmission255, fixtureAdmission255Context, node, "n", "n.missing IS NULL"))
+	fixtureAdmission256Context, fixtureAdmission256 := expressionTestContext(ctx, "id(n) = 'n-123'")
+	_ = fixtureAdmission256
+	assert.True(t, exec.evaluateWhere(fixtureAdmission256, fixtureAdmission256Context, node, "n", "id(n) = 'n-123'"))
+	fixtureAdmission257Context, fixtureAdmission257 := expressionTestContext(ctx, "elementId(n) = 'n-123'")
+	_ = fixtureAdmission257
+	assert.True(t, exec.evaluateWhere(fixtureAdmission257, fixtureAdmission257Context, node, "n", "elementId(n) = 'n-123'"))
+	fixtureAdmission258Context, fixtureAdmission258 := expressionTestContext(ctx, "n.age >= 30")
+	_ = fixtureAdmission258
+	assert.True(t, exec.evaluateWhere(fixtureAdmission258, fixtureAdmission258Context, node, "n", "n.age >= 30"))
+	fixtureAdmission259Context, fixtureAdmission259 := expressionTestContext(ctx, "n.age <= 30")
+	_ = fixtureAdmission259
+	assert.True(t, exec.evaluateWhere(fixtureAdmission259, fixtureAdmission259Context, node, "n", "n.age <= 30"))
+	fixtureAdmission260Context, fixtureAdmission260 := expressionTestContext(ctx, "n.age > 29")
+	_ = fixtureAdmission260
+	assert.True(t, exec.evaluateWhere(fixtureAdmission260, fixtureAdmission260Context, node, "n", "n.age > 29"))
+	fixtureAdmission261Context, fixtureAdmission261 := expressionTestContext(ctx, "n.age < 31")
+	_ = fixtureAdmission261
+	assert.True(t, exec.evaluateWhere(fixtureAdmission261, fixtureAdmission261Context, node, "n", "n.age < 31"))
+	fixtureAdmission262Context, fixtureAdmission262 := expressionTestContext(ctx, "n.name =~ 'a.*'")
+	_ = fixtureAdmission262
+	assert.True(t, exec.evaluateWhere(fixtureAdmission262, fixtureAdmission262Context, node, "n", "n.name =~ 'a.*'"))
+	fixtureAdmission263Context, fixtureAdmission263 := expressionTestContext(ctx, "n.age = 99")
+	_ = fixtureAdmission263
+	assert.False(t, exec.evaluateWhere(fixtureAdmission263, fixtureAdmission263Context, node, "n", "n.age = 99"))
+	fixtureAdmission264Context, fixtureAdmission264 := expressionTestContext(ctx, "x.age = 30")
+	_ = fixtureAdmission264
+	assert.False(t, exec.evaluateWhere(fixtureAdmission264, fixtureAdmission264Context, node, "n", "x.age = 30")) // wrong variable branch
+	fixtureAdmission265Context, fixtureAdmission265 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission265
+	assert.True(t, exec.evaluateWhere(fixtureAdmission265, fixtureAdmission265Context, node, "n", "")) // empty where clause includes
+	fixtureAdmission266Context, fixtureAdmission266 := expressionTestContext(ctx, "MALFORMED")
+	_ = fixtureAdmission266
+	assert.False(t, exec.evaluateWhere(fixtureAdmission266, fixtureAdmission266Context, node, "n", "MALFORMED")) // malformed non-empty clause excludes
 }
 
 func TestCypherHelpers_NormalizePropValueAndMap(t *testing.T) {
@@ -1466,7 +1599,9 @@ func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
 	require.NoError(t, err)
 
 	// Without dbManager, default fallback branch.
-	res, err := exec.executeShowDatabase(ctx, "SHOW DATABASE")
+	fixtureAdmission1115Context, fixtureAdmission1115 := statementTestContext(ctx, "SHOW DATABASE")
+	_ = fixtureAdmission1115Context
+	res, err := exec.executeShowDatabase(fixtureAdmission1115, fixtureAdmission1115Context, "SHOW DATABASE")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, "nornic", res.Rows[0][0])
@@ -1475,7 +1610,9 @@ func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
 
 	// :USE context branch should override namespace.
 	ctxUse := context.WithValue(ctx, ctxKeyUseDatabase, "ctx_db")
-	res, err = exec.executeShowDatabase(ctxUse, "SHOW DATABASE")
+	fixtureAdmission1116Context, fixtureAdmission1116 := statementTestContext(ctxUse, "SHOW DATABASE")
+	_ = fixtureAdmission1116Context
+	res, err = exec.executeShowDatabase(fixtureAdmission1116, fixtureAdmission1116Context, "SHOW DATABASE")
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	assert.Equal(t, "ctx_db", res.Rows[0][0])
@@ -1544,7 +1681,9 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 
 	ctx := context.Background()
 	// map-literal parser should normalize quoted/backticked keys and evaluate known values.
-	out := exec.evaluateMapLiteralFull(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true}", nodes, rels, nil, nil, nil, 0)
+	fixtureAdmission1117Context, fixtureAdmission1117 := expressionTestContext(ctx, "{`k1`: n.name, 'k2': 3, \"k3\": true}")
+	_ = fixtureAdmission1117Context
+	out := exec.evaluateMapLiteralFull(fixtureAdmission1117, fixtureAdmission1117Context, "{`k1`: n.name, 'k2': 3, \"k3\": true}", nodes, rels, nil, nil, nil, 0)
 	assert.Equal(t, "alice", out["k1"])
 	assert.Equal(t, int64(3), out["k2"])
 	assert.Equal(t, true, out["k3"])
@@ -1552,7 +1691,9 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 	// No partial map escapes when an entry or the map syntax is invalid.
 	for _, expr := range []string{"{ok:1,badPair}", "not-a-map"} {
 		invalidCtx := withExpressionFailureSlot(ctx)
-		assert.Nil(t, exec.evaluateMapLiteralFull(invalidCtx, expr, nodes, rels, nil, nil, nil, 0))
+		fixtureAdmission973Context, fixtureAdmission973 := expressionTestContext(invalidCtx, expr)
+		_ = fixtureAdmission973Context
+		assert.Nil(t, exec.evaluateMapLiteralFull(fixtureAdmission973, fixtureAdmission973Context, expr, nodes, rels, nil, nil, nil, 0))
 		require.Error(t, getExpressionFailure(invalidCtx))
 	}
 }
@@ -1592,7 +1733,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
 
 	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
+	edges, prefix, err := exec.relationshipEntityExecution().getEdgesByTypeFast("REL")
 	require.NoError(t, err)
 	assert.Equal(t, "tenant_fast_cov:", prefix)
 	for _, e := range edges {
@@ -1617,7 +1758,7 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
+	_, _, err = failExec.relationshipEntityExecution().getEdgesByTypeFast("REL")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "edges fail")
 }
@@ -1644,16 +1785,22 @@ func TestCypherHelpers_ExecuteCreateConstraint_TypeAndErrorBranches(t *testing.T
 	ctx := context.Background()
 
 	// Named Neo4j 5 style property type constraint.
-	_, err := exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: INTEGER")
+	fixtureAdmission1118Context, fixtureAdmission1118 := statementTestContext(ctx, "CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: INTEGER")
+	_ = fixtureAdmission1118Context
+	_, err := exec.executeCreateConstraint(fixtureAdmission1118, fixtureAdmission1118Context, "CREATE CONSTRAINT person_age_type IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: INTEGER")
 	require.NoError(t, err)
 
 	// Unsupported type should error deterministically.
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT person_bad_type IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: UUID")
+	fixtureAdmission1119Context, fixtureAdmission1119 := statementTestContext(ctx, "CREATE CONSTRAINT person_bad_type IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: UUID")
+	_ = fixtureAdmission1119Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1119, fixtureAdmission1119Context, "CREATE CONSTRAINT person_bad_type IF NOT EXISTS FOR (n:Person) REQUIRE n.age IS :: UUID")
 	require.Error(t, err)
 	assert.Contains(t, strings.ToUpper(err.Error()), "UNSUPPORTED PROPERTY TYPE")
 
 	// Completely malformed constraint command should error.
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT nonsense")
+	fixtureAdmission1120Context, fixtureAdmission1120 := statementTestContext(ctx, "CREATE CONSTRAINT nonsense")
+	_ = fixtureAdmission1120Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1120, fixtureAdmission1120Context, "CREATE CONSTRAINT nonsense")
 	require.Error(t, err)
 }
 
@@ -1710,7 +1857,9 @@ func TestCypherHelpers_ExecuteCreateConstraint_MultiSyntaxCoverage(t *testing.T)
 		"CREATE CONSTRAINT IF NOT EXISTS ON (n:Person) ASSERT n.age IS :: INTEGER",
 	}
 	for _, q := range valid {
-		_, err := exec.executeCreateConstraint(ctx, q)
+		fixtureAdmission1121Context, fixtureAdmission1121 := statementTestContext(ctx, q)
+		_ = fixtureAdmission1121Context
+		_, err := exec.executeCreateConstraint(fixtureAdmission1121, fixtureAdmission1121Context, q)
 		if strings.Contains(q, " ASSERT ") {
 			require.Error(t, err, q)
 			continue
@@ -1719,7 +1868,9 @@ func TestCypherHelpers_ExecuteCreateConstraint_MultiSyntaxCoverage(t *testing.T)
 	}
 
 	// Temporal constraint requires at least 3 properties (key..., valid_from, valid_to).
-	_, err := exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_temporal FOR (n:Versioned) REQUIRE (n.key, n.valid_from) IS TEMPORAL")
+	fixtureAdmission1122Context, fixtureAdmission1122 := statementTestContext(ctx, "CREATE CONSTRAINT bad_temporal FOR (n:Versioned) REQUIRE (n.key, n.valid_from) IS TEMPORAL")
+	_ = fixtureAdmission1122Context
+	_, err := exec.executeCreateConstraint(fixtureAdmission1122, fixtureAdmission1122Context, "CREATE CONSTRAINT bad_temporal FOR (n:Versioned) REQUIRE (n.key, n.valid_from) IS TEMPORAL")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "TEMPORAL constraint requires at least 3 properties")
 }
@@ -1742,7 +1893,9 @@ func TestCypherHelpers_ExecuteCreateConstraint_ValidationFailureBranches(t *test
 		Properties: map[string]interface{}{"email": "dup@example.com"},
 	})
 	require.NoError(t, err)
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT uq_user_email FOR (n:User) REQUIRE n.email IS UNIQUE")
+	fixtureAdmission1123Context, fixtureAdmission1123 := statementTestContext(ctx, "CREATE CONSTRAINT uq_user_email FOR (n:User) REQUIRE n.email IS UNIQUE")
+	_ = fixtureAdmission1123Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1123, fixtureAdmission1123Context, "CREATE CONSTRAINT uq_user_email FOR (n:User) REQUIRE n.email IS UNIQUE")
 	require.Error(t, err)
 
 	// Existing invalid type should fail property-type validation.
@@ -1752,7 +1905,9 @@ func TestCypherHelpers_ExecuteCreateConstraint_ValidationFailureBranches(t *test
 		Properties: map[string]interface{}{"age": "not-an-int"},
 	})
 	require.NoError(t, err)
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT profile_age_type FOR (n:Profile) REQUIRE n.age IS :: INTEGER")
+	fixtureAdmission1124Context, fixtureAdmission1124 := statementTestContext(ctx, "CREATE CONSTRAINT profile_age_type FOR (n:Profile) REQUIRE n.age IS :: INTEGER")
+	_ = fixtureAdmission1124Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1124, fixtureAdmission1124Context, "CREATE CONSTRAINT profile_age_type FOR (n:Profile) REQUIRE n.age IS :: INTEGER")
 	require.Error(t, err)
 }
 
@@ -1772,9 +1927,13 @@ func TestCypherHelpers_MatchRowsHelpers_Branches(t *testing.T) {
 
 	ctx := context.Background()
 	// filterNodesByWhereClause branches.
-	all := exec.filterNodesByWhereClause(ctx, nodes, "", "n")
+	fixtureAdmission1125Context, fixtureAdmission1125 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1125Context
+	all := exec.filterNodesByWhereClause(fixtureAdmission1125, fixtureAdmission1125Context, nodes, "", "n")
 	require.Len(t, all, 2)
-	filtered := exec.filterNodesByWhereClause(ctx, nodes, "n.a >= 3", "n")
+	fixtureAdmission1126Context, fixtureAdmission1126 := expressionTestContext(ctx, "n.a >= 3")
+	_ = fixtureAdmission1126Context
+	filtered := exec.filterNodesByWhereClause(fixtureAdmission1126, fixtureAdmission1126Context, nodes, "n.a >= 3", "n")
 	require.Len(t, filtered, 1)
 	assert.Equal(t, storage.NodeID("n1"), filtered[0].ID)
 }
@@ -1792,17 +1951,25 @@ func TestCypherHelpers_EvaluateMapLiteralFromValues_Branches(t *testing.T) {
 	}
 
 	// Normal map literal with value substitution and list-comprehension transform.
-	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{person: name, age: age, relTypes: [r IN rels | type(r)]}", values))
+	fixtureAdmission267Context, fixtureAdmission267 := expressionTestContext(context.Background(), "{person: name, age: age, relTypes: [r IN rels | type(r)]}")
+	_ = fixtureAdmission267
+	out := parsedTestValue(exec.evaluateMapLiteralFromValues(fixtureAdmission267, fixtureAdmission267Context, "{person: name, age: age, relTypes: [r IN rels | type(r)]}", values))
 	require.Equal(t, "alice", out["person"])
 	require.Equal(t, int64(30), out["age"])
 	require.Equal(t, []interface{}{"KNOWS", "WORKS_WITH"}, out["relTypes"])
 
 	// Invalid/non-map/empty shapes are deterministic empties.
-	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), "not-a-map", values)
+	fixtureAdmission268Context, fixtureAdmission268 := expressionTestContext(context.Background(), "not-a-map")
+	_ = fixtureAdmission268
+	_, parseErr := exec.evaluateMapLiteralFromValues(fixtureAdmission268, fixtureAdmission268Context, "not-a-map", values)
 	assert.Error(t, parseErr)
-	assert.Empty(t, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{}", values)))
+	fixtureAdmission269Context, fixtureAdmission269 := expressionTestContext(context.Background(), "{}")
+	_ = fixtureAdmission269
+	assert.Empty(t, parsedTestValue(exec.evaluateMapLiteralFromValues(fixtureAdmission269, fixtureAdmission269Context, "{}", values)))
 	// Pair without colon should be skipped, not panic.
-	out, parseErr = exec.evaluateMapLiteralFromValues(context.Background(), "{good: age, badpair}", values)
+	fixtureAdmission270Context, fixtureAdmission270 := expressionTestContext(context.Background(), "{good: age, badpair}")
+	_ = fixtureAdmission270
+	out, parseErr = exec.evaluateMapLiteralFromValues(fixtureAdmission270, fixtureAdmission270Context, "{good: age, badpair}", values)
 	require.Error(t, parseErr)
 	require.Nil(t, out)
 }
@@ -2220,7 +2387,9 @@ func TestCypherHelpers_ExecuteCallDispatchAssertions(t *testing.T) {
 	}
 	for _, q := range expectSuccess {
 		t.Run("success_"+q, func(t *testing.T) {
-			res, err := exec.executeCall(ctx, q)
+			fixtureAdmission986Context, fixtureAdmission986 := statementTestContext(ctx, q)
+			_ = fixtureAdmission986Context
+			res, err := exec.executeCall(fixtureAdmission986, fixtureAdmission986Context, q)
 			require.NoError(t, err, q)
 			require.NotNil(t, res, q)
 			require.NotNil(t, res.Columns, q)
@@ -2273,7 +2442,9 @@ func TestCypherHelpers_ExecuteCallDispatchAssertions(t *testing.T) {
 	}
 	for _, q := range expectError {
 		t.Run("error_"+q, func(t *testing.T) {
-			res, err := exec.executeCall(ctx, q)
+			fixtureAdmission987Context, fixtureAdmission987 := statementTestContext(ctx, q)
+			_ = fixtureAdmission987Context
+			res, err := exec.executeCall(fixtureAdmission987, fixtureAdmission987Context, q)
 			require.Error(t, err, q)
 			assert.Nil(t, res, q)
 		})
@@ -2359,15 +2530,31 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	n3, err := eng.GetNode("n3")
 	require.NoError(t, err)
 
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
+	fixtureAdmission1127Context, fixtureAdmission1127 := traversalTestContext(context.Background(), "(x)-[:KNOWS]->()", "", nil)
+	_ = fixtureAdmission1127Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1127, fixtureAdmission1127Context, n1, "n", "(x)-[:KNOWS]->()"))
+	fixtureAdmission1128Context, fixtureAdmission1128 := traversalTestContext(context.Background(), "(n)-[:KNOWS]->()", "", nil)
+	_ = fixtureAdmission1128Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1128, fixtureAdmission1128Context, n1, "n", "(n)-[:KNOWS]->()"))
+	fixtureAdmission1129Context, fixtureAdmission1129 := traversalTestContext(context.Background(), "(n)-[:LIKES]->()", "", nil)
+	_ = fixtureAdmission1129Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1129, fixtureAdmission1129Context, n1, "n", "(n)-[:LIKES]->()"))
+	fixtureAdmission1130Context, fixtureAdmission1130 := traversalTestContext(context.Background(), "(n)<-[:KNOWS]-()", "", nil)
+	_ = fixtureAdmission1130Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1130, fixtureAdmission1130Context, n2, "n", "(n)<-[:KNOWS]-()"))
+	fixtureAdmission1131Context, fixtureAdmission1131 := traversalTestContext(context.Background(), "(n)-[:ANY]-()", "", nil)
+	_ = fixtureAdmission1131Context
+	assert.False(t, relationshipPredicateTest(exec, fixtureAdmission1131, fixtureAdmission1131Context, n2, "n", "(n)-[:ANY]-()"))
+	fixtureAdmission1132Context, fixtureAdmission1132 := traversalTestContext(context.Background(), "(n)-[:KNOWS]->()-[:LIKES]->()", "", nil)
+	_ = fixtureAdmission1132Context
+	assert.True(t, relationshipPredicateTest(exec, fixtureAdmission1132, fixtureAdmission1132Context, n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
 
-	assert.False(t, exec.checkChainedPattern(n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
+	fixtureAdmission1133Context, fixtureAdmission1133 := traversalTestContext(context.Background(), "(n)-[:KNOWS]->()-[:LIKES]->()", "", nil)
+	_ = fixtureAdmission1133Context
+	assert.False(t, exec.checkChainedPattern(fixtureAdmission1133, fixtureAdmission1133Context, n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
+	fixtureAdmission1134Context, fixtureAdmission1134 := traversalTestContext(context.Background(), "(n:Person)-[:KNOWS]->()-[:LIKES]->()", "", nil)
+	_ = fixtureAdmission1134Context
+	assert.True(t, exec.checkChainedPattern(fixtureAdmission1134, fixtureAdmission1134Context, n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
 
 	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
 	require.Len(t, hops, 2)
@@ -2384,26 +2571,26 @@ func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
 	assert.Empty(t, incomingHops[1].relTypes)
 	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
 
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
+	assert.True(t, traverseChainTest(exec, n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
 		{relTypes: []string{"LIKES"}, outgoing: true},
 	}, 0))
-	assert.False(t, exec.traverseChain(n1, []relationshipHop{
+	assert.False(t, traverseChainTest(exec, n1, []relationshipHop{
 		{relTypes: []string{"KNOWS"}, outgoing: true},
 		{relTypes: []string{"MISSING"}, outgoing: true},
 	}, 0))
 
 	// Incoming traversal branch.
-	assert.True(t, exec.traverseChain(n3, []relationshipHop{
+	assert.True(t, traverseChainTest(exec, n3, []relationshipHop{
 		{relTypes: []string{"LIKES"}, outgoing: false},
 		{relTypes: []string{"KNOWS"}, outgoing: false},
 	}, 0))
-	assert.False(t, exec.traverseChain(n3, []relationshipHop{
+	assert.False(t, traverseChainTest(exec, n3, []relationshipHop{
 		{relTypes: []string{"MISSING"}, outgoing: false},
 	}, 0))
 
 	// No type filter branch.
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
+	assert.True(t, traverseChainTest(exec, n1, []relationshipHop{
 		{relTypes: nil, outgoing: true},
 	}, 0))
 }
@@ -2493,7 +2680,9 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 	// predicate evaluator compares it (#652).
 	row := map[string]interface{}{"n": a}
 	predicate := func(expression string, values map[string]interface{}) bool {
-		return exec.evaluateRowPredicate(context.Background(), expression, values)
+		fixtureAdmission271Context, fixtureAdmission271 := expressionTestContext(context.Background(), expression)
+		_ = fixtureAdmission271
+		return exec.evaluateRowPredicate(fixtureAdmission271, fixtureAdmission271Context, expression, values)
 	}
 	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } = 1", row))
 	assert.True(t, predicate("COUNT { MATCH (n)-[:KNOWS]->() } <> 2", row))
@@ -2529,11 +2718,17 @@ func TestCypherHelpers_EvaluateWhereAsBooleanBranches(t *testing.T) {
 	node := &storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(21), "name": "alice"}}
 
 	ctx := context.Background()
-	assert.True(t, exec.evaluateWhereAsBoolean(ctx, "n.age >= 21", "n", node))
-	assert.False(t, exec.evaluateWhereAsBoolean(ctx, "n.missing", "n", node))
+	fixtureAdmission1135Context, fixtureAdmission1135 := expressionTestContext(ctx, "n.age >= 21")
+	_ = fixtureAdmission1135Context
+	assert.True(t, exec.evaluateWhereAsBoolean(fixtureAdmission1135, fixtureAdmission1135Context, "n.age >= 21", "n", node))
+	fixtureAdmission1136Context, fixtureAdmission1136 := expressionTestContext(ctx, "n.missing")
+	_ = fixtureAdmission1136Context
+	assert.False(t, exec.evaluateWhereAsBoolean(fixtureAdmission1136, fixtureAdmission1136Context, "n.missing", "n", node))
 	for _, expression := range []string{"1", "0", "1.5", "0.0", "'x'"} {
 		predicateCtx := withExpressionFailureSlot(ctx)
-		assert.False(t, exec.evaluateWhereAsBoolean(predicateCtx, expression, "n", node))
+		fixtureAdmission988Context, fixtureAdmission988 := expressionTestContext(predicateCtx, expression)
+		_ = fixtureAdmission988Context
+		assert.False(t, exec.evaluateWhereAsBoolean(fixtureAdmission988, fixtureAdmission988Context, expression, "n", node))
 		assert.ErrorContains(t, getExpressionFailure(predicateCtx), "Type mismatch: expected Boolean")
 	}
 }
@@ -2742,7 +2937,9 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		limit:   "1",
 	}
 	ctx := context.Background()
-	filtered, err := exec.applyYieldFilter(ctx, baseResult, yield)
+	fixtureAdmission1868Context, fixtureAdmission1868 := statementTestContext(ctx, "RETURN "+("s > 0.3"))
+	_ = fixtureAdmission1868Context
+	filtered, err := exec.applyYieldFilter(fixtureAdmission1868, fixtureAdmission1868Context, baseResult, yield)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"n", "s"}, filtered.Columns)
 	require.Len(t, filtered.Rows, 1)
@@ -2761,13 +2958,16 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 		items: []yieldItem{{name: "score"}},
 		where: "score.value > 0.5",
 	}
-	whereFiltered, err := exec.applyYieldFilter(ctx, whereResult, yieldWhere)
+	fixtureAdmission1869Context, fixtureAdmission1869 := statementTestContext(ctx, "RETURN "+("score.value > 0.5"))
+	_ = fixtureAdmission1869Context
+	whereFiltered, err := exec.applyYieldFilter(fixtureAdmission1869, fixtureAdmission1869Context, whereResult, yieldWhere)
 	require.NoError(t, err)
 	require.Len(t, whereFiltered.Rows, 1)
 	assert.Equal(t, map[string]interface{}{"value": float64(0.9)}, whereFiltered.Rows[0][0])
 
 	// Unknown column should be rejected.
-	_, err = exec.applyYieldFilter(ctx, &ExecuteResult{
+	_, missingYieldStatement := statementTestContext(ctx, "YIELD missing")
+	_, err = exec.applyYieldFilter(missingYieldStatement, ctx, &ExecuteResult{
 		Columns: []string{"a"},
 		Rows:    [][]interface{}{{int64(1)}},
 	}, &yieldClause{
@@ -2785,21 +2985,22 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 	// Rejection branches.
 	rejectCases := []struct {
 		name    string
+		pattern string
 		matches *TraversalMatch
 		with    string
 		ret     string
 	}{
 		{name: "nil_matches", matches: nil, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "chained", matches: &TraversalMatch{IsChained: true}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_hops", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 2, MaxHops: 2}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_type", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"LIKES"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_direction", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "outgoing", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "missing_vars", matches: &TraversalMatch{StartNode: nodePatternInfo{labels: []string{"Product"}}, Relationship: RelationshipPattern{Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "bad_with_expr", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice + r.quantity) as revenue", ret: "p.productName, revenue"},
+		{name: "chained", pattern: "()--()--()", matches: &TraversalMatch{IsChained: true}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
+		{name: "wrong_hops", pattern: "(p:Product)<-[r:ORDERS*2]-()", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 2, MaxHops: 2}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
+		{name: "wrong_type", pattern: "(p:Product)<-[r:LIKES]-()", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"LIKES"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
+		{name: "wrong_direction", pattern: "(p:Product)-[r:ORDERS]->()", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "outgoing", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
+		{name: "missing_vars", pattern: "(:Product)<-[:ORDERS]-()", matches: &TraversalMatch{StartNode: nodePatternInfo{labels: []string{"Product"}}, Relationship: RelationshipPattern{Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
+		{name: "bad_with_expr", pattern: "(p:Product)<-[r:ORDERS]-()", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice + r.quantity) as revenue", ret: "p.productName, revenue"},
 	}
 	for _, tc := range rejectCases {
 		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
+			res, ok, err := revenueTest(exec, context.Background(), tc.pattern, tc.matches, tc.with, tc.ret, "", 0, 0)
 			require.NoError(t, err)
 			assert.False(t, ok)
 			assert.Nil(t, res)
@@ -2827,7 +3028,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
 			MaxHops:   1,
 		},
 	}
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := revenueTest(exec, context.Background(), "(p:Product)<-[r:ORDERS]-()",
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2890,7 +3091,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 		},
 	}
 
-	res, ok, err := exec.tryFastRevenueByProduct(
+	res, ok, err := revenueTest(exec, context.Background(), "(p:Product)<-[r:ORDERS]-()",
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2912,7 +3113,7 @@ func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *test
 	}
 
 	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
+	res, ok, err = revenueTest(exec, context.Background(), "(p:Product)<-[r:ORDERS]-()",
 		matches,
 		"p, sum(p.unitPrice * r.quantity) as revenue",
 		"p.productName, revenue",
@@ -2979,7 +3180,9 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	assert.Empty(t, exec.extractVariableNamesFromPattern("()-[:REL]->()"))
 
 	// No variable names branch.
-	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH ()-[:REL]->()")
+	fixtureAdmission272Context, fixtureAdmission272 := statementTestContext(ctx, "MATCH ()-[:REL]->()")
+	_ = fixtureAdmission272
+	matches, handled, err := exec.pipelineApplyMatch(fixtureAdmission272, fixtureAdmission272Context, []pipelineRow{{}}, "MATCH ()-[:REL]->()")
 	require.NoError(t, err)
 	assert.Empty(t, matches)
 	assert.True(t, handled)
@@ -2991,8 +3194,10 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "k1", StartNode: "pa", EndNode: "pb", Type: "KNOWS"}))
 
 	// Successful extraction branch.
-	matches, handled, err = exec.pipelineApplyMatch(
-		ctx,
+	fixtureAdmission273Context, fixtureAdmission273 := statementTestContext(ctx, "MATCH (a:Person)-[:KNOWS]->(b:Person)")
+	_ = fixtureAdmission273
+	matches, handled, err = exec.pipelineApplyMatch(fixtureAdmission273,
+		fixtureAdmission273Context,
 		[]pipelineRow{{}},
 		"MATCH (a:Person)-[:KNOWS]->(b:Person)",
 	)
@@ -3004,8 +3209,10 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	assert.Len(t, matches[0], 2)
 
 	// A named relationship is bound per row.
-	matches, handled, err = exec.pipelineApplyMatch(
-		ctx,
+	fixtureAdmission274Context, fixtureAdmission274 := statementTestContext(ctx, "MATCH (a:Person)-[k:KNOWS]->(b:Person)")
+	_ = fixtureAdmission274
+	matches, handled, err = exec.pipelineApplyMatch(fixtureAdmission274,
+		fixtureAdmission274Context,
 		[]pipelineRow{{}},
 		"MATCH (a:Person)-[k:KNOWS]->(b:Person)",
 	)
@@ -3339,7 +3546,9 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 // subquery evaluator (rowSubqueryValue).
 func subqueryCount(t *testing.T, exec *StorageExecutor, node *storage.Node, variable, body string) int64 {
 	t.Helper()
-	value, ok, err := exec.rowSubqueryValue(context.Background(), "COUNT", body, map[string]interface{}{variable: node})
+	fixtureAdmission275Context, fixtureAdmission275 := expressionTestContext(context.Background(), "COUNT"+" { "+body+" }")
+	_ = fixtureAdmission275
+	value, ok, err := exec.rowSubqueryValue(fixtureAdmission275, fixtureAdmission275Context, "COUNT", body, map[string]interface{}{variable: node})
 	require.NoError(t, err)
 	require.True(t, ok)
 	count, _ := value.(int64)

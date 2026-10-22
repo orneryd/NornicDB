@@ -153,7 +153,9 @@ func TestGh713WithCompilerRoutesAndWriteAdmission(t *testing.T) {
 				var err error
 				if route == "batch" {
 					var supported bool
-					result, supported, err = exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+					fixtureAdmission1861Context, fixtureAdmission1861 := statementTestContext(ctx, (mutation)+"\n"+("RETURN count(m) AS total"))
+					_ = fixtureAdmission1861Context
+					result, supported, err = exec.executeUnwindMergeChainBatch(fixtureAdmission1861, fixtureAdmission1861Context, "row", items, mutation, "RETURN count(m) AS total")
 					require.True(t, supported)
 				} else {
 					if route == "explicit transaction" {
@@ -183,7 +185,9 @@ func TestGh713WithCompilerRoutesAndWriteAdmission(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			mutation := "MERGE (n:WithSeed {id: row.id}) WITH " + projection +
 				" MERGE (m:WithValue {id: row.id}) SET m.score = score"
-			result, supported, err := exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+			fixtureAdmission1862Context, fixtureAdmission1862 := statementTestContext(ctx, (mutation)+"\n"+("RETURN count(m) AS total"))
+			_ = fixtureAdmission1862Context
+			result, supported, err := exec.executeUnwindMergeChainBatch(fixtureAdmission1862, fixtureAdmission1862Context, "row", items, mutation, "RETURN count(m) AS total")
 			require.NoError(t, err)
 			require.False(t, supported)
 			require.Nil(t, result)
@@ -204,7 +208,9 @@ func TestGh713CompiledWithItemsReadIncomingScope(t *testing.T) {
 					" MERGE (m:ScopeValue {id: row.id}) SET m.value = previous"
 				var err error
 				if route == "batch" {
-					_, supported, batchErr := exec.executeUnwindMergeChainBatch(ctx, "row", items, mutation, "RETURN count(m) AS total")
+					fixtureAdmission1863Context, fixtureAdmission1863 := statementTestContext(ctx, (mutation)+"\n"+("RETURN count(m) AS total"))
+					_ = fixtureAdmission1863Context
+					_, supported, batchErr := exec.executeUnwindMergeChainBatch(fixtureAdmission1863, fixtureAdmission1863Context, "row", items, mutation, "RETURN count(m) AS total")
 					require.True(t, supported)
 					err = batchErr
 				} else {

@@ -74,7 +74,9 @@ func TestSharedEvaluatorQuantifierListRule(t *testing.T) {
 	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"s": int64(5), "l": []interface{}{int64(1), int64(2)}}}
 	nodes := map[string]*storage.Node{"n": node}
 	eval := func(function, inner string) interface{} {
-		return exec.evaluateQuantifierWithContext(ctx, function, inner, nodes, nil, nil, nil, nil, 0)
+		fixtureAdmission1645Context, fixtureAdmission1645 := expressionTestContext(ctx, inner)
+		_ = fixtureAdmission1645Context
+		return exec.evaluateQuantifierWithContext(fixtureAdmission1645, fixtureAdmission1645Context, function, inner, nodes, nil, nil, nil, nil, 0)
 	}
 	assert.Equal(t, true, eval("all", "x IN n.s WHERE x > 1"))
 	assert.Equal(t, false, eval("none", "x IN n.s WHERE x > 1"))

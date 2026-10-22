@@ -755,13 +755,17 @@ func TestExecuteReturn_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// RETURN missing branch.
-	_, err := exec.executeReturn(ctx, "MATCH (n)")
+	fixtureAdmission1192Context, fixtureAdmission1192 := statementTestContext(ctx, "MATCH (n)")
+	_ = fixtureAdmission1192Context
+	_, err := exec.executeReturn(fixtureAdmission1192, fixtureAdmission1192Context, "MATCH (n)")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "RETURN clause not found")
 
 	// Parameter substitution + aliases + scalar literals.
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"x": int64(7)})
-	res, err := exec.executeReturn(ctxWithParams, "RETURN $x AS x, null AS n, 1 AS one, 0 AS zero, 3.14 AS pi, 's' AS s")
+	fixtureAdmission1193Context, fixtureAdmission1193 := statementTestContext(ctxWithParams, "RETURN $x AS x, null AS n, 1 AS one, 0 AS zero, 3.14 AS pi, 's' AS s")
+	_ = fixtureAdmission1193Context
+	res, err := exec.executeReturn(fixtureAdmission1193, fixtureAdmission1193Context, "RETURN $x AS x, null AS n, 1 AS one, 0 AS zero, 3.14 AS pi, 's' AS s")
 	require.NoError(t, err)
 	require.Equal(t, []string{"x", "n", "one", "zero", "pi", "s"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -773,14 +777,18 @@ func TestExecuteReturn_Branches(t *testing.T) {
 	assert.Equal(t, 3.14, res.Rows[0][4])
 	assert.Equal(t, "s", res.Rows[0][5])
 
-	_, err = exec.executeReturn(ctx, "RETURN bareword AS b")
+	fixtureAdmission1194Context, fixtureAdmission1194 := statementTestContext(ctx, "RETURN bareword AS b")
+	_ = fixtureAdmission1194Context
+	_, err = exec.executeReturn(fixtureAdmission1194, fixtureAdmission1194Context, "RETURN bareword AS b")
 	require.Error(t, err)
 	semanticError, ok := err.(*SemanticError)
 	require.True(t, ok)
 	require.Equal(t, "UnexpectedSyntax", semanticError.Detail)
 
 	// Expression evaluation branch (evaluateExpressionWithContext result != nil).
-	exprRes, err := exec.executeReturn(ctx, "RETURN toUpper('abc') AS up")
+	fixtureAdmission1195Context, fixtureAdmission1195 := statementTestContext(ctx, "RETURN toUpper('abc') AS up")
+	_ = fixtureAdmission1195Context
+	exprRes, err := exec.executeReturn(fixtureAdmission1195, fixtureAdmission1195Context, "RETURN toUpper('abc') AS up")
 	require.NoError(t, err)
 	require.Len(t, exprRes.Rows, 1)
 	require.Len(t, exprRes.Rows[0], 1)
@@ -919,7 +927,9 @@ func TestParseReturnClauseBasic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result, err := exec.projectMergeReturn(ctx, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, "RETURN "+tt.returnClause)
+			fixtureAdmission1593Context, fixtureAdmission1593 := statementTestContext(ctx, "RETURN "+tt.returnClause)
+			_ = fixtureAdmission1593Context
+			result, err := exec.projectMergeReturn(fixtureAdmission1593, fixtureAdmission1593Context, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, "RETURN "+tt.returnClause)
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, tt.expectedCols, result.Columns)
@@ -964,7 +974,9 @@ func TestEvaluateExpression(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateExpression(ctx, tt.expr, tt.varName, node)
+			fixtureAdmission989Context, fixtureAdmission989 := expressionTestContext(ctx, tt.expr)
+			_ = fixtureAdmission989Context
+			result := exec.evaluateExpression(fixtureAdmission989, fixtureAdmission989Context, tt.expr, tt.varName, node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1817,7 +1829,9 @@ func TestProcessCallSubqueryReturn_OrderByOnNewline(t *testing.T) {
 
 	ctx := context.Background()
 
-	out, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN textKey128, texts\nORDER BY textKey128")
+	fixtureAdmission1594Context, fixtureAdmission1594 := statementTestContext(ctx, "RETURN textKey128, texts\nORDER BY textKey128")
+	_ = fixtureAdmission1594Context
+	out, err := exec.processCallSubqueryReturn(fixtureAdmission1594, fixtureAdmission1594Context, inner, "RETURN textKey128, texts\nORDER BY textKey128")
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Len(t, out.Columns, 2)
@@ -1838,7 +1852,9 @@ func TestExecuteReturn_IgnoresOrderByInProjection(t *testing.T) {
 		"texts":      []interface{}{"ORD-001"},
 	}
 
-	res, err := exec.executeReturn(context.Background(), "RETURN textKey128, texts\nORDER BY textKey128")
+	fixtureAdmission1595Context, fixtureAdmission1595 := statementTestContext(context.Background(), "RETURN textKey128, texts\nORDER BY textKey128")
+	_ = fixtureAdmission1595Context
+	res, err := exec.executeReturn(fixtureAdmission1595, fixtureAdmission1595Context, "RETURN textKey128, texts\nORDER BY textKey128")
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Len(t, res.Columns, 2)
@@ -1947,12 +1963,24 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 		"a": &storage.Node{ID: "p1", Properties: map[string]interface{}{"age": int64(30)}},
 		"b": &storage.Node{ID: "p2", Properties: map[string]interface{}{"age": int64(40)}},
 	}
-	assert.True(t, exec.evaluateBindingWhere(ctx, b, "a <> b AND a.age < b.age", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, b, "NOT a.age > b.age", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, b, "a.age > b.age OR a = b", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, b, "a.name", nil))
-	assert.True(t, exec.evaluateWhereForContext(ctx, "a.age < b.age", map[string]*storage.Node{"a": b["a"], "b": b["b"]}))
-	assert.False(t, exec.evaluateWhereForContext(ctx, "a.name", map[string]*storage.Node{"a": b["a"]}))
+	fixtureAdmission298Context, fixtureAdmission298 := expressionTestContext(ctx, "a <> b AND a.age < b.age")
+	_ = fixtureAdmission298
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission298, fixtureAdmission298Context, b, "a <> b AND a.age < b.age", nil))
+	fixtureAdmission299Context, fixtureAdmission299 := expressionTestContext(ctx, "NOT a.age > b.age")
+	_ = fixtureAdmission299
+	assert.True(t, exec.evaluateBindingWhere(fixtureAdmission299, fixtureAdmission299Context, b, "NOT a.age > b.age", nil))
+	fixtureAdmission300Context, fixtureAdmission300 := expressionTestContext(ctx, "a.age > b.age OR a = b")
+	_ = fixtureAdmission300
+	assert.False(t, exec.evaluateBindingWhere(fixtureAdmission300, fixtureAdmission300Context, b, "a.age > b.age OR a = b", nil))
+	fixtureAdmission301Context, fixtureAdmission301 := expressionTestContext(ctx, "a.name")
+	_ = fixtureAdmission301
+	assert.False(t, exec.evaluateBindingWhere(fixtureAdmission301, fixtureAdmission301Context, b, "a.name", nil))
+	fixtureAdmission302Context, fixtureAdmission302 := expressionTestContext(ctx, "a.age < b.age")
+	_ = fixtureAdmission302
+	assert.True(t, exec.evaluateWhereForContext(fixtureAdmission302, fixtureAdmission302Context, "a.age < b.age", map[string]*storage.Node{"a": b["a"], "b": b["b"]}))
+	fixtureAdmission303Context, fixtureAdmission303 := expressionTestContext(ctx, "a.name")
+	_ = fixtureAdmission303
+	assert.False(t, exec.evaluateWhereForContext(fixtureAdmission303, fixtureAdmission303Context, "a.name", map[string]*storage.Node{"a": b["a"]}))
 	assert.False(t, isSystemNode(nil))
 	assert.True(t, isSystemNode(&storage.Node{Labels: []string{"_meta"}}))
 	assert.False(t, isSystemNode(&storage.Node{Labels: []string{"Person"}}))
@@ -2055,7 +2083,10 @@ func TestRunSearchRequestBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.runSearchRequest(ctx, map[string]interface{}{}, false, false)
+	var fixtureAdmission1889Value map[string]interface{} = map[string]interface{}{}
+	var fixtureAdmission1889Arguments []interface{} = []interface{}{(fixtureAdmission1889Value)}
+	fixtureAdmission1889Context, fixtureAdmission1889 := procedureTestContext(ctx, "db.retrieve", fixtureAdmission1889Arguments)
+	_, err := exec.runSearchRequest(fixtureAdmission1889, fixtureAdmission1889Context, fixtureAdmission1889Value, false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "query is required")
 
@@ -2075,7 +2106,10 @@ func TestRunSearchRequestBranches(t *testing.T) {
 		"rerankMinScore": 0.0,
 		"embedding":      []interface{}{0.1, 0.2, 0.3},
 	}
-	res, err := exec.runSearchRequest(ctx, req, true, true)
+	var fixtureAdmission1890Value map[string]interface{} = req
+	var fixtureAdmission1890Arguments []interface{} = []interface{}{(fixtureAdmission1890Value)}
+	fixtureAdmission1890Context, fixtureAdmission1890 := procedureTestContext(ctx, "db.retrieve", fixtureAdmission1890Arguments)
+	res, err := exec.runSearchRequest(fixtureAdmission1890, fixtureAdmission1890Context, fixtureAdmission1890Value, true, true)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}, res.Columns)
@@ -2432,22 +2466,40 @@ func TestEvaluateExpressionFromValues_Branches(t *testing.T) {
 		},
 	}
 
-	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Nil(t, exec.evaluateExpressionFromValues("m.title", values))
-	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
-	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
-	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size('abcd')", values))
+	fixtureAdmission304Context, fixtureAdmission304 := expressionTestRow(context.Background(), "n.name", values)
+	_ = fixtureAdmission304
+	require.Equal(t, "alice", exec.evaluateExpressionFromValues(fixtureAdmission304, "n.name", fixtureAdmission304Context))
+	fixtureAdmission305Context, fixtureAdmission305 := expressionTestRow(context.Background(), "m.title", values)
+	_ = fixtureAdmission305
+	require.Nil(t, exec.evaluateExpressionFromValues(fixtureAdmission305, "m.title", fixtureAdmission305Context))
+	fixtureAdmission306Context, fixtureAdmission306 := expressionTestRow(context.Background(), "length(path)", values)
+	_ = fixtureAdmission306
+	require.Equal(t, int64(2), exec.evaluateExpressionFromValues(fixtureAdmission306, "length(path)", fixtureAdmission306Context))
+	fixtureAdmission307Context, fixtureAdmission307 := expressionTestRow(context.Background(), "size(xs)", values)
+	_ = fixtureAdmission307
+	require.Equal(t, int64(3), exec.evaluateExpressionFromValues(fixtureAdmission307, "size(xs)", fixtureAdmission307Context))
+	fixtureAdmission308Context, fixtureAdmission308 := expressionTestRow(context.Background(), "size('abcd')", values)
+	_ = fixtureAdmission308
+	require.Equal(t, int64(4), exec.evaluateExpressionFromValues(fixtureAdmission308, "size('abcd')", fixtureAdmission308Context))
 
-	labels := exec.evaluateExpressionFromValues("labels(n)", values)
+	fixtureAdmission309Context, fixtureAdmission309 := expressionTestRow(context.Background(), "labels(n)", values)
+	_ = fixtureAdmission309
+	labels := exec.evaluateExpressionFromValues(fixtureAdmission309, "labels(n)", fixtureAdmission309Context)
 	require.NotNil(t, labels)
 
-	rels := exec.evaluateExpressionFromValues("relationships(path)", values)
+	fixtureAdmission310Context, fixtureAdmission310 := expressionTestRow(context.Background(), "relationships(path)", values)
+	_ = fixtureAdmission310
+	rels := exec.evaluateExpressionFromValues(fixtureAdmission310, "relationships(path)", fixtureAdmission310Context)
 	require.Len(t, rels.([]interface{}), 2)
 
-	listComp := exec.evaluateExpressionFromValues("[r IN relationships(path) | type(r)]", values)
+	fixtureAdmission311Context, fixtureAdmission311 := expressionTestRow(context.Background(), "[r IN relationships(path) | type(r)]", values)
+	_ = fixtureAdmission311
+	listComp := exec.evaluateExpressionFromValues(fixtureAdmission311, "[r IN relationships(path) | type(r)]", fixtureAdmission311Context)
 	require.Equal(t, []interface{}{"KNOWS", "WORKS_WITH"}, listComp)
 
-	mapLit := exec.evaluateExpressionFromValues("{name: n.name, relCount: size(relationships(path))}", values)
+	fixtureAdmission312Context, fixtureAdmission312 := expressionTestRow(context.Background(), "{name: n.name, relCount: size(relationships(path))}", values)
+	_ = fixtureAdmission312
+	mapLit := exec.evaluateExpressionFromValues(fixtureAdmission312, "{name: n.name, relCount: size(relationships(path))}", fixtureAdmission312Context)
 	require.NotNil(t, mapLit)
 }
 
@@ -2512,12 +2564,18 @@ func TestEvaluateExpressionFromValues_MaterializesTemporalExpressions(t *testing
 		},
 	}
 
-	validFrom := exec.evaluateExpressionFromValues("datetime(row.valid_from_iso)", values)
+	fixtureAdmission313Context, fixtureAdmission313 := expressionTestRow(context.Background(), "datetime(row.valid_from_iso)", values)
+	_ = fixtureAdmission313
+	validFrom := exec.evaluateExpressionFromValues(fixtureAdmission313, "datetime(row.valid_from_iso)", fixtureAdmission313Context)
 	validFromDateTime, ok := validFrom.(CypherDateTime)
 	require.True(t, ok, "expected CypherDateTime, got %T", validFrom)
 	require.Equal(t, "2026-03-20T20:22:20Z", validFromDateTime.Time.UTC().Format(time.RFC3339))
-	require.Nil(t, exec.evaluateExpressionFromValues("CASE WHEN row.valid_to_iso IS NULL THEN null ELSE datetime(row.valid_to_iso) END", values))
-	assertedAt := exec.evaluateExpressionFromValues("CASE WHEN row.asserted_at_iso IS NULL THEN null ELSE datetime(row.asserted_at_iso) END", values)
+	fixtureAdmission314Context, fixtureAdmission314 := expressionTestRow(context.Background(), "CASE WHEN row.valid_to_iso IS NULL THEN null ELSE datetime(row.valid_to_iso) END", values)
+	_ = fixtureAdmission314
+	require.Nil(t, exec.evaluateExpressionFromValues(fixtureAdmission314, "CASE WHEN row.valid_to_iso IS NULL THEN null ELSE datetime(row.valid_to_iso) END", fixtureAdmission314Context))
+	fixtureAdmission315Context, fixtureAdmission315 := expressionTestRow(context.Background(), "CASE WHEN row.asserted_at_iso IS NULL THEN null ELSE datetime(row.asserted_at_iso) END", values)
+	_ = fixtureAdmission315
+	assertedAt := exec.evaluateExpressionFromValues(fixtureAdmission315, "CASE WHEN row.asserted_at_iso IS NULL THEN null ELSE datetime(row.asserted_at_iso) END", fixtureAdmission315Context)
 	assertedAtDateTime, ok := assertedAt.(CypherDateTime)
 	require.True(t, ok, "expected CypherDateTime, got %T", assertedAt)
 	require.Equal(t, "2026-03-21T01:02:03Z", assertedAtDateTime.Time.UTC().Format(time.RFC3339))

@@ -24,8 +24,8 @@ const deleteStreamingBatchSize = 500
 // ========================================
 
 // executeMatch handles MATCH queries.
-func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
-	return e.parseMergeNodePattern(ctx, pattern, nil, nil)
+func (e *StorageExecutor) parseMergePattern(admission admittedRelationshipStatement, ctx context.Context, pattern string) (string, []string, map[string]interface{}, error) {
+	return e.parseMergeNodePattern(admission, ctx, pattern, nil, nil)
 }
 
 // nodeToMap converts a storage.Node to a map for result output.
@@ -41,7 +41,8 @@ func (e *StorageExecutor) parseMergePattern(ctx context.Context, pattern string)
 //	[RETURN ...]
 //
 // with a streamlined path that avoids generic WITH parsing in delete execution.
-func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
+func (run relationshipEntityExecution) tryExecuteDeleteWithWithLimitHotPath(admission admittedRelationshipStatement, ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
+	e := run.executor
 	if !detach || matchIdx < 0 || deleteIdx <= matchIdx {
 		return nil, false, nil
 	}
@@ -97,7 +98,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	}
 	store := e.getStorage(ctx)
 
-	candidates, ok, err := e.collectDeleteWithLimitCandidates(ctx, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
+	candidates, ok, err := e.collectDeleteWithLimitCandidates(admission, ctx, baseMatch, deleteVar, limitN, getParamsFromContext(ctx))
 	if err != nil {
 		return nil, true, err
 	}
@@ -132,11 +133,15 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	for _, node := range candidates {
 		input.Rows = append(input.Rows, []interface{}{node})
 	}
-	e.applyDeleteReturnProjection(result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
+	e.applyDeleteReturnProjection(admission, result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
 	return result, true, getExpressionFailure(ctx)
 }
 
-func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(admission admittedRelationshipStatement, ctx context.Context, cypher string, matchIdx, deleteIdx int, deleteVars string, detach bool, needEdgeStats bool) (*ExecuteResult, bool, error) {
+	return e.relationshipEntityExecution().tryExecuteDeleteWithWithLimitHotPath(admission, ctx, cypher, matchIdx, deleteIdx, deleteVars, detach, needEdgeStats)
+}
+
+func (e *StorageExecutor) collectDeleteWithLimitCandidates(admission admittedRelationshipStatement, ctx context.Context, baseMatch, deleteVar string, limitN int, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	matchIdx := findKeywordIndex(baseMatch, "MATCH")
 	if matchIdx < 0 {
 		return nil, false, nil
@@ -176,12 +181,12 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			return nil, false, nil
 		}
 	}
-	rowCtx, prepared, prepareErr := e.preparePatternRow(ctx, patternPart, nil)
+	rowCtx, prepared, prepareErr := e.preparePatternRow(admission, ctx, patternPart, nil)
 	if prepareErr != nil {
 		return nil, true, prepareErr
 	}
 	ctx = rowCtx
-	nodePat, parseErr = e.parseNodePattern(ctx, prepared)
+	nodePat, parseErr = e.parseNodePattern(admission, ctx, prepared)
 	if parseErr != nil {
 		return nil, true, parseErr
 	}
@@ -190,7 +195,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 	var err error
 	usedIndex := false
 	if wherePart != "" {
-		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(ctx, nodePat, wherePart, params); idxErr == nil && used {
+		if candidates, used, idxErr := e.tryCollectNodesFromIDIn(admission, ctx, nodePat, wherePart, params); idxErr == nil && used {
 			nodes = candidates
 			usedIndex = true
 		}
@@ -201,13 +206,13 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexInLiteral(admission, ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndex(admission, ctx, wherePartNodePattern(nodePat, deleteVar), wherePart); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
@@ -352,7 +357,8 @@ func classifyDeleteTargetValue(val interface{}) deleteTargetValue {
 	return deleteTargetValue{}
 }
 
-func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+func (run relationshipEntityExecution) applyDeleteReturnProjection(admission admittedRelationshipStatement, result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+	e := run.executor
 	if result == nil {
 		return
 	}
@@ -395,7 +401,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 			// The DELETE's targets, as the pipeline DELETE collects them (a
 			// path's nodes and relationships, a list's entities).
 			for _, target := range splitTopLevelComma(deleteVars) {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
+				value, ok := e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(target), row)
 				if !ok {
 					pipelineItemUnevaluable(ctx, target)
 					return
@@ -414,12 +420,16 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		return
 	}
 	e.replaceDeletedEntityViews(rows, deleted)
-	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
+	projected, err := e.projectMergeReturn(admission, ctx, rows, cypher[returnIdx:])
 	if err != nil {
 		return
 	}
 	result.Columns = projected.Columns
 	result.Rows = projected.Rows
+}
+
+func (e *StorageExecutor) applyDeleteReturnProjection(admission admittedRelationshipStatement, result *ExecuteResult, cypher, deleteVars string, info deleteProjectionInfo) {
+	e.relationshipEntityExecution().applyDeleteReturnProjection(admission, result, cypher, deleteVars, info)
 }
 
 func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars string, detach bool) bool {
@@ -481,7 +491,7 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 	}
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (run relationshipEntityExecution) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
 	if matchResult == nil {
 		return
 	}
@@ -507,6 +517,10 @@ func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResul
 			row[colIdx] = edge
 		}
 	}
+}
+
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+	e.relationshipEntityExecution().normalizeSetMatchRowsToEdges(matchResult, store)
 }
 
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
@@ -611,7 +625,7 @@ func firstPostSetClauseIndex(setTail string) int {
 	return first
 }
 
-func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwindExpr string, nodeVars map[string]*storage.Node) interface{} {
+func (e *StorageExecutor) resolveUnwindValueFromExpr(admission admittedRelationshipStatement, ctx context.Context, unwindExpr string, nodeVars map[string]*storage.Node) interface{} {
 	expr := normalizeUnwindExpression(unwindExpr)
 	if strings.HasPrefix(expr, "$") {
 		paramName := strings.TrimSpace(expr[1:])
@@ -623,7 +637,7 @@ func (e *StorageExecutor) resolveUnwindValueFromExpr(ctx context.Context, unwind
 			}
 		}
 	}
-	return e.evaluateExpressionWithContext(ctx, expr, nodeVars, nil)
+	return e.evaluateExpressionWithContext(admission, ctx, expr, nodeVars, nil)
 }
 
 // normalizeUnwindExpression removes syntactic wrapper parentheses around a valid
@@ -861,16 +875,17 @@ func (e *StorageExecutor) idCounter() int64 {
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+func (run relationshipAccessExecution) evaluateRelationshipPatternInWhere(ctx context.Context, node *storage.Node, variable, pattern string) bool {
+	e := run.executor
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
 		return false
 	}
 	relationshipCount := strings.Count(pattern, "-[")
 	if relationshipCount > 1 {
-		return e.checkChainedPattern(node, variable, pattern, "")
+		return e.checkChainedPattern(run.statement(), ctx, node, variable, pattern, "")
 	}
 	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
-	relPattern := e.parseOptionalRelPattern(context.Background(), pattern)
+	relPattern := e.parseOptionalRelPattern(run.statement(), ctx, pattern)
 	targetMatches := func(targetNodeID storage.NodeID) bool {
 		if len(relPattern.targetLabels) == 0 && len(relPattern.targetProps) == 0 {
 			return true
@@ -918,7 +933,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 }
 
 // checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
-func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, pattern, innerWhere string) bool {
+func (e *StorageExecutor) checkChainedPattern(admission admittedRelationshipStatement, ctx context.Context, node *storage.Node, variable, pattern, innerWhere string) bool {
 	// Parse the pattern to extract relationship hops
 	// E.g., (p)-[:KNOWS]->()-[:KNOWS]->() has two hops
 
@@ -942,7 +957,7 @@ func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, patt
 	}
 
 	// Traverse the chain starting from the given node
-	return e.traverseChain(node, hops, 0)
+	return e.relationshipExecutionFor(admission, ctx, pattern, innerWhere).traverseChain(node, hops, 0)
 }
 
 // relationshipHop represents one step in a chained relationship pattern
@@ -1027,7 +1042,8 @@ func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []rela
 }
 
 // traverseChain recursively checks if a chain of relationships exists
-func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+func (run relationshipAccessExecution) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+	e := run.executor
 	if hopIndex >= len(hops) {
 		return true // All hops matched
 	}
@@ -1043,7 +1059,7 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 				if err != nil {
 					continue
 				}
-				if e.traverseChain(nextNode, hops, hopIndex+1) {
+				if run.traverseChain(nextNode, hops, hopIndex+1) {
 					return true
 				}
 			}
@@ -1057,7 +1073,7 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 				if err != nil {
 					continue
 				}
-				if e.traverseChain(nextNode, hops, hopIndex+1) {
+				if run.traverseChain(nextNode, hops, hopIndex+1) {
 					return true
 				}
 			}
@@ -1239,7 +1255,7 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 // change. It validates all adjacent edges (outgoing and incoming) against the current
 // policy constraints to ensure no DISALLOWED pair is formed and any ALLOWED whitelist
 // is still satisfied.
-func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+func (run relationshipEntityExecution) validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
 	schema := store.GetSchema()
 	if schema == nil {
 		return nil
@@ -1282,6 +1298,10 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	return nil
+}
+
+func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+	return relationshipStorageExecution().validatePolicyOnLabelChange(store, node, oldLabels)
 }
 
 // checkPolicyForEdge validates a single edge against all policy constraints for its type.
