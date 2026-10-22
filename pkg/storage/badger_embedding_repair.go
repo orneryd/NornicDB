@@ -42,21 +42,13 @@ func (b *BadgerEngine) ensureEmbeddingKeyRepair() error {
 // repair excludes writers and drains buffered data before inspecting owners.
 // A crash before the completion marker safely repeats the remaining work.
 func (b *BadgerEngine) RepairOrphanedEmbeddingKeys() (int, error) {
-	for {
-		if err := b.FlushWriteBehind(); err != nil {
-			return 0, err
-		}
-		release, err := b.beginSchemaWrite()
-		if err != nil {
-			return 0, err
-		}
-		if b.writeBehind != nil && b.writeBehind.PendingOps() != 0 {
-			release()
-			continue
-		}
-		defer release()
-		return b.repairOrphanedEmbeddingKeysLocked()
+	defer b.drainCommitNotifications()
+	release, err := b.beginDrainedWrite()
+	if err != nil {
+		return 0, err
 	}
+	defer release()
+	return b.repairOrphanedEmbeddingKeysLocked()
 }
 
 func (b *BadgerEngine) repairOrphanedEmbeddingKeysLocked() (int, error) {

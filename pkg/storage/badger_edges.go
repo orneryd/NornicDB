@@ -69,6 +69,17 @@ func (b *BadgerEngine) createEdgeDirect(edge *Edge) error {
 		edge.UpdatedAt = edge.CreatedAt
 	}
 
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), before it reads whether the relationship
+	// and its endpoints exist, so it sees them and their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	// PERFORMANCE OPTIMIZATION: Use WriteBatch to batch all writes (edge + indexes)
 	// This reduces write amplification from 4 separate writes to 1 batch operation.
 	// We still validate existence via a read transaction first.
@@ -333,6 +344,16 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 	var oldType string
 	var image *Edge
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
@@ -551,13 +572,24 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		return err
 	}
 
-	// Get edge type before deletion for selective cache invalidation
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{edges: []EdgeID{id}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
+
+	// Get edge type before deletion for selective cache invalidation,
+	// after the order: the newest body
 	edge, _ := b.GetEdge(id)
 	var edgeType string
 	if edge != nil {
 		edgeType = edge.Type
 	}
-
 	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {

@@ -63,6 +63,30 @@ func (b *BadgerEngine) bufferedFlushMarkerExists(txID string) (bool, error) {
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
 func (tx *BadgerTransaction) commitBufferedLocked() error {
+	// The commit is acknowledged under its entities' write-order stripes, so
+	// a write of the same entities that commits to Badger itself
+	// (orderAfterBufferedCommits) falls wholly before or after it. They are
+	// taken first, as such a write takes them before any commit lock.
+	// A node it deletes is held exclusively, so no commit writing a
+	// relationship of that node is acknowledged alongside it.
+	var stripes, deletions orderStripeSet
+	stripes.operations(tx.operations)
+	deletions.deletions(tx.operations)
+	tx.engine.writeBehind.order.lockMixed(&stripes, &deletions)
+	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+	if err := tx.revalidateEndpointsLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+	// Load the namespace's MVCC state before excluding physical commits:
+	// loading it (after open or a restore) may persist its recovered
+	// sequence, a physical commit of its own.
+	if tx.namespace != "" {
+		if _, err := tx.engine.namespaceMVCC(tx.namespace); err != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return err
+		}
+	}
 	// Unlike a synchronous commit, an ACK never commits badgerTx's read set.
 	// Revalidate against the latest committed heads while excluding physical
 	// publication, and keep that exclusion through the WAL record and ACK.
@@ -212,6 +236,7 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
 func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit, beforeNotifications ...func()) error {
+	defer b.drainCommitNotifications()
 	return b.applyBufferedCommitsWithCountPublication(commits, nil, beforeNotifications...)
 }
 
@@ -221,16 +246,6 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	if len(commits) == 0 {
 		return nil
 	}
-	release, err := b.beginPublication(true)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if release != nil {
-			release()
-		}
-	}()
-
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
 	cw := b.newCommitWriter(b.db, txn)
 	// WAL recovery has no in-memory ACK reservations. Reserve the recovered
@@ -248,10 +263,6 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		cw.notification = replayNotification
 	}
 	defer func() {
-		// Replay shares the same Close/sidecar publication discipline as
-		// direct and transactional writes. Dispatch only after releasing it.
-		release()
-		release = nil
 		if result == nil {
 			if replayNotification != nil {
 				// Recovery hydrates the operations from their typed bodies.
@@ -273,9 +284,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		// Failed replay cancels only a new physical reservation. An ACK keeps
 		// its position and payload pending for the buffer's retry.
 		b.readyCommitNotification(replayNotification)
-		// Ready the whole generation before dispatch: a callback panic must
-		// not strand later ACKs in this already-applied generation.
-		b.drainCommitNotifications()
+		// The whole generation is ready before any of it is delivered (a
+		// callback panic must not strand later ACKs in it); whoever retired
+		// it delivers once it holds no lock (drainOne, applyBufferedCommits).
 	}()
 	// Write through the commit writer's own batch writer, exactly like the
 	// sync commit path: cw.finish() commits cw.batchWriter's open batch, so
@@ -616,13 +627,23 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 	})
 }
 
-// FlushWriteBehind drains every buffered generation synchronously. It is a
-// no-op when write-behind is disabled.
+// FlushWriteBehind drains every buffered generation synchronously and
+// delivers their notifications. It is a no-op when write-behind is disabled.
 func (b *BadgerEngine) FlushWriteBehind() error {
 	if b.writeBehind == nil {
 		return nil
 	}
-	return b.writeBehind.Flush()
+	release, err := b.beginPublication(true)
+	if err != nil {
+		if b.writeBehind.PendingOps() > 0 {
+			return err
+		}
+		return nil
+	}
+	err = b.writeBehind.flush(false, false)
+	release()
+	b.drainCommitNotifications()
+	return err
 }
 
 // writeBehindEnabled reports whether the buffer is active.

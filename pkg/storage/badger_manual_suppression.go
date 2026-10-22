@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"strings"
+
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -27,6 +29,7 @@ func manualSuppressionKey(kind byte, id string) []byte {
 func (b *BadgerEngine) loadManualSuppressions(db badgerViewer) error {
 	b.manualSuppressionMu.Lock()
 	b.manualSuppressed = nil
+	b.suppressionEnds = nil
 	b.manualSuppressionCount.Store(0)
 	b.manualSuppressionMu.Unlock()
 	prefix := []byte{prefixMVCCMeta, prefixMVCCMetaManualSuppression}
@@ -60,6 +63,14 @@ func (b *BadgerEngine) markManualSuppression(kind byte, id string, suppressed bo
 		delete(b.manualSuppressed, key)
 	}
 	b.manualSuppressionCount.Store(int64(len(b.manualSuppressed)))
+}
+
+// dropSuppressionEnd discards the pending end of an entity's stored
+// suppression, which the caller's suppression write superseded.
+func (b *BadgerEngine) dropSuppressionEnd(kind byte, id string) {
+	b.manualSuppressionMu.Lock()
+	delete(b.suppressionEnds, string(kind)+id)
+	b.manualSuppressionMu.Unlock()
 }
 
 // manuallySuppressed reports whether an entity is suppressed on demand. It
@@ -131,6 +142,25 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	if b.writeBehind != nil {
+		// The commits its drain replays are delivered once the order is
+		// released.
+		defer b.drainCommitNotifications()
+		// Ordered after the acknowledged commits of the entity
+		// (orderAfterBufferedCommits): it finds and reports the newest body.
+		entities := writtenEntities{nodes: []NodeID{NodeID(id)}}
+		if kind == manualSuppressionEdge {
+			entities = writtenEntities{edges: []EdgeID{EdgeID(id)}}
+		}
+		var order orderHold
+		if _, err := b.orderAfterBufferedCommits(&order, entities); err != nil {
+			return err
+		}
+		defer order.release()
+	}
+	// Ordered with the end of a deleted entity's suppression
+	// (endSuppressions): this write supersedes a pending end of its key.
+	b.suppressionWriteMu.Lock()
 	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		item, err := txn.Get(recordKey)
 		if err == badger.ErrKeyNotFound {
@@ -149,28 +179,97 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
 	}, notification...)
+	if err == nil {
+		b.markManualSuppression(kind, id, suppressed)
+		b.dropSuppressionEnd(kind, id)
+	}
+	b.suppressionWriteMu.Unlock()
 	if err != nil {
 		return err
 	}
-	b.markManualSuppression(kind, id, suppressed)
 	return nil
 }
 
 // forgetManualSuppression drops a deleted entity's on-demand suppression, so
 // an entity created again with the same ID (a MERGEd relationship's ID is
-// derived from its endpoints and properties) isn't hidden.
+// derived from its endpoints and properties) isn't hidden. A delete is
+// reported from inside its commit; its stored key is deleted afterwards, by
+// endSuppressions.
 func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	if !b.manuallySuppressed(kind, id) {
 		return
 	}
-	b.markManualSuppression(kind, id, false)
-	// A delete is reported from inside its commit; the key goes in a
-	// transaction of its own.
-	go func() {
-		_ = b.withUpdate(func(txn *badger.Txn) error {
-			return txn.Delete(manualSuppressionKey(kind, id))
-		})
-	}()
+	key := string(kind) + id
+	b.manualSuppressionMu.Lock()
+	delete(b.manualSuppressed, key)
+	b.manualSuppressionCount.Store(int64(len(b.manualSuppressed)))
+	if b.suppressionEnds == nil {
+		b.suppressionEnds = make(map[string]struct{})
+	}
+	b.suppressionEnds[key] = struct{}{}
+	start := !b.suppressionEnding
+	b.suppressionEnding = true
+	b.manualSuppressionMu.Unlock()
+	if start {
+		go b.endSuppressions()
+	}
+}
+
+// endSuppressions deletes the stored keys of the suppressions that deletes
+// ended (forgetManualSuppression). It writes under suppressionWriteMu, as
+// every suppression write does: a suppression written for an entity created
+// again with the same ID drops the pending end of its key, so it is never
+// deleted, and a lifecycle write discards the ends it supersedes. Close runs
+// it after its final drain.
+func (b *BadgerEngine) endSuppressions() {
+	for {
+		b.suppressionWriteMu.Lock()
+		b.manualSuppressionMu.Lock()
+		ends := b.suppressionEnds
+		b.suppressionEnds = nil
+		if len(ends) == 0 {
+			b.suppressionEnding = false
+			b.manualSuppressionMu.Unlock()
+			b.suppressionWriteMu.Unlock()
+			return
+		}
+		b.manualSuppressionMu.Unlock()
+		units := make([]func(txn *badger.Txn) error, 0, len(ends))
+		for key := range ends {
+			stored := manualSuppressionKey(key[0], key[1:])
+			units = append(units, func(txn *badger.Txn) error { return txn.Delete(stored) })
+		}
+		err := b.withUpdateUnits(units)
+		if err != nil {
+			// The store is closed: a store that opens it again reads the
+			// keys back, as it does after a crash.
+			b.manualSuppressionMu.Lock()
+			b.suppressionEnding = false
+			b.manualSuppressionMu.Unlock()
+		}
+		b.suppressionWriteMu.Unlock()
+		if err != nil {
+			return
+		}
+	}
+}
+
+// dropManualSuppressions forgets the suppressions, and their pending ends, of
+// the entities whose ID starts with prefix; the caller deleted their keys.
+func (b *BadgerEngine) dropManualSuppressions(prefix string) {
+	b.manualSuppressionMu.Lock()
+	defer b.manualSuppressionMu.Unlock()
+	for key := range b.manualSuppressed {
+		if strings.HasPrefix(key[1:], prefix) {
+			delete(b.manualSuppressed, key)
+		}
+	}
+	for key := range b.suppressionEnds {
+		if strings.HasPrefix(key[1:], prefix) {
+			delete(b.suppressionEnds, key)
+		}
+	}
+	b.manualSuppressionCount.Store(int64(len(b.manualSuppressed)))
 }
 
 // ManualSuppressionEngine hides and shows nodes and relationships on demand

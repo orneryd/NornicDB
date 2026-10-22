@@ -17,32 +17,24 @@ var embeddingKeyScanHook atomic.Pointer[func(NodeID)]
 // their current-range cleanup needs no new lock or sentinel point read.
 // The exclusive barrier is released before the caller fires listeners.
 func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notification *commitNotification, write func(*commitWriter) error) error {
-	for {
-		// Replay dispatches callbacks. Drain outside the barrier, then check
-		// under it that another ACK did not slip in before source validation.
-		if err := b.FlushWriteBehind(); err != nil {
-			return err
-		}
-		release, err := b.beginSchemaWrite()
-		if err != nil {
-			return err
-		}
-		if b.writeBehind != nil && b.writeBehind.PendingOps() != 0 {
-			release()
-			continue
-		}
-		err = b.commitEngineWrite(write, notification)
-		if err == nil {
-			if hasKeys {
-				b.lastEmbeddingSidecarWrite = b.db.oracle.published.Load()
-				b.embeddingSidecarWrites.Store(id, b.lastEmbeddingSidecarWrite)
-			} else {
-				b.embeddingSidecarWrites.Delete(id)
-			}
-		}
-		release()
+	// Every commit acknowledged before it is applied first, so its source
+	// check sees the newest body and no replay of an older one lands over it;
+	// the caller delivers the applied commits' notifications.
+	release, err := b.beginDrainedWrite()
+	if err != nil {
 		return err
 	}
+	err = b.commitEngineWrite(write, notification)
+	if err == nil {
+		if hasKeys {
+			b.lastEmbeddingSidecarWrite = b.db.oracle.published.Load()
+			b.embeddingSidecarWrites.Store(id, b.lastEmbeddingSidecarWrite)
+		} else {
+			b.embeddingSidecarWrites.Delete(id)
+		}
+	}
+	release()
+	return err
 }
 
 // replaceEmbeddingKeys replaces the entire embedding key range: vectors,

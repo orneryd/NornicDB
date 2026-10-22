@@ -65,6 +65,13 @@ type BadgerTransaction struct {
 	// created after our begin) bind to sequence 0, which correctly
 	// treats anything committed under them as post-begin.
 	beginSnapshot map[string]MVCCVersion
+	// lifecycleSeq is the engine's prefix-delete sequence at begin
+	// (prefixDroppedSince): a delete of this transaction's namespace that
+	// started since fails its commit.
+	lifecycleSeq uint64
+	// bufferEpoch is the write-behind buffer's read epoch at begin
+	// (replayedSinceBeginLocked).
+	bufferEpoch uint64
 	// CommitVersion is assigned once for a successful commit that mutates storage.
 	CommitVersion MVCCVersion
 
@@ -288,6 +295,11 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	badgerDB := b.db
 	b.mu.RUnlock()
 
+	lifecycleSeq := b.prefixDrops.seq.Load()
+	var bufferEpoch uint64
+	if b.writeBehind != nil {
+		bufferEpoch = b.writeBehind.readEpoch.Load()
+	}
 	snapshotTx, badgerReadTs, err := badgerDB.beginTxn(false)
 	if err != nil {
 		return nil, err
@@ -304,6 +316,8 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		Status:                  TxStatusActive,
 		readTS:                  readTS,
 		beginSnapshot:           beginSnapshot,
+		lifecycleSeq:            lifecycleSeq,
+		bufferEpoch:             bufferEpoch,
 		badgerTx:                badgerTx,
 		snapshotTx:              snapshotTx,
 		badgerDB:                badgerDB,
@@ -848,6 +862,13 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		if err := tx.validateNodeConstraints(node); err != nil {
 			return err
 		}
+	}
+
+	// A node this transaction deleted stays deleted: as in Neo4j, a write
+	// to it changes nothing (DETACH DELETE n WITH n SET n.q = 1, #907).
+	// Writing it would bring it back without counting it.
+	if _, deleted := tx.deletedNodes[node.ID]; deleted {
+		return nil
 	}
 
 	// Check if node exists
@@ -2920,12 +2941,18 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
 	notification := &commitNotification{}
+	ordered := false
 	defer func() {
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
 			afterPublication()
 		}
 		tx.engine.completeCommitNotification(notification)
+		if ordered {
+			// Also the commits a drain replayed, when this commit reserved
+			// no notification of its own.
+			tx.engine.drainCommitNotifications()
+		}
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
 		}
@@ -2954,6 +2981,10 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return writeErr
 	}
 	tx.commitReleaseWrite = releaseWrite
+	if len(tx.operations) > 0 && tx.engine.prefixDroppedSince(tx.lifecycleSeq, tx.namespace) {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("%w: namespace %q was deleted after the transaction began", ErrConflict, tx.namespace)
+	}
 	if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)
@@ -3046,6 +3077,31 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 			return err
 		}
 		return tx.commitBufferedLocked()
+	}
+	// A commit the buffer does not take writes Badger itself: it is ordered
+	// after the commits acknowledged before it (orderAfterBufferedCommits).
+	var order orderHold
+	if tx.engine.writeBehindEnabled() {
+		// Its notifications, and those of the commits a drain replays, are
+		// delivered once every lock is released (the deferred drain).
+		ordered = true
+		drained, err := tx.engine.orderAfterBufferedCommits(&order, operationEntities(tx.operations))
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		defer order.release()
+		if (drained || tx.replayedSinceBeginLocked()) && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
+			if err := tx.rebaseBadgerAfterDrainLocked(); err != nil {
+				tx.closeLocked(TxStatusRolledBack, true, nil)
+				return err
+			}
+		}
+		// Commits of its endpoints or of a deleted node's relationships,
+		// drained or committed directly, may have landed after this commit
+		// staged and validated them.
+		if err := tx.revalidateEndpointsLocked(); err != nil {
+			return tx.abortCommitLocked(err)
+		}
 	}
 
 	if err := tx.materializeEmbeddingChangesLocked(true); err != nil {
@@ -3147,6 +3203,9 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		}
 		return tx.abortCommitLocked(err)
 	}
+	// Committed, its notifications reserved by the commit writer: a commit of
+	// the same entities acknowledged from here on is later than this one.
+	order.release()
 	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.engine.forgetReplacedSidecars(tx.embeddingChanges)
 	tx.commitW = nil
@@ -3751,6 +3810,11 @@ func (tx *BadgerTransaction) visibleNodeLabelsLocked(nodeID NodeID) ([]string, b
 }
 
 func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
+	// The buffer first, the stored heads below after: a buffered delete
+	// applied in between is found in its heads.
+	if err := tx.bufferedDeleteConflictLocked(); err != nil {
+		return err
+	}
 	// Idempotent hidden-edge CREATEs stage no writes. Re-read them at the
 	// commit owner so an explicit transaction cannot acknowledge a no-op
 	// against a predecessor another writer changed, revealed or deleted after
@@ -4008,6 +4072,13 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 			return err
 		}
 		if head.Tombstoned {
+			// An acknowledged re-create the write-behind buffer has not
+			// applied yet is the endpoint's current state.
+			if _, nodeErr := tx.engine.GetStoredNode(nodeID); nodeErr == nil {
+				continue
+			} else if nodeErr != ErrNotFound {
+				return nodeErr
+			}
 			conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
 			if err != nil {
 				return err
@@ -4740,16 +4811,71 @@ func (tx *BadgerTransaction) observedLocked() bool {
 		len(tx.pendingNodes) > 0 || len(tx.pendingEdges) > 0 || len(tx.deletedNodes) > 0 || len(tx.deletedEdges) > 0
 }
 
+// replayedSinceBeginLocked reports whether a write-behind generation may have
+// been replayed into Badger since the transaction's Badger snapshot: the
+// buffer held one then and has changed since. A replay of a commit the
+// transaction already saw through the buffer lands after its snapshot like
+// one its own drain applied.
+func (tx *BadgerTransaction) replayedSinceBeginLocked() bool {
+	w := tx.engine.writeBehind
+	return w != nil && tx.bufferEpoch&1 == 1 && w.readEpoch.Load() != tx.bufferEpoch
+}
+
+// rebaseBadgerAfterDrainLocked moves a committing transaction onto Badger
+// transactions opened after a write-behind drain (orderAfterBufferedCommits)
+// or replay (replayedSinceBeginLocked):
+// the drained commits landed after its Badger snapshot, so its commit would
+// read around them and Badger would report their keys as concurrent writes.
+// The MVCC snapshot (readTS) stays its isolation anchor, authoritative under
+// write-behind because the flusher backdates its heads to their
+// acknowledgement (snapshotHeadConflict); its conflicts are checked again
+// against the drained heads, so a commit acknowledged after this
+// transaction began still conflicts. Staged ID and property-key counters
+// follow the writer transaction.
+func (tx *BadgerTransaction) rebaseBadgerAfterDrainLocked() error {
+	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
+	if err != nil {
+		return err
+	}
+	next := tx.badgerDB.newTxnAt(badgerReadTs, true)
+	if tx.engine.idDict != nil {
+		tx.engine.idDict.moveTxnCounters(tx.badgerTx, next)
+	}
+	if tx.engine.propKeyDict != nil {
+		tx.engine.propKeyDict.moveTxnCounters(tx.badgerTx, next)
+	}
+	tx.badgerTx.Discard()
+	if tx.snapshotTx != nil {
+		tx.snapshotTx.Discard()
+	}
+	if tx.badgerReadHeld {
+		tx.badgerDB.endRead(tx.badgerReadTs)
+	}
+	tx.snapshotTx = snapshotTx
+	tx.badgerReadTs = badgerReadTs
+	tx.badgerReadHeld = true
+	tx.badgerTx = next
+	tx.clearSnapshotCachesLocked()
+	return tx.validateSnapshotIsolationConflicts()
+}
+
 // refreshSnapshotLocked moves a transaction that has observed nothing to a
 // snapshot taken now, as if it had just begun: new Badger reader and writer
 // transactions, the namespaces' current MVCC versions, and empty snapshot
 // caches. The new snapshot is opened first, so a refresh turned away (a
 // restore holding reads) leaves the transaction on its current one.
 func (tx *BadgerTransaction) refreshSnapshotLocked() error {
+	lifecycleSeq := tx.engine.prefixDrops.seq.Load()
+	var bufferEpoch uint64
+	if tx.engine.writeBehind != nil {
+		bufferEpoch = tx.engine.writeBehind.readEpoch.Load()
+	}
 	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
 	if err != nil {
 		return err
 	}
+	tx.lifecycleSeq = lifecycleSeq
+	tx.bufferEpoch = bufferEpoch
 	if tx.badgerTx != nil && tx.engine.idDict != nil {
 		tx.engine.idDict.discardTxnCounters(tx.badgerTx)
 	}

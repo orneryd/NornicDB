@@ -383,7 +383,7 @@ func TestWriteBehindBuffer_FlushWaitsForClaimedGeneration(t *testing.T) {
 	w.AppendNode(&Node{ID: "test:claimed"})
 	w.rotate()
 	applied := make(chan struct{})
-	go func() { w.drainOne(); close(applied) }()
+	go func() { w.drainOne(true, nil); close(applied) }()
 	<-entered
 	flushed := make(chan error, 1)
 	go func() { flushed <- w.Flush() }()

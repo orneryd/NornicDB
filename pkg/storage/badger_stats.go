@@ -234,6 +234,9 @@ func (b *BadgerEngine) Close() error {
 		}
 		b.writeBehind.Close()
 	}
+	// The suppressions the deletes so far ended are deleted before the store
+	// closes (forgetManualSuppression).
+	b.endSuppressions()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
@@ -272,6 +275,9 @@ func (b *BadgerEngine) Close() error {
 	// Registrations preceded the barrier release, so no new notifications
 	// can be added now. Drain callbacks before tearing down their state.
 	b.txnWG.Wait()
+	// Deliver what is ready but undelivered (a replay queues its events for
+	// whoever retired it) before waiting for every reserved notification.
+	b.drainCommitNotifications()
 	b.notifyWG.Wait()
 
 	// Fold any derived-count deltas the last commits left behind so a clean

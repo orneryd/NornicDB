@@ -55,7 +55,7 @@ type managedBadgerDB struct {
 	// commit holds it shared only while it assigns its timestamp and writes;
 	// a large commit holds it exclusively from its first batch until it has
 	// published or rolled back, so no other commit lands between its batches.
-	commitGate sync.RWMutex
+	commitGate trackedRWMutex
 	// publishDiscard is the discard-publish seam: nil means m.DB.SetDiscardTs.
 	// Tests replace it to assert that published discard timestamps are
 	// strictly increasing; the production value is always SetDiscardTs.
@@ -127,6 +127,22 @@ func (m *managedBadgerDB) viewHeld(fn func(txn *badger.Txn) error) error {
 	txn := m.DB.NewTransactionAt(readTs, false)
 	defer txn.Discard()
 	return fn(txn)
+}
+
+// updateHeld is Update for the loaders that rebuild stored state in Restore,
+// while holdReads turns every other read away: it reads past the hold.
+func (m *managedBadgerDB) updateHeld(fn func(txn *badger.Txn) error) error {
+	if m.DB.IsClosed() {
+		return badger.ErrDBClosed
+	}
+	readTs := m.oracle.beginReadHeld()
+	defer m.oracle.endRead(readTs)
+	txn := m.DB.NewTransactionAt(readTs, true)
+	defer txn.Discard()
+	if err := fn(txn); err != nil {
+		return err
+	}
+	return m.commit(txn)
 }
 
 // heldViewer is viewHeld for the loaders that take a badgerViewer.

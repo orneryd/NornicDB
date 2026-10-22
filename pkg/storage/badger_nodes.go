@@ -136,6 +136,17 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
 	}
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		if orderErr != nil {
+			releaseUniqueLocks()
+			return "", orderErr
+		}
+		defer order.release()
+	}
 	err := b.commitEngineWrite(func(cw *commitWriter) error {
 		if err := cw.writeOnce(writeBody); err != nil {
 			return err
@@ -615,6 +626,16 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
 	}
 	var image *Node
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	err := b.commitEngineWrite(func(cw *commitWriter) error {
 		if err := cw.writeOnce(writeBody); err != nil {
 			return err
@@ -715,6 +736,16 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{deletedNodes: []NodeID{id}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {

@@ -85,6 +85,13 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 				}
 				edges = visible
 			}
+			attached := edges[:0]
+			for _, edge := range edges {
+				if attachedAt(edge, nodeID, outgoing) {
+					attached = append(attached, edge)
+				}
+			}
+			edges = attached
 			for _, edge := range d.live {
 				edges = append(edges, copyEdge(edge))
 			}
@@ -103,6 +110,17 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 		return err
 	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: cached})
 	return outgoing, incoming, err
+}
+
+// attachedAt reports whether edge has nodeID at the end an adjacency read in
+// that direction lists. An index or cache entry left at an endpoint the
+// relationship moved away from (a buffered or applied update) is not
+// adjacency: a node delete's cascade or a traversal there must not meet it.
+func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
+	if outgoing {
+		return edge.StartNode == nodeID
+	}
+	return edge.EndNode == nodeID
 }
 
 // cachedAdjacency resolves a traversal as one captured operation. The edge cache
@@ -142,7 +160,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 			if edge == nil {
 				return nil, false
 			}
-			if !b.hidesEdge(v, edge, now) {
+			if attachedAt(edge, id, outgoing) && !b.hidesEdge(v, edge, now) {
 				result = append(result, edge)
 			}
 		}

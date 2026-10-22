@@ -174,6 +174,9 @@ type BadgerEngine struct {
 	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed  bool
 	closing bool // write admission is closed before the final buffered drain
+	// prefixDrops records prefix deletes for the transactions open across
+	// them (prefixDroppedSince).
+	prefixDrops prefixDrops
 	// pendingCandidates accelerates the durable pending-embedding index. Adds
 	// are published by the common commit writer only after a successful commit.
 	pendingCandidates           pendingEmbeddingCandidates
@@ -409,6 +412,14 @@ type BadgerEngine struct {
 	manualSuppressionMu    sync.RWMutex
 	manualSuppressed       map[string]struct{}
 	manualSuppressionCount atomic.Int64
+
+	// suppressionEnds are the stored suppressions of deleted entities still
+	// to delete (endSuppressions, suppressionEnding while it runs), under
+	// manualSuppressionMu. suppressionWriteMu orders every write of a stored
+	// suppression.
+	suppressionEnds    map[string]struct{}
+	suppressionEnding  bool
+	suppressionWriteMu sync.Mutex
 
 	// labelCountWriteMu orders folds/rebuilds of the derived label counts
 	// against each other and keeps backup's count snapshot exclusive. Commit
@@ -1161,7 +1172,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		if interval <= 0 {
 			interval = 50 * time.Millisecond
 		}
-		engine.writeBehind = NewWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind)
+		engine.writeBehind = newWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind, engine.drainCommitNotifications)
 		engine.writeBehind.SetWarn(func(msg string) {
 			engine.log.Warn(msg, "subsystem", "storage")
 		})

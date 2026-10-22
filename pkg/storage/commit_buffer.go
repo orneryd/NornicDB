@@ -228,6 +228,12 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 					b.edgesByType[op.Edge.Type] = append(b.edgesByType[op.Edge.Type], op.Edge.ID)
 				}
 				b.indexEdgeAdjacency(op.Edge)
+				if op.OldEdge != nil && op.OldEdge.ID == op.Edge.ID {
+					// Moving a relationship must shadow its durable adjacency
+					// at the endpoints it left, just as deleting it does: a
+					// read or a node delete's cascade there must not meet it.
+					b.indexEdgeAdjacency(op.OldEdge)
+				}
 				if op.Type == OpCreateEdge && !op.ReplacesExisting {
 					b.edgeCreateCount++
 				}
@@ -354,7 +360,10 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu           sync.RWMutex
+	mu sync.RWMutex
+	// order orders the writes that commit to Badger themselves after the
+	// commits acknowledged before them (orderAfterBufferedCommits).
+	order        writeOrder
 	readScopes   sync.Map
 	readEpoch    atomic.Uint64
 	readTracking bool
@@ -365,6 +374,10 @@ type WriteBehindBuffer struct {
 	interval time.Duration
 	maxOps   int
 	apply    func(*CommitBuffer) error
+	// dispatch delivers the notifications a replay queued. A drain calls
+	// it once it released its claim on the generation, unless its caller
+	// holds write-order stripes and delivers them itself.
+	dispatch func()
 
 	// Adaptive sizing: draining a generation is deterministic — a drain of
 	// size S at throughput R takes S/R — so the size threshold that rotates
@@ -450,6 +463,12 @@ const defaultWriteBehindMaxDelay = 1 * time.Second
 // the sentinel 0 selects auto sizing against an internal default cap. apply
 // replays a drained generation into the underlying engine.
 func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*CommitBuffer) error) *WriteBehindBuffer {
+	return newWriteBehindBuffer(interval, maxOps, apply, nil)
+}
+
+// newWriteBehindBuffer is NewWriteBehindBuffer whose drains deliver the
+// notifications a replay queued through dispatch.
+func newWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*CommitBuffer) error, dispatch func()) *WriteBehindBuffer {
 	if interval <= 0 {
 		interval = 50 * time.Millisecond
 	}
@@ -461,6 +480,7 @@ func NewWriteBehindBuffer(interval time.Duration, maxOps int, apply func(*Commit
 		maxOps:       maxOps,
 		targetOps:    maxOps,
 		apply:        apply,
+		dispatch:     dispatch,
 		minDelay:     defaultWriteBehindMinDelay,
 		maxDelay:     defaultWriteBehindMaxDelay,
 		flushCh:      make(chan struct{}, 1),
@@ -655,11 +675,11 @@ func (w *WriteBehindBuffer) run() {
 			return
 		case <-timer.C:
 			w.rotate()
-			w.drainOne()
+			w.drainOne(true, nil)
 			reset()
 		case <-w.flushCh:
 			w.rotate()
-			w.drainOne()
+			w.drainOne(true, nil)
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -671,11 +691,15 @@ func (w *WriteBehindBuffer) run() {
 	}
 }
 
-// drainOne replays the oldest draining generation, if any.
-func (w *WriteBehindBuffer) drainOne() {
+// drainOne replays the oldest draining generation, if any, and none once
+// until (when set) is retired. dispatch delivers the notifications the
+// replay queued once the generation is retired and the claim released, so a
+// listener that writes back never waits on a writer that waits for this
+// generation.
+func (w *WriteBehindBuffer) drainOne(dispatch bool, until *CommitBuffer) {
 	w.mu.RLock()
 	buf := (*CommitBuffer)(nil)
-	if len(w.draining) > 0 {
+	if len(w.draining) > 0 && (until == nil || slices.Contains(w.draining, until)) {
 		buf = w.draining[0]
 	}
 	w.mu.RUnlock()
@@ -688,6 +712,9 @@ func (w *WriteBehindBuffer) drainOne() {
 	}
 	if !buf.claimDrain() {
 		return // another flusher (or Flush) is applying it
+	}
+	if dispatch && w.dispatch != nil {
+		defer w.dispatch()
 	}
 	if w.apply != nil {
 		start := time.Now()
@@ -887,19 +914,40 @@ func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
 }
 
 // Flush rotates the active generation and drains every generation
-// synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
+// synchronously, delivering their notifications. It retries failed applies;
+// if no generation makes progress for ~2s it returns the last apply error.
 func (w *WriteBehindBuffer) Flush() error {
+	return w.flush(true, false)
+}
+
+// flush is Flush. dispatch false leaves the notifications of the commits it
+// replays to the caller; frontier true returns once the generations rotated
+// before it started are retired, without chasing later ones: the write order
+// (orderAfterBufferedCommits) holds the stripes of the caller's entities, so
+// no commit of theirs enters a later generation.
+func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
 	w.rotate()
 	w.signal()
+	var last *CommitBuffer
+	if frontier {
+		w.mu.RLock()
+		if n := len(w.draining); n > 0 {
+			last = w.draining[n-1]
+		}
+		w.mu.RUnlock()
+		if last == nil {
+			return nil
+		}
+	}
 	lastPending := -1
 	stalls := 0
 	for {
-		w.drainOne()
+		w.drainOne(dispatch, last)
 		w.mu.RLock()
 		pending := len(w.draining)
+		done := pending == 0 || (last != nil && !slices.Contains(w.draining, last))
 		w.mu.RUnlock()
-		if pending == 0 {
+		if done {
 			return nil
 		}
 		if pending == lastPending {

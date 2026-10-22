@@ -150,6 +150,9 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	units = append(units, func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
 	notification := &commitNotification{}
 	defer b.completeCommitNotification(notification)
+	// The commits commitEmbeddingSidecar applies first are delivered once it
+	// released the barrier.
+	defer b.drainCommitNotifications()
 	err = b.commitEmbeddingSidecar(node.ID, len(node.ChunkEmbeddings) > 0 || writeMeta, notification, func(cw *commitWriter) error {
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			return b.checkEmbeddingSourceInTxn(txn, node)

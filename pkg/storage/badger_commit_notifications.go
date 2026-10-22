@@ -39,7 +39,15 @@ func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error
 		return nil, nil, err
 	}
 	n := &commitNotification{}
-	return n, func() { release(); b.completeCommitNotification(n) }, nil
+	return n, func() {
+		release()
+		// A write ordered after the write-behind buffer delivers here, after
+		// every lock, also the commits its drain replayed when it reserved no
+		// notification of its own.
+		if b.readyCommitNotification(n) || b.writeBehind != nil {
+			b.drainCommitNotifications()
+		}
+	}, nil
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
@@ -132,6 +140,7 @@ func (b *BadgerEngine) drainCommitNotifications() {
 					firstPanic = p
 				}
 			}()
+			deliveringToListeners()
 			b.notifyCommitOperations(n.ops)
 		}()
 		b.notificationMu.Lock()

@@ -28,8 +28,12 @@ func (b *BadgerEngine) beginWrite() (func(), error) {
 	return b.beginPublication(false)
 }
 
-// Replay is the only write admitted during shutdown's final drain. Existing
-// committers already hold their publication lease and finish before that drain.
+// A drain of the write-behind buffer (FlushWriteBehind) is the only write
+// admitted during shutdown's final drain. Existing committers already hold
+// their publication lease and finish before that drain. A replay itself
+// takes no barrier: a write ordered after the buffer drains it while
+// holding the barrier, and an exclusive waiter queued meanwhile would
+// otherwise wait for that write while the replay waited for the waiter.
 func (b *BadgerEngine) beginPublication(replay bool) (func(), error) {
 	b.writeBarrier.RLock()
 	b.mu.RLock()

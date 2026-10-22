@@ -360,9 +360,11 @@ func TestCommitNotifications_PanicReleasesLifetime(t *testing.T) {
 				require.NoError(t, e)
 				require.NoError(t, tx.Commit())
 				if path == "buffered" {
-					// Invoke the real replay callback in this goroutine so a
+					// Invoke the real replay callback in this goroutine and
+					// deliver as the generation's retirer does (drainOne), so a
 					// caller-level recovery can inspect the deferred lifetime.
 					_ = b.replayWriteBehind(b.writeBehind.active)
+					b.drainCommitNotifications()
 				}
 			}()
 			require.Equal(t, "review callback panic", caught)

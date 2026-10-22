@@ -310,6 +310,11 @@ func TestEmbeddingCleanup_SidecarFromCallback(t *testing.T) {
 				b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: strings.HasPrefix(action, "buffered"), WriteBehindInterval: time.Hour})
 				require.NoError(t, err)
 				defer b.Close()
+				if b.writeBehind != nil {
+					// No background flusher: Flush applies the commit and
+					// runs the callback on this goroutine, before the checks.
+					b.writeBehind.Close()
+				}
 				id := NodeID("test:callback")
 				updating := strings.HasSuffix(action, "update")
 				if updating {
