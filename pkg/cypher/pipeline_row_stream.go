@@ -13,6 +13,16 @@ type pipelineRowWith struct {
 	clause, where string
 	star          bool
 	projections   []pipelineRowProjection
+
+	// Bound on the plan copy for one invocation, never in the plan cache.
+	imports pipelineRow
+}
+
+// withImports binds one invocation's CALL imports to a copy of plan; the
+// cached plan itself never holds imports.
+func (plan pipelineRowWith) withImports(imports pipelineRow) pipelineRowWith {
+	plan.imports = imports
+	return plan
 }
 
 type pipelineRowWithParse struct {
@@ -94,6 +104,7 @@ func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipeli
 		}
 		projected[projection.alias] = value
 	}
+	carryPipelineRowImports(projected, row, plan.imports)
 	if plan.where == "" && scope == nil {
 		return projected, true, true
 	}
@@ -512,6 +523,9 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 
 func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
+		// Bind the imports per run, inside the closure: the outer function
+		// stays small enough to inline, so its closures need not escape.
+		plan := plan.withImports(pipelineImports(ctx))
 		projected := pipelineRow{}
 		var scope pipelineRow
 		if plan.where != "" {

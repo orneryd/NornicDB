@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -259,7 +260,7 @@ func TestCompareRegexNonStringExpected(t *testing.T) {
 	// =~ takes strings: a number is a type error, as in Neo4j.
 	_, err = exec.Execute(ctx, "MATCH (n:RegexNum) WHERE n.val =~ 123 RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "Type mismatch: expected String")
 }
 
@@ -459,7 +460,7 @@ func TestOrderNodesWithoutVariablePrefix(t *testing.T) {
 	// `priority` not defined"), and n.priority orders the rows.
 	_, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n ORDER BY priority", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "variable priority is not defined")
+	require.Contains(t, err.Error(), "Variable `priority` not defined")
 	result, err := exec.Execute(ctx, "MATCH (n:Item) RETURN n.priority AS p ORDER BY n.priority", nil)
 	require.NoError(t, err)
 	assert.Equal(t, [][]interface{}{{float64(1)}, {float64(2)}, {float64(3)}}, result.Rows)
@@ -961,8 +962,9 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 	// "Variable `m` not defined" SyntaxError, not null.
 	_, err = exec.Execute(ctx, "MATCH (n:DiffVar) RETURN m.val", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
-	require.Contains(t, err.Error(), "variable m is not defined")
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+	require.EqualError(t, err, "Variable `m` not defined")
 }
 
 func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
@@ -1329,7 +1331,7 @@ func TestExecuteCreateRelationshipWithRelReturn(t *testing.T) {
 	// `x` not defined" SyntaxError, and nothing is written.
 	_, err := exec.Execute(ctx, "CREATE (a:A)-[:REL]->(b:B) RETURN x.prop", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "variable x is not defined")
+	require.Contains(t, err.Error(), "Variable `x` not defined")
 	nodes, err := store.AllNodes()
 	require.NoError(t, err)
 	assert.Empty(t, nodes)
@@ -1380,7 +1382,7 @@ func TestParseValuePlainString(t *testing.T) {
 	// An unquoted word is an identifier, not a string literal.
 	_, err = exec.Execute(ctx, "MATCH (n:PlainStr) WHERE n.status = active RETURN n", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "variable active is not defined")
+	require.Contains(t, err.Error(), "Variable `active` not defined")
 }
 
 func TestStringPredicateRejectsUndefinedVariable(t *testing.T) {
@@ -2592,7 +2594,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	res, err := exec.Execute(ctx, "MATCH (a:Person {name:'alice'})", nil)
 	require.Error(t, err)
 	require.Nil(t, res)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// MATCH producing zero rows should short-circuit CREATE and still shape RETURN columns.
 	res, err = exec.Execute(ctx, "MATCH (m:Missing) CREATE (x:Tmp {id:'x'}) RETURN x", nil)
@@ -2629,7 +2631,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u1'}) SET z.flag = true RETURN b", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "z")
 
 	// Missing parameter for SET assignment must error.
