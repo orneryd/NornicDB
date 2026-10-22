@@ -17,40 +17,8 @@ func TestListInputPublicRepresentations(t *testing.T) {
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	ctx := context.Background()
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
-	// Classify the fixtures before execution: a failing literal must never
-	// turn a successful fromPairs case into an expected-error case.
-	const typeError = "Neo.ClientError.Statement.TypeError"
-	fromPairsCases := map[string]struct{ wantJSON, code string }{
-		"any":           {code: typeError},
-		"string":        {code: typeError},
-		"int":           {code: typeError},
-		"int8":          {code: typeError},
-		"int16":         {code: typeError},
-		"int32":         {code: typeError},
-		"int64":         {code: typeError},
-		"uint":          {code: typeError},
-		"uint8":         {code: typeError},
-		"uint16":        {code: typeError},
-		"uint32":        {code: typeError},
-		"uint64":        {code: typeError},
-		"float32":       {code: typeError},
-		"float64":       {code: typeError},
-		"bool":          {code: typeError},
-		"array":         {code: typeError},
-		"string-array":  {code: typeError},
-		"named-strings": {code: typeError},
-		"named-ints":    {code: typeError},
-		"maps":          {code: typeError},
-		// The registered constructor keeps singleton keys with null values.
-		"nested":        {wantJSON: `{"1":null,"3":null}`},
-		"nested-string": {wantJSON: `{"a":null,"c":null}`},
-		"nested-array":  {wantJSON: `{"1":null,"3":null}`},
-		// The shared null boundary runs before non-list pair validation.
-		"mixed": {code: "Neo.ClientError.Procedure.ProcedureCallFailed"},
-	}
 	inputs := listinputs.Inputs()
 	require.NotEmpty(t, inputs)
-	require.Len(t, fromPairsCases, len(inputs), "classify every fromPairs fixture")
 	read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
 		t.Helper()
 		result, err := exec.Execute(ctx, query, params)
@@ -83,19 +51,16 @@ func TestListInputPublicRepresentations(t *testing.T) {
 							{"nested-map", "WITH {items:$xs} AS box ", "box.items"},
 						}
 						if template == "apoc.map.fromPairs(%s)" {
-							fixture, ok := fromPairsCases[input.Name]
-							require.True(t, ok, "unclassified fromPairs fixture: %s", input.Name)
-							var want interface{}
-							if fixture.code == "" {
-								require.NoError(t, json.Unmarshal([]byte(fixture.wantJSON), &want))
-							}
 							for _, form := range append([]struct{ name, prefix, value string }{{"literal", "", input.Literal}}, forms...) {
 								t.Run(form.name, func(t *testing.T) {
-									if fixture.code != "" {
+									oracle := listinputs.FromPairsExpectation(input, form.name)
+									if oracle.Code != "" {
 										_, err := exec.Execute(ctx, form.prefix+listinputs.Query(template, form.value), params)
-										requireStatusCode(t, err, fixture.code)
+										requireStatusCode(t, err, oracle.Code)
 										return
 									}
+									var want interface{}
+									require.NoError(t, json.Unmarshal([]byte(oracle.JSON), &want))
 									require.Equal(t, want, read(t, form.prefix+listinputs.Query(template, form.value), params))
 								})
 							}

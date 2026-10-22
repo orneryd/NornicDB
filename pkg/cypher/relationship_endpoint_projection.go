@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -23,9 +24,9 @@ type endpointPropertyCache struct {
 }
 
 // relationshipEndpointReader owns endpoint visibility and selected properties.
-// Transaction reads use the canonical query snapshot. Read-only auto-commit
-// scalar reads may use storage projection when no embedding metadata is
-// requested; a projected storage read cannot replace the transaction view.
+// Every endpoint first crosses the canonical query read, including scalar and
+// existence-only reads. Storage projection and existence hints do not carry
+// the query view's complete visibility contract.
 type relationshipEndpointReader struct {
 	executor *StorageExecutor
 	store    storage.Engine
@@ -35,31 +36,7 @@ func (e *StorageExecutor) newRelationshipEndpointReader(store storage.Engine) re
 	return relationshipEndpointReader{executor: e, store: store}
 }
 
-func (reader relationshipEndpointReader) read(id storage.NodeID, properties []string) (*storage.Node, error) {
-	// Project selected scalar properties only for auto-commit read-only
-	// statements. Transaction snapshots and embedding metadata must use the
-	// canonical query-node read to preserve visibility and sidecar state.
-	if properties != nil && reader.executor.readOnlyQueryNodes {
-		metadata := false
-		for _, property := range properties {
-			if storage.IsEmbeddingMetadataProperty(property) {
-				metadata = true
-				break
-			}
-		}
-		if !metadata {
-			if projected, ok := reader.store.(storage.ProjectedNodeReader); ok {
-				node, err := projected.GetNodeProjected(id, properties)
-				if err != nil || node == nil {
-					return node, err
-				}
-				if shouldHideSystemNodes(reader.store) && isSystemNode(node) {
-					return nil, storage.ErrNotFound
-				}
-				return node, nil
-			}
-		}
-	}
+func (reader relationshipEndpointReader) read(id storage.NodeID, _ []string) (*storage.Node, error) {
 	node, err := reader.executor.getQueryNode(reader.store, id)
 	if err != nil || node == nil {
 		return node, err
@@ -67,19 +44,51 @@ func (reader relationshipEndpointReader) read(id storage.NodeID, properties []st
 	if shouldHideSystemNodes(reader.store) && isSystemNode(node) {
 		return nil, storage.ErrNotFound
 	}
-	if properties == nil {
-		return node, nil
+	// Transient scalar consumers inspect the canonical view directly. Owners
+	// that retain an endpoint must use readRetained with their property demand.
+	return node, nil
+}
+
+// readRetained takes ownership of the detached canonical read before it can
+// escape into a traversal cache or binding. A nil projection requires the full
+// entity; a non-nil projection retains only its demanded property values.
+// Reuse the caller-owned node and small map instead of copying every read.
+func (reader relationshipEndpointReader) readRetained(id storage.NodeID, properties []string) (*storage.Node, error) {
+	node, err := reader.read(id, properties)
+	if err != nil || node == nil || properties == nil {
+		return node, err
 	}
-	out := *node
-	out.ChunkEmbeddings, out.NamedEmbeddings = nil, nil
-	out.Properties = make(map[string]interface{}, len(properties))
-	for _, property := range properties {
-		if value, exists := node.Properties[property]; exists {
-			out.Properties[property] = value
+	var selected map[string]interface{}
+	if len(properties) > 0 {
+		selected = node.Properties
+		if len(selected) > 8 && len(selected) > 2*len(properties) {
+			// Do not retain a wide body's map buckets for a narrow selection.
+			selected = make(map[string]interface{}, len(properties))
+			for _, property := range properties {
+				if value, ok := node.Properties[property]; ok {
+					selected[property] = value
+				}
+			}
+		} else {
+			for property := range selected {
+				if !slices.Contains(properties, property) {
+					delete(selected, property)
+				}
+			}
 		}
 	}
-	return &out, nil
+	var metadata map[string]interface{}
+	if slices.Contains(properties, "has_embedding") {
+		metadata = map[string]interface{}{"has_embedding": nodeHasEmbeddingValue(node)}
+	}
+	// Timestamps belong to property visibility. Vectors, embedding bodies and
+	// storage snapshot owners are unrelated to an ID/label/scalar projection.
+	*node = storage.Node{ID: node.ID, Labels: node.Labels, Properties: selected,
+		CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt,
+		VisibilitySuppressed: node.VisibilitySuppressed, EmbedMeta: metadata}
+	return node, nil
 }
+
 func (c *endpointPropertyCache) keep(key endpointPropertyKey, value interface{}) {
 	// Include map/entry overhead and key storage, not just property payloads.
 	size := int64(128+len(key.id)+len(key.property)) + util.EstimateValueBytes(value)

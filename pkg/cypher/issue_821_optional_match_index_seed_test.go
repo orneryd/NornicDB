@@ -23,6 +23,18 @@ type labelStreamCountingEngine struct {
 	scanErr      error
 }
 
+// Whole query-node seeds moved to this scan contract in #1608. Keep the
+// error injection and visit counter on the path the shared seed owner uses.
+func (s *labelStreamCountingEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
+	if s.scanErr != nil {
+		return s.scanErr
+	}
+	return s.NamespacedEngine.StreamNodesWithOptions(ctx, opts, func(node *storage.Node) error {
+		s.nodesVisited++
+		return visit(node)
+	})
+}
+
 func (s *labelStreamCountingEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
 	if s.scanErr != nil {
 		return s.scanErr

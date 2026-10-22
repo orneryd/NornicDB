@@ -224,12 +224,16 @@ func TestTypedNumericPublicWidths(t *testing.T) {
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}
 				for _, template := range queries {
 					t.Run(template, func(t *testing.T) {
-						// Domain errors must have the same public code for literal and typed
-						// coordinates; never compare Go-kind-dependent wording.
+						// Compare public codes rather than Go-kind-dependent wording.
+						// fromPairs has a reference-backed static property-type error
+						// distinct from the scalar literal's runtime coercion error.
 						control, controlErr := exec.Execute(context.Background(), listinputs.Query(template, input.Literal), nil)
-						for _, form := range []struct{ prefix, value string }{
-							{"", "$xs"}, {"WITH $xs AS xs ", "xs"}, {"MATCH (n:NumericWidth {name:$name}) ", "n.xs"},
-							{"WITH {items:$xs} AS box ", "box.items"},
+						if template == "apoc.map.fromPairs(%s)" {
+							requireStatusCode(t, controlErr, listinputs.FromPairsExpectation(input, "literal").Code)
+						}
+						for _, form := range []struct{ name, prefix, value string }{
+							{"parameter", "", "$xs"}, {"with", "WITH $xs AS xs ", "xs"}, {"stored", "MATCH (n:NumericWidth {name:$name}) ", "n.xs"},
+							{"nested-map", "WITH {items:$xs} AS box ", "box.items"},
 						} {
 							// The rebased APOC hash owner preserves byte[] as binary,
 							// whose Java text includes brackets, unlike LIST<INTEGER>.
@@ -243,6 +247,10 @@ func TestTypedNumericPublicWidths(t *testing.T) {
 							} // Existing binary-parameter grammar contract has separate tests.
 							query := form.prefix + listinputs.Query(template, form.value)
 							got, err := exec.Execute(context.Background(), query, params)
+							if template == "apoc.map.fromPairs(%s)" {
+								requireStatusCode(t, err, listinputs.FromPairsExpectation(input, form.name).Code)
+								continue
+							}
 							if controlErr != nil {
 								require.Error(t, err, query)
 								require.Equal(t, errorStatusCode(controlErr), errorStatusCode(err), query)
