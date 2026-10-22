@@ -72,14 +72,29 @@ contract and acceptance evidence are verified.
 - [ ] Complete Copilot CLI ACP adapter and the same acceptance matrix; distinguish
   it from VS Code and SDK-only hook claims (SW-20).
 
-## 7. Verification, documentation and readiness
+## 7. Linear workflow integration
+
+- [ ] Resolve the existing NOR project, states and label groups into private
+  configuration; qualify branch automation and identity mapping (SW-24).
+- [ ] Implement tracker APIs, unique outcome binding and current criteria/
+  dependency snapshots; preserve human assignee vs T3 execution identity (SW-24).
+- [ ] Gate source mutation on confirmed Dev In Progress and current scope/criteria;
+  invalidate plans and readiness on relevant human changes (SW-24/25).
+- [ ] Implement one-writer outbox, read-before/write/readback reconciliation,
+  uncertain-response recovery, webhook deduplication and bounded polling (SW-25).
+- [ ] Implement the exact status/Delivery mapping and paired non-closing PR links;
+  preserve private discussions and final human shipment authority (SW-25).
+- [ ] Verify outage/drain, cancellation, human-edit races and label preservation
+  using synthetic issues before an explicitly configured live rollout (SW-24/25).
+
+## 8. Verification, documentation and readiness
 
 - [ ] Map every generated API entry to deterministic tests; execute the matrix
   over Bolt, HTTP, embedded and MCP paths with fresh-session state checks (SW-01–18).
 - [ ] Run scoped race, memory/disk isolation and full-suite checks appropriate to
   changed code; reproduce any discovered defect before correcting it.
 - [ ] Run the two-provider end-to-end scenario including conflict, message,
-  expiry, review rework and final remote PR verification (SW-23).
+  expiry, review rework and final remote PR and Linear projection verification (SW-23/24/25).
 - [ ] Record before/after workload measurements and regression analysis from
   `verification.md`; resolve measured regressions without weakening assertions.
 - [ ] Publish installation/configuration/API examples, provider capability matrix,

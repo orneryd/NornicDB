@@ -112,7 +112,8 @@ not just a Boolean.
 In the following tables, `R` means read procedure, `W` means write procedure.
 All require normal database/procedure authorization. Additional roles are:
 `agent` (assigned task/session), `runner` (trusted execution/evidence adapter),
-`indexer` (canonical importer), `router` (T3 delivery adapter), `maintainer`
+`indexer` (canonical importer), `router` (T3 delivery adapter),
+`tracker` (Linear integration adapter), `maintainer`
 (project configuration/recovery), and `reviewer` (assigned review session).
 The coordinator may schedule tasks but cannot forge runner receipts.
 
@@ -153,6 +154,27 @@ and PR readiness are specialized transitions performed by the procedures below;
 the generic transition cannot bypass their atomic side effects. No arbitrary
 `setStatus("done")` API exists. Tasks are reusable after review findings through
 rework, not by overwriting their evidence/history.
+
+### Linear intake and progress projection
+
+| Procedure suffix | Mode / role | Additional required inputs | `data` on success and semantics |
+| --- | --- | --- | --- |
+| `tracker.configure` | W / maintainer | Linear team/project binding, verified state/label mappings, field-ownership and assignment policy, related-link mode | Versioned adapter profile and capability/readiness checks; never creates statuses implicitly |
+| `tracker.bind` | W / tracker | `taskId`, verified issue ID/snapshot, criteria hash, project/milestone, assignee and dependency/PR mappings | Unique outcome binding; paired develop/release PRs stay on one outcome |
+| `tracker.refresh` | W / tracker | Binding ID, fresh external snapshot/version and verified source references | Current criteria/status/delivery state, invalidated plan/evidence/permits and sync obligations |
+| `tracker.planUpdate` | W / assignee/coordinator | `taskId`, desired lifecycle event, evidence IDs, expected external version | Derived allowed field delta and intent ID, or unmet prerequisites; arbitrary status overrides rejected |
+| `tracker.pending` | R / tracker | Cursor, optional binding ID | Bounded pending update intents for the external adapter |
+| `tracker.recordUpdate` | W / tracker | Intent ID, attempt ID, API result plus read-back snapshot or explicit failure/unknown outcome | Confirmed/conflict/failed/unknown receipt; no duplicate comment or false completion |
+| `tracker.get` | R / member | `taskId` or binding ID | Current Linear mapping, last refresh, pending deltas, evidence provenance and conflicts |
+
+These operations reuse the same envelope/idempotency/authorization rules.
+`tracker.refresh` updates bounded local facts; the adapter reads Linear first.
+`tracker.recordUpdate` records external effects and must not pretend Nornic and
+Linear share a transaction. `workflow.next` exposes tracker/criteria readiness;
+new source work, phase transitions and PR readiness require a reconciled current
+binding in the Linear-enabled profile. Live status names, label semantics,
+human-assignee rules and failure handling are specified in [linear.md](linear.md).
+Store API credentials privately outside graph records and model arguments.
 
 ### Workspace and code context
 
@@ -267,6 +289,7 @@ Stable expected-denial codes:
 | `RESOURCE_PRESSURE`, `BUDGET_EXHAUSTED` | Resource/budget and queued/paused state; bounded retry, no hidden workload duplication |
 | `PROVIDER_UNSUPPORTED`, `ENFORCEMENT_UNAVAILABLE` | Failed capability and required integration/test, not advisory success |
 | `T3_UNAVAILABLE`, `DELIVERY_UNKNOWN` | Durable event ID and retry/reconciliation state |
+| `TRACKER_UNAVAILABLE`, `TRACKER_CONFLICT`, `CRITERIA_CHANGED`, `TRACKER_MAPPING_INVALID` | Binding/intent ID, observed state and required reconciliation; no silent scope/status replacement |
 | `EVIDENCE_INVALID`, `REVIEW_REQUIRED`, `PR_HEAD_MISMATCH` | Invalid obligations, expected change and actual remote head |
 | `IDEMPOTENCY_MISMATCH` | Reused key and operation; no effect |
 
@@ -333,7 +356,7 @@ both exact names explicitly and rejects collisions at startup. External actions
 must set `external: true` individually. Pure helper functions need no MCP tool.
 Preserve existing FIFO collision behavior and expose no unrelated default action.
 
-Runner/indexer/router-only methods remain permission-restricted even when
+Runner/indexer/router/tracker-only methods remain permission-restricted even when
 discoverable. Trusted adapters carry scoped credentials separately from model
 tool arguments. Role labels supplied by an LLM are rejected. Internal Heimdall
 inference is subject to the same authorization, not a privileged backdoor.

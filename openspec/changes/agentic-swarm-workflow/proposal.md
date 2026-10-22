@@ -24,6 +24,9 @@ must make this possible on local hardware without embedding each worktree.
   visibility. Reacquire claims for rework. Expire abandoned ownership safely.
 - Reuse T3 identity and messaging. Nornic owns coordination facts, not a second
   conversation system.
+- Integrate the existing NOR Linear release project: acceptance-driven intake,
+  its actual development/test statuses, verified assignee mapping, separate
+  develop/release PR evidence and non-closing links. Preserve human-owned scope.
 - Maintain one canonical code corpus for the active release branch in one
   configured Nornic database. No full worktree ingestion, per-agent database,
   per-agent vector index, or per-agent embedding model instance.
@@ -43,11 +46,12 @@ Read in this order:
 1. [Design and lifecycle](design.md)
 2. [Complete API contract](api.md)
 3. [T3, Codex and Copilot integration](harness.md)
-4. [Shared code graph and local resource policy](code-intelligence.md)
-5. [Observable requirements](specs/swarm-workflow/spec.md)
-6. [Acceptance and performance verification](verification.md)
-7. [Implementation milestones](tasks.md)
-8. [Inspected source inventory](sources.md)
+4. [Concrete Linear workflow integration](linear.md)
+5. [Shared code graph and local resource policy](code-intelligence.md)
+6. [Observable requirements](specs/swarm-workflow/spec.md)
+7. [Acceptance and performance verification](verification.md)
+8. [Implementation milestones](tasks.md)
+9. [Inspected source inventory](sources.md)
 
 ## Capabilities
 
@@ -80,7 +84,8 @@ Already present on the inspected release base:
   configurable active release ref.
 
 Still to implement: every swarm API and workflow below, provider adapters,
-execution enforcement, single-writer release refresh, unembedded worktree deltas,
+execution enforcement, Linear intake/projection, single-writer release refresh,
+unembedded worktree deltas,
 and their tests. T3 and provider behavior must be version-qualified; inspected
 documentation is not an end-to-end enforcement test.
 

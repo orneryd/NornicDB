@@ -100,6 +100,12 @@ account outside the managed worker boundary.
 
 For each task the harness:
 
+For a Linear-bound task, first import/reconcile the existing outcome and its
+criteria through the tracker adapter. Apply [linear.md](linear.md)'s observed
+status mapping after each evidence-backed transition; preserve the assignee and
+use non-closing PR links. `workflow.next` carries these tracker obligations into
+the same execution loop, rather than starting a separate competing workflow.
+
 1. Binds the authenticated provider session and provisions an isolated workspace
    from a pinned release commit before enabling write tools.
 2. Calls `workflow.next`, retrieves bounded code context and exposes the current

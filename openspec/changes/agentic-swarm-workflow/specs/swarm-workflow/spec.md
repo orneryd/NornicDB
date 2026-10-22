@@ -311,3 +311,57 @@ intent IDs and SHALL preserve the boundary between ready for review and merged.
 - **WHEN** the PR head no longer matches the frozen validated revision
 - **THEN** readiness is invalidated and the required checks/review are reconciled
 - **AND** no automatic merge, tag or deployment follows.
+
+### Requirement: Linear drives scoped development intake
+
+The harness SHALL bind one execution outcome to a verified Linear issue and SHALL
+use its current criteria, dependencies and scope under the existing NOR workflow.
+Human assignee, tracker delegate and T3 execution identity SHALL remain distinct.
+
+#### Scenario: Eligible issue begins development
+
+- **WHEN** an eligible Todo issue has current criteria, satisfied dependencies and
+  approved release scope
+- **THEN** the harness binds the issue and confirms Dev In Progress in Linear
+  before authorizing its first source mutation
+- **AND** investigate, plan, claims and action prerequisites still apply.
+
+#### Scenario: Human changes criteria or cancels work
+
+- **WHEN** a refreshed issue changes acceptance criteria or becomes Canceled or Duplicate
+- **THEN** affected plans/evidence/readiness are invalidated or execution is drained
+- **AND** no new source mutation proceeds using the obsolete issue snapshot.
+
+#### Scenario: Tracker becomes unavailable
+
+- **WHEN** the harness cannot confirm a required current tracker snapshot or transition
+- **THEN** new source writes, phase advancement and review readiness are blocked
+- **AND** bounded running checks may finish while claims drain safely.
+
+### Requirement: Linear progress is reconciled from evidence
+
+The tracker adapter SHALL project the existing status and Delivery mapping from
+verified evidence, preserve human edits and use bounded idempotent reconciliation.
+It SHALL NOT invent a Review state or equate release verification with shipment.
+
+#### Scenario: Validated PR becomes ready for review
+
+- **WHEN** the exact release PR revision satisfies validation, documentation,
+  performance and independent review obligations
+- **THEN** the adapter derives the applicable Test Complete and Delivery update
+  and records non-closing develop/release PR links on the same outcome
+- **AND** it does not report Merged or Released without their external evidence.
+
+#### Scenario: Human edit races with a tracker update
+
+- **WHEN** read-before/write/readback detects conflicting human changes
+- **THEN** the adapter records a conflict and preserves the human-owned fields
+- **AND** it does not pretend Linear supplies an unverified atomic compare-and-swap.
+
+#### Scenario: Tracker write response is lost
+
+- **WHEN** a progress update has an unknown delivery result
+- **THEN** the adapter reconciles the current issue and stable update intent
+  before retrying
+- **AND** it avoids duplicate comments, unrelated label removal and private
+  discussion publication.

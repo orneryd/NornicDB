@@ -56,3 +56,21 @@ end-to-end mechanisms before strict integration can ship.
 Documentation URLs may evolve. Record installed versions, schemas and actual
 qualification results in implementation evidence. This PR uses no model API
 credentials and runs no live provider sessions.
+
+## Connected Linear workflow inspection
+
+Read-only inspection on 2026-10-22 covered the NOR / Nornicdb team,
+**v1.4.4 — Stabilization & release** project, live issue states, label groups,
+project milestones, work register and current release-work examples.
+[linear.md](linear.md) records the sanitized mapping and its limitations.
+
+Observed states are Backlog, Todo, Dev In Progress, Dev Complete, Test in Progress,
+Test Complete, Merged, Released, Canceled and Duplicate. Delivery labels separate
+develop-only work, an open release PR, merged pending validation and release
+verification. Neither Test Complete nor Release verified proves shipment.
+
+Live issues and current commit evidence supersede historical register snapshots.
+Existing reported validation is contextual evidence, not a test rerun by this PR.
+Branch-specific GitHub status automation and supported agent delegation remain
+installation qualifications. No issue content, private discussion, account IDs
+or credentials are reproduced; no Linear objects were changed.

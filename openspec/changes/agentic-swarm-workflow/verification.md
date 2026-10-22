@@ -10,7 +10,7 @@ or pass. The planning PR's actual checks belong in its PR verification comment.
   state, event counts, absence of partial writes and fresh-session observations.
 - Use isolated temporary directories, databases, ports, Git configs and fake
   external transports. Restore environment/settings with cleanup. Never mutate
-  user worktrees, shared test globals, model caches or real GitHub/T3 state.
+  user worktrees, shared test globals, model caches or real GitHub/T3/Linear state.
 - Concurrency tests launch known competing requests behind a barrier and join all
   workers. No leaked goroutines, subprocesses, locks, streams or temporary disks.
 - Real-provider acceptance is opt-in with dedicated fixtures/accounts. Unit tests
@@ -44,7 +44,9 @@ or pass. The planning PR's actual checks belong in its PR verification comment.
 | SW-20 | Copilot CLI ACP execution profile | Same assertions as Codex; test actual ACP hooks/tool filtering, not only SDK mocks |
 | SW-21 | Single corpus / embedding policy | Zero embeddings for coordination/deltas, no duplicate model/index/DB, unchanged content remains unchanged |
 | SW-22 | Resource scheduler / performance | Bounded bytes/jobs, pressure pause, live coordination, exclusive benchmark admission, correct measured workload |
-| SW-23 | End-to-end lifecycle | Two providers, conflict/message/handoff, validation/docs/tuning/review/rework, final PR receipt |
+| SW-23 | End-to-end lifecycle | Two providers, Linear intake/projection, conflict/message/handoff, validation/docs/tuning/review/rework, final PR receipt |
+| SW-24 | tracker.configure/bind/refresh/get | Exact existing mappings, unique outcome binding, authenticated snapshots, criteria/dependency invalidation, distinct human and execution identities |
+| SW-25 | tracker.planUpdate/pending/recordUpdate | Evidence-derived transitions, one writer, human-edit races, unknown-response reconciliation, preserved labels, outage gates and bounded retries |
 
 Each API registry entry must map to at least one matrix row and each row to
 implementation test names before the corresponding milestone is checked off.
@@ -74,7 +76,9 @@ supported configuration/integration or a separately approved upstream change.
 ## 4. End-to-end acceptance story
 
 1. Start Nornic with swarm enabled and local inference disabled; bind upstream
-   T3 and authenticated Codex/Copilot CLI fixture sessions.
+   T3 and authenticated Codex/Copilot CLI fixture sessions. Bind a synthetic Linear
+   Todo issue with criteria and dependencies using the observed NOR mapping.
+   Confirm Dev In Progress before the first source mutation.
 2. Index one release commit once. Launch two separate worktrees sharing protected,
    compatible dependencies. Count databases/models/indexes/embedding jobs.
 3. A claims a file. B requests a contained symbol and receives A's task/reason/T3
@@ -86,10 +90,18 @@ supported configuration/integration or a separately approved upstream change.
 5. An independent reviewer finds a defect. A reacquires ownership under a new
    generation, fixes it, repeats affected checks and freezes a new revision.
 6. Publish the branch and create a review-ready PR against the active release
-   target. Verify the actual remote head and attached evidence. No merge occurs.
+   target. Verify the actual remote head and attached evidence. Reconcile the
+   appropriate Test Complete/Delivery projection and paired PR links without
+   claiming Merged or Released. No merge occurs.
 7. Repeat a failure variant with A disconnected during execution and verify
    draining/epoch fencing; repeat release-ref advancement and partial ingestion
    failure without creating another corpus or admitting stale graph evidence.
+
+Repeat tracker failure fixtures with human criteria edits, cancellation,
+duplicate outcomes, dependency changes, stale webhooks, rate limits, lost write
+responses and manual status/label changes. Verify that private discussion never
+enters GitHub publication, unrelated labels survive, and no outage permits new
+source writes or false readiness. Run fixtures against a fake tracker by default.
 
 ## 5. Workload-scoped performance evidence
 

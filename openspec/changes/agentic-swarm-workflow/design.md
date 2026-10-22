@@ -17,6 +17,7 @@ same service into both adapters; two plugins must not create separate registries
 | Existing code-intelligence importer | Release-commit extraction, incremental content updates and repository graph ownership |
 | Existing embedding worker | Shared model lifetime, queues and vector generation for canonical code only |
 | T3 | Threads, provider sessions, delegation, conversation delivery and thread UI |
+| Linear tracker adapter | Live outcome/criteria intake, verified assignments and evidence-derived status/delivery projections |
 | Git/GitHub | Commits, branches, pull requests and maintainer merge authority |
 
 The harness owns filesystem/process effects; APOC does not execute arbitrary
@@ -49,6 +50,7 @@ database, separate from importer-owned code labels. Required entities:
 | Change | Frozen commit/tree/diff digest, affected resources, base, pending PR and supersession |
 | Notification | Small routing envelope, event ID, T3 delivery reference and retry state |
 | IndexState | Desired/indexed commit, generation, refresh status, structural/vector readiness |
+| TrackerBinding | Linear issue/project identity, criteria hash, external version, field ownership, pending update intents/receipts |
 
 Use relations for task dependencies, ownership, affected code, evidence and
 supersession. Resource keys remain valid without a current graph node. Never
@@ -81,6 +83,15 @@ The harness advances phases automatically through `workflow.advance`. There is
 no mandatory human plan approval. Human clarification is needed only when scope
 or acceptance meaning cannot be derived from the task. Runtime prerequisites
 are deterministic rules; an LLM saying "tests passed" cannot satisfy them.
+
+For the Linear-enabled profile, `workflow.next` includes the live issue binding,
+criteria hash, current external status and pending synchronization obligations.
+The phase engine and Linear use different representations of the same work:
+apply the exact evidence-based projection in [linear.md](linear.md). There is
+no new Review column, and Test Complete, Merged and Released remain distinct.
+External status edits alone never grant execution authority or satisfy evidence.
+Refresh/reconcile criteria before new source work and phase advancement. Tracker
+outage blocks those transitions but does not turn a paused task into completed work.
 
 Documentation edits after tests must be classified against the test manifest.
 Tests may be reused only when their declared inputs remain byte-identical and
@@ -189,6 +200,11 @@ Do not claim distributed atomicity between GitHub and Nornic. A mismatched PR
 head is not ready. Merge/closure observations update local lifecycle facts;
 they do not authorize a merge. Keep a review-ready worktree until retention and
 dirty-state checks allow explicit cleanup.
+
+The Linear adapter likewise uses bounded intents and read-back receipts rather
+than claiming atomicity across systems. Preserve human-owned scope/assignee and
+non-closing PR linkage. A task may close its execution after merge while the
+project's delivery observer still distinguishes Merged from Released.
 
 ## 7. Compatibility, startup and rollout
 
