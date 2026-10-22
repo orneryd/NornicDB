@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve local variable bindings inside correlated subqueries in quantified
+  path predicates, so nested list predicates count only qualifying paths.
 - Bound retained traversal endpoint bodies to the requested fields after canonical visibility checks.
 - Match Neo4j 5.26/APOC pair-list coercion, map keys and argument errors across embedded, HTTP and Bolt queries.
 - Match Neo4j 5.26 vector similarity argument descriptions to their list-only signatures.

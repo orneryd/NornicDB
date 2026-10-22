@@ -377,6 +377,14 @@ func rowCountValue(kind string, rows int64) interface{} {
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	// The expression's current lexical row owns its imports. A traversal's
+	// ambient context may still bind the same name to an earlier endpoint;
+	// it must not replace a quantifier/comprehension/reduce local in the body.
+	// Without an ambient value scope the correlated executor already seeds
+	// the pipeline from values, so it needs no additional context allocation.
+	if len(valueBindingsFromContext(ctx)) != 0 {
+		ctx = withValueBindings(ctx, values)
+	}
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranches(query); union {
