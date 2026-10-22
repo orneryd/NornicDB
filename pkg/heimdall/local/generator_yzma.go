@@ -1,24 +1,25 @@
-//go:build windows || yzma
+//go:build (windows || yzma) && !nolocalllm
 
-// Package heimdall provides the Heimdall cognitive guardian for NornicDB.
+// Local inference backend for the Heimdall host.
 // This file provides the yzma-enabled generator for Windows GPU support.
-package heimdall
+package local
 
 import (
 	"context"
 	"os"
 	"strconv"
 
+	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localllm"
 )
 
 func init() {
 	// Register the yzma-enabled generator loader for Windows
-	SetGeneratorLoader(yzmaGeneratorLoader)
+	heimdall.SetGeneratorLoader(yzmaGeneratorLoader)
 }
 
 // yzmaGeneratorLoader loads a generation model using yzma bindings (Windows GPU).
-func yzmaGeneratorLoader(modelPath string, gpuLayers, contextSize, batchSize, lazyMode int) (Generator, error) {
+func yzmaGeneratorLoader(modelPath string, gpuLayers, contextSize, batchSize, lazyMode int) (heimdall.Generator, error) {
 	opts := localllm.DefaultGenerationOptions(modelPath)
 	opts.GPULayers = gpuLayers
 	opts.ContextSize = contextSize
@@ -65,7 +66,7 @@ type yzmaGenerator struct {
 	model *localllm.GenerationModel
 }
 
-func (g *yzmaGenerator) Generate(ctx context.Context, prompt string, params GenerateParams) (string, error) {
+func (g *yzmaGenerator) Generate(ctx context.Context, prompt string, params heimdall.GenerateParams) (string, error) {
 	llamaParams := localllm.GenerateParams{
 		MaxTokens:   int32(params.MaxTokens),
 		Temperature: params.Temperature,
@@ -75,7 +76,7 @@ func (g *yzmaGenerator) Generate(ctx context.Context, prompt string, params Gene
 	return g.model.Generate(ctx, prompt, llamaParams)
 }
 
-func (g *yzmaGenerator) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) error {
+func (g *yzmaGenerator) GenerateStream(ctx context.Context, prompt string, params heimdall.GenerateParams, callback func(token string) error) error {
 	llamaParams := localllm.GenerateParams{
 		MaxTokens:   int32(params.MaxTokens),
 		Temperature: params.Temperature,

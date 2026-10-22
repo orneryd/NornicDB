@@ -1201,7 +1201,7 @@ plugin-heimdall-watcher: plugin-check
 	@mkdir -p $(HEIMDALL_PLUGINS_DIR)
 	@echo "Building Heimdall Watcher plugin..."
 	cd plugins/heimdall/plugin-src/watcher && go build $(if $(filter 1,$(NOLOCALLLM)),-tags nolocalllm,) -buildmode=plugin -o ../../built-plugins/watcher.so watcher_plugin.go
-	@if [ "$(NOLOCALLLM)" = "1" ]; then echo "Built watcher plugin with -tags nolocalllm (match the host binary build tags)."; fi
+	@if [ "$(NOLOCALLLM)" = "1" ]; then echo "Built watcher plugin with -tags nolocalllm (optional for Heimdall-only plugins)."; fi
 	@echo "Built: $(HEIMDALL_PLUGINS_DIR)/watcher.so"
 
 .PHONY: plugin-heimdall-watcher-remote
@@ -1209,7 +1209,8 @@ plugin-heimdall-watcher-remote:
 	@$(MAKE) plugin-heimdall-watcher NOLOCALLLM=1
 
 # Note: Heimdall core is built into the binary. Plugins extend functionality.
-# Enable Heimdall with: NORNICDB_HEIMDALL_ENABLED=true
+# Enable the agentic harness with: NORNICDB_HEIMDALL_ENABLED=true
+# Plugin loading and external tools also work with the harness disabled.
 # Load plugins with: NORNICDB_HEIMDALL_PLUGINS_DIR=$(HEIMDALL_PLUGINS_DIR)
 
 # Clean plugins

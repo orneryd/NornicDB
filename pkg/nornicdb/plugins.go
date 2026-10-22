@@ -68,7 +68,7 @@ var (
 	pluginsInitialized bool
 )
 
-var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem context (Heimdall disabled or not initialized)")
+var errHeimdallContextRequired = errors.New("heimdall plugin requires subsystem context (host context not initialized)")
 
 // LoadPluginsFromDir scans a directory for .so files and loads them.
 // Auto-detects plugin types and registers appropriately:
@@ -137,15 +137,15 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	for _, path := range matches {
 		loaded, err := loadPluginFile(path, heimdallCtx)
 		if err != nil {
-			// Heimdall plugins require an initialized subsystem context; when Heimdall is disabled
-			// (or not initialized yet), we skip loading them rather than treating as a failure.
+			// Embedded startup may scan plugins before a host context is supplied.
+			// Server plugin-only startup supplies that context even without inference.
 			if errors.Is(err, errHeimdallContextRequired) {
 				stats.skipped++
 				if loaded != nil && loaded.Name != "" {
-					fmt.Printf("║ - [HEIM] %-15s v%-8s skipped (Heimdall disabled)      ║\n",
+					fmt.Printf("║ - [HEIM] %-15s v%-8s deferred (no host context)      ║\n",
 						loaded.Name, loaded.Version)
 				} else {
-					fmt.Printf("║ - [HEIM] %-47s skipped (Heimdall disabled) ║\n", filepath.Base(path))
+					fmt.Printf("║ - [HEIM] %-47s deferred (no host context) ║\n", filepath.Base(path))
 				}
 				continue
 			}
@@ -191,7 +191,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	fmt.Printf("║ Loaded: %d plugins (%d function, %d heimdall) %15s ║\n",
 		stats.total, stats.function, stats.heimdall, "")
 	if stats.skipped > 0 {
-		fmt.Printf("║ Skipped: %d plugins (Heimdall disabled) %24s ║\n", stats.skipped, "")
+		fmt.Printf("║ Deferred: %d plugins (no host context) %24s ║\n", stats.skipped, "")
 	}
 	if stats.functions > 0 {
 		fmt.Printf("║         %d Cypher functions available %23s ║\n", stats.functions, "")
@@ -337,9 +337,8 @@ func loadHeimdallPlugin(sym interface{}, path string, ctx *heimdall.SubsystemCon
 
 // registerHeimdallPlugin registers the plugin with Heimdall's subsystem manager.
 func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, ctx *heimdall.SubsystemContext) (*LoadedPlugin, error) {
-	// Heimdall plugins depend on an initialized Heimdall subsystem context (Bifrost, DB reader, etc).
-	// When Heimdall is disabled, we should *not* register/start Heimdall plugins — doing so can
-	// start background goroutines and make `heimdall.enabled: false` a no-op in practice.
+	// A host context is required; it can be plugin-only with no inference or chat.
+	// Embedded scans with a nil context defer initialization to the host.
 	if ctx == nil {
 		return &LoadedPlugin{
 			Name:    hp.Name(),
@@ -361,7 +360,8 @@ func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, ctx *heimda
 
 	// Start the plugin
 	if err := hp.Start(); err != nil {
-		return nil, fmt.Errorf("start: %w", err)
+		mgr.UnregisterPlugin(hp.Name())
+		return nil, errors.Join(fmt.Errorf("start: %w", err), hp.Shutdown())
 	}
 
 	return &LoadedPlugin{

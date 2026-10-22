@@ -326,7 +326,7 @@ func ServerLogGraphQLEnabled() Message {
 
 // ServerLogHeimdallDisabled describes startup with Heimdall disabled.
 func ServerLogHeimdallDisabled() Message {
-	return Message{ID: MessageServerLogHeimdallDisabled, Fallback: "heimdall AI assistant disabled"}
+	return Message{ID: MessageServerLogHeimdallDisabled, Fallback: "Heimdall agentic harness disabled; configured plugins remain available"}
 }
 
 // ServerLogSearchRerankDisabled describes startup without search reranking.
