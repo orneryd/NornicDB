@@ -44,7 +44,12 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:KNOWS]-(a)", nodes))
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:LIKES]->(b)", nodes))
 
-	// Missing node in a relationship predicate should return false.
+	// #1384 routes this internal predicate through EXISTS: an unbound c is
+	// existential. Bind c explicitly to test a null or missing endpoint.
+	require.True(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+	nodes["c"] = nil
+	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+	nodes["c"] = &storage.Node{ID: storage.NodeID("missing")}
 	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
 
 	// Fallback expression evaluation branch.
