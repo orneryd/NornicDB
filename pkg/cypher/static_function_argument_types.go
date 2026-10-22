@@ -30,6 +30,10 @@ type staticArgumentType struct {
 	// unlisted are types accepted although the error doesn't name them
 	// (staticUnlistedArgumentTypes).
 	unlisted []string
+	// nestedLists retains the nested-list contract of a native APOC
+	// constructor. Narrow numeric/boolean lists reach runtime coercion;
+	// string lists, map-list literals and property-value unions do not.
+	nestedLists bool
 	// cypher25 is the check a Cypher 25 statement makes at the position
 	// instead, where Neo4j 2026.09 checks it otherwise than 5.26
 	// (staticCypher25Arguments); nil where both check it alike.
@@ -145,6 +149,10 @@ func buildStaticFunctionArguments() (map[string][]staticArgumentType, map[string
 	built := make(map[string][]staticArgumentType, len(signatures))
 	byCount := make(map[string]map[int][]staticArgumentType)
 	longest := 0
+	// Native APOC constructors are registered outside the built-in catalog.
+	// Keep their signature checks in the same literal/parameter/scope owner.
+	built["apoc.map.frompairs"] = []staticArgumentType{{expected: "List<List<T>>", options: []string{"List<List<T>>"}, nestedLists: true}}
+	longest = len("apoc.map.frompairs")
 	for name, all := range signatures {
 		if extensions[name] {
 			continue
@@ -321,6 +329,24 @@ func staticTypeChoices(typeName string) []string {
 
 func (argument staticArgumentType) accepts(typeName string) bool {
 	if typeName == "" || len(argument.options) == 0 {
+		return true
+	}
+	if argument.nestedLists {
+		// The inner element can itself be a union (List<List<Map>,
+		// List<Node> or List<Relationship>>). Its outer element is a list.
+		if strings.HasPrefix(typeName, "List<List<") && strings.HasSuffix(typeName, ">>") {
+			return true
+		}
+		for _, choice := range staticTypeChoices(typeName) {
+			switch choice {
+			case "List<T>", "List<Boolean>", "List<Float>", "List<Integer>", "List<Number>":
+				// Neo4j leaves these list-element coercions to runtime.
+			default:
+				if !strings.HasPrefix(choice, "List<List<") {
+					return false
+				}
+			}
+		}
 		return true
 	}
 	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {

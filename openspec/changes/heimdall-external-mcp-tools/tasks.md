@@ -25,3 +25,10 @@ blocked checks must be identified in the PR; they are not passes.
 - [x] Stop and shut down server-owned plugins, including plugin-only mode.
 - [x] Correct plugin-only startup logs, catalog text and documentation.
 - [x] Validate lifecycle regressions and focused race checks; full Heimdall/MCP suites pass. All 646 server top-level tests were accounted for in isolated batches: 642 pass, one previously reported base failure, three Neo4j-dependent skips. Record the localization verification blocker and single-process suite timeout on the PR.
+
+## Requested base-failure correction
+
+- [x] Reproduce the original HTTP list-representation failure before changing production code.
+- [x] Port the reference-backed `apoc.map.fromPairs` correction from release commit `ed8c8831`, preserving exact value and error-code assertions across embedded, HTTP and Bolt paths.
+- [x] Run the affected embedded, HTTP and Bolt contract tests, repeat each representation suite twice, and run vet.
+- [x] Repeat release-base verification and report the remaining localization catalog blocker separately; native inference and full release verification remain unverified.
