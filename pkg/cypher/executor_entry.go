@@ -139,7 +139,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// TRC-15: top-level cypher execute span. Started before timing so the
 	// span duration matches the metric observation window exactly. The span
 	// is ended in the same defer that emits the slow-query log.
-	ctx, execSpan := startExecuteSpan(ctx, "", cypher)
+	ctx, execSpan := e.startExecuteSpan(ctx, "", cypher)
 
 	// TRC-17: propagate span context to the storage layer so storage spans
 	// nest as children of the cypher execute span.

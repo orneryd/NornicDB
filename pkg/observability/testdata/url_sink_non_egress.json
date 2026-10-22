@@ -1,0 +1,13 @@
+{
+  "pkg/memory/wire_request.go:HTTPRequestWireBytes 8eede98814d740272dd6edf07c1f1573ea743808a3a3167ac1341696dbc40bf9": "Counts inbound request-target bytes for wire-size accounting; it does not return or log the target.",
+  "pkg/memory/wire_request.go:HTTPRequestWireBytes 2bb70c251f1685decc6eaecc3b3082f2ee87729e1a6ed97c0a0cb0e23ae14928": "Counts inbound request-target bytes for wire-size accounting; it does not return or log the target.",
+  "pkg/security/middleware.go:*SecurityMiddleware.ValidateRequest d06b95675064b927c1bae8851757a8820474dd82f0d41fc89cba9cb773de2fb5": "Validates a user-supplied URL parameter and reports validation status; it is not configured endpoint egress.",
+  "pkg/security/middleware.go:*SecurityMiddleware.ValidateRequest dbe69556485876e4f9379f2ac16c734a17d0eb073ebb741814edc211bf039aaf": "The handler closure validates request-supplied values; this exact return boundary does not emit a configured endpoint.",
+  "pkg/server/metadata_admission.go:bodylessControlRequest d737e993b22a68a918e35d79c0afa5fd13df6402945f07b7c1f0f1bb3ed5877f": "Reads request framing and path state only to return an admission boolean.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware a7cbbded7439e81dfae13f8b2910f327732abc643f9d6f7f2d138093c65c9561": "Uses the request path to select a fixed timeout message; it does not emit the path.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware b25402782139b78c0b54e8bc958db3ad2728dd595f7418f725f55b3fd354f856": "Uses the request path to select a fixed timeout message; it does not emit the path.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware 1b33700efb86234033f43952e879f57ce0451405d354019c197251812c43a19f": "Uses the request path to select a fixed timeout message; it does not emit the path.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware fb53ca5440cae553cad89933d15c573b1fa622bba12649d352459a3c2275c510": "Uses the request path to select a fixed timeout message; it does not emit the path.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware d6daf3a8667211712da5b2d5344f90b263928963da705af5ca5e03fdf80e8bde": "Uses the request path to select a fixed timeout message; it does not emit the path.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware ea772f9a3bc874295ba3968828480d937a9593fe939c1457e23cd53cc53c053a": "Uses the request path to select a fixed timeout message; it does not emit the path."
+}

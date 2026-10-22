@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -77,6 +78,30 @@ func startRelationshipService(t *testing.T, engine storage.Engine, embed Relatio
 func waitRelationshipVectors(t *testing.T, svc *Service, want int) {
 	t.Helper()
 	require.Eventually(t, func() bool { return svc.RelationshipEmbeddingCount() == want }, 5*time.Second, 10*time.Millisecond)
+}
+
+// waitRelationshipSnapshot waits for durable publication, separately from
+// vector visibility. Tests that read or reopen a snapshot need both boundaries.
+func waitRelationshipSnapshot(t *testing.T, svc *Service) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		saved := svc.loadRelationshipVectors()
+		rs := svc.relationshipSearch()
+		rs.mu.RLock()
+		defer rs.mu.RUnlock()
+		count := 0
+		for id, entry := range rs.entries {
+			if len(entry.Vectors) == 0 {
+				continue
+			}
+			count++
+			stored := saved[id]
+			if stored == nil || stored.Source != entry.Source || !reflect.DeepEqual(stored.Vectors, entry.Vectors) || !reflect.DeepEqual(stored.Spans, entry.Spans) {
+				return false
+			}
+		}
+		return len(saved) == count
+	}, 5*time.Second, 10*time.Millisecond)
 }
 
 // Relationship search finds a relationship by a word in its properties, and
@@ -201,6 +226,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	first := &countingEmbed{}
 	svc := startRelationshipService(t, engine, first.embed, persisted)
 	waitRelationshipVectors(t, svc, 2)
+	waitRelationshipSnapshot(t, svc)
 	require.NoError(t, svc.Close())
 
 	edge, err := engine.GetEdge("r2")
@@ -210,6 +236,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	second := &countingEmbed{}
 	svc = startRelationshipService(t, engine, second.embed, persisted)
 	waitRelationshipVectors(t, svc, 2)
+	waitRelationshipSnapshot(t, svc)
 	require.Equal(t, int64(1), second.calls.Load(), "only the changed relationship is embedded")
 	response, err := svc.SearchRelationships(ctx, "span", wordVector("span"), &SearchOptions{Limit: 1, Relationships: true})
 	require.NoError(t, err)

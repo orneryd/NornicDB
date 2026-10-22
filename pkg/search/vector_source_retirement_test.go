@@ -170,7 +170,10 @@ func TestVectorSourceMigrationReleasesMemoryLockBeforeServicePublication(t *test
 	select {
 	case <-countDone:
 		finished = true
-	case <-time.After(50 * time.Millisecond):
+	// This test runs with the race detector in the full package gate. Give the
+	// Count goroutine time to be scheduled while still holding the publication
+	// lock, so scheduler delay does not look like a lock-ordering regression.
+	case <-time.After(time.Second):
 	}
 	release()
 	select {

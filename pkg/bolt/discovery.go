@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -41,10 +42,10 @@ type discoveryBody struct {
 func validateDiscoveryURL(field, s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
-		return fmt.Errorf("discovery: %s is not a valid URL: %w", field, err)
+		return fmt.Errorf("discovery: %s is not a valid URL: %w", field, observability.RedactError(err, observability.ClientCredentials(s)...))
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("discovery: %s must have a scheme and host (got %q)", field, s)
+		return fmt.Errorf("discovery: %s must have a scheme and host (got %q)", field, observability.RedactURL(s))
 	}
 	return nil
 }
@@ -52,19 +53,21 @@ func validateDiscoveryURL(field, s string) error {
 // buildDiscoveryBody returns marshalled JSON for the configured-OAuth case
 // or nil for the empty-body Community-parity case. Validates Issuer and
 // CallbackURL syntax; returns error on malformed URLs.
+// RedirectURI is public protocol configuration: it must match CallbackURL
+// exactly so clients send the URI used by the actual OAuth flow.
 func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
 	if oauthCfg == nil || !oauthCfg.IsConfigured() {
 		return nil, nil
 	}
 
-	if err := validateDiscoveryURL("Issuer", oauthCfg.Issuer); err != nil {
+	if err := auth.ValidateOAuthIssuer(oauthCfg.Issuer); err != nil {
 		return nil, err
 	}
 	if err := validateDiscoveryURL("CallbackURL", oauthCfg.CallbackURL); err != nil {
 		return nil, err
 	}
 
-	issuer := strings.TrimRight(oauthCfg.Issuer, "/")
+	issuer := oauthCfg.Issuer
 
 	body := discoveryBody{
 		DefaultProvider: "nornic-oauth",

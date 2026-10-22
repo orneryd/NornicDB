@@ -47,11 +47,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
@@ -204,7 +206,12 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 }
 
 // callRerankAPI calls the cross-encoder service.
-func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) ([]float64, error) {
+func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candidates []RerankCandidate) (_ []float64, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, ce.config.APIURL, ce.config.APIKey)
+		}
+	}()
 	// Build request body - supports multiple formats
 	// Format 1: Cohere-style
 	// Format 2: HuggingFace TEI-style
@@ -228,7 +235,11 @@ func (ce *CrossEncoder) callRerankAPI(ctx context.Context, query string, candida
 		return nil, localizedError(localization.SearchRerankRequestMarshalFailed(err), err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", ce.config.APIURL, bytes.NewReader(body))
+	endpoint, err := observability.ComposeRequestURL(ce.config.APIURL, "", observability.AppendRequestRoute)
+	if err != nil {
+		return nil, localizedError(localization.SearchRerankRequestCreationFailed(err), err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, localizedError(localization.SearchRerankRequestCreationFailed(err), err)
 	}
@@ -311,7 +322,16 @@ func (ce *CrossEncoder) IsAvailable(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimSuffix(ce.config.APIURL, "/rerank")+"/health", nil)
+	configured, err := url.Parse(ce.config.APIURL)
+	if err != nil {
+		return false
+	}
+	healthPath := strings.TrimSuffix(configured.EscapedPath(), "/rerank") + "/health"
+	healthURL, err := observability.ComposeRequestURL(ce.config.APIURL, healthPath, observability.MergeRequestFollowup)
+	if err != nil {
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
 	if err != nil {
 		return false
 	}

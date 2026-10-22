@@ -23,6 +23,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txsession"
 )
@@ -609,7 +610,7 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 				"accessMode":   c.AccessMode,
 			}
 			if c.Type == "remote" && c.URI != "" {
-				entry["uri"] = c.URI
+				entry["uri"] = observability.RedactURL(c.URI)
 			}
 			consList = append(consList, entry)
 		}

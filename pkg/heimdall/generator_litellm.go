@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // defaultLiteLLMBaseURL is the default address of a local LiteLLM proxy.
@@ -46,7 +48,11 @@ func newLiteLLMGenerator(cfg Config) (Generator, error) {
 	if baseURL == "" {
 		baseURL = defaultLiteLLMBaseURL
 	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
+	configuredURL := strings.TrimSpace(baseURL)
+	baseURL, err := observability.NormalizeRequestBaseURL(configuredURL)
+	if err != nil {
+		return nil, fmt.Errorf("litellm provider URL: %w", observability.RedactClientError(err, configuredURL, cfg.APIKey))
+	}
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
 		return nil, fmt.Errorf("litellm provider requires NORNICDB_HEIMDALL_MODEL (a model/alias served by your LiteLLM proxy)")

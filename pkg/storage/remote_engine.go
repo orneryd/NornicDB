@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Compile-time interface assertion.
@@ -72,7 +74,12 @@ type remoteStatement struct {
 }
 
 // NewRemoteEngine creates a remote engine. Transport is auto-detected from the URI scheme.
-func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
+func NewRemoteEngine(cfg RemoteEngineConfig) (engine *RemoteEngine, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, cfg.URI, remoteDisplayCredentials(cfg)...)
+		}
+	}()
 	uri := strings.TrimSpace(cfg.URI)
 	database := strings.TrimSpace(cfg.Database)
 	if uri == "" {
@@ -83,7 +90,6 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 	}
 
 	var transport remoteTransport
-	var err error
 
 	lower := strings.ToLower(uri)
 	switch {
@@ -115,13 +121,17 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 // ---------------------------------------------------------------------------
 
 type boltTransport struct {
-	driver   neo4j.DriverWithContext
-	database string
+	credentials []string
+	baseURL     string
+	driver      neo4j.DriverWithContext
+	database    string
 }
 
 type boltCypherTx struct {
-	session neo4j.SessionWithContext
-	tx      neo4j.ExplicitTransaction
+	credentials []string
+	baseURL     string
+	session     neo4j.SessionWithContext
+	tx          neo4j.ExplicitTransaction
 }
 
 func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransport, error) {
@@ -130,7 +140,7 @@ func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransp
 	if err != nil {
 		return nil, localizedError(localization.StorageRemoteBoltDriverCreateFailed(err), err)
 	}
-	return &boltTransport{driver: driver, database: database}, nil
+	return &boltTransport{driver: driver, database: database, baseURL: uri, credentials: remoteDisplayCredentials(cfg)}, nil
 }
 
 func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
@@ -153,7 +163,12 @@ func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
 	return neo4j.NoAuth()
 }
 
-func (b *boltTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
+func (b *boltTransport) query(ctx context.Context, statement string, params map[string]interface{}) (_ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   accessModeForStatement(statement),
@@ -161,7 +176,7 @@ func (b *boltTransport) query(ctx context.Context, statement string, params map[
 	defer func() { _ = session.Close(ctx) }()
 
 	var rows [][]interface{}
-	_, err := executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
+	_, err = executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
 		row := make([]interface{}, len(record.Values))
 		for i, v := range record.Values {
 			row[i] = normalizeBoltValue(v)
@@ -174,7 +189,12 @@ func (b *boltTransport) query(ctx context.Context, statement string, params map[
 	return rows, nil
 }
 
-func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) (_ []string, _ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   accessModeForStatement(statement),
@@ -236,21 +256,26 @@ func executeManagedStatement(
 	return cols, nil
 }
 
-func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteStatement) error {
+func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteStatement) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
 	})
 	defer func() { _ = session.Close(ctx) }()
 
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		for _, stmt := range statements {
 			result, err := tx.Run(ctx, stmt.Statement, stmt.Parameters)
 			if err != nil {
 				return nil, err
 			}
 			// Consume to ensure statement completes.
-			if _, err := result.Consume(ctx); err != nil {
+			if _, err = result.Consume(ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -259,7 +284,12 @@ func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (b *boltTransport) beginCypherTx(ctx context.Context) (_ RemoteCypherTx, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   neo4j.AccessModeWrite,
@@ -269,10 +299,15 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		_ = session.Close(ctx)
 		return nil, err
 	}
-	return &boltCypherTx{session: session, tx: tx}, nil
+	return &boltCypherTx{session: session, tx: tx, baseURL: b.baseURL, credentials: b.credentials}, nil
 }
 
-func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) (_ []string, _ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
+		}
+	}()
 	result, err := t.tx.Run(ctx, statement, params)
 	if err != nil {
 		return nil, nil, err
@@ -296,17 +331,32 @@ func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params
 	return columns, rows, nil
 }
 
-func (t *boltCypherTx) Commit(ctx context.Context) error {
+func (t *boltCypherTx) Commit(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
+		}
+	}()
 	defer func() { _ = t.session.Close(ctx) }()
 	return t.tx.Commit(ctx)
 }
 
-func (t *boltCypherTx) Rollback(ctx context.Context) error {
+func (t *boltCypherTx) Rollback(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
+		}
+	}()
 	defer func() { _ = t.session.Close(ctx) }()
 	return t.tx.Rollback(ctx)
 }
 
-func (b *boltTransport) close() error {
+func (b *boltTransport) close() (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	return b.driver.Close(context.Background())
 }
 
@@ -465,7 +515,7 @@ func newHTTPTransport(uri, database string, cfg RemoteEngineConfig) (*httpTransp
 		client = &http.Client{Timeout: RemoteRequestTimeout}
 	}
 	return &httpTransport{
-		baseURL:   strings.TrimRight(uri, "/"),
+		baseURL:   uri,
 		database:  database,
 		authToken: strings.TrimSpace(cfg.AuthToken),
 		user:      strings.TrimSpace(cfg.User),
@@ -474,31 +524,51 @@ func newHTTPTransport(uri, database string, cfg RemoteEngineConfig) (*httpTransp
 	}, nil
 }
 
-func (h *httpTransport) commitURL() string {
-	if strings.HasSuffix(h.baseURL, "/tx/commit") {
-		return h.baseURL
+func (h *httpTransport) commitURL() (string, error) {
+	base, err := url.Parse(h.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid remote HTTP base URL")
 	}
-	if strings.Contains(h.baseURL, "/db/") {
-		return h.baseURL + "/tx/commit"
+	path := base.EscapedPath()
+	route := "/db/" + url.PathEscape(h.database) + "/tx/commit"
+	if strings.HasSuffix(path, "/tx/commit") {
+		route = ""
+	} else if strings.Contains(path, "/db/") {
+		route = "/tx/commit"
 	}
-	return fmt.Sprintf("%s/db/%s/tx/commit", h.baseURL, h.database)
+	return observability.ComposeRequestURL(h.baseURL, route, observability.AppendRequestRoute)
 }
 
-func (h *httpTransport) txOpenURL() string {
-	if strings.HasSuffix(h.baseURL, "/tx/commit") {
-		return strings.TrimSuffix(h.baseURL, "/commit")
+func (h *httpTransport) txOpenURL() (string, error) {
+	base, err := url.Parse(h.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid remote HTTP base URL")
 	}
-	if strings.Contains(h.baseURL, "/db/") {
-		return h.baseURL + "/tx"
+	path := base.EscapedPath()
+	if strings.HasSuffix(path, "/tx/commit") {
+		return observability.ComposeRequestURL(h.baseURL, strings.TrimSuffix(path, "/commit"), observability.MergeRequestFollowup)
 	}
-	return fmt.Sprintf("%s/db/%s/tx", h.baseURL, h.database)
+	route := "/db/" + url.PathEscape(h.database) + "/tx"
+	if strings.Contains(path, "/db/") {
+		route = "/tx"
+	}
+	return observability.ComposeRequestURL(h.baseURL, route, observability.AppendRequestRoute)
 }
 
 func (h *httpTransport) doRequest(ctx context.Context, body remoteTxRequest) (*remoteTxResponse, error) {
-	return h.doRequestToURL(ctx, http.MethodPost, h.commitURL(), body)
+	target, err := h.commitURL()
+	if err != nil {
+		return nil, observability.RedactClientError(err, h.baseURL, h.displayCredentials()...)
+	}
+	return h.doRequestToURL(ctx, http.MethodPost, target, body)
 }
 
-func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (*remoteTxResponse, error) {
+func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (_ *remoteTxResponse, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, h.baseURL, h.displayCredentials()...)
+		}
+	}()
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -612,13 +682,22 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (h *httpTransport) beginCypherTx(ctx context.Context) (_ RemoteCypherTx, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, h.baseURL, h.displayCredentials()...)
+		}
+	}()
 	openBody := remoteTxRequest{Statements: []remoteStatement{}}
 	raw, err := json.Marshal(openBody)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.txOpenURL(), bytes.NewReader(raw))
+	target, err := h.txOpenURL()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -653,11 +732,21 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 	if strings.TrimSpace(openResp.Commit) == "" {
 		return nil, localizedError(localization.StorageRemoteTransactionCommitURLMissing(), nil)
 	}
-	executeURL := strings.TrimSuffix(openResp.Commit, "/commit")
+	commitURL, err := observability.ComposeRequestURL(h.baseURL, openResp.Commit, observability.MergeRequestFollowup)
+	if err != nil {
+		return nil, err
+	}
+	commit, err := url.Parse(commitURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid composed remote transaction URL")
+	}
+	commit.Path = strings.TrimSuffix(commit.Path, "/commit")
+	commit.RawPath = strings.TrimSuffix(commit.RawPath, "/commit")
+	executeURL := commit.String()
 	return &httpCypherTx{
 		transport:   h,
 		executeURL:  executeURL,
-		commitURL:   openResp.Commit,
+		commitURL:   commitURL,
 		rollbackURL: executeURL,
 	}, nil
 }

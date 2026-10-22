@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/eval"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // safeClient wraps http.Client with SSRF-safe methods that only allow validated URLs.
@@ -48,17 +49,23 @@ func newSafeClient(timeout time.Duration) *safeClient {
 }
 
 // Get performs a GET request after validating the URL is localhost-only.
-func (s *safeClient) Get(rawURL string) (*http.Response, error) {
+func (s *safeClient) Get(rawURL string) (response *http.Response, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, rawURL)
+	}()
 	if err := validateURL(rawURL); err != nil {
-		return nil, fmt.Errorf("SSRF protection: %w", err)
+		return nil, fmt.Errorf("SSRF protection: %w", observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
 	return s.client.Get(rawURL)
 }
 
 // Post performs a POST request after validating the URL is localhost-only.
-func (s *safeClient) Post(rawURL, contentType string, body io.Reader) (*http.Response, error) {
+func (s *safeClient) Post(rawURL, contentType string, body io.Reader) (response *http.Response, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, rawURL)
+	}()
 	if err := validateURL(rawURL); err != nil {
-		return nil, fmt.Errorf("SSRF protection: %w", err)
+		return nil, fmt.Errorf("SSRF protection: %w", observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
 	return s.client.Post(rawURL, contentType, body)
 }
@@ -74,7 +81,7 @@ func main() {
 	flag.Parse()
 
 	// Check server health
-	fmt.Printf("🔍 Connecting to NornicDB at %s...\n", *serverURL)
+	fmt.Printf("🔍 Connecting to NornicDB at %s...\n", observability.RedactURL(*serverURL))
 	if err := checkHealth(*serverURL); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Server not reachable: %v\n", err)
 		os.Exit(1)
@@ -161,7 +168,10 @@ type HTTPSearcher struct {
 }
 
 // Search performs a search query via HTTP
-func (s *HTTPSearcher) Search(ctx context.Context, query string) ([]string, error) {
+func (s *HTTPSearcher) Search(ctx context.Context, query string) (_ []string, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, s.url)
+	}()
 	if s.client == nil {
 		s.client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -173,7 +183,11 @@ func (s *HTTPSearcher) Search(ctx context.Context, query string) ([]string, erro
 	}
 	body, _ := json.Marshal(reqBody)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.url+"/nornicdb/search", bytes.NewReader(body))
+	endpoint, err := observability.ComposeRequestURL(s.url, "/nornicdb/search", observability.AppendRequestRoute)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compose search URL: %w", observability.RedactError(err, observability.ClientCredentials(s.url)...))
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +485,7 @@ func min(a, b int) int {
 func validateURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("malformed URL: %w", err)
+		return fmt.Errorf("malformed URL: %w", observability.RedactError(err, observability.ClientCredentials(rawURL)...))
 	}
 	// Only allow http and https schemes
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
@@ -519,9 +533,9 @@ func isLoopbackHost(hostname string) bool {
 }
 
 func checkHealth(serverURL string) error {
-	healthURL, err := url.JoinPath(serverURL, "health")
+	healthURL, err := observability.ComposeRequestURL(serverURL, "/health", observability.AppendRequestRoute)
 	if err != nil {
-		return fmt.Errorf("failed to construct health URL: %w", err)
+		return fmt.Errorf("failed to construct health URL: %w", observability.RedactError(err, observability.ClientCredentials(serverURL)...))
 	}
 	client := newSafeClient(5 * time.Second)
 	resp, err := client.Get(healthURL)
@@ -557,10 +571,10 @@ func parseThresholds(s string) eval.Thresholds {
 }
 
 func createSampleData(serverURL string) error {
-	// Construct full URL safely using url.JoinPath to prevent path traversal
-	targetURL, err := url.JoinPath(serverURL, "db", "nornic", "tx", "commit")
+	// Construct the request URL through the configured-URL lifecycle owner.
+	targetURL, err := observability.ComposeRequestURL(serverURL, "/db/nornic/tx/commit", observability.AppendRequestRoute)
 	if err != nil {
-		return fmt.Errorf("failed to construct request URL: %w", err)
+		return fmt.Errorf("failed to construct request URL: %w", observability.RedactError(err, observability.ClientCredentials(serverURL)...))
 	}
 
 	client := newSafeClient(30 * time.Second)

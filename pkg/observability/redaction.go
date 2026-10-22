@@ -8,9 +8,10 @@ import (
 )
 
 // DefaultRedactKeys is the canonical sensitive-key allow-list for slog
-// records. Keys are matched case-insensitively, regardless of slog.Group
-// nesting depth. Extend at runtime via NORNICDB_LOG_REDACT_EXTRA
-// (comma-separated).
+// records and display helpers. Keys are matched case-insensitively, regardless
+// of slog.Group nesting depth. Add canonical extensions before constructing
+// handlers or using display helpers; do not mutate the list concurrently with
+// redaction. NORNICDB_LOG_REDACT_EXTRA (comma-separated) adds log-only keys.
 //
 // Note: pkg/audit/audit.go owns its own signed audit stream and is
 // intentionally NOT a consumer of this list (LOG-10 / SEC-05). A future
@@ -22,7 +23,15 @@ import (
 // (D-03a) — the protocol's own field name.
 var DefaultRedactKeys = []string{
 	"password", "token", "authorization", "secret", "api_key", "credentials",
+	"embedding_key", "private_key", "encryption_key", "master_key", "access_key",
+	"tls_key", "secret_key", "jwt_key", "client_key", "sign_key", "signing_key",
+	"auth.token", "auth.password", "auth.credentials", "db.password", "bolt.auth_token",
+	"http.authorization", "user.password", "user.token", "access_token", "refresh_token", "session_token",
+	"credential", "access_key_id", "url_query_key", "url_query_signature", "url_query_sig", "url_query_code", "url_query_state", "url_query_auth",
 }
+
+var builtInRedactSet = defaultRedactSet()
+var builtInSensitiveNames = newSensitiveNames(builtInRedactSet)
 
 // redactedPlaceholder is the value emitted in place of any matched key.
 const redactedPlaceholder = "<REDACTED>"
@@ -36,7 +45,11 @@ func RedactedPlaceholder() string {
 // Matching is case-insensitive and recognizes common separators such as '.', '_',
 // and '-' so names like client_secret and user.password are caught by the base key set.
 func IsSensitiveFieldName(name string) bool {
-	return isSensitiveKeyName(name, defaultRedactSet())
+	if isSensitiveKeyName(name, builtInSensitiveNames) {
+		return true
+	}
+	names := currentCanonicalSensitiveNames()
+	return names != builtInSensitiveNames && isSensitiveKeyName(name, names)
 }
 
 // redactingHandler walks slog.Attr groups recursively and replaces values
@@ -48,6 +61,7 @@ func IsSensitiveFieldName(name string) bool {
 type redactingHandler struct {
 	inner slog.Handler
 	keys  map[string]struct{}
+	names *sensitiveNames
 }
 
 // newRedactingHandler creates a handler with the given redact set.
@@ -56,7 +70,7 @@ type redactingHandler struct {
 // NORNICDB_LOG_REDACT_EXTRA env var is honored. The defaultRedactSet()
 // helper is used internally by tests that want only the built-in keys.
 func newRedactingHandler(inner slog.Handler, keys map[string]struct{}) *redactingHandler {
-	return &redactingHandler{inner: inner, keys: keys}
+	return &redactingHandler{inner: inner, keys: keys, names: newSensitiveNames(keys)}
 }
 
 // defaultRedactSet returns a lowercased set of just the built-in
@@ -101,7 +115,7 @@ func (h *redactingHandler) Enabled(ctx context.Context, lvl slog.Level) bool {
 // redacted record to the inner handler. Per Pitfall 6 we build a fresh
 // slog.Record via slog.NewRecord rather than mutating the source.
 func (h *redactingHandler) Handle(ctx context.Context, r slog.Record) error {
-	nr := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	nr := slog.NewRecord(r.Time, r.Level, RedactText(r.Message), r.PC)
 	r.Attrs(func(a slog.Attr) bool {
 		nr.AddAttrs(h.redactAttr(a))
 		return true
@@ -112,7 +126,7 @@ func (h *redactingHandler) Handle(ctx context.Context, r slog.Record) error {
 // redactAttr returns a redacted copy of a. Group attrs recurse; string
 // values get CRLF-stripped (LOG-03); other kinds pass through.
 func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
-	if isSensitiveKeyName(a.Key, h.keys) {
+	if isSensitiveKeyName(a.Key, h.names) {
 		return slog.String(a.Key, redactedPlaceholder)
 	}
 	if a.Value.Kind() == slog.KindGroup {
@@ -124,48 +138,55 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 		return slog.Group(a.Key, out...)
 	}
 	if a.Value.Kind() == slog.KindString {
-		s := a.Value.String()
+		s := RedactText(a.Value.String())
 		if strings.ContainsAny(s, "\r\n") {
-			return slog.String(a.Key, crlfReplacer.Replace(s))
+			s = crlfReplacer.Replace(s)
 		}
+		return slog.String(a.Key, s)
 	}
 	return a
 }
 
-func isSensitiveKeyName(name string, keys map[string]struct{}) bool {
-	lowerName := strings.ToLower(strings.TrimSpace(name))
-	if lowerName == "" {
-		return false
-	}
-	if _, sensitive := keys[lowerName]; sensitive {
+func isSensitiveKeyName(name string, names *sensitiveNames) bool {
+	suffix, candidate := names.match(name)
+	if suffix {
 		return true
 	}
-	parts := strings.FieldsFunc(lowerName, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	})
-	for _, part := range parts {
-		if _, sensitive := keys[part]; sensitive {
-			return true
+	if !candidate {
+		return false
+	}
+	parts := fieldWords(name)
+	if len(parts) == 0 {
+		return false
+	}
+	// These suffixes describe credentials rather than containing their material.
+	// Keep normal config paths, key IDs and token budgets useful in output.
+	switch parts[len(parts)-1] {
+	case "id", "ref", "path", "file", "name", "uri", "url", "type", "version", "enabled", "length", "count", "limit", "budget", "tokens", "expiry", "expires", "ttl":
+		return false
+	}
+	for i := range parts {
+		for j := i + 1; j <= len(parts); j++ {
+			key := strings.Join(parts[i:j], "")
+			// URL-only aliases name a query value, not metadata describing it
+			// (auth_provider, for example). Generic credential names still nest.
+			if _, sensitive := names.keys[key]; sensitive && (!strings.HasPrefix(key, "urlquery") || j == len(parts)) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// WithAttrs / WithGroup preserve the redactingHandler wrapper. Note: attrs
-// passed via WithAttrs are NOT pre-redacted at this point because they
-// flow into the inner handler's preformatted state — keeping correctness
-// here would require duplicating the inner handler's preformat logic.
-// Records emitted via Handle ARE redacted in full. Operators using
-// `logger.With("password", x)` would still leak; the convention is to
-// avoid sensitive keys in WithAttrs and rely on per-record attrs.
+// WithAttrs / WithGroup preserve the wrapper, including preformatted attributes.
 func (h *redactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	out := make([]slog.Attr, 0, len(attrs))
 	for _, a := range attrs {
 		out = append(out, h.redactAttr(a))
 	}
-	return &redactingHandler{inner: h.inner.WithAttrs(out), keys: h.keys}
+	return &redactingHandler{inner: h.inner.WithAttrs(out), keys: h.keys, names: h.names}
 }
 
 func (h *redactingHandler) WithGroup(name string) slog.Handler {
-	return &redactingHandler{inner: h.inner.WithGroup(name), keys: h.keys}
+	return &redactingHandler{inner: h.inner.WithGroup(name), keys: h.keys, names: h.names}
 }

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 const defaultOpenAIBaseURL = "https://api.openai.com"
@@ -128,7 +130,11 @@ func newVLLMGenerator(cfg Config) (Generator, error) {
 	if baseURL == "" {
 		baseURL = defaultVLLMBaseURL
 	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
+	configuredURL := strings.TrimSpace(baseURL)
+	baseURL, err := observability.NormalizeRequestBaseURL(configuredURL)
+	if err != nil {
+		return nil, fmt.Errorf("vllm provider URL: %w", observability.RedactClientError(err, configuredURL, cfg.APIKey))
+	}
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
 		return nil, fmt.Errorf("vllm provider requires NORNICDB_HEIMDALL_MODEL (the model served by vLLM)")
@@ -153,7 +159,11 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 	if baseURL == "" {
 		baseURL = defaultOpenAIBaseURL
 	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
+	configuredURL := strings.TrimSpace(baseURL)
+	baseURL, err := observability.NormalizeRequestBaseURL(configuredURL)
+	if err != nil {
+		return nil, fmt.Errorf("openai provider URL: %w", observability.RedactClientError(err, configuredURL, cfg.APIKey))
+	}
 	model := strings.TrimSpace(cfg.Model)
 	if looksLikeLocalModel(model) {
 		model = defaultOpenAIModel
@@ -172,7 +182,10 @@ func newOpenAIGenerator(cfg Config) (Generator, error) {
 }
 
 // Generate implements Generator.
-func (g *openAIGenerator) Generate(ctx context.Context, prompt string, params GenerateParams) (string, error) {
+func (g *openAIGenerator) Generate(ctx context.Context, prompt string, params GenerateParams) (_ string, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, g.baseURL, g.apiKey)
+	}()
 	reqBody := openAIChatRequest{
 		Model: g.model,
 		Messages: []openAIMsgWire{
@@ -188,31 +201,34 @@ func (g *openAIGenerator) Generate(ctx context.Context, prompt string, params Ge
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("openai request: %w", err)
+		return "", fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 
-	url := g.baseURL + openAIChatPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	endpoint, err := observability.ComposeRequestURL(g.baseURL, openAIChatPath, observability.AppendRequestRoute)
 	if err != nil {
-		return "", fmt.Errorf("openai request: %w", err)
+		return "", fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
 
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("openai request: %w", err)
+		return "", fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("openai returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 
 	var chatResp openAIChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", fmt.Errorf("openai decode: %w", err)
+		return "", fmt.Errorf("openai decode: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	if len(chatResp.Choices) == 0 {
 		return "", fmt.Errorf("openai: no choices in response")
@@ -312,6 +328,9 @@ func truncateForOpenAI(content string) string {
 // GenerateWithTools implements GeneratorWithTools (agentic loop, one round).
 // Trims messages to stay within model context (128K) and returns a friendly error if context is exceeded.
 func (g *openAIGenerator) GenerateWithTools(ctx context.Context, messages []ToolRoundMessage, tools []MCPTool, params GenerateParams) (content string, toolCalls []ParsedToolCall, err error) {
+	defer func() {
+		err = observability.RedactClientError(err, g.baseURL, g.apiKey)
+	}()
 	messages = trimMessagesForContext(messages, openAIMaxInputTokens)
 	wire := make([]openAIMsgWire, 0, len(messages))
 	for _, m := range messages {
@@ -356,23 +375,26 @@ func (g *openAIGenerator) GenerateWithTools(ctx context.Context, messages []Tool
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", nil, fmt.Errorf("openai request: %w", err)
+		return "", nil, fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
-	url := g.baseURL + openAIChatPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	endpoint, err := observability.ComposeRequestURL(g.baseURL, openAIChatPath, observability.AppendRequestRoute)
 	if err != nil {
-		return "", nil, fmt.Errorf("openai request: %w", err)
+		return "", nil, fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", nil, fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return "", nil, fmt.Errorf("openai request: %w", err)
+		return "", nil, fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		bodyStr := string(bodyBytes)
+		bodyStr := observability.RedactText(string(bodyBytes), observability.ClientCredentials(g.baseURL, g.apiKey)...)
 		if resp.StatusCode == http.StatusBadRequest && strings.Contains(bodyStr, "context_length_exceeded") {
 			return "", nil, fmt.Errorf("conversation is too long for the model (context limit exceeded). Please start a new chat or ask a shorter question")
 		}
@@ -380,7 +402,7 @@ func (g *openAIGenerator) GenerateWithTools(ctx context.Context, messages []Tool
 	}
 	var chatResp openAIChatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", nil, fmt.Errorf("openai decode: %w", err)
+		return "", nil, fmt.Errorf("openai decode: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	if len(chatResp.Choices) == 0 {
 		return "", nil, fmt.Errorf("openai: no choices in response")
@@ -398,7 +420,10 @@ func (g *openAIGenerator) GenerateWithTools(ctx context.Context, messages []Tool
 }
 
 // GenerateStream implements Generator.
-func (g *openAIGenerator) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) error {
+func (g *openAIGenerator) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) (err error) {
+	defer func() {
+		err = observability.RedactClientError(err, g.baseURL, g.apiKey)
+	}()
 	reqBody := openAIChatRequest{
 		Model: g.model,
 		Messages: []openAIMsgWire{
@@ -414,26 +439,29 @@ func (g *openAIGenerator) GenerateStream(ctx context.Context, prompt string, par
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return fmt.Errorf("openai request: %w", err)
+		return fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 
-	url := g.baseURL + openAIChatPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	endpoint, err := observability.ComposeRequestURL(g.baseURL, openAIChatPath, observability.AppendRequestRoute)
 	if err != nil {
-		return fmt.Errorf("openai request: %w", err)
+		return fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
 
 	resp, err := g.client.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("openai request: %w", err)
+		return fmt.Errorf("openai request: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("openai returned %d: %s", resp.StatusCode, observability.RedactText(string(bodyBytes), observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)

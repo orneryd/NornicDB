@@ -2,7 +2,11 @@ package cypher
 
 import (
 	"context"
+	"reflect"
+	"strings"
+	"unicode"
 
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -23,7 +27,7 @@ func tracingDisabled() bool {
 
 // startExecuteSpan begins the top-level nornicdb.cypher.execute span. The
 // returned context carries the span; callers must defer span.End().
-func startExecuteSpan(ctx context.Context, opType string, query string) (context.Context, trace.Span) {
+func (e *StorageExecutor) startExecuteSpan(ctx context.Context, opType string, query string) (context.Context, trace.Span) {
 	if tracingDisabled() {
 		return ctx, trace.SpanFromContext(ctx)
 	}
@@ -31,7 +35,7 @@ func startExecuteSpan(ctx context.Context, opType string, query string) (context
 		internalSpanStartOptions[0],
 		trace.WithAttributes(
 			attribute.String("cypher.op_type", opType),
-			attribute.String("cypher.query", truncateQuery(query, 512)),
+			attribute.String("cypher.query", truncateQuery(e.redactForLog(query), 512)),
 		),
 	)
 	return ctx, span
@@ -65,10 +69,51 @@ func endOperatorSpan(span trace.Span, actualRows int64) {
 
 // recordSpanError marks a span with error status and the error message.
 func recordSpanError(span trace.Span, err error) {
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
+	if err != nil && span.IsRecording() {
+		message := redactSpanErrorText(err.Error())
+		span.SetStatus(codes.Error, message)
+		// RecordError appends err.Error() after caller attributes, so a message
+		// override cannot hide it. Emit the standard exception event directly,
+		// retaining the SDK's type naming and the caller's original error.
+		typ := reflect.TypeOf(err)
+		typeName := typ.String()
+		if typ.PkgPath() != "" || typ.Name() != "" {
+			typeName = typ.PkgPath() + "." + typ.Name()
+		}
+		span.AddEvent("exception", trace.WithAttributes(
+			attribute.String("exception.type", typeName),
+			attribute.String("exception.message", message),
+		))
 	}
+}
+
+// Error prose is not a Cypher statement. Locate its quoted input fragments with
+// the existing scanner, then delegate their projection to the query-literal
+// owner. Parsing the whole prose would discard useful reasons and error codes.
+func redactSpanErrorText(text string) string {
+	text = observability.RedactText(text)
+	var out strings.Builder
+	last := 0
+	for i := 0; i < len(text); i++ {
+		quote := text[i]
+		if quote != '\'' && quote != '"' {
+			continue
+		}
+		// A prose apostrophe (can't, isn't) does not open an input literal.
+		if quote == '\'' && i > 0 && i+1 < len(text) && unicode.IsLetter(rune(text[i-1])) && unicode.IsLetter(rune(text[i+1])) {
+			continue
+		}
+		end, _ := scanCypherQuotedText(text, i, quote)
+		out.WriteString(text[last:i])
+		out.WriteString(strings.TrimPrefix(RedactLiterals("RETURN "+text[i:end]), "RETURN "))
+		last = end
+		i = end - 1
+	}
+	if last == 0 {
+		return text
+	}
+	out.WriteString(text[last:])
+	return out.String()
 }
 
 // emitOperatorSpans walks the plan tree and emits a span per operator (TRC-16).
