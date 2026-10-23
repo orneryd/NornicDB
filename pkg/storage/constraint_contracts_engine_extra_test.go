@@ -20,7 +20,7 @@ func (e *ccErrScanEdgesEngine) GetEdgesByType(edgeType string) ([]*Edge, error) 
 }
 
 func TestValidateConstraintContractOnCreationForEngine_Branches(t *testing.T) {
-	eng := NewMemoryEngine()
+	eng := newTestMemoryEngine(t)
 	_, err := eng.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
 	require.NoError(t, err)
 	_, err = eng.CreateNode(&Node{ID: "test:n2", Labels: []string{"Person"}, Properties: map[string]any{"team": "core"}})
@@ -135,7 +135,7 @@ func TestAddConstraintContractBundle_Branches(t *testing.T) {
 
 func TestConstraintContractExpressionComparisonParseErrors_Propagate(t *testing.T) {
 	t.Run("engine evaluator malformed literal", func(t *testing.T) {
-		eng := NewMemoryEngine()
+		eng := newTestMemoryEngine(t)
 		node := &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"age": 10}}
 		_, err := evaluateNodeConstraintContractExpressionEngine(eng, node, "n.age >= [not_a_literal]")
 		require.Error(t, err)
@@ -158,7 +158,7 @@ func TestConstraintContractExpressionComparisonParseErrors_Propagate(t *testing.
 
 func TestNodeConstraintComparisonExpressions_EvaluatedInEngineAndTransaction(t *testing.T) {
 	t.Run("engine evaluator comparison", func(t *testing.T) {
-		eng := NewMemoryEngine()
+		eng := newTestMemoryEngine(t)
 		node := &Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10)}}
 
 		ok, err := evaluateNodeConstraintContractExpressionEngine(eng, node, "n.age >= 10")

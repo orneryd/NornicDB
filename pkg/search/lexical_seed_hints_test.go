@@ -3,7 +3,6 @@ package search
 import (
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,7 +72,7 @@ func TestLexicalSeedHintsV1V2Parity(t *testing.T) {
 }
 
 func TestHNSWBuildMetadataDoesNotExecuteBM25Queries(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	index := &metadataOnlySeedIndex{bm25Index: NewFulltextIndexV2()}
 
 	hints := service.hnswLexicalSeedHints(index, 16)

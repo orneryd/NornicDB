@@ -24,7 +24,7 @@ import (
 
 // TestUndoCreateNode verifies that creating a node can be undone.
 func TestUndoCreateNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -63,7 +63,7 @@ func TestUndoCreateNode(t *testing.T) {
 
 // TestUndoUpdateNode verifies that updating a node can be undone.
 func TestUndoUpdateNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -109,7 +109,7 @@ func TestUndoUpdateNode(t *testing.T) {
 
 // TestUndoDeleteNode verifies that deleting a node can be undone.
 func TestUndoDeleteNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -157,7 +157,7 @@ func TestUndoDeleteNode(t *testing.T) {
 
 // TestUndoWithoutBeforeImage verifies error on missing undo data.
 func TestUndoWithoutBeforeImage(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -588,7 +588,7 @@ func TestRecoveryResultSummary(t *testing.T) {
 
 // TestUndoCreateEdge verifies edge creation can be undone.
 func TestUndoCreateEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes first
@@ -621,7 +621,7 @@ func TestUndoCreateEdge(t *testing.T) {
 
 // TestUndoDeleteEdge verifies edge deletion can be undone.
 func TestUndoDeleteEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes and edge
@@ -659,7 +659,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 }
 
 func TestUndoUpdateEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
@@ -695,7 +695,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	}
 
 	t.Run("bulk create nodes then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		data, _ := json.Marshal(WALBulkNodesData{Nodes: nodes})
 		entry := WALEntry{Operation: OpBulkNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
@@ -707,7 +707,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	})
 
 	t.Run("bulk create edges then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
 			_, err := engine.CreateNode(n)
@@ -724,7 +724,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	})
 
 	t.Run("bulk delete nodes then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
 			_, err := engine.CreateNode(n)
@@ -740,7 +740,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	})
 
 	t.Run("bulk delete edges then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
 			_, err := engine.CreateNode(n)
@@ -759,7 +759,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 }
 
 func TestReplayAndUndoWALEntry_ErrorBranches(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	t.Run("marker operations are noops", func(t *testing.T) {

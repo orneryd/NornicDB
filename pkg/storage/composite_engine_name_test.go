@@ -11,7 +11,7 @@ import (
 // name its queries run under); a later record replaces it.
 func TestCompositeEngine_CompositeName(t *testing.T) {
 	composite := NewCompositeEngine(
-		map[string]Engine{"a": NewMemoryEngine()},
+		map[string]Engine{"a": newTestMemoryEngine(t)},
 		map[string]string{"a": "da"},
 		map[string]string{"a": "read_write"},
 	)

@@ -35,7 +35,7 @@ func TestBytePropertyRoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, values[0], e.Properties["v"])
 	}
-	mem := NewMemoryEngine()
+	mem := newTestMemoryEngine(t)
 	defer mem.Close()
 	write(mem)
 	read(mem)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	published := false
 	engine.OnNodeCreated(func(node *Node) {
@@ -32,7 +32,7 @@ func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 }
 
 func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	entered, release := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex
@@ -84,7 +84,7 @@ func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 }
 
 func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	entered, release := make(chan struct{}), make(chan struct{})
 	callbackResult := make(chan error, 1)
 	engine.OnNodeCreated(func(node *Node) {
@@ -118,7 +118,7 @@ func TestBadgerTransaction_CloseWaitsForListenerWithoutWriteBarrier(t *testing.T
 }
 
 func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 }
 
 func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.OnNodeCreated(func(node *Node) {
 		if node.ID == "review:panic" {

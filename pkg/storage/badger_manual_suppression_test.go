@@ -121,7 +121,7 @@ type unsuppressibleEngine struct{ Engine }
 // Engines without on-demand suppression under the WAL engine report
 // ErrNotImplemented; a closed engine fails (#1064).
 func TestManualSuppressionUnsupportedAndClosed(t *testing.T) {
-	backing := NewMemoryEngine()
+	backing := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = backing.Close() })
 	memory := unsuppressibleEngine{Engine: backing}
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())

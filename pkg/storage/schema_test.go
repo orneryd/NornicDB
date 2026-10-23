@@ -478,7 +478,7 @@ func TestSchemaManager_PersistRollbackAndRangeDeleteBranches(t *testing.T) {
 
 func TestMemoryEngineConstraintIntegration(t *testing.T) {
 	t.Run("ConstraintEnforcementOnCreate", func(t *testing.T) {
-		store := NewMemoryEngine()
+		store := newTestMemoryEngine(t)
 
 		// Add constraint
 		store.GetSchemaForNamespace("test").AddUniqueConstraint("email_unique", "User", "email")
@@ -527,7 +527,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 	})
 
 	t.Run("ConstraintOnMultipleLabels", func(t *testing.T) {
-		store := NewMemoryEngine()
+		store := newTestMemoryEngine(t)
 
 		store.GetSchemaForNamespace("test").AddUniqueConstraint("id_unique", "Entity", "id")
 
@@ -559,7 +559,7 @@ func TestMemoryEngineConstraintIntegration(t *testing.T) {
 	})
 
 	t.Run("NoConstraintForDifferentLabel", func(t *testing.T) {
-		store := NewMemoryEngine()
+		store := newTestMemoryEngine(t)
 
 		store.GetSchemaForNamespace("test").AddUniqueConstraint("user_email", "User", "email")
 
@@ -1235,7 +1235,7 @@ func TestSchemaManager_PersistenceErrorRollback(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_UnknownType(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
@@ -1249,7 +1249,7 @@ func TestValidateConstraintOnCreation_UnknownType(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	// Create two nodes with the same property value
@@ -1271,7 +1271,7 @@ func TestValidateConstraintOnCreation_UniqueViolation(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	// Create a node missing the required property
@@ -1291,7 +1291,7 @@ func TestValidateConstraintOnCreation_ExistenceViolation(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_UniqueMultipleProperties(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
@@ -1345,7 +1345,7 @@ func TestValidateExistenceRelationshipConstraint_MultipleProperties(t *testing.T
 }
 
 func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	// Create two nodes with the same composite key
@@ -1367,7 +1367,7 @@ func TestValidateConstraintOnCreation_NodeKeyViolation(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"first": "John"}})
@@ -1387,7 +1387,7 @@ func TestValidateConstraintOnCreation_NodeKeyNullProperty(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	// Create two nodes with overlapping temporal intervals for the same key
@@ -1421,7 +1421,7 @@ func TestValidateConstraintOnCreation_TemporalOverlap(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_TemporalBadProperties(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{
@@ -1435,7 +1435,7 @@ func TestValidateConstraintOnCreation_TemporalBadProperties(t *testing.T) {
 }
 
 func TestValidateConstraintOnCreation_ExistenceMultipleProperties(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	err := ValidateConstraintOnCreationForEngine(engine, Constraint{

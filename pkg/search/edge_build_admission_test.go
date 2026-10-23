@@ -89,7 +89,7 @@ func TestBuildRelationshipStreamDoesNotOvertakeLiveEdgeWrites(t *testing.T) {
 	ctx := context.Background()
 	for _, removal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "update_not_lost", true: "removal_not_resurrected"}[removal], func(t *testing.T) {
-			engine := &edgeStreamGateEngine{MemoryEngine: storage.NewMemoryEngine(), entered: make(chan struct{}), release: make(chan struct{})}
+			engine := &edgeStreamGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
 			release := sync.OnceFunc(func() { close(engine.release) })
 			t.Cleanup(func() { release(); _ = engine.MemoryEngine.Close() })
 			for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {

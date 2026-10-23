@@ -2,6 +2,7 @@ package search
 
 import (
 	"math/rand"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -90,7 +91,7 @@ func TestDocIDsAreLexicalByNumber(t *testing.T) {
 }
 
 func TestFulltextIndexV2LoadDerivesDocumentIDOrder(t *testing.T) {
-	path := t.TempDir() + "/bm25"
+	path := filepath.Join(t.TempDir(), "bm25")
 	idx := NewFulltextIndexV2()
 	idx.Index("doc-c", "shared")
 	idx.Index("doc-a", "shared")
@@ -200,7 +201,7 @@ func TestFulltextIndexV2ConcurrentColdQueries(t *testing.T) {
 }
 
 func TestServiceFulltextPropertyProjection(t *testing.T) {
-	service := NewService(storage.NewMemoryEngine())
+	service := NewService(newTestMemoryEngine(t))
 	service.SetFulltextProperties([]string{"title", "text", "title", ""})
 	node := &storage.Node{
 		ID:     "physical-id",
@@ -216,7 +217,7 @@ func TestServiceFulltextPropertyProjection(t *testing.T) {
 	require.Equal(t, []string{"title", "text"}, service.FulltextProperties())
 	require.Contains(t, service.composeBM25BuildSettings(), "props=title,text")
 
-	defaultService := NewService(storage.NewMemoryEngine())
+	defaultService := NewService(newTestMemoryEngine(t))
 	require.Contains(t, defaultService.composeBM25BuildSettings(), "props=*")
 	require.NotEqual(t, defaultService.composeBM25BuildSettings(), service.composeBM25BuildSettings())
 }

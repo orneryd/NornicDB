@@ -13,7 +13,7 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	cleanup := config.WithWALEnabled()
 	defer cleanup()
 
-	source := NewMemoryEngine()
+	source := newTestMemoryEngine(t)
 	namespaced := NewNamespacedEngine(source, "test")
 	_, err := namespaced.CreateNode(&Node{ID: "snapshot-node", Labels: []string{"Doc"}})
 	require.NoError(t, err)
@@ -30,7 +30,7 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 	}, "test"))
 	require.NoError(t, wal.Close())
 
-	destination := NewMemoryEngine()
+	destination := newTestMemoryEngine(t)
 	result, status, err := RecoverIntoEngine(destination, walDir, snapshotPath)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Applied)
@@ -45,7 +45,7 @@ func TestRecoverIntoEngineStreamsSnapshotAndWAL(t *testing.T) {
 }
 
 func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
-	source := NewMemoryEngine()
+	source := newTestMemoryEngine(t)
 	for _, namespace := range []string{"nornic", "system"} {
 		_, err := source.CreateNode(&Node{
 			ID: NodeID(namespace + ":node"), Labels: []string{"Doc"},

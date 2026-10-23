@@ -21,7 +21,7 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 	for _, operation := range []string{"sidecar", "update", "transaction", "delete"} {
 		for _, history := range []int{0, 256} {
 			t.Run(fmt.Sprintf("%s/history_%d", operation, history), func(t *testing.T) {
-				engine := NewMemoryEngine().BadgerEngine
+				engine := newTestMemoryEngine(t).BadgerEngine
 				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				body := &Node{ID: "test:history-owner", Labels: []string{"Doc"}, Properties: map[string]any{"text": "original"}}
 				_, err := engine.CreateNode(body)

@@ -17,7 +17,7 @@ func TestExtractNamespaceFromID_Variants(t *testing.T) {
 }
 
 func TestBadgerEngine_IsDecayEnabled_Toggle(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	// Default: decay is off until explicitly enabled.
@@ -31,7 +31,7 @@ func TestBadgerEngine_IsDecayEnabled_Toggle(t *testing.T) {
 }
 
 func TestBadgerEngine_IsEmbeddingsEnabled_Toggle(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	// Default false on a fresh engine.
@@ -45,7 +45,7 @@ func TestBadgerEngine_IsEmbeddingsEnabled_Toggle(t *testing.T) {
 }
 
 func TestBadgerEngine_DB_HandleNonNil(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 	require.NotNil(t, be.DB(), "DB() should return the live badger handle")
 }
@@ -56,7 +56,7 @@ func TestBytesMetricsSweeper_NameStable(t *testing.T) {
 }
 
 func TestBadgerEngine_InvalidatePendingEmbeddingsIndex_Noop(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 	require.NotPanics(t, func() {
 		be.InvalidatePendingEmbeddingsIndex()
@@ -64,7 +64,7 @@ func TestBadgerEngine_InvalidatePendingEmbeddingsIndex_Noop(t *testing.T) {
 }
 
 func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	tx, err := be.BeginTransaction()
@@ -84,7 +84,7 @@ func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
 }
 
 func TestBadgerTransaction_HasPendingNodeMutations_DeletionAlsoCounts(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	// Seed a committed node so we can stage a delete in a fresh tx.
@@ -102,7 +102,7 @@ func TestBadgerTransaction_HasPendingNodeMutations_DeletionAlsoCounts(t *testing
 }
 
 func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{
@@ -120,7 +120,7 @@ func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {
 }
 
 func TestReadNodeLabelsInTxn_MissingNode(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {

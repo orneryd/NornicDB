@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
 	defer badger.Close()
 
 	// Create WAL
-	wal, err := NewWAL(tmpDir+"/wal", nil)
+	wal, err := NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 
@@ -75,7 +76,7 @@ func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := NewWAL(tmpDir+"/wal", nil)
+	wal, err := NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 

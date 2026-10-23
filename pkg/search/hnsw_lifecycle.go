@@ -202,7 +202,7 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 	if vfs != nil && (vi == nil || vfs.Count() > 0) {
 		total = vfs.Count()
 		s.logPrintf("[HNSW] Building from file store: %d vectors", total)
-		lookup, iterator = s.getVectorLookup(), hnswVectorFileStoreIterator(vfs, hints)
+		lookup, iterator = vfs.GetVector, hnswVectorFileStoreIterator(vfs, hints)
 		lease, err := vfs.beginReadLease()
 		if err == nil {
 			defer lease.Close()

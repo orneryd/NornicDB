@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -274,7 +275,7 @@ func TestTransactionStatementHandlers_WithWALAsyncEngine(t *testing.T) {
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 
@@ -327,7 +328,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 

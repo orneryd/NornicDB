@@ -11,13 +11,13 @@ func TestRefreshUniqueConstraintValuesForEngine_NilArgs(t *testing.T) {
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nil, nil))
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nil, NewSchemaManager()))
 
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(e, nil))
 }
 
 func TestRefreshUniqueConstraintValuesForEngine_NoConstraints(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	schema := NewSchemaManager()
@@ -25,7 +25,7 @@ func TestRefreshUniqueConstraintValuesForEngine_NoConstraints(t *testing.T) {
 }
 
 func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	schema := e.GetSchemaForNamespace("test")
@@ -46,7 +46,7 @@ func TestRefreshUniqueConstraintValuesForEngine_RebuildsCache(t *testing.T) {
 }
 
 func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	for _, n := range []NodeID{"test:a", "test:b"} {
@@ -77,7 +77,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_DispatchesByType(t *t
 }
 
 func TestValidateDomainConstraintOnCreationForEngine(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
@@ -151,7 +151,7 @@ func TestValidateCardinalityOnCreationForEngine(t *testing.T) {
 }
 
 func TestValidatePolicyOnCreationForEngine(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	for _, node := range []*Node{
@@ -189,7 +189,7 @@ func TestValidatePolicyOnCreationForEngine(t *testing.T) {
 }
 
 func TestValidateRelPropertyTypeOnCreationForEngine(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	for _, n := range []NodeID{"test:a", "test:b"} {

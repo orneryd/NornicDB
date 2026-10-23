@@ -5,6 +5,7 @@ import (
 	"errors"
 	"expvar"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -114,7 +115,7 @@ func TestPendingCandidatesRecoveryAndRestore(t *testing.T) {
 	e.SetEmbeddingsEnabled(true)
 	_, err = e.CreateNode(pendingCandidateNode(0))
 	require.NoError(t, err)
-	backup := t.TempDir() + "/pending.backup"
+	backup := filepath.Join(t.TempDir(), "pending.backup")
 	require.NoError(t, e.Backup(backup))
 	require.NoError(t, e.Close())
 	e, err = NewBadgerEngine(path)

@@ -1641,32 +1641,28 @@ func TestEmbeddingIndexScoreSubsetValidation(t *testing.T) {
 }
 
 func TestProbeBackendVariants(t *testing.T) {
-	// Test all backend variants
-	// Note: probeBackend may return DeviceInfo with Available=false when GPU hardware
-	// is detected but the backend isn't built (e.g., CUDA without -tags cuda).
-	// This is intentional - it provides informational data about detected hardware.
-	backends := []Backend{
-		BackendNone,
-		BackendOpenCL,
-		BackendVulkan,
-		Backend("unknown"),
-	}
-
-	for _, b := range backends {
-		device, err := probeBackend(b, 0)
-		if err == nil {
-			// If no error, device must exist and should not be usable for these backends
-			if device != nil && device.Available {
-				t.Errorf("probeBackend(%s) returned available device unexpectedly", b)
-			}
+	for _, backend := range []Backend{BackendNone, BackendOpenCL, Backend("unknown")} {
+		device, err := probeBackend(backend, 0)
+		if device != nil || err != ErrGPUNotAvailable {
+			t.Fatalf("unsupported backend %s returned device=%v error=%v", backend, device, err)
 		}
 	}
-
-	// CUDA and Metal may return device info (even if not fully available) when hardware detected
-	// This is not an error - it allows informational logging about detected GPUs
-	for _, b := range []Backend{BackendCUDA, BackendMetal} {
-		device, err := probeBackend(b, 0)
-		t.Logf("probeBackend(%s): device=%v, err=%v", b, device != nil, err)
+	for _, backend := range []Backend{BackendCUDA, BackendMetal, BackendVulkan} {
+		device, err := probeBackend(backend, 0)
+		if err == nil {
+			if device == nil {
+				t.Fatalf("successful %s probe returned no device", backend)
+			}
+			if device.Available && device.Backend != backend {
+				t.Fatalf("available %s probe returned backend %s", backend, device.Backend)
+			}
+			// CUDA may report installed hardware without a compiled CUDA backend.
+			// Other successful probes must describe available compute.
+			if !device.Available && (backend != BackendCUDA || device.Backend != BackendNone) {
+				t.Fatalf("successful %s probe returned unavailable compute: %+v", backend, device)
+			}
+		}
+		t.Logf("probeBackend(%s): device=%v, err=%v", backend, device, err)
 	}
 }
 

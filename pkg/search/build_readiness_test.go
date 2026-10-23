@@ -15,7 +15,7 @@ import (
 )
 
 func TestBuildReadinessPublishedAfterSuccessfulFinalReplay(t *testing.T) {
-	engine := &triageSnapshotEngine{MemoryEngine: storage.NewMemoryEngine()}
+	engine := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func (e *readinessHandoffEngine) OpenReadSnapshot(ctx context.Context) (storage.
 }
 
 func TestBuildReadinessWaitsForOverlappingFinalSequence(t *testing.T) {
-	engine := &readinessHandoffEngine{MemoryEngine: storage.NewMemoryEngine(), entered: make(chan struct{}), release: make(chan struct{})}
+	engine := &readinessHandoffEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)

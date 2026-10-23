@@ -7,7 +7,7 @@
 # For local builds, use: .\scripts\build-llama-cuda.ps1
 #
 # Build (requires Windows container mode):
-#   docker build -f docker/Dockerfile.llama-cuda-windows -t timothyswt/llama-cuda-libs-windows:v0.4.1 .
+#   docker build -f docker/Dockerfile.llama-cuda-windows -t timothyswt/llama-cuda-libs-windows:v0.7.0 .
 #
 # For GitHub Actions:
 #   See .github/workflows/build-llama-windows.yml
@@ -28,13 +28,15 @@ RUN choco install -y git cmake ninja visualstudio2022buildtools --package-parame
 # Note: CUDA Toolkit must be pre-installed on the host or use NVIDIA's CUDA Windows container image
 # For CI, consider using: mcr.microsoft.com/dotnet/framework/sdk with manual CUDA install
 
-ARG LLAMA_VERSION=v0.4.1
+ARG LLAMA_VERSION=v0.7.0
 ARG CUDA_VERSION=12.6
 
 WORKDIR C:\\llama
 
 # Clone llama.cpp
+COPY lib/llama/REVISION C:/llama-expected-revision
 RUN git clone --depth 1 --branch $env:LLAMA_VERSION https://github.com/ggml-org/llama.cpp.git .
+RUN if ((git rev-parse HEAD).Trim() -ne (Get-Content C:\llama-expected-revision -Raw).Trim()) { throw 'llama.cpp revision mismatch' }
 
 # Patch log.cpp for MSVC compatibility
 RUN $content = Get-Content 'common\\log.cpp' -Raw; \

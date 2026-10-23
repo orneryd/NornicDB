@@ -177,7 +177,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
-		_, err = wal.CreateSnapshot(NewMemoryEngine())
+		_, err = wal.CreateSnapshot(newTestMemoryEngine(t))
 		require.ErrorIs(t, err, ErrWALClosed)
 	})
 
@@ -186,7 +186,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 		engine := &snapshotErrorEngine{
-			MemoryEngine: NewMemoryEngine(),
+			MemoryEngine: newTestMemoryEngine(t),
 			allNodesErr:  fmt.Errorf("nodes-fail"),
 		}
 		_, err = wal.CreateSnapshot(engine)
@@ -198,7 +198,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 		engine := &snapshotErrorEngine{
-			MemoryEngine: NewMemoryEngine(),
+			MemoryEngine: newTestMemoryEngine(t),
 			allEdgesErr:  fmt.Errorf("edges-fail"),
 		}
 		_, err = wal.CreateSnapshot(engine)
@@ -315,7 +315,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create 100 nodes
@@ -362,7 +362,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create 50 nodes before snapshot
@@ -410,7 +410,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			// Create nodes
@@ -475,7 +475,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -499,7 +499,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable first time - should succeed
@@ -529,7 +529,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Add some data before enabling compaction
@@ -587,7 +587,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -633,7 +633,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -703,7 +703,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Write a lot of data to grow the WAL
@@ -777,7 +777,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -832,7 +832,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			for i := 1; i <= 50; i++ {
@@ -871,7 +871,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction on empty WAL

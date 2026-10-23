@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -134,8 +135,8 @@ func newGPUCompressedPipelineService(t *testing.T) *Service {
 		require.NoError(t, err)
 	}
 	svc := NewServiceWithDimensions(engine, 4)
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
 	svc.SetPersistenceEnabled(true)
 	svc.SetGPUManager(manager)
 	return svc

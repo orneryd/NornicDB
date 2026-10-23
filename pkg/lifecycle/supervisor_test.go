@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
 	"testing"
@@ -146,6 +147,9 @@ func TestRun_ComponentErrorTriggersDrain(t *testing.T) {
 // TestRun_SignalTriggersDrain confirms signal.NotifyContext-driven cancel
 // runs the drain. Table-driven across SIGINT and SIGTERM.
 func TestRun_SignalTriggersDrain(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Process.Signal cannot send SIGINT/SIGTERM on Windows; run signal delivery on Unix")
+	}
 	cases := []struct {
 		name string
 		sig  syscall.Signal

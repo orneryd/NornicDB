@@ -60,7 +60,7 @@ func TestFulltextIndexV2_StableTopK(t *testing.T) {
 }
 
 func TestFulltextIndexV2_SaveLoadAndMigrateV1(t *testing.T) {
-	path := t.TempDir() + "/bm25"
+	path := filepath.Join(t.TempDir(), "bm25")
 
 	v2 := NewFulltextIndexV2()
 	v2.Index("doc1", "hello world")
@@ -72,7 +72,7 @@ func TestFulltextIndexV2_SaveLoadAndMigrateV1(t *testing.T) {
 	require.Equal(t, 2, loaded.Count())
 	require.NotEmpty(t, loaded.Search("hello", 10))
 
-	legacyPath := t.TempDir() + "/bm25_legacy"
+	legacyPath := filepath.Join(t.TempDir(), "bm25_legacy")
 	legacySnap := bm25V1Snapshot{
 		Version:   "1.0.0",
 		Documents: map[string]string{"docA": "legacy migration path", "docB": "legacy bm25 test"},
