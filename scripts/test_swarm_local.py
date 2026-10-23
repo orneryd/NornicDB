@@ -29,6 +29,14 @@ class SwarmLocalTest(unittest.TestCase):
             self.assertEqual(saved["providerInstances"]["ollama_local"]["displayName"], "Nornic Local · Ornith")
             self.assertEqual(saved["providerInstances"]["ollama_remote"]["displayName"], "Nornic Remote 9B")
             self.assertEqual(saved["defaultModelSelection"], {"instanceId": "ollama_local", "model": "default"})
+            for worker_id in ("nornic_local_worker", "nornic_remote_worker"):
+                worker = saved["providerInstances"][worker_id]
+                self.assertNotIn("--no-builtin-tools", worker["config"]["launchArgs"])
+                self.assertNotIn("--no-context-files", worker["config"]["launchArgs"])
+                self.assertIn({"name": "T3_NORNIC_DELEGATED_WORKER", "value": "1", "sensitive": False}, worker["environment"])
+                self.assertFalse(any(item["name"] == "T3_NORNIC_LOCAL_WORKER" for item in worker["environment"]))
+            self.assertIn("--no-builtin-tools", saved["providerInstances"]["ollama_local"]["config"]["launchArgs"])
+
             models = json.loads((root / "pi-state" / "models.json").read_text())
             self.assertEqual(models["providers"]["custom"], {"baseUrl": "http://custom"})
             self.assertEqual(models["providers"]["ollamaRemote"]["baseUrl"], "http://remote:11434/v1")
@@ -57,6 +65,18 @@ class SwarmLocalTest(unittest.TestCase):
                 swarm_local.configure_providers(root, {})
             self.assertEqual(json.loads(settings.read_text())["defaultModelSelection"]["model"], "gpt-6.1-sol")
 
+    def test_lan_configuration_preserves_other_vite_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env.local").write_text("CUSTOM_SETTING=keep\nHOST=localhost\n")
+            env = {"SWARM_T3_ADVERTISE_HOST": "192.168.1.231"}
+            args = swarm_local.configure_network(root, env)
+            self.assertEqual(args, ["--host", "0.0.0.0", "--port", "13773", "--dev-url", "http://192.168.1.231:5733"])
+            self.assertEqual((root / ".env.local").read_text(), "CUSTOM_SETTING=keep\nHOST=0.0.0.0\n")
+            self.assertEqual(env["T3CODE_PORT_OFFSET"], "0")
+            with self.assertRaises(RuntimeError):
+                swarm_local.configure_network(root, {"SWARM_T3_ADVERTISE_HOST": "127.0.0.1"})
+
     def test_private_env_does_not_execute_or_override_process_values(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -73,6 +93,7 @@ class SwarmLocalTest(unittest.TestCase):
             root.joinpath("env").write_text("SWARM_NORNICDB_URL=http://remote:7474\nSWARM_REMOTE_OLLAMA_URL=http://remote:11434\n")
             with mock.patch.object(swarm_local, "paths", return_value=(root, root / "T3", root / "state")), \
                  mock.patch.object(swarm_local, "require_tools"), \
+                 mock.patch.object(swarm_local, "configure_network", return_value=["--host", "0.0.0.0", "--port", "13773", "--dev-url", "http://192.168.1.231:5733"]), \
                  mock.patch.object(swarm_local, "request", return_value={"errors": []}), \
                  mock.patch.object(swarm_local, "configure_providers"), \
                  mock.patch.object(swarm_local.subprocess, "run") as process:

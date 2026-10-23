@@ -8,13 +8,16 @@ All generated files and credentials live outside the repository.
 import argparse
 import base64
 import json
+import ipaddress
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -70,16 +73,16 @@ def model_entry(model, name, context_window, reasoning=False):
     }
 
 
-def provider_instance(name, provider, model, agent_home, agent_binary):
+def provider_instance(name, provider, model, agent_home, agent_binary, *, delegated=False):
     return {
         "driver": "pi", "displayName": name, "enabled": True,
         "environment": [
             {"name": "PI_CODING_AGENT_DIR", "value": str(agent_home), "sensitive": False},
-            {"name": "T3_NORNIC_LOCAL_WORKER", "value": "1", "sensitive": False},
+            {"name": "T3_NORNIC_DELEGATED_WORKER" if delegated else "T3_NORNIC_LOCAL_WORKER", "value": "1", "sensitive": False},
         ],
         "config": {
             "enabled": True, "binaryPath": str(agent_binary),
-            "launchArgs": f"--provider {provider} --model {model} --no-context-files --no-skills --no-builtin-tools",
+            "launchArgs": f"--provider {provider} --model {model} --no-skills" + ("" if delegated else " --no-context-files --no-builtin-tools"),
             "customModels": [],
         },
     }
@@ -118,8 +121,10 @@ def configure_providers(root, env):
     instances = settings.setdefault("providerInstances", {})
     agent_binary = root / "pi" / "node_modules" / ".bin" / "pi"
     instances.setdefault("ollama_local", provider_instance("Nornic Local · Ornith", "nornicLocal", local_model, agent_home, agent_binary))
+    instances.setdefault("nornic_local_worker", provider_instance("Nornic Local Worker · Ornith", "nornicLocal", local_model, agent_home, agent_binary, delegated=True))
     if remote_url:
         instances.setdefault("ollama_remote", provider_instance("Nornic Remote 9B", "ollamaRemote", remote_model, agent_home, agent_binary))
+        instances.setdefault("nornic_remote_worker", provider_instance("Nornic Remote Worker · Qwen 9B", "ollamaRemote", remote_model, agent_home, agent_binary, delegated=True))
     codex = env.get("SWARM_CODEX_BINARY") or shutil.which("codex")
     if codex:
         instances.setdefault("codex", {
@@ -225,6 +230,34 @@ def doctor():
             print(f"{label}: unavailable ({exc})")
 
 
+def configure_network(t3, env):
+    """Configure both sides of T3's single-origin development proxy for LAN access."""
+    advertise = env.get("SWARM_T3_ADVERTISE_HOST", "").strip()
+    if not advertise:
+        peer = urlsplit(env.get("SWARM_NORNICDB_URL") or env.get("NORNICDB_URI", "")).hostname
+        if not peer:
+            raise RuntimeError("Set SWARM_T3_ADVERTISE_HOST to this machine's LAN IP in the private harness env file.")
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+            route.connect((peer, 7474))
+            advertise = route.getsockname()[0]
+    address = ipaddress.ip_address(advertise)
+    if address.is_loopback or address.is_unspecified:
+        raise RuntimeError("SWARM_T3_ADVERTISE_HOST must be this machine's non-loopback LAN IP.")
+    # Backend must answer loopback for Vite's existing proxy, as well as LAN
+    # clients. A concrete backend bind is rejected by upstream dev-runner.
+    env.setdefault("T3CODE_PORT_OFFSET", "0")
+    web_port = 5733 + int(env["T3CODE_PORT_OFFSET"])
+    host = f"[{address}]" if address.version == 6 else str(address)
+    url = f"http://{host}:{web_port}"
+    # The runner deliberately removes inherited HOST; Vite supports loading it
+    # from .env.local. Wildcard HMR derives its destination from the page URL.
+    local = t3 / ".env.local"
+    lines = local.read_text().splitlines() if local.exists() else []
+    lines = [line for line in lines if not line.strip().startswith("HOST=")]
+    local.write_text("\n".join([*lines, "HOST=0.0.0.0"]) + "\n")
+    return ["--host", "0.0.0.0", "--port", str(13773 + int(env["T3CODE_PORT_OFFSET"])), "--dev-url", url]
+
+
 def start():
     require_tools("vp")
     root, t3, state = paths()
@@ -246,6 +279,7 @@ def start():
     env.setdefault("NORNIC_CLASSIFIER_MODEL", env.get("SWARM_REMOTE_ALIAS", "nornic-coder"))
     env.setdefault("NORNIC_LOCAL_PROVIDER_INSTANCE", "ollama_local")
     env.setdefault("NORNIC_FRONTIER_INSTANCES", "codex")
+    env.setdefault("NORNIC_WORKER_PROVIDER_INSTANCES", "nornic_local_worker,nornic_remote_worker")
     env["NORNIC_DUPLICATE_PYTHON"] = str(root / "code-intel" / "bin" / "python")
     env["NORNIC_GRAPHIFY"] = str(root / "code-intel" / "bin" / "graphify")
     env["NORNIC_DUPLICATE_RUNNER"] = str(REPO / "scripts" / "code_intelligence.py")
@@ -256,8 +290,9 @@ def start():
     if result.get("errors"):
         raise RuntimeError(f"Cannot create workflow database: {result['errors']}")
     configure_providers(root, env)
+    network_args = configure_network(t3, env)
     print("Starting T3. Open its pairing URL in a browser; press Ctrl-C to stop.", flush=True)
-    subprocess.run(["vp", "run", "dev", "--home-dir", str(state), "--no-seed"], cwd=t3, env=env, check=True)
+    subprocess.run(["vp", "run", "dev", "--home-dir", str(state), "--no-seed", *network_args], cwd=t3, env=env, check=True)
 
 
 def ingest_help():

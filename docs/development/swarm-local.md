@@ -74,15 +74,11 @@ driver identifier are technical dependency names, not the agent's UI name.
 New chats default to **Nornic Local · Ornith / Nornic default**. Within the
 Codex provider, the model dropdown defaults to **GPT-6.1 Sol** with **Low** reasoning.
 Choose **Nornic Local · Ornith** to use automatic intent routing. Selecting
-**Codex Frontier** directly starts it without the intake classifier. The remote
-Nornic provider is configured, but its worker environment currently uses the same
-intake hook while `intent.route` accepts only the local provider. Direct remote
-worker execution is therefore not qualified and can return `ROUTING_ORIGIN_DENIED`;
-it must not be treated as a working delegation path. The intent classifier uses
-the remote `nornic-coder` model. For
-automatic intake routing, the local Nornic instance is `ollama_local` and Codex is
-available as a frontier provider; the remote Nornic instance remains selectable for
-bounded tasks once distinct delegated-worker admission is implemented and tested.
+**Codex Frontier** directly starts it without the intake classifier. Automatic
+intake routing uses `ollama_local`; Codex is the frontier provider. Coding workers
+use distinct entries, `nornic_local_worker` and `nornic_remote_worker`, described
+below. The older standalone `ollama_remote` entry still uses the local-only intake
+hook and is not the remote delegated-worker target.
 The remote 9B model classifies intent and complexity. `intent.route`
 may automatically delegate frontier work only to the exact `gpt-6.1-sol` model,
 starting at low reasoning. After a frontier handoff, the local agent only reports
@@ -91,12 +87,6 @@ hook refuses workflow and graph calls with that handoff reason. Failed routing
 uses the same control and reports the failure. The next admitted user turn resets
 this state. A Linear issue identifier belongs to `linear.issue`; it is not a graph
 node ID for `nornic_recall`.
-
-T3's `delegate_task` supports cross-provider child agents, but using these Nornic
-providers as frontier-directed coding workers still needs a distinct worker
-admission path rather than recursively re-entering intake routing. Linear writes
-and organization operations are also not implemented; current Linear operations
-are read-only. Do not claim either path ready from provider configuration alone.
 
 Plans, reviews, and very uncertain classifications use
 medium reasoning. If Sol is not advertised and ready, routing returns
@@ -496,3 +486,136 @@ Qualification observed on the initial Windows/RTX 2080 Ti setup:
 
 These observations do not replace `make verify` for the NornicDB PR. Report its
 actual result and platform/baseline failures separately.
+
+
+## Offload bounded work from Sol
+
+The setup adds two worker provider instances backed by the existing model servers:
+
+| Provider instance | T3 label | Serving model |
+| --- | --- | --- |
+| `nornic_local_worker` | Nornic Local Worker · Ornith | Local llama.cpp, `nornic-ornith` |
+| `nornic_remote_worker` | Nornic Remote Worker · Qwen 9B | Remote Ollama, `nornic-agent-remote` |
+
+These workers are **subagent targets**, not the default chat selection. Start with
+Nornic intake or Sol, ask it to inspect `orchestrator_capabilities`, then give it
+one bounded delegation. For example:
+
+```json
+{
+  "task": "Update docs/example.md to explain the existing flag. Read AGENTS.md, edit only that file, run the documented Markdown checks, and return changed files and actual results. Do not commit or publish.",
+  "title": "Document the existing flag",
+  "target": { "providerInstanceId": "nornic_local_worker", "model": "default" },
+  "isolation": "worktree",
+  "mode": "async",
+  "clientRequestId": "document-existing-flag-1"
+}
+```
+
+Call `delegate_task` with that object. Use `nornic_remote_worker` for a smaller
+Qwen task. Always inspect readiness in the live catalog; an unavailable worker
+is a blocker, not permission to choose Astra or another paid model. Prefer one
+active task per model server. Keep the parent brief concise: children receive the
+supplied task rather than the parent's entire conversation. Include file scope,
+acceptance checks, dependencies and what evidence to return.
+
+T3 creates the child's isolated checkout from the parent's **committed HEAD**;
+uncommitted parent edits are not copied. `worker.admit` checks the authenticated
+provider, live child run, subagent lineage, bound worktree and matching active
+app-owned task in the parent projection. The task prompt comes from that record,
+not model-supplied admission fields. Admission does not invoke the classifier,
+read assistant, retrieval, or frontier. A standalone worker chat, shared-checkout
+child, unconfigured provider or canceled/mismatched assignment stays blocked.
+`NORNIC_WORKER_PROVIDER_INSTANCES` configures the worker provider allowlist; its
+default is the two IDs above.
+
+Admitted workers use the runtime's native read/edit/write/bash tools and load the
+checkout's AGENTS guidance. The same T3 permission-mode hook still applies:
+Supervised requests approval for writes/commands; Auto-accept edits requests
+approval for commands; Full access executes admitted tools directly. The gateway
+also exposes read-only code/help/Linear lookups. Workers cannot call routing,
+delegation or workflow mutations through that gateway. Admission is checked again
+on each new agent turn. This is tool admission plus an isolated Git checkout,
+**not an operating-system sandbox** or enforcement of arbitrary shell filesystem
+access. The brief remains the authorized task boundary.
+
+The parent collects the task receipt with `task_status`, reviews the child's diff
+and evidence, and integrates the result. Workers do not merge, publish or change
+git hooks. This path supports authoring code, docs and tests and running bounded
+checks; it does not claim the complete lifecycle/claim enforcement spec finished.
+
+## Connect Sol to Linear's official tools
+
+The harness's `LINEAR_API_KEY` supports its read-only intake operations. A full
+permission token does not add write operations to that API. To let the Codex/Sol
+parent use Linear's official MCP tools independently, run under the same account
+that starts T3:
+
+```sh
+codex mcp add linear --url https://mcp.linear.app/mcp
+codex mcp login linear
+```
+
+If the server already exists, update its existing configuration rather than
+creating a duplicate. Finish the browser authorization for the intended workspace
+and restart the T3 Codex agent. Verify an assigned-issues read before requesting
+organizational changes. This setup does not expose Linear mutations to the Nornic
+worker tool allowlist; leave those operations with the authorized parent.
+See [Linear's official MCP guide](https://linear.app/docs/mcp) and
+[OpenAI's MCP configuration guide](https://developers.openai.com/codex/mcp).
+
+
+## LAN pairing
+
+`make swarm` now starts the backend on `0.0.0.0` and the Vite frontend on all
+IPv4 interfaces. The frontend remains the single origin for HTTP and
+WebSocket traffic; its existing proxy connects to the backend over loopback.
+The launcher sets both `--host`/`--dev-url` and Vite's supported `.env.local`
+`HOST=0.0.0.0` setting, preserving unrelated entries. The approved pinned Vite
+patch lets HMR derive its destination from the browser URL for wildcard binds,
+so both `localhost` and the LAN address work. Setting only the backend bind does
+not make the development UI reachable remotely.
+
+Set `SWARM_T3_ADVERTISE_HOST` in the private harness env file to this Mac's actual
+LAN IP, for example `192.168.1.231`. Without an explicit value, the launcher uses
+the local IPv4 route to the configured NornicDB host and rejects a loopback result
+with setup guidance. The default URL is `http://<LAN-IP>:5733`; backend port is
+13773. A configured `T3CODE_PORT_OFFSET` moves both ports by that offset. Both
+ports are passed explicitly so the advertised URL cannot silently point to a
+port abandoned by automatic free-port selection. If occupied, stop the previous
+harness before starting another against the same state directory.
+
+Restart T3 after changing the address. The console prints an authenticated
+pairing URL; keep that link private. Network access should report
+`remote-reachable`, and an unauthenticated `/api/auth/session` still reports
+`authenticated: false`. This does not change the local model's loopback listener
+or disable T3 authentication. A request from this Mac's own LAN address verifies
+binding and routing; another device's firewall/network reachability is a separate
+check.
+
+To repeat the controlled worker checks on this Unix harness:
+
+```sh
+python3 testing/swarm-local/worker_smoke.py
+```
+
+The script materializes the current extension, starts an explicit local MCP
+admission fixture, and runs each real model against a disposable Python coding
+task. It verifies native editing and test execution and requires only
+`worker.admit`, never `intent.route`. Its JSON report is written outside the
+repository in the persistent harness directory. It does not create actual T3
+parent/child receipts or exercise a live frontier model; the public workflow
+regressions separately test authorization against T3 projections.
+
+
+Recorded worker smoke evidence is in
+[`testing/swarm-local/worker-smoke-results.json`](../../testing/swarm-local/worker-smoke-results.json):
+the latest controlled runs completed in 29.74 seconds on Ornith and 79.22 seconds
+on remote Qwen, each fixing the function and passing its existing tests using
+native editing and commands. These durations are individual smoke runs, not
+comparative performance benchmarks. The harness unit suite passed 11 tests; the
+focused T3/provider/dev-runner suite passed 234 tests with 9 opt-in skips.
+Provider-package typecheck passed. Server-package typecheck still exits 2 on
+repository-wide Effect diagnostics, with no TypeScript error diagnostics in the
+checked run. Native Windows and a live frontier-to-worker orchestration run were
+not exercised by these checks.

@@ -134,3 +134,12 @@ not complete the larger milestone's acceptance contract.
 - [x] Pin and checksum the Ornith APEX MTP Compact artifact and install llama.cpp.
 - [x] Verify the persistent local server, native 256K allocation, tool calls and warm reuse.
 - [x] Keep the router at 32K and use serving-model context sizes for agent sessions; leave Codex native defaults untouched.
+
+## Local experiment: delegated coding workers
+
+- [x] Admit only a live T3-owned delegated child on a configured local/remote worker provider in its isolated worktree.
+- [x] Use the parent's recorded task without reclassification or further delegation; preserve native permission modes.
+- [x] Configure local Ornith and remote Qwen workers separately from default intake.
+- [x] Prove rejection boundaries and actual controlled coding work on both servers; document Linear setup steps and limitations.
+
+- [x] Configure LAN binding for both frontend and backend, retain pairing authentication, and verify the operator's advertised address.
