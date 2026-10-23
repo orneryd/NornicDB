@@ -21,6 +21,7 @@ require (
 	github.com/hashicorp/go-kms-wrapping/wrappers/azurekeyvault/v2 v2.0.16
 	github.com/hybridgroup/yzma v1.30.0
 	github.com/klauspost/compress v1.19.1
+	github.com/neo4j/neo4j-go-driver/v4 v4.4.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/prometheus/client_golang v1.24.1
