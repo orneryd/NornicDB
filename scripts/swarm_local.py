@@ -19,6 +19,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from swarm_context import configure_context, local_context_window
+
 
 REPO = Path(__file__).resolve().parent.parent
 T3_PIN = "2c8bdf6177159d8fcd12a897d7c9311f6eb93237"
@@ -102,7 +104,7 @@ def configure_providers(root, env):
     providers = {
         "nornicLocal": {
             "baseUrl": local_url + "/v1", "api": "openai-completions", "apiKey": "local",
-            "models": [model_entry(local_model, "Ornith 1.5 Compact Local", int(env.get("SWARM_LOCAL_CONTEXT_WINDOW", "0")) or 262144, reasoning=True)],
+            "models": [model_entry(local_model, "Ornith 1.5 Compact Local", local_context_window(env), reasoning=True)],
         },
     }
     if remote_url:
@@ -277,6 +279,7 @@ def start():
     if not env["NORNIC_OLLAMA_URL"]:
         raise RuntimeError(f"Set SWARM_REMOTE_OLLAMA_URL in {root / 'env'} for the intent router.")
     env.setdefault("NORNIC_CLASSIFIER_MODEL", env.get("SWARM_REMOTE_ALIAS", "nornic-coder"))
+    configure_context(env)
     env.setdefault("NORNIC_LOCAL_PROVIDER_INSTANCE", "ollama_local")
     env.setdefault("NORNIC_FRONTIER_INSTANCES", "codex")
     env.setdefault("NORNIC_WORKER_PROVIDER_INSTANCES", "nornic_local_worker,nornic_remote_worker")

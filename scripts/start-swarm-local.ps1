@@ -24,6 +24,16 @@ $env:NORNIC_CODE_DATABASE = 'nornicdbcode'
 $env:NORNIC_OLLAMA_URL = 'http://127.0.0.1:11434'
 $env:NORNIC_CLASSIFIER_MODEL = 'nornic-coder'
 $env:NORNIC_FRONTIER_INSTANCES = 'codex,claude'
+# Use the same context admission owner as the Unix launcher. Read the installed
+# provider manifest; emit only non-secret context/model configuration.
+$contextPython = Join-Path $CodeIntelEnvironment 'Scripts\python.exe'
+$contextConfiguration = Invoke-SwarmCommand $contextPython -Arguments @(
+    (Join-Path $PSScriptRoot 'swarm_context.py'), '--models',
+    (Join-Path $ToolsRoot 'pi-state\models.json'), '--provider', 'ollama', '--model', 'nornic-agent-remote'
+) | ConvertFrom-Json
+foreach ($property in $contextConfiguration.PSObject.Properties) {
+    [Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value, 'Process')
+}
 $env:NORNIC_DUPLICATE_PYTHON = Join-Path $CodeIntelEnvironment 'Scripts\python.exe'
 $env:NORNIC_GRAPHIFY = Join-Path $CodeIntelEnvironment 'Scripts\graphify.exe'
 $env:NORNIC_DUPLICATE_RUNNER = Join-Path $CheckerRepository 'scripts\code_intelligence.py'

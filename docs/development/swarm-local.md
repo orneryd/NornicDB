@@ -85,7 +85,7 @@ starting at low reasoning. After a frontier handoff, the local agent only report
 the child-thread receipt: its model request disables tool selection and its tool
 hook refuses workflow and graph calls with that handoff reason. Failed routing
 uses the same control and reports the failure. The next admitted user turn resets
-this state. A Linear issue identifier belongs to `linear.issue`; it is not a graph
+this state. A Linear issue identifier belongs to the discovered Linear issue tool; it is not a graph
 node ID for `nornic_recall`.
 
 Plans, reviews, and very uncertain classifications use
@@ -191,18 +191,28 @@ frontier authentication are separate.
 
 For Linear, add `LINEAR_API_KEY=...` to the same ignored env file. The startup
 script passes it only to the local T3 server; Docker does not need this key.
-The tracker adapter uses [Linear's GraphQL API](https://linear.app/developers/graphql).
-`linear.assigned` lists issues assigned to the authenticated API-key owner,
-returning that person's identity and `pageInfo`. It defaults to 25 uncompleted
-issues in the configured `NORNIC_LINEAR_TEAM` (default `NOR`); `first` accepts
-1–50, `after` continues the returned cursor, and `includeCompleted` includes
-completed/canceled issues. Do not assume that an integration key belongs to the
-human asking: report the returned account and resolve any identity mismatch.
-For example, call `nornic_workflow` with
-`{"operation":"linear.assigned","requestId":"assigned-1"}`. If
-`pageInfo.hasNextPage` is true, continue with `after=pageInfo.endCursor` and a
-new request ID before claiming a complete list.
+The intake uses [Linear's official MCP server](https://linear.app/docs/mcp),
+with `LINEAR_API_KEY` passed as a bearer credential on the server side. Its default
+endpoint is `https://mcp.linear.app/mcp/readonly`; `NORNIC_LINEAR_MCP_URL` can
+configure a compatible endpoint. Missing authentication and connectivity failures
+report the environment variables to check; credentials never enter model prompts.
 
+Call `nornic_workflow` with `{"operation":"linear.tools","requestId":"tools-1"}`
+to discover the live catalog, descriptions and full input schemas. Catalog
+pagination is drained. To use a discovered tool, call
+`{"operation":"linear.call","toolName":"<discovered name>","arguments":{},"requestId":"call-1"}`.
+The tool name and argument object come from discovery, not a maintained list of
+Linear operations in the application. Newly exposed read tools work without
+adding an enum case. The controller supplies the selected tool's full schema
+before invoking it, and uses that schema as JSON-generation constraints. The
+SDK handles the MCP transport; the upstream tool validates its arguments. Tool
+validation errors remain planner evidence, rather than being relabeled as bad
+credentials. Returned cursors must be used unchanged, and partial lists must be
+identified. The official read-only endpoint and `readOnlyHint` metadata preserve
+the intake's read-only contract without a hand-maintained tool-name allowlist.
+
+The typed tracker operations remain available to existing explicit callers and
+internal task binding; the intake no longer selects from that fixed list.
 `linear.issue` reads the current issue; `linear.bind` attaches the exact current
 scope and external version to an assigned task. Binding invalidates its previous
 plan/claims/duplicate receipt, so plan again against the actual issue. Bound tasks
@@ -338,15 +348,55 @@ provider. Missing classification or frontier readiness blocks admission and
 reports the reason. A request to *implement an existing plan* must classify as
 implementation, not as a request to create a plan.
 
-For simple local information requests, a bounded read assistant on the routing
-model can call `linear.assigned`, `linear.issue` and `context.search` directly.
-It can make up to three reads, inspect results, and ask a specific clarification
-question when user input is missing. Up to four preceding conversation messages
-are available to resolve clarification replies. Repeated requests, oversized
-evidence and missing evidence stop the shortcut rather than fabricating an
-answer. The selected local model displays its answer or question with further
-tool calls disabled; this is not a direct UI response that avoids all local-model
-inference. Complex requests still follow the existing Sol routing rules.
+For simple information requests, the read assistant discovers and selects live
+Linear tools, or retrieves repository/help context. It can inspect schemas,
+execute reads, and ask a precise question when user input is missing. Tool
+requests and responses are retained with their actual names and arguments.
+Successful completed answers use the direct runtime reply stream. The selected
+coding-model dropdown does not disable intent classification.
+
+Context admission occurs at the model-request boundary and includes the full
+system instructions, generation schema, history and tool evidence. The former
+18,000-character evidence cutoff, 32,000-character input cutoff and truncation of
+clarification history have been removed. The admission calculation conservatively
+reserves one token per serialized UTF-8 byte, plus 4,096 tokens for output/chat
+headroom; it is a safe sizing estimate for the configured byte-fallback models,
+not an exact tokenizer measurement. Among configured intake models, use the
+smallest capacity that fits; never silently truncate evidence to make it fit.
+
+The configured route is the 32K remote router, then native-context local Ornith,
+then approved GPT-6.1 Sol via the existing T3 delegation owner. A generation that
+ends at its output limit also escalates with unchanged input/evidence. A frontier
+continuation contains the complete serialized request, selected schema and tool
+results/cursors; it must not redo completed reads. Astra remains user-approved
+and cannot be selected autonomously. If no approved model has confirmed capacity,
+report that precise condition and retain the workflow state rather than inventing
+capacity or changing models without authorization.
+
+`make swarm` derives `NORNIC_READ_MODEL_URL`, `NORNIC_READ_MODEL` and
+`NORNIC_READ_CONTEXT_WINDOW` from the same local-provider settings. A native/zero
+`SWARM_LOCAL_CONTEXT_WINDOW` resolves to this model's 262,144-token capacity.
+`NORNIC_ROUTER_CONTEXT_WINDOW` defaults to 32,768. Frontier admission uses
+`NORNIC_FRONTIER_CONTEXT_WINDOW`, read from the installed Codex model catalog for
+`gpt-6.1-sol`, including its effective-window percentage; an explicit environment
+value takes precedence. Unknown frontier capacity is never guessed. This
+admission setting does not override Codex's native window or compaction behavior.
+The current installed catalog reports 500,000 tokens at 95% usable (475,000).
+Restart the harness after changing these environment settings; a source hot reload
+cannot change the environment inherited by the existing process.
+
+Self-hosted inference (both LAN Ollama and local Ornith) has no total wall-clock
+deadline. Long prefill and generation may continue until completion or caller
+cancellation; provider/transport failures still surface as errors. Database and
+MCP tool network deadlines remain separate. Controlled smoke tests may have their
+own test-run ceiling; it is not a production inference deadline.
+Output allowances are 700 tokens for the remote read
+controller and 3,072 for the local continuation; a truncated generation goes to
+the next approved tier. These are controller allowances, not claimed model maxima.
+Each intake tier has three reads/eight decisions. Exhausting that allowance or
+repeating an already completed read advances to the next configured larger tier
+with retained evidence; it no longer asks the user to narrow the task. Capacities
+advance monotonically, so this does not create an unlimited loop or grant writes.
 
 ## Skills and repository guidance corpus
 
@@ -679,10 +729,11 @@ cursor is preserved. This covers a real structured model response containing
 controller and direct Linear tools share this correction. No API-key permissions
 need changing for that error.
 
-The remote model retains its 60-second request deadline. A timeout now identifies
-that deadline in the service diagnostic, and nested error wrapping preserves it.
-A model being loaded or serving `/api/ps` does not prove its current inference
-request finished. Do not bypass intent admission when a request fails.
+The earlier fixed inference deadlines described in the historical evidence below
+have been removed for both self-hosted model endpoints. Caller cancellation and
+transport errors still terminate requests. A model being loaded or serving
+`/api/ps` does not prove its current inference request finished. Do not bypass
+intent admission when a request fails.
 
 On October 23, the focused provider/store/classifier/Linear/read-controller and
 workflow tests passed 162 tests. Live remote database persistence and Linear
@@ -692,3 +743,52 @@ the invalid empty cursor. The controlled completed-reply runtime still delivered
 its exact answer with zero inference requests (0.34 seconds). These checks do not
 constitute a new browser-chat end-to-end run or qualify remote model latency under
 load. NornicDB engine tests and `make verify` were not run for this side exercise.
+
+
+## Selected prompt for the Ornith coding worker
+
+The operator-provided [Claudette prompt set](https://gist.github.com/orneryd/334e1d59b6abaf289d06eeda62690cdb),
+reviewed at revision `11d376585445a3244639af186659146e73c3db3c`, supplies
+`claudette-mini-tools.md` as the selected coding-worker baseline. Its short
+discover/execute/verify structure matches the desired routine tool work. The
+non-tool Mini variant is inappropriate for native tool workers. Condensed is a
+useful comparison candidate; no benchmark ranking on this exact Ornith artifact
+is claimed by this selection. The upstream prompt's benchmark results concern
+its documented models and tasks, not an established result for our Compact quant.
+
+This selection does not mean Ornith is equivalent to a dense 3B model. The
+[Ornith model card](https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B) describes
+a larger mixture of experts with roughly 3B parameters active per token. The
+[APEX Compact card](https://huggingface.co/mudler/Ornith-1.5-35B-A3B-APEX-MTP-GGUF)
+describes mixed precision by tensor role; treating the entire artifact as one
+uniform bit width would be inaccurate.
+
+Before runtime installation, map example tool names to native T3/Nornic tools
+(`read`, `edit`/`write`, `bash`, and discovered MCP tools). Examples are not shell
+commands or literal tool markup to print. Repository scope, existing memory
+ownership, user approvals and the Astra restriction remain authoritative. Do not
+create memory files outside the delegated task's approved scope. The coding
+prompt is separate from the read-only intake controller's JSON/schema contract.
+The selected upstream files are cached privately for review, not yet installed
+as an unmodified replacement system prompt.
+
+
+## Current dynamic-intake verification (October 23)
+
+The focused Nornic provider, store, classifier, discovered Linear-tool,
+read-assistant, and public-workflow suite passed 185 tests in 15 files. After the
+handoff reason schema correction, the affected classifier/read/workflow subset
+passed 23 tests. Python launcher/context configuration checks passed nine tests.
+The classifier tests advance simulated time by ten minutes for each self-hosted
+endpoint, assert that inference remains pending, then cancel the caller and
+assert request cleanup without a second model call. This establishes removal of
+elapsed-time cutoffs, not model liveness detection or a latency guarantee.
+Background text helpers also no longer impose a three-minute inference limit;
+their existing RPC acknowledgement and process-control timeouts remain separate.
+
+The real completed-intake runtime fixture delivered its exact answer in 1.77
+seconds with zero tokens and zero unexpected inference calls. These checks do
+not prove a new browser conversation or a completed Sol continuation. Server
+typechecking exits 2 on Effect diagnostics with zero TypeScript errors; provider
+typechecking exits 0. Native Windows execution, NornicDB engine tests, and
+`make verify` were not run for this side exercise.

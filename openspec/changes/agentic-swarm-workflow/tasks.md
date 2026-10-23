@@ -160,3 +160,16 @@ not complete the larger milestone's acceptance contract.
 - [x] Reproduce Linear rejection of an empty model-supplied cursor and normalize it in the shared adapter; preserve nonempty continuations.
 - [x] Preserve router timeout diagnostics through nested errors.
 - [x] Verify live workflow storage, remote intake/Linear reads and runtime delivery; record failures and practical limits.
+
+## Local experiment: dynamic tools and context handoff
+
+- [x] Replace the intake's fixed Linear operation enum with live MCP catalog/schema discovery and generic invocation.
+- [x] Preserve validation errors as evidence and enforce schema inspection before invocation; use the discovered schema for generation constraints.
+- [x] Remove character-based evidence/input/history cutoffs; select the smallest fitting configured context with full evidence and output headroom.
+- [x] Handle output truncation and public Sol handoff with complete continuation evidence; retain the Astra approval boundary.
+- [x] Derive local/native and Sol effective capacity from configured provider settings and the installed catalog; restart the harness with these settings.
+- [x] Review the operator's prompt variants and select Mini Tools for the Ornith coding worker; keep coding behavior separate from read-only routing.
+- [ ] Complete integrated live verification for assigned and unassigned release queries; report failures and remaining limits.
+- [x] Publish the synchronized pinned patch, documentation, exact checks and PR evidence; keep integrated live qualification explicitly pending.
+
+- [x] Remove fixed wall-clock deadlines from self-hosted inference; preserve caller cancellation and separate database/tool deadlines.

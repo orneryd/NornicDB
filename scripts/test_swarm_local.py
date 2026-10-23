@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -11,6 +13,42 @@ import swarm_local
 
 
 class SwarmLocalTest(unittest.TestCase):
+    def test_context_capacity_uses_sol_catalog_and_preserves_explicit_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "models_cache.json").write_text(json.dumps({"models": [
+                {"slug": "gpt-6-astra", "context_window": 1000000},
+                {"slug": "gpt-6.1-sol", "context_window": 500000, "effective_context_window_percent": 95},
+            ]}))
+            env = swarm_local.configure_context({"CODEX_HOME": str(root), "SWARM_LOCAL_CONTEXT_WINDOW": "0"})
+            self.assertEqual(env["NORNIC_FRONTIER_CONTEXT_WINDOW"], "475000")
+            self.assertEqual(env["NORNIC_READ_CONTEXT_WINDOW"], "262144")
+            self.assertEqual(env["NORNIC_ROUTER_CONTEXT_WINDOW"], "32768")
+            explicit = swarm_local.configure_context({"CODEX_HOME": str(root), "NORNIC_FRONTIER_CONTEXT_WINDOW": "123456"})
+            self.assertEqual(explicit["NORNIC_FRONTIER_CONTEXT_WINDOW"], "123456")
+
+    def test_shared_context_cli_uses_windows_manifest_without_printing_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "models.json"
+            models.write_text(json.dumps({"providers": {"ollama": {"baseUrl": "http://windows:11434/v1", "models": [{"id": "nornic-agent-remote", "contextWindow": 262144}]}}}))
+            env = dict(os.environ)
+            for name in list(env):
+                if name.startswith(("NORNIC_READ_", "SWARM_LOCAL_", "NORNIC_FRONTIER_")):
+                    env.pop(name)
+            env.update({"CODEX_HOME": directory, "LINEAR_API_KEY": "must-not-print"})
+            result = subprocess.run([sys.executable, str(Path(swarm_local.__file__).with_name("swarm_context.py")), "--models", str(models), "--provider", "ollama", "--model", "nornic-agent-remote"], env=env, text=True, capture_output=True, check=True)
+            configured = json.loads(result.stdout)
+            self.assertEqual(configured["NORNIC_READ_MODEL"], "nornic-agent-remote")
+            self.assertEqual(configured["NORNIC_READ_MODEL_URL"], "http://windows:11434")
+            self.assertEqual(configured["NORNIC_READ_CONTEXT_WINDOW"], "262144")
+            self.assertNotIn("must-not-print", result.stdout + result.stderr)
+
+    def test_unknown_frontier_capacity_is_not_guessed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = swarm_local.configure_context({"CODEX_HOME": directory})
+            self.assertNotIn("NORNIC_FRONTIER_CONTEXT_WINDOW", env)
+
     def test_provider_setup_preserves_existing_instances(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
