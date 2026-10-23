@@ -24,7 +24,7 @@ func TestGDSSupportedNativeIdentityContracts(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = exec.Execute(ctx, "CALL gds.graph.drop('u5_native_contract')", nil) })
 	t.Run("fastRP typed output", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "CALL gds.fastRP.stream('u5_native_contract', {embeddingDimension:4}) YIELD nodeId RETURN nodeId + ':ok' ORDER BY nodeId", nil)
+		result, err := exec.Execute(ctx, "CALL gds.fastRP.stream('u5_native_contract', {embeddingDimension:4, randomSeed:7}) YIELD nodeId RETURN nodeId + ':ok' ORDER BY nodeId", nil)
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 5)
 		for _, row := range result.Rows {
@@ -52,8 +52,8 @@ func TestGDSSupportedNativeIdentityContracts(t *testing.T) {
 			}
 		}
 	})
-	t.Run("native input utility round trip", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "MATCH (n:P {name:'alpha'}) RETURN gds.util.asNode(n).name, [x IN gds.util.asNodes([n, '1', 1]) | x.name], gds.util.nodeProperty('u5_native_contract', n, 'value')", nil)
+	t.Run("native string ID utility round trip", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "MATCH (n:P {name:'alpha'}) RETURN gds.util.asNode(id(n)).name, [x IN gds.util.asNodes([id(n), '1', 1]) | x.name], gds.util.nodeProperty('u5_native_contract', id(n), 'value')", nil)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{"alpha", []interface{}{"alpha", "1", "1"}, float64(7)}}, result.Rows)
 	})
