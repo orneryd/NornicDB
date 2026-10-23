@@ -74,7 +74,7 @@ func TestUpdateNode_ToInlineRemovesEverySeparatelyStoredEmbeddingKey(t *testing.
 func TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails(t *testing.T) {
 	engine := newTestEngine(t)
 	id := NodeID("test:read-only")
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(embeddingKey(id, 0), []byte{1})
 	}))
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {

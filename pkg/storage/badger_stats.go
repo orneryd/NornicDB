@@ -388,7 +388,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
 		batchFull := false
-		err := b.withUpdate(func(txn *badger.Txn) error {
+		err := b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			for len(p.ids) > 0 && !batchFull {
 				nodeID := p.ids[0]
 				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
@@ -490,7 +490,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 // MarkNodeEmbedded removes a node from the pending embeddings index.
 // Call this after successfully embedding a node.
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
 	})
 }
@@ -498,7 +498,7 @@ func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
 // Call this when creating a node that needs embedding.
 func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(nodeID))
 		if err == nil {
 			var node *Node
@@ -554,7 +554,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	cleanupErr := b.withUpdate(func(txn *badger.Txn) error {
+	cleanupErr := b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
@@ -638,7 +638,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	// Second pass: Add missing nodes to the index
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()

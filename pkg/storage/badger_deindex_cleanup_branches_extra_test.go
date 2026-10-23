@@ -23,7 +23,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 
 	t.Run("RunOnce returns context canceled mid-loop", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return enqueueWorkItemInTxn(txn, "test:ctx-cancel", "NODE")
 		}))
 
@@ -43,7 +43,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			TargetID:   "test:missing-cat",
 			Status:     "pending",
 		}
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			data, err := msgpack.Marshal(item)
 			if err != nil {
 				return err
@@ -72,7 +72,7 @@ func TestDeindexCleanupJob_AdditionalBranches(t *testing.T) {
 			TargetScope: "NODE",
 			Deindexed:   true,
 		}))
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			data, err := msgpack.Marshal(item)
 			if err != nil {
 				return err

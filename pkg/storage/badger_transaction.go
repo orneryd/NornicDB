@@ -714,6 +714,8 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 		return "", err
 	}
 	// The write uses its key names now; it encodes them only at commit.
+	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	node = nodeForStorageWrite(node)
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
 	// Validate constraints BEFORE writing
@@ -745,8 +747,6 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// PERFORMANCE OPTIMIZATION: Buffer all writes and flush at commit time
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
-	// Stamp creation times before encoding, as direct engine creation does (#1228).
-	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
 	// Serialize node (may store embeddings separately if too large)
 	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
@@ -813,6 +813,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
 		return err
 	}
+	node = nodeForStorageWrite(node)
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
 	// Validate constraints
@@ -1526,6 +1527,10 @@ func (tx *BadgerTransaction) CreateEdge(edge *Edge) error {
 	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
 		return err
 	}
+	if edge != nil {
+		initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
+	}
+	edge = edgeForStorageWrite(edge)
 	startLabels, endLabels, err := tx.validateNewEdgeLocked(edge, tx.visibleNodeLabelsLocked, nil)
 	if err != nil {
 		return err
@@ -1560,6 +1565,14 @@ func (tx *BadgerTransaction) BulkCreateEdges(edges []*Edge) error {
 		labels  []string
 		visible bool
 	}
+	ownedEdges := make([]*Edge, len(edges))
+	for i, edge := range edges {
+		if edge != nil {
+			initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
+		}
+		ownedEdges[i] = edgeForStorageWrite(edge)
+	}
+	edges = ownedEdges
 	endpoints := make(map[NodeID]endpoint, util.SafePreallocProduct(len(edges), 2))
 	resolve := func(id NodeID) ([]string, bool) {
 		if cached, ok := endpoints[id]; ok {
@@ -1703,6 +1716,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
 		return err
 	}
+	edge = edgeForStorageWrite(edge)
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, edge.Properties)
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 		return ErrNotFound
@@ -2831,6 +2845,7 @@ const commitCancelPollEvery = 256
 
 func (tx *BadgerTransaction) Commit() error {
 	tx.mu.Lock()
+	var nodeCacheBefore [1]uint64
 	var knowledgePolicyChanged func()
 	notification := &commitNotification{}
 	defer func() {
@@ -2999,7 +3014,10 @@ func (tx *BadgerTransaction) Commit() error {
 	// for this transaction's own registration (#911).
 	tx.releaseSnapshotReaderLocked()
 
-	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
+	cw, writerErr := tx.engine.newCommitWriter(transactionNodeCacheWrites(tx), tx.badgerDB, tx.badgerTx)
+	if writerErr != nil {
+		return writerErr
+	}
 	cw.notification = notification
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
@@ -3046,7 +3064,7 @@ func (tx *BadgerTransaction) Commit() error {
 
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.
-	if err := cw.finish(); err != nil {
+	if err := cw.finish(nodeCacheBefore[:]...); err != nil {
 		if !errors.Is(err, errPersistingTokens) && !errors.Is(err, badger.ErrConflict) {
 			err = fmt.Errorf("badger commit failed: %w", err)
 		}
@@ -3110,23 +3128,23 @@ func (tx *BadgerTransaction) Commit() error {
 	for _, op := range tx.operations {
 		switch op.Type {
 		case OpCreateNode:
-			tx.engine.cacheOnNodeCreated(op.Node)
+			tx.engine.cacheOnNodeCreated(op.Node, nodeCacheBefore[:]...)
 		case OpUpdateNode:
-			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode, nodeCacheBefore[:]...)
 		case OpDeleteNode:
 			if op.OldNode != nil {
-				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
+				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, nodeCacheBefore[:]...)
 			} else {
-				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
+				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted, nodeCacheBefore[:]...)
 			}
 		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreated(op.Edge)
+			tx.engine.cacheOnEdgeCreated(op.Edge, nodeCacheBefore[:]...)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
-			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge)
+			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge, nodeCacheBefore[:]...)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {

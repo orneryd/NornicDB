@@ -117,7 +117,7 @@ func (b *BadgerEngine) repairOrphanedEmbeddingKeysLocked() (int, error) {
 				var after []byte
 				for {
 					deleted := 0
-					err := b.commitEngineWriteHeld(func(cw *commitWriter) error {
+					err := b.commitEngineWriteHeld(singleNodeCacheWrites(id), func(cw *commitWriter) error {
 						referenced, err := b.embeddingOwnerReferenced(cw.txn, id)
 						if err != nil || referenced {
 							return err
@@ -136,7 +136,7 @@ func (b *BadgerEngine) repairOrphanedEmbeddingKeysLocked() (int, error) {
 			}
 		}
 	}
-	if err := b.commitEngineWriteHeld(func(cw *commitWriter) error {
+	if err := b.commitEngineWriteHeld(noNodeCacheWrites(), func(cw *commitWriter) error {
 		return cw.writeOnce(func(txn *badger.Txn) error {
 			return txn.Set(embeddingRepairReadyKey, []byte{1})
 		})

@@ -31,7 +31,7 @@ func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notificat
 			release()
 			continue
 		}
-		err = b.commitEngineWrite(write, notification)
+		err = b.commitEngineWrite(singleNodeCacheWrites(id), write, notification)
 		if err == nil {
 			if hasKeys {
 				b.lastEmbeddingSidecarWrite = b.db.oracle.published.Load()

@@ -151,7 +151,7 @@ func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
 	}
 	scan := func() time.Duration {
 		engine.nodeCacheMu.Lock()
-		engine.nodeCache = map[NodeID]*Node{}
+		engine.nodeCache = map[NodeID]nodeCacheEntry{}
 		engine.nodeCacheMu.Unlock()
 		start := time.Now()
 		for r := 0; r < 5; r++ {

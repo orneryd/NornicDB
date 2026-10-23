@@ -100,7 +100,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		missingID := NodeID(prefixTestID("aa-missing"))
 		corruptID := NodeID(prefixTestID("ab-corrupt"))
 		valid := &Node{ID: NodeID(prefixTestID("zz-valid")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "valid"}}
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			missingKey, err := b.labelIndexKeyString(txn, "Person", missingID)
 			if err != nil {
 				return err
@@ -123,7 +123,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		got, err := b.GetFirstNodeByLabel("Person")
 		require.Error(t, err)
 		require.Nil(t, got)
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Delete(nodeKey(corruptID))
 		}))
 		got, err = b.GetFirstNodeByLabel("Person")
@@ -207,7 +207,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		corruptID := NodeID(prefixTestID("batch-corrupt"))
 		_, err := b.CreateNode(valid)
 		require.NoError(t, err)
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(nodeKey(corruptID), []byte("not-a-node"))
 		}))
 
@@ -243,7 +243,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, b.CreateEdge(&Edge{ID: EdgeID(prefixTestID("edge-good")), StartNode: start.ID, EndNode: end.ID, Type: "REL"}))
 
 		corruptID := EdgeID(prefixTestID("edge-bad"))
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			corruptOut, err := b.outgoingIndexKeyString(txn, start.ID, corruptID)
 			if err != nil {
 				return err
@@ -320,7 +320,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 			Properties: map[string]interface{}{},
 		}
 		require.NoError(t, b.CreateEdge(edge))
-		require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(edgeKey(edge.ID), []byte("not-an-edge"))
 		}))
 		err = b.UpdateEdge(edge)

@@ -153,7 +153,7 @@ func TestEmbeddingReferenceView_FreezesReferenceInputs(t *testing.T) {
 	id := NodeID("test:reference-input")
 	_, err := b.CreateNode(&Node{ID: id})
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(embeddingMetaKey(id), []byte{1})
 	}))
 	require.NoError(t, b.withView(func(txn *badger.Txn) error {

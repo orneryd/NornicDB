@@ -22,7 +22,11 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	becameSuppressed := false
 	nodeChanged := false
 	var edgeChanged *Edge
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	scope := noNodeCacheWrites()
+	if !isEdge {
+		scope = singleNodeCacheWrites(NodeID(entityID))
+	}
+	err := b.withUpdate(scope, func(txn *badger.Txn) error {
 		if isEdge {
 			changed, mutation, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
 			edgeChanged = mutation

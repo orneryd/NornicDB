@@ -108,7 +108,7 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:b", Type: "LINKS", VisibilitySuppressed: true}))
 	nodeGen, edgeGen := engine.nodeCacheGen.current(), engine.edgeCacheGen.current()
 	rollback := errors.New("injected rollback after suppression writes")
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_, changed, err := engine.evaluateNodeSuppressionInTxn(txn, "test:n")
 		require.NoError(t, err)
 		require.True(t, changed)
@@ -129,7 +129,7 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	engine.nodeCacheMu.RLock()
 	cachedNode := engine.nodeCache["test:n"]
 	engine.nodeCacheMu.RUnlock()
-	require.NotNil(t, cachedNode)
+	require.NotNil(t, cachedNode.Node)
 	assert.True(t, cachedNode.VisibilitySuppressed)
 	cachedEdge, ok := engine.cacheLoadEdge("test:e")
 	require.True(t, ok)

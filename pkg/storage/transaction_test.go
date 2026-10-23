@@ -241,15 +241,11 @@ func TestTransaction_UpdateNode(t *testing.T) {
 
 	// Engine should still have old version
 	old, _ := engine.GetNode(NodeID(prefixTestID("update-me")))
-	if old.Properties["version"] != 1 {
-		t.Error("Engine should still have old version before commit")
-	}
+	require.Equal(t, int64(1), old.Properties["version"], "engine retains the previous committed value")
 
 	// Transaction should have new version
 	txNode, _ := tx.GetNode(NodeID(prefixTestID("update-me")))
-	if txNode.Properties["version"] != 2 {
-		t.Error("Transaction should have new version")
-	}
+	require.Equal(t, int64(2), txNode.Properties["version"], "transaction reads its pending value")
 
 	// Commit
 	err = tx.Commit()
@@ -262,18 +258,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNode after commit failed: %v", err)
 	}
-	// Note: JSON serialization may convert int to float64
-	version, ok := updated.Properties["version"].(float64)
-	if !ok {
-		vInt, ok := updated.Properties["version"].(int)
-		if ok {
-			version = float64(vInt)
-		}
-	}
-	if version != 2 {
-		t.Errorf("Engine should have new version after commit, got version=%v (type %T)",
-			updated.Properties["version"], updated.Properties["version"])
-	}
+	require.Equal(t, int64(2), updated.Properties["version"], "engine reads the committed canonical integer")
 }
 
 func TestTransaction_CommitRejectsConstraintContractViolation(t *testing.T) {
@@ -1020,7 +1005,7 @@ func TestTransaction_DeleteEdgesWithPrefixBuffered(t *testing.T) {
 		missingEdge := EdgeID(prefixTestID("missing-edge"))
 		badEdge := EdgeID(prefixTestID("bad-edge"))
 
-		if err := engine.withUpdate(func(txn *badger.Txn) error {
+		if err := engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			missingOut, err := engine.outgoingIndexKeyString(txn, nodeID, missingEdge)
 			if err != nil {
 				return err
@@ -1108,7 +1093,7 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		if err := engine.CreateEdge(edge); err != nil {
 			t.Fatalf("CreateEdge failed: %v", err)
 		}
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			emb, err := encodeEmbedding([]float32{1, 2})
 			if err != nil {
 				return err
@@ -1784,7 +1769,7 @@ func TestTransaction_ScanCommittedKeysWithPrefix(t *testing.T) {
 	})
 
 	t.Run("non-edge key under the adjacency prefix is skipped", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(append(append([]byte{}, outPrefix...), 'x'), []byte{})
 		}))
 		tx, err := engine.BeginTransaction()

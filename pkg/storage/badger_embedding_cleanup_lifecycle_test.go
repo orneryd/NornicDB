@@ -108,7 +108,7 @@ func TestEmbeddingCleanup_AllKeyShapes(t *testing.T) {
 			require.NoError(t, err)
 			meta, err := encodeValue(map[string]any{"chunk_count": 1})
 			require.NoError(t, err)
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(id), meta) }))
+			require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error { return txn.Set(embeddingMetaKey(id), meta) }))
 			require.Greater(t, countEmbeddingKeys(t, engine, id), 3)
 			if action == "delete" {
 				require.NoError(t, engine.DeleteNode(id))

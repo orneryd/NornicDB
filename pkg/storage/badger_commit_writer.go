@@ -27,6 +27,7 @@ import (
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
 	batchWriter
+	cacheScope          nodeCacheWriteScope
 	engine              *BadgerEngine
 	db                  *managedBadgerDB
 	large               *largeCommit
@@ -42,21 +43,29 @@ type commitWriter struct {
 	onBatch func(next *badger.Txn)
 }
 
-func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *commitWriter {
-	cw := &commitWriter{engine: b, db: db}
+func (b *BadgerEngine) newCommitWriter(scope nodeCacheWriteScope, db *managedBadgerDB, txn *badger.Txn) (*commitWriter, error) {
+	if err := admitDurableWrite(scope); err != nil {
+		return nil, err
+	}
+	cw := &commitWriter{engine: b, db: db, cacheScope: scope}
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
-	return cw
+	return cw, nil
 }
 
 // commitBatch writes a full batch as the next batch of the large commit,
 // turning the commit into one first.
 func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
+	if nodeCacheScopeCheck != nil {
+		if err := nodeCacheScopeCheck(txn, cw.cacheScope); err != nil {
+			return err
+		}
+	}
 	cw.collectPendingEmbeddingAdds(txn)
 	if cw.large == nil {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
+		lc, err := cw.db.beginLargeCommit(cw.cacheScope, cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -104,14 +113,17 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 // finish commits: an ordinary commit after persisting its property-key
 // tokens, or a large commit's last batch, publishing it. On error the
 // caller must abort.
-func (cw *commitWriter) finish() error {
+func (cw *commitWriter) finish(cacheToken ...uint64) error {
+	if err := admitDurableWrite(cw.cacheScope); err != nil {
+		return err
+	}
 	cw.collectPendingEmbeddingAdds(cw.txn)
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		if err := cw.db.commit(cw.txn, cw.reserveNotification); err != nil {
+		if err := cw.db.commitWithNodeCache(cw.txn, cw.engine, cacheToken, cw.cacheScope, cw.reserveNotification); err != nil {
 			return err
 		}
 		cw.publishPendingEmbeddingAdds()
@@ -119,7 +131,7 @@ func (cw *commitWriter) finish() error {
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
-		err = cw.large.finish(&cw.batchWriter)
+		err = cw.large.finish(&cw.batchWriter, cw.engine, cacheToken)
 	}
 	if err == nil {
 		cw.publishPendingEmbeddingAdds()

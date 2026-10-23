@@ -173,7 +173,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_IgnoresStaleIndexEntries(t
 	_, err := engine.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(view *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(view *badger.Txn) error {
 		prefix := engine.outgoingIndexPrefixString("test:a")
 		require.NotNil(t, prefix)
 		if err := view.Set(append(append([]byte{}, prefix...), []byte("bad")...), nil); err != nil {
@@ -207,7 +207,7 @@ func TestBadgerTransaction_CheckNodeAdjacencyConflict_HeadDecodeErrorBranch(t *t
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e-bad-head", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 
 	// Corrupt the edge MVCC head so loadEdgeMVCCHeadInTxn returns a decode error.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		headKey, err := engine.mvccEdgeHeadKeyString(txn, "test:e-bad-head")
 		if err != nil {
 			return err

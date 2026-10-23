@@ -284,7 +284,7 @@ func TestEmbeddingReferenceView_RangeMetadataPrecedence(t *testing.T) {
 					return err
 				}))
 				if family != "current" {
-					require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+					require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 						if err := txn.Delete(embeddingMetaKey(id)); err != nil {
 							return err
 						}

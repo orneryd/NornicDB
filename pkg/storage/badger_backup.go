@@ -178,7 +178,7 @@ func restoreEngine(engine Engine, path string) error {
 func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeCacheMu.Lock()
 	b.nodeCacheGen.advance()
-	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
+	b.nodeCache = make(map[NodeID]nodeCacheEntry, b.nodeCacheMaxEntries)
 	b.queryNodeCache = nil
 	b.nodeCacheMu.Unlock()
 
@@ -190,18 +190,18 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 
 	b.edgeTypeCacheMu.Lock()
 	b.edgeTypeCacheGen.advance()
-	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
+	b.edgeTypeCache = make(map[string]edgeListCacheEntry, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 
 	b.edgeCacheMu.Lock()
 	b.edgeCacheGen.advance()
-	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
+	b.edgeCache = make(map[EdgeID]edgeCacheEntry, b.edgeCacheMaxItems)
 	b.edgeCacheMu.Unlock()
 
 	b.adjCacheMu.Lock()
 	b.adjCacheGen.advance()
-	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
-	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
+	b.outgoingAdjCache = make(map[NodeID]adjacencyCacheEntry, b.adjCacheMaxNodes)
+	b.incomingAdjCache = make(map[NodeID]adjacencyCacheEntry, b.adjCacheMaxNodes)
 	b.adjCacheMu.Unlock()
 
 	b.labelFirstNodeCacheMu.Lock()
@@ -376,7 +376,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 
 	deleteIndexEntriesBySuffixPrefix := func(indexPrefix byte) error {
 		indexKeyPrefix := []byte{indexPrefix}
-		wb := b.db.NewWriteBatch()
+		wb := b.db.NewWriteBatch(noNodeCacheWrites())
 		defer wb.Cancel()
 
 		const flushEvery = 50_000
@@ -470,7 +470,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 
 	b.edgeTypeCacheMu.Lock()
 	b.edgeTypeCacheGen.advance()
-	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
+	b.edgeTypeCache = make(map[string]edgeListCacheEntry, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 
 	if nodesDeleted != 0 {
@@ -489,7 +489,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 }
 
 func (b *BadgerEngine) deleteNamespaceKeyFamilies(prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) error {
-	batch := b.db.NewWriteBatch()
+	batch := b.db.NewWriteBatch(unknownNodeCacheWrites(nodeCacheUnknownMaintenance))
 	defer batch.Cancel()
 	pending := 0
 	for _, family := range badgerKeyFamilies {

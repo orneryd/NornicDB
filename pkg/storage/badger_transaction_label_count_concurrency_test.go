@@ -105,7 +105,7 @@ func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
 	engine, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		malformed := make([]byte, 4)
 		binary.BigEndian.PutUint32(malformed, 99)
 		return txn.Set(labelCountKey("db1", "Work"), malformed)

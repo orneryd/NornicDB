@@ -23,7 +23,7 @@ func TestEmbeddingCleanup_RestoreLegacyOrphans(t *testing.T) {
 				_, err = source.CreateNode(separatelyStoredNode(id))
 				require.NoError(t, err)
 			}
-			require.NoError(t, source.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, source.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				body, separate, err := source.encodeNodeInTxn(txn, "test", &Node{
 					ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"k": "v2"}, ChunkEmbeddings: [][]float32{{7, 8}},
 				})

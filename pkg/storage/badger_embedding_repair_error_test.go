@@ -23,7 +23,7 @@ func TestEmbeddingCleanup_RepairRejectsCorruptOwner(t *testing.T) {
 		body, err = item.ValueCopy(nil)
 		return err
 	}))
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := txn.Delete(embeddingRepairReadyKey); err != nil {
 			return err
 		}
@@ -38,7 +38,7 @@ func TestEmbeddingCleanup_RepairRejectsCorruptOwner(t *testing.T) {
 		require.ErrorIs(t, err, badger.ErrKeyNotFound)
 		return nil
 	}))
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(nodeKey(live.ID), body)
 	}))
 	removed, err = b.RepairOrphanedEmbeddingKeys()

@@ -114,7 +114,7 @@ func (b *BadgerEngine) hasAnyStoredNodes() (bool, error) {
 
 // markLabelIndexReady records that no compatibility rebuild remains.
 func (b *BadgerEngine) markLabelIndexReady() error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Set(labelIndexReadyKey, []byte{labelIndexSchemeVersion})
 	})
 }
@@ -199,7 +199,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 		message:   "label index backfill progress",
 		unit:      "nodes",
 	}
-	processed, err := b.forEachStoredRecordInChunks(ctx, scan, func(txn *badger.Txn, key, val []byte) (int, bool, error) {
+	processed, err := b.forEachStoredRecordInChunks(noNodeCacheWrites(), ctx, scan, func(txn *badger.Txn, key, val []byte) (int, bool, error) {
 		if len(key) <= 1 {
 			return 0, false, nil
 		}

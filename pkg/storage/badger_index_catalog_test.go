@@ -101,7 +101,7 @@ func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = engine.Close() })
 	// Seed a numID so the compact collector returns the expected keys.
-	if err := engine.withUpdate(func(txn *badger.Txn) error {
+	if err := engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:n1")
 		return err
 	}); err != nil {
@@ -125,7 +125,7 @@ func TestIndexCatalog_CollectEdgeIndexKeys(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = engine.Close() })
 	// Pre-seed the dict so the edge-between key makes it into the catalog.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if _, err := engine.idDict.resolveOrAllocateNodeNumIDInTxn(txn, "nornic:a"); err != nil {
 			return err
 		}

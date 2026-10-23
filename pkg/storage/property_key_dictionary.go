@@ -355,7 +355,7 @@ func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, drain pr
 	if drain.empty() {
 		return nil
 	}
-	w := &batchWriter{to: db}
+	w := &batchWriter{to: metadataBatches{db}}
 	defer w.discard()
 	err := drain.writeTo(w)
 	if err == nil {

@@ -23,7 +23,7 @@ func TestArchivePrimaryIntoMVCCVersionInTxn_NodeAndEdge(t *testing.T) {
 	engine.activeMVCCSnapshotReaders.Store(1)
 	defer engine.activeMVCCSnapshotReaders.Store(0)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, node.ID, v, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, edge.ID, v, nil, MVCCVersion{}))
 		return nil
@@ -43,7 +43,7 @@ func TestArchivePrimaryIntoMVCCVersionInTxn_NoHistoryOrMissing_NoOp(t *testing.T
 	v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7}
 
 	// Head-only retention and no active readers => archive short-circuits.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, "tenant:missing", v, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveEdgePrimaryIntoMVCCVersionInTxn(txn, "tenant:missing", v, nil, MVCCVersion{}))
 		return nil
@@ -84,7 +84,7 @@ func TestMaterializeMVCCCommitInTxn_CoversOperationSwitch(t *testing.T) {
 		{Type: OpDeleteEdge, EdgeID: "tenant:ed", OldEdge: &Edge{ID: "tenant:ed", StartNode: "tenant:a", EndNode: "tenant:b", Type: "R", Properties: map[string]any{"p": "gone"}}},
 	}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, opList)
 	}))
 

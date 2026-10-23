@@ -220,7 +220,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if err != nil {
 		t.Fatalf("GetNodesByLabel Function: %v", err)
 	}
-	if len(nodes) != 1 || nodes[0].ID != nodeID || nodes[0].Properties["uid"] != uid || nodes[0].Properties["revision"] != loser.revision {
+	if len(nodes) != 1 || nodes[0].ID != nodeID || nodes[0].Properties["uid"] != uid || nodes[0].Properties["revision"] != int64(loser.revision) {
 		t.Fatalf("same-UID final nodes = %#v, want one node %s at retry revision %d", nodes, nodeID, loser.revision)
 	}
 	cachedID, found, constrained := schema.LookupUniqueConstraintValue("Function", "uid", uid)
@@ -345,7 +345,7 @@ func assertBadgerUniqueFunctionExactness(t *testing.T, engine *BadgerEngine, sch
 			t.Fatalf("duplicate Function uid %q on %s and %s", uid, previous, node.ID)
 		}
 		seenUIDs[uid] = node.ID
-		if node.Properties["revision"] != revision {
+		if node.Properties["revision"] != int64(revision) {
 			t.Fatalf("node %s revision = %#v, want %d", node.ID, node.Properties["revision"], revision)
 		}
 		cachedID, found, constrained := schema.LookupUniqueConstraintValue("Function", "uid", uid)

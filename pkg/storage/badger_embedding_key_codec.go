@@ -38,59 +38,80 @@ type embeddingKeyOwner struct {
 }
 
 func embeddingKeyOwners(key []byte) []embeddingKeyOwner {
-	if len(key) == 0 {
+	var candidates [2]embeddingKeyOwner
+	n := embeddingKeyOwnersInto(key, "", &candidates)
+	if n == 0 {
 		return nil
+	}
+	return append([]embeddingKeyOwner(nil), candidates[:n]...)
+}
+
+// The durable scope borrows immutable raw-map keys. Other codec callers keep
+// independent owner strings, as before; both routes share this decoder.
+func embeddingOwnerID(key []byte, source string, start, end int) NodeID {
+	if source != "" {
+		return NodeID(source[start:end])
+	}
+	return NodeID(key[start:end])
+}
+func embeddingKeyOwnersInto(key []byte, source string, owners *[2]embeddingKeyOwner) int {
+	if len(key) == 0 {
+		return 0
 	}
 	if key[0] == prefixEmbeddingCurrent {
 		if len(key) < 17 {
-			return nil
+			return 0
 		}
 		n, err := strconv.ParseUint(string(key[1:9]), 16, 32)
 		if err != nil || n > uint64(len(key)-17) {
-			return nil
+			return 0
 		}
 		end := 9 + int(n)
 		part := len(key)-end == 13 && key[end+8] == 0
 		if len(key)-end != 8 && !part {
-			return nil
+			return 0
 		}
 		index, err := strconv.ParseUint(string(key[end:end+8]), 16, 32)
 		if err != nil {
-			return nil
+			return 0
 		}
 		if part {
 			if _, err = strconv.ParseUint(string(key[end+9:]), 16, 16); err != nil {
-				return nil
+				return 0
 			}
 		}
-		return []embeddingKeyOwner{{NodeID(key[9:end]), uint32(index), part}}
+		owners[0] = embeddingKeyOwner{embeddingOwnerID(key, source, 9, end), uint32(index), part}
+		return 1
 	}
 	if key[0] == prefixEmbeddingBinary {
 		if len(key) < 9 {
-			return nil
+			return 0
 		}
 		n := uint64(binary.BigEndian.Uint32(key[1:5]))
 		if n > uint64(len(key)-9) {
-			return nil
+			return 0
 		}
 		end := 5 + int(n)
 		if len(key)-end != 4 && (len(key)-end != 7 || key[end+4] != 0) {
-			return nil
+			return 0
 		}
-		return []embeddingKeyOwner{{NodeID(key[5:end]), binary.BigEndian.Uint32(key[end:]), len(key)-end == 7}}
+		owners[0] = embeddingKeyOwner{embeddingOwnerID(key, source, 5, end), binary.BigEndian.Uint32(key[end:]), len(key)-end == 7}
+		return 1
 	}
 	if key[0] != prefixEmbedding {
-		return nil
+		return 0
 	}
-	var owners []embeddingKeyOwner
+	n := 0
 	// Decode from the fixed-width suffix, including all bytes of the ID.
 	if len(key) >= 6 && key[len(key)-5] == 0 {
-		owners = append(owners, embeddingKeyOwner{NodeID(key[1 : len(key)-5]), binary.BigEndian.Uint32(key[len(key)-4:]), false})
+		owners[n] = embeddingKeyOwner{embeddingOwnerID(key, source, 1, len(key)-5), binary.BigEndian.Uint32(key[len(key)-4:]), false}
+		n++
 	}
 	if len(key) >= 9 && key[len(key)-8] == 0 && key[len(key)-3] == 0 {
-		owners = append(owners, embeddingKeyOwner{NodeID(key[1 : len(key)-8]), binary.BigEndian.Uint32(key[len(key)-7:]), true})
+		owners[n] = embeddingKeyOwner{embeddingOwnerID(key, source, 1, len(key)-8), binary.BigEndian.Uint32(key[len(key)-7:]), true}
+		n++
 	}
-	return owners
+	return n
 }
 
 // embeddingKeyBelongsTo prevents a legacy prefix from swallowing another

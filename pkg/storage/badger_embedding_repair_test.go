@@ -20,7 +20,7 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 			id := NodeID("test:r3-old-shrink")
 			_, err = b.CreateNode(separatelyStoredNode(id))
 			require.NoError(t, err)
-			require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				body, separate, err := b.encodeNodeInTxn(txn, "test", &Node{
 					ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"k": "v2"}, ChunkEmbeddings: [][]float32{{7, 8}},
 				})
@@ -93,7 +93,7 @@ func TestEmbeddingCleanup_ExplicitRepair(t *testing.T) {
 	// that prefixes a live owner's ID. Missing bodies are repaired as well.
 	const owners = embeddingRepairBatchSize + 1
 	const keys = embeddingRepairBatchSize + 3
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for i := 0; i < owners; i++ {
 			id := NodeID(fmt.Sprintf("test:orphan-%03d", i))
 			if i == 0 {

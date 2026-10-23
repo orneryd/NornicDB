@@ -61,7 +61,7 @@ func (b *BadgerEngine) GetAccessMeta(entityID string) (*knowledgepolicy.AccessMe
 }
 
 func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.AccessMetaEntry) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		current, err := getAccessMetaInTxn(txn, entityID)
 		if err != nil {
 			return err
@@ -78,7 +78,7 @@ func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.Acc
 }
 
 func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		entry, err := getAccessMetaInTxn(txn, entityID)
 		if err != nil {
 			return err

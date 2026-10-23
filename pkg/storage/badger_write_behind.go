@@ -168,7 +168,7 @@ func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyT
 	if drain.empty() {
 		return nil
 	}
-	var to batchTarget = b.db
+	var to batchTarget = scopedCacheBatches{b.db, noNodeCacheWrites()}
 	if cw.large != nil {
 		to = cw.large
 	}
@@ -224,8 +224,13 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		}
 	}()
 
+	var nodeCacheBefore [1]uint64
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
-	cw := b.newCommitWriter(b.db, txn)
+	cw, writerErr := b.newCommitWriter(bufferedNodeCacheWrites(commits), b.db, txn)
+	if writerErr != nil {
+		txn.Discard()
+		return writerErr
+	}
 	// WAL recovery has no in-memory ACK reservations. Reserve the recovered
 	// batch at its physical publication, preserving its operation order.
 	var replayNotification *commitNotification
@@ -406,7 +411,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// by its commit, as the sync path's (markTxnCommitted).
 	b.idDict.flushTxnCounters(cw.txn)
 	committing := cw.txn
-	if err := cw.finish(); err != nil {
+	if err := cw.finish(nodeCacheBefore[:]...); err != nil {
 		b.totalCountWriteMu.Unlock()
 		b.idDict.discardTxnCounters(committing)
 		if holdEdge {
@@ -495,7 +500,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			schema = b.GetSchemaForNamespace(c.namespace)
 			schemas[c.namespace] = schema
 		}
-		b.publishCommitOperations(c.namespace, schema, c.ops)
+		b.publishCommitOperations(c.namespace, schema, c.ops, nodeCacheBefore[:])
 	}
 	for _, publish := range beforeNotifications {
 		publish()
@@ -505,13 +510,13 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 // publishCommitOperations mirrors the commit tail's entity and unique-value
 // cache updates. The replay caller dispatches notifications after retirement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, nodeCacheBefore []uint64) {
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
-			b.cacheOnNodeCreatedWithCounts(op.Node, false)
+			b.cacheOnNodeCreatedWithCounts(op.Node, false, nodeCacheBefore...)
 		case OpUpdateNode:
-			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
+			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode, nodeCacheBefore...)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
@@ -519,18 +524,18 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 				// cache, so the cache-based maintenance would leave their
 				// committed index entries dangling.
 				b.maintainPropertyIndexesOnNodeDeletedWithNode(op.NodeID, op.OldNode)
-				b.cacheOnNodeDeletedWithLabelsAndCounts(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, false)
+				b.cacheOnNodeDeletedWithLabelsAndCounts(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, false, nodeCacheBefore...)
 			} else {
-				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
+				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false, nodeCacheBefore...)
 			}
 		case OpCreateEdge:
-			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
+			b.cacheOnEdgeCreatedWithCounts(op.Edge, false, nodeCacheBefore...)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
-			b.cacheOnEdgeUpdated(oldType, op.Edge)
+			b.cacheOnEdgeUpdated(oldType, op.Edge, nodeCacheBefore...)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {
@@ -589,7 +594,7 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 	if len(label) == 0 && len(edgeType) == 0 && len(edgeTypeLabel) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, delta := range label {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, delta); err != nil {
 				return err

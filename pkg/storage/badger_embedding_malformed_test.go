@@ -35,7 +35,7 @@ func TestEmbeddingCleanup_RepairPreservesMalformedKeys(t *testing.T) {
 		require.Empty(t, embeddingKeyOwners(key), "malformed framing must not acquire an owner: %x", key)
 	}
 	orphan := embeddingKey("test:missing-owner", 0)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for _, key := range malformed {
 			if err := txn.Set(key, []byte("opaque payload")); err != nil {
 				return err

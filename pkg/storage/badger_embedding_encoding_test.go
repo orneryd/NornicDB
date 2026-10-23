@@ -18,7 +18,7 @@ func seedPriorEmbeddingNode(t *testing.T, b *BadgerEngine, id NodeID, binaryLeng
 	n := separatelyStoredNode(id)
 	_, err := b.CreateNode(n)
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for i := range n.ChunkEmbeddings {
 			current := embeddingKey(id, i)
 			item, err := txn.Get(current)
@@ -111,7 +111,7 @@ func TestEmbeddingCleanup_AmbiguousOwnersShareReferencePolicy(t *testing.T) {
 				require.NoError(t, err)
 			}
 			key := legacyEmbeddingKey(long, 0)
-			require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				if reference == "sidecar" {
 					meta, err := encodeValue(map[string]any{"chunk_count": 1, embeddingContentUpdatedAtKey: "stale"})
 					if err != nil {

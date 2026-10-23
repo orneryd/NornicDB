@@ -131,7 +131,7 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
-	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
+	err := b.withNotifyingUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		item, err := txn.Get(recordKey)
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -167,7 +167,7 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	// A delete is reported from inside its commit; the key goes in a
 	// transaction of its own.
 	go func() {
-		_ = b.withUpdate(func(txn *badger.Txn) error {
+		_ = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			return txn.Delete(manualSuppressionKey(kind, id))
 		})
 	}()

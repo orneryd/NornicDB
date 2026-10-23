@@ -244,12 +244,17 @@ type BadgerEngine struct {
 
 	// Hot node cache for frequently accessed nodes
 	// Dramatically speeds up repeated MATCH lookups
-	nodeCache   map[NodeID]*Node
+	nodeCache   map[NodeID]nodeCacheEntry
 	nodeCacheMu sync.RWMutex
+	// Latest durable data commit, issued under nodeCacheMu and read atomically.
+	// Cache callbacks can
+	// arrive in a different order from Badger's assigned commit timestamps.
+	nodeCacheCommitTs       atomic.Uint64
+	nodeCacheInvalidationTs uint64 // protected by nodeCacheMu; unknown-writer fence
 	// queryNodeCache holds nodes as GetQueryNode reads them (no stored
 	// vectors) that nodeCache doesn't hold in full. It is guarded by
 	// nodeCacheMu and invalidated wherever nodeCache is.
-	queryNodeCache map[NodeID]*Node
+	queryNodeCache map[NodeID]nodeCacheEntry
 	// The generations order each read cache's fills against its writes
 	// (see cacheGeneration).
 	nodeCacheGen       cacheGeneration
@@ -272,7 +277,7 @@ type BadgerEngine struct {
 	// Edge type cache for mutual relationship queries
 	// Caches edges by type for O(1) lookup
 	relationshipUniqueIndexes relationshipUniqueIndexSet
-	edgeTypeCache             map[string][]*Edge // edgeType -> edges of that type
+	edgeTypeCache             map[string]edgeListCacheEntry // edgeType -> edges of that type
 	edgeTypeCacheMu           sync.RWMutex
 
 	// Hot edge-body cache. BFS-style traversals (shortestPath, variable-
@@ -280,7 +285,7 @@ type BadgerEngine struct {
 	// CPU profile showed badger.Txn.Get + decodeEdgeBodyByID was the
 	// dominant per-request cost on warm runs. Populated lazily inside
 	// collectEdgesByIndexPrefix and invalidated on every edge mutation.
-	edgeCache         map[EdgeID]*Edge
+	edgeCache         map[EdgeID]edgeCacheEntry
 	edgeCacheMu       sync.RWMutex
 	edgeCacheMaxItems int
 
@@ -290,8 +295,8 @@ type BadgerEngine struct {
 	// Iterator.Rewind+Next+parseItem was ~55% of warm shortestPath cost
 	// after the edge-body cache landed. Invalidated when any edge that
 	// touches one of the cached nodes is created/updated/deleted.
-	outgoingAdjCache map[NodeID][]EdgeID
-	incomingAdjCache map[NodeID][]EdgeID
+	outgoingAdjCache map[NodeID]adjacencyCacheEntry
+	incomingAdjCache map[NodeID]adjacencyCacheEntry
 	adjCacheMu       sync.RWMutex
 	adjCacheMaxNodes int
 
@@ -1026,16 +1031,17 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		engine.labelFirstCacheMax = defaultBadgerLabelFirstCacheMax
 	}
 
-	engine.nodeCache = make(map[NodeID]*Node, engine.nodeCacheMaxEntries)
+	db.cacheOwner = engine
+	engine.nodeCache = make(map[NodeID]nodeCacheEntry, engine.nodeCacheMaxEntries)
 	engine.nodeBodyCache = make(map[NodeID]*nodeBodyCacheEntry, engine.nodeCacheMaxEntries)
-	engine.edgeTypeCache = make(map[string][]*Edge, engine.edgeTypeCacheMaxTypes)
+	engine.edgeTypeCache = make(map[string]edgeListCacheEntry, engine.edgeTypeCacheMaxTypes)
 	engine.labelFirstNodeCache = make(map[string]NodeID, engine.labelFirstCacheMax)
 	// Mirror the node cache sizing knob unless we add a dedicated tunable.
 	engine.edgeCacheMaxItems = engine.nodeCacheMaxEntries
-	engine.edgeCache = make(map[EdgeID]*Edge, engine.edgeCacheMaxItems)
+	engine.edgeCache = make(map[EdgeID]edgeCacheEntry, engine.edgeCacheMaxItems)
 	engine.adjCacheMaxNodes = engine.nodeCacheMaxEntries
-	engine.outgoingAdjCache = make(map[NodeID][]EdgeID, engine.adjCacheMaxNodes)
-	engine.incomingAdjCache = make(map[NodeID][]EdgeID, engine.adjCacheMaxNodes)
+	engine.outgoingAdjCache = make(map[NodeID]adjacencyCacheEntry, engine.adjCacheMaxNodes)
+	engine.incomingAdjCache = make(map[NodeID]adjacencyCacheEntry, engine.adjCacheMaxNodes)
 	engine.namespaceNodeCounts = make(map[string]int64)
 	engine.namespaceEdgeCounts = make(map[string]int64)
 
@@ -1200,6 +1206,7 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 	}
 	// initializeMVCCSequence + initializeCounts read off b.db, so swap
 	// it before calling them.
+	newDB.cacheOwner = b
 	b.db = newDB
 	if err := b.initializeMVCCSequence(); err != nil {
 		newDB.Close()
@@ -1334,7 +1341,7 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.Update(func(txn *badger.Txn) error {
+	_ = b.db.updateMetadata(func(txn *badger.Txn) error {
 		return txn.Set(persistKey, encodedSeq)
 	})
 }
@@ -1372,7 +1379,7 @@ func (b *BadgerEngine) readSchemaVersion() (int, error) {
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.Update(func(txn *badger.Txn) error {
+	return b.db.updateWithScope(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		buf := make([]byte, 8)
 		binary.BigEndian.PutUint64(buf, uint64(version))
 		return txn.Set(mvccSchemaVersionKey(), buf)

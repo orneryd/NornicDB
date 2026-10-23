@@ -152,7 +152,7 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 		if err := b.ensureOpen(); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
-		if err := b.db.DropPrefix([]byte{p}); err != nil {
+		if err := b.db.dropPrefixWithScope(noNodeCacheWrites(), []byte{p}); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
 	}
@@ -208,7 +208,7 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			for _, item := range batch {
 				nodeID := NodeID(string(item.key[1:]))
 				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
@@ -296,7 +296,7 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			for _, item := range batch {
 				edgeID := EdgeID(string(item.key[1:]))
 				edge, err := b.decodeEdgeBodyByID(item.value, edgeID)
@@ -426,7 +426,7 @@ func (b *BadgerEngine) migrateV1ToV2Nodes() (v1ToV2PassStats, error) {
 		if len(batch) == 0 {
 			break
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(migrationNodeCacheWrites(batch), func(txn *badger.Txn) error {
 			for _, item := range batch {
 				stats.scanned++
 				nodeID := NodeID(string(item.key[1:]))
@@ -482,7 +482,7 @@ func (b *BadgerEngine) migrateV1ToV2Edges() (v1ToV2PassStats, error) {
 		if len(batch) == 0 {
 			break
 		}
-		err = b.withUpdate(func(txn *badger.Txn) error {
+		err = b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			for _, item := range batch {
 				stats.scanned++
 				edgeID := EdgeID(string(item.key[1:]))

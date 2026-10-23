@@ -235,7 +235,7 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	m, err := openManagedBadger(opts)
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(unknownNodeCacheWrites(nodeCacheUnknownManaged))
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k"), []byte("x")))
@@ -267,7 +267,7 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 	m, err = openManagedBadger(opts.WithReadOnly(true))
 	require.NoError(t, err)
 	defer m.Close()
-	_, err = m.beginLargeCommit()
+	_, err = m.beginLargeCommit(unknownNodeCacheWrites(nodeCacheUnknownManaged))
 	require.ErrorContains(t, err, "rolling back")
 	require.Error(t, m.oracle.failure())
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
@@ -297,7 +297,7 @@ func TestManagedBadger_UnregisteredAccessPanics(t *testing.T) {
 // stays usable afterwards; Cancel drops writes not yet flushed.
 func TestManagedWriteBatch_FlushKeepsWriterUsable(t *testing.T) {
 	engine := newTestEngine(t)
-	wb := engine.db.NewWriteBatch()
+	wb := engine.db.NewWriteBatch(unknownNodeCacheWrites(nodeCacheUnknownManaged))
 	require.NoError(t, wb.Set([]byte("wb-1"), []byte("a")))
 	require.NoError(t, wb.Flush())
 	require.NoError(t, wb.Set([]byte("wb-2"), []byte("b")))
@@ -331,7 +331,8 @@ func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 		txn, readTs, err := engine.db.beginTxn(true)
 		require.NoError(t, err)
 		defer engine.db.endRead(readTs)
-		cw := engine.newCommitWriter(engine.db, txn)
+		cw, writerErr := engine.newCommitWriter(unknownNodeCacheWrites(nodeCacheUnknownManaged), engine.db, txn)
+		require.NoError(t, writerErr)
 		defer cw.discard()
 		calls := 0
 		cw.beforeLarge = func() { calls++ }

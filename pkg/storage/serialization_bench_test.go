@@ -26,7 +26,7 @@ func BenchmarkSerializeNode(b *testing.B) {
 	ns := namespaceForNodeID(node.ID)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := eng.withUpdate(func(txn *badger.Txn) error {
+		err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			_, _, err := eng.encodeNodeInTxn(txn, ns, node)
 			return err
 		})
@@ -41,7 +41,7 @@ func BenchmarkDeserializeNode(b *testing.B) {
 	node := benchmarkNode()
 	ns := namespaceForNodeID(node.ID)
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
+	if err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
 		if encErr != nil {
@@ -65,7 +65,7 @@ func BenchmarkDecodeTokenizedPropertiesGraphitiVector(b *testing.B) {
 	eng := benchEngine(b)
 	props := benchmarkGraphitiProperties()
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
+	if err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeTokenizedProperties(txn, "test", props)
 		if encErr != nil {
@@ -96,7 +96,7 @@ func BenchmarkDeserializeNodeGraphitiVector(b *testing.B) {
 	node.Properties = benchmarkGraphitiProperties()
 	ns := namespaceForNodeID(node.ID)
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
+	if err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
 		if encErr != nil {
@@ -127,7 +127,7 @@ func BenchmarkDeserializeNodeGraphitiVectorProjectedScalars(b *testing.B) {
 	node.Properties = benchmarkGraphitiProperties()
 	ns := namespaceForNodeID(node.ID)
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
+	if err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var encErr error
 		data, _, encErr = eng.encodeNodeInTxn(txn, ns, node)
 		if encErr != nil {
@@ -162,7 +162,7 @@ func BenchmarkSerializeEdge(b *testing.B) {
 	ns := namespaceForEdgeID(edge.ID)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := eng.withUpdate(func(txn *badger.Txn) error {
+		err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			_, err := eng.encodeEdgeInTxn(txn, ns, edge)
 			return err
 		})
@@ -177,7 +177,7 @@ func BenchmarkDeserializeEdge(b *testing.B) {
 	edge := benchmarkEdge()
 	ns := namespaceForEdgeID(edge.ID)
 	var data []byte
-	if err := eng.withUpdate(func(txn *badger.Txn) error {
+	if err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var encErr error
 		data, encErr = eng.encodeEdgeInTxn(txn, ns, edge)
 		if encErr != nil {

@@ -20,7 +20,7 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 					_, err = b.CreateNode(n)
 					require.NoError(t, err, "public storage API accepts this ID")
 					if legacy {
-						require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+						require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 							for i := 0; i < 16; i++ {
 								key := embeddingKey(id, i)
 								item, err := txn.Get(key)
@@ -43,7 +43,7 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 					}
 					require.Equal(t, 16, separatorIDKeyCount(t, b, id))
 					if reopen {
-						require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(embeddingRepairReadyKey) }))
+						require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error { return txn.Delete(embeddingRepairReadyKey) }))
 						require.NoError(t, b.Close())
 						b, err = NewBadgerEngine(dir)
 						require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestEmbeddingCleanup_DoesNotDeleteOtherLegacyOwner(t *testing.T) {
 	n := separatelyStoredNode(long)
 	_, err = b.CreateNode(n)
 	require.NoError(t, err)
-	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, b.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for i := 0; i < 16; i++ {
 			item, e := txn.Get(embeddingKey(long, i))
 			if e != nil {

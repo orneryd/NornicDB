@@ -15,7 +15,7 @@ func TestEmbeddingCleanup_SingleOwnerRepairLinear(t *testing.T) {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			b := newTestEngine(t)
 			id := NodeID("test:large-orphan")
-			require.NoError(t, b.commitEngineWrite(func(cw *commitWriter) error {
+			require.NoError(t, b.commitEngineWrite(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(cw *commitWriter) error {
 				for i := 0; i < n; i++ {
 					key := embeddingKey(id, i)
 					if e := cw.write(func(txn *badger.Txn) error { return txn.Set(key, []byte{1}) }); e != nil {

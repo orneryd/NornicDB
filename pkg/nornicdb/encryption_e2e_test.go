@@ -153,7 +153,7 @@ func TestEncryptionOfPHIFields(t *testing.T) {
 	assert.Equal(t, "4111-1111-1111-1111", retrieved.Properties["credit_card"])
 	assert.Equal(t, "sk-secret-key-123", retrieved.Properties["api_key"])
 	assert.Equal(t, "not sensitive", retrieved.Properties["regular_field"])
-	assert.Equal(t, 42, retrieved.Properties["count"])
+	assert.Equal(t, int64(42), retrieved.Properties["count"])
 }
 
 func TestEncryptionDataAtRest(t *testing.T) {
@@ -235,7 +235,7 @@ func TestEncryptionDoesNotBreakNonSensitiveFields(t *testing.T) {
 
 	assert.Equal(t, "My Document", retrieved.Properties["title"])
 	assert.Equal(t, "A test document", retrieved.Properties["description"])
-	assert.Equal(t, 100, retrieved.Properties["count"])
+	assert.Equal(t, int64(100), retrieved.Properties["count"])
 	assert.Equal(t, 4.5, retrieved.Properties["rating"])
 	assert.Equal(t, true, retrieved.Properties["active"])
 }
