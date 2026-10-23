@@ -6,7 +6,12 @@ import (
 	"context"
 	"math"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/hybridgroup/yzma/pkg/llama"
 )
 
 // This exercises the native FFI layouts and pooled output API together. A
@@ -50,6 +55,47 @@ func TestYzmaPooledEmbeddingIntegration(t *testing.T) {
 	for i, x := range vectors[0] {
 		if math.Abs(float64(x-vectors[1][i])) > 1e-4 {
 			t.Fatal("identical input produced different embeddings")
+		}
+	}
+}
+
+func TestYzmaTokenChunkingIntegration(t *testing.T) {
+	path := os.Getenv("TEST_GGUF_MODEL")
+	if path == "" {
+		t.Skip("set TEST_GGUF_MODEL and NORNICDB_LIB to test real tokenizer chunking")
+	}
+	opts := DefaultOptions(path)
+	opts.GPULayers = 0
+	model, err := LoadModel(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer model.Close()
+	text := strings.Repeat("NornicDB code search. 日本語の文書とコード。 👩‍💻 ", 20)
+	chunks, err := model.ChunkText(text, 32, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) < 2 {
+		t.Fatal("long input was not chunked")
+	}
+	again, err := model.ChunkText(text, 32, 8)
+	if err != nil || !reflect.DeepEqual(chunks, again) {
+		t.Fatalf("chunking is not deterministic: %v", err)
+	}
+	params := llama.ModelDefaultParams()
+	params.VocabOnly, params.NGpuLayers = 1, 0
+	checkModel, err := llama.ModelLoadFromFile(path, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer llama.ModelFree(checkModel)
+	for _, chunk := range chunks {
+		if chunk == "" || !utf8.ValidString(chunk) {
+			t.Fatal("invalid or empty UTF-8 chunk")
+		}
+		if count := len(llama.Tokenize(llama.ModelGetVocab(checkModel), chunk, true, false)); count > 32 || count == 0 {
+			t.Fatalf("chunk has %d tokens, expected 1..32 including special tokens", count)
 		}
 	}
 }

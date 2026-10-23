@@ -78,6 +78,9 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Build local GGUF provider with yzma
+        run: CGO_ENABLED=0 go build -tags 'noui,localllm,yzma' -o /tmp/nornicdb-yzma ./cmd/nornicdb
+
   coverage:
     name: Test and Coverage
     # Manual and reusable runs wait for an administrator before allocating a runner.

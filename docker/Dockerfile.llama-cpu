@@ -50,6 +50,9 @@ RUN mkdir -p /output/lib /output/include && \
     cp include/llama.h ggml/include/*.h /output/include/ && \
     ls -lh /output/lib/libllama_combined.a
 
+COPY lib/llama/REVISION /llama-expected-revision
+RUN test "$(git rev-parse HEAD)" = "$(tr -d '\r\n' < /llama-expected-revision)"
+
 FROM debian:bookworm-slim
 
 COPY --from=builder /output /output

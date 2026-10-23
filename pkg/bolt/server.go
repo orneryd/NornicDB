@@ -1065,7 +1065,7 @@ func (s *Server) Serve(listener net.Listener) error {
 	// Validate the discovery body once at startup and start the 1s Date
 	// refresh ticker. Startup fails if OAuthConfig has malformed URLs.
 	if err := s.startDiscoveryRefresher(); err != nil {
-		_ = listener.Close()
+		_ = s.closeListener()
 		return fmt.Errorf("discovery response startup: %w", err)
 	}
 
@@ -1076,6 +1076,19 @@ func (s *Server) listenerSnapshot() net.Listener {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	return s.listener
+}
+
+// Startup failure and shutdown can overlap. Transfer ownership before closing
+// so only one path closes the published listener.
+func (s *Server) closeListener() error {
+	s.lifecycleMu.Lock()
+	listener := s.listener
+	s.listener = nil
+	s.lifecycleMu.Unlock()
+	if listener != nil {
+		return listener.Close()
+	}
+	return nil
 }
 
 // serve accepts connections in a loop.
@@ -1102,7 +1115,6 @@ func (s *Server) serve() error {
 func (s *Server) Close() error {
 	s.lifecycleMu.Lock()
 	s.closed.Store(true)
-	listener := s.listener
 	s.lifecycleMu.Unlock()
 	s.statementCacheIndex.Close()
 	s.executorsMu.Lock()
@@ -1110,10 +1122,7 @@ func (s *Server) Close() error {
 	s.executorsMu.Unlock()
 	s.fallbackStatementCaches().Dispose()
 	s.stopDiscoveryRefresher()
-	if listener != nil {
-		return listener.Close()
-	}
-	return nil
+	return s.closeListener()
 }
 
 // IsClosed returns whether the server is closed.

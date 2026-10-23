@@ -42,6 +42,11 @@ mkdir -p "$OUTDIR"
 echo "📥 Cloning llama.cpp $VERSION..."
 git clone --depth 1 --branch "$VERSION" https://github.com/ggml-org/llama.cpp.git "$TMPDIR"
 cd "$TMPDIR"
+EXPECTED_REVISION="${LLAMA_REVISION:-$(tr -d '\r\n' < "$OUTDIR/REVISION")}"
+if [[ "$(git rev-parse HEAD)" != "$EXPECTED_REVISION" ]]; then
+    echo "llama.cpp $VERSION does not match pinned revision $EXPECTED_REVISION" >&2
+    exit 1
+fi
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')

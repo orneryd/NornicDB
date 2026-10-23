@@ -39,3 +39,7 @@ RUN mkdir -p /output/lib /output/include && \
     ar -M < /tmp/ar.mri && \
     cp include/llama.h ggml/include/*.h /output/include/ && \
     echo "Combined library:" && ls -lh /output/lib/libllama_linux_amd64_cuda.a
+
+# Refuse to export libraries built from a moved or mismatched release tag.
+COPY lib/llama/REVISION /llama-expected-revision
+RUN test "$(git rev-parse HEAD)" = "$(tr -d '\r\n' < /llama-expected-revision)"
