@@ -3209,7 +3209,7 @@ func (s *Service) ensureVectorFileStore() {
 	// taken inside s.mu, the order every reader of the index uses (see
 	// clusterStateMu).
 	s.mu.Lock()
-	s.vectorFileStore = vfs
+	s.replaceVectorFileStoreLocked(vfs)
 	vi.mu.Lock()
 	vi.vectors = make(map[string][]float32)
 	vi.rawVectors = make(map[string][]float32)
@@ -3222,10 +3222,20 @@ func (s *Service) ensureVectorFileStore() {
 // change or close under it. The caller also holds buildMu exclusively (the
 // base build), or indexMu (retirement/clear), to exclude source mutations.
 func (s *Service) closeVectorFileStoreLocked() {
+	s.replaceVectorFileStoreLocked(nil)
+}
+
+// replaceVectorFileStoreLocked owns both publication and retirement of the
+// file and its rooted directory capability. Callers hold mu plus build/index
+// admission, as for closeVectorFileStoreLocked.
+func (s *Service) replaceVectorFileStoreLocked(store *VectorFileStore) {
+	if s.vectorFileStore == store {
+		return
+	}
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
 	}
+	s.vectorFileStore = store
 }
 
 // lastWriteTime returns the last known write time for the underlying storage, if available.
@@ -4232,7 +4242,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				} else if labels, types, named, properties, chunks, ok := vfs.NodeQueryMetadataWithTypes(); ok {
 					s.indexMu.Lock()
 					s.mu.Lock()
-					s.vectorFileStore = vfs
+					s.replaceVectorFileStoreLocked(vfs)
 					s.nodeLabels = labels
 					s.nodeTypes = types
 					s.nodeNamedVector = named
@@ -4245,7 +4255,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 				} else if storageNodeCount == 0 {
 					s.logPrintf("BuildIndexes: vector metadata missing and storage empty; loading legacy vectors without query metadata")
 					s.mu.Lock()
-					s.vectorFileStore = vfs
+					s.replaceVectorFileStoreLocked(vfs)
 					s.mu.Unlock()
 				} else {
 					s.logPrintf("BuildIndexes: vector metadata missing; rebuilding from storage")

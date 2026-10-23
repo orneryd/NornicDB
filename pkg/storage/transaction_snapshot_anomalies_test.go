@@ -14,7 +14,7 @@ import (
 )
 
 func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	doctor1 := NodeID(prefixTestID("doctor-1"))
@@ -60,7 +60,7 @@ func TestCommitConflictError_MapsBadgerConflict(t *testing.T) {
 }
 
 func TestTransaction_ReadYourWritesDoesNotBreakAnchoredSnapshot(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	nodeID := NodeID(prefixTestID("anchored-read-node"))
@@ -101,7 +101,7 @@ func TestTransaction_ReadYourWritesDoesNotBreakAnchoredSnapshot(t *testing.T) {
 }
 
 func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	for i := 0; i < 3; i++ {
@@ -145,7 +145,7 @@ func TestTransaction_LabelScanRepeatabilityWithinSnapshot(t *testing.T) {
 }
 
 func TestTransaction_AllNodesRepeatabilityWithinSnapshot(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	for i := 0; i < 3; i++ {
@@ -189,7 +189,7 @@ func TestTransaction_AllNodesRepeatabilityWithinSnapshot(t *testing.T) {
 }
 
 func TestTransaction_CreateEdgeConflictsWithConcurrentNodeDelete(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	start := NodeID(prefixTestID("edge-after-delete-start"))
@@ -222,7 +222,7 @@ func TestTransaction_CreateEdgeConflictsWithConcurrentNodeDelete(t *testing.T) {
 }
 
 func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	start := NodeID(prefixTestID("adjacency-snapshot-start"))
@@ -271,7 +271,7 @@ func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
 }
 
 func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelete(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	start := NodeID(prefixTestID("snapshot-edge-start"))

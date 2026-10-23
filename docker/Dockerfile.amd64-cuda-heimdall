@@ -14,7 +14,7 @@
 # This is a "batteries included" deployment - no additional model downloads required.
 # Heimdall provides: anomaly detection, runtime diagnosis, and memory curation via Bifrost chat.
 
-ARG LLAMA_CUDA_IMAGE=timothyswt/llama-cuda-libs:v0.4.1
+ARG LLAMA_CUDA_IMAGE=timothyswt/llama-cuda-libs:v0.7.0@sha256:89aa226654e16adcb794d1edc3cc90d945963e993d21d5f650b6d9638c2a98f7
 ARG CUDA_VERSION=12.6.0
 
 # =============================================================================

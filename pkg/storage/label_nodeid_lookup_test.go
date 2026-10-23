@@ -34,7 +34,7 @@ func (e *firstNodeOnlyEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 }
 
 func TestFirstNodeIDByLabel_NamespaceFiltering(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engineA := NewNamespacedEngine(base, "a")
 	engineB := NewNamespacedEngine(base, "b")
 
@@ -56,7 +56,7 @@ func TestFirstNodeIDByLabel_NamespaceFiltering(t *testing.T) {
 }
 
 func TestFirstNodeIDByLabel_InvalidatesOnDelete(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(base, "test")
 
 	_, err := engine.CreateNode(&Node{
@@ -88,7 +88,7 @@ func TestFirstNodeIDByLabel_InvalidatesOnDelete(t *testing.T) {
 
 func TestNodeIDsByLabel_FallbackBranches(t *testing.T) {
 	engine := &labelLookupFallbackEngine{
-		Engine: NewMemoryEngine(),
+		Engine: newTestMemoryEngine(t),
 		nodes: []*Node{
 			nil,
 			{ID: "n1"},
@@ -110,7 +110,7 @@ func TestNodeIDsByLabel_FallbackBranches(t *testing.T) {
 }
 
 func TestFirstNodeIDByLabel_FallbackBranches(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := &firstNodeOnlyEngine{Engine: base, node: &Node{ID: "n1"}}
 
 	id, err := FirstNodeIDByLabel(engine, "Person")

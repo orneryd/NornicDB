@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +13,7 @@ import (
 // node is indexed.
 func TestBuildSkipsAStoredEmbeddingWithOtherDimensions(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(buildWriteNode("nornic:good", "goodterm", []float32{1, 0, 0}))
 	require.NoError(t, err)

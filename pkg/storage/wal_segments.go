@@ -185,6 +185,13 @@ func resolveWALSegmentPath(walDir, segmentName string) (string, error) {
 
 // ReadWALEntriesFromDir reads WAL entries across all segments and the active WAL file.
 func ReadWALEntriesFromDir(walDir string) ([]WALEntry, error) {
+	info, err := os.Stat(walDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err == nil && !info.IsDir() {
+		return nil, fmt.Errorf("WAL path %q is not a directory", walDir)
+	}
 	manifest, err := loadWALManifest(walDir)
 	if err != nil {
 		return nil, err

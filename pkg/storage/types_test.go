@@ -232,7 +232,7 @@ func TestErrors(t *testing.T) {
 }
 
 func TestCollectLabels(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{}})
@@ -247,7 +247,7 @@ func TestCollectLabels(t *testing.T) {
 }
 
 func TestCollectEdgeTypes(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
@@ -264,7 +264,7 @@ func TestCollectEdgeTypes(t *testing.T) {
 }
 
 func TestStreamNodesWithFallback(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})
@@ -282,7 +282,7 @@ func TestStreamNodesWithFallback(t *testing.T) {
 }
 
 func TestStreamEdgesWithFallback(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"A"}, Properties: map[string]interface{}{}})

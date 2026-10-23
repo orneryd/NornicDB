@@ -25,7 +25,7 @@ func (c *countingBM25Index) Remove(id string) {
 
 func newCountingFulltextService(t *testing.T) (*Service, *countingBM25Index) {
 	t.Helper()
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 3)
 	counting := &countingBM25Index{bm25Index: svc.fulltext()}
 	svc.setFulltext(counting)
 	return svc, counting
@@ -33,7 +33,7 @@ func newCountingFulltextService(t *testing.T) (*Service, *countingBM25Index) {
 
 // A node's default searchable text lists its other properties in key order.
 func TestExtractSearchableTextOrdersPropertiesByKey(t *testing.T) {
-	svc := NewService(storage.NewMemoryEngine())
+	svc := NewService(newTestMemoryEngine(t))
 	node := &storage.Node{Labels: []string{"V"}, Properties: map[string]any{"zeta": "z", "alpha": int64(1), "mid": true, "content": "body"}}
 	for i := 0; i < 20; i++ {
 		require.Equal(t, "V body alpha 1 mid true zeta z", svc.extractSearchableText(node))

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ import (
 func gh446ServiceRecallFixture(t testing.TB) (*VectorSearchPipeline, *SearchOptions) {
 	t.Helper()
 	const floor = 32
-	vectors, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	vectors, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vectors.Close()) })
 	index := &IVFPQIndex{

@@ -8,7 +8,7 @@ import (
 )
 
 func TestBadgerEngine_PruneMVCCVersions_ReclaimsTombstonedHeadsAndDictEntries(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	nodeA := NodeID("test:prune-a")

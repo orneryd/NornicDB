@@ -65,7 +65,7 @@ func TestCandidateNodeBoundIncludesUnsurfacedMembers(t *testing.T) {
 func TestServiceSearchDoesNotPruneUnsurfacedBestMember(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	svc := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	var candidates []Candidate
@@ -103,10 +103,10 @@ func TestIVFPQOverflowCopiesDoNotInflateCappedPopulation(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	const count, dims = 64, 4
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", dims)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), dims)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	want := make([]string, count)

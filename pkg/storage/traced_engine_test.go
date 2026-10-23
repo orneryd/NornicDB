@@ -19,7 +19,7 @@ import (
 // the tracer is a no-op global, which is exactly what we want — the
 // wrappers must not blow up when otel.Tracer returns the noop tracer.
 func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 
 	traced := NewTracedEngine(inner)
@@ -142,7 +142,7 @@ func TestTracedEngine_DelegatesAllMethods(t *testing.T) {
 }
 
 func TestTracedEngine_DefaultContextIsBackground(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 
 	traced := NewTracedEngine(inner)

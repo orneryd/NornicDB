@@ -9,8 +9,8 @@ import (
 
 func TestCompositeEngine_GetSchema_MergesIndexes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Add indexes to engine1
 	schema1 := engine1.GetSchema()
@@ -88,8 +88,8 @@ func TestCompositeEngine_GetSchema_MergesIndexes(t *testing.T) {
 
 func TestCompositeEngine_GetSchema_DeduplicatesIndexes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Add same index to both engines (same name)
 	schema1 := engine1.GetSchema()
@@ -134,8 +134,8 @@ func TestCompositeEngine_GetSchema_DeduplicatesIndexes(t *testing.T) {
 
 func TestCompositeEngine_GetSchema_MergesConstraints(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Add constraints to engine1
 	schema1 := engine1.GetSchema()
@@ -220,7 +220,7 @@ func TestCompositeEngine_GetSchema_EmptyComposite(t *testing.T) {
 
 func TestCompositeEngine_GetSchema_AllIndexTypes(t *testing.T) {
 	// Create constituent engine with all index types
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	schema1 := engine1.GetSchema()
 
 	// Add one of each index type
@@ -290,7 +290,7 @@ func TestAnyToStringSlice_DeterministicAcrossShapes(t *testing.T) {
 }
 
 func TestCompositeEngine_GetSchema_MergesRelationshipRangeIndexEntityType(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	require.NoError(t, engine.GetSchema().AddRangeIndexForEntity(
 		"rel_range_idx",
 		"RELATES_TO",
@@ -326,7 +326,7 @@ func TestCompositeEngine_GetSchema_MergesRelationshipRangeIndexEntityType(t *tes
 }
 
 func TestCompositeEngine_GetSchema_MergesLegacyScalarRangePropertyShape(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	sm := engine.GetSchema()
 	require.NoError(t, sm.AddRangeIndex("legacy_range_idx", "Person", "age"))
 	// Force legacy export shape: scalar "property" only.

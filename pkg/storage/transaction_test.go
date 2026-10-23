@@ -10,7 +10,7 @@ import (
 )
 
 func TestNewTransaction(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	tx, err := engine.BeginTransaction()
@@ -36,7 +36,7 @@ func TestNewTransaction(t *testing.T) {
 }
 
 func TestTransaction_CreateNode_Basic(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	node := &Node{
@@ -83,7 +83,7 @@ func TestTransaction_CreateNode_Basic(t *testing.T) {
 }
 
 func TestTransaction_Rollback(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Create some nodes
@@ -123,7 +123,7 @@ func TestTransaction_Rollback(t *testing.T) {
 }
 
 func TestTransaction_Atomicity(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Pre-create a node that will cause conflict
 	conflictNode := &Node{ID: NodeID(prefixTestID("conflict-node")), Labels: []string{"Conflict"}}
@@ -171,7 +171,7 @@ func TestTransaction_Atomicity(t *testing.T) {
 }
 
 func TestTransaction_DeleteNode(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create a node first
 	node := &Node{ID: NodeID(prefixTestID("delete-me")), Labels: []string{"Delete"}}
@@ -213,7 +213,7 @@ func TestTransaction_DeleteNode(t *testing.T) {
 }
 
 func TestTransaction_UpdateNode(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create a node first
 	node := &Node{
@@ -276,7 +276,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 }
 
 func TestTransaction_CommitRejectsConstraintContractViolation(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	contract := ConstraintContract{
@@ -313,7 +313,7 @@ func TestTransaction_CommitRejectsConstraintContractViolation(t *testing.T) {
 }
 
 func TestTransaction_CreateEdge(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create nodes first
 	node1 := &Node{ID: NodeID(prefixTestID("edge-node-1")), Labels: []string{"Node"}}
@@ -358,7 +358,7 @@ func TestTransaction_CreateEdge(t *testing.T) {
 }
 
 func TestTransaction_UpdateEdge(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	node1 := &Node{ID: NodeID(prefixTestID("update-edge-node-1")), Labels: []string{"Node"}}
@@ -448,7 +448,7 @@ func TestTransaction_UpdateEdge(t *testing.T) {
 }
 
 func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	tx, _ := engine.BeginTransaction()
@@ -503,7 +503,7 @@ func TestTransaction_UpdateEdge_ValidationPaths(t *testing.T) {
 }
 
 func TestTransaction_CreateEdgeWithNewNodes(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Create nodes IN transaction
@@ -546,7 +546,7 @@ func TestTransaction_CreateEdgeWithNewNodes(t *testing.T) {
 }
 
 func TestTransaction_DeleteEdge(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create nodes and edge first
 	node1 := &Node{ID: NodeID(prefixTestID("del-edge-node-1")), Labels: []string{"Node"}}
@@ -589,7 +589,7 @@ func TestTransaction_DeleteEdge(t *testing.T) {
 }
 
 func TestTransaction_ClosedTransaction(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Commit first
@@ -624,7 +624,7 @@ func TestTransaction_ClosedTransaction(t *testing.T) {
 }
 
 func TestTransaction_IsActive(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	if !tx.IsActive() {
@@ -639,7 +639,7 @@ func TestTransaction_IsActive(t *testing.T) {
 }
 
 func TestTransaction_ConfigSettersAndSkipCreateHelpers(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	tx, _ := engine.BeginTransaction()
@@ -698,7 +698,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
 
 	t.Run("validates basic temporal inputs", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		defer engine.Close()
 		tx, _ := engine.BeginTransaction()
 
@@ -729,7 +729,7 @@ func TestTransaction_CheckTemporalConstraint(t *testing.T) {
 	})
 
 	t.Run("detects overlap and invalid pending nodes", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		defer engine.Close()
 		tx, _ := engine.BeginTransaction()
 
@@ -1222,7 +1222,7 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 }
 
 func TestTransaction_Isolation(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	// Transaction 1 creates a node
@@ -1256,7 +1256,7 @@ func TestTransaction_Isolation(t *testing.T) {
 }
 
 func TestTransaction_WriteWriteConflict(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	nodeID := NodeID(prefixTestID("ww-conflict-node"))
@@ -1292,7 +1292,7 @@ func TestTransaction_WriteWriteConflict(t *testing.T) {
 }
 
 func TestTransaction_WriteWriteConflict_OnEdge(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	start := NodeID(prefixTestID("ww-edge-start"))
@@ -1340,7 +1340,7 @@ func TestTransaction_WriteWriteConflict_OnEdge(t *testing.T) {
 }
 
 func TestTransaction_DeleteNodeConflictsWithConcurrentEdgeCreate(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	start := NodeID(prefixTestID("delete-node-start"))
@@ -1375,7 +1375,7 @@ func TestTransaction_DeleteNodeConflictsWithConcurrentEdgeCreate(t *testing.T) {
 }
 
 func TestTransaction_MultipleOperationTypes(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Pre-create some data
 	engine.CreateNode(&Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Existing"}})

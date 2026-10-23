@@ -7,13 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolveCompressedVectorStrategy_FallsBackWhenNotReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 
 	strategy, err := svc.resolveVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 8000, 16, nil)
 	require.NoError(t, err)
@@ -27,9 +26,9 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
 	t.Setenv("NORNICDB_VECTOR_IVFPQ_NPROBE", "4")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 	dir := t.TempDir()
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 16)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)
 	defer vfs.Close()
 
@@ -40,8 +39,8 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 	}
 	svc.mu.Lock()
 	svc.vectorFileStore = vfs
-	svc.vectorIndexPath = fmt.Sprintf("%s/vectors", dir)
-	svc.hnswIndexPath = fmt.Sprintf("%s/hnsw", dir)
+	svc.vectorIndexPath = filepath.Join(dir, "vectors")
+	svc.hnswIndexPath = filepath.Join(dir, "hnsw")
 	svc.mu.Unlock()
 
 	strategy, err := svc.resolveVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 1500, 16, vfs)
@@ -52,9 +51,9 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 func TestResolveCompressedVectorStrategy_FallbackOnLoadError(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 	dir := t.TempDir()
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 16)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)
 	defer vfs.Close()
 	require.NoError(t, vfs.Add("doc-1", []float32{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}))
@@ -66,8 +65,8 @@ func TestResolveCompressedVectorStrategy_FallbackOnLoadError(t *testing.T) {
 
 	svc.mu.Lock()
 	svc.vectorFileStore = vfs
-	svc.vectorIndexPath = fmt.Sprintf("%s/vectors", dir)
-	svc.hnswIndexPath = fmt.Sprintf("%s/hnsw", dir)
+	svc.vectorIndexPath = filepath.Join(dir, "vectors")
+	svc.hnswIndexPath = filepath.Join(dir, "hnsw")
 	svc.mu.Unlock()
 
 	strategy, err := svc.resolveCompressedVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 1500, 16, vfs)

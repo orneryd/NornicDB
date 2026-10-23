@@ -104,7 +104,7 @@ func (e *walOptionalEngine) TopLifecycleDebtKeys(int) []MVCCLifecycleDebtKey {
 func TestWALEngine_OptionalDelegationAndFallbackBranches(t *testing.T) {
 	node := &Node{ID: "test:n1", Labels: []string{"L"}}
 	edge := &Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n1", Type: "R"}
-	opt := &walOptionalEngine{MemoryEngine: NewMemoryEngine(), node: node, edge: edge}
+	opt := &walOptionalEngine{MemoryEngine: newTestMemoryEngine(t), node: node, edge: edge}
 	t.Cleanup(func() { _ = opt.Close() })
 
 	we := NewWALEngine(opt, nil)
@@ -172,7 +172,7 @@ func TestWALEngine_OptionalDelegationAndFallbackBranches(t *testing.T) {
 }
 
 func TestWALEngine_OptionalFallbackBranches(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 	we := NewWALEngine(&nonMVCCEngine{Engine: inner}, nil)
 
@@ -245,7 +245,7 @@ func TestWALEngine_Logger_NilBranches(t *testing.T) {
 }
 
 func TestWALEngine_FallbackLatestEffectivePropagatesErrors(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 	we := NewWALEngine(inner, nil)
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/stretchr/testify/require"
+	"path/filepath"
 	"testing"
 )
 
@@ -15,7 +16,7 @@ func TestExactReceiptFinalQualificationAcrossProviders(t *testing.T) {
 		for _, rejected := range []int{1, 65} {
 			t.Run(fmt.Sprintf("eligible_%d/rejected_%d", eligible, rejected), func(t *testing.T) {
 				index := NewVectorIndex(2)
-				store, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+				store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, store.Close()) })
 				cfg := gpu.DefaultEmbeddingIndexConfig(2)
@@ -42,7 +43,7 @@ func TestExactReceiptFinalQualificationAcrossProviders(t *testing.T) {
 						require.Len(t, rows, min(8, eligible))
 						require.Equal(t, eligible <= 8, complete, "completion uses final qualifying nodes, not widened matches")
 						for _, r := range rows {
-							require.Equal(t, 1.0, r.Score)
+							require.InDelta(t, 1.0, r.Score, 1e-6, "float32 final scoring may differ by a few ULPs")
 							require.Less(t, r.ID, fmt.Sprintf("v-%03d", eligible))
 						}
 					})
@@ -56,7 +57,7 @@ func TestExactReceiptFinalQualificationAcrossProviders(t *testing.T) {
 // generator. Removing the safety margin would lose this qualifying result.
 func TestExactReceiptKeepsFloatSafetyMargin(t *testing.T) {
 	index := NewVectorIndex(2)
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	cfg := gpu.DefaultEmbeddingIndexConfig(2)

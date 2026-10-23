@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestFulltextIndexScoresUseCurrentDocumentFrequency(t *testing.T) {
 	require.Empty(t, idx.Search("unique", 10))
 	require.Equal(t, "rare", idx.Search("replacement", 1)[0].ID)
 
-	path := t.TempDir() + "/fulltext.gob"
+	path := filepath.Join(t.TempDir(), "fulltext.gob")
 	require.NoError(t, idx.Save(path))
 	reloaded := NewFulltextIndexV2()
 	require.NoError(t, reloaded.Load(path))

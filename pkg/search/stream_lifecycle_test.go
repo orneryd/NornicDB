@@ -12,7 +12,7 @@ import (
 func TestSearchStreamLifecycleInvalidation(t *testing.T) {
 	for _, end := range []string{"write", "backfill", "policy", "abandoned_write"} {
 		t.Run(end, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := newTestMemoryEngine(t)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			store := storage.NewNamespacedEngine(base, "test")
 			for _, id := range []storage.NodeID{"a", "b"} {

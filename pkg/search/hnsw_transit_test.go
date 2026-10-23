@@ -115,7 +115,7 @@ func TestHNSWSearchRoutesThroughTombstoneRuns(t *testing.T) {
 // between live ones; continuation must still return every live document.
 func TestContinuationAfterTombstoneRunsReturnsEveryLiveDocument(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 30; i++ {

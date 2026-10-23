@@ -7,7 +7,7 @@ import (
 )
 
 func TestBulkCreatedRelationshipPublishesVersionedAdjacency(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	require.NoError(t, engine.BulkCreateNodes([]*Node{

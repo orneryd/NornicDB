@@ -42,8 +42,8 @@ func TestCompositeEngine_EmptyComposite(t *testing.T) {
 
 func TestCompositeEngine_OfflineConstituent(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -85,8 +85,8 @@ func TestCompositeEngine_OfflineConstituent(t *testing.T) {
 
 func TestCompositeEngine_AllConstituentsOffline(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -131,7 +131,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 	t.Run("nested_composite_works", func(t *testing.T) {
 		// Test that nested composites work correctly (A -> B -> C where B is composite)
 		// This is not a cycle, just nesting
-		engineC := NewMemoryEngine()
+		engineC := newTestMemoryEngine(t)
 		defer engineC.Close()
 
 		// Create composite B with constituent C
@@ -172,7 +172,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 	t.Run("direct_self_reference_detected", func(t *testing.T) {
 		// Test that direct self-reference (A -> A) is detected or handled gracefully
 		// In practice, this should be prevented by DatabaseManager, but we test the engine behavior
-		engine1 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
 		defer engine1.Close()
 
 		// Create composite A
@@ -215,7 +215,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 	t.Run("indirect_cycle_handled", func(t *testing.T) {
 		// Test indirect cycle (A -> B -> A)
 		// This should be prevented by DatabaseManager, but we test engine behavior
-		engine1 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
 		defer engine1.Close()
 
 		// Create composite A with engine1
@@ -280,7 +280,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 		// Here we just verify that if someone manually creates a CompositeEngine with
 		// a composite as constituent, it still works (the engine doesn't prevent it)
 
-		engine1 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
 		defer engine1.Close()
 
 		// Create first composite
@@ -324,7 +324,7 @@ func TestCompositeEngine_CircularDependencyPrevention(t *testing.T) {
 }
 
 func TestCompositeEngine_GetConstituentByAlias(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	constituents := map[string]Engine{"db1": engine1}
@@ -346,7 +346,7 @@ func TestCompositeEngine_GetConstituentByAlias(t *testing.T) {
 }
 
 func TestCompositeEngine_IsComposite(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	composite := NewCompositeEngine(
@@ -366,8 +366,8 @@ func TestCompositeEngine_IsComposite(t *testing.T) {
 }
 
 func TestCompositeEngine_routeWrite_EmptyDatabaseID(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	defer engine1.Close()
 	defer engine2.Close()
 
@@ -385,8 +385,8 @@ func TestCompositeEngine_routeWrite_EmptyDatabaseID(t *testing.T) {
 }
 
 func TestCompositeEngine_routeWrite_ByConstituentName(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	defer engine1.Close()
 	defer engine2.Close()
 
@@ -404,7 +404,7 @@ func TestCompositeEngine_routeWrite_ByConstituentName(t *testing.T) {
 }
 
 func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	composite := NewCompositeEngine(
@@ -434,7 +434,7 @@ func TestCompositeEngine_UpdateEdge_CrossConstituent(t *testing.T) {
 }
 
 func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	composite := NewCompositeEngine(
@@ -462,7 +462,7 @@ func TestCompositeEngine_DeleteEdge_CrossConstituent(t *testing.T) {
 
 func TestCompositeEngine_StreamEdges_Fallback(t *testing.T) {
 	// Use a plain MemoryEngine which doesn't implement StreamingEngine
-	engine1 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
 	defer engine1.Close()
 
 	// Create test data — IDs must be namespace-prefixed

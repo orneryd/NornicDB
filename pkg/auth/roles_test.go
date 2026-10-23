@@ -9,7 +9,7 @@ import (
 
 func TestRoleStore_AllRoles_Create_Delete(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "system")
 	defer eng.Close()
 
 	store := NewRoleStore(eng)
@@ -46,7 +46,7 @@ func TestRoleStore_AllRoles_Create_Delete(t *testing.T) {
 
 func TestRoleStore_RenameRole(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "system")
 	defer eng.Close()
 
 	store := NewRoleStore(eng)
@@ -69,7 +69,7 @@ func TestRoleStore_RenameRole(t *testing.T) {
 
 func TestRoleStore_ErrorAndLoadPaths(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "system")
 	defer eng.Close()
 
 	_, err := eng.CreateNode(&storage.Node{

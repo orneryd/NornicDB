@@ -37,12 +37,22 @@ func newTestCollectionStore(t *testing.T) CollectionStore {
 	return store
 }
 
+// Hold collection creation across a real clock tick so the response's positive
+// elapsed-time assertion exercises measured work on coarse platform clocks.
+type delayedCollectionCreateStore struct{ CollectionStore }
+
+func (s delayedCollectionCreateStore) Create(ctx context.Context, name string, dimensions int, distance qpb.Distance) error {
+	time.Sleep(20 * time.Millisecond)
+	return s.CollectionStore.Create(ctx, name, dimensions, distance)
+}
+
 func TestCollectionsService_Create(t *testing.T) {
 	ctx := context.Background()
 	collections := newTestCollectionStore(t)
 	service := NewCollectionsService(collections, nil)
 
 	t.Run("create collection successfully", func(t *testing.T) {
+		service := NewCollectionsService(delayedCollectionCreateStore{collections}, nil)
 		req := &qpb.CreateCollection{
 			CollectionName: "test_collection",
 			VectorsConfig: &qpb.VectorsConfig{
