@@ -192,6 +192,12 @@
   other: "No se permite convertir una lista en booleano. Use `NOT isEmpty(...)` en su lugar."
 - id: cyphercore.list_index_type_mismatch
   other: "Tipo no coincidente: el índice de lista debe ser Integer, pero era {{.Type}}"
+- id: cyphercore.list_index_non_integer
+  other: "No se puede acceder a una lista mediante un índice numérico no entero, se recibió {{.Value}}"
+- id: cyphercore.list_index_non_number
+  other: "No se puede acceder a la lista '{{.List}}' mediante un índice no numérico, se recibió {{.Value}}"
+- id: cyphercore.list_index_boolean
+  other: "No se puede acceder a la lista '{{.List}}' mediante un índice no numérico, se recibió {{.Value}}: se esperaba que {{.Value}} fuera org.neo4j.values.storable.NumberValue, pero era org.neo4j.values.storable.{{.Class}}"
 - id: cyphercore.regex_pattern_type_mismatch
   other: "Tipo no coincidente: el patrón de una expresión regular debe ser String, pero era {{.Value}}"
 - id: cyphercore.duration_arithmetic_overflow
