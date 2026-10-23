@@ -137,6 +137,11 @@ func (e *StorageExecutor) resolveAPOCLocalFilePath(source string, ensureAllowed 
 		return "", err
 	}
 
+	// A native Windows drive path is a local path, not a URL scheme.
+	if filepath.IsAbs(source) && filepath.VolumeName(source) != "" {
+		return e.rebaseAPOCImportPath(source)
+	}
+
 	parsed, err := url.Parse(source)
 	if err == nil && parsed.Scheme != "" {
 		switch lowerASCII(parsed.Scheme) {

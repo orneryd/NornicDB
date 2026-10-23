@@ -14,7 +14,7 @@ func documentedTextIntervalPartition(t testing.TB) string {
 	t.Helper()
 	doc, err := os.ReadFile("../../docs/api-reference/cypher-functions/README.md")
 	require.NoError(t, err)
-	_, statement, ok := strings.Cut(string(doc), "// [start, end) split into the intervals' clipped parts with their role, gaps as 'own'\n")
+	_, statement, ok := strings.Cut(strings.ReplaceAll(string(doc), "\r\n", "\n"), "// [start, end) split into the intervals' clipped parts with their role, gaps as 'own'\n")
 	require.True(t, ok, "partition recipe must be documented")
 	statement, _, ok = strings.Cut(statement, "\n\n// The 1-based")
 	require.True(t, ok, "partition recipe must end before the line-position recipe")

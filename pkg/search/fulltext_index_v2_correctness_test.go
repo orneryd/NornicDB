@@ -2,6 +2,7 @@ package search
 
 import (
 	"math/rand"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -90,7 +91,7 @@ func TestDocIDsAreLexicalByNumber(t *testing.T) {
 }
 
 func TestFulltextIndexV2LoadDerivesDocumentIDOrder(t *testing.T) {
-	path := t.TempDir() + "/bm25"
+	path := filepath.Join(t.TempDir(), "bm25")
 	idx := NewFulltextIndexV2()
 	idx.Index("doc-c", "shared")
 	idx.Index("doc-a", "shared")

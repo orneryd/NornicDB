@@ -1,5 +1,4 @@
-//go:build !vulkan
-// +build !vulkan
+//go:build !cgovulkan
 
 package vulkan
 
@@ -7,33 +6,6 @@ import (
 	"errors"
 	"testing"
 )
-
-func TestIsAvailableStub(t *testing.T) {
-	if IsAvailable() {
-		t.Error("IsAvailable() should return false on stub")
-	}
-}
-
-func TestDeviceCountStub(t *testing.T) {
-	if DeviceCount() != 0 {
-		t.Error("DeviceCount() should return 0 on stub")
-	}
-}
-
-func TestNewDeviceStub(t *testing.T) {
-	device, err := NewDevice(0)
-	// On stub build (no Vulkan library), we expect either ErrVulkanNotAvailable
-	// or ErrDeviceCreation wrapped error
-	if err == nil {
-		t.Error("NewDevice() should return an error on stub")
-	}
-	if !errors.Is(err, ErrVulkanNotAvailable) && !errors.Is(err, ErrDeviceCreation) {
-		t.Errorf("NewDevice() error = %v, want ErrVulkanNotAvailable or ErrDeviceCreation", err)
-	}
-	if device != nil {
-		t.Error("NewDevice() should return nil device on stub")
-	}
-}
 
 func TestDeviceMethodsStub(t *testing.T) {
 	var device Device

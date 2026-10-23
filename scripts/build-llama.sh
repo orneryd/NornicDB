@@ -5,7 +5,7 @@
 #   ./scripts/build-llama.sh [version]
 #
 # Examples:
-#   ./scripts/build-llama.sh          # Uses default version (v0.4.1)
+#   ./scripts/build-llama.sh          # Uses default version (v0.7.0)
 #   ./scripts/build-llama.sh b8000    # Specific version
 #
 # Output:
@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-v0.4.1}"
+VERSION="${1:-v0.7.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 OUTDIR="$PROJECT_ROOT/lib/llama"

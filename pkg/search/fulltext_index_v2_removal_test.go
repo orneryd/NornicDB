@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,7 +48,7 @@ func TestFulltextIndexV2RemovalKeepsResultsAndCompacts(t *testing.T) {
 
 	// Both save paths write, and load keeps, live postings only.
 	for _, save := range []func(string) error{index.Save, index.SaveNoCopy} {
-		path := t.TempDir() + "/bm25"
+		path := filepath.Join(t.TempDir(), "bm25")
 		require.NoError(t, save(path))
 		loaded := NewFulltextIndexV2()
 		require.NoError(t, loaded.Load(path))

@@ -1548,13 +1548,19 @@ func TestSearchTextContinuationIDModeBoundsRetainedDescriptorBytes(t *testing.T)
 func TestSearchTextContinuationIDModeBoundsBuildTime(t *testing.T) {
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	service := NewService(engine)
-	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxBuildDuration: time.Nanosecond})
+	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxBuildDuration: time.Millisecond})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, err := engine.CreateNode(&storage.Node{ID: "node-a", Labels: []string{"Document"}})
 	require.NoError(t, err)
 
+	options := DefaultSearchOptions()
+	options.Where = func(*storage.Node) bool {
+		// Cross the configured deadline even on coarse platform clocks.
+		time.Sleep(10 * time.Millisecond)
+		return true
+	}
 	_, err = service.SearchTextContinuation(
-		context.Background(), "", DefaultSearchOptions(),
+		context.Background(), "", options,
 		SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: SearchContinuationID, N: 1},
 		nil, nil, nil, ChunkedSearchErrorPolicy{},
 	)

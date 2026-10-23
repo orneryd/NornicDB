@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -154,7 +155,7 @@ func TestServiceFileIterationCallbacksReleaseLeafLock(t *testing.T) {
 	for _, action := range []string{"append", "close", "compact"} {
 		t.Run(action, func(t *testing.T) {
 			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			for _, id := range []string{"a", "b"} {
 				require.NoError(t, svc.IndexNode(&storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{{1, 0}}}))

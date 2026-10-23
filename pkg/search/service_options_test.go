@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -120,7 +121,7 @@ func TestVectorStorageModeControlsFileStore(t *testing.T) {
 		t.Run(test.mode, func(t *testing.T) {
 			service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: test.mode})
 			service.SetPersistenceEnabled(true)
-			service.SetVectorIndexPath(t.TempDir() + "/vectors")
+			service.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 
 			service.indexMu.Lock()
 			service.ensureVectorFileStore()

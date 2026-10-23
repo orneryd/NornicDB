@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -167,7 +168,7 @@ func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
 // new dimension nor reports success for a vector it cannot store.
 func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
-	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
 	t.Cleanup(func() { _ = svc.Close() })
 	eight := make([]float32, 8)
@@ -201,7 +202,7 @@ func TestFileStoreMigrationDoesNotDeadlockDimensionAdmission(t *testing.T) {
 	// Persistence enabled after live ingestion began: the next index
 	// mutation migrates the in-memory vector to disk. Nothing else here takes
 	// s.mu for writing, so a pending writer below is the migration.
-	svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
 
 	// Admission of a 3-dimensional write between its two steps: s.mu held,
@@ -270,7 +271,7 @@ func TestRetiringFileStoreHoldsServiceLock(t *testing.T) {
 		t.Run(retire.name, func(t *testing.T) {
 			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 			t.Cleanup(func() { _ = svc.Close() })
-			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			svc.indexMu.Lock()
 			svc.ensureVectorFileStore()

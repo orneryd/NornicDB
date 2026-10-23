@@ -192,7 +192,7 @@ __global__ void kernel_compute_norms(
     if (idx >= n) return;
     
     float sum = 0.0f;
-    const float* vec = vectors + idx * dimensions;
+    const float* vec = vectors + (size_t)idx * dimensions;
     
     for (uint32_t d = 0; d < dimensions; d++) {
         float val = vec[d];
@@ -219,7 +219,7 @@ __global__ void kernel_normalize_vectors(
     
     // Each thread handles one dimension stride
     for (uint32_t d = dim_idx; d < dimensions; d += blockDim.x) {
-        vectors[vec_idx * dimensions + d] /= norm;
+        vectors[(size_t)vec_idx * dimensions + d] /= norm;
     }
 }
 
@@ -271,7 +271,7 @@ __global__ void kernel_cosine_similarity_normalized(
     if (idx >= n) return;
     
     float dot = 0.0f;
-    const float* vec = embeddings + idx * dimensions;
+    const float* vec = embeddings + (size_t)idx * dimensions;
     
     for (uint32_t d = 0; d < dimensions; d++) {
         dot += vec[d] * query[d];
@@ -295,7 +295,7 @@ __global__ void kernel_cosine_similarity(
     float norm_e = 0.0f;
     float norm_q = 0.0f;
     
-    const float* vec = embeddings + idx * dimensions;
+    const float* vec = embeddings + (size_t)idx * dimensions;
     
     for (uint32_t d = 0; d < dimensions; d++) {
         float e = vec[d];

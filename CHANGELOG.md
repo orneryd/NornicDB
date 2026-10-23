@@ -9,11 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add opt-in CUDA and Vulkan HNSW qualification beyond 4 GiB of resident
+  1,024-dimensional vectors, sharing the full-scale Metal construction fixture.
+
 - Heimdall plugin actions can opt into the public MCP server with `External: true`; combined tool registration retains the first name and logs collisions. Default examples remain internal. Plugins compile independently of the optional local inference adapter and load with the agentic harness disabled.
   Failed starts roll back; exported tools retire with their owners; server shutdown
   stops plugin-only installations; standalone MCP shutdown drains active requests
   without holding the registry lock.
 - Normalize duration seconds/nanoseconds and preserve TIME offset versus DATETIME region identity in canonical temporal equality. Use typed temporal keys for allocation-free collection lookup.
+
+### Changed
+
+- Update llama.cpp libraries and headers to v0.7.0, the Windows yzma adapter
+  to v1.30.0, and Vite to 8.3.5 from Dependabot PR #1626.
 
 ### Cluster upgrade requirement
 
@@ -25,6 +33,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Use device pointer mode for CUDA vector norms and wide coordinate offsets.
+- Read pooled sequence embeddings through the Windows yzma adapter so BGE-M3
+  returns normalized embeddings rather than zero token-output vectors.
+- Resolve HNSW construction coordinates from its supplied file store when
+  memory mapping is unavailable. Correct Windows test paths, resource cleanup,
+  system database fixtures, and clock-dependent continuation deadline coverage.
+- Run Windows build GPU detection from a PowerShell file so shell expansion
+  cannot corrupt its variables; support Windows documentation virtualenv paths.
+- Include typed list-index errors in all source localization catalogs, using
+  the correction from PR #1657 and its source-catalog completeness test.
+- Drain rejected GraphQL WebSocket messages within the transport limits before
+  closing so Windows delivers the memory-capacity close frame instead of a reset.
+- Isolate evaluation file-error fixtures and run native Go plugin loading only
+  on supported platforms; retain Linux coverage for actual plugin loading.
+- Recognize native Windows drive paths as local APOC files. Parameterize file
+  paths in procedure tests and normalize documentation line endings when
+  extracting executable Cypher examples.
+- Make deferred-log outcome tests independent of clock resolution, calibrate
+  cold-scan timing batches, and retain positive elapsed-time checks using
+  collection work that spans a clock tick.
 
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Preserve node properties and source metadata in retrieval procedure rows, graph

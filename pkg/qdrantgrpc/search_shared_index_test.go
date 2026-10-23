@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -376,7 +377,7 @@ func TestSharedIndexDefaultDropRemovesPersistedCoordinates(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	path := t.TempDir() + "/vectors"
+	path := filepath.Join(t.TempDir(), "vectors")
 	provider := sharedSearchProvider()
 	var svc *search.Service
 	srv := startSharedIndexServer(t, dbm, base, func(name string, store storage.Engine) (*search.Service, error) {
@@ -417,7 +418,7 @@ func TestSharedIndexPersistedScoresUseOriginalMagnitudes(t *testing.T) {
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			var svc *search.Service
-			path := t.TempDir() + "/vectors"
+			path := filepath.Join(t.TempDir(), "vectors")
 			srv := startSharedIndexServer(t, dbm, base, func(_ string, store storage.Engine) (*search.Service, error) {
 				if svc == nil {
 					svc = search.NewServiceWithDimensions(store, 4)
@@ -506,7 +507,7 @@ func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
 		svc := services[database]
 		if svc == nil {
 			svc = search.NewServiceWithDimensions(store, 8)
-			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			t.Cleanup(func() { _ = svc.Close() })
 			if err := svc.IndexNode(&storage.Node{ID: "previous", NamedEmbeddings: map[string][]float32{"default": unitVector(8, 0)}}); err != nil {

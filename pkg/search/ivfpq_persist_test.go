@@ -13,8 +13,8 @@ import (
 
 func TestIVFPQPersistRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	base := fmt.Sprintf("%s/hnsw", dir)
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 8)
+	base := filepath.Join(dir, "hnsw")
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 8)
 	require.NoError(t, err)
 	defer vfs.Close()
 

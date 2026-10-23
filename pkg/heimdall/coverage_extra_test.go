@@ -316,6 +316,9 @@ func setupHeimdallCoverageGlobals(t *testing.T) {
 
 func buildCoverageHeimdallPlugin(t *testing.T, source string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Go buildmode=plugin is unsupported on Windows; run plugin loading on Linux or macOS")
+	}
 
 	wd, err := os.Getwd()
 	require.NoError(t, err)

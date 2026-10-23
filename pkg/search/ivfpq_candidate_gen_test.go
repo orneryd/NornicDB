@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -21,7 +22,7 @@ func (ctx *cancelOnDoneContext) Done() <-chan struct{} {
 
 func TestIVFPQCandidateGen_SearchCandidates(t *testing.T) {
 	dir := t.TempDir()
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 8)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 8)
 	require.NoError(t, err)
 	defer vfs.Close()
 

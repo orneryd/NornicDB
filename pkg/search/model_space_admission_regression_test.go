@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -39,7 +40,7 @@ func TestPersistedExactQueriesRespectAdmittedModelSpace(t *testing.T) {
 			defer svc.Close()
 			svc.SetEmbeddingSpace("new:4")
 			if persist {
-				svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+				svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 				svc.SetPersistenceEnabled(true)
 			}
 			require.NoError(t, svc.BuildIndexes(context.Background()))

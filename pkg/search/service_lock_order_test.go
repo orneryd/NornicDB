@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -172,7 +173,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 		t.Run(fmt.Sprintf("close=%t", closeService), func(t *testing.T) {
 			engine := &serviceLockBuildEngine{Engine: storage.NewMemoryEngine()}
 			svc := NewServiceWithDimensions(engine, 2)
-			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			if err := svc.IndexNode(&storage.Node{ID: "live", ChunkEmbeddings: [][]float32{{1, 0}}}); err != nil {
 				t.Fatal(err)

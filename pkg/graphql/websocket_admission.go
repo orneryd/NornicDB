@@ -82,11 +82,11 @@ func (c *policyWebsocketConn) NextReader() (kind int, result io.Reader, err erro
 		return kind, nil, err
 	}
 	if err = c.wire.Grow(c.metadataBytes); err != nil {
-		return kind, nil, c.reject(err)
+		return kind, nil, c.reject(err, reader)
 	}
 	limit, err := c.wire.WireLimit()
 	if err != nil {
-		return kind, nil, c.reject(err)
+		return kind, nil, c.reject(err, reader)
 	}
 	var data []byte
 	var scratch [32 << 10]byte
@@ -101,10 +101,10 @@ func (c *policyWebsocketConn) NextReader() (kind int, result io.Reader, err erro
 		if n > 0 {
 			wireSize := int64(len(data)) + int64(n)
 			if limit > 0 && memory.WireSize(c.metadataBytes, wireSize) > limit {
-				return kind, nil, c.reject(memory.ErrLimitExceeded)
+				return kind, nil, c.reject(memory.ErrLimitExceeded, reader)
 			}
 			if err = c.wire.Grow(c.metadataBytes, wireSize); err != nil {
-				return kind, nil, c.reject(err)
+				return kind, nil, c.reject(err, reader)
 			}
 			data = append(data, scratch[:n]...)
 		}
@@ -118,8 +118,8 @@ func (c *policyWebsocketConn) NextReader() (kind int, result io.Reader, err erro
 	return kind, bytes.NewReader(data), nil
 }
 
-func (c *policyWebsocketConn) reject(err error) error {
-	_ = c.WriteClose(websocket.CloseTryAgainLater, websocketMemoryErrorCode)
+func (c *policyWebsocketConn) reject(err error, reader io.Reader) error {
+	_ = c.writeClose(websocket.CloseTryAgainLater, websocketMemoryErrorCode, reader)
 	return err
 }
 
@@ -130,8 +130,20 @@ func (c *policyWebsocketConn) WriteJSON(value any) error {
 }
 
 func (c *policyWebsocketConn) WriteClose(code int, message string) (err error) {
+	return c.writeClose(code, message, nil)
+}
+
+func (c *policyWebsocketConn) writeClose(code int, message string, rejected io.Reader) (err error) {
 	c.closeOnce.Do(func() {
 		err = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, message), time.Now().Add(time.Second))
+		if rejected != nil {
+			// Closing with unread TCP data can reset the socket on Windows,
+			// discarding the close frame. Drain the rejected message without
+			// buffering or decoding it. The existing transport read limit and
+			// this deadline bound a client that keeps sending.
+			_ = c.conn.SetReadDeadline(time.Now().Add(time.Second))
+			_, _ = io.Copy(io.Discard, rejected)
+		}
 		_ = c.conn.Close()
 	})
 	return err

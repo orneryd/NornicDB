@@ -473,8 +473,9 @@ func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
 		return nil, fmt.Errorf("encoding failed: %w", err)
 	}
 
-	// Get embeddings (nOutputs=1 for single sequence, nEmbeddings=dims)
-	emb, err := llama.GetEmbeddings(lctx, 1, m.dims)
+	// Read the pooled sequence embedding, as the CGO backend does. The raw
+	// token-output buffer is not the embedding for pooling models such as BGE.
+	emb, err := llama.GetEmbeddingsSeq(lctx, 0, int32(m.dims))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get embeddings: %w", err)
 	}

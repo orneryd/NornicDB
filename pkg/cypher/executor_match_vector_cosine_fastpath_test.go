@@ -458,8 +458,8 @@ func TestMatchVectorCosineFastPath_FileBackedPropertyVectors(t *testing.T) {
 
 	searchSvc := search.NewServiceWithDimensions(ns, 4)
 	searchSvc.SetPersistenceEnabled(true)
-	t.Cleanup(func() { searchSvc.SetPersistenceEnabled(false) })
 	searchSvc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
 	require.NoError(t, searchSvc.BuildIndexes(ctx))
 	require.True(t, searchSvc.IsReady())
 	require.Equal(t, 2, searchSvc.CountPropertyVectorEntries("name_embedding"))

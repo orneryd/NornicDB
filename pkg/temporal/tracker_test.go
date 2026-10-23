@@ -522,6 +522,7 @@ func TestTracker_EvictOldestAndCleanup(t *testing.T) {
 		t.Fatalf("unexpected access order after eviction: %v", tracker.accessOrder)
 	}
 
+	tracker.lastCleanup = time.Now().Add(-time.Second)
 	before := tracker.lastCleanup
 	tracker.cleanup()
 	if !tracker.lastCleanup.After(before) {
