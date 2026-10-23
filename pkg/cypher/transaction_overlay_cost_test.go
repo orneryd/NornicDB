@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// An isolated node's degree does not change when unrelated relationships are
-// added to the same transaction. Repeated integrity reads must not allocate a
-// shadow map containing every unrelated relationship.
-func TestTransactionOverlayIncidentCostIsLocal(t *testing.T) {
+// An isolated node's outgoing degree does not change when unrelated
+// relationships are added to the same transaction. Repeated adjacency reads
+// must not allocate a shadow map containing every unrelated relationship.
+func TestTransactionOverlayOutgoingCostIsLocal(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	tx, err := base.BeginTransaction()
 	require.NoError(t, err)
@@ -23,7 +23,7 @@ func TestTransactionOverlayIncidentCostIsLocal(t *testing.T) {
 		require.NoError(t, err)
 	}
 	read := func() {
-		edges, err := tx.IncidentEdges("test:isolated")
+		edges, err := tx.GetOutgoingEdges("test:isolated")
 		if err != nil || len(edges) != 0 {
 			t.Fatalf("isolated node: edges=%d, err=%v", len(edges), err)
 		}
