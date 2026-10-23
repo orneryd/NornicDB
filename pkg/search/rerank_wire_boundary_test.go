@@ -152,7 +152,7 @@ func assertReviewerExplicitEnvelope(t *testing.T, provider reviewerBoundaryProvi
 
 func assertReviewerNodeEnvelope(t *testing.T, provider reviewerBoundaryProvider, testCase reviewerEnvelopeCase) {
 	t.Helper()
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { _ = service.Close() })
 	fixtures := []struct {
@@ -303,7 +303,7 @@ func TestReviewerAliasedFieldsBoundary(t *testing.T) {
 				}
 			}
 
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewServiceWithDimensions(engine, 2)
 			t.Cleanup(func() { _ = service.Close() })
 			service.SetReranker(reranker)

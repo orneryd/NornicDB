@@ -56,7 +56,7 @@ func TestXhighExactThresholdPopulationBoundary(t *testing.T) {
 		})
 	}
 	t.Run("public_start_pull", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := storage.NewNamespacedEngine(base, "threshold")
 		service := NewServiceWithDimensions(engine, 2)

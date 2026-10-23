@@ -59,7 +59,7 @@ func TestUndecodableVectorKeysHaveNoOwnerInEveryReader(t *testing.T) {
 // forEachNodeVectorEntry stops as soon as its callback does, in every entry
 // kind, and visits entries in kind order.
 func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	t.Cleanup(func() { _ = svc.Close() })
 	for name, node := range map[string]*storage.Node{
 		"named":    {ID: "n", NamedEmbeddings: map[string][]float32{"a": {1, 0}, "b": {0, 1}}},

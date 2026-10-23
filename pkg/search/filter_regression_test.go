@@ -30,7 +30,7 @@ import (
 
 func newFilterTestEngine(tb testing.TB) storage.Engine {
 	tb.Helper()
-	eng := storage.NewMemoryEngine()
+	eng := newTestMemoryEngine(tb)
 	tb.Cleanup(func() { eng.Close() })
 	return eng
 }

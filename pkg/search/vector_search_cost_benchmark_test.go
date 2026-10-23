@@ -35,7 +35,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 	tb.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 	tb.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	const count, dims = 2000, 16
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(tb), "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
 	tb.Cleanup(func() { closeAfterBuilds(tb, svc) })
 	if strategy != "ivfpq" {

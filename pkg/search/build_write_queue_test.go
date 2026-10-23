@@ -32,7 +32,7 @@ type nodeSnapshotGateEngine struct {
 
 func newNodeSnapshotGateEngine(t *testing.T) *nodeSnapshotGateEngine {
 	t.Helper()
-	e := &nodeSnapshotGateEngine{MemoryEngine: storage.NewMemoryEngine(), entered: make(chan struct{}), release: make(chan struct{})}
+	e := &nodeSnapshotGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
 	return e
 }
@@ -157,7 +157,7 @@ func requireReturnsDuringBuild(t *testing.T, what string, write func() error) {
 	case err := <-done:
 		require.NoError(t, err, what)
 	case <-time.After(5 * time.Second):
-		t.Fatalf("%s waited for the build", what)
+		t.Fatalf("%s waited for the build (memory headroom=%d)\n%s", what, memoryHeadroom(), serviceLockStacks())
 	}
 }
 
@@ -255,7 +255,7 @@ func TestBuildLiveWritesDuringWarmupSurviveTheBM25Reload(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
-			engine := storage.NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 			require.NoError(t, err)

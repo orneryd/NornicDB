@@ -236,7 +236,7 @@ func TestDocsCorpusFixture_DeterministicAndSufficientScale(t *testing.T) {
 
 func buildDocsSearchFixture(tb testing.TB, chunks []docsCorpusChunk) *Service {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(tb)
 	engine := storage.NewNamespacedEngine(base, "docs-benchmark")
 	svc := NewServiceWithDimensions(engine, docsVectorDims)
 	svc.resultCache = nil

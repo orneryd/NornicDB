@@ -7,13 +7,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolveCompressedVectorStrategy_FallsBackWhenNotReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 
 	strategy, err := svc.resolveVectorStrategy(context.Background(), svc.pipelineBuildSeeds(), 8000, 16, nil)
 	require.NoError(t, err)
@@ -27,7 +26,7 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
 	t.Setenv("NORNICDB_VECTOR_IVFPQ_NPROBE", "4")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)
@@ -52,7 +51,7 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 func TestResolveCompressedVectorStrategy_FallbackOnLoadError(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)

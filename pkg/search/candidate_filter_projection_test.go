@@ -78,7 +78,7 @@ func (s *candidateFilterReadSpy) GetNodeWithoutEmbeddings(id storage.NodeID) (*s
 }
 
 func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &candidateFilterReadSpy{
 		Engine: base,
@@ -106,7 +106,7 @@ func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 }
 
 func TestTypeOnlyCandidateFilterUsesInMemoryMetadata(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	spy := &candidateFilterReadSpy{
 		Engine: base,

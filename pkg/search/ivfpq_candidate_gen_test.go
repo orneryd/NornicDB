@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,7 +168,7 @@ func TestIVFPQCandidateGenDefersSimilarityThresholdUntilExactScoring(t *testing.
 }
 
 func TestServiceTracksCompressedIndexMutationsWithoutRebuild(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	service.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 2}}
 
 	service.indexMu.Lock()

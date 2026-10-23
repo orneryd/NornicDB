@@ -231,7 +231,7 @@ func TestBoundCandidateLimit(t *testing.T) {
 }
 
 func TestVectorSearchCandidates_UsesPipeline(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)
 
 	// Add test nodes
@@ -261,7 +261,7 @@ func TestVectorSearchCandidates_UsesPipeline(t *testing.T) {
 }
 
 func TestVectorSearchCandidates_AutoStrategyDefaultsToHNSW(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)
 
 	for i := 0; i < 12; i++ {
@@ -286,7 +286,7 @@ func TestVectorSearchCandidates_AutoStrategyDefaultsToHNSW(t *testing.T) {
 
 func TestVectorSearchCandidates_CPUBruteForceThresholdOptIn(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100")
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)
 
 	for i := 0; i < 12; i++ {
@@ -310,7 +310,7 @@ func TestVectorSearchCandidates_CPUBruteForceThresholdOptIn(t *testing.T) {
 
 func TestVectorSearchPipeline_UsesBruteForceWhenClusteredAndThresholdOptIn(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "50")
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)
 
 	// Enable clustering and force it to cluster with a dataset below the CPU brute-force threshold.

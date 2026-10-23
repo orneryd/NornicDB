@@ -256,7 +256,7 @@ type nodeReadParkEngine struct {
 
 func newNodeReadParkEngine(t *testing.T) *nodeReadParkEngine {
 	t.Helper()
-	e := &nodeReadParkEngine{MemoryEngine: storage.NewMemoryEngine(), entered: make(chan struct{}), release: make(chan struct{})}
+	e := &nodeReadParkEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { e.open(); _ = e.MemoryEngine.Close() })
 	return e
 }
