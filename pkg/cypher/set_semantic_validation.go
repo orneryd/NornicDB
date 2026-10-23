@@ -311,6 +311,7 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
+	syntax := functionSyntaxView{text: expression}
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
 	// Both maskers blank in place: offsets are the expression's.
 	locals := newLocalReader(expression)
@@ -414,9 +415,9 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
+		if call, called := syntax.callAt(index); called {
 			delimiters = append(delimiters, '(')
-			index = functionEnd + 1
+			index = call.open + 1
 			continue
 		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
@@ -478,6 +479,12 @@ func expressionFreeVariables(expression string) []string {
 // is the names-only view of the one declaration reader, for the caches and
 // pre-filters in front of localVariableShadowsAt.
 func expressionLocalBindings(expression string) map[string]struct{} {
+	syntax := functionSyntaxView{text: expression}
+	return localBindingNamesFromSyntax(&syntax)
+}
+
+func localBindingNamesFromSyntax(syntax *functionSyntaxView) map[string]struct{} {
+	expression := syntax.text
 	locals := make(map[string]struct{})
 	for index := 0; index < len(expression); index++ {
 		switch c := expression[index]; cypherLexicalByte(c) {
@@ -488,7 +495,7 @@ func expressionLocalBindings(expression string) map[string]struct{} {
 				index = end - 1
 			}
 		case '[', '(':
-			if binding, ok := localBindingAt(expression, index); ok {
+			if binding, ok := readLocalBinding(syntax, index); ok {
 				for declared := 0; declared < binding.count; declared++ {
 					locals[binding.names[declared]] = struct{}{}
 				}

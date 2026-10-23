@@ -32,5 +32,5 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 }
 
 func rowTopLevelPipeIndex(expression string) int {
-	return findTopLevelOperator(expression, "|", false, true)
+	return readFunctionSyntax(expression).firstTopLevelByte('|')
 }

@@ -347,10 +347,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 			return true
 		}
 	}
-	j := end
-	for j < len(s) && isASCIISpace(s[j]) {
-		j++
-	}
+	j := queryGapEnd(s, end)
 	if j < len(s) && s[j] == ':' {
 		return true // a map key: {set: 1}
 	}
@@ -1303,6 +1300,52 @@ func queryGapEnd(query string, index int) int {
 	return end
 }
 
+// queryGapStart is queryGapEnd read backwards: the start of the run of
+// whitespace and comments that ends at index, index itself when none does.
+// Comment text may hold quotes, dots or slashes, so when the text before
+// index has a comment the boundary is read with the forward reader (quoted
+// text that looks like a comment is data); otherwise it is a short backward
+// whitespace scan.
+func queryGapStart(query string, index int) int {
+	before := query[:index]
+	if !strings.Contains(before, "/*") && !strings.Contains(before, "//") {
+		start := index
+		for start > 0 && isASCIISpace(query[start-1]) {
+			start--
+		}
+		return start
+	}
+	start := 0
+	for at := 0; at < index; {
+		if end := queryGapEnd(before, at); end > at {
+			at = end
+			continue
+		}
+		if c := before[at]; isCypherQuoteByte(c) {
+			at = skipCypherQuotedText(before, at, c)
+		} else {
+			at++
+		}
+		start = at
+	}
+	return start
+}
+
+// trimQueryTrivia removes surrounding whitespace and comments without changing
+// quoted data or expression offsets within the retained text. Evaluation must
+// accept trivia even when optional statement normalization is disabled.
+func trimQueryTrivia(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.IndexByte(text, '/') < 0 {
+		return text
+	}
+	start, end := queryGapEnd(text, 0), queryGapStart(text, len(text))
+	if end < start {
+		end = start
+	}
+	return text[start:end]
+}
+
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
 // statements with a syntax of its own, which canonicalizeQueryText leaves as
 // written but for its comments: the knowledge-policy DDL (CREATE / ALTER /
@@ -2038,6 +2081,12 @@ func cypherStringLexicalByte(character byte) int {
 }
 
 func scanIdentifierToken(text string, start int) (string, int, bool) {
+	return readIdentifierToken(text, start, false)
+}
+
+// Callable identifiers stop at Unicode trivia. Both identifier policies use
+// this one forward token reader, without scanning ASCII components twice.
+func readIdentifierToken(text string, start int, unicodeTrivia bool) (string, int, bool) {
 	if start < 0 || start >= len(text) {
 		return "", start, false
 	}
@@ -2051,8 +2100,14 @@ func scanIdentifierToken(text string, start int) (string, int, bool) {
 	if !isIdentStartByte(text[start]) {
 		return "", start, false
 	}
+	if unicodeTrivia && text[start] >= 0x80 && queryWhitespaceAt(text, start) > 0 {
+		return "", start, false
+	}
 	end := start + 1
 	for end < len(text) && isIdentByte(text[end]) {
+		if unicodeTrivia && text[end] >= 0x80 && queryWhitespaceAt(text, end) > 0 {
+			break
+		}
 		end++
 	}
 	return text[start:end], end, true

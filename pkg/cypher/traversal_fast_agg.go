@@ -105,12 +105,14 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 
 	specs := make([]aggSpec, 0, len(returnItems)-1)
 	for _, item := range returnItems[1:] {
-		k := m.key(item.expr)
+		name, inner, ok := parseFunctionCallWS(item.expr)
+		if !ok {
+			return nil, false, nil
+		}
+		inner = trimQueryTrivia(inner)
 
 		switch {
-		case strings.HasPrefix(k, "COUNT(") && strings.HasSuffix(k, ")"):
-			inner := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(item.expr), "count("), ")")
-			inner = strings.TrimSpace(inner)
+		case strings.EqualFold(name, "count"):
 			innerKey := m.key(inner)
 			// Support count(endVar) and count(*)
 			if innerKey == "*" || (endVar != "" && innerKey == m.key(endVar)) {
@@ -119,12 +121,10 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 			}
 			return nil, false, nil
 
-		case strings.HasPrefix(k, "SUM(") && strings.HasSuffix(k, ")"):
+		case strings.EqualFold(name, "sum"):
 			if relVar == "" {
 				return nil, false, nil
 			}
-			inner := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(item.expr), "sum("), ")")
-			inner = strings.TrimSpace(inner)
 			innerKey := m.key(inner)
 			if strings.HasPrefix(innerKey, m.key(relVar+".")+"") {
 				prop := strings.TrimSpace(inner)[len(relVar)+1:]
@@ -136,9 +136,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 			}
 			return nil, false, nil
 
-		case strings.HasPrefix(k, "AVG(") && strings.HasSuffix(k, ")"):
-			inner := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(item.expr), "avg("), ")")
-			inner = strings.TrimSpace(inner)
+		case strings.EqualFold(name, "avg"):
 			innerKey := m.key(inner)
 			// We only support avg(endVar.prop) for 1-hop aggregation fast path.
 			if endVar == "" {
@@ -154,9 +152,7 @@ func (e *StorageExecutor) tryFastSingleHopAgg(matches *TraversalMatch, returnIte
 			}
 			return nil, false, nil
 
-		case strings.HasPrefix(k, "COLLECT(") && strings.HasSuffix(k, ")"):
-			inner := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(item.expr), "collect("), ")")
-			inner = strings.TrimSpace(inner)
+		case strings.EqualFold(name, "collect"):
 			innerKey := m.key(inner)
 			if endVar == "" {
 				return nil, false, nil

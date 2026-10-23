@@ -42,7 +42,15 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
-	query = classificationText(query)
+	return queryPermissionRequirements(query, nil)
+}
+
+// A compiler that already owns query facts passes them through, rather than
+// rediscovering every procedure while checking the same query's permissions.
+func queryPermissionRequirements(query string, facts *functionSyntax) PermissionRequirements {
+	if facts == nil {
+		query = classificationText(query)
+	}
 	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read:   true,
@@ -62,7 +70,17 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 	// An administration command needs admin whatever it calls; otherwise
 	// the admin procedures the query calls are listed for procedure grants.
 	adminCommand := requirements.Admin
-	for _, procedure := range registeredProceduresForCalls(query) {
+	var procedures []ProcedureSpec
+	if facts == nil {
+		procedures = registeredProceduresForCalls(query)
+	} else {
+		for _, call := range facts.calls {
+			if call.procedure {
+				procedures = appendRegisteredProcedureSpecs(procedures, call.name)
+			}
+		}
+	}
+	for _, procedure := range procedures {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
 			requirements.Write = true
@@ -92,33 +110,23 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
 	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
 	var procedures []ProcedureSpec
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
-			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
-		}
-		if procedure, found := globalProcedureRegistry.Get(name); found {
-			procedures = append(procedures, procedure.Spec)
-			continue
-		}
-		// Execution resolves exact names. Preserve conservative authorization
-		// for an invalid case variant without making it executable: every
-		// matching contract counts, since case-distinct registrations can
-		// require different permissions. An exact match above remains decisive.
-		for _, procedure := range globalProcedureRegistry.List() {
-			if strings.EqualFold(name, procedure.Name) {
-				procedures = append(procedures, procedure)
-			}
+	_ = lexicalProcedureInvocations(query, func(name, _ string, _ int) error {
+		procedures = appendRegisteredProcedureSpecs(procedures, name)
+		return nil
+	})
+	return procedures
+}
+
+func appendRegisteredProcedureSpecs(procedures []ProcedureSpec, name string) []ProcedureSpec {
+	if procedure, found := globalProcedureRegistry.Get(name); found {
+		return append(procedures, procedure.Spec)
+	}
+	// Exact execution lookup remains decisive. Otherwise every case variant's
+	// existing contract contributes, as in the standalone permission reader.
+	for _, procedure := range globalProcedureRegistry.List() {
+		if strings.EqualFold(name, procedure.Name) {
+			procedures = append(procedures, procedure)
 		}
 	}
 	return procedures
@@ -128,66 +136,7 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 // ending at offset: segments of identifier characters or backticked text,
 // separated by dots, with whitespace allowed around them.
 func procedureNameAt(query string, offset int) (string, bool) {
-	i := offset
-	skipSpace := func() {
-		for i < len(query) && isASCIISpace(query[i]) {
-			i++
-		}
-	}
-	// Keep the ordinary dotted name as a source slice. Only quoted parts
-	// or spaces around separators need normalization, shared by auth and CALL.
-	var normalized strings.Builder
-	normalizing := false
-	startName, endName, components := offset, offset, 0
-	expectComponent := false
-	for {
-		skipSpace()
-		if i >= len(query) {
-			break
-		}
-		partStart := i
-		part, next, ok := scanIdentifierToken(query, i)
-		if !ok {
-			if expectComponent {
-				return "", false
-			}
-			break
-		}
-		expectComponent = false
-		quoted := isCypherBacktickByte(query[i])
-		i = next
-		if components == 0 {
-			startName = partStart
-		}
-		if !normalizing && (quoted || components > 0 && partStart != endName+1) {
-			if components > 0 {
-				normalized.WriteString(query[startName:endName])
-			}
-			normalizing = true
-		}
-		if normalizing {
-			if components > 0 {
-				normalized.WriteByte('.')
-			}
-			normalized.WriteString(part)
-		}
-		endName = i
-		components++
-		skipSpace()
-		if i < len(query) && query[i] == '.' {
-			i++
-			expectComponent = true
-			continue
-		}
-		break
-	}
-	if components == 0 {
-		return "", false
-	}
-	if normalizing {
-		return normalized.String(), true
-	}
-	return query[startName:endName], true
+	return lexicalProcedureNameAt(query, offset)
 }
 
 func isSchemaPermissionQuery(query string) bool {

@@ -1,0 +1,6 @@
+[
+  {"id":"comment-range","query":"RETURN toUpper(/* range('bad') */ 'ok') AS v","rows":[["OK"]]},
+  {"id":"comment-family","query":"RETURN toUpper(/* percentileCont('bad') shortestPath((a)-->(a)) missing('bad') ) */ 'ok') AS v","rows":[["OK"]]},
+  {"id":"line-comment","query":"RETURN toUpper(// range('bad')\n'ok') AS v","rows":[["OK"]]},
+  {"id":"comment-aggregate","query":"UNWIND [1,2] AS x RETURN x /* count('bad') range('bad') */ AS v","rows":[[1],[2]]}
+]

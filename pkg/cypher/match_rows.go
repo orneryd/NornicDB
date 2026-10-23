@@ -10,14 +10,10 @@ import (
 )
 
 func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[string]*storage.Node, edgeMap map[string]*storage.Edge, computedValues map[string]interface{}) interface{} {
-	// Extract arguments from COALESCE(arg1, arg2, ...)
-	innerStart := strings.Index(expr, "(")
-	innerEnd := strings.LastIndex(expr, ")")
-	if innerStart == -1 || innerEnd == -1 {
+	_, inner, ok := parseFunctionCallWS(expr)
+	if !ok {
 		return nil
 	}
-	inner := expr[innerStart+1 : innerEnd]
-
 	// Split arguments
 	args := e.splitFunctionArgs(inner)
 
@@ -83,9 +79,8 @@ func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.No
 
 		// Evaluate this part
 		var value float64
-		upperPart := upperASCII(part)
 
-		if strings.HasPrefix(upperPart, "SUM(") {
+		if isFunctionCallWS(part, "sum") {
 			if agg := ParseAggregation(part); agg != nil && agg.Function == "SUM" && agg.Property != "" {
 				for _, node := range nodes {
 					if val, exists := node.Properties[agg.Property]; exists {

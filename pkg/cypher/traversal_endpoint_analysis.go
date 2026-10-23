@@ -94,6 +94,7 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 		return false
 	}
 	want := normalizeProjectionColumnName(variable)
+	syntax := functionSyntaxView{text: expression}
 	for index := 0; index < len(expression); {
 		c := expression[index]
 		if isCypherStringQuoteByte(c) {
@@ -138,7 +139,7 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 		if cursor < len(expression) && expression[cursor] == '.' {
 			return true // v.x property access
 		}
-		if !traversalBareVariableInSafeCall(expression, nameStart) {
+		if !syntax.traversalBareVariableInSafeCall(nameStart) {
 			return true // bare v in value position, or inside a property-reading call
 		}
 	}
@@ -149,12 +150,18 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 // starting at nameStart is the direct argument of a property-agnostic function:
 // fn(v) or fn(DISTINCT v).
 func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
+	syntax := functionSyntaxView{text: expression}
+	return syntax.traversalBareVariableInSafeCall(nameStart)
+}
+
+func (syntax *functionSyntaxView) traversalBareVariableInSafeCall(nameStart int) bool {
+	expression := syntax.text
 	pos := nameStart
 	for pos > 0 && isASCIIWhitespace(expression[pos-1]) {
 		pos--
 	}
 	if pos > 0 && expression[pos-1] == '(' {
-		return traversalCallNameIsSafe(expression, pos-1)
+		return syntax.traversalCallNameIsSafe(pos - 1)
 	}
 	if pos >= len("DISTINCT") {
 		distinct := pos - len("DISTINCT")
@@ -164,7 +171,7 @@ func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 				p--
 			}
 			if p > 0 && expression[p-1] == '(' {
-				return traversalCallNameIsSafe(expression, p-1)
+				return syntax.traversalCallNameIsSafe(p - 1)
 			}
 		}
 	}
@@ -174,21 +181,11 @@ func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 // traversalCallNameIsSafe reports whether the function whose opening paren is
 // at openParen is property-agnostic for a node argument.
 func traversalCallNameIsSafe(expression string, openParen int) bool {
-	end := openParen
-	for end > 0 && isASCIIWhitespace(expression[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 {
-		b := expression[start-1]
-		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' {
-			start--
-			continue
-		}
-		break
-	}
-	if start == end {
-		return false
-	}
-	return traversalSafeArgumentFunctions[strings.ToLower(expression[start:end])]
+	syntax := functionSyntaxView{text: expression}
+	return syntax.traversalCallNameIsSafe(openParen)
+}
+
+func (syntax *functionSyntaxView) traversalCallNameIsSafe(openParen int) bool {
+	call, ok := syntax.callBeforeParen(openParen)
+	return ok && traversalSafeArgumentFunctions[call.normalized]
 }

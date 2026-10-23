@@ -220,7 +220,8 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 
 	require.Empty(t, expressionLocalBindings("reduce + 1"))
 	require.Empty(t, expressionLocalBindings("reduce(s = 0"))
-	require.NoError(t, checkReduceForm("allReduce", "allReduce(a", 9, nil))
+	incomplete, _ := readFunctionSyntax("allReduce(a").callAt(0)
+	require.NoError(t, checkReduceForm("allReduce", "allReduce(a", incomplete, nil))
 	rewritten, rewrite := canonicalizeFunctionAliases("WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)")
 	require.Nil(t, rewrite)
 	require.Equal(t, "WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)", rewritten)

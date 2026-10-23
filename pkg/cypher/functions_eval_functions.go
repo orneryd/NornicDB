@@ -78,8 +78,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
-		args := e.splitFunctionArgs(inner)
+	if name, args, ok := parseFunctionCallArguments(expr); ok {
 		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
 			return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		})

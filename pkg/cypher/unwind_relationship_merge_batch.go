@@ -298,18 +298,15 @@ func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationsh
 	callPart := strings.TrimSpace(afterWith[callIdx+len("CALL"):])
 	setters := make([]relationshipVectorSetterSpec, 0, 1)
 	for callPart != "" {
-		if !strings.HasPrefix(lowerASCII(callPart), "db.create.setrelationshipvectorproperty") {
+		call, ok := functionCallAt(callPart, readFunctionSyntax(callPart).leading)
+		if !ok || !strings.EqualFold(call.name, "db.create.setRelationshipVectorProperty") {
 			return nil, false
 		}
-		openParen := strings.Index(callPart, "(")
-		if openParen < 0 {
+		closeParen := call.close(callPart)
+		if closeParen < 0 {
 			return nil, false
 		}
-		closeParen := findMatchingParenAt(callPart, openParen)
-		if closeParen <= openParen {
-			return nil, false
-		}
-		args := splitTopLevelComma(callPart[openParen+1 : closeParen])
+		args := call.arguments(nil)
 		if len(args) != 3 || strings.TrimSpace(args[0]) != relVar {
 			return nil, false
 		}
