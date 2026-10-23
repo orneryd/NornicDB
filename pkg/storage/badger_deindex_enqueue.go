@@ -53,12 +53,11 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(ctx context.Context, entityID 
 	var edgeChanged *Edge
 	var ops []Operation
 	publish := func(images *commitCacheImages) {
-		if len(ops) != 0 {
-			images.acceptOperation(ops[0])
-		}
-		if edgeChanged != nil {
-			b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
-		}
+		// The rewrite is admitted: its frame is selected and published on that
+		// write's completion lifetime, so the fold cannot cancel.
+		states, _ := newCommitStates(context.Background(), ops)
+		images.acceptStates(states)
+		b.publishIndexMembership(states)
 		b.prepareCommitOperations(ops, false)
 	}
 	keys := func(preparationContext context.Context) ([]any, error) {

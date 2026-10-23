@@ -20,19 +20,19 @@ func TestBadgerConstraintValidation_NodeScanBranchCoverage(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		err := engine.scanForUniqueViolationInTxn(txn, "test", "User", "email", "a@x", "")
+		err := engine.scanForUniqueViolationInTxn(t.Context(), txn, "test", "User", "email", "a@x", "")
 		require.Error(t, err)
 
-		err = engine.scanForUniqueViolationInTxn(txn, "test", "User", "email", "a@x", "test:u1")
+		err = engine.scanForUniqueViolationInTxn(t.Context(), txn, "test", "User", "email", "a@x", "test:u1")
 		require.NoError(t, err)
 
-		err = engine.scanForUniqueViolationInTxn(txn, "other", "User", "email", "a@x", "")
+		err = engine.scanForUniqueViolationInTxn(t.Context(), txn, "other", "User", "email", "a@x", "")
 		require.NoError(t, err)
 
-		err = engine.scanForNodeKeyViolationInTxn(txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "")
+		err = engine.scanForNodeKeyViolationInTxn(t.Context(), txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "")
 		require.Error(t, err)
 
-		err = engine.scanForNodeKeyViolationInTxn(txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "test:u1")
+		err = engine.scanForNodeKeyViolationInTxn(t.Context(), txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "test:u1")
 		require.NoError(t, err)
 
 		err = engine.scanForTemporalOverlapInTxn(t.Context(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "", temporalOverlapFullLabel)

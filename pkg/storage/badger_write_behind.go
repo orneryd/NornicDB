@@ -251,12 +251,12 @@ func (tx *BadgerTransaction) commitBufferedLocked(preparationContext context.Con
 
 		tx.releaseSnapshotReaderLocked()
 		tx.bufferedStagingTransferred = true
-		tx.engine.writeBehind.AppendCommit(c)
+		states := tx.engine.writeBehind.AppendCommit(c)
 		// Claims follow logical visibility, not the later materialization of
 		// historical images. Entity/value authority remains held until return.
 		// A concurrent flusher never republishes these normal ACK-time claims.
 		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		tx.engine.publishUniqueValues(schema, physicalOps, ValidatedUniqueClaim)
+		tx.engine.publishUniqueValues(schema, states, ValidatedUniqueClaim)
 		if accounting != nil {
 			accounting()
 		}
@@ -461,10 +461,11 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	schemas := make(map[string]*SchemaManager, 1)
 	constraints := make(map[string]*publicationConstraintView, 1)
 	for _, c := range commits {
-		if c.namespace == "" {
+		if _, exists := schemas[c.namespace]; exists {
 			continue
 		}
-		if _, exists := schemas[c.namespace]; exists {
+		if c.namespace == "" {
+			schemas[c.namespace] = nil // historical frames still publish membership
 			continue
 		}
 		schema := b.GetSchemaForNamespace(c.namespace)
@@ -566,23 +567,34 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	}
 	capturePublicationOperations(notification, notificationOps)
 	cw.publish = func(images *commitCacheImages) {
-		// A recovered batch can contain intermediate images of one node. Fold
-		// once at its atomic physical boundary; normal frames published at ACK.
-		if recovered {
-			// Each namespace has a distinct schema owner. Select only its operations
-			// without retaining state beyond this bounded recovery batch.
-			for namespace, schema := range schemas {
-				var ops []Operation
-				for _, c := range commits {
-					if c.recovered && c.namespace == namespace {
-						ops = append(ops, c.ops...)
+		// All frames land at one physical boundary. Publish its endpoints,
+		// never historical intermediate operations or acknowledged frames.
+		for namespace, schema := range schemas {
+			var frames, recoveryFrames [][]Operation
+			for _, c := range commits {
+				if c.namespace == namespace {
+					frames = append(frames, c.ops)
+					if c.recovered {
+						recoveryFrames = append(recoveryFrames, c.ops)
 					}
 				}
-				b.publishUniqueValues(schema, ops, RecoveredUniqueClaim)
 			}
+			// The generation is durable: its frames are selected on that
+			// accepted completion lifetime, so the fold cannot cancel.
+			states, _ := newCommitStates(accepted, frames...)
+			if len(recoveryFrames) > 0 {
+				claims := states
+				if len(recoveryFrames) != len(frames) {
+					// Normal frames already published their claims at ACK.
+					claims, _ = newCommitStates(accepted, recoveryFrames...)
+				}
+				b.publishUniqueValues(schema, claims, RecoveredUniqueClaim)
+			}
+			b.publishIndexMembership(states)
+			images.acceptStates(states)
 		}
 		for _, c := range commits {
-			b.publishCommitOperations(c.namespace, nil, c.ops, false, c.recovered, images)
+			b.publishCommitEffects(c.ops, false, c.recovered)
 		}
 	}
 
@@ -696,34 +708,21 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 	if namespace == "" {
 		schema = nil
 	}
-	b.publishUniqueValues(schema, ops, ValidatedUniqueClaim)
+	// The commit is accepted: its frame is selected on that completion
+	// lifetime, so the fold cannot cancel.
+	states, _ := newCommitStates(context.Background(), ops)
+	b.publishUniqueValues(schema, states, ValidatedUniqueClaim)
+	b.publishIndexMembership(states)
+	images.acceptStates(states)
+	b.publishCommitEffects(ops, publishCounts, publishRevision)
+}
+
+// publishCommitEffects retains operation multiplicity for cardinality,
+// observation and notifications. It never edits entity index membership.
+func (b *BadgerEngine) publishCommitEffects(ops []Operation, publishCounts, publishRevision bool) {
 	for _, op := range ops {
-		images.acceptOperation(op)
-		switch op.Type {
-		case OpCreateNode:
-			b.cacheOnNodeCreatedWithCounts(op.Node, publishCounts)
-		case OpUpdateNode:
-			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-		case OpDeleteNode:
-			if op.OldNode != nil {
-				b.cacheOnNodeDeletedWithNodeAndCounts(op.NodeID, op.OldNode, op.EdgesDeleted, publishCounts)
-			} else {
-				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, publishCounts)
-			}
-		case OpCreateEdge:
-			b.cacheOnEdgeCreatedWithCounts(op.Edge, publishCounts)
-		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			b.cacheOnEdgeUpdated(oldType, op.Edge)
-		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, publishCounts)
+		if publishCounts {
+			visitOperationTotalCounts(op, b.publishTotalCountChange)
 		}
 		observeCommitCacheOperation(op)
 	}

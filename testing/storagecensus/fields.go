@@ -74,18 +74,14 @@ var fieldClasses = map[string]fieldRow{
 	// direct write, a transaction commit and a write-behind replay), the
 	// prefix delete, the recount at open, and construction and close.
 	"pkg/storage.BadgerEngine.nodeCount": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.cacheOnNodeCreatedWithCounts", "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts",
-		"pkg/storage.BadgerEngine.cacheOnNodesDeleted", "pkg/storage.BadgerEngine.initializeCounts", "pkg/storage.BadgerEngine.publishBufferedTotalCounts"}, readers: []string{"pkg/storage.BadgerEngine.NodeCount", "pkg/storage.BadgerEngine.labelCoversScope"}},
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.publishTotalCountChange", "pkg/storage.BadgerEngine.initializeCounts"}, readers: []string{"pkg/storage.BadgerEngine.NodeCount", "pkg/storage.BadgerEngine.labelCoversScope"}},
 	"pkg/storage.BadgerEngine.edgeCount": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.cacheOnEdgeCreatedWithCounts", "pkg/storage.BadgerEngine.cacheOnEdgeDeletedWithCounts",
-		"pkg/storage.BadgerEngine.cacheOnEdgesDeleted", "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts", "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
-		"pkg/storage.BadgerEngine.initializeCounts", "pkg/storage.BadgerEngine.publishBufferedTotalCounts"}, readers: []string{"pkg/storage.BadgerEngine.EdgeCount"}},
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.publishTotalCountChange", "pkg/storage.BadgerEngine.initializeCounts"}, readers: []string{"pkg/storage.BadgerEngine.EdgeCount"}},
 	"pkg/storage.BadgerEngine.namespaceNodeCounts": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceNodeCount", "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
-		"pkg/storage.BadgerEngine.initializeCounts", "pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceNodeCount", "pkg/storage.BadgerEngine.initializeCounts",
+		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	"pkg/storage.BadgerEngine.namespaceEdgeCounts": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceEdgeCount", "pkg/storage.BadgerEngine.addNamespaceEdgeCountFromNode",
-		"pkg/storage.BadgerEngine.cacheOnEdgesDeleted", "pkg/storage.BadgerEngine.cacheOnNodesDeleted", "pkg/storage.BadgerEngine.initializeCounts",
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceEdgeCount", "pkg/storage.BadgerEngine.initializeCounts",
 		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	// Counts of acknowledged write-behind commits not yet applied.
 	"pkg/storage.bufferedCardinalityDeltas.nodes":     bufferedCardinalityRow,

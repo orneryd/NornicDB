@@ -6,7 +6,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
+// commitStatesFor folds one acknowledged frame into the publication states the
+// engine hands to index maintenance, asserting the fold accepted the frame.
+func commitStatesFor(t *testing.T, operations []Operation) commitStates {
+	t.Helper()
+	states, err := newCommitStates(t.Context(), operations)
+	require.NoError(t, err)
+	return states
+}
+
+func TestPublishIndexMembershipCreatedUpdatedDeleted(t *testing.T) {
 	engine := newTestEngine(t)
 	ns := "tenant"
 	sm := engine.GetSchemaForNamespace(ns)
@@ -18,7 +27,7 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 		Properties: map[string]any{"name": "Alice", "age": int64(41)},
 	}
 
-	engine.maintainPropertyIndexesOnNodeCreated(node)
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpCreateNode, Node: node}}))
 	require.Equal(t, []NodeID{node.ID}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alice")))
 
 	oldNode := &Node{
@@ -27,7 +36,7 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	}
 	node.Properties["name"] = "Alicia"
-	engine.maintainPropertyIndexesOnNodeUpdated(node, oldNode)
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpUpdateNode, OldNode: oldNode, Node: node}}))
 	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alice")))
 	require.Equal(t, []NodeID{node.ID}, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alicia")))
 
@@ -35,15 +44,15 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	engine.nodeCache[node.ID] = &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}}
 	engine.nodeCacheMu.Unlock()
 
-	engine.maintainPropertyIndexesOnNodeDeletedWithNode(node.ID, node)
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpDeleteNode, NodeID: node.ID, OldNode: node}}))
 	require.Empty(t, checkedIndexRead[[]NodeID](t)(sm.PropertyIndexLookup(t.Context(), "Person", "name", "Alicia")))
 }
 
-func TestMaintainPropertyIndexesOnNodeDeletedWithNode_EarlyReturns(t *testing.T) {
+func TestPublishIndexMembershipUncoveredNamespace(t *testing.T) {
 	engine := newTestEngine(t)
-	engine.maintainPropertyIndexesOnNodeDeletedWithNode("tenant:n2", nil)
-	engine.maintainPropertyIndexesOnNodeDeletedWithNode("tenant:n2", &Node{ID: "tenant:n2"})
-	engine.maintainPropertyIndexesOnNodeDeletedWithNode("unprefixed", &Node{ID: "unprefixed", Labels: []string{"Person"}})
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpDeleteNode, NodeID: "tenant:n2"}}))
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpDeleteNode, NodeID: "tenant:n2", OldNode: &Node{ID: "tenant:n2"}}}))
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpDeleteNode, NodeID: "unprefixed", OldNode: &Node{ID: "unprefixed", Labels: []string{"Person"}}}}))
 }
 
 func TestSchemaForNodeID_ReturnsNamespaceSchemaOrNil(t *testing.T) {
@@ -53,10 +62,8 @@ func TestSchemaForNodeID_ReturnsNamespaceSchemaOrNil(t *testing.T) {
 	require.Nil(t, engine.schemaForNodeID("unprefixed"))
 }
 
-func TestMaintainPropertyIndexesOnNodeUpdated_NilInputs_NoPanic(t *testing.T) {
+func TestPublishIndexMembershipEmptyOperations(t *testing.T) {
 	engine := newTestEngine(t)
 
-	engine.maintainPropertyIndexesOnNodeCreated(nil)
-	engine.maintainPropertyIndexesOnNodeUpdated(nil, nil)
-	engine.maintainPropertyIndexesOnNodeUpdated(&Node{ID: "unprefixed"}, nil)
+	engine.publishIndexMembership(commitStatesFor(t, []Operation{{Type: OpCreateNode}, {Type: OpUpdateNode}, {Type: OpUpdateNode, Node: &Node{ID: "unprefixed"}}}))
 }

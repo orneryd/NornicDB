@@ -15,11 +15,11 @@ import (
 // written copy.
 func TestCommittedCopyDoesNotHideAStoredEmbedding(t *testing.T) {
 	for _, late := range []struct {
-		name  string
-		apply func(b *BadgerEngine, written *Node)
+		name string
+		kind OperationType
 	}{
-		{"created", func(b *BadgerEngine, written *Node) { b.cacheOnNodeCreated(written) }},
-		{"updated", func(b *BadgerEngine, written *Node) { b.cacheOnNodeUpdatedWithOldNode(written, nil) }},
+		{"created", OpCreateNode},
+		{"updated", OpUpdateNode},
 	} {
 		t.Run(late.name, func(t *testing.T) {
 			b := newSidecarTestBadger(t)
@@ -31,7 +31,9 @@ func TestCommittedCopyDoesNotHideAStoredEmbedding(t *testing.T) {
 
 			embedded := embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, time.Time{})
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(context.Background(), embedded))
-			late.apply(b, written)
+			cw := &commitWriter{engine: b, durableVersion: b.db.oracle.published.Load()}
+			b.publishCommitOperations(namespaceForNodeID(written.ID), nil, []Operation{{Type: late.kind, Node: written}}, false, false, &cw.cacheImages)
+			cw.publishCacheImages()
 
 			got, err := b.GetNode(t.Context(), node.ID)
 			require.NoError(t, err)

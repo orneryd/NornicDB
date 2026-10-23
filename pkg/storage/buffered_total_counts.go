@@ -36,19 +36,23 @@ func visitOperationTotalCounts(op Operation, visit func(string, bool, int64)) {
 
 // Caller holds totalCountWriteMu until the matching countsApplied flag is set.
 func (b *BadgerEngine) publishBufferedTotalCounts(commits []bufferedCommit) {
-	visit := func(id string, edge bool, delta int64) {
-		if edge {
-			b.edgeCount.Add(delta)
-			b.addNamespaceEdgeCount(EdgeID(id), delta)
-		} else {
-			b.nodeCount.Add(delta)
-			b.addNamespaceNodeCount(NodeID(id), delta)
-		}
-	}
 	for _, commit := range commits {
 		for _, op := range commit.ops {
-			visitOperationTotalCounts(op, visit)
+			visitOperationTotalCounts(op, b.publishTotalCountChange)
 		}
+	}
+}
+
+// publishTotalCountChange is the cache delta sink for both synchronous
+// publication and buffered replay. Cardinality still follows the operation
+// stream; membership follows the commit's before/final images.
+func (b *BadgerEngine) publishTotalCountChange(id string, edge bool, delta int64) {
+	if edge {
+		b.edgeCount.Add(delta)
+		b.addNamespaceEdgeCount(EdgeID(id), delta)
+	} else {
+		b.nodeCount.Add(delta)
+		b.addNamespaceNodeCount(NodeID(id), delta)
 	}
 }
 

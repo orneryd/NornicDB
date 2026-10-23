@@ -17,17 +17,16 @@ func TestBadgerConstraintScansRecordErrors(t *testing.T) {
 		scan   func(*BadgerEngine, *badger.Txn) error
 	}{
 		{"unique", true, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.scanForUniqueViolationInTxn(txn, "test", "Account", "key", "new", "")
+			return b.scanForUniqueViolationInTxn(t.Context(), txn, "test", "Account", "key", "new", "")
 		}},
 		{"node_key", true, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.scanForNodeKeyViolationInTxn(txn, "test", "Account", []string{"key"}, []interface{}{"new"}, "")
+			return b.scanForNodeKeyViolationInTxn(t.Context(), txn, "test", "Account", []string{"key"}, []interface{}{"new"}, "")
 		}},
 		{"full_label_temporal", true, func(b *BadgerEngine, txn *badger.Txn) error {
 			return b.scanForTemporalOverlapInTxn(t.Context(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "Account", Properties: []string{"key", "from", "to"}}, "new", start, start.Add(time.Hour), true, "", temporalOverlapFullLabel)
 		}},
 		{"edge_unique", false, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.checkEdgeUniquenessInTxn(txn, &Edge{Type: "REL", Properties: map[string]interface{}{"key": "new"}},
-				Constraint{Type: ConstraintUnique, Properties: []string{"key"}}, "test", "")
+			return b.checkEdgeUniquenessInTxn(t.Context(), txn, &Edge{Type: "REL", Properties: map[string]interface{}{"key": "new"}}, Constraint{Type: ConstraintUnique, Properties: []string{"key"}}, "test", "")
 		}},
 		{"edge_temporal", false, func(b *BadgerEngine, txn *badger.Txn) error {
 			return b.checkEdgeTemporalInTxn(txn, &Edge{Type: "REL", Properties: map[string]interface{}{"key": "new", "from": start, "to": start.Add(time.Hour)}},

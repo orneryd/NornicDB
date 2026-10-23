@@ -34,14 +34,8 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
-func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
-	var ids []storage.NodeID
-	var err error
-	if full {
-		ids, err = idx.LookupFull(ctx, values...)
-	} else {
-		ids, err = idx.LookupPrefix(ctx, values...)
-	}
+func compositeIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
+	ids, err := schema.CompositeIndexLookup(ctx, idx, values, full)
 	if err != nil {
 		return nil, err
 	}
