@@ -74,58 +74,50 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
 		return policy
 	}
-	requirements := QueryPermissionRequirements(text)
+	facts := readFunctionCallFacts(text)
+	requirements := queryPermissionRequirements(text, facts)
 	if requirements.Write || requirements.Schema || requirements.Admin {
 		return policy
 	}
-	if err := forEachFunctionInvocation(text, func(name, normalized string, open int) error {
+	for _, invocation := range facts.calls {
+		if invocation.procedure || invocation.typed || isNonFunctionSemanticKeyword(invocation.normalized) {
+			continue
+		}
+		name, normalized := invocation.name, invocation.normalized
 		volatility, known := functionCacheDeclarations[normalized]
 		if !known || volatility == functionVolatile {
-			return errNonDeterministicExecution
+			return policy
 		}
 		policy.functions = append(policy.functions, name)
 		if volatility == functionStable {
-			return nil
+			continue
 		}
-		close := findMatchingCallParen(text, open)
-		if close < 0 {
-			return errNonDeterministicExecution
+		args := invocation.arguments(nil)
+		if invocation.close(text) < 0 || len(args) == 0 {
+			return policy
 		}
-		body := strings.TrimSpace(text[open+1 : close])
-		if body == "" {
-			return errNonDeterministicExecution
-		}
-		args := splitTopLevelComma(body)
 		if volatility == functionTemporalTruncation && len(args) < 2 {
-			return errNonDeterministicExecution
+			return policy
 		}
 		if volatility == functionTemporalConstructor {
 			for _, argument := range args {
 				value, known := compileExecutionInput(argument, depth+1)
 				if !known {
-					return errNonDeterministicExecution
+					return policy
 				}
 				if value.bound {
 					policy.temporal = append(policy.temporal, value)
 				} else if _, text := value.literal.(string); !text {
-					return errNonDeterministicExecution
+					return policy
 				}
 			}
 		}
-		return nil
-	}); err != nil {
-		return policy
 	}
-	for from := 0; from < len(text); {
-		at := keywordIndexFrom(text, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, named := procedureNameAt(text, queryGapEnd(text, from))
-		if !named {
+	for _, invocation := range facts.calls {
+		if !invocation.procedure {
 			continue
 		} // CALL { ... }: this pass also scans its body.
+		name := invocation.name
 		procedure, known := globalProcedureRegistry.Get(name)
 		if !known || procedure.User || procedure.Spec.Mode != ProcedureModeRead || !procedure.Spec.ResultCache.Deterministic {
 			return policy
@@ -134,7 +126,10 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 		if len(declaration.CypherInputs) == 0 {
 			continue
 		}
-		arguments := explicitProcedureArgumentTexts(text[at:])
+		var arguments []string
+		if invocation.open >= 0 {
+			arguments = invocation.arguments(nil)
+		}
 		call := executionCallPolicy{name: name, continuation: declaration.Continuation}
 		var request map[string]any
 		if declaration.RetrievalRequest {

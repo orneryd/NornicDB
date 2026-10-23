@@ -3,13 +3,13 @@ package cypher
 import "strings"
 
 func validateExpressionOperandCompleteness(expression string) error {
-	expression = strings.TrimSpace(expression)
+	expression = trimQueryTrivia(expression)
 	for {
 		inner, enclosed := stripEnclosingExpressionParentheses(expression)
 		if !enclosed {
 			break
 		}
-		expression = strings.TrimSpace(inner)
+		expression = trimQueryTrivia(inner)
 	}
 	last := len(expression) - 1
 	if expression == "" || (expression != "*" && strings.ContainsAny(expression[last:], "+-*/%^") && !labelWildcardAt(expression, last)) {
@@ -44,6 +44,7 @@ func validateExpressionLexicalTokens(text string) error {
 // sequence `NOT IN` (only whitespace between them) outside quotes and
 // comments. `x NOT IN list` is not Cypher; the negation is `NOT x IN list`.
 func containsNotInOperator(cypher string) bool {
+	syntax := functionSyntaxView{text: cypher}
 	for i := 0; i < len(cypher); i++ {
 		c := cypher[i]
 		if isCypherQuoteByte(c) {
@@ -56,7 +57,7 @@ func containsNotInOperator(cypher string) bool {
 		}
 		// NOT is a valid local iterator name, read by the same declaration
 		// owner as the list/quantifier evaluators, rather than an infix NOT.
-		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
+		if c == '[' || c == '(' && syntax.bindingFunctionBeforeParen(i) != "" {
 			if name, at, _, declared := bindingDeclaration(cypher, i+1); declared && strings.EqualFold(name, "NOT") {
 				_, end, _ := scanIdentifierToken(cypher, at)
 				i = end - 1
@@ -78,25 +79,14 @@ func containsNotInOperator(cypher string) bool {
 // expression after it (`[1, 2,]`) or no expression before it (`[, 1]`) —
 // both are syntax errors in Neo4j.
 func containsTrailingListComma(cypher string) bool {
-	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
-		if isCypherQuoteByte(c) {
-			i = skipCypherQuotedText(cypher, i, c) - 1
+	syntax := readFunctionSyntax(cypher)
+	for index, group := range syntax.groups {
+		if group.open < 0 || group.close < 0 || cypher[group.open] != '[' || group.argumentEnd-group.argumentStart <= 1 {
 			continue
 		}
-		if c == '/' && i+1 < len(cypher) && (cypher[i+1] == '/' || cypher[i+1] == '*') {
-			i = queryCommentEnd(cypher, i) - 1
-			continue
-		}
-		switch c {
-		case ',':
-			if queryGapEnd(cypher, i+1) < len(cypher) && cypher[queryGapEnd(cypher, i+1)] == ']' {
-				return true
-			}
-		case '[':
-			if next := queryGapEnd(cypher, i+1); next < len(cypher) && cypher[next] == ',' {
-				return true
-			}
+		spans := syntax.argumentSpans(index)
+		if syntax.render(spans[0]) == "" || syntax.render(spans[len(spans)-1]) == "" {
+			return true
 		}
 	}
 	return false
@@ -108,6 +98,10 @@ func containsTrailingListComma(cypher string) bool {
 // literals and Neo4j rejects it.
 func hasAdjacentStringLiterals(cypher string) bool {
 	for i := 0; i < len(cypher); i++ {
+		if end := queryCommentEnd(cypher, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		c := cypher[i]
 		if isCypherBacktickByte(c) {
 			i = skipCypherQuotedText(cypher, i, c) - 1

@@ -12,19 +12,19 @@ import (
 // (receiver[key], receiver[from..to]), wherever it appears, with scope's
 // static types. The rules are staticOperatorChecker.checkPostfix's.
 func validateStaticPropertySubscripts(text string, scope staticTypeScope) error {
+	if !strings.ContainsRune(text, '[') {
+		return nil
+	}
 	// The scan reads raw text, local variables included ([x IN l | x[0]]),
 	// so it can't tell an undefined variable.
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope, params: scope.params}
-	for index := 0; index < len(text); index++ {
-		if isCypherQuoteByte(text[index]) {
-			index = skipCypherQuotedText(text, index, text[index]) - 1
+	syntax := readFunctionSyntax(text)
+	for _, group := range syntax.groups {
+		if group.open < 0 || text[group.open] != '[' {
 			continue
 		}
-		if text[index] != '[' {
-			continue
-		}
-		end := findMatchingDelimiter(text, index, '[', ']')
+		index, end := group.open, group.close
 		if end < 0 {
 			return nil
 		}
@@ -175,7 +175,12 @@ func rowSubscriptStart(expr string) int {
 // expression starts, reading brackets outside string literals and quoted
 // names; -1 when expression doesn't end with a balanced group.
 func closingBracketGroupStart(expression string) int {
-	return matchingRowDelimiterStart(expression, len(expression)-1, '[', ']')
+	for _, group := range readFunctionSyntax(expression).groups {
+		if group.open >= 0 && expression[group.open] == '[' && group.close >= 0 && queryGapEnd(expression, group.close+1) == len(expression) {
+			return group.open
+		}
+	}
+	return -1
 }
 
 // rowSubscriptReceiverStart finds the primary expression immediately to the
@@ -184,10 +189,7 @@ func closingBracketGroupStart(expression string) int {
 // receiver while retaining chained, parenthesized, literal, and property
 // receivers.
 func rowSubscriptReceiverStart(expression string, open int) int {
-	end := open - 1
-	for end >= 0 && isASCIIWhitespace(expression[end]) {
-		end--
-	}
+	end := queryGapStart(expression, open) - 1
 	if end < 0 {
 		return -1
 	}
@@ -263,32 +265,9 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 }
 
 func matchingRowDelimiterStart(expression string, closeIndex int, open, close byte) int {
-	if closeIndex < 0 || closeIndex >= len(expression) || expression[closeIndex] != close {
-		return -1
-	}
-	for index := 0; index <= closeIndex; index++ {
-		switch character := expression[index]; {
-		case isCypherQuoteByte(character):
-			end, closed := scanCypherQuotedText(expression, index, character)
-			if !closed {
-				return -1
-			}
-			index = end - 1
-		case character == '/':
-			if end := queryCommentEnd(expression, index); end >= 0 {
-				index = end - 1
-			}
-		case character == open:
-			end := findMatchingDelimiter(expression, index, rune(open), rune(close))
-			if end == closeIndex {
-				return index
-			}
-			if end < 0 {
-				return -1
-			}
-			if end < closeIndex {
-				index = end
-			}
+	for _, group := range readFunctionSyntax(expression).groups {
+		if group.open >= 0 && group.close == closeIndex && expression[group.open] == open && expression[closeIndex] == close {
+			return group.open
 		}
 	}
 	return -1

@@ -430,9 +430,9 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			}
 			// A function call's parentheses (shortestPath(…)) and a quantified
 			// path are not plain parenthesised paths.
-			before := trimRightIndex(q, start, i)
+			invocation, called := r.callSyntax().callBeforeParen(i)
 			if inner := skipASCIISpaces(q, i+1, close); inner >= close || q[inner] != '(' || quantifiedGroupAt(q, close, len(q)) ||
-				before > start && isIdentByte(q[before-1]) {
+				called && invocation.start >= start && invocation.expressionCall() {
 				i = close
 				continue
 			}

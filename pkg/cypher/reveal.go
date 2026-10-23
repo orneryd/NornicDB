@@ -14,26 +14,7 @@ type revealScopeState struct {
 
 // hasRevealCall detects the presence of reveal(...) in the query text.
 func hasRevealCall(query string) bool {
-	for index := 0; index < len(query); {
-		if end, skipped := skipCypherLexicalToken(query, index); skipped {
-			index = end
-			continue
-		}
-
-		name, next, ok := scanIdentifierToken(query, index)
-		if !ok {
-			index++
-			continue
-		}
-		if isRevealFunctionName(name) && (index == 0 || query[index-1] != '.') {
-			cursor := queryGapEnd(query, next)
-			if cursor < len(query) && query[cursor] == '(' {
-				return true
-			}
-		}
-		index = next
-	}
-	return false
+	return containsFunctionCallNamed(query, "reveal")
 }
 
 func isRevealFunctionName(name string) bool {

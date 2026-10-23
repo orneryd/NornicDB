@@ -38,6 +38,15 @@ var traversalAggFnNames = []struct{ lower, upper string }{
 	{"min", "MIN"}, {"max", "MAX"}, {"stdevp", "STDEVP"}, {"stdev", "STDEV"},
 }
 
+func lexicalAggregateName(name string) bool {
+	for _, aggregate := range traversalAggFnNames {
+		if strings.EqualFold(name, aggregate.lower) {
+			return true
+		}
+	}
+	return false
+}
+
 // aggregateSpan is one aggregate call located inside a larger expression.
 type aggregateSpan struct {
 	start, end int // expr[start:end] is the full call text
@@ -50,64 +59,23 @@ type aggregateSpan struct {
 // not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
 // is skipped: its aggregates are the subquery's own (#907).
 func findAggregateSpans(expr string) []aggregateSpan {
-	// The first letters of the aggregates, and E (EXISTS { … }).
-	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('E'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
+	syntax := readFunctionSyntax(expr)
 	var spans []aggregateSpan
-	i := 0
-	for i < len(expr) {
-		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
-			i = end
-			continue
-		}
-		c := expr[i]
-		// Only a letter at a word start can begin an aggregate or a subquery
-		// expression. A qualified function whose terminal component happens to
-		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
-		// aggregate. It is evaluated once per row by the same expression path.
-		folded := asciiUpper(c)
-		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
-			i++
-			continue
-		}
-		matched := false
-		for _, fn := range traversalAggFnNames {
-			if fn.upper[0] != folded {
-				continue
-			}
-			if !strings.HasPrefix(expr[i:], fn.lower) && !startsWithKeywordFold(expr[i:], fn.upper) {
-				continue
-			}
-			j := i + len(fn.lower)
-			for j < len(expr) && isWhitespace(expr[j]) {
-				j++
-			}
-			if j >= len(expr) || expr[j] != '(' {
-				continue
-			}
-			close := findMatchingParen(expr, j)
-			if close < 0 {
-				continue
-			}
-			end := close + 1
-			spans = append(spans, aggregateSpan{start: i, end: end})
-			i = end
-			matched = true
+	for index := 0; index < len(expr); {
+		call, ok := syntax.nextCall(index, false, false, false)
+		if !ok {
 			break
 		}
-		if matched {
+		index = call.open + 1
+		if !lexicalAggregateName(call.name) {
 			continue
 		}
-		// EXISTS / COUNT / COLLECT { … } is skipped whole: its aggregates
-		// are the subquery's own. An aggregate call is read first: count(…)
-		// is not a subquery, and is then read once.
-		if folded == 'E' || folded == 'C' {
-			if end := subqueryExpressionEnd(expr, i); end > i {
-				i = end
-				continue
-			}
+		close := call.close(expr)
+		if close < 0 {
+			continue
 		}
-		i++
+		spans = append(spans, aggregateSpan{start: call.start, end: close + 1})
+		index = close + 1
 	}
 	return spans
 }
@@ -138,15 +106,8 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 // subqueryExpressionEnd is the index after the EXISTS / COUNT / COLLECT
 // { … } subquery that starts at expr[i], or -1.
 func subqueryExpressionEnd(expr string, i int) int {
-	// A subquery's keyword is followed by '{': any other word ends here,
-	// before the keyword comparisons.
-	end := i
-	for end < len(expr) && isIdentByte(expr[end]) {
-		end++
-	}
-	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
-		return -1
-	}
+	// Use the shared reader so comments between the keyword and brace do
+	// not expose the subquery's aggregates to the outer projection.
 	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
 		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
 			return closing + 1

@@ -197,11 +197,17 @@ func (binding *localBinding) declare(name string, at, sourceStart, sourceEnd int
 // and where each is in scope (localVariableShadowsAt) both come from it, so
 // x IN[…], x /* … */ IN … and p = (…) read alike everywhere.
 func localBindingAt(text string, open int) (localBinding, bool) {
+	syntax := functionSyntaxView{text: text}
+	return readLocalBinding(&syntax, open)
+}
+
+func readLocalBinding(syntax *functionSyntaxView, open int) (localBinding, bool) {
+	text := syntax.text
 	var binding localBinding
 	list := text[open] == '[' // else the '(' of a call: callers pass only these
 	function := ""
 	if !list {
-		if function = bindingFunctionBeforeParen(text, open); function == "" {
+		if function = syntax.bindingFunctionBeforeParen(open); function == "" {
 			return binding, false
 		}
 	}
@@ -351,6 +357,12 @@ func localVariableShadowsAt(text string, operand int, name string) bool {
 // name (and isn't a reduce, which declares two) is passed over without
 // being read whole.
 func localBindingOf(text string, operand int, name string) (localBinding, int, bool) {
+	syntax := functionSyntaxView{text: text}
+	return localBindingOfSyntax(&syntax, operand, name)
+}
+
+func localBindingOfSyntax(syntax *functionSyntaxView, operand int, name string) (localBinding, int, bool) {
+	text := syntax.text
 	var found localBinding
 	foundIndex, ok := 0, false
 	for open := 0; open < operand; {
@@ -358,7 +370,7 @@ func localBindingOf(text string, operand int, name string) (localBinding, int, b
 			open++
 			continue
 		}
-		next, binding, bound := localBindingStep(text, open, name)
+		next, binding, bound := stepLocalBinding(syntax, open, name)
 		open = next
 		for index := 0; bound && index < binding.count; index++ {
 			if binding.names[index] == name && (binding.declared[index] == operand || binding.scope <= operand && operand < binding.close) {
@@ -385,6 +397,12 @@ func localBindingStepReads(c byte) bool {
 // passed over without being read whole. It is called only at a byte
 // localBindingStepReads reads.
 func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
+	syntax := functionSyntaxView{text: text}
+	return stepLocalBinding(&syntax, open, name)
+}
+
+func stepLocalBinding(syntax *functionSyntaxView, open int, name string) (int, localBinding, bool) {
+	text := syntax.text
 	switch cypherLexicalByte(text[open]) {
 	case cypherQuoteClass:
 		return skipCypherQuotedText(text, open, text[open]), localBinding{}, false
@@ -397,11 +415,11 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 	// text[open] is '[' or '(': the walks step over the bytes
 	// localBindingStepReads doesn't read themselves.
 	if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
-		if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
+		if text[open] != '(' || !isReduceFormFunction(syntax.bindingFunctionBeforeParen(open)) {
 			return open + 1, localBinding{}, false
 		}
 	}
-	binding, bound := localBindingAt(text, open)
+	binding, bound := readLocalBinding(syntax, open)
 	return open + 1, binding, bound
 }
 
@@ -414,7 +432,12 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
 // node. It is unknown when that type isn't known.
 func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
-	binding, index, ok := localBindingOf(text, at, name)
+	return newLocalReader(text).operand(at, name, scope)
+}
+
+func (reader localReader) operand(at int, name string, scope staticTypeScope) staticOperand {
+	text := reader.text
+	binding, index, ok := localBindingOfSyntax(&reader.syntax, at, name)
 	if !ok {
 		return staticOperand{}
 	}
@@ -426,7 +449,7 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 		return staticOperand{}
 	}
 	source := strings.TrimSpace(text[span[0]:span[1]])
-	inner := withLocalTypes(scope, text, span[0])
+	inner := reader.withTypes(scope, span[0])
 	types := typeScopeOf(inner)
 	if binding.element[index] {
 		return listElementOperand(types, inner, source)
@@ -445,15 +468,19 @@ func localBindingKind(text string, at int, name string, scope staticTypeScope) m
 // a subquery's pattern reads is an Integer, not the clause's relationship.
 // The scope goes through typeScope, the one type of every variable.
 func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+	return newLocalReader(text).withTypes(scope, at)
+}
+
+func (reader localReader) withTypes(scope staticTypeScope, at int) staticTypeScope {
 	var types typeScope
-	for name := range expressionLocalBindings(text) {
-		if !localVariableShadowsAt(text, at, name) {
+	for name := range reader.names {
+		if !reader.shadows(name, at) {
 			continue
 		}
 		if types == nil {
 			types = typeScopeOf(scope)
 		}
-		types[name] = localBindingOperand(text, at, name, scope)
+		types[name] = reader.operand(at, name, scope)
 	}
 	if types == nil {
 		return scope
@@ -467,20 +494,18 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 // open at text[open] when it binds variables of its own (all / any / none /
 // single / filter, reduce / allReduce), as written; "" for any other.
 func bindingFunctionBeforeParen(text string, open int) string {
-	end := open
-	for end > 0 && isWhitespace(text[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	if start == end || start > 0 && isIdentByte(text[start-1]) {
+	syntax := functionSyntaxView{text: text}
+	return syntax.bindingFunctionBeforeParen(open)
+}
+
+func (syntax *functionSyntaxView) bindingFunctionBeforeParen(open int) string {
+	call, ok := syntax.callBeforeParen(open)
+	if !ok {
 		return ""
 	}
-	switch strings.ToLower(text[start:end]) {
+	switch call.normalized {
 	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
-		return text[start:end]
+		return call.name
 	default:
 		return ""
 	}
@@ -509,6 +534,7 @@ type localOccurrences struct {
 	// open before walked, and holds those of name a later occurrence can
 	// still read (scopes, then more once scopes is full).
 	input, name string
+	syntax      functionSyntaxView
 	bound       bool
 	walked      int
 	scopes      [8]localOccurrenceScope
@@ -531,6 +557,9 @@ func (occurrences *localOccurrences) keeps(input, name string, at int) bool {
 		return false
 	}
 	if input != occurrences.input || name != occurrences.name || at < occurrences.walked {
+		if input != occurrences.input {
+			occurrences.syntax = functionSyntaxView{text: input}
+		}
 		occurrences.input, occurrences.name, occurrences.walked = input, name, 0
 		occurrences.open, occurrences.more = 0, occurrences.more[:0]
 		occurrences.bound = occurrences.binds(name)
@@ -543,7 +572,7 @@ func (occurrences *localOccurrences) keeps(input, name string, at int) bool {
 			occurrences.walked++
 			continue
 		}
-		next, binding, bound := localBindingStep(input, occurrences.walked, name)
+		next, binding, bound := stepLocalBinding(&occurrences.syntax, occurrences.walked, name)
 		occurrences.walked = next
 		for index := 0; bound && index < binding.count; index++ {
 			if binding.names[index] == name {
@@ -605,12 +634,15 @@ func (occurrences *localOccurrences) binds(name string) bool {
 // (semanticFreeReferences, expressionFreeVariables) ask it for each
 // occurrence they read.
 type localReader struct {
-	text  string
-	names map[string]struct{}
+	text   string
+	names  map[string]struct{}
+	syntax functionSyntaxView
 }
 
 func newLocalReader(text string) localReader {
-	return localReader{text: text, names: expressionLocalBindings(text)}
+	reader := localReader{text: text, syntax: functionSyntaxView{text: text}}
+	reader.names = localBindingNamesFromSyntax(&reader.syntax)
+	return reader
 }
 
 // shadows reports whether the occurrence of name at offset at of the text
@@ -619,7 +651,8 @@ func (reader localReader) shadows(name string, at int) bool {
 	if _, declared := reader.names[name]; !declared {
 		return false
 	}
-	return localVariableShadowsAt(reader.text, at, name)
+	_, _, bound := localBindingOfSyntax(&reader.syntax, at, name)
+	return bound
 }
 
 // withoutTypes is types (static type names by variable) without the names
@@ -628,7 +661,7 @@ func (reader localReader) shadows(name string, at int) bool {
 func (reader localReader) withoutTypes(types map[string]string, at int) map[string]string {
 	var inner map[string]string
 	for name := range reader.names {
-		if _, typed := types[name]; !typed || !localVariableShadowsAt(reader.text, at, name) {
+		if _, typed := types[name]; !typed || !reader.shadows(name, at) {
 			continue
 		}
 		if inner == nil {
@@ -649,8 +682,9 @@ func (reader localReader) withoutTypes(types map[string]string, at int) map[stri
 // come from expressionLocalBindings, read only when a check would fail.
 func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTypeScope, bool) {
 	var shadowed []string
-	for name := range expressionLocalBindings(text) {
-		if scope.bound(name) && localVariableShadowsAt(text, at, name) {
+	reader := newLocalReader(text)
+	for name := range reader.names {
+		if scope.bound(name) && reader.shadows(name, at) {
 			shadowed = append(shadowed, name)
 		}
 	}

@@ -7,8 +7,8 @@ import (
 )
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
-// (), [], {} groups and quoted strings. The parts are trimmed substrings of
-// input, so splitting copies no text.
+// (), [], {} groups, comments and quoted strings. Comment-free parts retain
+// source slices; comments are rendered from the lexical owner's recorded spans.
 func splitTopLevelComma(input string) []string {
 	var buffer [8]string
 	parts := appendTopLevelComma(buffer[:0], input)
@@ -22,39 +22,17 @@ func splitTopLevelComma(input string) []string {
 
 // appendTopLevelComma appends input's comma-separated parts outside quotes
 // and brackets, trimmed, to parts (splitTopLevelComma). A caller passing a
-// fixed-size buffer (var buffer [8]string; buffer[:0]) splits without
-// allocating.
+// fixed-size buffer reuses its result storage and the immutable argument spans.
 func appendTopLevelComma(parts []string, input string) []string {
-	return appendTopLevelCommaParts(parts, input, false)
+	return appendFunctionArguments(parts, input, false)
 }
 
-// splitTopLevelCommaKeepEmpty preserves the final empty entry for strict
-// grammar consumers, using the same tokens as every other comma reader.
 func splitTopLevelCommaKeepEmpty(input string) []string {
-	return appendTopLevelCommaParts(nil, input, true)
+	return appendFunctionArguments(nil, input, true)
 }
 
-// appendTopLevelCommaParts separates expressions through the canonical token
-// reader used for operators. Quoted names, strings, comments and nested groups
-// have one lexical owner. Only the caller's trailing-entry policy differs.
 func appendTopLevelCommaParts(parts []string, input string, keepEmpty bool) []string {
-	if strings.Contains(input, "/") {
-		input = StripComments(input)
-	}
-	if strings.TrimSpace(input) == "" {
-		return parts
-	}
-	for {
-		comma := findTopLevelOperator(input, ",", false, true)
-		if comma < 0 {
-			if last := strings.TrimSpace(input); last != "" || keepEmpty {
-				parts = append(parts, last)
-			}
-			return parts
-		}
-		parts = append(parts, strings.TrimSpace(input[:comma]))
-		input = input[comma+1:]
-	}
+	return appendFunctionArguments(parts, input, keepEmpty)
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {

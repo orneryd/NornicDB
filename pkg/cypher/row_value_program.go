@@ -259,7 +259,7 @@ func (n *rowRuntimeValueNode) eval(e *StorageExecutor, values map[string]interfa
 }
 
 func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo) {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return rowUnresolvedNode{}, rowValueInfo{pure: true, trivial: true}
 	}

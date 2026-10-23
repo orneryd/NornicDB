@@ -217,42 +217,27 @@ type deletedEntityRead struct {
 // labels, the keys or properties() of, outside string literals: v.p,
 // labels(v), keys(v), properties(v).
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
-	var reads []deletedEntityRead
-	for index := 0; index < len(expression); {
-		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
-			index = end
-			continue
+	var buffer [8]syntaxReference
+	facts := readFunctionReferenceFacts(expression, buffer[:0], []string{"labels", "keys", "properties"})
+	count := len(facts)
+	for _, fact := range facts {
+		if fact.function == "" && fact.nullTest {
+			count--
 		}
-		switch character := expression[index]; {
-		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
-			index++
-			continue
-		}
-		start := index
-		for index < len(expression) && isIdentByte(expression[index]) {
-			index++
-		}
-		word := expression[start:index]
-		next := skipSpaceIndex(expression, index)
-		switch {
-		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
-			if !propertyNullTestFollows(expression, next+1) {
-				reads = append(reads, deletedEntityRead{variable: word})
-			}
-		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
-			argumentStart := skipSpaceIndex(expression, next+1)
-			argumentEnd := argumentStart
-			for argumentEnd < len(expression) && isIdentByte(expression[argumentEnd]) {
-				argumentEnd++
-			}
-			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
-				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
-			}
+	}
+	if count == 0 {
+		return nil
+	}
+	reads := make([]deletedEntityRead, 0, count)
+	for _, fact := range facts {
+		if fact.function != "" {
+			reads = append(reads, deletedEntityRead{variable: fact.variable, relationshipOnly: fact.function != "labels"})
+		} else if !fact.nullTest {
+			reads = append(reads, deletedEntityRead{variable: fact.variable})
 		}
 	}
 	return reads
 }
-
 func skipSpaceIndex(text string, index int) int {
 	for index < len(text) && isASCIISpace(text[index]) {
 		index++
@@ -296,24 +281,6 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 	default:
 		return false
 	}
-}
-
-// propertyNullTestFollows reports whether the property name starting at
-// index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
-// entity's property for null without an error (it has none).
-func propertyNullTestFollows(expression string, index int) bool {
-	for index < len(expression) && isIdentByte(expression[index]) {
-		index++
-	}
-	rest := expression[skipSpaceIndex(expression, index):]
-	if !startsWithKeywordFold(rest, "IS") {
-		return false
-	}
-	rest = strings.TrimLeft(rest[len("IS"):], " \t\r\n")
-	if startsWithKeywordFold(rest, "NOT") {
-		rest = strings.TrimLeft(rest[len("NOT"):], " \t\r\n")
-	}
-	return startsWithKeywordFold(rest, "NULL")
 }
 
 // iterationSourceVariable is the row variable that variable iterates in

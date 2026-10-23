@@ -285,44 +285,17 @@ type AggregationResult struct {
 //	ParseAggregation("SUM(DISTINCT x.value)") → {Function: "SUM", Variable: "x", Property: "value", Distinct: true}
 //	ParseAggregation("COUNT(*)") → {Function: "COUNT", IsStar: true}
 func ParseAggregation(expr string) *AggregationResult {
-	expr = strings.TrimSpace(expr)
-	if len(expr) < 5 { // Minimum: "MIN()"
+	name, content, ok := parseFunctionCallWS(expr)
+	if !ok {
 		return nil
 	}
-
-	upper := upperASCII(expr)
-
-	// Find the function name
-	var funcName string
-	var funcLen int
-	for _, fn := range []string{"COLLECT", "COUNT", "SUM", "AVG", "MIN", "MAX"} {
-		if strings.HasPrefix(upper, fn+"(") {
-			funcName = fn
-			funcLen = len(fn)
-			break
-		}
-	}
-	if funcName == "" {
+	funcName := upperASCII(name)
+	switch funcName {
+	case "COLLECT", "COUNT", "SUM", "AVG", "MIN", "MAX":
+	default:
 		return nil
 	}
-
-	// Find the opening and closing parentheses
-	openParen := funcLen
-	if expr[openParen] != '(' {
-		return nil
-	}
-
-	// Find matching closing paren
-	closeParen := len(expr) - 1
-	for closeParen > openParen && expr[closeParen] != ')' {
-		closeParen--
-	}
-	if closeParen <= openParen {
-		return nil
-	}
-
-	// Extract the content inside parentheses
-	content := strings.TrimSpace(expr[openParen+1 : closeParen])
+	content = trimQueryTrivia(content)
 	if content == "" {
 		return nil
 	}

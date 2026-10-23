@@ -245,7 +245,7 @@ func addStretchLabelChain(chain string, tokens *stretchTokens) {
 func addStretchExpressionReads(text string, tokens *stretchTokens) {
 	addStretchPropertyReads(text, tokens)
 	lower := lowerASCII(text)
-	if strings.Contains(lower, "labels(") {
+	if containsFunctionCallNamed(lower, "labels") {
 		tokens.anyNode = true
 	}
 	if strings.Contains(text, "-[") || strings.Contains(text, "]-") || strings.Contains(text, ")-") ||
@@ -329,7 +329,7 @@ func addStretchSetItems(list string, reads, writes *stretchTokens) {
 func addStretchPropertyReads(text string, tokens *stretchTokens) {
 	lower := lowerASCII(text)
 	if strings.Contains(text, ".*") || strings.Contains(text, "{.") || strings.Contains(text, "{ .") ||
-		strings.Contains(lower, "properties(") || strings.Contains(lower, "keys(") {
+		containsFunctionCallNamed(lower, "properties") || containsFunctionCallNamed(lower, "keys") {
 		tokens.anyKey = true
 	}
 	for index := 0; index < len(text); index++ {

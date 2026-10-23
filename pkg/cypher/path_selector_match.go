@@ -34,11 +34,11 @@ func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool)
 	}
 	terms := splitTopLevelAndConjuncts(where)
 	call := strings.TrimSpace(terms[0])
-	open := strings.IndexByte(call, '(')
-	if open < 0 || findMatchingParen(call, open) != len(call)-1 {
+	name, inner, ok := parseFunctionCallWS(call)
+	if !ok || !strings.EqualFold(name, pathSelectorFunction) {
 		return nil, "", nil, false
 	}
-	args := splitTopLevelComma(call[open+1 : len(call)-1])
+	args := splitTopLevelComma(inner)
 	if len(args) < 5 {
 		return nil, "", nil, false
 	}

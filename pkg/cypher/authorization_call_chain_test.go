@@ -30,6 +30,9 @@ func TestQueryPermissionRequirementsClassifiesEveryCall(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Equal(t, testCase.admin, QueryPermissionRequirements(testCase.query).Admin)
+			classified := classificationText(testCase.query)
+			facts := readFunctionCallFacts(classified)
+			require.Equal(t, testCase.admin, queryPermissionRequirements(classified, facts).Admin)
 		})
 	}
 }

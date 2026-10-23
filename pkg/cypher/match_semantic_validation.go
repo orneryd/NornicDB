@@ -925,8 +925,9 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 	if !mayContainSubqueryExpression(text) {
 		return nil
 	}
+	reader := newLocalReader(text)
 	for _, subquery := range findSubqueryExpressions(text) {
-		local := withPatternComprehensionBindings(withLocalTypes(scope, text, subquery.start), text, subquery.start)
+		local := withPatternComprehensionBindings(reader.withTypes(scope, subquery.start), text, subquery.start)
 		for name := range expressionLocalBindings(maskNestedScopeBodies(subquery.body)) {
 			if local.bound(name) {
 				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
@@ -972,8 +973,9 @@ func validateExpressionPatternBindings(scope staticTypeScope, text string) error
 		}
 	}
 	structure := maskNestedScopeBodies(text)
+	reader := newLocalReader(text)
 	local := func(at int) staticTypeScope {
-		return withPatternComprehensionBindings(withLocalTypes(scope, text, at), text, at)
+		return withPatternComprehensionBindings(reader.withTypes(scope, at), text, at)
 	}
 	for index := start; index < len(structure); index++ {
 		if isCypherQuoteByte(structure[index]) {
