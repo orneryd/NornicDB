@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"net"
@@ -224,7 +226,7 @@ func TestBoltIdleTimeoutCleanupFailureImmediatelyClosesAndQuarantines(t *testing
 }
 
 func TestBoltTimeoutCannotAutocommitRunWaitingBeforeAdapterAdmission(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	release := make(chan struct{})
 	released := false

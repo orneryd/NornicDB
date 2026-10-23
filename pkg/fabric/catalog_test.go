@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 
@@ -173,7 +174,7 @@ func TestCatalog_DottedCompositeConstituent(t *testing.T) {
 }
 
 func TestCatalog_PopulateFromManager_WithCompositeAndRemote(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(inner, multidb.DefaultConfig())
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)

@@ -2,6 +2,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"math"
@@ -726,7 +728,7 @@ func TestExecuteWithImplicitTransaction_WALBeginError(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 

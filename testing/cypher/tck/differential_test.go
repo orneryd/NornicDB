@@ -1,6 +1,8 @@
 package tck
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -27,7 +29,7 @@ func TestGh531_BoltNativeKnowledgeRouting(t *testing.T) {
 				previous := config.GetParserType()
 				config.SetParserType(parser)
 				t.Cleanup(func() { config.SetParserType(previous) })
-				engine, err := storage.NewBadgerEngine(t.TempDir())
+				engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 				driver, shutdown := startConformanceServerWithEngine(t, engine)

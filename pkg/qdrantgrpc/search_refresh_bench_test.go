@@ -1,6 +1,8 @@
 package qdrantgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -13,7 +15,7 @@ import (
 // An upsert of an existing point writes storage and publishes it to search.
 func BenchmarkSearchRefreshQdrantUpsert(b *testing.B) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	if err != nil {

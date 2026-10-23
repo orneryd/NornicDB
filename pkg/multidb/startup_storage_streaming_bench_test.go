@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"strings"
 	"testing"
@@ -13,7 +15,7 @@ const startupBenchmarkEntityCount = 2000
 func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerEngine {
 	b.Helper()
 	dataDir := b.TempDir()
-	engine, err := storage.NewBadgerEngine(dataDir)
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -45,10 +47,10 @@ func newStartupBenchmarkEngine(b *testing.B, includeEdges bool) *storage.BadgerE
 		b.Fatal(err)
 	}
 
-	reopened, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	reopened, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             dataDir,
 		NodeCacheMaxEntries: 512,
-	})
+	}))
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/testing/cypher/listinputs"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTypedNumericBoltBoundaries(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "numeric_wire")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "numeric_wire")
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	for _, input := range listinputs.NumericInputs() {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})

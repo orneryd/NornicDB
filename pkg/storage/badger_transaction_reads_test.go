@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sort"
 	"strconv"
@@ -163,7 +165,7 @@ func TestTxReads_StreamNodesByLabelProjected_CallbackCanReadWithPendingWrites(t 
 }
 
 func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	for _, name := range []string{"alice", "bob", "carol"} {

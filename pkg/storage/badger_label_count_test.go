@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestBadgerEngine_LabelCountMetadataMaintainedAcrossNodeMutations(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -67,7 +68,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossNodeMutations(t *testing
 }
 
 func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -102,7 +103,10 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *t
 func TestBadgerEngine_LabelCountMetadataRebuildsOnReopenWhenDriftDetected(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person", "Employee"}})
 	require.NoError(t, err)
@@ -119,7 +123,7 @@ func TestBadgerEngine_LabelCountMetadataRebuildsOnReopenWhenDriftDetected(t *tes
 	}))
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 

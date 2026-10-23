@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"math"
 	"sync"
@@ -12,7 +14,7 @@ import (
 
 func relationshipUniqueCommitFixture(t testing.TB, existing int, constraints ...bool) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, id := range []NodeID{"test:a", "test:b"} {

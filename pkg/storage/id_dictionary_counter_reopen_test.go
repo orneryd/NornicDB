@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -66,7 +67,10 @@ func rewindPersistedIDCounter(t *testing.T, engine *BadgerEngine, key []byte, va
 func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 
 	nodeCounterBefore := persistedIDCounter(t, engine1, idCounterNodeKey)
@@ -94,7 +98,7 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 	rewindPersistedIDCounter(t, engine1, idCounterEdgeKey, edgeCounterBefore)
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -146,7 +150,10 @@ func TestIDDictionary_ReopenNeverReallocatesACommittedNumID(t *testing.T) {
 func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "solo:1", Labels: []string{"L"}})
 	require.NoError(t, err)
@@ -156,7 +163,7 @@ func TestIDDictionary_ReopenKeepsAHigherPersistedCounter(t *testing.T) {
 	rewindPersistedIDCounter(t, engine1, idCounterEdgeKey, 2_000)
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 	require.Equal(t, uint64(1_000), engine2.idDict.nextNode.Load())

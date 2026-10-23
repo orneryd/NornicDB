@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"hash"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 )
 
 func TestApocUtilHashByteArrayBolt(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "digest_bytes")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "digest_bytes")
 	defer store.Close()
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	ctx := context.Background()

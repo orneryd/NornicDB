@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sort"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // deleted nodes without their committed entries. The pending index is built
 // by the first lookup and kept current by every later write.
 func TestMergePendingPropertyMatches(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -45,7 +46,7 @@ func TestCompositeExplicitTx_ExpiredFailureRollsBackHTTPParticipant(t *testing.T
 	}
 	require.Empty(t, autocommit("CREATE CONSTRAINT hk_u FOR (u:U) REQUIRE u.k IS UNIQUE").Errors)
 
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), &multidb.Config{
+	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {

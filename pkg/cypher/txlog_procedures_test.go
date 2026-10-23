@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"io"
 	"os"
@@ -18,7 +20,7 @@ import (
 func newTxlogExecutor(t *testing.T) (*StorageExecutor, *storage.WAL) {
 	t.Helper()
 	dir := t.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { badger.Close() })
 	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)

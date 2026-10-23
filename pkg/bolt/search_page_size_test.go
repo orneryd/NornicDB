@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -13,7 +15,7 @@ import (
 func TestSearchContinuationPageSizeBolt(t *testing.T) {
 	for _, limit := range []int{500, 2, 600} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			store := storage.NewNamespacedEngine(base, "nornic")
 			for i := 0; i < limit+2; i++ {

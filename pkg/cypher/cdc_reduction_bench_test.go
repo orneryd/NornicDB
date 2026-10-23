@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"strings"
@@ -49,7 +51,7 @@ func BenchmarkCDCReduction(b *testing.B) {
 // capturing store and returns the cursor before them.
 func newCDCReductionBenchmark(b testing.TB) (*StorageExecutor, string) {
 	b.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")

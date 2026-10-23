@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -69,7 +70,7 @@ func BenchmarkSearchServiceIndexNodeUnchangedVector_CopyScaleHNSW(b *testing.B) 
 		nodeCount = 1500
 		dim       = 1024
 	)
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, dim)
 	for i := 0; i < nodeCount; i++ {
 		node := &storage.Node{

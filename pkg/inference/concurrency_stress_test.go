@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"sort"
 	"sync"
@@ -205,7 +206,7 @@ func TestEdgeDecayConcurrentAPI(t *testing.T) {
 	cfg := DefaultEdgeDecayConfig()
 	cfg.Enabled = true
 	cfg.ScanInterval = time.Hour
-	ed := NewEdgeDecay(cfg, storage.NewMemoryEngine())
+	ed := NewEdgeDecay(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	ops := map[string]func(int){
 		"Start":         func(int) { ed.Start(context.Background()) },
 		"Stop":          func(int) { ed.Stop() },
@@ -254,7 +255,7 @@ func TestEngineConcurrentAPI(t *testing.T) {
 	defer config.WithPerNodeConfigAutoIntegrationEnabled()()
 	defer config.WithCooldownEnabled()()
 
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, store)
 	topoCfg := DefaultTopologyConfig()
 	topoCfg.Enabled = true
@@ -340,7 +341,7 @@ func TestKalmanAdapterConcurrentAPI(t *testing.T) {
 }
 
 func TestTopologyIntegrationConcurrentAPI(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, store)
 	cfg := DefaultTopologyConfig()
 	cfg.Enabled = true

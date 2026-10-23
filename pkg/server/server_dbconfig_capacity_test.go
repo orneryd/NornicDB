@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"net/http"
@@ -22,7 +24,7 @@ func openPersistentDBConfigTestServer(t *testing.T, dataDir string) (*Server, *a
 	database, err := nornicdb.Open(dataDir, dbConfig)
 	require.NoError(t, err)
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,
@@ -203,7 +205,7 @@ func TestAdminDatabaseConfigUsesInjectedProcessConfig(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: false}, authStorage)
 	require.NoError(t, err)

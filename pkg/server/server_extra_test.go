@@ -2,6 +2,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -947,7 +949,7 @@ func TestNewAdditionalInitializationCoverage(t *testing.T) {
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(authConfig, authStorage)
 	if err != nil {
@@ -1147,7 +1149,7 @@ func TestDBConfigHandlers(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	// configured store branches
-	configStoreEngine := storage.NewMemoryEngine()
+	configStoreEngine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = configStoreEngine.Close() })
 	server.dbConfigStore = dbconfig.NewStore(configStoreEngine)
 	_ = server.dbConfigStore.Load(context.Background())
@@ -1402,7 +1404,7 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	}
 
 	// related nodes traversal
-	mem := storage.NewMemoryEngine()
+	mem := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = mem.Close() })
 	_, err = mem.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"A"}})
 	assert.NoError(t, err)
@@ -2148,7 +2150,7 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 
 func setupAuthForHelper(t *testing.T) *auth.Authenticator {
 	t.Helper()
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	a, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 
@@ -29,7 +30,10 @@ func newLargeEmbeddingGraph(tb testing.TB, docs int) *largeEmbeddingGraph {
 // to the stored body and chunks.
 func newColdLargeEmbeddingGraph(tb testing.TB, docs int) *largeEmbeddingGraph {
 	tb.Helper()
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, NodeCacheMaxEntries: 1})
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, NodeCacheMaxEntries: 1}))
+	if engine != nil {
+		fixtureowner.Own(tb, engine)
+	}
 	if err != nil {
 		tb.Fatal(err)
 	}

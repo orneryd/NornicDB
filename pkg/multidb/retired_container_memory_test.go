@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func TestRetiredDatabaseReferencesCollectible(t *testing.T) {
 	for _, constituent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "alias", true: "constituent"}[constituent], func(t *testing.T) {
-			owner, err := NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			owner, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = owner.Close() })
 			reference := func() weak.Pointer[byte] {

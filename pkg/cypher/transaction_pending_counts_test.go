@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"math/rand"
@@ -74,7 +76,7 @@ func TestTransactionCountsEqualScan(t *testing.T) {
 			end = "ROLLBACK"
 		}
 		t.Run(fmt.Sprintf("seed=%d/%s", seed, end), func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "pending")

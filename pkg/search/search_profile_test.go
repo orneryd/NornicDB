@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -142,7 +143,10 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 		tb.Skipf("disk fixture vector file unavailable: %s.vec (%v)", vectorPath, err)
 	}
 
-	baseEngine, err := storage.NewBadgerEngine(dataDir)
+	baseEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	if baseEngine != nil {
+		fixtureowner.Own(tb, baseEngine)
+	}
 	if err != nil {
 		tb.Skipf("disk fixture storage unavailable (possibly already open/locked): %v", err)
 	}

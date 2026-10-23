@@ -2,6 +2,7 @@ package dbconfig
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +12,7 @@ import (
 
 func TestStore_Load_Get_Set(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 
@@ -41,7 +42,7 @@ func TestStore_Load_Get_Set(t *testing.T) {
 
 func TestStore_SetOverrides_EmptyClears(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 
@@ -60,7 +61,7 @@ func TestStore_SetOverrides_EmptyClears(t *testing.T) {
 
 func TestStore_EmptyDbNameIgnored(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 	err := store.SetOverrides(ctx, "", map[string]string{"K": "v"})
@@ -70,7 +71,7 @@ func TestStore_EmptyDbNameIgnored(t *testing.T) {
 
 func TestStore_LoadFiltersAndParsesConfigNodes(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
 	_, err := eng.CreateNode(&storage.Node{
@@ -109,7 +110,7 @@ func TestStore_LoadFiltersAndParsesConfigNodes(t *testing.T) {
 
 func TestStore_SetOverrides_UpdateAndTrimmedDbName(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 
@@ -129,7 +130,7 @@ func TestStore_SetOverrides_UpdateAndTrimmedDbName(t *testing.T) {
 // land in the store on first boot when no row exists for that database.
 func TestLoadWithYAMLDefaults_SeedsOnFirstBoot(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 
@@ -156,7 +157,7 @@ func TestLoadWithYAMLDefaults_SeedsOnFirstBoot(t *testing.T) {
 
 func TestLoadWithYAMLDefaults_AcceptsBothKeyForms(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer engine.Close()
 	store := NewStore(engine)
 
@@ -178,7 +179,7 @@ func TestLoadWithYAMLDefaults_AcceptsBothKeyForms(t *testing.T) {
 
 func TestLoadWithYAMLDefaultsNormalizesAndRejectsInvalidValues(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer engine.Close()
 	store := NewStore(engine)
 
@@ -195,7 +196,7 @@ func TestLoadWithYAMLDefaultsNormalizesAndRejectsInvalidValues(t *testing.T) {
 }
 
 func TestStoreCanonicalizesEnvironmentAlternativeKeys(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := NewStore(engine)
 	require.NoError(t, store.SetOverrides(context.Background(), "alpha", map[string]string{
 		"NORNICDB_SEARCH_VECTOR_ENABLED": "false",
@@ -211,7 +212,7 @@ func TestStoreCanonicalizesEnvironmentAlternativeKeys(t *testing.T) {
 }
 
 func TestStorePersistsEveryRestartSettingAcrossReload(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer engine.Close()
 	configured := make(map[string]string)
 	for _, definition := range Settings() {
@@ -251,7 +252,7 @@ func TestStorePersistsEveryRestartSettingAcrossReload(t *testing.T) {
 // edits are authoritative across restarts.
 func TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
 	// Boot 1: yaml seeds initial values.
@@ -281,7 +282,7 @@ func TestLoadWithYAMLDefaults_DoesNotClobberAdminEdits(t *testing.T) {
 // admin has never set, even when other keys for the same DB are stored.
 func TestLoadWithYAMLDefaults_FillsMissingKeysOnly(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 
@@ -307,7 +308,7 @@ func TestLoadWithYAMLDefaults_FillsMissingKeysOnly(t *testing.T) {
 // the same allow-list as the admin API; yaml typos don't get persisted.
 func TestLoadWithYAMLDefaults_RejectsDisallowedKeys(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	store := NewStore(eng)
 

@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"reflect"
 	"testing"
@@ -11,7 +13,7 @@ import (
 func TestStatementCacheFamilyBoltTransactionCacheFamily(t *testing.T) {
 	for _, auth := range []string{"", "Bearer forwarded-token"} {
 		t.Run(auth, func(t *testing.T) {
-			store := storage.NewMemoryEngine()
+			store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = store.Close() })
 			manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 			session := &Session{server: &Server{config: DefaultConfig(), dbManager: manager, executors: make(map[string]QueryExecutor)}, forwardedAuthHeader: auth}

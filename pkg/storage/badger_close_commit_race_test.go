@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func closeWhileTailRuns(t *testing.T, engine *BadgerEngine) <-chan error {
 }
 
 func TestBadgerEngine_HelperUpdateTailSurvivesConcurrentClose(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	closeDone := closeWhileTailRuns(t, engine)
@@ -60,7 +61,10 @@ func TestBadgerEngine_HelperUpdateTailSurvivesConcurrentClose(t *testing.T) {
 // high-water mark the tail persists must be on disk for the next open.
 func TestBadgerTransaction_CommitTailSurvivesConcurrentClose(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	tx, err := engine.BeginTransaction()
@@ -74,7 +78,7 @@ func TestBadgerTransaction_CommitTailSurvivesConcurrentClose(t *testing.T) {
 	require.NoError(t, commitErr, "a commit whose Badger commit already returned must be reported as success")
 	require.NoError(t, <-closeDone)
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	node, err := reopened.GetNode("race:1")
@@ -91,7 +95,10 @@ func TestBadgerTransaction_CommitTailSurvivesConcurrentClose(t *testing.T) {
 // ID counters after db.Update returns, and Close must wait for that too.
 func TestBadgerEngine_NonTransactionalWriteTailSurvivesConcurrentClose(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	closeDone := closeWhileTailRuns(t, engine)
@@ -99,7 +106,7 @@ func TestBadgerEngine_NonTransactionalWriteTailSurvivesConcurrentClose(t *testin
 	require.NoError(t, err)
 	require.NoError(t, <-closeDone)
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	num, ok := reopened.idDict.lookupNodeNumID("race:2")
@@ -113,7 +120,10 @@ func TestBadgerEngine_NonTransactionalWriteTailSurvivesConcurrentClose(t *testin
 // after Close has finished must fail with ErrStorageClosed, without touching
 // Badger and without panicking.
 func TestBadgerTransaction_CommitAfterCloseFailsCleanly(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	tx, err := engine.BeginTransaction()

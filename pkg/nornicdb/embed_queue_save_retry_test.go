@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -71,7 +73,7 @@ func (e *retryPropertyBatchEmbedder) EmbedDocumentPropertyBatchChunks(ctx contex
 
 func nodeSaveRetryFixture(tb testing.TB, mode string, nodes, rejections int) (*EmbedWorker, *rejectingSidecarQueue, *mockEmbedder) {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	tb.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "node-save-retry")
 	ids := make([]storage.NodeID, nodes)

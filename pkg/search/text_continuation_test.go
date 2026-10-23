@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1830,7 +1831,7 @@ func passageIDs(passages []SearchPassage) []string {
 
 func BenchmarkSearchTextContinuationCompleteBuild(b *testing.B) {
 	b.Run("ID/20000_members", func(b *testing.B) {
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		service := NewService(engine)
 		b.Cleanup(func() { _ = service.Close() })
 		nodes := make([]*storage.Node, 20_000)
@@ -1862,7 +1863,7 @@ func BenchmarkSearchTextContinuationCompleteBuild(b *testing.B) {
 	})
 
 	b.Run("ID_grouped/1000_passages", func(b *testing.B) {
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		service := NewService(engine)
 		b.Cleanup(func() { _ = service.Close() })
 		nodes := make([]*storage.Node, 1_000)
@@ -1891,7 +1892,7 @@ func BenchmarkSearchTextContinuationCompleteBuild(b *testing.B) {
 
 func BenchmarkSearchTextContinuationCompleteBuildBadger(b *testing.B) {
 	b.Run("ID/2000_members_with_embeddings", func(b *testing.B) {
-		base, err := storage.NewBadgerEngine(b.TempDir())
+		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(b.TempDir()))
 		require.NoError(b, err)
 		engine := storage.NewNamespacedEngine(base, "nornic")
 		service := NewService(engine)
@@ -1940,7 +1941,7 @@ func benchmarkContinuationEmbedding(seed int) []float32 {
 }
 
 func BenchmarkSearchTextContinuationScanPath(b *testing.B) {
-	base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	base := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	nodes := make([]*storage.Node, 20_000)
 	for index := range nodes {
 		nodes[index] = &storage.Node{ID: storage.NodeID(fmt.Sprintf("scan-%05d", index)), Labels: []string{"Document"}}

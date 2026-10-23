@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -16,7 +18,7 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 		foreignFirst      bool
 	}{{"own1000", 1000, 0, false}, {"own1000_foreign50000", 1000, 50000, false}, {"foreign50000_before_own1000", 1000, 50000, true}, {"own1000_sparse", 1, 0, false}} {
 		b.Run(fixture.name, func(b *testing.B) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = engine.Close() })
 			populations := []struct {

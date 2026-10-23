@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
 )
@@ -8,7 +10,7 @@ import (
 var propertyViewDisabledBenchmarkSink interface{}
 
 func BenchmarkQueryPropertyViewDisabled(b *testing.B) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

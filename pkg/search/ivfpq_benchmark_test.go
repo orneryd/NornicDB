@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,7 +44,10 @@ func loadBenchmarkCorpus(tb testing.TB, syntheticCount, syntheticDims int) bench
 	maxVectors := clampInt(envInt("NORNICDB_IVFPQ_BENCH_MAX_VECTORS", 50000), 500, 500000)
 
 	if _, err := os.Stat(dataDir); err == nil {
-		baseEngine, err := storage.NewBadgerEngine(dataDir)
+		baseEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		if baseEngine != nil {
+			fixtureowner.Own(tb, baseEngine)
+		}
 		if err == nil {
 			tb.Cleanup(func() { _ = baseEngine.Close() })
 			engine := storage.NewNamespacedEngine(baseEngine, dbName)

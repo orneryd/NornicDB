@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,7 +16,7 @@ import (
 )
 
 func TestQueryMemoryBoltPropertyVisibility(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	schema := be.GetSchemaForNamespace("review")

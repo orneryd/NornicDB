@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"errors"
@@ -129,7 +131,7 @@ func (e *constraintValidationEngine) GetNodesByLabel(label string) ([]*Node, err
 
 func newIsolatedBadgerEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine

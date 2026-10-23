@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 	"time"
@@ -15,7 +17,7 @@ import (
 // reached through tx.CreateEdge → tx.Commit → tx.validateEdgeConstraints.
 func txEdgeConstraintFixture(t *testing.T, c Constraint) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -481,7 +483,7 @@ func TestTxCheckEdgeCardinality_DeletedExcluded(t *testing.T) {
 // TestTxCheckEdgePolicy_Disallowed: a DISALLOWED edge between Source/Target
 // labels must fail.
 func TestTxCheckEdgePolicy_Disallowed(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -520,7 +522,7 @@ func TestTxCheckEdgePolicy_Disallowed(t *testing.T) {
 // TestTxCheckEdgePolicy_AllowedNoMatch: ALLOWED policy in effect; no
 // constraint matches the edge → it must be rejected.
 func TestTxCheckEdgePolicy_AllowedNoMatch(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -559,7 +561,7 @@ func TestTxCheckEdgePolicy_AllowedNoMatch(t *testing.T) {
 // TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel: read-your-writes —
 // a node created within the same tx must be visible to the policy check.
 func TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -593,7 +595,7 @@ func TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel(t *testing.T) {
 // TestTxGetNodeLabels_PendingThenCommittedThenDeleted exercises the three
 // branches of tx.getNodeLabels in one test.
 func TestTxGetNodeLabels_PendingCommittedDeleted(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

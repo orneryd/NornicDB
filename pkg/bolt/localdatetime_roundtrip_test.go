@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -102,7 +103,7 @@ func TestBoltIntegration_LocalDateTimeParamRoundTrip_ServerStack(t *testing.T) {
 func roundTripLocalDateTimeScenario(t *testing.T, writeMessage []byte, readQuery string, want time.Time) {
 	t.Helper()
 
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "bolt_localdatetime_roundtrip")
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)

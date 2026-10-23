@@ -1,6 +1,8 @@
 package nornicgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestSearchStreamLifecycleNativeGRPC(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b"} {

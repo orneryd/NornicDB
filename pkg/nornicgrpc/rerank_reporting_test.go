@@ -1,6 +1,8 @@
 package nornicgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"math"
 	"net"
@@ -26,7 +28,7 @@ func (r malformedGRPCReranker) Rerank(context.Context, string, []search.RerankCa
 }
 
 func TestSearchTextMalformedRerankTrailerParity(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed), "nornic")
 	service := search.NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index, id := range []string{"a", "b", "c"} {

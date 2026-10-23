@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"testing"
 	"time"
@@ -60,7 +61,10 @@ func TestSnapshotOverlayStrippedStreamOwnership(t *testing.T) {
 				var b *BadgerEngine
 				var err error
 				if reader == "legacy" {
-					b, err = NewBadgerEngineInMemory()
+					b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+					if b != nil {
+						fixtureowner.Own(t, b)
+					}
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, b.Close()) })
 				} else {

@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +16,10 @@ import (
 )
 
 func TestBoltDatabaseManagerExecuteWriteUniqueMerge_BadgerDefaultNamespaceWithLookupIndex(t *testing.T) {
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)

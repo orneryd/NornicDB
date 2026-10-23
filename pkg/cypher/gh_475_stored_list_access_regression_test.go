@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -57,7 +58,10 @@ func TestGH475_StoredListSubscriptAndHeadInMatch(t *testing.T) {
 
 func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir})
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -101,7 +105,10 @@ func TestGH475_StoredMixedListAcrossBadgerReopenAndSnapshot(t *testing.T) {
 	t.Run("live", func(t *testing.T) { check(t, false) })
 	require.NoError(t, engine.Close())
 	engine = nil
-	engine, err = storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir})
+	engine, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Run("reopened snapshot", func(t *testing.T) { check(t, true) })
 }

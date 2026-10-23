@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,7 +104,10 @@ func TestNotInNullUsesThreeValuedLogic(t *testing.T) {
 func newThreeValuedServerStackExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	dir := t.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)

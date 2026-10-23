@@ -1,6 +1,8 @@
 package storage_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"testing"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -51,7 +53,7 @@ func TestBadgerEngine_StreamNodes_LoadsSeparatelyStoredEmbeddings(t *testing.T) 
 }
 
 func TestBadgerEngine_StreamNodeChunks_LoadsSeparatelyStoredEmbeddings(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

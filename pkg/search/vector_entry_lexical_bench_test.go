@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -22,7 +23,7 @@ func BenchmarkVectorEntryLexicalConstructionInputs(b *testing.B) {
 			vectors = append(vectors, []float32{1, float32(i + 1)})
 		}
 	}
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	defer service.Close()
 	hints := service.hnswLexicalSeedHints(ft, 16)
 	if len(hints) == 0 {

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"strings"
 	"testing"

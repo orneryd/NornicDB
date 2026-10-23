@@ -1,6 +1,8 @@
 package storage_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -11,7 +13,7 @@ import (
 )
 
 func TestWriteBehindAdjacencyGapPublicCypherProbe(t *testing.T) {
-	b, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour, WriteBehindMaxOps: 100000})
+	b, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour, WriteBehindMaxOps: 100000}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.FlushWriteBehind()); require.NoError(t, b.Close()) })
 	exec := cypher.NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(b, "probe"), 0, 0)

@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -155,7 +156,7 @@ func TestClusterIntegrationCountsConcurrentSearchesExactly(t *testing.T) {
 // run is consistent: no build time without a completed build, and the last
 // build no longer than the total.
 func TestTopologyStatsReadsBuildStatsDuringRebuilds(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	setupTestGraph(t, engine)
 	cfg := DefaultTopologyConfig()
 	cfg.Enabled = true

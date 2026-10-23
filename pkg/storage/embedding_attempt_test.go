@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
@@ -47,7 +49,7 @@ func TestEmbeddingAttemptRuntimeIdentityNeverEncoded(t *testing.T) {
 }
 
 func TestEmbeddingAttemptCachedBodySnapshot(t *testing.T) {
-	disk, err := NewBadgerEngine(t.TempDir())
+	disk, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(false)
@@ -107,7 +109,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "vectors", true: "terminal"}[terminal], func(t *testing.T) {
-			disk, err := NewBadgerEngine(t.TempDir())
+			disk, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
@@ -157,7 +159,7 @@ func TestEmbeddingAttemptAuthoritativeOutcome(t *testing.T) {
 }
 
 func TestEmbeddingPendingCounterNamespaceAndExclusion(t *testing.T) {
-	disk, err := NewBadgerEngine(t.TempDir())
+	disk, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(true)

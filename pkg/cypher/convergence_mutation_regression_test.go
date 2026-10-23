@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -99,10 +101,10 @@ func (e *StorageExecutor) sharedTrailingRowsForTest(ctx context.Context, query s
 	return result, err
 }
 
-func sharedSetAssignmentForTest(entity interface{}, assignment unwindSimpleSetAssignment, values map[string]interface{}, _ func(string, map[string]interface{}) interface{}, _ *setWrites) (int, error) {
+func sharedSetAssignmentForTest(t testing.TB, entity interface{}, assignment unwindSimpleSetAssignment, values map[string]interface{}, _ func(string, map[string]interface{}) interface{}, _ *setWrites) (int, error) {
 	// NamespacedEngine.Close does not close its shared owner. This fixture owns
 	// the MemoryEngine and must close it directly.
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
 	store := storage.NewNamespacedEngine(base, "fixture")
 	row := pipelineRow(maps.Clone(values))

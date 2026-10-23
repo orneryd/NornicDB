@@ -2,13 +2,14 @@ package server
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
 )
 
 func TestRule73CachedHeimdallViewsDropCycles64(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

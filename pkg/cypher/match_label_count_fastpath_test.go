@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -40,7 +42,7 @@ func (e *labelCountGuardEngine) NodeCountByLabel(label string) (int64, error) {
 }
 
 func TestMatchCountUsesLabelCountFastPath(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &labelCountGuardEngine{Engine: base}
 	exec := NewStorageExecutor(eng)
@@ -63,7 +65,7 @@ func TestMatchCountUsesLabelCountFastPath(t *testing.T) {
 }
 
 func TestMatchCountUsesLabelCountFastPathInsideTransaction(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	eng := &labelCountGuardEngine{Engine: base}

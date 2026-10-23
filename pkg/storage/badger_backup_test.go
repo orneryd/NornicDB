@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -20,7 +21,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 		backupPath := filepath.Join(t.TempDir(), "backup.bin")
 
 		// Create engine
-		engine, err := NewBadgerEngine(dbDir)
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dbDir))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -40,7 +41,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 		backupPath := filepath.Join(t.TempDir(), "backup.bin")
 
 		// Create engine and add data
-		engine, err := NewBadgerEngine(dbDir)
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dbDir))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -80,7 +81,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 
 	t.Run("backup to invalid path", func(t *testing.T) {
 		dbDir := t.TempDir()
-		engine, err := NewBadgerEngine(dbDir)
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dbDir))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -93,7 +94,10 @@ func TestBadgerEngine_Backup(t *testing.T) {
 		dbDir := t.TempDir()
 		backupPath := filepath.Join(t.TempDir(), "backup.bin")
 
-		engine, err := NewBadgerEngine(dbDir)
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dbDir))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		engine.Close()
 
@@ -105,7 +109,7 @@ func TestBadgerEngine_Backup(t *testing.T) {
 
 func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 	sourceDir := t.TempDir()
-	source, err := NewBadgerEngine(sourceDir)
+	source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(sourceDir))
 	require.NoError(t, err)
 	defer source.Close()
 
@@ -130,7 +134,7 @@ func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 	require.NotEmpty(t, backupBytes)
 	require.NotEqual(t, byte('{'), backupBytes[0])
 
-	target, err := NewBadgerEngine(t.TempDir())
+	target, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer target.Close()
 	require.NoError(t, target.Restore(backupPath))
@@ -144,7 +148,7 @@ func TestBadgerEngine_RestoreNativeStream(t *testing.T) {
 }
 
 func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
-	source, err := NewBadgerEngine(t.TempDir())
+	source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer source.Close()
 
@@ -160,7 +164,10 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 	require.NoError(t, source.Backup(backupPath))
 
 	targetDir := t.TempDir()
-	target, err := NewBadgerEngine(targetDir)
+	target, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
+	if target != nil {
+		fixtureowner.Own(t, target)
+	}
 	require.NoError(t, err)
 	require.NoError(t, target.Restore(backupPath))
 	require.Len(t, target.GetSchemaForNamespace("nornic").ExportDefinition().Constraints, 1)
@@ -171,14 +178,14 @@ func TestBadgerEngine_RestoreReloadsSchema(t *testing.T) {
 	require.Error(t, err)
 	require.NoError(t, target.Close())
 
-	reopened, err := NewBadgerEngine(targetDir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
 	require.NoError(t, err)
 	defer reopened.Close()
 	require.Len(t, reopened.GetSchemaForNamespace("nornic").ExportDefinition().Constraints, 1)
 }
 
 func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
-	source, err := NewBadgerEngine(t.TempDir())
+	source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer source.Close()
 	_, err = source.CreateNode(&Node{
@@ -189,7 +196,10 @@ func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
 	require.NoError(t, source.Backup(backupPath))
 
 	targetDir := t.TempDir()
-	target, err := NewBadgerEngine(targetDir)
+	target, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
+	if target != nil {
+		fixtureowner.Own(t, target)
+	}
 	require.NoError(t, err)
 	_, err = target.CreateNode(&Node{
 		ID: NodeID("system:target"), Properties: map[string]interface{}{"target_key": "target"},
@@ -200,7 +210,7 @@ func TestBadgerEngine_RestoreReplacesTargetSystemRecords(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, target.Close())
 
-	reopened, err := NewBadgerEngine(targetDir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(targetDir))
 	require.NoError(t, err)
 	defer reopened.Close()
 	_, err = reopened.GetNode(NodeID("system:source"))

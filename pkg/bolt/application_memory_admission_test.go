@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"fmt"
@@ -17,7 +19,7 @@ import (
 )
 
 func TestBoltApplicationMemoryReclaimsCompletedWork(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
 	_, err := executor.Execute(context.Background(), "RETURN 1 AS ok", nil)

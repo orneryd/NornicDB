@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"math"
 	"testing"
@@ -23,7 +25,7 @@ func (p *boltRerankFailureProvider) Rerank(context.Context, string, []search.Rer
 }
 
 func TestBoltDbRerankProviderFailuresReturnFailure(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	server, port := startBoltIntegrationServer(t, store)

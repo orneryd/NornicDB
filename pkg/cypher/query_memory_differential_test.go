@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -78,9 +80,9 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					require.ErrorIs(t, err, storage.ErrNotFound, "suppression control")
 				} else {
 					var err error
-					base, err = storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+					base, err = runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 						InMemory: true, WriteBehind: mode == "write_behind", WriteBehindInterval: time.Hour,
-					})
+					}))
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = base.Close() })
 					exec = NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "test"), 0, 0)

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -9,7 +11,7 @@ import (
 )
 
 func BenchmarkAlgorithmRelationshipFilters(b *testing.B) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "algorithm_bench")
 	const size = 32

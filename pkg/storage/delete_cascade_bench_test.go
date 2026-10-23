@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 // that 32 outgoing and 32 incoming relationships connect, a quarter of them
 // suppressed: the cascade a node delete reads and buffers.
 func BenchmarkTransactionDeleteNodeCascade(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	const degree = 32

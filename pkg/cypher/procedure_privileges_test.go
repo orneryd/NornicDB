@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -235,7 +237,7 @@ func TestProcedurePrivilegeMissingRole(t *testing.T) {
 // store in the system namespace, or the executor's own storage.
 func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	for name, setup := range map[string]func() (*StorageExecutor, storage.Engine){
 		"database manager's system storage": func() (*StorageExecutor, storage.Engine) {
@@ -294,7 +296,7 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 // statement, even when the client opened it on a user database.
 func TestProcedurePrivilegeInOtherDatabaseTransaction(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	system := storage.NewNamespacedEngine(inner, "system")
 	require.NoError(t, auth.NewProcedurePrivilegeStore(system).Grant(ctx, "viewer", "db.ping", false, false))
@@ -321,7 +323,7 @@ func TestProcedurePrivilegeInOtherDatabaseTransaction(t *testing.T) {
 // unaffected.
 func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	system := storage.NewNamespacedEngine(inner, "system")
 	exec := NewStorageExecutor(system)

@@ -1,6 +1,8 @@
 package qdrantgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"sync"
@@ -62,7 +64,7 @@ func TestSharedIndexDeleteOrdersStorageBeforePopulationBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	id := &qpb.PointId{PointIdOptions: &qpb.PointId_Num{Num: 1}}
-	memory := storage.NewMemoryEngine()
+	memory := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, memory.Close()) })
 	base := &heldPointDeletion{Engine: memory, suffix: string(pointIDToNodeID(id)), entered: make(chan struct{}), resume: make(chan struct{})}
 	dbm, err := multidb.NewDatabaseManager(base, nil)

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -647,7 +648,10 @@ func TestBadgerEngine_ForEachNodeIDByLabel_NilVisitor(t *testing.T) {
 }
 
 func TestBadgerEngine_ForEachNodeIDByLabel_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

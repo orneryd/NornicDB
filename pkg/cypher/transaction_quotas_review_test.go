@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"sync"
@@ -67,7 +69,7 @@ func TestTransactionQuotaExplicitCommitUsesCallerContext(t *testing.T) {
 func BenchmarkTransactionQuotaParallel(b *testing.B) {
 	for _, merge := range []bool{false, true} {
 		b.Run(fmt.Sprintf("merge=%v", merge), func(b *testing.B) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			manager, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = manager.Close(); _ = base.Close() })

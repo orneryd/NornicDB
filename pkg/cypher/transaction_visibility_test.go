@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestExplicitTransactionSchemaRollbackIsolation(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "schema_rollback")
@@ -40,7 +42,7 @@ func TestExplicitTransactionSchemaRollbackIsolation(t *testing.T) {
 }
 
 func TestExplicitTransactionSchemaCommitPublishesBackfill(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "schema_commit")
@@ -66,7 +68,7 @@ func TestExplicitTransactionSchemaCommitPublishesBackfill(t *testing.T) {
 }
 
 func TestExplicitTransactionSchemaBackfillConcurrentWrite(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "schema_concurrent")
@@ -174,7 +176,7 @@ func TestExplicitTransactionSchemaProcedureAdmission(t *testing.T) {
 func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 	for _, schemaFirst := range []bool{false, true} {
 		t.Run(map[bool]string{false: "data_then_schema", true: "schema_then_data"}[schemaFirst], func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "mixed_schema")

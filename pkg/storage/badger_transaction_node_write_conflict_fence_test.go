@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"log/slog"
 	"sync"
 	"testing"
@@ -12,11 +14,11 @@ import (
 
 func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:         t.TempDir(),
 		HighPerformance: true,
 		Logger:          slog.New(barrier),
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

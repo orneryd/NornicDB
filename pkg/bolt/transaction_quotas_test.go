@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 
 func TestBoltTransactionQuotas(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
@@ -67,7 +68,7 @@ func TestBoltTransactionQuotaCodesAndSameConnectionReuse(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, kind := range []string{"capacity", "rate"} {
 			t.Run(fmt.Sprintf("explicit=%v/%s", explicit, kind), func(t *testing.T) {
-				base := storage.NewMemoryEngine()
+				base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				manager, err := multidb.NewDatabaseManager(base, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close(); _ = base.Close() })

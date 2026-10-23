@@ -3,6 +3,7 @@ package tck
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"path/filepath"
 	"testing"
@@ -33,7 +34,10 @@ func (m *conformanceDatabaseManager) DefaultDatabaseName() string { return "norn
 func TestGh775_TypedNodeIndexRouting(t *testing.T) {
 	for _, mode := range []TransactionMode{AutocommitMode, ExplicitTransactionMode} {
 		t.Run(string(mode), func(t *testing.T) {
-			engine, err := storage.NewBadgerEngine(t.TempDir())
+			engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+			if engine != nil {
+				fixtureowner.Own(t, engine)
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -187,7 +191,10 @@ func TestBoltBackendResetClearsSchemaArtifacts(t *testing.T) {
 
 func startConformanceServer(t *testing.T) (neo4j.DriverWithContext, func()) {
 	t.Helper()
-	engine, err := storage.NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("create Badger engine: %v", err)
 	}

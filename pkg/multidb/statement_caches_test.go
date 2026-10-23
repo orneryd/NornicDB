@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
 )
@@ -11,7 +12,7 @@ func (c *testStatementCacheResource) Dispose()          { c.disposed = true }
 func (c *testStatementCacheResource) InvalidateScopes() {}
 
 func TestStatementCacheFamilyManagerLifecycle(t *testing.T) {
-	manager, err := NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
