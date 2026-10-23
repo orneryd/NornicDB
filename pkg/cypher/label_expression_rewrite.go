@@ -1421,42 +1421,7 @@ func (r *labelExpressionRewriter) isLabeledTest(wordStart, wordEnd, afterIs, end
 // EXISTS {, COUNT {, COLLECT {, CALL { or CALL (…) {. The word may be the
 // clause keyword before the scanned body (CALL).
 func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
-	q, start := r.query, 0
-	i := brace - 1
-	for i >= start && isASCIISpace(q[i]) {
-		i--
-	}
-	if i >= start && q[i] == ')' {
-		depth := 0
-		for ; i >= start; i-- {
-			if q[i] == ')' {
-				depth++
-			} else if q[i] == '(' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
-		}
-		i--
-		for i >= start && isASCIISpace(q[i]) {
-			i--
-		}
-		end := i + 1
-		for i >= start && isIdentByte(q[i]) {
-			i--
-		}
-		return strings.EqualFold(q[i+1:end], "CALL")
-	}
-	end := i + 1
-	for i >= start && isIdentByte(q[i]) {
-		i--
-	}
-	switch strings.ToUpper(q[i+1 : end]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-		return true
-	}
-	return false
+	return precedingSubqueryExpressionKeyword(r.query, brace)
 }
 
 // subquery rewrites a subquery body query[start:end]: a statement, or a

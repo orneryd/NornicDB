@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -47,41 +48,43 @@ func mayContainSubqueryExpression(expr string) bool {
 // outside string literals and quoted names.
 func findSubqueryExpressions(expr string) []subqueryExpression {
 	var found []subqueryExpression
-	for i := 0; i < len(expr); {
-		if end, skipped := skipCypherLexicalToken(expr, i); skipped {
-			i = end
+	scanner := newSubqueryBraceScanner(expr, 0)
+	for token, subquery, ok := scanner.next(); ok; token, subquery, ok = scanner.next() {
+		if !subquery || scanner.prior.Kind != cyphertext.Word {
 			continue
 		}
-		keyword, open, isSubquery := subqueryExpressionKeywordAt(expr, i)
-		if !isSubquery {
-			i++
+		kind := upperASCII(scanner.prior.Text(expr))
+		if kind != "EXISTS" && kind != "COUNT" && kind != "COLLECT" {
 			continue
 		}
-		closing := findMatchingDelimiter(expr, open, '{', '}')
-		if closing < 0 {
+		close := findMatchingDelimiter(expr, token.Start, '{', '}')
+		if close < 0 {
 			return found
 		}
-		found = append(found, subqueryExpression{
-			kind:  keyword,
-			start: i,
-			end:   closing + 1,
-			body:  strings.TrimSpace(expr[open+1 : closing]),
-		})
-		i = closing + 1
+		found = append(found, subqueryExpression{kind: kind, start: scanner.prior.Start, end: close + 1, body: strings.TrimSpace(expr[token.End:close])})
+		scanner.skipBody(close)
 	}
 	return found
 }
 
-// subqueryExpressionKeywordAt reports whether an EXISTS / COUNT / COLLECT
-// subquery expression starts at expr[i]: the keyword, then its body's '{'
-// (at open). It is the one reader of where a subquery expression starts.
+// subqueryExpressionKeywordAt shares the same token-based brace classification
+// with the streaming expression reader and map preflight.
 func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, ok bool) {
-	for _, keyword := range subqueryExpressionKeywords {
-		if !matchKeywordAt(expr, i, keyword) {
+	if i < 0 || i >= len(expr) {
+		return "", 0, false
+	}
+	reader := cyphertext.NewReader(expr, i)
+	token, exists := reader.Next()
+	if !exists || token.Start != i || token.Kind != cyphertext.Word {
+		return "", 0, false
+	}
+	for _, kind := range subqueryExpressionKeywords {
+		if !strings.EqualFold(token.Text(expr), kind) {
 			continue
 		}
-		if open := queryGapEnd(expr, i+len(keyword)); open < len(expr) && expr[open] == '{' && subqueryExpressionKeywordBeforeBrace(expr, i, i+len(keyword), open) {
-			return keyword, open, true
+		brace, exists := reader.Next()
+		if exists && brace.Is(expr, "{") && precedingSubqueryExpressionKeyword(expr, brace.Start) {
+			return kind, brace.Start, true
 		}
 	}
 	return "", 0, false

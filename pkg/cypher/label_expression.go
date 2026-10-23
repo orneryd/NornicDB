@@ -1,6 +1,10 @@
 package cypher
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
 
 // Label expressions (#860).
 //
@@ -514,33 +518,37 @@ func labelExpressionBarAt(s string, start, at int) bool {
 	if at <= start || at+1 >= len(s) {
 		return false
 	}
-	before, after := s[at-1], s[at+1]
-	if !(isIdentByte(before) || isCypherBacktickByte(before) || before == ')' || before == '%') ||
-		!(isIdentByte(after) || isCypherBacktickByte(after) || after == '(' || after == '!' || after == '%') {
+	before := cyphertext.PreviousToken(s, at)
+	reader := cyphertext.NewReader(s, at+1)
+	after, ok := reader.Next()
+	if !ok || before.End != at || after.Start != at+1 {
 		return false
 	}
-	for i := at - 1; i >= start; i-- {
-		switch c := s[i]; {
-		case isCypherBacktickByte(c):
-			// A quoted name: back to its opening backtick.
-			open := strings.LastIndexByte(s[start:i], '`')
-			if open < 0 {
-				return false
-			}
-			open += start
-			_, end, ok := scanIdentifierToken(s, open)
-			if !ok || end != i+1 {
-				return false
-			}
-			i = open
-		case isIdentByte(c) || c == '|' || c == '&' || c == '!' || c == '%' || c == '(' || c == ')':
-		case c == ':':
-			return i > start && isIdentByte(s[i-1])
-		default:
-			return false
-		}
+	beforeTerm := before.Kind == cyphertext.Word || before.Kind == cyphertext.QuotedName || before.Is(s, ")") || before.Is(s, "%")
+	afterTerm := after.Kind == cyphertext.Word || after.Kind == cyphertext.QuotedName || after.Is(s, "(") || after.Is(s, "!") || after.Is(s, "%")
+	if !beforeTerm || !afterTerm {
+		return false
 	}
-	return false
+	reader = cyphertext.NewReader(s, start)
+	valid := false
+	var previous cyphertext.Token
+	for span, ok := reader.Next(); ok && span.Start < at; span, ok = reader.Next() {
+		switch span.Kind {
+		case cyphertext.Word, cyphertext.QuotedName:
+		case cyphertext.Symbol:
+			switch span.Text(s) {
+			case ":":
+				valid = previous.Kind == cyphertext.Word && previous.End == span.Start
+			case "|", "&", "!", "%", "(", ")":
+			default:
+				valid = false
+			}
+		default:
+			valid = false
+		}
+		previous = span
+	}
+	return valid
 }
 
 // predicate renders the expression as a boolean expression over variable,

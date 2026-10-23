@@ -55,8 +55,8 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 		}
 
 		// Literal value
-		if strings.HasPrefix(arg, "'") && strings.HasSuffix(arg, "'") {
-			return arg[1 : len(arg)-1]
+		if value, literal := decodeCypherQuotedString(arg); literal {
+			return value
 		}
 	}
 

@@ -78,10 +78,15 @@ func scanQuotedText(text string, start int, doubled bool, expressionEnd func(int
 	return len(text), hasEscape, false
 }
 
-// CommentEnd returns the end of the Cypher comment at index, or -1.
-func CommentEnd(text string, index int) int {
-	if index+1 >= len(text) || text[index] != '/' {
-		return -1
+// ScanComment reads a comment at a known source boundary. Its span retains the
+// original bytes. Unterminated is true only for a block comment without a closing
+// delimiter; a line comment ending at EOF is complete. Quotes inside comments are
+// data, and the first block terminator closes a comment (comments do not nest).
+// Callers inspecting arbitrary query text use Reader so quoted comment markers
+// remain opaque.
+func ScanComment(text string, index int) (Token, bool) {
+	if index < 0 || index+1 >= len(text) || text[index] != '/' {
+		return Token{}, false
 	}
 	switch text[index+1] {
 	case '/':
@@ -89,27 +94,34 @@ func CommentEnd(text string, index int) int {
 		for end < len(text) && text[end] != '\n' && text[end] != '\r' {
 			end++
 		}
-		return end
+		return Token{Start: index, End: end, Kind: Comment}, true
 	case '*':
 		if close := strings.Index(text[index+2:], "*/"); close >= 0 {
-			return index + 2 + close + 2
+			return Token{Start: index, End: index + 2 + close + 2, Kind: Comment}, true
 		}
-		return len(text)
+		return Token{Start: index, End: len(text), Kind: Comment, Unterminated: true}, true
+	}
+	return Token{}, false
+}
+
+// CommentEnd returns the end of the Cypher comment at index, or -1. It is a
+// permissive compatibility adapter: use ScanComment for admission, since EOF alone
+// cannot distinguish a complete comment from an unfinished block comment.
+func CommentEnd(text string, index int) int {
+	if span, ok := ScanComment(text, index); ok {
+		return span.End
 	}
 	return -1
 }
 
 // SkipToken skips one quoted token or comment at index.
 func SkipToken(text string, index int) (int, bool) {
-	if index < 0 || index >= len(text) {
+	if index < 0 || index >= len(text) || !IsQuote(text[index]) && text[index] != '/' {
 		return index, false
 	}
-	if IsQuote(text[index]) {
-		end, _ := ScanQuotedText(text, index)
-		return end, true
-	}
-	if end := CommentEnd(text, index); end >= 0 {
-		return end, true
+	span, ok := TokenAt(text, index)
+	if ok && (span.Kind == String || span.Kind == QuotedName || span.Kind == Comment) {
+		return span.End, true
 	}
 	return index, false
 }

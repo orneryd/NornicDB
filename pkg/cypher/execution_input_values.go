@@ -51,7 +51,7 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 		var direct string
 		scanParameterReferences(text, func(dollar, start, end int) {
 			if dollar == 0 && end == len(text) {
-				direct = text[start:end]
+				direct = symbolicNameValue(text[start:end])
 			}
 		})
 		if direct != "" {

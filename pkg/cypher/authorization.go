@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -278,31 +279,13 @@ func firstExecutableCypherOffset(query string) int {
 	if strings.HasPrefix(query, "\xef\xbb\xbf") {
 		index = 3
 	}
-	for {
-		for index < len(query) && isASCIISpace(query[index]) {
-			index++
-		}
-		switch {
-		case index+1 < len(query) && query[index] == '/' && query[index+1] == '/':
-			index += 2
-			for index < len(query) && query[index] != '\n' {
-				index++
-			}
-		case index+1 < len(query) && query[index] == '/' && query[index+1] == '*':
-			index += 2
-			for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
-				index++
-			}
-			if index+1 >= len(query) {
-				return len(query)
-			}
-			index += 2
-		default:
-			return index
-		}
+	reader := cyphertext.NewReader(query, index)
+	span, ok := reader.Next()
+	if !ok {
+		return len(query)
 	}
+	return span.Start
 }
-
 func queryKeywords(query string) map[string]bool {
 	keywords := make(map[string]bool)
 	for index := 0; index < len(query); {

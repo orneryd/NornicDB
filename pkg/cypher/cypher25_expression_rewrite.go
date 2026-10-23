@@ -216,63 +216,62 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 // query[open]: the expression it stands for and the index after it.
 func interpolatedStringText(query string, open int) (string, int, error) {
 	delimiter := query[open]
-	end, closed := cyphertext.ScanInterpolatedText(query, open, func(at int) int { return interpolationEnd(query, at) })
-	var out, literal strings.Builder
+	var out strings.Builder
 	parts := 0
-	flush := func() {
+	flush := func(literal string) {
 		if parts > 0 {
 			out.WriteString(" + ")
 		}
 		out.WriteByte(delimiter)
-		out.WriteString(literal.String())
+		out.WriteString(literal)
 		out.WriteByte(delimiter)
-		literal.Reset()
 		parts++
 	}
-	syntaxError := func(message localization.Message) (string, int, error) {
-		return "", 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", message)
+	syntaxError := func(message localization.Message) error {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", message)
+	}
+	cursor := open + 1
+	var failure error
+	end, closed := cyphertext.ScanInterpolatedText(query, open, func(at int) int {
+		close := interpolationEnd(query, at)
+		if close < 0 {
+			return -1
+		}
+		literal, valid := cyphertext.InterpolationLiteral(query[cursor:at])
+		if !valid {
+			failure = syntaxError(localization.CypherCoreInvalidInput("}"))
+			return -1
+		}
+		expression := strings.TrimSpace(query[at+1 : close])
+		if expression == "" {
+			failure = syntaxError(localization.CypherCoreInvalidInputExpectedExpression("}"))
+			return -1
+		}
+		edits, err := interpolationEdits(expression)
+		if err != nil {
+			failure = err
+			return -1
+		}
+		if len(edits) > 0 {
+			expression, _ = applyLabelRewriteEdits(expression, edits, true)
+		}
+		flush(literal)
+		out.WriteString(" + " + interpolateFunction + "(" + expression + ")")
+		cursor = close + 1
+		return close
+	})
+	if failure != nil {
+		return "", 0, failure
 	}
 	if !closed {
-		return syntaxError(localization.CypherCoreInvalidInput(string(delimiter)))
+		return "", 0, syntaxError(localization.CypherCoreInvalidInput(string(delimiter)))
 	}
-	for i := open + 1; i < end-1; i++ {
-		c := query[i]
-		switch {
-		case c == '\\' && i+1 < len(query):
-			if query[i+1] == '{' || query[i+1] == '}' {
-				literal.WriteByte(query[i+1])
-			} else {
-				literal.WriteString(query[i : i+2])
-			}
-			i++
-		case c == '}':
-			return syntaxError(localization.CypherCoreInvalidInput("}"))
-		case c == '{':
-			close := interpolationEnd(query, i)
-			if close < 0 {
-				return syntaxError(localization.CypherCoreInvalidInput("{"))
-			}
-			expression := strings.TrimSpace(query[i+1 : close])
-			if expression == "" {
-				return syntaxError(localization.CypherCoreInvalidInputExpectedExpression("}"))
-			}
-			// An interpolated string inside the expression.
-			edits, err := interpolationEdits(expression)
-			if err != nil {
-				return "", 0, err
-			}
-			if len(edits) > 0 {
-				expression, _ = applyLabelRewriteEdits(expression, edits, true)
-			}
-			flush()
-			out.WriteString(" + " + interpolateFunction + "(" + expression + ")")
-			i = close
-		default:
-			literal.WriteByte(c)
-		}
+	literal, valid := cyphertext.InterpolationLiteral(query[cursor : end-1])
+	if !valid {
+		return "", 0, syntaxError(localization.CypherCoreInvalidInput("}"))
 	}
-	if parts == 0 || literal.Len() > 0 {
-		flush()
+	if parts == 0 || literal != "" {
+		flush(literal)
 	}
 	return "(" + out.String() + ")", end, nil
 }

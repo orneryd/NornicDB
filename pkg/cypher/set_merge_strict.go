@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"strings"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -39,29 +39,27 @@ func validateMapLiteralSyntax(s string) error {
 // forEachMapEntry validates map structure over the canonical Cypher token
 // reader. It owns map grammar, not quotation, comments or delimiter scanning.
 func forEachMapEntry(s string, entry func(key, value string)) error {
-	s = strings.TrimSpace(StripComments(s))
-	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
+	text := cyphertext.TrimTrivia(s)
+	reader := cyphertext.NewReader(text, 0)
+	open, ok := reader.Next()
+	if !ok || !open.Is(text, "{") || findMatchingDelimiter(text, open.Start, '{', '}') != len(text)-1 {
 		return localizedError(localization.CypherMergeMapLiteralEnclosureRequired(), nil)
 	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	var buffer [8]string
-	for _, pair := range appendTopLevelCommaParts(buffer[:0], inner, true) {
+	parts := cyphertext.CommaSegments(text[open.End : len(text)-1])
+	for raw, ok := parts.Next(); ok; raw, ok = parts.Next() {
+		pair := cyphertext.TrimTrivia(raw)
 		if pair == "" {
 			return localizedError(localization.CypherMergeMapEntryEmpty(), nil)
 		}
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
-		if colonIdx <= 0 || colonIdx == len(pair)-1 {
+		parsed, valid := parseBraceEntry(pair, literalBrace)
+		if !valid {
 			return localizedError(localization.CypherMergeMapEntryInvalid(pair), nil)
 		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
+		key := normalizePropertyKey(parsed.key)
 		if key == "" {
 			return localizedError(localization.CypherMergeMapKeyEmpty(), nil)
 		}
-		value := strings.TrimSpace(pair[colonIdx+1:])
-		if value == "" {
-			return localizedError(localization.CypherMergeMapValueEmpty(key), nil)
-		}
-		entry(key, value)
+		entry(key, cyphertext.TrimTrivia(parsed.value))
 	}
 	return nil
 }

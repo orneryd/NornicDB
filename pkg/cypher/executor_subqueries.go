@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
@@ -551,36 +552,34 @@ func callSubqueryHasScopeClause(cypher string) bool {
 }
 
 func parseCallSubqueryImportVariables(cypher string) []string {
-	trimmed := strings.TrimSpace(cypher)
-	if findKeywordIndex(trimmed, "CALL") != 0 {
+	reader := cyphertext.NewReader(cypher, 0)
+	call, ok := reader.Next()
+	if !ok || call.Kind != cyphertext.Word || !equalFoldASCII(call.Text(cypher), "CALL") {
 		return nil
 	}
-	idx := skipSpaces(trimmed, len("CALL"))
-	if idx >= len(trimmed) || trimmed[idx] != '(' {
+	open, ok := reader.Next()
+	if !ok || !open.Is(cypher, "(") {
 		return nil
 	}
-	close := findMatchingCallParen(trimmed, idx)
+	close := findMatchingDelimiter(cypher, open.Start, '(', ')')
 	if close < 0 {
 		return nil
 	}
-	body := strings.TrimSpace(trimmed[idx+1 : close])
+	body := cyphertext.TrimTrivia(cypher[open.End:close])
 	if body == "" {
 		return []string{}
 	}
 	if body == "*" {
 		return nil
 	}
-	parts := splitTopLevelComma(body)
-	vars := make([]string, 0, len(parts))
-	for _, part := range parts {
-		name := strings.TrimSpace(part)
-		name = strings.Trim(name, "`")
-		if !isSimpleIdentifier(name) {
-			continue
+	var variables []string
+	parts := cyphertext.CommaSegments(body)
+	for part, ok := parts.Next(); ok; part, ok = parts.Next() {
+		if written := singleMapName(part); written != "" {
+			variables = append(variables, symbolicNameValue(written))
 		}
-		vars = append(vars, name)
 	}
-	return vars
+	return variables
 }
 
 // prefixUnionBranches puts prefix before body, or before each branch of a

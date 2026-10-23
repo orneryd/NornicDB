@@ -1541,12 +1541,12 @@ func isArrowRightHeadRune(r rune) bool {
 
 func cypherWhitespaceReplacement(r rune) (rune, bool) {
 	switch r {
-	case '\u0085', '\u2028', '\u2029':
+	case '\u2028', '\u2029':
 		return '\n', true
 	case ' ', '\t', '\n', '\r':
 		return 0, false
 	default:
-		if unicode.IsSpace(r) {
+		if cyphertext.IsWhitespaceRune(r) {
 			return ' ', true
 		}
 		return 0, false
