@@ -41,25 +41,25 @@ func validateMapLiteralSyntax(s string) error {
 func forEachMapEntry(s string, entry func(key, value string)) error {
 	s = strings.TrimSpace(StripComments(s))
 	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
-		return localizedError(localization.CypherMergeMapLiteralEnclosureRequired(), nil)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapLiteralEnclosureRequired())
 	}
 	inner := strings.TrimSpace(s[1 : len(s)-1])
 	var buffer [8]string
 	for _, pair := range appendTopLevelCommaParts(buffer[:0], inner, true) {
 		if pair == "" {
-			return localizedError(localization.CypherMergeMapEntryEmpty(), nil)
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapEntryEmpty())
 		}
 		colonIdx := findTopLevelMapKeyValueSeparator(pair)
 		if colonIdx <= 0 || colonIdx == len(pair)-1 {
-			return localizedError(localization.CypherMergeMapEntryInvalid(pair), nil)
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapEntryInvalid(pair))
 		}
 		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
 		if key == "" {
-			return localizedError(localization.CypherMergeMapKeyEmpty(), nil)
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapKeyEmpty())
 		}
 		value := strings.TrimSpace(pair[colonIdx+1:])
 		if value == "" {
-			return localizedError(localization.CypherMergeMapValueEmpty(key), nil)
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherMergeMapValueEmpty(key))
 		}
 		entry(key, value)
 	}

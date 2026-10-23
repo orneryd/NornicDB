@@ -51,7 +51,7 @@ func (e *walLabelFallbackEngine) GetNodesByLabel(string) ([]*Node, error) {
 }
 
 func TestWALEngine_GetInnerEngine_Delegation(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
@@ -77,7 +77,7 @@ func TestWALEngine_Logger_FallsBackToDiscard(t *testing.T) {
 }
 
 func TestWALEngine_TemporalDelegation(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
@@ -98,7 +98,7 @@ func TestWALEngine_TemporalDelegation(t *testing.T) {
 }
 
 func TestWALEngine_LifecycleDelegation(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
@@ -113,7 +113,7 @@ func TestWALEngine_LifecycleDelegation(t *testing.T) {
 }
 
 func TestWALEngine_NamespaceListing(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
@@ -131,7 +131,7 @@ func TestWALEngine_NamespaceListing(t *testing.T) {
 }
 
 func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	for _, id := range []NodeID{"tenant:n1", "tenant:n2", "tenant:n3"} {
 		_, err := base.CreateNode(&Node{ID: id, Labels: []string{"Endpoint"}})
@@ -160,7 +160,7 @@ func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
 	require.EqualValues(t, 1, count)
 	w.RecordMaterializedAccess("tenant:p1")
 
-	recorder := &namespaceLifecycleRecorder{Engine: NewMemoryEngine()}
+	recorder := &namespaceLifecycleRecorder{Engine: newTestMemoryEngine(t)}
 	recorderWAL := NewWALEngine(recorder, nil)
 	recorderWAL.RecordMaterializedAccess("tenant:recorded")
 	require.Equal(t, []string{"tenant:recorded"}, recorder.accesses)
@@ -168,7 +168,7 @@ func TestWALEngine_AdjacentAndLabelCountFallbacks(t *testing.T) {
 
 func TestWALEngine_OptionalDelegateAndErrorBranches(t *testing.T) {
 	direct := &adjacentDirectEngine{
-		adjacentFallbackEngine: &adjacentFallbackEngine{Engine: NewMemoryEngine()},
+		adjacentFallbackEngine: &adjacentFallbackEngine{Engine: newTestMemoryEngine(t)},
 		adjOut:                 []*Edge{{ID: "tenant:direct-out", StartNode: "tenant:n1", EndNode: "tenant:n2", Type: "R"}},
 		adjIn:                  []*Edge{{ID: "tenant:direct-in", StartNode: "tenant:n3", EndNode: "tenant:n1", Type: "R"}},
 	}
@@ -179,7 +179,7 @@ func TestWALEngine_OptionalDelegateAndErrorBranches(t *testing.T) {
 	require.Equal(t, EdgeID("tenant:direct-in"), in[0].ID)
 
 	fallbackErr := errors.New("incoming failed")
-	fallback := &adjacentFallbackEngine{Engine: NewMemoryEngine(), inErr: fallbackErr}
+	fallback := &adjacentFallbackEngine{Engine: newTestMemoryEngine(t), inErr: fallbackErr}
 	w = NewWALEngine(fallback, nil)
 	out, in, err = w.GetAdjacentEdges("tenant:n1")
 	require.ErrorIs(t, err, fallbackErr)
@@ -187,7 +187,7 @@ func TestWALEngine_OptionalDelegateAndErrorBranches(t *testing.T) {
 	require.Nil(t, in)
 
 	lookup := &walStatsLookupEngine{
-		Engine:         NewMemoryEngine(),
+		Engine:         newTestMemoryEngine(t),
 		labelCount:     7,
 		namespaceCount: 3,
 		ids:            []NodeID{"tenant:a", "tenant:b"},
@@ -216,7 +216,7 @@ func TestWALEngine_OptionalDelegateAndErrorBranches(t *testing.T) {
 
 func TestWALEngine_LabelFallbackBranches(t *testing.T) {
 	base := &walLabelFallbackEngine{
-		Engine: NewMemoryEngine(),
+		Engine: newTestMemoryEngine(t),
 		nodesByLabel: []*Node{
 			{ID: "tenant:a", Labels: []string{"Person"}},
 			{ID: "tenant:b", Labels: []string{"Person"}},
@@ -254,7 +254,7 @@ func TestWALEngine_LabelFallbackBranches(t *testing.T) {
 }
 
 func TestWALEngine_MVCCHeadDelegation(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
@@ -282,7 +282,7 @@ func TestWALEngine_MVCCHeadDelegation(t *testing.T) {
 }
 
 func TestWALEngine_LatestEffectiveAndVisible(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(base, nil)
 
@@ -306,7 +306,7 @@ func TestWALEngine_LatestEffectiveAndVisible(t *testing.T) {
 }
 
 func TestWALEngine_FallbacksForNonOptionalInterfaces(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	w := NewWALEngine(&nonMVCCEngine{Engine: base}, nil)
 

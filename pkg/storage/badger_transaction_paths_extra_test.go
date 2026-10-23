@@ -2,7 +2,6 @@ package storage
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -80,6 +79,9 @@ func TestBadgerTransaction_QueryAndMutationPaths(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
+	// Exercise both the no-snapshot wrappers and the original pinned boundary.
+	pinnedReadTS := tx.readTS
+	tx.readTS = MVCCVersion{}
 	// readTS zero path wrappers
 	_, err = tx.GetEdgesByType("REL")
 	require.NoError(t, err)
@@ -95,7 +97,7 @@ func TestBadgerTransaction_QueryAndMutationPaths(t *testing.T) {
 	require.NoError(t, err)
 
 	// readTS non-zero path wrappers
-	tx.readTS = MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
+	tx.readTS = pinnedReadTS
 	_, err = tx.GetEdgesByType("REL")
 	require.NoError(t, err)
 	_, err = tx.GetNodesByLabel("User")

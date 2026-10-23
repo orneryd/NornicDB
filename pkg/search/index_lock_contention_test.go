@@ -12,7 +12,7 @@ import (
 )
 
 func TestIndexNode_DoesNotBlockSearchStateReads(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)
 
 	tmpDir := t.TempDir()

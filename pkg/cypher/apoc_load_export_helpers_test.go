@@ -512,7 +512,8 @@ func TestApocLoadExportHelpers_CallApocExportJsonAll_WriteError(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// /dev/null is a file on Unix-like systems, so creating /dev/null/subdir should fail.
-	_, err = exec.callApocExportJsonAll(ctx, []interface{}{"/dev/null/subdir/out.json", map[string]interface{}{}})
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(parent, []byte("file"), 0o600))
+	_, err = exec.callApocExportJsonAll(ctx, []interface{}{filepath.Join(parent, "subdir", "out.json"), map[string]interface{}{}})
 	require.Error(t, err)
 }

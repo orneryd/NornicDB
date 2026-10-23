@@ -15,7 +15,7 @@ import (
 func TestDecayRelaxAfterHiddenEdgeUpdateRestoresAdjacency(t *testing.T) {
 	for _, update := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no-update-control", true: "updated-while-hidden"}[update], func(t *testing.T) {
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			engine.SetDecayEnabled(true)
 			schema := engine.GetSchemaForNamespace("test")
@@ -68,7 +68,7 @@ func TestDecayRelaxAfterHiddenEdgeUpdateRestoresAdjacency(t *testing.T) {
 }
 
 func TestDecayRelaxAfterHiddenNodeUpdateRefreshesCache(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetDecayEnabled(true)
 	schema := engine.GetSchemaForNamespace("test")
@@ -98,7 +98,7 @@ func TestDecayRelaxAfterHiddenNodeUpdateRefreshesCache(t *testing.T) {
 }
 
 func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetDecayEnabled(true)
 	_, err := engine.CreateNode(&Node{ID: "test:n", VisibilitySuppressed: true})

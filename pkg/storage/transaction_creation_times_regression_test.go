@@ -22,7 +22,7 @@ func TestTransactionCreationTimesRegression(t *testing.T) {
 				name += "/unset"
 			}
 			t.Run(name, func(t *testing.T) {
-				eng := NewMemoryEngine()
+				eng := newTestMemoryEngine(t)
 				t.Cleanup(func() { require.NoError(t, eng.Close()) })
 				tx, err := eng.BeginTransaction()
 				require.NoError(t, err)

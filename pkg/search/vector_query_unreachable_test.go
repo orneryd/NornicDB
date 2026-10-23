@@ -62,7 +62,7 @@ func sparseWordEmbedding(text string, dimensions int) []float32 {
 // widening running on without end.
 func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testing.T) {
 	const dimensions = 2048
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), dimensions)
+	service := NewServiceWithDimensions(newTestMemoryEngine(t), dimensions)
 	config := DefaultHNSWConfig()
 	config.EfConstruction, config.EfSearch, config.UseGPUBuild = 100, 50, false
 	index := NewHNSWIndex(dimensions, config)
@@ -88,7 +88,7 @@ func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testin
 }
 
 func TestAdaptiveVectorSearchCompletesOnceRequestCoversPopulation(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	for index, embedding := range [][]float32{{1, 0}, {0.9, 0.1}, {0.8, 0.2}} {
 		require.NoError(t, service.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("doc-%d", index+1)), Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{embedding}}))
 	}
@@ -109,7 +109,7 @@ func TestAdaptiveVectorSearchCompletesOnceRequestCoversPopulation(t *testing.T) 
 }
 
 func TestAdaptiveVectorSearchStopsWhenContextEnds(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	generator := &shortApproximateCandidateGenerator{candidates: []Candidate{{ID: "doc-1", Score: 1}}, population: 1 << 40}
 	pipeline := NewVectorSearchPipeline(generator, &IdentityExactScorer{})
 	opts := adaptiveOverfetchTestOptions(3)

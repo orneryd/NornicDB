@@ -71,7 +71,7 @@ func TestRerankCandidatesMinimumGovernsEveryOutcomePath(t *testing.T) {
 		{name: "reranker disabled", reranker: minimumPathReranker{disabled: true}, candidates: candidates(0.9, 0.3), minScore: 0.5, wantIDs: []string{"a"}, wantScores: []float64{0.9}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+			service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 			t.Cleanup(func() { _ = service.Close() })
 			service.SetReranker(testCase.reranker)
 			options := DefaultSearchOptions()
@@ -98,7 +98,7 @@ func TestRerankCandidatesMinimumGovernsEveryOutcomePath(t *testing.T) {
 		"provider empty": {empty: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+			service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 			t.Cleanup(func() { _ = service.Close() })
 			service.SetReranker(reranker)
 			options := DefaultSearchOptions()
@@ -115,7 +115,7 @@ func TestRerankCandidatesMinimumGovernsEveryOutcomePath(t *testing.T) {
 func TestNodeSearchFallbackWithoutRerankOutputIgnoresMinimum(t *testing.T) {
 	newService := func(t *testing.T) *Service {
 		t.Helper()
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 		service := NewServiceWithDimensions(engine, 2)
 		t.Cleanup(func() { _ = service.Close() })
 		for index, fixture := range []struct {

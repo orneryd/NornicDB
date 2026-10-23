@@ -38,7 +38,7 @@ func (e *asyncErrQueryEngine) NodeCountByLabelInNamespace(namespace, label strin
 }
 
 func TestWALEngine_LowBranchHelpers(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	errEng := &asyncErrQueryEngine{MemoryEngine: base, err: ErrStorageClosed}
 	wal := NewWALEngine(errEng, nil)
 

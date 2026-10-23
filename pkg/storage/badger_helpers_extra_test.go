@@ -43,7 +43,7 @@ func TestExtractEdgeNumIDAndMVCCVersionFromVersionKey(t *testing.T) {
 }
 
 func TestEngineEncodeNode_RequiresNamespacePrefix(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	require.NoError(t, e.db.Update(func(txn *badger.Txn) error {
@@ -170,7 +170,7 @@ func TestEncodeNodeV1Body_PreservesExistingChunkCount(t *testing.T) {
 }
 
 func TestBadgerHelpers_DictionaryKeyWrappersAndLookups(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	version := MVCCVersion{
@@ -227,7 +227,7 @@ func TestBadgerHelpers_DictionaryKeyWrappersAndLookups(t *testing.T) {
 }
 
 func TestBadgerHelpers_EdgeBetweenIndexWriteDeletePaths(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	edge := &Edge{ID: "test:e-between", StartNode: "test:start", EndNode: "test:end", Type: "REL"}
@@ -306,7 +306,7 @@ func TestBadgerHelpers_EmbeddingShardMarkerHelpers(t *testing.T) {
 }
 
 func TestBadgerHelpers_MVCCIncomingAdjacencyKeyString_EdgeAllocationErrors(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {

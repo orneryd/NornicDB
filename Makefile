@@ -72,9 +72,12 @@ IMAGE_CPU_BGE_HEADLESS := $(REGISTRY)/nornicdb-cpu-bge-headless:$(VERSION)
 IMAGE_AMD64_VULKAN := $(REGISTRY)/nornicdb-amd64-vulkan:$(VERSION)
 IMAGE_AMD64_VULKAN_BGE := $(REGISTRY)/nornicdb-amd64-vulkan-bge:$(VERSION)
 IMAGE_AMD64_VULKAN_HEADLESS := $(REGISTRY)/nornicdb-amd64-vulkan-headless:$(VERSION)
-LLAMA_VERSION ?= v0.4.1
+LLAMA_VERSION ?= v0.7.0
 LLAMA_CPU := $(REGISTRY)/llama-cpu-libs:$(LLAMA_VERSION)
 LLAMA_CUDA := $(REGISTRY)/llama-cuda-libs:$(LLAMA_VERSION)
+# Consumers use immutable references; publication helpers retain writable tags.
+LLAMA_CPU_REF := $(LLAMA_CPU)@$(shell tr -d '\r\n' < lib/llama/CPU_IMAGE_DIGEST)
+LLAMA_CUDA_REF := $(LLAMA_CUDA)@$(shell tr -d '\r\n' < lib/llama/CUDA_IMAGE_DIGEST)
 
 # Dockerfiles
 DOCKER_DIR := docker
@@ -292,49 +295,49 @@ build-arm64-metal: ensure-llama-cpu
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64) [BYOM]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) -t $(IMAGE_ARM64) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) -t $(IMAGE_ARM64) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-arm64-metal-bge: ensure-llama-cpu download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64_BGE) [with BGE model]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) --build-arg EMBED_MODEL=true -t $(IMAGE_ARM64_BGE) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) --build-arg EMBED_MODEL=true -t $(IMAGE_ARM64_BGE) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-arm64-metal-bge-heimdall: ensure-llama-cpu download-models
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64_BGE_HEIMDALL) [BGE + Heimdall]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) -t $(IMAGE_ARM64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.arm64-metal-heimdall .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) -t $(IMAGE_ARM64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.arm64-metal-heimdall .
 
 build-arm64-metal-headless: ensure-llama-cpu
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64_HEADLESS) [headless, no UI]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) --build-arg HEADLESS=true -t $(IMAGE_ARM64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) --build-arg HEADLESS=true -t $(IMAGE_ARM64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-amd64-cuda: ensure-llama-cuda
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64) [BYOM]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) -t $(IMAGE_AMD64) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) -t $(IMAGE_AMD64) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
 
 build-amd64-cuda-bge: ensure-llama-cuda download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64_BGE) [with BGE model]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) --build-arg EMBED_MODEL=true -t $(IMAGE_AMD64_BGE) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) --build-arg EMBED_MODEL=true -t $(IMAGE_AMD64_BGE) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
 
 build-amd64-cuda-bge-heimdall: ensure-llama-cuda download-models
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64_BGE_HEIMDALL) [BGE + Heimdall]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) -t $(IMAGE_AMD64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda-heimdall .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) -t $(IMAGE_AMD64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda-heimdall .
 
 build-amd64-cuda-headless: ensure-llama-cuda
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64_HEADLESS) [headless, no UI]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) --build-arg HEADLESS=true -t $(IMAGE_AMD64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) --build-arg HEADLESS=true -t $(IMAGE_AMD64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
 
 build-amd64-cpu:
 	@echo "╔══════════════════════════════════════════════════════════════╗"
@@ -353,13 +356,13 @@ build-cpu-bge: ensure-llama-cpu download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_CPU_BGE) [CPU + BGE embeddings + reranker]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) -t $(IMAGE_CPU_BGE) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
+	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) -t $(IMAGE_CPU_BGE) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
 
 build-cpu-bge-headless: ensure-llama-cpu download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_CPU_BGE_HEADLESS) [CPU + BGE + reranker, headless]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) --build-arg HEADLESS=true -t $(IMAGE_CPU_BGE_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
+	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) --build-arg HEADLESS=true -t $(IMAGE_CPU_BGE_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
 
 # AMD64 Vulkan (any GPU: NVIDIA/AMD/Intel)
 build-amd64-vulkan:
@@ -729,73 +732,9 @@ build-swagger-ui:
 build-binary: sync-version check-llama-lib
 ifeq ($(HOST_OS),windows)
 	@echo "Detecting GPU support..."
-	@powershell -Command " \
-		$$forceBackend = $$env:NORNICDB_GPU_BACKEND; \
-		$$cuda = $$false; \
-		$$vulkan = $$false; \
-		if ($$forceBackend) { \
-			Write-Host '  [**] Forced backend: '$$forceBackend -ForegroundColor Magenta; \
-		} \
-		if (Get-Command nvcc -ErrorAction SilentlyContinue) { \
-			$$cudaVer = (nvcc --version 2>$$null | Select-String 'release' | ForEach-Object { $$_ -replace '.*release ([0-9.]+).*','$$1' }); \
-			if ($$cudaVer) { \
-				Write-Host '  [OK] CUDA Toolkit detected: v'$$cudaVer -ForegroundColor Green; \
-				$$cuda = $$true; \
-			} \
-		} \
-		if (-not $$cuda) { \
-			if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { \
-				Write-Host '  [!!] NVIDIA GPU detected but CUDA Toolkit not installed' -ForegroundColor Yellow; \
-				Write-Host '       Install from: https://developer.nvidia.com/cuda-downloads' -ForegroundColor Yellow; \
-			} else { \
-				Write-Host '  [--] No NVIDIA GPU/CUDA detected' -ForegroundColor Gray; \
-			} \
-		} \
-		if (Get-Command vulkaninfo -ErrorAction SilentlyContinue) { \
-			Write-Host '  [OK] Vulkan SDK detected' -ForegroundColor Green; \
-			$$vulkan = $$true; \
-		} elseif (Test-Path 'C:\\VulkanSDK') { \
-			Write-Host '  [OK] Vulkan SDK found at C:\\VulkanSDK' -ForegroundColor Green; \
-			$$vulkan = $$true; \
-		} else { \
-			Write-Host '  [--] No Vulkan SDK detected' -ForegroundColor Gray; \
-		} \
-		Write-Host ''; \
-		if ($$forceBackend -eq 'vulkan' -and $$vulkan) { \
-			Write-Host 'Building with Vulkan support (forced)...' -ForegroundColor Cyan; \
-			Write-Host 'GPU_BACKEND=vulkan' | Out-File -FilePath .gpu-backend -Encoding ascii; \
-		} elseif ($$forceBackend -eq 'cuda' -and $$cuda) { \
-			Write-Host 'Building with CUDA support (forced)...' -ForegroundColor Cyan; \
-			Write-Host 'GPU_BACKEND=cuda' | Out-File -FilePath .gpu-backend -Encoding ascii; \
-		} elseif ($$forceBackend -eq 'cpu') { \
-			Write-Host 'Building CPU-only (forced)...' -ForegroundColor Yellow; \
-			Write-Host 'GPU_BACKEND=cpu' | Out-File -FilePath .gpu-backend -Encoding ascii; \
-		} elseif ($$cuda) { \
-			Write-Host 'Building with CUDA support (NVIDIA GPU)...' -ForegroundColor Cyan; \
-			Write-Host 'GPU_BACKEND=cuda' | Out-File -FilePath .gpu-backend -Encoding ascii; \
-		} elseif ($$vulkan) { \
-			Write-Host 'Building with Vulkan support (Universal GPU)...' -ForegroundColor Cyan; \
-			Write-Host 'GPU_BACKEND=vulkan' | Out-File -FilePath .gpu-backend -Encoding ascii; \
-		} else { \
-			Write-Host 'Building CPU-only (no GPU acceleration)...' -ForegroundColor Yellow; \
-			Write-Host 'GPU_BACKEND=cpu' | Out-File -FilePath .gpu-backend -Encoding ascii; \
-		} \
-	"
+	@powershell -NoProfile -File scripts/windows-build-gpu.ps1
 	@go build -ldflags "$(BUILD_LDFLAGS)" -o bin/nornicdb$(BIN_EXT) ./cmd/nornicdb
-	@powershell -Command " \
-		$$backend = (Get-Content .gpu-backend -ErrorAction SilentlyContinue) -replace 'GPU_BACKEND=',''; \
-		Remove-Item .gpu-backend -ErrorAction SilentlyContinue; \
-		Write-Host ''; \
-		if ($$backend -eq 'cuda') { \
-			Write-Host 'Next: Run scripts\\setup-windows-cuda.bat to install runtime libraries' -ForegroundColor Green; \
-		} elseif ($$backend -eq 'vulkan') { \
-			Write-Host 'Next: Run scripts\\setup-windows-vulkan.bat to install runtime libraries' -ForegroundColor Green; \
-		} else { \
-			Write-Host 'Note: GPU acceleration disabled. For better performance:' -ForegroundColor Yellow; \
-			Write-Host '  NVIDIA: Install CUDA Toolkit from https://developer.nvidia.com/cuda-downloads' -ForegroundColor Yellow; \
-			Write-Host '  AMD/Intel: Install Vulkan SDK from https://vulkan.lunarg.com/sdk/home' -ForegroundColor Yellow; \
-		} \
-	"
+	@powershell -NoProfile -File scripts/windows-build-gpu.ps1 -AfterBuild
 else
 ifeq ($(HOST_OS),linux)
 	CGO_ENABLED=1 CGO_LDFLAGS="-Wl,-no-pie" go build -ldflags "$(BUILD_LDFLAGS)" -tags localllm -o bin/nornicdb$(BIN_EXT) ./cmd/nornicdb
@@ -892,7 +831,7 @@ lint-cardinality:
 
 test: lint-slog lint-cardinality
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./... 2>&1 | Select-String -Pattern '^(FAIL|ok|---\s+FAIL)'; exit $$LASTEXITCODE"
+	powershell -NoProfile -File scripts/test-windows.ps1 -PackageParallelism 1 -Parallel 1
 else
 	# pipefail propagates `go test`'s real exit through the grep filter,
 	# so a test failure still fails the make target even though grep
@@ -908,7 +847,7 @@ install-hooks:
 # Test with limited parallelism (useful on Windows with memory constraints)
 test-serial:
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
+	powershell -NoProfile -File scripts/test-windows.ps1 -PackageParallelism 1 -ShowAll
 else
 	go test -p 1 -parallel 4 -timeout 30m ./...
 endif
@@ -918,7 +857,7 @@ endif
 test-pkg:
 	@echo "Usage: make test-pkg PKG=./pkg/cypher"
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -v -timeout 10m $(PKG)"
+	powershell -NoProfile -File scripts/test-windows.ps1 -Package "$(PKG)" -Timeout 10m -VerboseTests -ShowAll
 else
 	go test -v -timeout 10m $(PKG)
 endif

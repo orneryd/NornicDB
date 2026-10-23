@@ -17,6 +17,15 @@ func newTestEngine(t *testing.T) *BadgerEngine {
 	return engine
 }
 
+// MemoryEngine owns an in-memory Badger store with background workers. Keep
+// its lifetime bound to its test even when an assertion exits the test early.
+func newTestMemoryEngine(t testing.TB) *MemoryEngine {
+	t.Helper()
+	engine := NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	return engine
+}
+
 func TestAccessMetaOwnsCatalogAndPreservesConcurrentPolicyState(t *testing.T) {
 	engine := newTestEngine(t)
 	require.Equal(t, accessMetaKey("test:node"), indexEntryCatalogKey("test:node"))

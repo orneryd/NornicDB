@@ -47,18 +47,21 @@ func norm(v []float32) float32 {
 	if len(v) == 0 {
 		return 0
 	}
-	return vek32.Norm(v)
+	// Keep the SIMD reduction, but use a correctly rounded square root.
+	// vek32.Norm's approximate square root changes even a unit axis to
+	// 0.99999994, so storing an already normalized vector changes its values.
+	return float32(math.Sqrt(float64(vek32.Dot(v, v))))
 }
 
 func normalizeInPlace(v []float32) {
 	if len(v) == 0 {
 		return
 	}
-	n := vek32.Norm(v)
+	n := norm(v)
 	if n == 0 {
 		return
 	}
-	vek32.DivNumber_Inplace(v, n)
+	vek32.MulNumber_Inplace(v, 1/n)
 }
 
 func runtimeInfo() RuntimeInfo {

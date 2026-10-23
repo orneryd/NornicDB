@@ -14,7 +14,7 @@ import (
 func TestVectorQueryRelationshipsNeo4jScale(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	for id, embedding := range map[string][]float32{"zero": {0, 0}, "same": {1, 0}, "opposite": {-1, 0}} {
 		require.NoError(t, svc.IndexEdge(&storage.Edge{
 			ID: storage.EdgeID(id), StartNode: "a", EndNode: "b", Type: "R",
@@ -37,7 +37,7 @@ func TestVectorQueryRelationshipsNeo4jScale(t *testing.T) {
 func TestVectorQueryRelationshipsExactOrderOnNearTies(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 3)
 	for id, embedding := range map[string][]float32{
 		"ranked-first": {-0.23, -0.64, 0.09},
 		"scored-first": {-0.3818, -1.0624, 0.1494},

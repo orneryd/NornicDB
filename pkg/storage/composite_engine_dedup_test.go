@@ -10,8 +10,8 @@ import (
 
 func TestCompositeEngine_Deduplication_GetNodesByLabel(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create same node in both constituents (same ID)
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -42,7 +42,7 @@ func TestCompositeEngine_Deduplication_GetNodesByLabel(t *testing.T) {
 }
 
 func TestCompositeEngine_GetNodesByLabelPropagatesConstituentError(t *testing.T) {
-	backing := NewMemoryEngine()
+	backing := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("constituent label scan failed")
 	composite := NewCompositeEngine(
@@ -56,8 +56,8 @@ func TestCompositeEngine_GetNodesByLabelPropagatesConstituentError(t *testing.T)
 }
 
 func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
-	first := NewMemoryEngine()
-	second := NewMemoryEngine()
+	first := newTestMemoryEngine(t)
+	second := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, first.Close()) })
 	t.Cleanup(func() { require.NoError(t, second.Close()) })
 	shared := NodeID(prefixTestID("shared-projected"))
@@ -93,7 +93,7 @@ func TestCompositeEngine_StreamNodesByLabelProjected(t *testing.T) {
 }
 
 func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *testing.T) {
-	backing := NewMemoryEngine()
+	backing := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	unsupported := struct{ Engine }{backing}
 	composite := NewCompositeEngine(
@@ -111,8 +111,8 @@ func TestCompositeEngine_StreamNodesByLabelProjectedUnsupportedConstituent(t *te
 
 func TestCompositeEngine_Deduplication_GetEdgesByType(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and same edge in both constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -150,8 +150,8 @@ func TestCompositeEngine_Deduplication_GetEdgesByType(t *testing.T) {
 
 func TestCompositeEngine_Deduplication_AllNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create same node in both constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -183,8 +183,8 @@ func TestCompositeEngine_Deduplication_AllNodes(t *testing.T) {
 
 func TestCompositeEngine_Deduplication_AllEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and same edge in both constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -222,8 +222,8 @@ func TestCompositeEngine_Deduplication_AllEdges(t *testing.T) {
 
 func TestCompositeEngine_Deduplication_GetOutgoingEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and same edge in both constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -261,8 +261,8 @@ func TestCompositeEngine_Deduplication_GetOutgoingEdges(t *testing.T) {
 
 func TestCompositeEngine_Deduplication_GetIncomingEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and same edge in both constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -300,8 +300,8 @@ func TestCompositeEngine_Deduplication_GetIncomingEdges(t *testing.T) {
 
 func TestCompositeEngine_Deduplication_GetEdgesBetween(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and same edge in both constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}

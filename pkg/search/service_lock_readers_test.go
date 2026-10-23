@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -36,7 +37,7 @@ func serviceLockResult(t *testing.T, result <-chan error) {
 // The public exact read holds the metadata snapshot while checking its
 // context. Queue an ordinary configuration writer at that boundary.
 func TestServiceExactVectorReadVersusAdminWriter(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "live", ChunkEmbeddings: [][]float32{{1, 0}}}))
 	entered, resume := make(chan struct{}), make(chan struct{})
 	ctx := &serviceLockQueryContext{Context: context.Background(), gate: func() { close(entered); <-resume }}
@@ -70,7 +71,7 @@ func TestServiceExactVectorReadVersusAdminWriter(t *testing.T) {
 
 func TestServiceCompressedSettingsVersusAdminWriter(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	finished := make(chan error, 2)
 	start := make(chan struct{})
 	go func() {
@@ -101,7 +102,7 @@ func TestServiceCompressedSettingsVersusAdminWriter(t *testing.T) {
 func TestServiceStrategyPublicationVersusQuantization(t *testing.T) {
 	for _, transition := range []bool{false, true} {
 		t.Run(fmt.Sprintf("transition=%t", transition), func(t *testing.T) {
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+			svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 			require.NoError(t, svc.IndexNode(&storage.Node{ID: "live", ChunkEmbeddings: [][]float32{{1, 0}}}))
 			// The target is CPU; no device is needed for a GPU candidate descriptor.
 			svc.pipelineMu.Lock()
@@ -153,8 +154,8 @@ func TestServiceFileIterationCallbacksReleaseLeafLock(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_VFS_COMPACT_MIN_SIZE_MB", "0")
 	for _, action := range []string{"append", "close", "compact"} {
 		t.Run(action, func(t *testing.T) {
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
-			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
+			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			for _, id := range []string{"a", "b"} {
 				require.NoError(t, svc.IndexNode(&storage.Node{ID: storage.NodeID(id), ChunkEmbeddings: [][]float32{{1, 0}}}))

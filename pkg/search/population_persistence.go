@@ -142,10 +142,7 @@ func (s *Service) resetIncompletePopulation() {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	s.mu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
+	s.closeVectorFileStoreLocked()
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
 	}

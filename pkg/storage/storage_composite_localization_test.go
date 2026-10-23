@@ -83,7 +83,7 @@ func TestCompositeEngineLocalizedQueryWrappersPreserveCause(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			engine := &compositeErrorEngine{MemoryEngine: NewMemoryEngine()}
+			engine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
 			t.Cleanup(func() { _ = engine.MemoryEngine.Close() })
 			composite := NewCompositeEngine(
 				map[string]Engine{"tenant-a": engine},
@@ -100,7 +100,7 @@ func TestCompositeEngineLocalizedQueryWrappersPreserveCause(t *testing.T) {
 
 func TestCompositeEngineLocalizedBulkWrapperPreservesCause(t *testing.T) {
 	cause := errors.New("bulk write failed")
-	engine := &compositeErrorEngine{MemoryEngine: NewMemoryEngine(), bulkCreateNodesErr: cause}
+	engine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t), bulkCreateNodesErr: cause}
 	t.Cleanup(func() { _ = engine.MemoryEngine.Close() })
 	composite := NewCompositeEngine(
 		map[string]Engine{"tenant-a": engine},

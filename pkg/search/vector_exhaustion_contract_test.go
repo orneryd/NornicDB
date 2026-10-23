@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -42,7 +43,7 @@ func requireExhaustion(t *testing.T, gen exhaustionGenerator, k int, minSimilari
 func TestExactCandidateGeneratorsReportTheirOwnExhaustion(t *testing.T) {
 	vectors := exhaustionFixtureVectors()
 	index := NewVectorIndex(2)
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	embCfg := gpu.DefaultEmbeddingIndexConfig(2)
@@ -117,7 +118,7 @@ func TestClusteredCandidateGeneratorsAreExhaustedOnlyAfterEveryCluster(t *testin
 }
 
 func TestIVFPQCandidateGeneratorIsExhaustedOnlyAfterEveryList(t *testing.T) {
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", 8)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 8)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	for i := 0; i < 300; i++ {

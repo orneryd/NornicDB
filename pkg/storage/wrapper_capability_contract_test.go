@@ -18,6 +18,7 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
+	defer walBacking.Close()
 	wal := NewWALEngine(badger, walBacking)
 	namespaced := NewNamespacedEngine(wal, "ns")
 
@@ -194,6 +195,7 @@ func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testi
 		require.NoError(t, err)
 		// The parent test keeps using badger, so close only the WAL file (#924).
 		t.Cleanup(func() { _ = walBacking.Close() })
+		defer walBacking.Close()
 		wal := NewWALEngine(badger, walBacking)
 		var created []NodeID
 		var edges []EdgeID

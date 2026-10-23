@@ -34,7 +34,7 @@ func repairWALTailIfNeeded(walPath string, logger WALLogger) (bool, *CorruptionD
 		}
 		return false, nil, fmt.Errorf("wal: startup repair stat failed: %w", err)
 	}
-	if fi.Size() == 0 {
+	if fi.Mode().IsRegular() && fi.Size() == 0 {
 		return false, nil, nil
 	}
 
@@ -212,7 +212,7 @@ func truncateWALFile(walPath string, truncateOffset int64, lastGoodSeq uint64, r
 		}
 		return false, nil, fmt.Errorf("wal: startup repair stat(truncate) failed: %w", err)
 	}
-	if truncateOffset >= fi.Size() {
+	if fi.Mode().IsRegular() && truncateOffset >= fi.Size() {
 		// Nothing to do.
 		return false, nil, nil
 	}

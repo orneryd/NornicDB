@@ -61,7 +61,7 @@ func TestStorageSchemaLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("constraint contract violation", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = engine.Close() })
 		_, err := engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Person"}, Properties: map[string]any{"team": "ops"}})
 		require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestStorageSchemaLocalizedContractWrapperPreservesSentinel(t *testing.T) {
 			TargetEntityType:  string(ConstraintEntityNode),
 			TargetLabelOrType: "Person",
 		}
-		err := ValidateConstraintContractOnCreationForEngine(&schemaLocalizationScanErrorEngine{Engine: NewMemoryEngine()}, contract)
+		err := ValidateConstraintContractOnCreationForEngine(&schemaLocalizationScanErrorEngine{Engine: newTestMemoryEngine(t)}, contract)
 		requireStorageSchemaLocalizedError(t, err, localization.MessageStorageSchemaScanNodesFailed, "scanning nodes: conflict")
 		require.ErrorIs(t, err, ErrConflict)
 	})
@@ -104,7 +104,7 @@ func TestStorageSchemaLocalizedContractWrapperPreservesSentinel(t *testing.T) {
 				Expression: "COUNT { (n)-[:KNOWS]->() } > 0",
 			}},
 		}
-		err := ValidateConstraintContractOnCreationForEngine(&schemaLocalizationPredicateErrorEngine{Engine: NewMemoryEngine()}, contract)
+		err := ValidateConstraintContractOnCreationForEngine(&schemaLocalizationPredicateErrorEngine{Engine: newTestMemoryEngine(t)}, contract)
 		requireStorageSchemaLocalizedError(t, err, localization.MessageStorageSchemaConstraintContractInvalid, `constraint contract edge_count invalid: predicate "COUNT { (n)-[:KNOWS]->() } > 0": conflict`)
 		require.ErrorIs(t, err, ErrConflict)
 	})

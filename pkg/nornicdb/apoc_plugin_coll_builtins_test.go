@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/orneryd/nornicdb/internal/pluginbuild"
@@ -24,6 +25,9 @@ import (
 // passes once the plugin's export exclusion lists these names (#1422 /
 // #1494 on develop, #1476 on release/v1.4.4).
 func TestBundledAPOCPluginLeavesCollectionBuiltIns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go buildmode=plugin is unsupported on Windows")
+	}
 	if testing.Short() {
 		t.Skip("builds the APOC plugin")
 	}

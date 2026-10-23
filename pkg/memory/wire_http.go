@@ -3,9 +3,11 @@ package memory
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"time"
 )
 
 // HTTPWireOptions preserves a caller's existing body cap independently of
@@ -17,6 +19,8 @@ type HTTPWireOptions struct {
 	// decoder worker, which can outlive a timeout response.
 	MetadataOnly bool
 }
+
+type httpReadControllerKey struct{}
 
 // HandleHTTPRequest owns admission until the consumer actually returns, even
 // after cancellation or upgrade. Delegated consumers borrow the context owner
@@ -46,7 +50,11 @@ func HandleHTTPRequest(policy *Policy, w http.ResponseWriter, r *http.Request, o
 			reject(w, r, err)
 			return err
 		}
-		r = r.WithContext(context.WithValue(wire.Context(r.Context()), httpMetadataKey{}, metadata))
+		ctx := context.WithValue(wire.Context(r.Context()), httpMetadataKey{}, metadata)
+		// Preserve read-deadline control before TimeoutHandler substitutes its
+		// buffered writer. Only the actual body worker may use it to drain.
+		ctx = context.WithValue(ctx, httpReadControllerKey{}, http.NewResponseController(w))
+		r = r.WithContext(ctx)
 		serveAdmittedHTTPRequest(w, r, wire, options, reject, next)
 		return nil
 	})
@@ -58,29 +66,51 @@ func serveAdmittedHTTPRequest(w http.ResponseWriter, r *http.Request, wire *Wire
 		return
 	}
 	guard := &wireResponseWriter{ResponseWriter: w, request: r, reject: reject}
-	body := r.Body
+	originalBody := r.Body
+	body := originalBody
 	if options.LimitBody {
 		body = http.MaxBytesReader(w, body, options.MaxBodyBytes)
 	}
-	r.Body = &wireBody{ReadCloser: body, request: r, wire: wire, metadata: HTTPRequestWireBytes(r), reject: func(err error) { guard.err = err }}
+	guardedBody := &wireBody{ReadCloser: body, request: r, wire: wire, metadata: HTTPRequestWireBytes(r), reject: func(err error) { guard.err = err }}
+	r.Body = guardedBody
 	next.ServeHTTP(guard, r)
 	guard.finish()
+	// The decoder has stopped at the existing cap. Preserve the error reply
+	// on HTTP/1 instead of closing with unread TCP bytes (which can send RST).
+	// Only drain an already-started oversized body, never a pre-read rejection.
+	if guardedBody.overLimit && r.ProtoMajor == 1 {
+		controller, _ := r.Context().Value(httpReadControllerKey{}).(*http.ResponseController)
+		if controller == nil {
+			controller = http.NewResponseController(w)
+		}
+		if controller.SetReadDeadline(time.Now().Add(time.Second)) == nil {
+			// Flush only through the current writer; a timeout writer must keep
+			// owning its buffered status rather than flushing an implicit 200.
+			_ = http.NewResponseController(w).Flush()
+			_, _ = io.Copy(io.Discard, originalBody)
+		}
+	}
 }
 
 // Bytes are charged before reaching a decoder. The initial metadata snapshot
 // cannot shrink if a downstream handler consumes or rewrites request headers.
 type wireBody struct {
 	io.ReadCloser
-	request  *http.Request
-	wire     *WireRequest
-	metadata int64
-	read     int64
-	trailers int64
-	reject   func(error)
+	request   *http.Request
+	wire      *WireRequest
+	metadata  int64
+	read      int64
+	trailers  int64
+	reject    func(error)
+	overLimit bool
 }
 
 func (b *wireBody) Read(buffer []byte) (int, error) {
 	n, err := b.ReadCloser.Read(buffer)
+	var limitError *http.MaxBytesError
+	if errors.As(err, &limitError) {
+		b.overLimit = true
+	}
 	b.read = WireSize(b.read, int64(n))
 	if err == io.EOF {
 		b.trailers = HTTPHeaderWireBytes(b.request.Trailer)

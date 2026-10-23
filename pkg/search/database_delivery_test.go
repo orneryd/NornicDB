@@ -9,7 +9,7 @@ import (
 )
 
 func TestSearchStreamDeliveryDatabaseDiscardDuringPreparation(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "one")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

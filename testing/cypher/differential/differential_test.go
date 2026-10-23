@@ -220,6 +220,11 @@ func TestRatchetCheckAndUpdate(t *testing.T) {
 	require.Error(t, err)
 	_, err = LoadRatchet(filepath.Join(path, "below-a-file"))
 	require.Error(t, err)
+	_, err = LoadRatchet(filepath.Join(path, "nested", "below-a-file.jsonl"))
+	require.Error(t, err)
+	missing, err := LoadRatchet(filepath.Join(dir, "missing", "nested", "ratchet.jsonl"))
+	require.NoError(t, err)
+	require.Empty(t, missing)
 	require.Error(t, Ratchet{}.Update(filepath.Join(dir, "missing", "x.jsonl"), "r", nil))
 }
 

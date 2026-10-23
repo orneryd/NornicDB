@@ -8,11 +8,11 @@ import (
 )
 
 func TestQueryResultProjectionDisabledAndNil(t *testing.T) {
-	event := NewNormalEventResultProjection(NewMemoryEngine())
+	event := NewNormalEventResultProjection(newTestMemoryEngine(t))
 	require.Nil(t, event.Node(nil))
 	require.Nil(t, event.Edge(nil))
 
-	view, release := BeginQueryResultProjection(NewMemoryEngine())
+	view, release := BeginQueryResultProjection(newTestMemoryEngine(t))
 	defer release()
 	require.Nil(t, view.Node(nil))
 	require.Nil(t, view.Edge(nil))

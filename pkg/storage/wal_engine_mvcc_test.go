@@ -65,7 +65,7 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 	})
 
 	t.Run("returns ErrNotImplemented when wrapped engine is not MVCC-capable", func(t *testing.T) {
-		baseInner := NewMemoryEngine()
+		baseInner := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = baseInner.Close() })
 		walLog, err := NewWAL(filepath.Join(t.TempDir(), "wal"), nil)
 		require.NoError(t, err)

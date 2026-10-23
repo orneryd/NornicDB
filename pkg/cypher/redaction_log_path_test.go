@@ -69,7 +69,7 @@ func captureSlowQueryLog(t *testing.T) (*StorageExecutor, func() []string) {
 	var buf bytes.Buffer
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	exec.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
-	exec.SetSlowQueryThreshold(time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 	return exec, func() []string {
 		var queries []string
 		for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {

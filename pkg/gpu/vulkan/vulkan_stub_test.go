@@ -1,5 +1,4 @@
-//go:build !vulkan
-// +build !vulkan
+//go:build !cgovulkan
 
 package vulkan
 
@@ -8,30 +7,19 @@ import (
 	"testing"
 )
 
-func TestIsAvailableStub(t *testing.T) {
+// An unavailable runtime must keep the public constructor on its error path.
+// The default pure-Go build can use a real Vulkan driver, so build tags alone
+// cannot establish that a machine has no device.
+func TestUnavailableRuntime(t *testing.T) {
 	if IsAvailable() {
-		t.Error("IsAvailable() should return false on stub")
+		t.Skip("Vulkan runtime is available; native device tests cover this host")
 	}
-}
-
-func TestDeviceCountStub(t *testing.T) {
-	if DeviceCount() != 0 {
-		t.Error("DeviceCount() should return 0 on stub")
+	if count := DeviceCount(); count != 0 {
+		t.Fatalf("unavailable runtime reported %d devices", count)
 	}
-}
-
-func TestNewDeviceStub(t *testing.T) {
 	device, err := NewDevice(0)
-	// On stub build (no Vulkan library), we expect either ErrVulkanNotAvailable
-	// or ErrDeviceCreation wrapped error
-	if err == nil {
-		t.Error("NewDevice() should return an error on stub")
-	}
-	if !errors.Is(err, ErrVulkanNotAvailable) && !errors.Is(err, ErrDeviceCreation) {
-		t.Errorf("NewDevice() error = %v, want ErrVulkanNotAvailable or ErrDeviceCreation", err)
-	}
-	if device != nil {
-		t.Error("NewDevice() should return nil device on stub")
+	if device != nil || (!errors.Is(err, ErrVulkanNotAvailable) && !errors.Is(err, ErrDeviceCreation)) {
+		t.Fatalf("unavailable runtime constructed a device: %v, %v", device, err)
 	}
 }
 

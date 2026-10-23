@@ -16,6 +16,7 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
+	defer walBacking.Close()
 	wal := NewWALEngine(badger, walBacking)
 	namespaced := NewNamespacedEngine(wal, "ns")
 	other := NewNamespacedEngine(wal, "other")

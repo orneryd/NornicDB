@@ -15,7 +15,7 @@ import (
 // reads a map being written (a concurrent map read and write stopped the
 // process).
 func TestVectorQueriesWhileNodesAreIndexed(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "n0", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))

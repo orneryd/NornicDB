@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -22,7 +23,7 @@ func BenchmarkSetCreateRoutes(b *testing.B) {
 		dir := b.TempDir()
 		badger, err := storage.NewBadgerEngine(dir)
 		require.NoError(b, err)
-		wal, err := storage.NewWAL(dir+"/wal", nil)
+		wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 		require.NoError(b, err)
 		engine := storage.NewWALEngine(badger, wal)
 		b.Cleanup(func() {

@@ -103,7 +103,7 @@ func TestStorageExtraMVCCConstructorAndPendingNoop(t *testing.T) {
 
 func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 	fallback := &adjacentFallbackEngine{
-		Engine: NewMemoryEngine(),
+		Engine: newTestMemoryEngine(t),
 		outgoing: []*Edge{
 			{ID: "tenant:e1", StartNode: "tenant:n1", EndNode: "tenant:n2"},
 			{ID: "other:e2", StartNode: "other:n1", EndNode: "other:n2"},
@@ -117,7 +117,7 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 	require.Equal(t, []*Edge{{ID: "e3", StartNode: "n3", EndNode: "n1"}}, in)
 
 	wantErr := errors.New("adjacent failed")
-	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: NewMemoryEngine()}, adjErr: wantErr}
+	direct := &adjacentDirectEngine{adjacentFallbackEngine: &adjacentFallbackEngine{Engine: newTestMemoryEngine(t)}, adjErr: wantErr}
 	ns = NewNamespacedEngine(direct, "tenant")
 	_, _, err = ns.GetAdjacentEdges("n1")
 	require.ErrorIs(t, err, wantErr)
@@ -142,7 +142,7 @@ func TestNamespacedExtraAdjacentEdgesBranches(t *testing.T) {
 }
 
 func TestNamespacedExtraLifecycleLabelAndAccessBranches(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	recorder := &namespaceLifecycleRecorder{
 		Engine:   base,

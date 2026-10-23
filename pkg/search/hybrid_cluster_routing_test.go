@@ -44,7 +44,7 @@ func preferredSeedsForTest(t *testing.T, ci interface{}) []int {
 
 func TestEnableClustering_DefaultMaxIterationsIsFive(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	svc.EnableClustering(nil, 2)
 	require.NotNil(t, svc.clusterIndex)
 	require.Equal(t, 5, svc.clusterIndex.Config().MaxIterations)
@@ -55,7 +55,7 @@ func TestSelectHybridClusters_UsesLexicalSignal(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX", "0.9")
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "5")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 
@@ -95,7 +95,7 @@ func setClusterProfilesForTest(t *testing.T, svc *Service, profiles map[int]map[
 }
 
 func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	svc.EnableClustering(nil, 2)
 	require.NotNil(t, svc.clusterIndex)
 
@@ -113,7 +113,7 @@ func TestApplyBM25SeedHints_AppliesPreferredSeedsWhenAvailable(t *testing.T) {
 }
 
 func TestApplyBM25SeedHints_NoSeedsIsNoOp(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	svc.EnableClustering(nil, 2)
 	require.NotNil(t, svc.clusterIndex)
 

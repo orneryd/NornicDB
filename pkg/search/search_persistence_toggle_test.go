@@ -11,7 +11,7 @@ import (
 )
 
 func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := storage.NewNamespacedEngine(base, "test")
 	_, err := engine.CreateNode(&storage.Node{
 		ID:     "doc-1",
@@ -48,7 +48,7 @@ func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
 }
 
 func TestSetPersistenceEnabledFalse_DisablesExistingVectorFileStoreWrites(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := storage.NewNamespacedEngine(base, "test")
 	_, err := engine.CreateNode(&storage.Node{
 		ID:     "doc-1",

@@ -60,7 +60,7 @@ func requirePublished(t *testing.T, events *publishedEvents, event, why string) 
 // consumer that derives state from storage (search) never misses one (#1482
 // round 3). A mutator added without its event fails here.
 func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	events := recordEvents(engine)
 
@@ -131,7 +131,7 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 // A decay flip rewrites the stored body without UpdateNode; it is published
 // as an update in both directions.
 func TestDecayFlipsPublishUpdates(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetDecayEnabled(true)
 	schema := engine.GetSchemaForNamespace("test")

@@ -20,7 +20,7 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 				disk.SetEmbeddingsEnabled(true)
 				base = disk
 			} else {
-				memory := NewMemoryEngine()
+				memory := newTestMemoryEngine(t)
 				memory.SetEmbeddingsEnabled(true)
 				// Hide the optional counter capability to exercise the public
 				// stream fallback with the same real storage eligibility rules.

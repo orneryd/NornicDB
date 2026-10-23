@@ -241,7 +241,7 @@ func TestRecoveryReportsBulkWriteFailures(t *testing.T) {
 			Edges: []*Edge{{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "R"}},
 		}
 	}
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 	err := restoreLegacySnapshot(&failingBulkEngine{Engine: engine, nodesErr: failure}, snapshot())
 	require.ErrorIs(t, err, failure)

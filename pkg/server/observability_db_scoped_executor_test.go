@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/cypher/testutil"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/stretchr/testify/require"
@@ -146,7 +147,7 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 
 	// Composite databases refuse ungrounded queries; target the local
 	// constituent explicitly, same as TestCompositeExplicitTx_SecondWriteShardErrorCode.
-	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "CALL { USE obs_comp_remote.local1 RETURN 1 AS x } RETURN x"),
+	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "CALL { USE obs_comp_remote.local1 "+testutil.SlowQueryWorkload+" } RETURN total"),
 		"the composite/remote-auth executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
 }
 
@@ -172,6 +173,6 @@ func TestHeimdallRouter_ExecutorForDatabase_InheritsLoggerAndSlowQueryThreshold(
 	require.NotNil(t, exec)
 	require.Equal(t, "nornic", dbName)
 
-	require.True(t, executorEmitsSlowQueryLog(t, te, exec, "RETURN 1"),
+	require.True(t, executorEmitsSlowQueryLog(t, te, exec, testutil.SlowQueryWorkload),
 		"heimdallDBRouter.executorForDatabase's executor did not inherit the base executor's logger/threshold (NornicDB issue #563 defect 1)")
 }

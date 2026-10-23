@@ -1,6 +1,4 @@
-//go:build vulkan && (linux || windows || darwin)
-// +build vulkan
-// +build linux windows darwin
+//go:build !cgovulkan
 
 package vulkan
 
@@ -272,14 +270,6 @@ func TestComputeContextLargeScale(t *testing.T) {
 	}
 }
 
-func absF32(x float32) float32 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// TestComputeContextTopKDistinctScores tests that top-k returns correct indices with distinct scores
 func TestComputeContextTopKDistinctScores(t *testing.T) {
 	if !IsAvailable() {
 		t.Skip("Vulkan not available")

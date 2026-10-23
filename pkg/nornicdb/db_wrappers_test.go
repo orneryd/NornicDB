@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -247,7 +248,7 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 
 	// Non-standalone mode should attempt replication setup. Force adapter creation failure
 	// by pointing DataDir at a file path, so mkdir for replication/wal fails deterministically.
-	badPath := t.TempDir() + "/not-a-dir"
+	badPath := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(badPath, []byte("x"), 0644))
 	cfg := DefaultConfig()
 	cfg.Database.DataDir = badPath
@@ -270,7 +271,7 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 	require.Contains(t, err.Error(), "unknown replication mode")
 
 	// Explicit cluster data dir override path is honored when set.
-	overridePath := t.TempDir() + "/not-a-dir-override"
+	overridePath := filepath.Join(t.TempDir(), "not-a-dir-override")
 	require.NoError(t, os.WriteFile(overridePath, []byte("x"), 0644))
 	require.NoError(t, os.Setenv("NORNICDB_CLUSTER_DATA_DIR", overridePath))
 	_, err = db.maybeEnableReplication(base)

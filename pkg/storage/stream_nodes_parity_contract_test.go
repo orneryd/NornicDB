@@ -23,7 +23,7 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 	}
 	stacks := []stackCase{
 		{name: "memory", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			return engine
 		}},
