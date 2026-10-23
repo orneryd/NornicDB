@@ -64,7 +64,9 @@ make swarm
 
 Choose **Ollama Local 27B**, **Ollama Remote 9B**, or **Codex Frontier** as the
 agent in T3. The intent classifier uses the remote `nornic-coder` model. For
-terminal use, run `make swarm` in a terminal and keep it open; T3 prints the
+automatic intake routing, the local Pi instance is `ollama_local` and Codex is
+the frontier delegate; the remote Pi instance remains selectable for bounded
+tasks. For terminal use, run `make swarm` and keep the terminal open; T3 prints the
 browser pairing URL there. To launch from any directory, add a shell alias such
 as `alias t3-swarm='make -C /absolute/path/to/NornicDB-swarm swarm'` to your
 shell configuration. On a different host, update the private URLs and use

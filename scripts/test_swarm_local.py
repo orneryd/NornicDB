@@ -50,6 +50,22 @@ class SwarmLocalTest(unittest.TestCase):
             self.assertEqual(env["NORNICDB_TOKEN"], "from-process")
             self.assertEqual(env["SWARM_REMOTE_OLLAMA_URL"], "http://remote:11434")
 
+    def test_start_routes_local_intake_to_frontier_codex(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.joinpath("T3").mkdir()
+            root.joinpath("env").write_text("SWARM_NORNICDB_URL=http://remote:7474\n")
+            with mock.patch.object(swarm_local, "paths", return_value=(root, root / "T3", root / "state")), \
+                 mock.patch.object(swarm_local, "require_tools"), \
+                 mock.patch.object(swarm_local, "request", return_value={"errors": []}), \
+                 mock.patch.object(swarm_local, "configure_providers"), \
+                 mock.patch.object(swarm_local.subprocess, "run") as process:
+                swarm_local.start()
+            launch_env = process.call_args.kwargs["env"]
+            self.assertEqual(launch_env["NORNICDB_URI"], "http://remote:7474")
+            self.assertEqual(launch_env["NORNIC_LOCAL_PROVIDER_INSTANCE"], "ollama_local")
+            self.assertEqual(launch_env["NORNIC_FRONTIER_INSTANCES"], "codex")
+
 
 if __name__ == "__main__":
     unittest.main()
