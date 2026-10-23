@@ -569,7 +569,10 @@ func encodePackStreamLocalDateTimeValueInto(dst []byte, value time.Time) []byte 
 }
 
 func encodePackStreamCypherDateTimeInto(dst []byte, value cypher.CypherDateTime, useUTCDateTimeStructs bool) []byte {
-	_, offset := value.Time.Zone()
+	var offset int
+	if !useUTCDateTimeStructs || value.ZoneID == "" {
+		_, offset = value.Time.Zone()
+	}
 	seconds := value.Time.Unix()
 	signature := byte(0x49)
 	if !useUTCDateTimeStructs {
