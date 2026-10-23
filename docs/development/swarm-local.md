@@ -74,13 +74,31 @@ driver identifier are technical dependency names, not the agent's UI name.
 New chats default to **Nornic Local · Ornith / Nornic default**. Within the
 Codex provider, the model dropdown defaults to **GPT-6.1 Sol** with **Low** reasoning.
 Choose **Nornic Local · Ornith** to use automatic intent routing. Selecting
-**Codex Frontier** or **Nornic Remote 9B** directly starts that agent without
-the automatic classifier. The intent classifier uses the remote `nornic-coder` model. For
+**Codex Frontier** directly starts it without the intake classifier. The remote
+Nornic provider is configured, but its worker environment currently uses the same
+intake hook while `intent.route` accepts only the local provider. Direct remote
+worker execution is therefore not qualified and can return `ROUTING_ORIGIN_DENIED`;
+it must not be treated as a working delegation path. The intent classifier uses
+the remote `nornic-coder` model. For
 automatic intake routing, the local Nornic instance is `ollama_local` and Codex is
 available as a frontier provider; the remote Nornic instance remains selectable for
-bounded tasks. The remote 9B model classifies intent and complexity. `intent.route`
+bounded tasks once distinct delegated-worker admission is implemented and tested.
+The remote 9B model classifies intent and complexity. `intent.route`
 may automatically delegate frontier work only to the exact `gpt-6.1-sol` model,
-starting at low reasoning. Plans, reviews, and very uncertain classifications use
+starting at low reasoning. After a frontier handoff, the local agent only reports
+the child-thread receipt: its model request disables tool selection and its tool
+hook refuses workflow and graph calls with that handoff reason. Failed routing
+uses the same control and reports the failure. The next admitted user turn resets
+this state. A Linear issue identifier belongs to `linear.issue`; it is not a graph
+node ID for `nornic_recall`.
+
+T3's `delegate_task` supports cross-provider child agents, but using these Nornic
+providers as frontier-directed coding workers still needs a distinct worker
+admission path rather than recursively re-entering intake routing. Linear writes
+and organization operations are also not implemented; current Linear operations
+are read-only. Do not claim either path ready from provider configuration alone.
+
+Plans, reviews, and very uncertain classifications use
 medium reasoning. If Sol is not advertised and ready, routing returns
 `SOL_UNAVAILABLE` without choosing a different model. Astra requires an explicit
 user-started T3 session; MCP agents cannot delegate to it, create Astra threads,
