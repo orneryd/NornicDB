@@ -290,7 +290,9 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := updateMutatedNode(store, node); err != nil {
+			before := *node
+			before.Properties, before.Labels = state.properties, state.labels
+			if err := updateMutatedNode(store, node, &before); err != nil {
 				restore()
 				return wrap(*state, err)
 			}

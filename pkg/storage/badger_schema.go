@@ -76,13 +76,18 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 		return err
 	}
 
-	// Rebuild derived unique-constraint value caches from stored nodes.
-	// This keeps CreateNode() fast (in-memory uniqueness checks) and ensures constraints
-	// enforce correctly immediately after restart.
+	// Validate stored nodes and initialize any missing persisted unique indexes.
+	// Complete indexes remain authoritative; temporary backfill values are cleared
+	// before the loaded schema is published.
 	for _, ls := range loadedSchemas {
 		if err := b.rebuildUniqueConstraintValues(ls.namespace, ls.schema); err != nil {
 			return err
 		}
+		if err := b.initializeNodeUniqueIndexes(ls.namespace, ls.schema); err != nil {
+			return err
+		}
+		ls.schema.uniqueEngine, ls.schema.uniqueNamespace = b, ls.namespace
+		clearUniqueBackfillValues(ls.schema)
 	}
 	loadedMap := make(map[string]*SchemaManager, len(loadedSchemas))
 	for _, ls := range loadedSchemas {
@@ -129,8 +134,11 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
 	}
 
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(schemaKey(namespace), blob)
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		if err := prepareNodeUniqueSchemaTransition(&cw.batchWriter, namespace, def); err != nil {
+			return err
+		}
+		return cw.write(func(txn *badger.Txn) error { return txn.Set(schemaKey(namespace), blob) })
 	})
 }
 
@@ -290,6 +298,7 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	sm := b.schemas[namespace]
 	if sm == nil {
 		sm = NewSchemaManager()
+		sm.uniqueEngine, sm.uniqueNamespace = b, namespace
 		sm.SetPersister(func(def *SchemaDefinition) error {
 			return b.persistSchemaDefinition(namespace, def)
 		})

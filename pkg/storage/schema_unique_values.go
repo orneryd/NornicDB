@@ -3,137 +3,116 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// CheckUniqueConstraint checks if a value violates a unique constraint.
-// Returns error if constraint is violated.
-func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value interface{}, excludeNode NodeID) error {
+// uniqueValueRead is a committed-index result, optionally merged with the
+// acknowledged node overlay. Temporary schema builders use their backfill map.
+type uniqueValueRead struct {
+	holder      NodeID
+	found       bool
+	pending     []NodeID
+	complete    bool
+	constrained bool
+}
+
+func (sm *SchemaManager) readUniqueConstraintValue(label, property string, value interface{}, overlay bool) (uniqueValueRead, error) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
+	constraint := sm.uniqueConstraints[label+":"+property]
+	engine, namespace := sm.uniqueEngine, sm.uniqueNamespace
 	sm.mu.RUnlock()
-
-	if !exists {
-		return nil // No constraint
+	result := uniqueValueRead{constrained: constraint != nil}
+	if constraint == nil || value == nil {
+		return result, nil
 	}
-
-	constraint.mu.RLock()
-	defer constraint.mu.RUnlock()
-
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return nil
+	key, indexed := indexValueKey(value)
+	if !indexed {
+		return result, nil
 	}
+	view, source := pendingWriteView{}, pendingWriteSource(nil)
+	if overlay {
+		view, source = sm.beginPendingRead()
+		defer endPendingRead(source)
+	}
+	if engine != nil {
+		var err error
+		result.holder, result.complete, err = engine.readNodeUniqueValue(namespace, label, property, value)
+		if err != nil {
+			return uniqueValueRead{constrained: true}, err
+		}
+		result.found = result.holder != ""
+	} else {
+		constraint.mu.RLock()
+		result.holder, result.found = constraint.values[key]
+		result.complete = constraint.valuesCacheComplete
+		constraint.mu.RUnlock()
+	}
+	if result.found && !view.keep(result.holder) {
+		result.found = false
+	}
+	result.pending = view.valueMatches(nil, label, property, key)
+	for _, id := range result.pending {
+		if result.found && id == result.holder {
+			result.found = false
+		}
+	}
+	return result, nil
+}
 
-	if existingNode, found := constraint.values[valueKey]; found {
-		if existingNode != excludeNode {
+func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value interface{}, excludeNode NodeID) error {
+	claims, err := sm.readUniqueConstraintValue(label, property, value, true)
+	if err != nil {
+		return err
+	}
+	if claims.found && claims.holder != excludeNode {
+		return localizedError(localization.StorageSchemaUniqueConstraintViolation(label, property, value), nil)
+	}
+	for _, id := range claims.pending {
+		if id != excludeNode {
 			return localizedError(localization.StorageSchemaUniqueConstraintViolation(label, property, value), nil)
 		}
 	}
-
 	return nil
 }
 
-// LookupUniqueConstraintValue returns the node currently registered for a
-// single-property uniqueness constraint value. The second return value reports
-// whether the value is present, and the third reports whether the unique
-// constraint exists.
+// LookupUniqueConstraintValue retains the legacy planning-hint API. Production
+// planners use the checked form so an owned storage failure is never hidden.
 func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, value interface{}) (NodeID, bool, bool) {
-	nodeID, found, exists, _ := sm.LookupUniqueConstraintValueForPlanning(label, property, value)
-	return nodeID, found, exists
+	id, found, exists, _ := sm.LookupUniqueConstraintValueForPlanning(label, property, value)
+	return id, found, exists
 }
 
-// LookupUniqueConstraintValueForPlanning returns the node currently registered
-// for a single-property uniqueness constraint value, plus whether the values
-// cache has been rebuilt from storage and can be trusted for misses. Planners
-// may trust absence only when cacheComplete is true; otherwise they must retain
-// a scan fallback because the cache may not have been rebuilt from storage yet.
-func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
-	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-	if !exists || value == nil {
-		return "", false, exists, false
-	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return "", false, true, false
-	}
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, true, cacheComplete
+func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (NodeID, bool, bool, bool) {
+	id, found, exists, complete, _ := sm.LookupUniqueConstraintValueForPlanningChecked(label, property, value)
+	return id, found, exists, complete
 }
 
-func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (nodeID NodeID, valueFound bool, cacheComplete bool, constraintExists bool) {
-	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-	if !exists || value == nil {
-		return "", false, false, exists
+// LookupUniqueConstraintValueForPlanningChecked returns the holder, whether it
+// was found, whether the constraint exists, and whether the answer is complete.
+// It preserves storage failures through the error result.
+func (sm *SchemaManager) LookupUniqueConstraintValueForPlanningChecked(label, property string, value interface{}) (NodeID, bool, bool, bool, error) {
+	claims, err := sm.readUniqueConstraintValue(label, property, value, true)
+	id, found := claims.holder, claims.found
+	for _, pending := range claims.pending {
+		if !found || string(pending) < string(id) {
+			id, found = pending, true
+		}
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return "", false, false, true
+	if !found {
+		id = ""
 	}
-
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, cacheComplete, true
+	return id, found, claims.constrained, claims.complete, err
 }
 
-// uniqueValueHolders returns the nodes holding value under label's unique
-// constraint on property, merged with the pending writes: the registered
-// holder unless a pending write supersedes it, and every pending node with
-// the value. cacheComplete reports whether the registered values cover all
-// stored nodes, so an empty result can be trusted.
-func (sm *SchemaManager) uniqueValueHolders(label, property string, value interface{}) (holders []NodeID, cacheComplete bool, constraintExists bool) {
-	sm.mu.RLock()
-	constraint, exists := sm.uniqueConstraints[fmt.Sprintf("%s:%s", label, property)]
-	sm.mu.RUnlock()
-	if !exists {
-		return nil, false, false
-	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return nil, false, true
-	}
-	view, source := sm.beginPendingRead()
-	defer endPendingRead(source)
-	constraint.mu.RLock()
-	holder, found := constraint.values[valueKey]
-	cacheComplete = constraint.valuesCacheComplete
-	constraint.mu.RUnlock()
-	if found && view.keep(holder) {
-		holders = append(holders, holder)
-	}
-	holders = view.valueMatches(holders, label, property, valueKey)
-	return holders, cacheComplete, true
-}
-
-// lookupUniqueValue returns the node holding valueKey under constraint,
-// merged with the pending writes: a registered holder with a pending update
-// or delete no longer counts, and a pending node with the value does.
-func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, property string, value, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool) {
-	view, source := sm.beginPendingRead()
-	defer endPendingRead(source)
-	constraint.mu.RLock()
-	nodeID, found = constraint.values[valueKey]
-	cacheComplete = constraint.valuesCacheComplete
-	constraint.mu.RUnlock()
-	if found && !view.keep(nodeID) {
-		nodeID, found = "", false
-	}
-	if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
-		sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
-		nodeID, found = pending[0], true
-	}
-	return nodeID, found, cacheComplete
+func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (NodeID, bool, bool, bool) {
+	id, found, exists, complete := sm.LookupUniqueConstraintValueForPlanning(label, property, value)
+	return id, found, complete, exists
 }
 
 // uniqueConstraintLockKey identifies one (label, property, value) triple for
@@ -186,7 +165,7 @@ type uniqueConstraintLockRequest struct {
 // value of each single-property UNIQUE constraint, the composite value of each
 // NODE KEY, and the key value of each TEMPORAL (no-overlap) constraint. Every
 // writer of a constrained node holds them across its constraint check, its
-// write and the publication of the value to the constraint cache: a
+// write and publication of the data/index transaction or buffered ACK: a
 // transaction at commit, and the engine's own CreateNode / UpdateNode /
 // BulkCreateNodes. So two writers of the same key (two transactions, or a
 // transaction and a direct engine write such as the AsyncEngine's
@@ -285,11 +264,8 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // no-op release function so callers can safely defer the result regardless
 // of whether locks were acquired.
 //
-// Each lock guards the entire commit window for its specific value —
-// validateAllConstraints, badgerTx.Commit, and the RegisterUniqueValue call
-// that publishes the committed value to the constraint cache — so a
-// subsequent transaction touching the same value always observes a coherent
-// cache. Transactions touching disjoint values always acquire disjoint locks.
+// Each lock guards validation and data/index publication. Transactions
+// touching disjoint values acquire disjoint locks.
 // Registry entries count both holders and waiters and are evicted when that
 // count reaches zero, bounding memory by active commit demand rather than the
 // historical graph cardinality.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -290,6 +291,10 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	}
 
+	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID), "a pending body alone does not prove a new claim")
+	tx.operations = append(tx.operations, Operation{Type: OpCreateNode, NodeID: nodeID, Node: tx.pendingNodes[nodeID]})
+	_, err = tx.getNodeFromBadgerSnapshotLocked(nodeID)
+	require.ErrorIs(t, err, ErrNotFound)
 	err = tx.classifyUpdateConflictAsUniqueViolation(nodeID)
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -299,7 +304,20 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 	require.Equal(t, []string{"name"}, cve.Properties)
 	require.Contains(t, cve.Message, "claimed by concurrent commit")
 	require.ErrorIs(t, cve.Cause, ErrConflict)
+	require.ErrorAs(t, tx.checkNodeWriteConflict(nodeID), &cve)
 
-	schema.UnregisterUniqueValue("Person", "name", "Alice")
+	t.Run("classification does not read the discarded snapshot", func(t *testing.T) {
+		snapshot := tx.snapshotTx
+		discarded := engine.db.testTxn(false)
+		discarded.Discard()
+		tx.snapshotTx = discarded
+		defer func() { tx.snapshotTx = snapshot }()
+		_, readErr := tx.getNodeFromBadgerSnapshotLocked(nodeID)
+		require.ErrorIs(t, readErr, badger.ErrDiscardedTxn)
+		var violation *ConstraintViolationError
+		require.ErrorAs(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID), &violation)
+		require.Equal(t, ConstraintUnique, violation.Type)
+	})
+	require.NoError(t, engine.DeleteNode(nodeID))
 	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID))
 }

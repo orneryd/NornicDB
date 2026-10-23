@@ -132,6 +132,13 @@ type CommitBuffer struct {
 	// generation that reached the applied state retires its nodes from the
 	// index exactly once, whichever drain path reaches it first.
 	retired atomic.Bool
+
+	// pins counts transactions whose begin overlay holds this generation
+	// (beginOverlay); once it has left the draining queue (queueRetired) its
+	// memory leases are released when the last pin goes.
+	pins           atomic.Int32
+	queueRetired   atomic.Bool
+	leasesReleased atomic.Bool
 }
 
 type labelSeenKey struct {
@@ -363,6 +370,13 @@ type WriteBehindBuffer struct {
 	active       *CommitBuffer
 	draining     []*CommitBuffer
 	opCount      int
+
+	// overlays are the begin overlays of open transactions (beginOverlay);
+	// Close releases those still open so a closed buffer keeps no memory
+	// leases. overlaysClosed turns later pins away from the registry.
+	overlayMu      sync.Mutex
+	overlays       map[*beginOverlay]struct{}
+	overlaysClosed bool
 
 	interval time.Duration
 	maxOps   int
@@ -789,8 +803,11 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	}
 	w.mu.Unlock()
 	if retired {
-		for _, commit := range buf.commits {
-			commit.memoryLease.Release()
+		// A transaction that began while the generation was buffered keeps
+		// reading it; its leases go with the last pin.
+		buf.queueRetired.Store(true)
+		if buf.pins.Load() == 0 {
+			buf.releaseLeases()
 		}
 	}
 }
@@ -934,7 +951,9 @@ func (w *WriteBehindBuffer) LastErr() error {
 	return w.lastErr
 }
 
-// Close stops the background flusher. Callers must Flush first to drain.
+// Close stops the background flusher and releases the begin overlays of
+// transactions still open, abandoned ones included, so their generations'
+// memory leases go back to the policy. Callers must Flush first to drain.
 func (w *WriteBehindBuffer) Close() {
 	w.closeMu.Lock()
 	if w.closed {
@@ -945,6 +964,7 @@ func (w *WriteBehindBuffer) Close() {
 	close(w.done)
 	w.closeMu.Unlock()
 	w.wg.Wait()
+	w.releaseOverlays()
 }
 
 // GetNode resolves the latest buffered state for id across generations,

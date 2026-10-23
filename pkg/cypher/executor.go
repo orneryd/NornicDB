@@ -1966,9 +1966,11 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 				dimensions = v
 			}
 		}
+		before := *node
+		before.Properties = cloneStringAnyMap(node.Properties)
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
 		embeddingutil.RecordChunkSpans(node, source, chunks)
-		if err := store.UpdateNode(node); err != nil {
+		if err := storage.UpdateObservedNode(store, &before, node); err != nil {
 			return err
 		}
 	}

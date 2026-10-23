@@ -118,6 +118,9 @@ func (b *BadgerEngine) setPendingEmbeddingInTxn(txn *badger.Txn, id NodeID) erro
 // Both synchronous buffered keys and write-behind/replay keys pass here, so
 // there is one reader of the pending-marker key shape and one hint journal.
 func (b *BadgerEngine) setKeyWithPendingHint(txn *badger.Txn, key, value []byte) error {
+	if err := b.nodeUniqueRecordInTxn(txn, key, value, false); err != nil {
+		return err
+	}
 	if err := txn.Set(key, value); err != nil {
 		return err
 	}

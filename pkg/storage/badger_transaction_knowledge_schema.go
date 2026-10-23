@@ -85,6 +85,7 @@ func (tx *BadgerTransaction) publishKnowledgePolicySchemaLocked() func() {
 	committed.mu.Lock()
 	if tx.schemaRuntime != nil {
 		committed.installTransactionSchemaLocked(tx.schemaRuntime)
+		clearUniqueBackfillValuesLocked(committed)
 	}
 	committed.decayProfileBundles = snapshot.decayProfileBundles
 	committed.decayProfileBindings = snapshot.decayProfileBindings

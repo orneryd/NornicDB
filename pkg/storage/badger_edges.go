@@ -533,6 +533,11 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		edgeType = edge.Type
 	}
 
+	// A commit writing this relationship and this delete publish one at a
+	// time (entity_commit_order.go).
+	var order entityOrderSet
+	order.addEdge(id)
+	releaseOrder := b.entityOrder.lock(&order)
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
@@ -581,6 +586,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
 	})
+	releaseOrder()
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
@@ -660,7 +666,7 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 	// Delete edge primary key. Dict cleanup deferred to the prune
 	// pipeline — the caller still writes MVCC tombstone + head which
 	// reuses the numID.
-	return txn.Delete(key)
+	return b.deleteKeyWithUniqueIndex(txn, key)
 }
 
 // deleteNodeInTxn is the internal helper for deleting a node within a transaction.
@@ -752,7 +758,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	// and head AFTER this helper returns, and those writes reuse the
 	// existing numID. The prune pipeline is the final owner of dict
 	// cleanup for tombstoned entities.
-	if err := txn.Delete(key); err != nil {
+	if err := b.deleteKeyWithUniqueIndex(txn, key); err != nil {
 		return 0, nil, nil, nil, err
 	}
 	return edgesDeleted, deletedEdgeIDs, deletedEdges, deletedNode, nil

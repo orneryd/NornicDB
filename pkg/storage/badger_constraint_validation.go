@@ -74,7 +74,7 @@ func numericConstraintValue(value interface{}) (float64, bool) {
 	}
 }
 
-func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID) error {
+func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID, observed ...*Node) error {
 	if node == nil || schema == nil {
 		return nil
 	}
@@ -83,6 +83,9 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 	for _, c := range constraints {
 		switch c.Type {
 		case ConstraintUnique:
+			if len(observed) > 0 && !nodeIntroducesKey(observed[0], node, c) {
+				continue
+			}
 			if len(c.Properties) > 1 {
 				values := make([]interface{}, len(c.Properties))
 				complete := true
@@ -111,9 +114,19 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 			if value == nil {
 				continue
 			}
-			if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
-				if found && existingNode != excludeNodeID {
-					return uniqueConstraintViolation(c.Label, prop, value, existingNode)
+			claims, err := schema.readUniqueConstraintValue(c.Label, prop, value, true)
+			if err != nil {
+				return err
+			}
+			if claims.constrained && claims.complete {
+				holders := claims.pending
+				if claims.found {
+					holders = append(holders, claims.holder)
+				}
+				for _, id := range holders {
+					if id != excludeNodeID {
+						return uniqueConstraintViolation(c.Label, prop, value, id)
+					}
 				}
 				continue
 			}

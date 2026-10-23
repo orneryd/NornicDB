@@ -369,9 +369,12 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		}
 		for keyStr := range c.deletes {
 			key := []byte(keyStr)
-			if err := w.write(func(t *badger.Txn) error { return t.Delete(key) }); err != nil {
+			if err := w.write(func(t *badger.Txn) error { return b.deleteKeyWithUniqueIndex(t, key) }); err != nil {
 				return abort(err)
 			}
+		}
+		if err := b.prepareNodeUniqueRemovals(w, c.ops, c.writes, c.deletes); err != nil {
+			return abort(err)
 		}
 		for keyStr, value := range c.writes {
 			if c.deletes[keyStr] {
@@ -577,45 +580,6 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 		}
 	}
 
-	if namespace != "" && schema != nil && schema.HasUniqueValueTracking() {
-		for _, op := range ops {
-			switch op.Type {
-			case OpCreateNode:
-				if op.Node == nil {
-					continue
-				}
-				for _, label := range op.Node.Labels {
-					for propName, propValue := range op.Node.Properties {
-						schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-					}
-				}
-			case OpUpdateNode:
-				if op.OldNode != nil {
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-				if op.Node != nil {
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				}
-			case OpDeleteNode:
-				if op.OldNode == nil {
-					continue
-				}
-				for _, label := range op.OldNode.Labels {
-					for propName, propValue := range op.OldNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
-	}
 }
 
 // applyWriteBehindCountDeltasLocked persists one generation's merged

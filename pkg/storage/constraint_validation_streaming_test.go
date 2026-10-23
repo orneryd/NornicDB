@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -519,25 +520,6 @@ func legacyRefreshUniqueValues(t *testing.T, engine Engine, schema *SchemaManage
 	return out
 }
 
-func uniqueCacheSnapshot(schema *SchemaManager) map[string]map[interface{}]NodeID {
-	schema.mu.RLock()
-	defer schema.mu.RUnlock()
-	out := map[string]map[interface{}]NodeID{}
-	for key, uc := range schema.uniqueConstraints {
-		uc.mu.RLock()
-		values := make(map[interface{}]NodeID, len(uc.values))
-		for k, v := range uc.values {
-			values[k] = v
-		}
-		if !uc.valuesCacheComplete {
-			panic("unique cache " + key + " not marked complete")
-		}
-		uc.mu.RUnlock()
-		out[key] = values
-	}
-	return out
-}
-
 func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
@@ -563,10 +545,34 @@ func TestRefreshUniqueConstraintValues_StreamedMatchesFullScan(t *testing.T) {
 	}
 
 	require.NoError(t, RefreshUniqueConstraintValuesForEngine(nsA, schema))
-	got := uniqueCacheSnapshot(schema)
-	require.Equal(t, legacyRefreshUniqueValues(t, nsA, schema), got)
-	require.Equal(t, NodeID("a:u1"), got["User:email"]["a@x"])
-	require.Len(t, got["Admin:uid"], 2)
+	want := legacyRefreshUniqueValues(t, nsA, schema)
+	for name, uc := range schema.uniqueConstraints {
+		// Compare the entire persisted reservation population, including
+		// absence of extra entries, against an independent full-node scan.
+		wantEntries, gotEntries := make(map[string]NodeID), make(map[string]NodeID)
+		prefix := nodeUniquePrefix("a", uc.Label, uc.Property)
+		for value, id := range want[name] {
+			key, ok := nodeUniqueKey("a", uc.Label, uc.Property, value)
+			require.True(t, ok)
+			wantEntries[string(key)] = id
+		}
+		require.NoError(t, schema.uniqueEngine.db.View(func(txn *badger.Txn) error {
+			_, err := txn.Get(append(prefix, 0))
+			require.NoError(t, err, "backfill publishes its completeness marker")
+			it := txn.NewIterator(badgerPrefixIteratorOptions(append(prefix, 1)))
+			defer it.Close()
+			for it.Rewind(); it.Valid(); it.Next() {
+				value, err := it.Item().ValueCopy(nil)
+				require.NoError(t, err)
+				gotEntries[string(it.Item().KeyCopy(nil))] = NodeID(value)
+			}
+			return nil
+		}))
+		require.Equal(t, wantEntries, gotEntries, name)
+		require.Empty(t, uc.values, "the live schema retains no side registry")
+	}
+	require.Equal(t, NodeID("a:u1"), want["User:email"]["a@x"])
+	require.Len(t, want["Admin:uid"], 2)
 
 	// A duplicate among constrained values is still reported.
 	nsDup := NewNamespacedEngine(inner, "dup")

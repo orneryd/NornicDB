@@ -75,6 +75,7 @@ const (
 	MessageStorageTransactionNodeChanged                    MessageID = "storage.transaction.node_changed"
 	MessageStorageTransactionDeadlockDetected               MessageID = "storage.transaction.deadlock_detected"
 	MessageStorageTransactionNodeChangedDetailed            MessageID = "storage.transaction.node_changed_detailed"
+	MessageStorageTransactionSnapshotReadFailed             MessageID = "storage.transaction.snapshot_read_failed"
 	MessageStorageTransactionConcurrentModification         MessageID = "storage.transaction.concurrent_modification"
 	MessageStorageTransactionEndpointDeleted                MessageID = "storage.transaction.endpoint_deleted"
 	MessageStorageTransactionAdjacentEdgeChanged            MessageID = "storage.transaction.adjacent_edge_changed"
@@ -333,6 +334,9 @@ func StorageTransactionNodeChangedDetailed(nodeID, head, readTimestamp string) M
 }
 func StorageTransactionConcurrentModification() Message {
 	return storageValidationMessage(MessageStorageTransactionConcurrentModification, "conflict detected: concurrent transaction modified data before commit", nil)
+}
+func StorageTransactionSnapshotReadFailed(nodeID string, cause error) Message {
+	return storageValidationMessage(MessageStorageTransactionSnapshotReadFailed, fmt.Sprintf("failed to read transaction snapshot for node %s: %s", nodeID, storageErrorText(cause)), map[string]any{"NodeID": nodeID, "Cause": storageErrorText(cause)})
 }
 func StorageTransactionEndpointDeleted(nodeID string) Message {
 	return storageValidationMessage(MessageStorageTransactionEndpointDeleted, fmt.Sprintf("conflict detected: endpoint node %s was deleted after transaction start", nodeID), map[string]any{"NodeID": nodeID})

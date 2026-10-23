@@ -970,8 +970,10 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		return nil, localizedError(localization.CypherProceduresNodeNotFound(identifier), nil)
 	}
 	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
+		before := *node
+		before.Properties = cloneStringAnyMap(node.Properties)
 		node.Properties[propertyKey] = vector
-		if err := updateMutatedNode(store, node); err != nil {
+		if err := updateMutatedNode(store, node, &before); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))
