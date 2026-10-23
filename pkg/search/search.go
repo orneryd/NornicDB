@@ -252,6 +252,10 @@ type SearchResult struct {
 	ContentPreview string          `json:"content_preview,omitempty"`
 	Properties     map[string]any  `json:"properties,omitempty"`
 
+	// sourceNode retains the hit's read-time metadata for typed procedure output.
+	// Compact continuation state drops it and restores it when hydrating a page.
+	sourceNode *storage.Node
+
 	// Scoring. Similarity is the vector similarity when VectorRank is
 	// positive (for a chunked search, the best of the chunks that found it by
 	// vector), else the keyword score; graph fusion and MCP rely on this.
@@ -814,6 +818,7 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 	var resultBytes func(SearchResult) int64
 	resultBytes = func(result SearchResult) int64 {
 		size := int64(256 + len(result.ID) + len(result.NodeID) + len(result.GroupKey) + len(result.Phase) + len(result.Type) + len(result.Title) + len(result.Description) + len(result.ContentPreview))
+		size += result.nodeMetadataBytes()
 		for _, label := range result.Labels {
 			size += int64(16 + len(label))
 		}
