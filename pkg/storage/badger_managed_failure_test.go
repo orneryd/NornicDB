@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -224,6 +225,9 @@ func TestCommitOracle_FailureReleasesWaiters(t *testing.T) {
 // A store whose interrupted large commit cannot be rolled back (here: it is
 // opened read-only) refuses to open; opened writable, it recovers.
 func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Badger read-only mode is unsupported on Windows")
+	}
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
 	m, err := openManagedBadger(opts)
@@ -251,6 +255,9 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 // A large commit that cannot write its intent record, and cannot roll that
 // back either, fails and stops further commits.
 func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Badger read-only mode is unsupported on Windows")
+	}
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
 	m, err := openManagedBadger(opts)

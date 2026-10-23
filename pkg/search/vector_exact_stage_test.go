@@ -141,7 +141,7 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 		}
 		pipeline = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(embeddings), svc.resolveVectorExactScorer(svc.vectorIndex, nil))
 	case "filestore", "ivfpq":
-		store, err := NewVectorFileStore(t.TempDir()+"/vectors", exactStageDims)
+		store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), exactStageDims)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = store.Close() })
 		for id, vec := range vectors {
@@ -581,7 +581,7 @@ func TestCompressedScoresStayWithinTheirBound(t *testing.T) {
 func TestIVFPQScoresStayWithinTheirBound(t *testing.T) {
 	const n, dims = 600, 16
 	rng := rand.New(rand.NewSource(11))
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", dims)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), dims)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	byID := map[string][]float32{}

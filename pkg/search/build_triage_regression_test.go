@@ -117,6 +117,22 @@ func TestBuildTriageSnapshotClosedBeforePersistAndWarmup(t *testing.T) {
 	}
 }
 
+func TestBuildTriageClosesReplacedVectorFileStore(t *testing.T) {
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	_, err := engine.CreateNode(triageNode("nornic:baseline"))
+	require.NoError(t, err)
+	svc := newTriageService(t, engine)
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	previous := svc.vectorFileStore
+	require.NotNil(t, previous)
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	require.NotSame(t, previous, svc.vectorFileStore)
+	require.ErrorIs(t, previous.Add("retired", []float32{1, 0, 0}), errVecFileClosed,
+		"restoring a saved index must release the preceding file and directory capability")
+	require.Equal(t, 1, svc.EmbeddingCount())
+}
+
 func TestBuildTriageDeferredWriteFailure(t *testing.T) {
 	for _, kind := range []string{"named", "main", "chunk", "property", "edge"} {
 		t.Run(kind, func(t *testing.T) {

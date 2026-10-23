@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -132,9 +133,9 @@ func TestIVFPQBackgroundPersistenceNoopBranches(t *testing.T) {
 	require.Equal(t, "vector-path", svc.ivfpqPersistenceBasePath("vector-path", ""))
 
 	svc.persistIVFPQBackground("", "")
-	svc.persistIVFPQBackground(t.TempDir()+"/vectors", "")
+	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
 	svc.ivfpqIndex = &IVFPQIndex{}
-	svc.persistIVFPQBackground(t.TempDir()+"/vectors", "")
+	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
 }
 
 func TestFilterByPropertiesDirect(t *testing.T) {

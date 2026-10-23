@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Select only usable compiled GPU backends, and close replaced vector-file
+  stores and slow-query log files through their owning lifecycle.
+- Preserve pre-pin MVCC scan visibility at tied clock timestamps and use the
+  shared platform directory-sync policy when writing recovery manifests.
+- Deliver Bolt memory-pressure and HTTP body-limit responses before transport
+  teardown; detect queued-client disconnects on Windows without reading payloads.
+- Compute AMD64 vector norms with a correctly rounded square root, retaining
+  SIMD reduction and multiplication without changing unit-axis vectors.
+- Install Windows llama DLLs with the pinned yzma module and llama version,
+  including the supported Vulkan installer wrapper.
+- Build reusable CUDA llama archives without host-native CPU instructions.
+- Distinguish invalid WAL directory paths from absent WAL data on Windows.
 - Use device pointer mode for CUDA vector norms and wide coordinate offsets.
 - Keep Vulkan push-constant data alive across the native binding and Go stack
   movement; cover normalization, search, and HNSW construction under forced

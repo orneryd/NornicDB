@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -29,7 +30,7 @@ func TestXhighExactThresholdPopulationBoundary(t *testing.T) {
 		return []float32{1, 0}
 	}
 	index := NewVectorIndex(2)
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	cfg := gpu.DefaultEmbeddingIndexConfig(2)
@@ -94,7 +95,7 @@ func TestExactThresholdQualifiedPopulationMatrix(t *testing.T) {
 		for _, minimum := range []float64{0, 1} {
 			t.Run(fmt.Sprintf("eligible_%d/min_%g", eligible, minimum), func(t *testing.T) {
 				index := NewVectorIndex(2)
-				store, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+				store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, store.Close()) })
 				cfg := gpu.DefaultEmbeddingIndexConfig(2)

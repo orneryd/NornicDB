@@ -106,7 +106,7 @@ func TestIVFPQOverflowCopiesDoNotInflateCappedPopulation(t *testing.T) {
 	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", dims)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), dims)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	want := make([]string, count)

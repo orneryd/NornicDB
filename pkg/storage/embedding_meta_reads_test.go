@@ -21,6 +21,7 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	t.Cleanup(func() { _ = badgerEngine.Close() })
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(directory, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = wal.Close() })
 	stack := NewNamespacedEngine(NewWALEngine(badgerEngine, wal), "nornic")
 
 	_, err = stack.CreateNode(&Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "alpha beta"}})

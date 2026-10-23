@@ -125,8 +125,10 @@ func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 		path := filepath.Join(t.TempDir(), "missing", "backup.bin")
+		_, cause := os.Open(filepath.Dir(path))
+		require.Error(t, cause)
 		err = engine.Backup(path)
-		localizedErr := requireStorageClientLocalizedError(t, err, localization.MessageStorageClientBackupFileCreateFailed, "failed to create backup file: open "+filepath.Dir(path)+": no such file or directory")
+		localizedErr := requireStorageClientLocalizedError(t, err, localization.MessageStorageClientBackupFileCreateFailed, "failed to create backup file: "+cause.Error())
 		require.Equal(t, path, localizedErr.Message.Data["Path"])
 		var pathErr *os.PathError
 		require.ErrorAs(t, err, &pathErr)

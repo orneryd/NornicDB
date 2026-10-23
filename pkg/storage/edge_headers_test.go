@@ -101,6 +101,7 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
+	defer walBacking.Close()
 	wal := NewWALEngine(badger, walBacking)
 	namespaced := NewNamespacedEngine(wal, "ns")
 	for _, id := range []NodeID{"a", "b", "c"} {

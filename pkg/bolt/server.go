@@ -1748,7 +1748,7 @@ func (s *Session) handleQueuedMessage() error {
 	if err != nil {
 		var admission *wireAdmissionError
 		if errors.As(err, &admission) {
-			if sendErr := s.sendApplicationAdmissionFailure(admission.cause); sendErr != nil {
+			if sendErr := s.rejectWireAdmission(admission); sendErr != nil {
 				return sendErr
 			}
 		}
@@ -1820,7 +1820,7 @@ func (s *Session) handleMessage() error {
 	if err != nil {
 		var admission *wireAdmissionError
 		if errors.As(err, &admission) {
-			if sendErr := s.sendApplicationAdmissionFailure(admission.cause); sendErr != nil {
+			if sendErr := s.rejectWireAdmission(admission); sendErr != nil {
 				return sendErr
 			}
 		}

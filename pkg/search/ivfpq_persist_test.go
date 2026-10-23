@@ -145,7 +145,7 @@ func TestIVFPQPersist_LoadErrorBranches(t *testing.T) {
 				"codebooks": ivfpqCodebooksSnapshot{},
 				"lists":     ivfpqListsSnapshot{},
 			},
-			wantError: "no such file",
+			wantError: "missing centroids",
 		},
 		{
 			name: "bad codebooks",
@@ -183,7 +183,11 @@ func TestIVFPQPersist_LoadErrorBranches(t *testing.T) {
 			idx, err := LoadIVFPQBundle(base)
 			require.Error(t, err)
 			require.Nil(t, idx)
-			require.Contains(t, err.Error(), tc.wantError)
+			if tc.wantError == "missing centroids" {
+				require.ErrorIs(t, err, os.ErrNotExist)
+			} else {
+				require.Contains(t, err.Error(), tc.wantError)
+			}
 		})
 	}
 }

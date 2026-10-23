@@ -150,7 +150,7 @@ func TestAdmitsVectorDimensionsMatchesIndexNode(t *testing.T) {
 	// A file-backed store holding vectors decides the dimension, as it does
 	// for IndexNode, even when the in-memory index is empty and unfixed.
 	stored := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = vfs.Close() })
 	require.NoError(t, vfs.Add("two", []float32{1, 0}))
@@ -196,6 +196,7 @@ func TestEmptyFileBackedStoreKeepsItsDimension(t *testing.T) {
 // migration that held vectorIndex.mu while waiting for s.mu deadlocked a
 // Qdrant write of another dimension.
 func TestFileStoreMigrationDoesNotDeadlockDimensionAdmission(t *testing.T) {
+	_ = t.TempDir()
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
 	t.Cleanup(func() { _ = svc.Close() })
 	require.NoError(t, svc.vectorIndex.Add("live", []float32{1, 0}))

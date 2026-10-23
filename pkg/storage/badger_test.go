@@ -33,6 +33,7 @@ func createTestBadgerEngineOnDisk(t *testing.T) (*BadgerEngine, string) {
 	dir := t.TempDir()
 	engine, err := NewBadgerEngine(dir)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
 	return engine, dir
 }
 

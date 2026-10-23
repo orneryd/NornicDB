@@ -309,6 +309,7 @@ func TestVectorFileQueryReadsFallBackWhenMappingFails(t *testing.T) {
 // The public vector search returns the same results when the platform will not
 // map the service's readable vector file.
 func TestVectorSearchUsesCopiedReadsWhenMappingFails(t *testing.T) {
+	_ = t.TempDir()
 	newService := func(failMapping bool) (*Service, *atomic.Int32) {
 		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 		t.Cleanup(func() { require.NoError(t, svc.Close()) })

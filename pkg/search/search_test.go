@@ -103,6 +103,9 @@ func (r *testReranker) Rerank(ctx context.Context, query string, candidates []Re
 }
 
 func newNamespacedEngine(tb testing.TB) storage.Engine {
+	// Register artifact removal before engine/service cleanup. Later TempDir
+	// calls share this root, so Windows file capabilities close before removal.
+	_ = tb.TempDir()
 	base := storage.NewMemoryEngine()
 	tb.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
@@ -1775,8 +1778,10 @@ func TestEnableClustering_ReentrantAndEnvOverrides(t *testing.T) {
 }
 
 func TestVectorFileStoreCreationHonorsPersistenceConfiguration(t *testing.T) {
+	_ = t.TempDir()
 	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
 	svc := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { _ = svc.Close() })
 
 	// persistence disabled branch
 	svc.vectorIndex.vectors["keep"] = []float32{1, 0}
@@ -2249,7 +2254,7 @@ func TestConvertFileGobToMsgpack_ErrorPaths(t *testing.T) {
 func TestConvertOneDbDir_Branches(t *testing.T) {
 	t.Run("hnsw_ivf readdir error propagates", func(t *testing.T) {
 		dbDir := t.TempDir()
-		// Trigger non-ENOENT error for os.ReadDir(ivfDir).
+		// An existing non-directory must not be treated as a missing index.
 		require.NoError(t, os.WriteFile(filepath.Join(dbDir, "hnsw_ivf"), []byte("not-dir"), 0o644))
 		err := convertOneDbDir(dbDir)
 		require.Error(t, err)

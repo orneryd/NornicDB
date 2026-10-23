@@ -2,6 +2,7 @@ package storage
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -10,6 +11,9 @@ import (
 // permissions, so the denied open succeeds.
 func skipIfPermissionsBypassed(t *testing.T) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are not enforced on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: file permissions are not enforced")
 	}

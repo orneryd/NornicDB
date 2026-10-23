@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/stretchr/testify/require"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -12,7 +13,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
 		require.NoError(t, err)
 		cfg := DefaultWALConfig()
-		cfg.Dir = dir + "/wal"
+		cfg.Dir = filepath.Join(dir, "wal")
 		w, err := NewWAL(cfg.Dir, cfg)
 		require.NoError(t, err)
 		b.SetBufferedCommitWAL(w)

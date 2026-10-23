@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -44,7 +45,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 	cfg := gpu.DefaultEmbeddingIndexConfig(dims)
 	cfg.GPUEnabled, cfg.AutoSync = false, false
 	clusters := gpu.NewClusterIndex(nil, cfg, &gpu.KMeansConfig{NumClusters: 8, MaxIterations: 10, Tolerance: 0.001, InitMethod: "kmeans++"})
-	store, err := NewVectorFileStore(tb.TempDir()+"/vectors", dims)
+	store, err := NewVectorFileStore(filepath.Join(tb.TempDir(), "vectors"), dims)
 	if err != nil {
 		tb.Fatal(err)
 	}

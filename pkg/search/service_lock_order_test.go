@@ -23,12 +23,10 @@ func serviceLockWait(t *testing.T, why string, ready func() bool) {
 		runtime.Gosched()
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("could not stage " + why)
+	serviceLockDump(t, "could not stage "+why)
 }
 func serviceLockStack(parts ...string) bool {
-	b := make([]byte, 1<<20)
-	n := runtime.Stack(b, true)
-	for _, g := range strings.Split(string(b[:n]), "\n\n") {
+	for _, g := range strings.Split(serviceLockStacks(), "\n\n") {
 		found := true
 		for _, p := range parts {
 			if !strings.Contains(g, p) {
@@ -42,11 +40,18 @@ func serviceLockStack(parts ...string) bool {
 	}
 	return false
 }
+func serviceLockStacks() string {
+	for size := 1 << 20; ; size *= 2 {
+		b := make([]byte, size)
+		n := runtime.Stack(b, true)
+		if n < len(b) {
+			return string(b[:n])
+		}
+	}
+}
 func serviceLockDump(t *testing.T, why string) {
 	t.Helper()
-	b := make([]byte, 1<<20)
-	n := runtime.Stack(b, true)
-	t.Fatalf("%s\n%s", why, b[:n])
+	t.Fatalf("%s\n%s", why, serviceLockStacks())
 }
 
 // All operations are production operations; locks only stage their ordinary
@@ -174,6 +179,7 @@ func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 			engine := &serviceLockBuildEngine{Engine: storage.NewMemoryEngine()}
 			svc := NewServiceWithDimensions(engine, 2)
 			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+			defer svc.Close()
 			svc.SetPersistenceEnabled(true)
 			if err := svc.IndexNode(&storage.Node{ID: "live", ChunkEmbeddings: [][]float32{{1, 0}}}); err != nil {
 				t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -249,7 +250,7 @@ func TestExecuteImplicitAsync_CreateSet_RemainsTransactional(t *testing.T) {
 	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
 	require.NoError(t, err)
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 
 	walEngine := storage.NewWALEngine(badgerEngine, wal)

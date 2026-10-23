@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -93,7 +94,7 @@ func TestEncryptionPersistsSalt(t *testing.T) {
 	db1.Close()
 
 	// Verify salt file was created
-	saltFile := tmpDir + "/db.salt"
+	saltFile := filepath.Join(tmpDir, "db.salt")
 	saltData, err := os.ReadFile(saltFile)
 	require.NoError(t, err)
 	assert.Len(t, saltData, 32, "salt should be 32 bytes")

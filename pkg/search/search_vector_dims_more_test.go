@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -60,7 +61,7 @@ func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
 	require.InDelta(t, 1.0, v2[0], 1e-6)
 
 	// vector file store takes precedence when configured.
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 3)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 3)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
 	require.NoError(t, vfs.Add("vfs", []float32{0, 1, 0}))
@@ -81,7 +82,7 @@ func TestService_VectorQueryNodes_FileStorePropertyVectors(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
 	svc.vectorFileStore = vfs
@@ -119,7 +120,7 @@ func TestService_VectorQueryNodes_FileStorePropertyVectors(t *testing.T) {
 
 func TestService_VectorQueryNodes_FileStorePropertyVectorsSupplementsStaleHNSW(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
 	svc.vectorFileStore = vfs
@@ -177,7 +178,7 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 	require.Equal(t, 0.5, *svc.resolveMinSimilarity(nil))
 
 	// File-store-backed count/dimension branches.
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 4)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
 	require.NoError(t, vfs.Add("nornic:v1", []float32{1, 0, 0, 0}))
@@ -188,7 +189,7 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 
 	// An empty file store keeps its own dimension: vectors are written to it.
 	svcFallback := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
-	emptyVFS, err := NewVectorFileStore(t.TempDir()+"/vectors-empty", 7)
+	emptyVFS, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors-empty"), 7)
 	require.NoError(t, err)
 	defer func() { _ = emptyVFS.Close() }()
 	svcFallback.vectorFileStore = emptyVFS
@@ -205,7 +206,7 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 
-	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors-clear", 3)
+	vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors-clear"), 3)
 	require.NoError(t, err)
 	require.NoError(t, vfs.Add("nornic:n1", []float32{1, 0, 0}))
 	svc.vectorFileStore = vfs

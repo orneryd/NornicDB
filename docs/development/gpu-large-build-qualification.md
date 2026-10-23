@@ -8,7 +8,8 @@ The tests must use the requested GPU backend; CPU fallback does not qualify it.
 ## Run on a GPU host
 
 Keep enough GPU memory free for at least 4.3 GiB of resident vectors plus query
-buffers and driver overhead. The full construction fixture has 1,101,077 vectors
+buffers and driver overhead. Run large native builds and full Linux suites
+sequentially when Docker has limited RAM; leave memory for the running database. The full construction fixture has 1,101,077 vectors
 of 1,024 float32 coordinates. Its graph and original coordinates also use system
 memory. Full construction can take hours on an RTX 2080 Ti.
 
@@ -51,6 +52,13 @@ docker build -f docker/Dockerfile.llama-cuda --build-arg LLAMA_BUILD_JOBS=2 -t n
 docker build -f docker/Dockerfile.llama-cuda --build-arg LLAMA_BUILD_JOBS=2 --build-arg LLAMA_CUDA_ARCHITECTURES=75 -t nornic-llama-cuda:v0.7.0-sm75-local .
 ```
 
+CUDA library images disable host-native CPU instructions, as the CPU image does.
+This avoids publishing an archive that requires the builder's CPU instruction set.
+For BGE-M3 qualification with the default floating-point KV cache, pass
+`--build-arg LLAMA_CUDA_FA_ALL_QUANTS=OFF` to omit unused quantized KV flash-attention
+kernels and shorten a local build. Distribution builds retain all-quant support
+by default. This option does not change the quantized GGUF model weights.
+
 Application Dockerfiles consume the versioned `timothyswt/llama-*-libs` images.
 Those new versioned images must be built and published before a clean remote
 application build can consume them. A successful local builder image does not
@@ -60,6 +68,14 @@ To build an application against the local GPU library without publishing it:
 
 ```powershell
 docker build -f docker/Dockerfile.amd64-cuda --build-arg LLAMA_CUDA_IMAGE=nornic-llama-cuda:v0.7.0-sm75-local --build-arg HEADLESS=true --build-arg EMBED_MODEL=false -t nornicdb:v1.4.4-llama070-local .
+```
+
+Install matching Windows DLLs using the repository-pinned yzma CLI (the CUDA
+and Vulkan `.bat` wrappers call this same installer):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows-llama.ps1 -Processor cuda
+# CPU or Vulkan hosts use -Processor cpu or -Processor vulkan.
 ```
 
 For actual Windows inference regression checks, point `NORNICDB_LIB` to the

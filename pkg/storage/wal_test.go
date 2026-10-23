@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -2391,6 +2392,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		walPath := filepath.Join(realDir, "wal.log")
 		f, err := os.OpenFile(walPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		require.NoError(t, err)
+		defer f.Close()
 
 		w := &WAL{
 			config: &WALConfig{
@@ -2436,6 +2438,9 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 
 func TestWAL_TruncateAfterSnapshot_EarlyErrorBranches(t *testing.T) {
 	t.Run("missing WAL directory preserves active handle", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows cannot rename a directory containing an open WAL file")
+		}
 		parent := t.TempDir()
 		dir := filepath.Join(parent, "wal")
 		wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})

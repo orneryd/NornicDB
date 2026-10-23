@@ -262,6 +262,7 @@ func TestEmbeddingFreeBatchCapabilityRejectsUnsupportedInnerEngine(t *testing.T)
 	base := newEngineWithoutEmbeddingFreeReads(t)
 	walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = walLog.Close() })
 	wal := NewWALEngine(base, walLog)
 	tenant := NewNamespacedEngine(wal, "unsupported")
 

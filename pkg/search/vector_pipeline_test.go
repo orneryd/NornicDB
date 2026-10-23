@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -198,7 +199,7 @@ func TestVectorSearchPipeline_Timeout(t *testing.T) {
 		idx.Add(fmt.Sprintf("vec%d", i), vec)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
 	query := []float32{1, 0, 0, 0}
@@ -333,7 +334,7 @@ func TestVectorSearchPipeline_UsesBruteForceWhenClusteredAndThresholdOptIn(t *te
 }
 
 func TestFileStoreBruteForceCandidateGen_SearchAndCancel(t *testing.T) {
-	path := fmt.Sprintf("%s/vectors", t.TempDir())
+	path := filepath.Join(t.TempDir(), "vectors")
 	vfs, err := NewVectorFileStore(path, 3)
 	require.NoError(t, err)
 	defer vfs.Close()

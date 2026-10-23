@@ -1509,12 +1509,12 @@ func TestHeimdallCoverage_PromptStreamingAndPluginLoading(t *testing.T) {
 		tmpDir := t.TempDir()
 		require.NoError(t, LoadHeimdallPluginsFromDir(tmpDir, ctx))
 
-		notDir := tmpDir + "/file.txt"
+		notDir := filepath.Join(tmpDir, "file.txt")
 		require.NoError(t, os.WriteFile(notDir, []byte("not a dir"), 0o600))
 		require.ErrorContains(t, LoadHeimdallPluginsFromDir(notDir, ctx), "not a directory")
 
 		badPluginDir := t.TempDir()
-		badPluginPath := badPluginDir + "/bad.so"
+		badPluginPath := filepath.Join(badPluginDir, "bad.so")
 		require.NoError(t, os.WriteFile(badPluginPath, []byte("not a plugin"), 0o600))
 		require.NoError(t, LoadHeimdallPluginsFromDir(badPluginDir, ctx))
 

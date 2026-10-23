@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -251,7 +252,7 @@ func newSetRouteServerStackExecutor(t *testing.T) *StorageExecutor {
 	// fsync wall-clock per build).
 	badger, err := storage.NewBadgerEngineInMemory()
 	require.NoError(t, err)
-	wal, err := storage.NewWAL(dir+"/wal", &storage.WALConfig{SyncMode: "none"})
+	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), &storage.WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
 	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
