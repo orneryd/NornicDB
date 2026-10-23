@@ -12,7 +12,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func (e *StorageExecutor) callDbRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
@@ -447,11 +446,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 
 	for _, r := range response.Results {
-		node := &storage.Node{
-			ID:         storage.NodeID(r.ID),
-			Labels:     r.Labels,
-			Properties: r.Properties,
-		}
+		node := r.MaterializedNode()
 		result.Rows = append(result.Rows, []interface{}{
 			node,
 			r.Score,
@@ -475,7 +470,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 	for index := range page.Results {
 		result := page.Results[index]
 		mapped := map[string]interface{}{
-			"node":  &storage.Node{ID: storage.NodeID(result.ID), Labels: result.Labels, Properties: result.Properties},
+			"node":  result.MaterializedNode(),
 			"score": result.Score, "rrf_score": result.RRFScore,
 			"vector_rank": int64(result.VectorRank), "bm25_rank": int64(result.BM25Rank),
 			"group_key": result.GroupKey, "phase": result.Phase,
@@ -489,7 +484,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 			for passageIndex := range result.Passages {
 				passage := result.Passages[passageIndex]
 				passages[passageIndex] = map[string]interface{}{
-					"node":  &storage.Node{ID: storage.NodeID(passage.ID), Labels: passage.Labels, Properties: passage.Properties},
+					"node":  passage.MaterializedNode(),
 					"score": passage.Score, "rrf_score": passage.RRFScore,
 					"vector_rank": int64(passage.VectorRank), "bm25_rank": int64(passage.BM25Rank),
 					"phase":   passage.Phase,

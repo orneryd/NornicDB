@@ -391,6 +391,7 @@ func compactContinuationResult(result SearchResult) SearchResult {
 	result.Description = ""
 	result.ContentPreview = ""
 	result.Properties = nil
+	result.sourceNode = nil
 	result.Passages = nil
 	return result
 }
@@ -403,6 +404,7 @@ func hydrateContinuationResult(ranked, stored SearchResult) SearchResult {
 	ranked.Description = stored.Description
 	ranked.ContentPreview = stored.ContentPreview
 	ranked.Properties = stored.Properties
+	ranked.sourceNode = stored.sourceNode
 	return ranked
 }
 
@@ -469,27 +471,10 @@ func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOp
 }
 
 func searchResultFromContinuationNode(node *storage.Node, projection resultPropertyProjection) SearchResult {
-	result := SearchResult{
-		ID:         string(node.ID),
-		NodeID:     node.ID,
-		Labels:     append([]string(nil), node.Labels...),
-		Properties: projection.apply(node.Properties),
-	}
-	if t, ok := node.Properties["type"].(string); ok {
-		result.Type = t
-	} else if len(node.Labels) > 0 {
+	result := searchResultFromNode(string(node.ID), node, projection)
+	result.Labels = append([]string(nil), node.Labels...)
+	if _, typed := node.Properties["type"].(string); !typed && len(node.Labels) > 0 {
 		result.Type = node.Labels[0]
-	}
-	if title, ok := node.Properties["title"].(string); ok {
-		result.Title = title
-	}
-	if desc, ok := node.Properties["description"].(string); ok {
-		result.Description = desc
-	}
-	if content, ok := node.Properties["content"].(string); ok {
-		result.ContentPreview = truncate(content, 200)
-	} else if text, ok := node.Properties["text"].(string); ok {
-		result.ContentPreview = truncate(text, 200)
 	}
 	return result
 }

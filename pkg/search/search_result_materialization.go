@@ -3,6 +3,8 @@ package search
 import (
 	"context"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/util"
+	"unsafe"
 )
 
 // enrichResults converts RRF results to SearchResult with full node data.
@@ -158,6 +160,16 @@ func searchResultFromNode(id string, node *storage.Node, projection resultProper
 		Labels:     node.Labels,
 		Properties: projection.apply(node.Properties),
 	}
+	result.sourceNode = node
+	if len(node.ChunkEmbeddings) > 0 || len(node.NamedEmbeddings) > 0 || len(projection.include) > 0 || len(projection.exclude) > 0 {
+		// A fallback reader may return vectors; an explicit projection may leave
+		// large excluded properties behind. Retain metadata without either payload.
+		metadata := *node
+		metadata.Properties = nil
+		metadata.ChunkEmbeddings = nil
+		metadata.NamedEmbeddings = nil
+		result.sourceNode = &metadata
+	}
 	if t, ok := node.Properties["type"].(string); ok {
 		result.Type = t
 	}
@@ -173,4 +185,31 @@ func searchResultFromNode(id string, node *storage.Node, projection resultProper
 		result.ContentPreview = truncate(text, 200)
 	}
 	return result
+}
+
+// MaterializedNode returns a detached logical node for a search hit. Preserve
+// the source timestamps: later property-visibility checks must score the node
+// that was read, rather than a reconstruction with a zero creation time.
+// Managed vectors stay in storage; a user vector property remains a property.
+func (result SearchResult) MaterializedNode() *storage.Node {
+	var node storage.Node
+	if result.sourceNode != nil {
+		node = *result.sourceNode
+	}
+	node.ID = result.NodeID
+	if node.ID == "" {
+		node.ID = storage.NodeID(result.ID)
+	}
+	node.Labels = result.Labels
+	node.Properties = result.Properties
+	node.ChunkEmbeddings = nil
+	node.NamedEmbeddings = nil
+	return &node
+}
+
+func (result SearchResult) nodeMetadataBytes() int64 {
+	if result.sourceNode == nil {
+		return 0
+	}
+	return int64(unsafe.Sizeof(storage.Node{})) + util.EstimateValueBytes(result.sourceNode.EmbedMeta)
 }
