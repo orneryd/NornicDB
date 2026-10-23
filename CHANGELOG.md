@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make deferred-log outcome tests independent of clock resolution, calibrate
   cold-scan timing batches, and retain positive elapsed-time checks using
   collection work that spans a clock tick.
+- Correct legacy Bolt DateTime seconds for clients that do not negotiate the `utc` patch. Offset and named-zone values now preserve their local clock and instant in results and parameters, including nested lists and maps. UTC-patched Bolt 4.4 and Bolt 5.x retain their existing encodings.
 
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Preserve node properties and source metadata in retrieval procedure rows, graph
