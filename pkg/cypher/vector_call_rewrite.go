@@ -24,29 +24,25 @@ var vectorCallMetrics = map[string][]string{
 	"vector_norm":     {"EUCLIDEAN", "MANHATTAN"},
 }
 
-// vectorCall rewrites the call whose function name is query[wordStart:wordEnd]
+// vectorCall consumes the retained call, including quoted names and trivia,
 // when it is vector, vector_distance or vector_norm.
-func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error {
+func (r *labelExpressionRewriter) vectorCall(call functionCallSpan, end int) error {
 	q := r.query
-	word := strings.ToLower(q[wordStart:wordEnd])
+	word := call.normalized
 	if word != "vector" && word != "vector_distance" && word != "vector_norm" {
 		return nil
 	}
-	open := skipASCIISpaces(q, wordEnd, end)
-	if open >= end || q[open] != '(' {
+	close := call.close(q)
+	if close < 0 || close >= end {
 		return nil
 	}
-	close := findMatchingParen(q[:end], open)
-	if close < 0 {
-		return nil
-	}
-	args := topLevelArgumentSpans(q, open+1, close)
+	args := call.syntax.argumentSpans(call.group)
 	nameArg := map[string]int{"vector": 2, "vector_distance": 2, "vector_norm": 1}[word]
 	if len(args) != nameArg+1 {
 		return nil // the function reports its argument count
 	}
-	nameStart, nameEnd := args[nameArg][0], args[nameArg][1]
-	name := q[nameStart:nameEnd]
+	nameStart, nameEnd := args[nameArg].start, args[nameArg].end
+	name := call.syntax.render(args[nameArg])
 	canonical := ""
 	if word == "vector" {
 		if coordinateType, ok := parseVectorCoordinateType(name); ok && isBareName(name) {
@@ -54,7 +50,7 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 		} else {
 			return labelExpressionSyntaxError(localization.CypherCoreVectorInnerTypeInvalid())
 		}
-		dimension := strings.TrimSpace(q[args[1][0]:args[1][1]])
+		dimension := call.syntax.render(args[1])
 		if value, err := strconv.ParseInt(dimension, 10, 64); err == nil && (value < 1 || value > vectorDimensionLimit) {
 			return labelExpressionSyntaxError(localization.CypherCoreVectorDimensionRange(dimension))
 		}
@@ -70,7 +66,7 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 			return labelExpressionSyntaxError(localization.CypherCoreVectorMetricInvalid(expected))
 		}
 	}
-	r.edit(wordStart, wordEnd, "__nornic_"+word)
+	r.edit(call.start, call.nameEnd, "__nornic_"+word)
 	r.edit(nameStart, nameEnd, "'"+canonical+"'")
 	return nil
 }
@@ -89,48 +85,9 @@ func isBareName(text string) bool {
 	return true
 }
 
-// topLevelArgumentSpans returns the [start, end) of each comma-separated
-// argument in query[start:end], spaces trimmed.
-func topLevelArgumentSpans(query string, start, end int) [][2]int {
-	var spans [][2]int
-	for from := start; from <= end; {
-		comma := topLevelByteIndex(query, from, end, ',')
-		stop := end
-		if comma >= 0 {
-			stop = comma
-		}
-		argStart := skipASCIISpaces(query, from, stop)
-		spans = append(spans, [2]int{argStart, trimRightIndex(query, argStart, stop)})
-		if comma < 0 {
-			break
-		}
-		from = comma + 1
-	}
-	return spans
-}
-
 // mayUseVectorCall reports whether query may call vector, vector_distance
 // or vector_norm: the word, outside a longer name, then (. It never answers
 // false for one.
 func mayUseVectorCall(query string) bool {
-	for from := 0; ; {
-		at := indexASCIIFold(query[from:], "vector")
-		if at < 0 {
-			return false
-		}
-		at += from
-		from = at + len("vector")
-		if at > 0 && (isIdentByte(query[at-1]) || query[at-1] == '.') {
-			continue
-		}
-		end := from
-		for _, suffix := range []string{"_distance", "_norm"} {
-			if len(query) >= end+len(suffix) && equalFoldASCII(query[end:end+len(suffix)], suffix) {
-				end += len(suffix)
-			}
-		}
-		if next := skipASCIISpaces(query, end, len(query)); next < len(query) && query[next] == '(' {
-			return true
-		}
-	}
+	return lexicalMayRewrite(query, functionRewriteVector)
 }

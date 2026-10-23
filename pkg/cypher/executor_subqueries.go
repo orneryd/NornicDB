@@ -831,38 +831,15 @@ var withImportClauseKeywords = []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNW
 
 // leadingWithClause returns the leading WITH clause of text, which starts
 // with WITH (its WHERE, ORDER BY, SKIP and LIMIT included), and whether a
-// clause follows it. Unlike splitPipelineClauses it reads no further than
-// the next clause, in one pass, and it takes texts with procedure calls
+// clause follows it. It shares the top-level clause-word reader and takes procedure calls
 // (WITH p CALL db.x() …).
 func leadingWithClause(text string) (clause string, followed bool) {
-	depth := 0
-	for index := len("WITH"); index < len(text); index++ {
-		switch c := text[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(text, index, c) - 1
-			continue
-		case '(', '[', '{':
-			depth++
-			continue
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-			continue
+	for _, word := range topLevelWords(text, len("WITH"), len(text)) {
+		previous := text[word.start-1]
+		if previous != '.' && previous != '$' && previous != ':' && isLeadingWithFollower(text[word.start:word.end]) &&
+			!(word.upper == "WITH" && isOperatorWith(text, word.start)) {
+			return text[:word.start], true
 		}
-		if depth > 0 || !isIdentStartByte(text[index]) || isIdentByte(text[index-1]) {
-			continue
-		}
-		end := index + 1
-		for end < len(text) && isIdentByte(text[end]) {
-			end++
-		}
-		previous := text[index-1]
-		if previous != '.' && previous != '$' && previous != ':' && isLeadingWithFollower(text[index:end]) &&
-			!(equalFoldASCII(text[index:end], "with") && isOperatorWith(text, index)) {
-			return text[:index], true
-		}
-		index = end - 1
 	}
 	return text, false
 }
@@ -1782,68 +1759,9 @@ func isCallSubqueryImportNotNullGuardTerm(term string, importCol string) bool {
 }
 
 func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
-	inSingle, inDouble, inBacktick := false, false, false
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(expr); i++ {
-		ch := expr[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-			continue
-		case '"':
-			inDouble = true
-			continue
-		case '`':
-			inBacktick = true
-			continue
-		case '(':
-			paren++
-			continue
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-			continue
-		case '[':
-			bracket++
-			continue
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-			continue
-		case '{':
-			brace++
-			continue
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-			continue
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if ch == '=' {
-			left := strings.TrimSpace(expr[:i])
-			right := strings.TrimSpace(expr[i+1:])
+	for _, at := range readFunctionSyntax(expr).rootPunctuation {
+		if expr[at] == '=' {
+			left, right := strings.TrimSpace(expr[:at]), strings.TrimSpace(expr[at+1:])
 			if left == "" || right == "" {
 				return "", "", false
 			}
@@ -1854,61 +1772,7 @@ func splitTopLevelEqualityCallSubquery(expr string) (lhs, rhs string, ok bool) {
 }
 
 func indexTopLevelKeywordCallSubquery(s string, keyword string) int {
-	paren, bracket, brace := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if findKeywordIndex(s[i:], keyword) == 0 {
-			return i
-		}
-	}
-	return -1
+	return topLevelKeywordIndex(s, keyword)
 }
 
 func splitTopLevelResultModifiersCallSubquery(returnPart string) (projection string, modifiers string) {

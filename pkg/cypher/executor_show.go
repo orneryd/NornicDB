@@ -922,11 +922,12 @@ func pluginFunctionRows() [][]interface{} {
 // returnDescription from a signature "f(a :: T, b :: U = d) :: R". An argument
 // without a declared type is ANY.
 func functionSignatureDescriptions(signature string) ([]interface{}, string) {
-	open := strings.IndexByte(signature, '(')
-	if open < 0 {
+	call, called := functionCallAt(signature, readFunctionSyntax(signature).leading)
+	open := call.open
+	if !called || open < 0 {
 		return []interface{}{}, ""
 	}
-	closing := findMatchingParen(signature, open)
+	closing := call.close(signature)
 	if closing < 0 {
 		return []interface{}{}, ""
 	}

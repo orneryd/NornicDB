@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Read function calls, comments and nested expressions consistently during
+  Cypher validation and execution, including aggregates inside map values.
+- Validate the value after `DISTINCT` in aggregate calls instead of treating
+  `DISTINCT` as an undefined variable.
+
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).

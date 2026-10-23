@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // FabricPlanner decomposes a Cypher query into a Fragment tree by splitting
@@ -1003,77 +1005,21 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	if pos >= len(s) || s[pos] != '{' {
 		return -1, fmt.Errorf("expected '{' at position %d", pos)
 	}
-
 	depth := 1
-	inSingleQuote := false
-	inDoubleQuote := false
-
 	for i := pos + 1; i < len(s); i++ {
-		ch := s[i]
-
-		// Handle string literals (skip brace counting inside strings).
-		if ch == '\'' && !inDoubleQuote {
-			if inSingleQuote {
-				// Check for escaped quote.
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			} else {
-				inSingleQuote = true
-			}
+		if next, quoted := cyphertext.SkipToken(s, i); quoted {
+			i = next - 1
 			continue
 		}
-		if ch == '"' && !inSingleQuote {
-			if inDoubleQuote {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			} else {
-				inDoubleQuote = true
-			}
-			continue
-		}
-
-		if inSingleQuote || inDoubleQuote {
-			continue
-		}
-
-		// Handle line comments (// ...).
-		if ch == '/' && i+1 < len(s) && s[i+1] == '/' {
-			// Skip to end of line.
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			continue
-		}
-
-		// Handle block comments (/* ... */).
-		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
-			i += 2
-			for i+1 < len(s) {
-				if s[i] == '*' && s[i+1] == '/' {
-					i++
-					break
-				}
-				i++
-			}
-			continue
-		}
-
-		if ch == '{' {
+		if s[i] == '{' {
 			depth++
-		} else if ch == '}' {
+		} else if s[i] == '}' {
 			depth--
 			if depth == 0 {
 				return i, nil
 			}
 		}
 	}
-
 	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
 }
 

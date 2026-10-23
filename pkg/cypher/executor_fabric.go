@@ -836,50 +836,14 @@ func startsWithKeywordAtLocal(s string, i int, kw string) bool {
 }
 
 func splitCommaTopLevelLocal(s string) []string {
-	var parts []string
-	start := 0
-	depth := 0
-	inSingle, inDouble, inBacktick := false, false, false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-			continue
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-			continue
-		case inBacktick:
-			if ch == '`' {
-				inBacktick = false
-			}
-			continue
-		}
-		switch ch {
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '`':
-			inBacktick = true
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
+	// Fabric keeps the original import text; only its consumer trims names.
+	// Delimiter positions still come from the shared lexical owner.
+	syntax := readFunctionSyntax(s)
+	spans := syntax.argumentSpans(0)
+	parts := make([]string, len(spans))
+	for index, span := range spans {
+		parts[index] = s[span.start:span.end]
 	}
-	parts = append(parts, s[start:])
 	return parts
 }
 

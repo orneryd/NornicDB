@@ -21,7 +21,6 @@ var (
 	// inferCacheTrueRe enables db.infer cache only when the request explicitly opts in:
 	//   CALL db.infer({..., cache: true})
 	inferCacheTrueRe = regexp.MustCompile(`(?is)\bcache\s*:\s*true\b`)
-	retrieveCallRe   = regexp.MustCompile(`(?is)\bCALL\s+DB\.RETRIEVE\s*\(`)
 )
 
 // isCacheableReadQuery returns true if it's safe to cache a read-only query result.
@@ -59,26 +58,24 @@ func cacheableReadQuery(cypher string, depth int) bool {
 
 	// Non-deterministic / time-sensitive builtins.
 	// Keep this intentionally small and conservative; add more as we support them.
-	if strings.Contains(upper, "RAND(") ||
-		strings.Contains(upper, "RANDOMUUID(") ||
-		strings.Contains(upper, "DATETIME(") ||
-		strings.Contains(upper, "DATE(") ||
-		strings.Contains(upper, "TIME(") ||
-		strings.Contains(upper, "TIMESTAMP(") {
+	if containsFunctionCallNamed(cypher, "RAND") ||
+		containsFunctionCallNamed(cypher, "RANDOMUUID") ||
+		containsFunctionCallNamed(cypher, "DATETIME") ||
+		containsFunctionCallNamed(cypher, "DATE") ||
+		containsFunctionCallNamed(cypher, "TIME") ||
+		containsFunctionCallNamed(cypher, "TIMESTAMP") {
 		return false
 	}
 
 	// db.retrieve can start, pull, or discard durable continuation cursors. Its
 	// stateful lifecycle and owner checks must always reach the continuation
 	// registry, including when qid/discard fields are hidden in parameters.
-	// (The pattern needs the text DB.RETRIEVE, so any other statement skips
-	// the regular expression.)
-	if strings.Contains(upper, "DB.RETRIEVE") && retrieveCallRe.MatchString(cypher) {
+	if containsProcedureCallNamed(cypher, "db.retrieve") {
 		return false
 	}
 
 	// Inference is non-cacheable by default; allow explicit opt-in via request map.
-	if strings.Contains(upper, "CALL DB.INFER(") {
+	if containsProcedureCallNamed(cypher, "db.infer") {
 		if !inferCacheTrueRe.MatchString(cypher) {
 			return false
 		}
@@ -115,21 +112,17 @@ func cacheableReadQuery(cypher string, depth int) bool {
 // same cache policy as the outer statement. Parameters and row expressions
 // are resolved during execution, so their outer results cannot be reused.
 func cacheableDynamicStatements(query string, depth int) bool {
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, queryGapEnd(query, from))
-		if !ok {
+	for _, call := range readFunctionSyntax(query).calls {
+		if !call.procedure {
 			continue
 		}
-		switch name = lowerASCII(name); name {
+		name := call.normalized
+		switch name {
 		case "apoc.cypher.run", "apoc.cypher.doitall":
-			args := explicitProcedureArgumentTexts(query[at:])
+			var args []string
+			if call.group >= 0 && call.close(query) >= 0 {
+				args = call.arguments(nil)
+			}
 			if len(args) == 0 || !isWholeCypherQuotedString(args[0]) {
 				return false
 			}

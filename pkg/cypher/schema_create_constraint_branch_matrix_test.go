@@ -285,8 +285,10 @@ func TestMonster531RejectMalformedCompositeUnique(t *testing.T) {
 		{"(n:CU)", "(m.a, m.b)"},
 		{"(n:CU)", "(n.a, n.b + 1)"},
 		{"(n:CU)", "(n.a, n.b,)"},
+		{"(n:CU)", "(n.a, n.b, /* missing property */)"},
 		{"()-[r:CU]-()", "(r.a, s.b)"},
 		{"()-[r:CU]-()", "(r.a, r.b + 1)"},
+		{"()-[r:CU]-()", "(r.a, r.b,)"},
 	} {
 		t.Run(testCase.pattern+testCase.predicate, func(t *testing.T) {
 			exec, store := newTestExecutor(t)

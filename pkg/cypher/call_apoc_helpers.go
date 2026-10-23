@@ -6,7 +6,10 @@ package cypher
 
 // findMatchingParen finds the index of the closing parenthesis matching the one at startIdx.
 func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
-	return findMatchingDelimiter(s, startIdx, '(', ')')
+	if startIdx < 0 || startIdx >= len(s) || s[startIdx] != '(' {
+		return -1
+	}
+	return syntaxGroupClose(s, startIdx)
 }
 
 // findMatchingBrace finds the index of the closing brace matching the one at startIdx.
@@ -40,10 +43,8 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 // extractProcedureName uses the same component reader as authorization,
 // retaining exact case while accepting quoted names and spaced separators.
 func extractProcedureName(cypher string) string {
-	if at := keywordIndexFrom(cypher, "CALL", 0, defaultKeywordScanOpts()); at >= 0 {
-		if name, ok := procedureNameAt(cypher, at+len("CALL")); ok {
-			return name
-		}
+	if call, ok := firstProcedureCall(cypher); ok {
+		return call.name
 	}
 	// Fallback: return truncated query
 	if len(cypher) > 60 {

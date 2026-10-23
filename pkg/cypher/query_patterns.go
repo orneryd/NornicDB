@@ -101,7 +101,7 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	}
 
 	// Check for incoming count aggregation
-	if info.Pattern == PatternGeneric && strings.Contains(upperQuery, "COUNT(") {
+	if info.Pattern == PatternGeneric && containsFunctionCallNamed(upperQuery, "COUNT") {
 		// Guardrails: the (in|out) count optimizers only support a very narrow query shape.
 		// Do NOT route queries that:
 		//   - have other aggregations (AVG/SUM/MIN/MAX/COLLECT)
@@ -109,11 +109,11 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 		//
 		// Those queries should use the generic executor (and any traversal fast paths),
 		// otherwise we can mis-route multi-hop queries and/or return incorrect columns.
-		if !strings.Contains(upperQuery, "SUM(") &&
-			!strings.Contains(upperQuery, "AVG(") &&
-			!strings.Contains(upperQuery, "MIN(") &&
-			!strings.Contains(upperQuery, "MAX(") &&
-			!strings.Contains(upperQuery, "COLLECT(") {
+		if !containsFunctionCallNamed(upperQuery, "SUM") &&
+			!containsFunctionCallNamed(upperQuery, "AVG") &&
+			!containsFunctionCallNamed(upperQuery, "MIN") &&
+			!containsFunctionCallNamed(upperQuery, "MAX") &&
+			!containsFunctionCallNamed(upperQuery, "COLLECT") {
 			matchClause := extractMatchClause(query)
 			if countRelationshipPatterns(matchClause) == 1 {
 				if detectIncomingCountAgg(ctx, query, &info) {
@@ -246,12 +246,7 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable (the one doing the incoming), and
 	// only optimize the narrow "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := upperASCII(query)
-	countPattern := "COUNT(" + upperASCII(endVar)
-	countStarPattern := "COUNT(*)"
-
-	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
-		isReturnNameCountShape(query, startVar, endVar) {
+	if isReturnNameCountShape(query, startVar, endVar) {
 		info.Pattern = PatternIncomingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -273,10 +268,7 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable, and only optimize the narrow
 	// "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := upperASCII(query)
-	countPattern := "COUNT(" + upperASCII(endVar)
-
-	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
+	if isReturnNameCountShape(query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
 		info.StartVar = startVar
 		info.EndVar = endVar
@@ -331,9 +323,8 @@ func isReturnNameCountShape(query string, startVar string, endVar string) bool {
 	}
 
 	// Require COUNT(endVar) or COUNT(*).
-	rightUpper := upperASCII(strings.ReplaceAll(right, " ", ""))
-	wantCountVar := "COUNT(" + upperASCII(endVar) + ")"
-	return rightUpper == wantCountVar || rightUpper == "COUNT(*)"
+	name, arguments, called := parseFunctionCallArguments(right)
+	return called && strings.EqualFold(name, "count") && len(arguments) == 1 && (arguments[0] == "*" || simpleSemanticIdentifier(arguments[0]) == endVar)
 }
 
 func parseDirectionalCountPattern(ctx context.Context, matchClause string, incoming bool) (string, string, string, string, bool) {
@@ -391,15 +382,12 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 
 	for _, item := range returnItems[1:] {
 		expr, _ := parseProjectionExprAlias(item.expr)
-		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
-		open := strings.IndexByte(u, '(')
-		close := strings.LastIndexByte(u, ')')
-		if open <= 0 || close <= open {
+		name, arguments, ok := parseFunctionCallWS(expr)
+		if !ok {
 			continue
 		}
-		aggFunc := lowerASCII(u[:open])
-		inner := u[open+1 : close]
-
+		aggFunc := lowerASCII(name)
+		inner := upperASCII(stripExpressionWhitespace(StripComments(arguments)))
 		if aggFunc == "count" {
 			if inner == "*" || strings.EqualFold(inner, upperASCII(relVar)) {
 				continue
@@ -481,23 +469,20 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 			item = strings.TrimSpace(item[:asIdx])
 		}
 
-		u := upperASCII(strings.ReplaceAll(item, " ", ""))
+		name, arguments, ok := parseFunctionCallWS(item)
+		if !ok {
+			return false
+		}
+		inner := upperASCII(stripExpressionWhitespace(StripComments(arguments)))
 		switch {
-		case strings.HasPrefix(u, "COUNT(") && strings.HasSuffix(u, ")"):
+		case strings.EqualFold(name, "count"):
 			// Allow COUNT(r) and COUNT(*).
-			inner := strings.TrimSuffix(strings.TrimPrefix(u, "COUNT("), ")")
 			if inner == "*" || strings.EqualFold(inner, relVar) {
 				continue
 			}
 			return false
 
-		case strings.HasPrefix(u, "SUM(") || strings.HasPrefix(u, "AVG(") || strings.HasPrefix(u, "MIN(") || strings.HasPrefix(u, "MAX("):
-			open := strings.IndexByte(u, '(')
-			close := strings.LastIndexByte(u, ')')
-			if open < 0 || close < 0 || close <= open+1 {
-				return false
-			}
-			inner := u[open+1 : close]
+		case strings.EqualFold(name, "sum"), strings.EqualFold(name, "avg"), strings.EqualFold(name, "min"), strings.EqualFold(name, "max"):
 			if !strings.HasPrefix(inner, wantAggPrefix) {
 				return false
 			}
@@ -518,19 +503,8 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 // directly follows a name that isn't a clause keyword (MATCH(n), WHERE(...)
 // open patterns and expressions).
 func functionCallParenAt(text string, open int) bool {
-	end := open
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	if start == end {
-		return false
-	}
-	switch upperASCII(text[start:end]) {
-	case "MATCH", "CREATE", "MERGE", "WHERE", "AND", "OR", "XOR", "NOT", "WITH", "RETURN", "UNWIND", "IN", "DELETE", "SET", "REMOVE", "FOREACH", "YIELD":
-		return false
-	}
-	return true
+	call, ok := functionCallBeforeParen(text, open)
+	return ok && !isNonFunctionSemanticKeyword(call.normalized)
 }
 
 // extractNodeVariables extracts node variable names from a MATCH pattern,

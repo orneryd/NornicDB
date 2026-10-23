@@ -920,43 +920,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 	})
 }
 
-// splitArgsRespectingArrays splits arguments, keeping array brackets together
-func (e *StorageExecutor) splitArgsRespectingArrays(args string) []string {
-	var result []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := byte(0)
-
-	for i := 0; i < len(args); i++ {
-		c := args[i]
-		if (c == '\'' || c == '"') && !isBackslashEscaped(args, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteByte(c)
-		} else if c == '[' && !inQuote {
-			depth++
-			current.WriteByte(c)
-		} else if c == ']' && !inQuote {
-			depth--
-			current.WriteByte(c)
-		} else if c == ',' && depth == 0 && !inQuote {
-			result = append(result, current.String())
-			current.Reset()
-		} else {
-			current.WriteByte(c)
-		}
-	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-	return result
-}
-
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
 func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {

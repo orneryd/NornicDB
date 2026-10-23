@@ -99,7 +99,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Conte
 }
 
 func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return nil
 	}
@@ -218,72 +218,26 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	inSingle, inDouble, inBacktick := false, false, false
+	if !strings.ContainsRune(expr, '.') {
+		return "", "", false
+	}
+	syntax := readFunctionSyntax(expr)
 	lastDot := -1
-	for index := 0; index < len(expr); index++ {
-		ch := expr[index]
-		if ch == '\\' && (inSingle || inDouble) {
-			index++
-			continue
-		}
-		// A backtick-quoted name may hold any character, dots included.
-		if ch == '`' && !inSingle && !inDouble {
-			inBacktick = !inBacktick
-			continue
-		}
-		if inBacktick {
-			continue
-		}
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '(':
-			if !inSingle && !inDouble {
-				parenDepth++
-			}
-		case ')':
-			if !inSingle && !inDouble && parenDepth > 0 {
-				parenDepth--
-			}
-		case '[':
-			if !inSingle && !inDouble {
-				bracketDepth++
-			}
-		case ']':
-			if !inSingle && !inDouble && bracketDepth > 0 {
-				bracketDepth--
-			}
-		case '{':
-			if !inSingle && !inDouble {
-				braceDepth++
-			}
-		case '}':
-			if !inSingle && !inDouble && braceDepth > 0 {
-				braceDepth--
-			}
-		case '.':
-			if !inSingle && !inDouble && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				lastDot = index
-			}
+	for _, at := range syntax.rootPunctuation {
+		if expr[at] == '.' {
+			lastDot = at
 		}
 	}
 	if lastDot <= 0 || lastDot == len(expr)-1 {
 		return "", "", false
 	}
-	property := strings.TrimSpace(expr[lastDot+1:])
+	property := syntax.render(syntaxSpan{lastDot + 1, len(expr)})
 	if isBacktickQuotedName(property) {
 		property = normalizePropertyKey(property)
 	} else if !isValidIdentifier(property) {
 		return "", "", false
 	}
-	base := strings.TrimSpace(expr[:lastDot])
+	base := syntax.render(syntaxSpan{0, lastDot})
 	// Property access binds tighter than any operator: in 'x' + o.missing the
 	// access is o.missing, not ('x' + o).missing. A base with a top-level
 	// operator is not a postfix access.

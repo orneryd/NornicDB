@@ -604,37 +604,8 @@ func normalizeUnwindExpression(expr string) string {
 }
 
 func hasOuterParens(s string) bool {
-	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
-		return false
-	}
-	depth := 0
-	inSingle := false
-	inDouble := false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch ch {
-		case '\'':
-			if !inDouble {
-				inSingle = !inSingle
-			}
-		case '"':
-			if !inSingle {
-				inDouble = !inDouble
-			}
-		case '(':
-			if !inSingle && !inDouble {
-				depth++
-			}
-		case ')':
-			if !inSingle && !inDouble {
-				depth--
-				if depth == 0 && i < len(s)-1 {
-					return false
-				}
-			}
-		}
-	}
-	return depth == 0 && !inSingle && !inDouble
+	_, enclosed := parenthesizedFunctionExpression(s)
+	return enclosed
 }
 
 // coerceToUnwindItems is the one UNWIND coercion, as in Neo4j (#693): null
@@ -1070,20 +1041,13 @@ func extractVariableNameFromReturnItem(expr string) string {
 	}
 
 	// Handle function calls like id(n), elementId(n), etc.
-	if strings.Contains(expr, "(") {
-		// Extract variable from function call: id(n) -> n
-		openParen := strings.Index(expr, "(")
-		closeParen := strings.LastIndex(expr, ")")
-		if openParen > 0 && closeParen > openParen {
-			inner := strings.TrimSpace(expr[openParen+1 : closeParen])
-			// If inner contains a dot, it's property access: id(n.name) -> n
-			if dotIdx := strings.Index(inner, "."); dotIdx > 0 {
-				return strings.TrimSpace(inner[:dotIdx])
-			}
-			return inner
+	if _, inner, ok := parseFunctionCallWS(expr); ok {
+		inner = strings.TrimSpace(inner)
+		if dot := strings.IndexByte(inner, '.'); dot > 0 {
+			return strings.TrimSpace(inner[:dot])
 		}
+		return inner
 	}
-
 	// Handle property access: n.name -> n
 	if strings.Contains(expr, ".") {
 		parts := strings.SplitN(expr, ".", 2)

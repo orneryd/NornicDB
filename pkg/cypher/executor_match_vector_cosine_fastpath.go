@@ -948,8 +948,8 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 	}
 	compact := lowerASCII(strings.ReplaceAll(expr, " ", ""))
 	lowerVar := lowerASCII(varName)
-	if strings.Contains(compact, "properties("+lowerVar+")") ||
-		strings.Contains(compact, "keys("+lowerVar+")") ||
+	if functionReadsVariable(expr, "properties", varName) ||
+		functionReadsVariable(expr, "keys", varName) ||
 		strings.Contains(compact, lowerVar+"{") ||
 		strings.Contains(compact, lowerVar+"[") {
 		return false

@@ -17,7 +17,8 @@ import (
 //	if err != nil {
 //	    // handle error
 //	}
-//	// ast.Clauses contains structured representation
+
+// // ast.Clauses contains structured representation
 type ASTBuilder struct {
 	// Precompiled patterns for performance
 	nodePattern     *regexp.Regexp
@@ -806,33 +807,27 @@ func (b *ASTBuilder) parseSkip(text string) *int64 {
 func (b *ASTBuilder) parseCall(text string) *ASTCall {
 	call := &ASTCall{}
 	content := strings.TrimSpace(text[len("CALL"):])
-
-	// Find procedure name and arguments
-	if parenIdx := strings.Index(content, "("); parenIdx > 0 {
-		call.Procedure = strings.TrimSpace(content[:parenIdx])
-
-		// Find closing paren
-		closeIdx := strings.LastIndex(content, ")")
-		if closeIdx > parenIdx {
-			call.RawArgs = content[parenIdx+1 : closeIdx]
-
-			// Parse YIELD if present
-			rest := strings.TrimSpace(content[closeIdx+1:])
-			if strings.HasPrefix(upperASCII(rest), "YIELD") {
-				yieldContent := strings.TrimSpace(rest[5:])
-				yields := strings.Split(yieldContent, ",")
-				for _, y := range yields {
-					y = strings.TrimSpace(y)
-					if y != "" {
-						call.Yield = append(call.Yield, y)
-					}
-				}
-			}
+	syntax := readFunctionSyntax(text)
+	for _, invocation := range syntax.calls {
+		if !invocation.procedure {
+			continue
 		}
-	} else {
-		call.Procedure = content
+		call.Procedure = invocation.name
+		if invocation.open < 0 {
+			return call
+		}
+		close := invocation.close(text)
+		if close < 0 {
+			return call
+		}
+		call.RawArgs = text[invocation.open+1 : close]
+		rest := syntax.render(syntaxSpan{close + 1, len(text)})
+		if startsWithKeywordFold(rest, "YIELD") {
+			call.Yield = splitTopLevelComma(strings.TrimSpace(rest[len("YIELD"):]))
+		}
+		return call
 	}
-
+	call.Procedure = content
 	return call
 }
 
@@ -983,7 +978,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// Property access (n.prop)
-	if dotIdx := strings.Index(text, "."); dotIdx > 0 && !strings.Contains(text, "(") {
+	if dotIdx := strings.Index(text, "."); dotIdx > 0 && len(readFunctionSyntax(text).calls) == 0 {
 		expr.Type = ASTExprProperty
 		expr.Property = &ASTPropertyAccess{
 			Variable: text[:dotIdx],
@@ -993,31 +988,19 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	}
 
 	// Function call
-	if parenIdx := strings.Index(text, "("); parenIdx > 0 {
-		closeParen := strings.LastIndex(text, ")")
-		if closeParen > parenIdx {
-			expr.Type = ASTExprFunction
-			funcName := strings.TrimSpace(text[:parenIdx])
-			argsText := text[parenIdx+1 : closeParen]
-
-			fc := &ASTFunctionCall{Name: funcName}
-
-			// Check for DISTINCT
-			argsText, fc.Distinct = cutDistinctArgument(argsText)
-
-			args := splitOutsideBrackets(argsText, ',')
-			for _, arg := range args {
-				arg = strings.TrimSpace(arg)
-				if arg != "" && arg != "*" {
-					fc.Arguments = append(fc.Arguments, b.parseExpression(arg))
-				}
+	if name, argsText, ok := parseFunctionCallWS(text); ok {
+		expr.Type = ASTExprFunction
+		fc := &ASTFunctionCall{Name: name}
+		argsText, fc.Distinct = cutDistinctArgument(argsText)
+		for _, arg := range splitTopLevelComma(argsText) {
+			arg = strings.TrimSpace(arg)
+			if arg != "" && arg != "*" {
+				fc.Arguments = append(fc.Arguments, b.parseExpression(arg))
 			}
-
-			expr.Function = fc
-			return expr
 		}
+		expr.Function = fc
+		return expr
 	}
-
 	// Default: treat as variable
 	expr.Type = ASTExprVariable
 	expr.Variable = text
@@ -1026,54 +1009,7 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 
 // splitOutsideBrackets splits string by delimiter, ignoring delimiters inside brackets.
 func splitOutsideBrackets(s string, delim rune) []string {
-	var parts []string
-	var current strings.Builder
-	depth := 0
-	inString := false
-	stringChar := rune(0)
-
-	for _, ch := range s {
-		if inString {
-			current.WriteRune(ch)
-			if ch == stringChar {
-				inString = false
-			}
-			continue
-		}
-
-		if ch == '\'' || ch == '"' {
-			inString = true
-			stringChar = ch
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == '(' || ch == '[' || ch == '{' {
-			depth++
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == ')' || ch == ']' || ch == '}' {
-			depth--
-			current.WriteRune(ch)
-			continue
-		}
-
-		if ch == delim && depth == 0 {
-			parts = append(parts, current.String())
-			current.Reset()
-			continue
-		}
-
-		current.WriteRune(ch)
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
+	return readFunctionSyntax(s).splitDelimiter(delim)
 }
 
 // determineReadOnly checks if the AST represents a read-only query.

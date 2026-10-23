@@ -244,8 +244,8 @@ func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 func aggregateContains(expression string, predicate func(string) bool) bool {
 	for _, span := range findAggregateSpans(expression) {
 		call := expression[span.start:span.end]
-		open := strings.IndexByte(call, '(')
-		if predicate(call[open+1 : len(call)-1]) {
+		_, inner, _ := parseFunctionCallWS(call)
+		if predicate(inner) {
 			return true
 		}
 	}
@@ -253,24 +253,8 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 }
 
 func containsFunctionCallNamed(expression, expected string) bool {
-	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if strings.EqualFold(normalizeProjectionColumnName(name), expected) && cursor < len(expression) && expression[cursor] == '(' {
-			return true
-		}
-		index = next
-	}
-	return false
+	return lexicalHasFunction(expression, expected)
 }
-
 func pipelineReturnSourceColumns(clause string) []string {
 	body := strings.TrimSpace(clause[len("RETURN"):])
 	end := len(body)
@@ -314,6 +298,7 @@ func semanticExpressionReferences(expression string) []string {
 // forEachSemanticExpressionReference calls visit with each reference
 // semanticExpressionReferences finds and the offset of its variable.
 func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
+	syntax := functionSyntaxView{text: expression}
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -357,10 +342,10 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if cursor < len(expression) && expression[cursor] == ':' {
 			continue
 		}
-		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
+		if call, called := syntax.callAt(start); called {
 			// apoc.coll.sort(…): a namespaced function's name, not a
 			// variable and its property.
-			index = end
+			index = call.open
 			continue
 		}
 		normalized := normalizeProjectionColumnName(name)
@@ -379,18 +364,6 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		}
 		visit(normalized, start)
 	}
-}
-
-// qualifiedFunctionNameEnd reports whether the name before at continues as
-// a namespace path (.name …) that a call's '(' follows, and where the path
-// ends.
-func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
-	parts, end := dottedNameParts(expression, at, true)
-	cursor := queryGapEnd(expression, end)
-	if parts == "" || cursor >= len(expression) || expression[cursor] != '(' {
-		return at, false
-	}
-	return cursor, true
 }
 
 // semanticFreeReferences returns the variables and variable.property

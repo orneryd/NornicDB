@@ -400,44 +400,15 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
+	syntax := readFunctionSyntax(text)
 	for index := 0; index < len(text); {
-		// Comment contents are never code.
-		if end := queryGapEnd(text, index); end > index {
-			index = end
-			continue
-		}
-		switch text[index] {
-		case '\'', '"':
-			index = skipQuotedSemanticText(text, index)
-			continue
-		}
-		name, next, ok := scanIdentifierToken(text, index)
+		call, ok := syntax.nextCall(index, true, false, false)
 		if !ok {
-			index++
-			continue
+			break
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || text[index-1] == ':' || isIdentByte(text[index-1])) {
-			index = next
-			continue
-		}
-		if precededByTypeAnnotation(text, index) {
-			// `x IS :: DATE` names a type, not a call: in a REQUIRE { ... }
-			// block the next entry may start with "(", which must not read
-			// as DATE(...).
-			index = next
-			continue
-		}
-		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, next, true)
-		name, next = name+parts, end
-
-		open := queryGapEnd(text, next)
-		if open >= len(text) || text[open] != '(' {
-			index = next
-			continue
-		}
+		name, open := call.name, call.open
 		if isReduceFormFunction(name) {
-			if err := checkReduceForm(name, text, open, check); err != nil {
+			if err := checkReduceForm(name, text, call, check); err != nil {
 				return err
 			}
 			index = open + 1
@@ -449,12 +420,12 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = open + 1
 			continue
 		}
-		closing := findMatchingDelimiter(text, open, '(', ')')
+		closing := call.close(text)
 		if closing < 0 {
 			return nil
 		}
-		inner := strings.TrimSpace(text[open+1 : closing])
-		inner, _ = cutDistinctArgument(inner)
+		inner := call.syntax.render(syntaxSpan{open + 1, closing})
+		inner, distinct := cutDistinctArgument(inner)
 		if strings.EqualFold(inner, "ALL") {
 			// f(all) is f's ALL modifier with no argument, as in Neo4j
 			// (count(all) fails "Insufficient parameters"), not a variable
@@ -473,7 +444,13 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			}
 		}
 		var buffer [8]string
-		expressions := appendTopLevelComma(buffer[:0], inner)
+		expressions := call.arguments(buffer[:0])
+		if len(expressions) > 0 && distinct {
+			expressions[0] = strings.TrimSpace(expressions[0][len("DISTINCT"):])
+		}
+		if inner == "" {
+			expressions = expressions[:0]
+		}
 		if counted {
 			if err := checkFunctionArity(name, arity, len(expressions)); err != nil {
 				return err
@@ -995,8 +972,8 @@ func uniformListElementType(list string) string {
 // call whose parentheses open at open: the call must have the function's
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
-func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
-	closing := findMatchingDelimiter(text, open, '(', ')')
+func checkReduceForm(function, text string, call functionCallSpan, check func(staticArgumentType, string, int) error) error {
+	open, closing := call.open, call.close(text)
 	if closing < 0 {
 		return nil
 	}

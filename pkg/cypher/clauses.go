@@ -104,9 +104,12 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 // expression at the top level. Recognizes the canonical forms
 // `collect(...)`, `count(...)`, etc., case-insensitively.
 func isAggregateExpression(expr string) bool {
-	trimmed := lowerASCII(strings.TrimSpace(expr))
-	for _, fn := range cypherAggregateNames {
-		if strings.HasPrefix(trimmed, fn+"(") || strings.HasPrefix(trimmed, fn+" (") {
+	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
+	if !ok {
+		return false
+	}
+	for _, name := range cypherAggregateNames {
+		if strings.EqualFold(call.name, name) {
 			return true
 		}
 	}
@@ -125,13 +128,14 @@ func isAggregateExpression(expr string) bool {
 //
 // stdev / stdevp follow the avg convention (null on empty input).
 func aggregateIdentity(expr string) interface{} {
-	trimmed := lowerASCII(strings.TrimSpace(expr))
-	switch {
-	case strings.HasPrefix(trimmed, "collect("), strings.HasPrefix(trimmed, "collect ("):
+	call, ok := functionCallAt(expr, queryGapEnd(expr, 0))
+	if !ok {
+		return nil
+	}
+	switch call.normalized {
+	case "collect":
 		return []interface{}{}
-	case strings.HasPrefix(trimmed, "count("), strings.HasPrefix(trimmed, "count ("):
-		return int64(0)
-	case strings.HasPrefix(trimmed, "sum("), strings.HasPrefix(trimmed, "sum ("):
+	case "count", "sum":
 		return int64(0)
 	}
 	return nil
@@ -151,43 +155,7 @@ func rowHasAggregate(items []returnItem) bool {
 
 // splitWithItems splits WITH expressions respecting nested brackets and quotes
 func (e *StorageExecutor) splitWithItems(expr string) []string {
-	var items []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for _, c := range expr {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteRune(c)
-		case c == '(' || c == '[' || c == '{':
-			if !inQuote {
-				depth++
-			}
-			current.WriteRune(c)
-		case c == ')' || c == ']' || c == '}':
-			if !inQuote {
-				depth--
-			}
-			current.WriteRune(c)
-		case c == ',' && depth == 0 && !inQuote:
-			items = append(items, current.String())
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-	if current.Len() > 0 {
-		items = append(items, current.String())
-	}
-	return items
+	return readFunctionSyntax(expr).appendArguments(nil, 0, false)
 }
 
 type unwindSimpleSetAssignment struct {
@@ -1383,11 +1351,11 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		left := strings.TrimSpace(parts[0])
 		right := strings.TrimSpace(parts[1])
-		lowerLeft := lowerASCII(left)
-		if !strings.HasPrefix(lowerLeft, "elementid(") || !strings.HasSuffix(left, ")") {
+		functionName, _, _ := parseFunctionCallWS(left)
+		if !strings.EqualFold(functionName, "elementId") {
 			return rootSpec{}, false
 		}
-		whereVar := strings.TrimSpace(left[len("elementId(") : len(left)-1])
+		whereVar := singleFunctionArgument(left)
 		rowVar, rowField, ok := parseRowFieldRef(right)
 		if !ok || !strings.EqualFold(whereVar, varName) || !strings.EqualFold(rowVar, unwindVar) {
 			return rootSpec{}, false
@@ -1676,7 +1644,7 @@ func canApplySetBasedUnwindRewrite(query string, items []interface{}) bool {
 		findKeywordIndex(query, "REMOVE") >= 0 {
 		return false
 	}
-	if !strings.Contains(upper, "RETURN") || !strings.Contains(upper, "COUNT(") {
+	if !strings.Contains(upper, "RETURN") || !containsFunctionCallNamed(upper, "COUNT") {
 		return false
 	}
 	// Rewrites should preserve semantics. We only apply when unwind items are

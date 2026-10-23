@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
@@ -345,10 +347,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 			return true
 		}
 	}
-	j := end
-	for j < len(s) && isASCIISpace(s[j]) {
-		j++
-	}
+	j := queryGapEnd(s, end)
 	if j < len(s) && s[j] == ':' {
 		return true // a map key: {set: 1}
 	}
@@ -1280,23 +1279,7 @@ func queryWhitespaceAt(query string, index int) int {
 // query[index], or -1 when none starts there. A line comment ends before
 // its line break.
 func queryCommentEnd(query string, index int) int {
-	if index+1 >= len(query) || query[index] != '/' {
-		return -1
-	}
-	switch query[index+1] {
-	case '/':
-		end := index + 2
-		for end < len(query) && query[end] != '\n' && query[end] != '\r' {
-			end++
-		}
-		return end
-	case '*':
-		if close := strings.Index(query[index+2:], "*/"); close >= 0 {
-			return index + 2 + close + 2
-		}
-		return len(query)
-	}
-	return -1
+	return cyphertext.CommentEnd(query, index)
 }
 
 // queryGapEnd returns the end of the run of whitespace and comments that
@@ -1346,6 +1329,21 @@ func queryGapStart(query string, index int) int {
 		start = at
 	}
 	return start
+}
+
+// trimQueryTrivia removes surrounding whitespace and comments without changing
+// quoted data or expression offsets within the retained text. Evaluation must
+// accept trivia even when optional statement normalization is disabled.
+func trimQueryTrivia(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.IndexByte(text, '/') < 0 {
+		return text
+	}
+	start, end := queryGapEnd(text, 0), queryGapStart(text, len(text))
+	if end < start {
+		end = start
+	}
+	return text[start:end]
 }
 
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
@@ -2047,24 +2045,16 @@ func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
 	if start < 0 || start >= len(query) || query[start] != quote {
 		return start, false
 	}
-	for index := start + 1; index < len(query); index++ {
-		if query[index] == '\\' && quote != '`' && index+1 < len(query) {
-			index++
-			continue
-		}
-		if query[index] != quote {
-			continue
-		}
-		if index+1 < len(query) && query[index+1] == quote {
-			index++
-			continue
-		}
-		return index + 1, true
-	}
-	return len(query), false
+	return cyphertext.ScanQuotedText(query, start)
 }
 
 func scanIdentifierToken(text string, start int) (string, int, bool) {
+	return readIdentifierToken(text, start, false)
+}
+
+// Callable identifiers stop at Unicode trivia. Both identifier policies use
+// this one forward token reader, without scanning ASCII components twice.
+func readIdentifierToken(text string, start int, unicodeTrivia bool) (string, int, bool) {
 	if start < 0 || start >= len(text) {
 		return "", start, false
 	}
@@ -2078,8 +2068,14 @@ func scanIdentifierToken(text string, start int) (string, int, bool) {
 	if !isIdentStartByte(text[start]) {
 		return "", start, false
 	}
+	if unicodeTrivia && text[start] >= 0x80 && queryWhitespaceAt(text, start) > 0 {
+		return "", start, false
+	}
 	end := start + 1
 	for end < len(text) && isIdentByte(text[end]) {
+		if unicodeTrivia && text[end] >= 0x80 && queryWhitespaceAt(text, end) > 0 {
+			break
+		}
 		end++
 	}
 	return text[start:end], end, true

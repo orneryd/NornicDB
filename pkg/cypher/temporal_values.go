@@ -202,19 +202,17 @@ func rowStatementContext(values map[string]interface{}) context.Context {
 // scores at the statement's time (#866). A row expression with one carries
 // the statement context (rowStatementContextKey).
 func containsStatementClockCall(expression string) bool {
-	for index := 0; index < len(expression); index++ {
-		if expression[index] != '(' {
-			continue
+	if !mayHaveFunctionCall(expression) {
+		return false
+	}
+	syntax := readFunctionSyntax(expression)
+	for index := 0; index < len(expression); {
+		call, ok := syntax.nextCall(index, true, false, false)
+		if !ok {
+			break
 		}
-		end := index
-		for end > 0 && isASCIISpace(expression[end-1]) {
-			end--
-		}
-		start := end
-		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
-			start--
-		}
-		name := expression[start:end]
+		index = call.open + 1
+		name := call.name
 		if dot := strings.IndexByte(name, '.'); dot >= 0 {
 			name = name[:dot]
 		}
@@ -357,7 +355,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		argument = strings.TrimSpace(argument)
-		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
+		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && functionArgumentCount(argument) > 1 {
 			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
 				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
 				return value, true, err

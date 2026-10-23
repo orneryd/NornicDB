@@ -1057,40 +1057,9 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 }
 
 func findTopLevelByte(input string, target byte) int {
-	inSingle := false
-	inDouble := false
-	parenDepth := 0
-	bracketDepth := 0
-	braceDepth := 0
-	for i := 0; i < len(input); i++ {
-		ch := input[i]
-		switch {
-		case inSingle:
-			if ch == '\'' {
-				inSingle = false
-			}
-		case inDouble:
-			if ch == '"' {
-				inDouble = false
-			}
-		case ch == '\'':
-			inSingle = true
-		case ch == '"':
-			inDouble = true
-		case ch == '(':
-			parenDepth++
-		case ch == ')':
-			parenDepth--
-		case ch == '[':
-			bracketDepth++
-		case ch == ']':
-			bracketDepth--
-		case ch == '{':
-			braceDepth++
-		case ch == '}':
-			braceDepth--
-		case ch == target && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0:
-			return i
+	for _, at := range readFunctionSyntax(input).rootPunctuation {
+		if input[at] == target {
+			return at
 		}
 	}
 	return -1

@@ -116,75 +116,23 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
-	return forEachSemanticCall(text, func(name, normalized string, _ int, procedure bool) error {
-		if procedure {
-			return nil
-		}
-		return visit(name, normalized)
-	})
+	return lexicalFunctionInvocations(text, func(name, normalized string, _ int) error { return visit(name, normalized) })
 }
-
-// forEachSemanticCall is the token-aware owner for function and procedure
-// detection. arguments is the position after the opening parenthesis (or the
-// end of a procedure name when its optional parentheses are absent).
-func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
-	expression := text
-	for index := 0; index < len(expression); {
-		if expression[index] == '\'' || expression[index] == '"' {
-			index = skipQuotedSemanticText(expression, index)
-			continue
-		}
-		if end := queryCommentEnd(expression, index); end >= 0 {
-			index = end
-			continue
-		}
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		procedure := expression[index] != '`' && strings.EqualFold(name, "CALL")
-		if procedure || expression[index] != '`' && strings.EqualFold(name, "USE") {
-			start := queryGapEnd(expression, next)
-			called, end, named := scanIdentifierToken(expression, start)
-			if !named {
-				index = next
-				continue
-			}
-			name, next = called, end
-			if !procedure {
-				_, index = dottedNameParts(expression, next, true)
-				continue
-			}
-		}
-		parts, cursor := dottedNameParts(expression, next, true)
-		name += parts
-		cursor = queryGapEnd(expression, cursor)
-		parenthesis := cursor < len(expression) && expression[cursor] == '('
-		if !parenthesis && !procedure {
-			index = next
-			continue
-		}
-		index = cursor
-		if parenthesis {
-			index++
-		}
-		normalized := lowerASCII(normalizeProjectionColumnName(name))
-		// Clause and predicate keywords can legally be followed by a parenthesized
-		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
-		// function invocations.
-		if !procedure && isNonFunctionSemanticKeyword(normalized) {
-			continue
-		}
-		if err := visit(name, normalized, index, procedure); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func isNonFunctionSemanticKeyword(name string) bool {
-	switch name {
+	// Every keyword here fits this stack buffer. Boolean syntax consumers
+	// can classify the original spelling without allocating a lowercase name.
+	var folded [16]byte
+	if len(name) > len(folded) {
+		return false
+	}
+	for index := range len(name) {
+		character := name[index]
+		if character >= 'A' && character <= 'Z' {
+			character += 'a' - 'A'
+		}
+		folded[index] = character
+	}
+	switch string(folded[:len(name)]) {
 	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
 		return true
 	default:
@@ -192,55 +140,23 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
-// dottedNameParts returns the dotted parts (.b.c) following a name that ends
-// at end, and where they end. Each name is read as the code that runs it
-// reads it: whitespace may stand around a dot only when spaced is set, for a
-// procedure, function or graph name. Contiguous unquoted components reuse
-// the source slice; only names containing trivia or quotes are normalized.
-func dottedNameParts(expression string, end int, spaced bool) (string, int) {
-	skip := func(index int) int {
-		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
-			return queryGapEnd(expression, index)
-		}
-		return index
-	}
-	origin := end
-	var normalized strings.Builder
-	normalizing := false
-	for {
-		dot := skip(end)
-		if dot >= len(expression) || expression[dot] != '.' {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		partStart := skip(dot + 1)
-		part, partEnd, ok := scanIdentifierToken(expression, partStart)
+// forEachSemanticCall retains the procedure dependency inventory, using the
+// same lexical spans as runtime and static function consumers.
+func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
+	syntax := readFunctionSyntax(text)
+	for index := 0; index < len(text); {
+		call, ok := syntax.nextCall(index, true, true, false)
 		if !ok {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
+			break
 		}
-		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
-			normalized.WriteString(expression[origin:end])
-			normalizing = true
+		if err := visit(call.name, call.normalized, call.next, call.procedure); err != nil {
+			return err
 		}
-		if normalizing {
-			normalized.WriteByte('.')
-			normalized.WriteString(part)
-		}
-		end = partEnd
+		index = call.next
 	}
+	return nil
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
-	quote := expression[start]
-	for index := start + 1; index < len(expression); index++ {
-		if expression[index] == quote && !isBackslashEscaped(expression, index) {
-			return index + 1
-		}
-	}
-	return len(expression)
+	return skipCypherQuotedText(expression, start, expression[start])
 }

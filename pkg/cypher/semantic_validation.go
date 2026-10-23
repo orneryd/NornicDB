@@ -495,6 +495,14 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 	expression = maskPathFunctionCalls(expression)
 	segmentStart := 0
 	for index := 0; index < len(expression); index++ {
+		if end := queryCommentEnd(expression, index); end >= 0 {
+			index = end - 1
+			continue
+		}
+		if c := expression[index]; c == '\'' || c == '"' || c == '`' {
+			index = skipCypherQuotedText(expression, index, c) - 1
+			continue
+		}
 		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
 			continue
 		}
@@ -527,34 +535,26 @@ func maskPathFunctionCalls(expression string) string {
 		return expression
 	}
 	masked := []byte(expression)
-	for _, name := range []string{"shortestpath", "allshortestpaths"} {
-		searchStart := 0
-		for searchStart < len(expression) {
-			idx := indexASCIIFold(expression[searchStart:], name)
-			if idx < 0 {
-				break
-			}
-			idx += searchStart
-			if !functionNameStartsAt(expression, idx) {
-				searchStart = idx + 1
-				continue
-			}
-			openParen := skipSpaces(expression, idx+len(name))
-			if openParen >= len(expression) || expression[openParen] != '(' {
-				searchStart = idx + 1
-				continue
-			}
-			closeParen := findMatchingParen(expression, openParen)
-			if closeParen < 0 {
-				break
-			}
-			for position := idx; position <= closeParen; position++ {
-				if masked[position] != '\n' && masked[position] != '\r' {
-					masked[position] = ' '
-				}
-			}
-			searchStart = closeParen + 1
+	syntax := readFunctionSyntax(expression)
+	for index := 0; index < len(expression); {
+		call, ok := syntax.nextCall(index, true, false, false)
+		if !ok {
+			break
 		}
+		index = call.open + 1
+		if !strings.EqualFold(call.name, "shortestPath") && !strings.EqualFold(call.name, "allShortestPaths") {
+			continue
+		}
+		close := call.close(expression)
+		if close < 0 {
+			break
+		}
+		for position := call.start; position <= close; position++ {
+			if masked[position] != '\n' && masked[position] != '\r' {
+				masked[position] = ' '
+			}
+		}
+		index = close + 1
 	}
 	return string(masked)
 }

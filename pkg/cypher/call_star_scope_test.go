@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -221,5 +222,30 @@ func TestCallScopeClauseSyntax(t *testing.T) {
 				require.Equal(t, byte('{'), tc.query[scope.bodyOffset], "scope reader locates the body after whitespace and the import clause")
 			}
 		})
+	}
+}
+
+func TestCallScopeClausePublicRejection(t *testing.T) {
+	prior := config.IsCypherQueryNormalizationEnabled()
+	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
+	for _, normalize := range []bool{false, true} {
+		for _, explicit := range []bool{false, true} {
+			for _, query := range []string{"CALL (x+1) { RETURN 1 AS a }", "CALL (x"} {
+				t.Run(fmt.Sprintf("normalize=%t/explicit=%t/%s", normalize, explicit, query), func(t *testing.T) {
+					config.SetCypherQueryNormalizationEnabled(normalize)
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_scope_syntax"))
+					ctx := context.Background()
+					if explicit {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+					}
+					_, err := exec.Execute(ctx, query, nil)
+					require.Error(t, err)
+					code, _ := nornicerrors.Neo4jStatus(err)
+					require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+				})
+			}
+		}
 	}
 }

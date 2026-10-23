@@ -70,14 +70,14 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 	}
 
 	kind := ""
-	lowerLeft := lowerASCII(left)
+	functionName, _, _ := parseFunctionCallWS(left)
 	switch {
-	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
+	case strings.EqualFold(functionName, "id"):
 		kind = "id"
-		variable = strings.TrimSpace(left[3 : len(left)-1])
-	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
+		variable = singleFunctionArgument(left)
+	case strings.EqualFold(functionName, "elementId"):
 		kind = "elementId"
-		variable = strings.TrimSpace(left[10 : len(left)-1])
+		variable = singleFunctionArgument(left)
 	default:
 		return "", "", false, false
 	}
@@ -198,14 +198,14 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 
 	kind := ""
 	varName := ""
-	lowerLeft := lowerASCII(left)
+	functionName, _, _ := parseFunctionCallWS(left)
 	switch {
-	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
+	case strings.EqualFold(functionName, "id"):
 		kind = "id"
-		varName = strings.TrimSpace(left[3 : len(left)-1])
-	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
+		varName = singleFunctionArgument(left)
+	case strings.EqualFold(functionName, "elementId"):
 		kind = "elementId"
-		varName = strings.TrimSpace(left[10 : len(left)-1])
+		varName = singleFunctionArgument(left)
 	default:
 		return nil, false, nil
 	}
@@ -880,14 +880,14 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 
 	kind := ""
 	varName := ""
-	lowerLeft := lowerASCII(left)
+	functionName, _, _ := parseFunctionCallWS(left)
 	switch {
-	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
+	case strings.EqualFold(functionName, "id"):
 		kind = "id"
-		varName = strings.TrimSpace(left[3 : len(left)-1])
-	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
+		varName = singleFunctionArgument(left)
+	case strings.EqualFold(functionName, "elementId"):
 		kind = "elementId"
-		varName = strings.TrimSpace(left[10 : len(left)-1])
+		varName = singleFunctionArgument(left)
 	default:
 		return nil, false, nil
 	}
@@ -1478,13 +1478,14 @@ func parseSimpleSingleIndexedIsNotNull(variable, clause string) (property string
 }
 
 func unwrapOuterParens(clause string) string {
-	out := strings.TrimSpace(clause)
-	// Only a pair that encloses the whole clause: (a) OR (b) starts and ends
-	// with a parenthesis, but they don't match each other.
-	for strings.HasPrefix(out, "(") && findMatchingDelimiter(out, 0, '(', ')') == len(out)-1 {
-		out = strings.TrimSpace(out[1 : len(out)-1])
+	out := lexicalExpressionText(clause)
+	for {
+		inner, enclosed := parenthesizedFunctionExpression(out)
+		if !enclosed {
+			return out
+		}
+		out = inner
 	}
-	return out
 }
 
 // splitTopLevelAndConjuncts splits a WHERE clause into its top-level AND
@@ -1847,42 +1848,16 @@ func tryRewriteNullNormalizedPredicate(whereClause string) string {
 		return clause
 	}
 
-	// Look for coalesce( at the start.
-	lowerClause := lowerASCII(clause)
-	if !strings.HasPrefix(lowerClause, "coalesce(") {
+	call, called := functionCallAt(clause, readFunctionSyntax(clause).leading)
+	if !called || !strings.EqualFold(call.name, "coalesce") || call.close(clause) < 0 {
 		return clause
 	}
-
-	// Find matching closing paren for coalesce(...).
-	depth := 0
-	closeIdx := -1
-	for i := 9; i < len(clause); i++ { // start after "coalesce("
-		switch clause[i] {
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 {
-				closeIdx = i
-				goto found
-			}
-			depth--
-		}
-	}
-found:
-	if closeIdx < 0 {
+	arguments := call.arguments(nil)
+	if len(arguments) != 2 {
 		return clause
 	}
-
-	inner := strings.TrimSpace(clause[9:closeIdx])
-	afterCoalesce := strings.TrimSpace(clause[closeIdx+1:])
-
-	// Parse inner: expect "var.prop, <default>"
-	commaIdx := strings.Index(inner, ",")
-	if commaIdx <= 0 {
-		return clause
-	}
-	varProp := strings.TrimSpace(inner[:commaIdx])
-	defaultVal := strings.TrimSpace(inner[commaIdx+1:])
+	varProp, defaultVal := arguments[0], arguments[1]
+	afterCoalesce := strings.TrimSpace(clause[call.close(clause)+1:])
 	if varProp == "" || defaultVal == "" {
 		return clause
 	}
