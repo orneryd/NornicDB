@@ -822,6 +822,9 @@ func temporalLocation(fields map[string]interface{}, zoned bool) (*time.Location
 }
 
 func parseTemporalOffset(value string) (int, bool) {
+	if value == "Z" {
+		return 0, true
+	}
 	if len(value) == 5 || len(value) == 7 {
 		sign := 1
 		if value[0] == '-' {
