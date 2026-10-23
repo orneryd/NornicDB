@@ -126,6 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume
   wake the worker pool; skipping deleted candidates continues draining pending work (#1230).
 - Reuse pending embedding candidates between active claims so deleted index markers are not traversed again for every document. Durable markers and atomic storage writes remain authoritative across replay and restart.
+- Keep a node findable by its indexed key while a concurrent write updates it. Property,
+  composite and uniqueness-constraint indexes now replace a node's entries in one step and
+  leave unchanged keys in place, so `MATCH`/`MERGE` on an existing node no longer matches
+  zero rows (or creates a duplicate) under concurrent writes.
 
 
 - Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream

@@ -13,21 +13,22 @@ package storage
 //   - Walk each label on the node and each property present on the node.
 //   - Consult `MaintainsPropertyIndex(label, property)` to decide whether
 //     the (label, property) pair is indexed (filled or not, #875).
-//   - Call the schema's Insert / Delete helpers only when an index exists
-//     — the helpers are no-ops for unindexed pairs but an explicit gate
-//     avoids the unnecessary map lookup on every CREATE.
+//   - Every write moves the node from its old entries to its new ones with
+//     one CompositeIndex.ReplaceNode per index (replaceNodeIndexEntries), so
+//     a concurrent seek never misses a node in between, and an unchanged key
+//     is never removed.
 //   - Namespace is derived from the node ID prefix (see
 //     extractNamespaceFromID) so the correct SchemaManager is used.
-//   - Errors are logged (via the engine logger) and NOT returned; a
-//     single bad write must not block an entire bulk CREATE. The caller
-//     can still detect failure via end-to-end correctness checks.
+//   - Maintenance cannot fail: a value with no index key (null, byte
+//     arrays, ...) is simply not filed, so a bulk CREATE is never blocked.
 //
 // This file deliberately stays storage-local — it references only
 // *BadgerEngine / *SchemaManager / *Node, no cypher / knowledgepolicy
 // imports.
 
 import (
-	"log/slog"
+	"slices"
+	"sync/atomic"
 )
 
 // maintainPropertyIndexesOnNodeCreated inserts the freshly-created node into
@@ -47,19 +48,7 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 // maintainCompositeIndexesOnNodeCreated indexes the node under every equality
 // index that covers one of its labels.
 func (b *BadgerEngine) maintainCompositeIndexesOnNodeCreated(node *Node, sm *SchemaManager) {
-	for _, label := range node.Labels {
-		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-			if idx == nil {
-				continue
-			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-				b.log.Warn("composite index insert failed",
-					slog.String("component", "storage"),
-					slog.String("label", label),
-					slog.String("index", idx.Name))
-			}
-		}
-	}
+	b.replaceNodeIndexEntries(node.ID, nil, node, sm)
 }
 
 // maintainPropertyIndexesOnNodeUpdated removes old index entries (when the
@@ -78,32 +67,10 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 	b.maintainCompositeIndexesOnNodeUpdated(node, oldNode, sm)
 }
 
-// maintainCompositeIndexesOnNodeUpdated removes the node's stale entries
-// (from oldNode, when available) and inserts its current entries.
+// maintainCompositeIndexesOnNodeUpdated moves the node from its stale entries
+// (from oldNode, when available) to its current entries.
 func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node, sm *SchemaManager) {
-	if oldNode != nil {
-		for _, label := range oldNode.Labels {
-			for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-				if idx == nil {
-					continue
-				}
-				idx.RemoveNode(oldNode.ID, oldNode.Properties)
-			}
-		}
-	}
-	for _, label := range node.Labels {
-		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-			if idx == nil {
-				continue
-			}
-			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
-				b.log.Warn("composite index insert (new) failed",
-					slog.String("component", "storage"),
-					slog.String("label", label),
-					slog.String("index", idx.Name))
-			}
-		}
-	}
+	b.replaceNodeIndexEntries(node.ID, oldNode, node, sm)
 }
 
 // maintainPropertyIndexesOnNodeDeletedWithNode removes index entries for a
@@ -164,15 +131,55 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID,
 // maintainCompositeIndexesOnNodeDeleted removes the node from every equality
 // index its cached copy could have been filed under.
 func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, cached *Node, sm *SchemaManager) {
-	for _, label := range cached.Labels {
+	b.replaceNodeIndexEntries(id, cached, nil, sm)
+}
+
+// replaceNodeIndexEntries is the one index-maintenance step of every node
+// write: for each equality index covering a label of the old or the new body,
+// it replaces the node's old entries with its new ones in one
+// CompositeIndex.ReplaceNode. A nil body is no entries (create: no old body;
+// delete: no new body); an index whose label only one body carries gets only
+// that side.
+func (b *BadgerEngine) replaceNodeIndexEntries(id NodeID, oldNode, newNode *Node, sm *SchemaManager) {
+	var oldLabels, newLabels []string
+	var oldProperties, newProperties map[string]interface{}
+	if oldNode != nil {
+		oldLabels, oldProperties = oldNode.Labels, oldNode.Properties
+	}
+	if newNode != nil {
+		newLabels, newProperties = newNode.Labels, newNode.Properties
+	}
+	replace := func(label string) {
+		before := oldProperties
+		if !slices.Contains(oldLabels, label) {
+			before = nil
+		}
+		after := newProperties
+		if !slices.Contains(newLabels, label) {
+			after = nil
+		}
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
-			if idx == nil {
-				continue
+			if idx != nil {
+				idx.ReplaceNode(id, before, after)
 			}
-			idx.RemoveNode(id, cached.Properties)
 		}
 	}
+	for _, label := range newLabels {
+		replace(label)
+	}
+	for _, label := range oldLabels {
+		if !slices.Contains(newLabels, label) {
+			replace(label)
+		}
+	}
+	if hook := nodeIndexEntriesReplacedHook.Load(); hook != nil {
+		(*hook)(id)
+	}
 }
+
+// nodeIndexEntriesReplacedHook lets storage tests pause a node write after its
+// equality-index entries are replaced, while the writer is still publishing.
+var nodeIndexEntriesReplacedHook atomic.Pointer[func(NodeID)]
 
 // schemaForNodeID returns the SchemaManager for the namespace extracted
 // from a node ID (e.g. "nornic:abc" → "nornic"). Unnamespaced IDs fall
