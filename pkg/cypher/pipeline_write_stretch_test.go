@@ -72,8 +72,9 @@ func TestWriteStretchSeesEveryReadForm(t *testing.T) {
 }
 
 func TestStretchReadAnalysis(t *testing.T) {
-	var tokens stretchTokens
-	addStretchExpressionReads("WHERE a:B:`C D` AND x.k = 1 AND m {k: 1}.k = 1 AND 'n:Q' = s", &tokens)
+	effects, err := pipelineClauseEffectsFor(context.Background(), "WITH 1 AS anchor WHERE a:B:`C D` AND x.k = 1 AND m {k: 1}.k = 1 AND 'n:Q' = s")
+	require.NoError(t, err)
+	tokens := effects.reads
 	require.Contains(t, tokens.labels, "B")
 	require.Contains(t, tokens.labels, "C D")
 	require.NotContains(t, tokens.labels, "Q")
@@ -81,9 +82,9 @@ func TestStretchReadAnalysis(t *testing.T) {
 	require.False(t, tokens.anyNode)
 
 	for _, text := range []string{"labels(a) = []", "(a)-[:R]->()", "a:A|B", "a:$(x)", "COUNT { (a) } > 0"} {
-		var any stretchTokens
-		addStretchExpressionReads(text, &any)
-		require.True(t, any.anyNode, text)
+		effects, err := pipelineClauseEffectsFor(context.Background(), "WITH 1 AS anchor WHERE "+text)
+		require.NoError(t, err)
+		require.True(t, effects.reads.anyNode, text)
 	}
 	for _, text := range []string{"x.`k`", "x . k", "x['k']", "x[$p]", "x {.k}", "keys(x)", "x.*"} {
 		var any stretchTokens
@@ -105,25 +106,25 @@ func TestStretchReadAnalysis(t *testing.T) {
 
 	// A read-only procedure only reads; an unknown one may write.
 	var reads, writes stretchTokens
-	analyzeStretchClause(pipelineClause{kind: pipelineClauseCall, text: "CALL db.labels() YIELD label"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseCall, text: "CALL db.labels() YIELD label"}, &reads, &writes)
 	require.True(t, reads.everything)
 	require.False(t, writes.everything)
 	reads, writes = stretchTokens{}, stretchTokens{}
-	analyzeStretchClause(pipelineClause{kind: pipelineClauseCall, text: "CALL no.such() YIELD x"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseCall, text: "CALL no.such() YIELD x"}, &reads, &writes)
 	require.True(t, writes.everything)
 
 	// A RETURN after the stretch that reads what it writes.
 	clauses, ok, _ := parsePipelineClauses("MATCH (d:Done) SET d.flag = true RETURN d.flag")
 	require.True(t, ok)
-	require.True(t, pipelineWriteStretchConflicts(clauses[:2], clauses[2:]))
-	require.False(t, pipelineWriteStretchConflicts(clauses[:2], []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN count(*)"}}))
+	require.True(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], clauses[2:]))
+	require.False(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN count(*)"}}))
 }
 
 func TestPipelineWriteStretchConflicts(t *testing.T) {
 	conflicts := func(query string) bool {
 		clauses, ok, _ := parsePipelineClauses(query)
 		require.True(t, ok, query)
-		return pipelineWriteStretchConflicts(clauses, nil)
+		return pipelineWriteStretchConflicts(context.Background(), clauses, nil)
 	}
 	// Bulk-load shapes stay row by row: nothing read is written.
 	for _, query := range []string{
@@ -161,7 +162,7 @@ func TestStretchAnalysisEdgeBranches(t *testing.T) {
 
 	// A REMOVE item that is neither a property nor a label stands for any write.
 	var reads, writes stretchTokens
-	analyzeStretchClause(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
 	require.True(t, writes.everything)
 
 	// A variable-length relationship reads its types without the length.

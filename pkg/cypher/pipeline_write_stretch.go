@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // Neo4j runs every clause of a statement over all its rows before the next
 // clause reads, so a clause never sees what a later row of an earlier clause
@@ -22,6 +25,22 @@ type stretchTokens struct {
 	labels, types, keys              map[string]struct{}
 	anyNode, anyRelationship, anyKey bool
 	everything                       bool
+}
+
+func (tokens *stretchTokens) include(other *stretchTokens) {
+	for name := range other.labels {
+		tokens.add(&tokens.labels, name)
+	}
+	for name := range other.types {
+		tokens.add(&tokens.types, name)
+	}
+	for name := range other.keys {
+		tokens.add(&tokens.keys, name)
+	}
+	tokens.anyNode = tokens.anyNode || other.anyNode
+	tokens.anyRelationship = tokens.anyRelationship || other.anyRelationship
+	tokens.anyKey = tokens.anyKey || other.anyKey
+	tokens.everything = tokens.everything || other.everything
 }
 
 func (tokens *stretchTokens) add(set *map[string]struct{}, name string) {
@@ -70,11 +89,11 @@ func stretchSetsMeet(read, written map[string]struct{}, readAny, writtenAny bool
 // one the stretch writes. A row carries the entities it matched as they were
 // then, so a later clause would read a row's entity before later rows of the
 // stretch wrote it; Neo4j reads it after every row did.
-func pipelineWriteStretchConflicts(stretch, after []pipelineClause) bool {
+func pipelineWriteStretchConflicts(ctx context.Context, stretch, after []pipelineClause) bool {
 	reads := make([]stretchTokens, len(stretch))
 	writes := make([]stretchTokens, len(stretch))
 	for index, clause := range stretch {
-		analyzeStretchClause(clause, &reads[index], &writes[index])
+		analyzeStretchClause(ctx, clause, &reads[index], &writes[index])
 	}
 	for reader := range stretch {
 		for writer := range stretch {
@@ -85,7 +104,7 @@ func pipelineWriteStretchConflicts(stretch, after []pipelineClause) bool {
 	}
 	for _, clause := range after {
 		var laterReads, laterWrites stretchTokens
-		analyzeStretchClause(clause, &laterReads, &laterWrites)
+		analyzeStretchClause(ctx, clause, &laterReads, &laterWrites)
 		for writer := range stretch {
 			if laterReads.observes(&writes[writer]) {
 				return true
@@ -95,80 +114,22 @@ func pipelineWriteStretchConflicts(stretch, after []pipelineClause) bool {
 	return false
 }
 
-// analyzeStretchClause records what clause reads and writes.
-func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
-	text := clause.text
-	switch clause.kind {
-	case pipelineClauseMatch, pipelineClauseOptionalMatch:
-		keyword := "MATCH"
-		if clause.kind == pipelineClauseOptionalMatch {
-			keyword = "OPTIONAL MATCH"
-		}
-		body := pipelineClauseBody(text, keyword)
-		pattern := body
-		if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-			pattern = body[:where]
-		}
-		addStretchPattern(pattern, reads, false)
-		addStretchExpressionReads(body[len(pattern):], reads)
-		addStretchPropertyReads(pattern, reads)
-	case pipelineClauseMerge:
-		actions := splitMergeClauseActions(strings.TrimSpace(pipelineClauseBody(text, "MERGE")))
-		addStretchPattern(actions.pattern, reads, false)
-		addStretchPattern(actions.pattern, writes, true)
-		addStretchPropertyReads(actions.pattern, reads)
-		for _, item := range mergeActionAssignments(actions.onCreate) {
-			addStretchSetItems(item, reads, writes)
-		}
-		for _, item := range mergeActionAssignments(actions.onMatch) {
-			addStretchSetItems(item, reads, writes)
-		}
-	case pipelineClauseCreate:
-		pattern := pipelineClauseBody(text, "CREATE")
-		addStretchPattern(pattern, writes, true)
-		addStretchPropertyReads(pattern, reads)
-	case pipelineClauseSet:
-		addStretchSetItems(pipelineClauseBody(text, "SET"), reads, writes)
-	case pipelineClauseRemove:
-		// The REMOVE item reader (parseRemoveItems) names what each item
-		// removes; a dynamic label or key stands for any.
-		items, err := parseRemoveItems(pipelineClauseBody(text, "REMOVE"))
-		if err != nil {
-			writes.everything = true
-			break
-		}
-		for _, item := range items {
-			switch {
-			case len(item.labels) > 0:
-				for _, label := range item.labels {
-					if label.expression != "" {
-						writes.anyNode = true
-						addStretchExpressionReads(label.expression, reads)
-						continue
-					}
-					writes.add(&writes.labels, label.name)
-				}
-			case item.key != "":
-				writes.anyKey = true
-				addStretchExpressionReads(item.key, reads)
-			default:
-				writes.add(&writes.keys, item.property)
-			}
-		}
-	case pipelineClauseWith, pipelineClauseUnwind, pipelineClauseReturn:
-		addStretchExpressionReads(text, reads)
-	case pipelineClauseCall:
-		// A procedure the registry knows to be read-only only reads.
-		reads.everything = true
-		if procedure, found := globalProcedureRegistry.Get(extractProcedureName(text)); !found || procedure.Spec.writes() {
-			writes.everything = true
-		}
-	default:
-		// DELETE, FOREACH, CALL subqueries and anything else: assume it
-		// reads and writes everything.
+// analyzeStretchClause is the write-stretch consumer of the shared effect
+// owner. It has no clause or expression scanner of its own.
+func analyzeStretchClause(ctx context.Context, clause pipelineClause, reads, writes *stretchTokens) {
+	effects, err := pipelineClauseEffectsFor(ctx, clause.text)
+	if err != nil {
 		reads.everything = true
 		writes.everything = true
+		return
 	}
+	reads.include(&effects.reads)
+	// Procedures consume their input inside a CALL chain, but an ordinary
+	// write stretch must preserve their opaque reads across earlier rows.
+	if effects.opaqueReads {
+		reads.everything = true
+	}
+	writes.include(&effects.writes)
 }
 
 // addStretchPattern records the labels, relationship types and property keys
@@ -236,54 +197,6 @@ func addStretchLabelChain(chain string, tokens *stretchTokens) {
 	}
 }
 
-// addStretchExpressionReads records what an expression text (a WHERE, a
-// WITH or UNWIND, a SET value) reads: property keys
-// (addStretchPropertyReads), labels tested with v:Label or labels(v), and
-// for a pattern predicate or a subquery (EXISTS { … }, COUNT { … },
-// COLLECT { … }, (a)-[:R]->(b), a pattern comprehension) any node and any
-// relationship, since the analysis doesn't model their patterns.
-func addStretchExpressionReads(text string, tokens *stretchTokens) {
-	addStretchPropertyReads(text, tokens)
-	lower := lowerASCII(text)
-	if strings.Contains(lower, "labels(") {
-		tokens.anyNode = true
-	}
-	if strings.Contains(text, "-[") || strings.Contains(text, "]-") || strings.Contains(text, ")-") ||
-		strings.Contains(text, "<-") || strings.Contains(text, "-(") ||
-		strings.Contains(lower, "exists") || strings.Contains(lower, "count {") || strings.Contains(lower, "count{") ||
-		strings.Contains(lower, "collect {") || strings.Contains(lower, "collect{") {
-		tokens.anyNode = true
-		tokens.anyRelationship = true
-	}
-	depth := 0
-	for index := 0; index < len(text); index++ {
-		switch character := text[index]; cypherLexicalByte(character) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(text, index, character) - 1
-		case '{':
-			depth++
-		case '}':
-			if depth > 0 {
-				depth--
-			}
-		case ':':
-			// v:Label (a label test) outside a map literal's keys.
-			if depth == 0 && index > 0 && (isIdentByte(text[index-1]) || isCypherBacktickByte(text[index-1]) || text[index-1] == ')') {
-				end := index
-				for end < len(text) && (isIdentByte(text[end]) || strings.IndexByte(":`|&!%", text[end]) >= 0) {
-					if isCypherBacktickByte(text[end]) {
-						end = skipCypherQuotedText(text, end, '`')
-						continue
-					}
-					end++
-				}
-				addStretchLabelChain(strings.TrimSpace(text[index:end]), tokens)
-				index = end - 1
-			}
-		}
-	}
-}
-
 // addStretchMapKeys records the keys of a "{k: v, …}" map.
 func addStretchMapKeys(text string, tokens *stretchTokens) {
 	end := findMatchingDelimiter(text, 0, '{', '}')
@@ -297,28 +210,45 @@ func addStretchMapKeys(text string, tokens *stretchTokens) {
 	}
 }
 
-// addStretchSetItems records what SET items (or an ON CREATE / ON MATCH SET
-// list) write, and the properties their values read.
-func addStretchSetItems(list string, reads, writes *stretchTokens) {
+// addStretchSetWrites projects the existing mutation item reader onto writes.
+// Expression reads are supplied exclusively by the shared grammar-tree walk.
+func addStretchSetWrites(list string, writes *stretchTokens) {
 	for _, item := range splitSetAssignments(list) {
 		_, property, operator, right := splitSetAssignment(item)
 		switch {
 		case operator == ":":
 			addStretchLabelChain(":"+right, writes)
-			// A dynamic label's expression ($(e)) reads what e reads.
-			addStretchExpressionReads(right, reads)
-			continue
 		case operator == "[]=":
-			// x[key] = v writes the key its expression names, read like any
-			// expression.
 			writes.anyKey = true
-			addStretchExpressionReads(property, reads)
 		case property != "":
 			writes.add(&writes.keys, property)
 		default:
 			writes.anyKey = true
 		}
-		addStretchExpressionReads(right, reads)
+	}
+}
+
+func addStretchRemoveWrites(list string, writes *stretchTokens) {
+	items, err := parseRemoveItems(list)
+	if err != nil {
+		writes.everything = true
+		return
+	}
+	for _, item := range items {
+		switch {
+		case len(item.labels) > 0:
+			for _, label := range item.labels {
+				if label.expression != "" {
+					writes.anyNode = true
+				} else {
+					writes.add(&writes.labels, label.name)
+				}
+			}
+		case item.key != "":
+			writes.anyKey = true
+		default:
+			writes.add(&writes.keys, item.property)
+		}
 	}
 }
 

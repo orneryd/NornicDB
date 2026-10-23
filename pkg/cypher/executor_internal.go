@@ -138,6 +138,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
 	}
+	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
+		return nil, err
+	}
 	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
 		return nil, err
 	}
@@ -172,6 +175,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
+	if err := e.validateTransactionalCalls(ctx, cypher, params); err != nil {
+		return err
+	}
 	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
