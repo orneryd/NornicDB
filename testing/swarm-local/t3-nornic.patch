@@ -261,12 +261,13 @@ index 0000000000..6ca2c0ffac
 +export const NornicToolkit = Toolkit.make(WorkflowTool);
 diff --git a/apps/server/src/nornic/CodeContext.integration.test.ts b/apps/server/src/nornic/CodeContext.integration.test.ts
 new file mode 100644
-index 0000000000..0808f08fb7
+index 0000000000..f87ac612da
 --- /dev/null
 +++ b/apps/server/src/nornic/CodeContext.integration.test.ts
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,26 @@
 +import { describe, expect, it } from "@effect/vitest";
 +import * as Effect from "effect/Effect";
++import * as ConfigProvider from "effect/ConfigProvider";
 +import * as CodeContext from "./CodeContext.ts";
 +
 +describe.runIf(process.env.NORNICDB_LIVE_TEST === "1")("live bounded repository retrieval", () => {
@@ -284,21 +285,25 @@ index 0000000000..0808f08fb7
 +      expect(result.complete).toBe(false);
 +      expect(result.warning).toContain("missing hits do not establish absence");
 +      expect((yield* context.search("x".repeat(2001)).pipe(Effect.exit))._tag).toBe("Failure");
-+    }).pipe(Effect.provide(CodeContext.layer)),
++    }).pipe(
++      Effect.provide(CodeContext.layer),
++      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: process.env as Record<string, string> }))),
++    ),
 +  );
 +});
 diff --git a/apps/server/src/nornic/CodeContext.ts b/apps/server/src/nornic/CodeContext.ts
 new file mode 100644
-index 0000000000..bf75b7a55b
+index 0000000000..6477f7f9a4
 --- /dev/null
 +++ b/apps/server/src/nornic/CodeContext.ts
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,164 @@
 +import * as Config from "effect/Config";
 +import * as Context from "effect/Context";
 +import * as Effect from "effect/Effect";
 +import * as Layer from "effect/Layer";
 +import * as Schema from "effect/Schema";
 +import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
++import * as NornicAuth from "./NornicAuth.ts";
 +
 +const Hit = Schema.Struct({
 +  node: Schema.Struct({
@@ -349,6 +354,7 @@ index 0000000000..bf75b7a55b
 +>()("t3/nornic/CodeContext") {}
 +const make = Effect.gen(function* () {
 +  const client = yield* HttpClient.HttpClient;
++  const authenticate = yield* NornicAuth.request;
 +  const origin = yield* Config.String("NORNICDB_WORKFLOW_URL").pipe(
 +    Config.withDefault("http://127.0.0.1:7474"),
 +  );
@@ -383,7 +389,7 @@ index 0000000000..bf75b7a55b
 +          ],
 +        }),
 +      );
-+      const response = yield* client.execute(request);
++      const response = yield* client.execute(authenticate(request));
 +      if (response.status !== 200)
 +        return yield* new CodeContextError({
 +          reason: "INDEX_NOT_READY: NornicDB search is unavailable.",
@@ -406,7 +412,7 @@ index 0000000000..bf75b7a55b
 +          ],
 +        }),
 +      );
-+      const indexResponse = yield* client.execute(indexRequest);
++      const indexResponse = yield* client.execute(authenticate(indexRequest));
 +      const index = yield* indexResponse.json.pipe(Effect.flatMap(decodeIndex));
 +      if (indexResponse.status !== 200 || index.errors.length)
 +        return yield* new CodeContextError({
@@ -989,14 +995,69 @@ index 0000000000..4ae1c24cee
 +  return LinearTracker.of({ getIssue });
 +});
 +export const layer = Layer.effect(LinearTracker, make).pipe(Layer.provide(FetchHttpClient.layer));
+diff --git a/apps/server/src/nornic/NornicAuth.test.ts b/apps/server/src/nornic/NornicAuth.test.ts
+new file mode 100644
+index 0000000000..248efb8637
+--- /dev/null
++++ b/apps/server/src/nornic/NornicAuth.test.ts
+@@ -0,0 +1,26 @@
++import { expect, it } from "vite-plus/test";
++import * as ConfigProvider from "effect/ConfigProvider";
++import * as Effect from "effect/Effect";
++import * as HttpClientRequest from "effect/http/HttpClientRequest";
++import * as NornicAuth from "./NornicAuth.ts";
++
++const header = (values: Record<string, string>) =>
++  Effect.runPromise(
++    Effect.gen(function* () {
++      const authenticate = yield* NornicAuth.request;
++      const request = HttpClientRequest.get("http://localhost/health");
++      return authenticate(request).headers.authorization;
++    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: values })))),
++  );
++
++it("uses a bearer token when configured", async () => {
++  expect(await header({ NORNICDB_TOKEN: "test-token", NORNICDB_USER: "u", NORNICDB_PASSWORD: "p" })).toBe("Bearer test-token");
++});
++
++it("uses basic credentials when no token is configured", async () => {
++  expect(await header({ NORNICDB_USER: "u", NORNICDB_PASSWORD: "p" })).toBe("Basic dTpw");
++});
++
++it("does not invent credentials", async () => {
++  expect(await header({})).toBeUndefined();
++});
+diff --git a/apps/server/src/nornic/NornicAuth.ts b/apps/server/src/nornic/NornicAuth.ts
+new file mode 100644
+index 0000000000..372b0db675
+--- /dev/null
++++ b/apps/server/src/nornic/NornicAuth.ts
+@@ -0,0 +1,16 @@
++import * as Config from "effect/Config";
++import * as Effect from "effect/Effect";
++import * as HttpClientRequest from "effect/http/HttpClientRequest";
++
++/** Attach the configured NornicDB credentials to every remote HTTP request. */
++export const request = Effect.gen(function* () {
++  const token = yield* Config.String("NORNICDB_TOKEN").pipe(Config.withDefault(""));
++  const user = yield* Config.String("NORNICDB_USER").pipe(Config.withDefault(""));
++  const password = yield* Config.String("NORNICDB_PASSWORD").pipe(Config.withDefault(""));
++  if (token) return HttpClientRequest.setHeader("Authorization", `Bearer ${token}`);
++  if (user && password) {
++    const value = Buffer.from(`${user}:${password}`).toString("base64");
++    return HttpClientRequest.setHeader("Authorization", `Basic ${value}`);
++  }
++  return (httpRequest: HttpClientRequest.HttpClientRequest) => httpRequest;
++});
 diff --git a/apps/server/src/nornic/NornicMcp.integration.test.ts b/apps/server/src/nornic/NornicMcp.integration.test.ts
 new file mode 100644
-index 0000000000..4366250323
+index 0000000000..fe14b6644a
 --- /dev/null
 +++ b/apps/server/src/nornic/NornicMcp.integration.test.ts
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,36 @@
 +import { describe, expect, it } from "@effect/vitest";
 +import * as Effect from "effect/Effect";
++import * as ConfigProvider from "effect/ConfigProvider";
 +import * as NornicMcp from "./NornicMcp.ts";
 +import { NornicGraphToolkit } from "../mcp/toolkits/nornic/graphTools.ts";
 +
@@ -1024,15 +1085,18 @@ index 0000000000..4366250323
 +      });
 +      expect(discovery).toMatchObject({ content: expect.any(Array) });
 +      expect(discovery).not.toMatchObject({ isError: true });
-+    }).pipe(Effect.provide(NornicMcp.layer)),
++    }).pipe(
++      Effect.provide(NornicMcp.layer),
++      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: process.env as Record<string, string> }))),
++    ),
 +  );
 +});
 diff --git a/apps/server/src/nornic/NornicMcp.ts b/apps/server/src/nornic/NornicMcp.ts
 new file mode 100644
-index 0000000000..b70949dc44
+index 0000000000..7a8d7dc2f5
 --- /dev/null
 +++ b/apps/server/src/nornic/NornicMcp.ts
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,79 @@
 +import * as Config from "effect/Config";
 +import * as Context from "effect/Context";
 +import * as Effect from "effect/Effect";
@@ -1040,6 +1104,7 @@ index 0000000000..b70949dc44
 +import * as Schema from "effect/Schema";
 +import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 +import { OrchestratorMcpFailure } from "@t3tools/contracts";
++import * as NornicAuth from "./NornicAuth.ts";
 +
 +const decodeReply = Schema.decodeUnknownEffect(
 +  Schema.Struct({
@@ -1058,6 +1123,7 @@ index 0000000000..b70949dc44
 +>()("t3/nornic/NornicMcp") {}
 +export const make = Effect.gen(function* () {
 +  const client = yield* HttpClient.HttpClient;
++  const authenticate = yield* NornicAuth.request;
 +  const origin = yield* Config.String("NORNICDB_WORKFLOW_URL").pipe(
 +    Config.withDefault("http://127.0.0.1:7474"),
 +  );
@@ -1079,7 +1145,7 @@ index 0000000000..b70949dc44
 +          params: { name, arguments: { ...args, database } },
 +        }),
 +      );
-+      const response = yield* client.execute(request);
++      const response = yield* client.execute(authenticate(request));
 +      if (response.status !== 200)
 +        return yield* new OrchestratorMcpFailure({
 +          code: "orchestration_error",
@@ -1112,17 +1178,19 @@ index 0000000000..b70949dc44
 +export const layer = Layer.effect(NornicMcp, make).pipe(Layer.provide(FetchHttpClient.layer));
 diff --git a/apps/server/src/nornic/NornicStore.integration.test.ts b/apps/server/src/nornic/NornicStore.integration.test.ts
 new file mode 100644
-index 0000000000..632952de78
+index 0000000000..57abbee087
 --- /dev/null
 +++ b/apps/server/src/nornic/NornicStore.integration.test.ts
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,139 @@
 +import { describe, expect, it } from "@effect/vitest";
 +import * as Effect from "effect/Effect";
++import * as ConfigProvider from "effect/ConfigProvider";
 +import * as Clock from "effect/Clock";
 +import * as Layer from "effect/Layer";
 +import * as Schema from "effect/Schema";
 +import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 +import * as NornicStore from "./NornicStore.ts";
++import * as NornicAuth from "./NornicAuth.ts";
 +import { WorkflowState } from "./workflowSchema.ts";
 +import { emptyState, transition, type Owner } from "./workflowState.ts";
 +
@@ -1230,8 +1298,9 @@ index 0000000000..632952de78
 +          expect(yield* store.load(key)).toBe(snapshot);
 +        } finally {
 +          const client = yield* HttpClient.HttpClient;
++          const authenticate = yield* NornicAuth.request;
 +          const request = yield* HttpClientRequest.post(
-+            "http://127.0.0.1:7474/db/t3workflow/tx/commit",
++            `${process.env.NORNICDB_WORKFLOW_URL ?? "http://127.0.0.1:7474"}/db/${process.env.NORNICDB_WORKFLOW_DATABASE ?? "t3workflow"}/tx/commit`,
 +          ).pipe(
 +            HttpClientRequest.bodyJson({
 +              statements: [
@@ -1242,25 +1311,29 @@ index 0000000000..632952de78
 +              ],
 +            }),
 +          );
-+          const response = yield* client.execute(request);
++          const response = yield* client.execute(authenticate(request));
 +          yield* response.json;
 +        }
-+      }).pipe(Effect.provide(Layer.merge(NornicStore.layer, FetchHttpClient.layer))),
++      }).pipe(
++        Effect.provide(Layer.merge(NornicStore.layer, FetchHttpClient.layer)),
++        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: process.env as Record<string, string> }))),
++      ),
 +    );
 +  },
 +);
 diff --git a/apps/server/src/nornic/NornicStore.ts b/apps/server/src/nornic/NornicStore.ts
 new file mode 100644
-index 0000000000..32dbf2deb6
+index 0000000000..5108be92cf
 --- /dev/null
 +++ b/apps/server/src/nornic/NornicStore.ts
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,94 @@
 +import * as Config from "effect/Config";
 +import * as Context from "effect/Context";
 +import * as Effect from "effect/Effect";
 +import * as Layer from "effect/Layer";
 +import * as Schema from "effect/Schema";
 +import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
++import * as NornicAuth from "./NornicAuth.ts";
 +
 +export class NornicStoreError extends Schema.TaggedError<NornicStoreError>()("NornicStoreError", {
 +  operation: Schema.String,
@@ -1299,12 +1372,13 @@ index 0000000000..32dbf2deb6
 +    Config.withDefault("t3workflow"),
 +  );
 +  const client = yield* HttpClient.HttpClient;
++  const authenticate = yield* NornicAuth.request;
 +  const query = Effect.fn("NornicStore.query")(
 +    function* (statement: string, parameters: Record<string, unknown>) {
 +      const request = yield* HttpClientRequest.post(
 +        `${origin}/db/${encodeURIComponent(database)}/tx/commit`,
 +      ).pipe(HttpClientRequest.bodyJson({ statements: [{ statement, parameters }] }));
-+      const response = yield* client.execute(request);
++      const response = yield* client.execute(authenticate(request));
 +      const result = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Result)));
 +      if (response.status !== 200 || result.errors.length)
 +        return yield* new NornicStoreError({

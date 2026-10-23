@@ -63,7 +63,12 @@ if (!(Test-Path $settingsPath)) {
 }
 $envPath = Join-Path $repo 'docker\.env.swarm-local'
 if (!(Test-Path $envPath)) { Copy-Item (Join-Path $repo 'docker\.env.swarm-local.example') $envPath }
-if ($BuildImage) {
+$shouldBuildImage = $BuildImage.IsPresent
+if (!$shouldBuildImage) {
+    & docker image inspect 'nornicdb:1.4.4-cuda-local' *> $null
+    $shouldBuildImage = ($LASTEXITCODE -ne 0)
+}
+if ($shouldBuildImage) {
     $release = Join-Path $ToolsRoot 'NornicDB-release'
     if (!(Test-Path $release)) { Invoke-SwarmCommand git -Arguments @('clone', '--branch', 'release/v1.4.4', '--single-branch', 'https://github.com/orneryd/NornicDB.git', $release) }
     Push-Location $release

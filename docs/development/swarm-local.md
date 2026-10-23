@@ -4,33 +4,75 @@ This is the implementation experiment for PR 1648. The workflow service lives in
 a pinned local T3 extension; NornicDB stores its records through existing Cypher
 APIs. No custom database plugin or Git hook is installed.
 
-## Moving this checkpoint to a Mac
+## One command on Windows and macOS
 
-Fetch the PR branch (`docs/swarm-lifecycle-spec-v1.4.4`) and follow the pinned T3
-patch below. The committed PowerShell automation and Compose file currently
-qualify Windows with NVIDIA; the CUDA image and NVIDIA device reservation do not
-run on Apple Silicon. Mac startup/CPU-or-Metal Docker configuration has not been
-implemented or qualified in this checkpoint. Do not run the NVIDIA Compose file
-unchanged on a Mac.
+From this PR checkout, `make swarm` sets up and starts the harness; `make
+swarm-setup` installs without starting, and `make swarm-doctor` checks local tools
+and service reachability. On Windows these call the existing PowerShell/NVIDIA
+scripts. On macOS the Python launcher uses an existing remote NornicDB and
+Ollama host; it does not run the CUDA Compose file on Apple Silicon. The T3
+checkout and all runtime state are outside the repository. Press Ctrl-C to stop
+the foreground T3 process. T3 prints a private pairing URL; open it in a browser
+to use the UI. The normal web address is `http://localhost:5733`.
 
-The portable integration is the T3 source patch, Python importer/checker and
-model configuration. Start the Mac port from these pins:
+### macOS with local and remote workers
+
+Install Git, Python 3, Node/npm, [Vite+](https://viteplus.dev/),
+[uv](https://docs.astral.sh/uv/), and [Ollama](https://ollama.com/). Start the local
+Ollama service. The local 27B model is optional but requires roughly 17 GiB of
+model storage; choose a smaller model if your machine cannot keep it resident.
+The remote 2080 Ti host uses its existing `qwen3.5:9b` and `nornic-coder` models.
 
 ```sh
-git clone https://github.com/pingdotgg/t3code.git ../T3-swarm
-cd ../T3-swarm
-git checkout 2c8bdf6177159d8fcd12a897d7c9311f6eb93237
-git apply /absolute/path/to/NornicDB/testing/swarm-local/t3-nornic.patch
-vp install --frozen-lockfile
+ollama pull qwen3.5:27b
+make swarm-setup
 ```
 
-Use a separate T3 home and Pi agent directory. Python executables on macOS are
-under the virtualenv's `bin/` directory instead of `Scripts/`. Set the extension's
-`NORNIC_DUPLICATE_PYTHON`, `NORNIC_GRAPHIFY` and `NORNIC_DUPLICATE_RUNNER` to those
-absolute paths. Keep the workflow database (`t3workflow`) separate from the code
-index (`nornicdbcode`). Docker volumes, API keys and provider sign-ins are local
-to each machine and are intentionally not checked in. The remaining sections
-record the working Windows configuration to reproduce during the Mac port.
+The default permanent tools/state directory is
+`~/.local/share/nornicdb-swarm`; set `SWARM_TOOLS_ROOT` to change it. The setup
+pins T3 to `2c8bdf6177159d8fcd12a897d7c9311f6eb93237`, applies this PR's
+patch, installs frozen T3 dependencies, Pi 1.4.0 and the code-intelligence
+Python requirements. It preserves existing T3 provider instances. It does not
+download a model or change global Git hooks.
+
+Put machine-specific endpoints in a private `env` file under that directory
+(mode 0600); shell environment values take precedence. For the current testing
+host use:
+
+```dotenv
+SWARM_NORNICDB_URL=http://192.168.1.30:7474
+SWARM_REMOTE_OLLAMA_URL=http://192.168.1.30:11434
+SWARM_LOCAL_OLLAMA_URL=http://127.0.0.1:11434
+# Optional if codex is not on PATH:
+SWARM_CODEX_BINARY=/absolute/path/to/codex
+```
+
+`SWARM_NORNICDB_URL` is deliberately separate from `NORNICDB_URI` so an existing
+local NornicDB setting in your shell cannot redirect this harness. If the server
+requires authentication, set `NORNICDB_TOKEN` or `NORNICDB_USER` and
+`NORNICDB_PASSWORD` in the shell or private env file. Set `LINEAR_API_KEY` there
+only when using Linear. Never put keys in the tracked model JSON or patch.
+Authenticate Codex separately with `codex login`; the Pi/Ollama workers do not
+need cloud API keys. The code graph remains in `nornicdbcode`; the launcher
+creates or reuses `t3workflow` for workflow records and keeps T3's own SQLite
+state locally. It does not reingest the remote graph.
+
+```sh
+make swarm-doctor
+make swarm
+```
+
+Choose **Ollama Local 27B**, **Ollama Remote 9B**, or **Codex Frontier** as the
+agent in T3. The intent classifier uses the remote `nornic-coder` model. For
+terminal use, run `make swarm` in a terminal and keep it open; T3 prints the
+browser pairing URL there. To launch from any directory, add a shell alias such
+as `alias t3-swarm='make -C /absolute/path/to/NornicDB-swarm swarm'` to your
+shell configuration. On a different host, update the private URLs and use
+`make swarm-doctor` before starting.
+
+The remote test Compose configuration has authentication disabled and publishes
+HTTP/Bolt on its LAN interfaces. Restrict those ports to the trusted test
+network; see `docs/.flagged_security.md` before putting real data there.
 
 ## Prerequisites (Windows / NVIDIA)
 
