@@ -54,6 +54,34 @@ docker build -f docker/Dockerfile.llama-cuda --build-arg LLAMA_BUILD_JOBS=2 --bu
 
 CUDA library images disable host-native CPU instructions, as the CPU image does.
 This avoids publishing an archive that requires the builder's CPU instruction set.
+The CPU backend remains enabled, including models split between CPU and GPU.
+
+### Existing model offload controls
+
+For NornicDB's local GGUF provider, set
+`NORNICDB_EMBEDDING_GPU_LAYERS` for embeddings and
+`NORNICDB_HEIMDALL_GPU_LAYERS` for the assistant model:
+
+| Value | Placement |
+| --- | --- |
+| `0` | CPU only |
+| `12` (example) | Offload 12 model layers to GPU; remaining layers run on CPU |
+| `-1` | Request automatic/full GPU offload; capacity depends on available VRAM |
+
+These settings apply to local GGUF inference. Ollama and remote providers manage
+their own model placement. CPU offload still needs enough system RAM, and GPU
+layers plus inference buffers must fit available VRAM.
+
+NornicDB preserves llama.cpp's default layer split across available GPUs.
+llama.cpp controls model placement; the GPU SDK supplies execution and transfers.
+Disabling host-native CPU instructions does not disable either CPU offload or
+the default multi-GPU layer split. This qualification host has one RTX 2080 Ti,
+so it does not establish multi-GPU correctness.
+
+Explicit split modes, main-GPU selection, and per-GPU tensor ratios require
+additional configuration and bindings across platforms. They are deferred to
+1.5.0 rather than added to this GPU correctness and dependency update.
+
 For BGE-M3 qualification with the default floating-point KV cache, pass
 `--build-arg LLAMA_CUDA_FA_ALL_QUANTS=OFF` to omit unused quantized KV flash-attention
 kernels and shorten a local build. Distribution builds retain all-quant support
@@ -63,6 +91,21 @@ Application Dockerfiles consume the versioned `timothyswt/llama-*-libs` images.
 Those new versioned images must be built and published before a clean remote
 application build can consume them. A successful local builder image does not
 establish that the remote tags exist.
+
+Publish the CUDA prerequisite using the distribution defaults (all configured
+CUDA architectures and quantized KV kernels), rather than tagging a local
+SM75-only qualification image as the release artifact:
+
+```powershell
+docker build -f docker/Dockerfile.llama-cuda --build-arg LLAMA_BUILD_JOBS=2 -t timothyswt/llama-cuda-libs:v0.7.0 .
+docker push timothyswt/llama-cuda-libs:v0.7.0
+docker manifest inspect timothyswt/llama-cuda-libs:v0.7.0
+```
+
+The tag matches `LLAMA_VERSION` in the Makefile and the default
+`LLAMA_CUDA_IMAGE` in both CUDA application Dockerfiles. After publishing, verify
+an application build against the remote tag; record the registry digest with
+the qualification results so CI's prerequisite can be identified exactly.
 
 To build an application against the local GPU library without publishing it:
 

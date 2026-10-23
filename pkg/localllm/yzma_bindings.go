@@ -1,4 +1,4 @@
-//go:build windows || yzma
+//go:build !nolocalllm && (windows || yzma)
 
 // Package localllm provides GPU-accelerated inference via yzma (no CGO required).
 //
