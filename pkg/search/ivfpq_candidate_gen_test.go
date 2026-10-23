@@ -3,9 +3,9 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +21,7 @@ func (ctx *cancelOnDoneContext) Done() <-chan struct{} {
 
 func TestIVFPQCandidateGen_SearchCandidates(t *testing.T) {
 	dir := t.TempDir()
-	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 8)
+	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 8)
 	require.NoError(t, err)
 	defer vfs.Close()
 
@@ -168,7 +168,7 @@ func TestIVFPQCandidateGenDefersSimilarityThresholdUntilExactScoring(t *testing.
 }
 
 func TestServiceTracksCompressedIndexMutationsWithoutRebuild(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	service.ivfpqIndex = &IVFPQIndex{profile: IVFPQProfile{Dimensions: 2}}
 
 	service.indexMu.Lock()

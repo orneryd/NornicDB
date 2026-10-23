@@ -7,7 +7,7 @@ import (
 )
 
 func TestNamespacedEngine_BulkDeleteEdgesInvalidatesPreloadedTraversalCaches(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 
 	tenant := NewNamespacedEngine(inner, "test")

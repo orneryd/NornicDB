@@ -1,4 +1,4 @@
-//go:build windows || yzma
+//go:build !nolocalllm && (windows || yzma)
 
 // Package localllm provides GPU-accelerated inference via yzma (no CGO required).
 //
@@ -52,6 +52,7 @@ import (
 
 	"github.com/hybridgroup/yzma/pkg/llama"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/textchunk"
 )
 
 // Backend information detected at init time
@@ -473,8 +474,9 @@ func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
 		return nil, fmt.Errorf("encoding failed: %w", err)
 	}
 
-	// Get embeddings (nOutputs=1 for single sequence, nEmbeddings=dims)
-	emb, err := llama.GetEmbeddings(lctx, 1, m.dims)
+	// Read the pooled sequence embedding, as the CGO backend does. The raw
+	// token-output buffer is not the embedding for pooling models such as BGE.
+	emb, err := llama.GetEmbeddingsSeq(lctx, 0, int32(m.dims))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get embeddings: %w", err)
 	}
@@ -488,6 +490,32 @@ func (m *Model) Embed(ctx context.Context, text string) ([]float32, error) {
 	vector.NormalizeInPlace(result)
 
 	return result, nil
+}
+
+// ChunkText splits text using the model vocabulary, including the same special
+// tokens as Embed, so each chunk fits the requested token budget.
+func (m *Model) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
+	if text == "" {
+		return []string{""}, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	params := llama.ModelDefaultParams()
+	params.VocabOnly = 1
+	params.NGpuLayers = 0
+	model, err := llama.ModelLoadFromFile(m.modelPath, params)
+	if err != nil {
+		return nil, fmt.Errorf("load tokenizer: %w", err)
+	}
+	defer llama.ModelFree(model)
+	vocab := llama.ModelGetVocab(model)
+	return textchunk.ChunkByTokenCount(text, maxTokens, overlap, func(part string) (int, error) {
+		tokens := llama.Tokenize(vocab, part, true, false)
+		if len(tokens) == 0 {
+			return 0, fmt.Errorf("text produced no tokens")
+		}
+		return len(tokens), nil
+	})
 }
 
 // EmbedBatch generates normalized embeddings for multiple texts.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 	tb.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 	tb.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	const count, dims = 2000, 16
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(tb), "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
 	tb.Cleanup(func() { closeAfterBuilds(tb, svc) })
 	if strategy != "ivfpq" {
@@ -44,7 +45,7 @@ func selectiveClusteredService(tb testing.TB, strategy string) (*Service, []floa
 	cfg := gpu.DefaultEmbeddingIndexConfig(dims)
 	cfg.GPUEnabled, cfg.AutoSync = false, false
 	clusters := gpu.NewClusterIndex(nil, cfg, &gpu.KMeansConfig{NumClusters: 8, MaxIterations: 10, Tolerance: 0.001, InitMethod: "kmeans++"})
-	store, err := NewVectorFileStore(tb.TempDir()+"/vectors", dims)
+	store, err := NewVectorFileStore(filepath.Join(tb.TempDir(), "vectors"), dims)
 	if err != nil {
 		tb.Fatal(err)
 	}

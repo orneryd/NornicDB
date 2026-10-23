@@ -11,7 +11,7 @@ import (
 )
 
 func TestEmbeddingRangeManifestReplacementSnapshotsAndMetadata(t *testing.T) {
-	engine := NewMemoryEngine().BadgerEngine
+	engine := newTestMemoryEngine(t).BadgerEngine
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	body := &Node{ID: "test:manifest-owner", Labels: []string{"Doc"}, Properties: map[string]any{"text": "same source"}}
 	_, err := engine.CreateNode(body)
@@ -83,7 +83,7 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 		"too_many_parts":  tooManyParts,
 	} {
 		t.Run(name, func(t *testing.T) {
-			engine := NewMemoryEngine().BadgerEngine
+			engine := newTestMemoryEngine(t).BadgerEngine
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			body := &Node{ID: "test:manifest-repair", Properties: map[string]any{"text": "unchanged"}}
 			_, err := engine.CreateNode(body)
@@ -122,7 +122,7 @@ func TestEmbeddingRangeManifestInvalidRecordRepairsThroughPublicReplacement(t *t
 }
 
 func TestEmbeddingRangeManifestLargeMetadataKeepsStorageLimit(t *testing.T) {
-	engine := NewMemoryEngine().BadgerEngine
+	engine := newTestMemoryEngine(t).BadgerEngine
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	body := &Node{ID: "test:manifest-large-meta", Properties: map[string]any{"text": "unchanged"}}
 	_, err := engine.CreateNode(body)

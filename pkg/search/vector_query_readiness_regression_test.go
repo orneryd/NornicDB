@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -37,7 +38,7 @@ func TestPersistedVectorQueriesPreserveMagnitude(t *testing.T) {
 	node := &storage.Node{ID: "point", NamedEmbeddings: map[string][]float32{"default": {3, 4, 0, 0}}}
 	_, err := engine.CreateNode(node)
 	require.NoError(t, err)
-	path := t.TempDir() + "/vectors"
+	path := filepath.Join(t.TempDir(), "vectors")
 	makeService := func() *Service {
 		svc := NewServiceWithDimensions(engine, 4)
 		svc.SetVectorIndexPath(path)

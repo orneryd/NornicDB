@@ -35,7 +35,7 @@ func (e *xhighNestedFaultEngine) GetEdge(id storage.EdgeID) (*storage.Edge, erro
 
 func xhighNestedService(t *testing.T) (*storage.NamespacedEngine, *Service, *xhighNestedFaultEngine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "nesteddiscard")
 	fault := &xhighNestedFaultEngine{Engine: engine}

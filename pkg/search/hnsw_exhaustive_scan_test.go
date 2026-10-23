@@ -422,7 +422,7 @@ func requireContinuationReturnsEveryLiveDocument(t *testing.T, service *Service,
 // of the document at the entry point and further inserts.
 func TestContinuationReturnsEveryLiveDocumentAfterRemovalsAndInserts(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	live := map[string]bool{}
@@ -635,7 +635,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 	for _, docs := range []int{40, 200, 1000} {
 		t.Run(fmt.Sprintf("docs=%d", docs), func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewServiceWithDimensions(engine, 2)
 			t.Cleanup(func() { _ = service.Close() })
 			for i := 0; i < docs; i++ {
@@ -703,7 +703,7 @@ func TestContinuationReturnsDocumentNoGraphLinkReaches(t *testing.T) {
 func TestContinuationReturnsSoleMatchNoGraphLinkReaches(t *testing.T) {
 	const docs = 1000
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { _ = service.Close() })
 	for i := 0; i < docs; i++ {
@@ -791,7 +791,7 @@ func TestContinuationReturnsSoleMatchNoIVFHNSWLinkReaches(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MAX_CLUSTERS", "1")
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			target := fmt.Sprintf("doc-%d", docs/2)
 			for i := 0; i < docs; i++ {
 				vec := []float32{0, 1}

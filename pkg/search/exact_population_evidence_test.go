@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -15,7 +16,7 @@ func TestExactCandidatePopulationBoundary(t *testing.T) {
 	for _, population := range []int{0, 1, 8, 9} {
 		t.Run(fmt.Sprintf("population_%d", population), func(t *testing.T) {
 			index := NewVectorIndex(2)
-			store, err := NewVectorFileStore(t.TempDir()+"/vectors", 2)
+			store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 2)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })
 			cfg := gpu.DefaultEmbeddingIndexConfig(2)

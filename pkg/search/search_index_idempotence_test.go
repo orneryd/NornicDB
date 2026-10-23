@@ -10,7 +10,7 @@ import (
 )
 
 func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 4)
 	svc.hnswMu.Lock()
 	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())

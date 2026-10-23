@@ -56,7 +56,7 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 	if generator == "brute" {
 		t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
 	}
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	svc := NewServiceWithDimensions(engine, exactStageDims)
 	t.Cleanup(func() { closeAfterBuilds(t, svc) })
 	if generator == "kmeans" || generator == "ivf_hnsw" {
@@ -141,7 +141,7 @@ func exactStageService(t *testing.T, generator, quantization string) *Service {
 		}
 		pipeline = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(embeddings), svc.resolveVectorExactScorer(svc.vectorIndex, nil))
 	case "filestore", "ivfpq":
-		store, err := NewVectorFileStore(t.TempDir()+"/vectors", exactStageDims)
+		store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), exactStageDims)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = store.Close() })
 		for id, vec := range vectors {
@@ -287,7 +287,7 @@ func TestMultiChunkNodeKeepsItsBestChunkUnderCompression(t *testing.T) {
 			t.Setenv(EnvSearchResultCacheEnabled, "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			svc := NewServiceWithDimensions(engine, 2)
 			t.Cleanup(func() { closeAfterBuilds(t, svc) })
 			node := &storage.Node{ID: "multi", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{0.6, 0.8}, {0.9, 0.4358899}}}
@@ -581,7 +581,7 @@ func TestCompressedScoresStayWithinTheirBound(t *testing.T) {
 func TestIVFPQScoresStayWithinTheirBound(t *testing.T) {
 	const n, dims = 600, 16
 	rng := rand.New(rand.NewSource(11))
-	store, err := NewVectorFileStore(t.TempDir()+"/vectors", dims)
+	store, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), dims)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	byID := map[string][]float32{}

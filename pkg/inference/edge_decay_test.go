@@ -120,6 +120,8 @@ func TestEdgeDecay_StartStopAndTriggerScan(t *testing.T) {
 	}, store)
 
 	decay.ReinforceEdge("nornic:reinforced-edge")
+	// The asserted tiny decay requires time to advance on coarse clocks.
+	time.Sleep(20 * time.Millisecond)
 
 	decay.Start(context.Background())
 	decay.Stop()

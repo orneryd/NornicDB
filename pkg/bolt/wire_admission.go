@@ -4,15 +4,49 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
-type wireAdmissionError struct{ cause error }
+type wireAdmissionError struct {
+	cause          error
+	remainingChunk int
+	unfinished     bool
+}
 
 func (e *wireAdmissionError) Error() string { return e.cause.Error() }
 func (e *wireAdmissionError) Unwrap() error { return e.cause }
+
+// The framing reader has stopped before this is called. Send FAILURE first,
+// then drain the rejected frame without allocating its payload. Closing a TCP
+// socket with unread receive data can reset it and discard the failure reply.
+func (s *Session) rejectWireAdmission(admission *wireAdmissionError) error {
+	if err := s.sendApplicationAdmissionFailure(admission.cause); err != nil {
+		return err
+	}
+	if !admission.unfinished || s.conn == nil || s.reader == nil {
+		return nil
+	}
+	if err := s.conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		return err
+	}
+	remaining := admission.remainingChunk
+	var header [2]byte
+	for {
+		if _, err := io.CopyN(io.Discard, s.reader, int64(remaining)); err != nil {
+			return nil
+		}
+		if _, err := io.ReadFull(s.reader, header[:]); err != nil {
+			return nil
+		}
+		remaining = int(header[0])<<8 | int(header[1])
+		if remaining == 0 {
+			return nil
+		}
+	}
+}
 
 func messageDecodesPayload(kind byte) bool {
 	switch kind {
@@ -92,7 +126,7 @@ func (s *Session) readWireMessage(buffer []byte) (msg *boltMessage, wire []byte,
 		if s.server != nil && s.server.memoryPolicy != nil && (messageDecodesPayload(kind) || total > 2) {
 			err = request.Grow(int64(total), chunkHeaders)
 			if err != nil {
-				return nil, wire, &wireAdmissionError{cause: err}
+				return nil, wire, &wireAdmissionError{cause: err, remainingChunk: size - take, unfinished: true}
 			}
 			admitted = true
 		}

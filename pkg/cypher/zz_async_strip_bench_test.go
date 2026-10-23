@@ -9,6 +9,7 @@ package cypher
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func BenchmarkZZAsyncStrip(b *testing.B) {
 		walCfg := storage.DefaultWALConfig()
 		walCfg.BatchSyncInterval = 50 * time.Millisecond
 		walCfg.DeferAppendFlush = writeBehind
-		wal, err := storage.NewWAL(dir+"/wal", walCfg)
+		wal, err := storage.NewWAL(filepath.Join(dir, "wal"), walCfg)
 		if err != nil {
 			b.Fatal(err)
 		}

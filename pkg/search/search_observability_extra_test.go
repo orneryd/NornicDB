@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
-	"github.com/orneryd/nornicdb/pkg/storage"
+
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestServiceIndexSizeBytes(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewServiceWithDimensions(engine, 4)
@@ -37,7 +37,7 @@ func TestServiceIndexSizeBytes(t *testing.T) {
 }
 
 func TestObserveSearchStageDirect(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 	svc := NewServiceWithDimensions(engine, 4)
 	reg := prometheus.NewRegistry()

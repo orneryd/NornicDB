@@ -216,8 +216,8 @@ func (e *compositeStreamEngine) StreamNodeChunks(_ context.Context, chunkSize in
 }
 
 func TestCompositeEngine_RoutingSetters(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1, "db2": engine2},
 		map[string]string{"db1": "db1", "db2": "db2"},
@@ -236,8 +236,8 @@ func TestCompositeEngine_RoutingSetters(t *testing.T) {
 }
 
 func TestCompositeEngine_StreamingAPIs(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1, "db2": engine2},
 		map[string]string{"db1": "db1", "db2": "db2"},
@@ -279,8 +279,8 @@ func TestCompositeEngine_StreamingAPIs(t *testing.T) {
 
 func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 	t.Run("streaming engines propagate wrapped errors", func(t *testing.T) {
-		base1 := NewMemoryEngine()
-		base2 := NewMemoryEngine()
+		base1 := newTestMemoryEngine(t)
+		base2 := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base1.Close() })
 		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := &compositeStreamEngine{Engine: base1}
@@ -325,8 +325,8 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 	})
 
 	t.Run("fallback engines use allnodes and alledges", func(t *testing.T) {
-		base1 := NewMemoryEngine()
-		base2 := NewMemoryEngine()
+		base1 := newTestMemoryEngine(t)
+		base2 := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base1.Close() })
 		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := &nonStreamingCountEngine{Engine: base1}
@@ -397,8 +397,8 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 }
 
 func TestCompositeEngine_ReadWriteSelectorsAndDeleteByPrefix(t *testing.T) {
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 	composite := NewCompositeEngine(
 		map[string]Engine{"db1": engine1, "db2": engine2, "db3": nil},
 		map[string]string{"db1": "db1", "db2": "db2", "db3": "db3"},
@@ -418,8 +418,8 @@ func TestCompositeEngine_ReadWriteSelectorsAndDeleteByPrefix(t *testing.T) {
 
 func TestCompositeEngine_CreateNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -461,8 +461,8 @@ func TestCompositeEngine_CreateNode(t *testing.T) {
 
 func TestCompositeEngine_GetNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in each constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -503,8 +503,8 @@ func TestCompositeEngine_GetNode(t *testing.T) {
 
 func TestCompositeEngine_CreateEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -548,7 +548,7 @@ func TestCompositeEngine_CreateEdge(t *testing.T) {
 
 func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 	t.Run("rejects nil edge and no writable constituents", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		composite := NewCompositeEngine(
 			map[string]Engine{"db1": engine},
 			map[string]string{"db1": "db1"},
@@ -563,8 +563,8 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 	})
 
 	t.Run("returns not found when endpoints do not exist anywhere", func(t *testing.T) {
-		engine1 := NewMemoryEngine()
-		engine2 := NewMemoryEngine()
+		engine1 := newTestMemoryEngine(t)
+		engine2 := newTestMemoryEngine(t)
 		composite := NewCompositeEngine(
 			map[string]Engine{"db1": engine1, "db2": engine2},
 			map[string]string{"db1": "db1", "db2": "db2"},
@@ -582,8 +582,8 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 	})
 
 	t.Run("uses transaction state when both nodes map to same namespaced constituent", func(t *testing.T) {
-		base1 := NewMemoryEngine()
-		base2 := NewMemoryEngine()
+		base1 := newTestMemoryEngine(t)
+		base2 := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base1.Close() })
 		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := NewNamespacedEngine(base1, "db1")
@@ -613,8 +613,8 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 	})
 
 	t.Run("returns read-only constituent error when start node only exists there", func(t *testing.T) {
-		base1 := NewMemoryEngine()
-		base2 := NewMemoryEngine()
+		base1 := newTestMemoryEngine(t)
+		base2 := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base1.Close() })
 		t.Cleanup(func() { _ = base2.Close() })
 		engine1 := NewNamespacedEngine(base1, "db1")
@@ -636,8 +636,8 @@ func TestCompositeEngine_CreateEdge_ValidationPaths(t *testing.T) {
 
 func TestCompositeEngine_BulkCreateNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -679,8 +679,8 @@ func TestCompositeEngine_BulkCreateNodes(t *testing.T) {
 
 func TestCompositeEngine_GetSchema(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes with labels to populate schema
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -716,8 +716,8 @@ func TestCompositeEngine_GetSchema(t *testing.T) {
 
 func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create node in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -755,8 +755,8 @@ func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 
 func TestCompositeEngine_GetNodeFromMultipleConstituents(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in each constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
@@ -793,8 +793,8 @@ func TestCompositeEngine_GetNodeFromMultipleConstituents(t *testing.T) {
 
 func TestCompositeEngine_UpdateNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create node in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
@@ -828,8 +828,8 @@ func TestCompositeEngine_UpdateNode(t *testing.T) {
 
 func TestCompositeEngine_DeleteNode(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create node in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -862,8 +862,8 @@ func TestCompositeEngine_DeleteNode(t *testing.T) {
 
 func TestCompositeEngine_GetEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edge in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -898,8 +898,8 @@ func TestCompositeEngine_GetEdge(t *testing.T) {
 
 func TestCompositeEngine_UpdateEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edge in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -962,8 +962,8 @@ func TestCompositeEngine_UpdateEdge(t *testing.T) {
 
 func TestCompositeEngine_DeleteEdge(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edge in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1000,8 +1000,8 @@ func TestCompositeEngine_DeleteEdge(t *testing.T) {
 
 func TestCompositeEngine_GetNodesByLabel(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes with same label in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1040,8 +1040,8 @@ func TestCompositeEngine_GetNodesByLabel(t *testing.T) {
 
 func TestCompositeEngine_GetFirstNodeByLabel(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes with same label in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1073,8 +1073,8 @@ func TestCompositeEngine_GetFirstNodeByLabel(t *testing.T) {
 
 func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1111,8 +1111,8 @@ func TestCompositeEngine_GetOutgoingEdges(t *testing.T) {
 
 func TestCompositeEngine_GetIncomingEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1146,8 +1146,8 @@ func TestCompositeEngine_GetIncomingEdges(t *testing.T) {
 
 func TestCompositeEngine_GetEdgesBetween(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edge
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1181,8 +1181,8 @@ func TestCompositeEngine_GetEdgesBetween(t *testing.T) {
 
 func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edge
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1215,8 +1215,8 @@ func TestCompositeEngine_GetEdgeBetween(t *testing.T) {
 
 func TestCompositeEngine_GetEdgesByType(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges with same type in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1263,8 +1263,8 @@ func TestCompositeEngine_GetEdgesByType(t *testing.T) {
 
 func TestCompositeEngine_AllNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1303,8 +1303,8 @@ func TestCompositeEngine_AllNodes(t *testing.T) {
 
 func TestCompositeEngine_AllEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1351,8 +1351,8 @@ func TestCompositeEngine_AllEdges(t *testing.T) {
 
 func TestCompositeEngine_GetAllNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1390,8 +1390,8 @@ func TestCompositeEngine_GetAllNodes(t *testing.T) {
 
 func TestCompositeEngine_GetInDegree(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges (both edges point to node2)
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1430,8 +1430,8 @@ func TestCompositeEngine_GetInDegree(t *testing.T) {
 
 func TestCompositeEngine_GetOutDegree(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1467,8 +1467,8 @@ func TestCompositeEngine_GetOutDegree(t *testing.T) {
 
 func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes - put node1 and node2 in engine1, node3 and node4 in engine2
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1513,8 +1513,8 @@ func TestCompositeEngine_BulkCreateEdges(t *testing.T) {
 
 func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1550,8 +1550,8 @@ func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 
 func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -1595,8 +1595,8 @@ func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1636,8 +1636,8 @@ func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_LabelBased(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1667,8 +1667,8 @@ func TestCompositeEngine_routeWrite_LabelBased(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1698,8 +1698,8 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int64(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1729,8 +1729,8 @@ func TestCompositeEngine_routeWrite_PropertyBased_Int(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1760,8 +1760,8 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeHash(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1791,8 +1791,8 @@ func TestCompositeEngine_routeWrite_PropertyBased_NegativeInt(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_LabelBased_NegativeHash(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1822,8 +1822,8 @@ func TestCompositeEngine_routeWrite_LabelBased_NegativeHash(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1853,8 +1853,8 @@ func TestCompositeEngine_routeWrite_NoLabelsNoProperties(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_PropertiesWithoutDatabaseID(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1895,7 +1895,7 @@ func TestCompositeEngine_hashValue(t *testing.T) {
 
 func TestCompositeEngine_routeWrite_DirectBranches(t *testing.T) {
 	composite := NewCompositeEngine(
-		map[string]Engine{"db1": NewMemoryEngine(), "db2": NewMemoryEngine()},
+		map[string]Engine{"db1": newTestMemoryEngine(t), "db2": newTestMemoryEngine(t)},
 		map[string]string{"db1": "primary", "db2": "analytics"},
 		map[string]string{"db1": "read_write", "db2": "read_write"},
 	)
@@ -1917,8 +1917,8 @@ func TestCompositeEngine_routeWrite_DirectBranches(t *testing.T) {
 
 func TestCompositeEngine_CreateNode_NoWritableConstituents(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine with read-only constituents
 	constituents := map[string]Engine{
@@ -1948,8 +1948,8 @@ func TestCompositeEngine_CreateNode_NoWritableConstituents(t *testing.T) {
 
 func TestCompositeEngine_UpdateNode_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -1975,8 +1975,8 @@ func TestCompositeEngine_UpdateNode_NotFound(t *testing.T) {
 
 func TestCompositeEngine_DeleteNode_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2001,8 +2001,8 @@ func TestCompositeEngine_DeleteNode_NotFound(t *testing.T) {
 
 func TestCompositeEngine_GetEdge_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2027,8 +2027,8 @@ func TestCompositeEngine_GetEdge_NotFound(t *testing.T) {
 
 func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2054,8 +2054,8 @@ func TestCompositeEngine_UpdateEdge_NotFound(t *testing.T) {
 
 func TestCompositeEngine_DeleteEdge_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2080,8 +2080,8 @@ func TestCompositeEngine_DeleteEdge_NotFound(t *testing.T) {
 
 func TestCompositeEngine_GetFirstNodeByLabel_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2109,8 +2109,8 @@ func TestCompositeEngine_GetFirstNodeByLabel_NotFound(t *testing.T) {
 
 func TestCompositeEngine_GetEdgeBetween_NotFound(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2134,8 +2134,8 @@ func TestCompositeEngine_GetEdgeBetween_NotFound(t *testing.T) {
 
 func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in first constituent
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -2174,8 +2174,8 @@ func TestCompositeEngine_BulkCreateEdges_Unrouted(t *testing.T) {
 
 func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -2209,8 +2209,8 @@ func TestCompositeEngine_BatchGetNodes(t *testing.T) {
 
 func TestCompositeEngine_Close(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create composite engine
 	constituents := map[string]Engine{
@@ -2234,8 +2234,8 @@ func TestCompositeEngine_Close(t *testing.T) {
 
 func TestCompositeEngine_NodeCount(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -2266,8 +2266,8 @@ func TestCompositeEngine_NodeCount(t *testing.T) {
 
 func TestCompositeEngine_EdgeCount(t *testing.T) {
 	// Create constituent engines
-	engine1 := NewMemoryEngine()
-	engine2 := NewMemoryEngine()
+	engine1 := newTestMemoryEngine(t)
+	engine2 := newTestMemoryEngine(t)
 
 	// Create nodes and edges in different constituents
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
@@ -2307,8 +2307,8 @@ func TestCompositeEngine_EdgeCount(t *testing.T) {
 func TestCompositeEngine_ErrorPaths(t *testing.T) {
 	t.Run("query helpers propagate constituent errors and continue nil-first-node results", func(t *testing.T) {
 		boom := errors.New("boom")
-		errEngine := &compositeErrorEngine{MemoryEngine: NewMemoryEngine()}
-		okEngine := NewMemoryEngine()
+		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
+		okEngine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
 		t.Cleanup(func() { _ = okEngine.Close() })
 
@@ -2404,8 +2404,8 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 
 	t.Run("write helpers propagate routed constituent and close errors", func(t *testing.T) {
 		boom := errors.New("boom")
-		errEngine := &compositeErrorEngine{MemoryEngine: NewMemoryEngine()}
-		okEngine := NewMemoryEngine()
+		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
+		okEngine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
 		t.Cleanup(func() { _ = okEngine.Close() })
 

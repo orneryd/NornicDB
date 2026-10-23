@@ -12,7 +12,7 @@ import (
 
 func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(vectorPath)
 	svc.SetPersistenceEnabled(true)
@@ -38,7 +38,7 @@ func TestLiveVectorIndexingCreatesConfiguredFileStore(t *testing.T) {
 
 func TestEnablingVectorPersistenceMigratesExistingLiveVectors(t *testing.T) {
 	vectorPath := filepath.Join(t.TempDir(), "vectors")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	require.NoError(t, svc.IndexNode(&storage.Node{

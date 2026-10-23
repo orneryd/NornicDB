@@ -407,7 +407,9 @@ func detectGPU(config *Config) (*DeviceInfo, error) {
 		}
 
 		device, err := probeBackend(backend, config.DeviceID)
-		if err == nil && device != nil {
+		// A probe can describe installed hardware whose compute backend was
+		// not compiled in. Keep probing so an available backend can serve it.
+		if err == nil && device != nil && device.Available {
 			return device, nil
 		}
 	}

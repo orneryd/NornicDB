@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +16,7 @@ import (
 // free while waiting. Both operations must then finish.
 func TestCompressedPipelineCreationRacesPolicyChange(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 16)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(filepath.Join(dir, "vectors"), 16)
 	require.NoError(t, err)

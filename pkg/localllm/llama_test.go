@@ -1,4 +1,4 @@
-//go:build !nolocalllm
+//go:build cgo && !nolocalllm && !yzma && (darwin || linux)
 
 package localllm
 

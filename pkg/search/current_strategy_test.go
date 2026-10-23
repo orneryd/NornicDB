@@ -3,14 +3,13 @@ package search
 import (
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 // The status names every strategy a pipeline can run, IVF-PQ and k-means
 // routing included, rather than "unknown".
 func TestCurrentStrategyNamesEveryStrategy(t *testing.T) {
-	svc := NewService(storage.NewMemoryEngine())
+	svc := NewService(newTestMemoryEngine(t))
 	t.Cleanup(func() { _ = svc.Close() })
 	require.Equal(t, "unknown", svc.CurrentStrategy())
 

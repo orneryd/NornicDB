@@ -20,6 +20,7 @@ func openTestDB(t *testing.T) *DB {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 

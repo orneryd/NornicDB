@@ -87,7 +87,7 @@ func (e *blockingContinuationEngine) StreamNodeChunks(ctx context.Context, chunk
 }
 
 func TestSearchTextContinuationExpandsWithoutReembedding(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 30; index++ {
@@ -151,7 +151,7 @@ func TestSearchTextContinuationExpandsWithoutReembedding(t *testing.T) {
 
 func TestSearchTextContinuationUsesNodeIDWhenIDIsEmpty(t *testing.T) {
 	t.Run("ranked expansion", func(t *testing.T) {
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 		service := NewService(engine)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		ids := []storage.NodeID{"node-a", "node-b", "node-c", "node-d"}
@@ -190,7 +190,7 @@ func TestSearchTextContinuationUsesNodeIDWhenIDIsEmpty(t *testing.T) {
 	})
 
 	t.Run("ranked then ID", func(t *testing.T) {
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 		service := NewService(engine)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		for _, id := range []storage.NodeID{"node-a", "node-b", "node-c"} {
@@ -230,7 +230,7 @@ func TestSearchTextContinuationUsesNodeIDWhenIDIsEmpty(t *testing.T) {
 }
 
 func TestSearchTextContinuationReusesRerankMemoAcrossExpansion(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 8; index++ {
@@ -265,7 +265,7 @@ func TestSearchTextContinuationReusesRerankMemoAcrossExpansion(t *testing.T) {
 }
 
 func TestSearchTextContinuationMaxResultsCapsInitialPage(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 10; index++ {
@@ -300,7 +300,7 @@ func TestSearchTextContinuationMaxResultsCapsInitialPage(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeGroupsCompleteFilteredPopulation(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -351,7 +351,7 @@ func TestSearchTextContinuationIDModeGroupsCompleteFilteredPopulation(t *testing
 }
 
 func TestSearchTextContinuationIDModeProjectedBuildStillHydratesFullResults(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	for _, node := range []*storage.Node{
 		{ID: "doc-a", Labels: []string{"Report"}, Properties: map[string]any{"asset_id": "asset-a", "status": "active", "type": "report", "secret": "hydrate-me"}},
@@ -389,7 +389,7 @@ func TestSearchTextContinuationIDModeProjectedBuildStillHydratesFullResults(t *t
 }
 
 func TestSearchTextContinuationRankedThenIDFreezesPrefixBeforeCatalog(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -445,7 +445,7 @@ func TestSearchTextContinuationRankedThenIDFreezesPrefixBeforeCatalog(t *testing
 }
 
 func TestSearchTextContinuationRankedThenIDUsesBranchLimitWhenRankedLimitOmitted(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, err := engine.CreateNode(&storage.Node{ID: "doc-a", Labels: []string{"Document"}, Properties: map[string]any{"content": "alpha"}})
@@ -472,7 +472,7 @@ func TestSearchTextContinuationRankedThenIDUsesBranchLimitWhenRankedLimitOmitted
 }
 
 func TestSearchTextContinuationRankedThenIDDeepensMultiChunkRankedPrefix(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 101; index++ {
@@ -531,7 +531,7 @@ func TestSearchTextContinuationRankedThenIDDeepensMultiChunkRankedPrefix(t *test
 }
 
 func TestSearchTextContinuationRankedThenIDStopsAtBoundedRankedPrefix(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 101; index++ {
@@ -597,7 +597,7 @@ func TestSearchTextContinuationRankedThenIDStopsAtBoundedRankedPrefix(t *testing
 }
 
 func TestSearchTextContinuationRankedThenIDShortPrefixCanStillDeepen(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 3; index++ {
@@ -646,7 +646,7 @@ func TestSearchTextContinuationRankedThenIDShortPrefixCanStillDeepen(t *testing.
 }
 
 func TestSearchTextContinuationRankedThenIDStopsAfterRepeatedNonGrowingExpansion(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 80; index++ {
@@ -713,7 +713,7 @@ func TestSearchTextContinuationRankedThenIDStopsAfterRepeatedNonGrowingExpansion
 // deepening and, at the configured depth limit, says it can't continue; it
 // never ends as if complete.
 func TestSearchTextContinuationRankedDoesNotEndOnNonGrowingExpansion(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 80; index++ {
@@ -771,7 +771,7 @@ func TestSearchTextContinuationRankedDoesNotEndOnNonGrowingExpansion(t *testing.
 // one that adds nothing: candidate_pool_exhausted, with every result it
 // returned, instead of deepening until the stream times out.
 func TestSearchTextContinuationRankedEndsOnceDepthCoversTheIndex(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 80; index++ {
@@ -828,7 +828,7 @@ func TestSearchTextContinuationRankedEndsOnceDepthCoversTheIndex(t *testing.T) {
 func TestSearchTextContinuationRankedJumpsToIndexDepthAfterAnEmptyExpansion(t *testing.T) {
 	for _, cap := range []int{0, 1000, 500} {
 		t.Run(fmt.Sprintf("cap_%d", cap), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewService(engine)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for index := 0; index < 1000; index++ {
@@ -879,7 +879,7 @@ func TestSearchTextContinuationRankedJumpsToIndexDepthAfterAnEmptyExpansion(t *t
 }
 
 func TestSearchTextContinuationNonGrowingExpansionGetsSecondChance(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 3; index++ {
@@ -950,7 +950,7 @@ func TestSearchTextContinuationPlateauInferenceMethods(t *testing.T) {
 }
 
 func TestSearchTextContinuationRankedStopsAtDeclaredCandidateBudget(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for index := 0; index < 100; index++ {
@@ -1013,7 +1013,7 @@ func TestSearchTextContinuationRankedStopsAtDeclaredCandidateBudget(t *testing.T
 func TestSearchTextContinuationRerankTopKCapsRankedResults(t *testing.T) {
 	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
 		t.Run(string(mode), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewServiceWithDimensions(engine, 2)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for _, doc := range []struct {
@@ -1232,7 +1232,7 @@ func TestSearchTextContinuationRerankMemoMatchesFreshMovedHybridPool(t *testing.
 }
 
 func TestSearchTextContinuationRankedNaturalExhaustionCompletion(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 
@@ -1297,7 +1297,7 @@ func TestSearchTextContinuationRankedNaturalExhaustionCompletion(t *testing.T) {
 }
 
 func TestSearchTextContinuationRankedPullRehydratesAndAuthorizes(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, id := range []storage.NodeID{"doc-a", "doc-b"} {
@@ -1327,7 +1327,7 @@ func TestSearchTextContinuationRankedPullRehydratesAndAuthorizes(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeMaxResultsReturnsSortedPrefix(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, id := range []storage.NodeID{"doc-c", "doc-a", "doc-b"} {
@@ -1350,7 +1350,7 @@ func TestSearchTextContinuationIDModeMaxResultsReturnsSortedPrefix(t *testing.T)
 func TestSearchTextContinuationMaxResultsReportsCeilingNotExhaustion(t *testing.T) {
 	for _, mode := range []SearchContinuationMode{SearchContinuationID, SearchContinuationRankedThenID} {
 		t.Run(string(mode), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewService(engine)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for _, id := range []storage.NodeID{"doc-a", "doc-b", "doc-c"} {
@@ -1383,7 +1383,7 @@ func TestSearchTextContinuationMaxResultsReportsCeilingNotExhaustion(t *testing.
 func TestSearchTextContinuationHydratesCanonicalDisplayFields(t *testing.T) {
 	for _, mode := range []SearchContinuationMode{SearchContinuationID, SearchContinuationRanked, SearchContinuationRankedThenID} {
 		t.Run(string(mode), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewService(engine)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			_, err := engine.CreateNode(&storage.Node{
@@ -1419,7 +1419,7 @@ func TestSearchTextContinuationHydratesCanonicalDisplayFields(t *testing.T) {
 func TestSearchTextContinuationPreservesCanonicalResponseMetadata(t *testing.T) {
 	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, SearchContinuationRankedThenID} {
 		t.Run(string(mode), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewService(engine)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for _, id := range []storage.NodeID{"a", "b"} {
@@ -1444,7 +1444,7 @@ func TestSearchTextContinuationPreservesCanonicalResponseMetadata(t *testing.T) 
 }
 
 func TestSearchTextContinuationIDModeCountsRejectedNodesAgainstScanLimit(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxScannedNodes: 2})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1468,7 +1468,7 @@ func TestSearchTextContinuationIDModeCountsRejectedNodesAgainstScanLimit(t *test
 }
 
 func TestSearchTextContinuationIDModeFailsInsteadOfTruncatingLogicalMembers(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxMembers: 1})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1490,7 +1490,7 @@ func TestSearchTextContinuationIDModeFailsInsteadOfTruncatingLogicalMembers(t *t
 }
 
 func TestSearchTextContinuationIDModeBoundsGroupedPassageFanout(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxMembers: 1, MaxPassages: 2})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1512,7 +1512,7 @@ func TestSearchTextContinuationIDModeBoundsGroupedPassageFanout(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeRejectsBuildWhenAdmissionIsFull(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxConcurrentBuilds: 1})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1530,7 +1530,7 @@ func TestSearchTextContinuationIDModeRejectsBuildWhenAdmissionIsFull(t *testing.
 }
 
 func TestSearchTextContinuationIDModeBoundsRetainedDescriptorBytes(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxBuildBytes: 1})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1546,15 +1546,21 @@ func TestSearchTextContinuationIDModeBoundsRetainedDescriptorBytes(t *testing.T)
 }
 
 func TestSearchTextContinuationIDModeBoundsBuildTime(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
-	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxBuildDuration: time.Nanosecond})
+	service.SetCompleteContinuationPolicy(CompleteContinuationPolicy{MaxBuildDuration: time.Millisecond})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, err := engine.CreateNode(&storage.Node{ID: "node-a", Labels: []string{"Document"}})
 	require.NoError(t, err)
 
+	options := DefaultSearchOptions()
+	options.Where = func(*storage.Node) bool {
+		// Cross the configured deadline even on coarse platform clocks.
+		time.Sleep(10 * time.Millisecond)
+		return true
+	}
 	_, err = service.SearchTextContinuation(
-		context.Background(), "", DefaultSearchOptions(),
+		context.Background(), "", options,
 		SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: SearchContinuationID, N: 1},
 		nil, nil, nil, ChunkedSearchErrorPolicy{},
 	)
@@ -1562,7 +1568,7 @@ func TestSearchTextContinuationIDModeBoundsBuildTime(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeGroupingIsIndependentOfScanOrder(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 
@@ -1595,7 +1601,7 @@ func TestSearchTextContinuationIDModeGroupingIsIndependentOfScanOrder(t *testing
 // group_by is refused in ranked mode (named or by default), which pages hits as
 // they are found and can't group them; it isn't silently ignored.
 func TestSearchTextContinuationRankedModeRejectsGroupBy(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, ""} {
@@ -1621,7 +1627,7 @@ func TestSearchTextContinuationIDModeRejectsInvalidGroupKeys(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			service := NewService(engine)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			_, err := engine.CreateNode(&storage.Node{ID: "frame-a", Labels: []string{"Frame"}, Properties: testCase.properties})
@@ -1638,7 +1644,7 @@ func TestSearchTextContinuationIDModeRejectsInvalidGroupKeys(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeInvalidatesAfterMutation(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, id := range []string{"node-a", "node-b"} {
@@ -1659,7 +1665,7 @@ func TestSearchTextContinuationIDModeInvalidatesAfterMutation(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeRejectsMutationDuringBuild(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	_, err := engine.CreateNode(&storage.Node{ID: "node-a", Labels: []string{"Document"}})
 	require.NoError(t, err)
 	blocking := &blockingContinuationEngine{
@@ -1686,7 +1692,7 @@ func TestSearchTextContinuationIDModeRejectsMutationDuringBuild(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeInvalidatesAfterPolicyChange(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, id := range []string{"node-a", "node-b"} {
@@ -1706,7 +1712,7 @@ func TestSearchTextContinuationIDModeInvalidatesAfterPolicyChange(t *testing.T) 
 }
 
 func TestSearchTextContinuationIDModeAuthorizesBuildAndHydration(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for _, id := range []string{"allowed-a", "allowed-b", "denied"} {
@@ -1739,7 +1745,7 @@ func TestSearchTextContinuationIDModeAuthorizesBuildAndHydration(t *testing.T) {
 }
 
 func TestCatalogContinuationCloseDoesNotWaitForHydration(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	for _, id := range []storage.NodeID{"doc-a", "doc-b"} {
 		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Document"}})
 		require.NoError(t, err)
@@ -1783,7 +1789,7 @@ func TestCatalogContinuationCloseDoesNotWaitForHydration(t *testing.T) {
 }
 
 func TestSearchTextContinuationIDModeEnumeratesExactlyTwentyThousandMembers(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	service := NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 

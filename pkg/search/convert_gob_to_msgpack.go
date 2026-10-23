@@ -87,7 +87,12 @@ func convertOneDbDir(dbDir string) error {
 	ivfEntries, err := os.ReadDir(ivfDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			// Windows also classifies ReadDir on an existing regular file as
+			// not-exist. Only an absent entry is optional; an invalid entry
+			// must still fail conversion.
+			if _, statErr := os.Stat(ivfDir); os.IsNotExist(statErr) {
+				return nil
+			}
 		}
 		return err
 	}

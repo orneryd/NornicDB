@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -22,12 +23,10 @@ func serviceLockWait(t *testing.T, why string, ready func() bool) {
 		runtime.Gosched()
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("could not stage " + why)
+	serviceLockDump(t, "could not stage "+why)
 }
 func serviceLockStack(parts ...string) bool {
-	b := make([]byte, 1<<20)
-	n := runtime.Stack(b, true)
-	for _, g := range strings.Split(string(b[:n]), "\n\n") {
+	for _, g := range strings.Split(serviceLockStacks(), "\n\n") {
 		found := true
 		for _, p := range parts {
 			if !strings.Contains(g, p) {
@@ -41,17 +40,24 @@ func serviceLockStack(parts ...string) bool {
 	}
 	return false
 }
+func serviceLockStacks() string {
+	for size := 1 << 20; ; size *= 2 {
+		b := make([]byte, size)
+		n := runtime.Stack(b, true)
+		if n < len(b) {
+			return string(b[:n])
+		}
+	}
+}
 func serviceLockDump(t *testing.T, why string) {
 	t.Helper()
-	b := make([]byte, 1<<20)
-	n := runtime.Stack(b, true)
-	t.Fatalf("%s\n%s", why, b[:n])
+	t.Fatalf("%s\n%s", why, serviceLockStacks())
 }
 
 // All operations are production operations; locks only stage their ordinary
 // overlap. A policy update holds indexMu, and ClearVectorIndex holds pipelineMu.
 func TestServiceClearVersusQuantization(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	// Let policy preflight read the current configuration and join any build
 	// before staging the admission/publication overlap under the service lock.
 	svc.pipelineMu.Lock()
@@ -112,7 +118,7 @@ func TestServiceClearVersusQuantization(t *testing.T) {
 // Gate it at those real boundaries, then queue a normal persistence retirement
 // while its Count holds mu. Its second RLock must not deadlock on that writer.
 func TestServicePipelineDimensionsVersusClose(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	svc.indexMu.Lock()
 	queried := make(chan error, 1)
 	go func() { _, err := svc.getOrCreateVectorPipeline(context.Background()); queried <- err }()
@@ -170,9 +176,10 @@ func (e *serviceLockBuildEngine) LastWriteTime() time.Time { return e.lastWrite(
 func TestServiceBuildResumeVersusRetirement(t *testing.T) {
 	for _, closeService := range []bool{false, true} {
 		t.Run(fmt.Sprintf("close=%t", closeService), func(t *testing.T) {
-			engine := &serviceLockBuildEngine{Engine: storage.NewMemoryEngine()}
+			engine := &serviceLockBuildEngine{Engine: newTestMemoryEngine(t)}
 			svc := NewServiceWithDimensions(engine, 2)
-			svc.SetVectorIndexPath(t.TempDir() + "/vectors")
+			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
+			defer svc.Close()
 			svc.SetPersistenceEnabled(true)
 			if err := svc.IndexNode(&storage.Node{ID: "live", ChunkEmbeddings: [][]float32{{1, 0}}}); err != nil {
 				t.Fatal(err)

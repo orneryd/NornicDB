@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -23,7 +24,7 @@ func TestCypher_CountAfterDeleteRecreate(t *testing.T) {
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 
@@ -93,7 +94,7 @@ func TestCypher_CountVsMatchCount(t *testing.T) {
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 	defer wal.Close()
 

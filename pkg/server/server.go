@@ -742,6 +742,7 @@ type Server struct {
 
 	// Slow query logging
 	slowQueryLogger *log.Logger
+	slowQueryFile   *os.File // owned until Stop has drained HTTP handlers
 	slowQueryCount  atomic.Int64
 
 	// Cached Cypher executors per database (thread-safe, reusable)
@@ -1815,6 +1816,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					"slow_query", config.Logging.SlowQueryLogFile, err))
 		} else {
 			s.slowQueryLogger = log.New(file, "", log.LstdFlags)
+			s.slowQueryFile = file
 			s.logEvent(context.Background(), slog.LevelInfo,
 				localization.ServerSlowQueryLoggingConfiguredEvent(
 					"slow_query", config.Logging.SlowQueryLogFile,
@@ -1998,6 +2000,11 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
 	}
+	defer func() {
+		if s.slowQueryFile != nil {
+			err = errors.Join(err, s.slowQueryFile.Close())
+		}
+	}()
 
 	defer func() {
 		if shutdownErr := s.stopHeimdallPlugins(); shutdownErr != nil {
