@@ -6,7 +6,7 @@ The source inventory in [sources.md](sources.md) pins inspected T3 documentation
 It establishes provider-session-scoped MCP credentials, durable T3 thread IDs,
 thread messaging, worktree-aware launch, Codex app-server integration and generic
 ACP providers. It does **not** establish a universal T3 pre-execution interceptor
-or prove a Nornic workflow plugin can prevent every native tool write.
+or prove the T3 workflow extension can prevent every native tool write.
 
 Codex is a native T3 provider. Copilot CLI offers ACP and can be configured as a
 T3 local ACP command (`copilot --acp --stdio`) or a compatible registry entry
@@ -22,17 +22,15 @@ Authentication success and model availability are separate from enforcement.
 
 ## 2. Proposed installation model
 
-Nornic supplies the optional APOC/swarm and Heimdall swarm adapters plus a local
-harness integration package. The latter uses supported provider lifecycle/tool
-hooks, MCP endpoints and launch configuration. It owns the trusted local
-execution gateway and workspace manager. No fork of upstream T3 is part of this
-proposal. No external source patch is authorized by this spec PR.
+This repository supplies a pinned, user-authorized local T3 extension patch and
+setup scripts. T3 hosts the workflow service, trusted execution gateway and
+workspace manager. Existing NornicDB APIs store coordination in `t3workflow` and
+the release corpus in `nornicdbcode`. No custom NornicDB plugin is installed.
 
-The integration must prove how the T3 invocation scope reaches the local gateway
-without trusting model-supplied IDs. Preferred binding: a supported authenticated
-T3 integration resolves environment/thread/provider-session scope, then exchanges
-it for a short-lived Nornic session credential scoped to that project/worktree.
-T3's internal bearer token is not automatically a token Nornic can validate.
+The integration resolves T3 invocation scope inside T3's authenticated MCP
+service, without trusting model-supplied IDs. The internal workflow owner calls
+NornicDB using server-owned configuration; T3 bearer tokens are not forwarded as
+database identity and no undocumented attestation endpoint is needed.
 Do not scrape transcripts, rely on titles, or invent an undocumented identity
 endpoint. If the pinned upstream API cannot attest this binding, record the
 exact upstream extension needed as an implementation dependency; strict T3

@@ -1,18 +1,18 @@
-# APOC and MCP API contract, version 1
+# T3 workflow MCP API contract, version 1
 
-All names below are proposed. Implementation must generate Cypher metadata,
-Heimdall action schemas, documentation inventory and adapter contract tests from
-one typed registry. Listing a method here does not mean it already exists.
+The full catalog below is the target contract. T3 owns one typed MCP registry;
+there are no new Cypher procedures or Heimdall plugins. Listing an operation here
+does not mean it exists. The experiment's actual schemas and capability report
+are in the pinned T3 patch and documented in the local setup guide.
 
 ## 1. Calling convention
 
-Every procedure takes exactly one non-null `request :: MAP` and yields exactly
-one row, including list operations. The common signature is:
+The tool `nornic_workflow` accepts one JSON object with an `operation` field and
+returns one structured envelope, including for list operations:
 
 ```text
-apoc.swarm.<group>.<operation>(request :: MAP)
-  :: (ok :: BOOLEAN, code :: STRING, data :: MAP,
-      next :: LIST<MAP>, version :: INTEGER, requestId :: STRING)
+nornic_workflow({operation: "<group>.<operation>", ...request})
+  -> {ok, code, data, version, requestId}
 ```
 
 Success is `ok=true, code="OK"`. Expected contention, readiness failures and
@@ -109,8 +109,8 @@ not just a Boolean.
 
 ## 3. Procedure inventory
 
-In the following tables, `R` means read procedure, `W` means write procedure.
-All require normal database/procedure authorization. Additional roles are:
+In the following tables, `R` means a read operation, `W` means a mutating operation.
+All require authenticated T3 invocation and workflow authorization. Additional roles are:
 `agent` (assigned task/session), `runner` (trusted execution/evidence adapter),
 `indexer` (canonical importer), `router` (T3 delivery adapter),
 `tracker` (Linear integration adapter), `maintainer`
@@ -150,7 +150,7 @@ No worker can configure a different code DB to bypass the one-corpus contract.
 | `task.observeClosure` | W / runner | `taskId`, verified GitHub merge/closure receipt | Closed state and cleanup eligibility; never performs merge/tag/deployment |
 
 `workflow.advance` may move only along the edges in `design.md`. Freeze, rework
-and PR readiness are specialized transitions performed by the procedures below;
+and PR readiness are specialized transitions performed by the operations below;
 the generic transition cannot bypass their atomic side effects. No arbitrary
 `setStatus("done")` API exists. Tasks are reusable after review findings through
 rework, not by overwriting their evidence/history.
@@ -268,8 +268,8 @@ chat bus is silently created when T3 is unavailable.
 
 | Signature | Behavior |
 | --- | --- |
-| `apoc.swarm.resourceKey(resource :: MAP) :: STRING` | Canonical identity serialization after syntactic validation; no graph/clock/identity access |
-| `apoc.swarm.resourcesOverlap(left :: MAP, right :: MAP) :: BOOLEAN` | Deterministic structural overlap of normalized resource descriptors; unresolved symbol containment requires explicit path/member data and otherwise errors |
+| `resourceKey(resource) -> string` | Internal canonical identity serialization after syntactic validation; no graph/clock/identity access |
+| `resourcesOverlap(left, right) -> boolean` | Internal deterministic structural overlap of normalized resource descriptors; unresolved symbol containment requires explicit path/member data and otherwise errors |
 
 These helpers are for planning/display. They cannot establish current ownership,
 authorize writes, or substitute for the authoritative claim transaction.
@@ -295,7 +295,7 @@ Stable expected-denial codes:
 
 Protocol/query errors use namespaced swarm categories for invalid request,
 unauthorized, unsupported transaction, persistence failure and internal error,
-mapped through the existing Bolt/HTTP error machinery. Do not claim an invented
+mapped through T3 MCP protocol errors. Do not claim an invented
 Neo4j status code is standard. Partial commit/cancellation outcomes report known
 receipt IDs; callers reconcile after transport loss rather than infer rollback.
 
@@ -318,52 +318,31 @@ Proposed initial configurable bounds, returned by capabilities:
 
 ## 6. Example agent loop
 
-```cypher
-CALL apoc.swarm.workflow.next({apiVersion: 1, projectId: $project, taskId: $task})
-YIELD ok, code, data, next
-RETURN ok, code, data, next;
+```json
+{"operation":"task.create","requestId":"create-1","taskId":"fix-1","title":"Correct the arithmetic bug","acceptanceCriteria":["square(3)=9"]}
 ```
 
-```cypher
-CALL apoc.swarm.claim.acquire({
-  apiVersion: 1, projectId: $project, taskId: $task,
-  requestId: $request, expectedVersion: $taskVersion,
-  planVersion: $planVersion, resources: $resources,
-  reason: 'Move embedding invalidation into the storage owner', ttlSeconds: 120
-}) YIELD ok, code, data, next
-RETURN ok, code, data, next;
+```json
+{"operation":"plan.put","requestId":"plan-1","taskId":"fix-1","expectedVersion":1,"resources":["calc.py"],"steps":["Replace addition with multiplication"],"validation":["python -m unittest"]}
 ```
 
-The runner obtains and consumes an action permit, applies only the authorized
-patch, records actual effects, and attaches test/doc/benchmark evidence. After
-the lifecycle obligations pass:
+Next acquire the planned resources, read the file and its SHA256, and pass that
+hash plus the live claim generation to file.write. Fetch the current task version
+before workflow.validate. The duplicate receipt is not independent test evidence.
+The target full lifecycle freezes immutable changes, independently reviews them
+and prepares a PR only after all obligations pass.
 
-```cypher
-CALL apoc.swarm.change.freeze($freezeRequest)
-YIELD ok, code, data, next
-RETURN ok, code, data, next;
-```
+## 7. Invocation and persistence rules
 
-The freeze response includes the pending change and released claim IDs. The
-coordinator requests an independent review, then prepares and records a PR.
-Review findings call `change.rework`; they never reopen an expired claim.
+T3 resolves trusted identity before dispatch. Server-owned credentials remain
+outside model arguments. Tool availability and authorization are separate;
+runner/indexer/tracker-only operations require their own scoped admission.
 
-## 7. Transport parity and transaction rules
-
-Each procedure maps to Heimdall action `heimdall_swarm_<group>_<operation>`;
-top-level `capabilities`/`status` map without an extra group. The registry stores
-both exact names explicitly and rejects collisions at startup. External actions
-must set `external: true` individually. Pure helper functions need no MCP tool.
-Preserve existing FIFO collision behavior and expose no unrelated default action.
-
-Runner/indexer/router/tracker-only methods remain permission-restricted even when
-discoverable. Trusted adapters carry scoped credentials separately from model
-tool arguments. Role labels supplied by an LLM are rejected. Internal Heimdall
-inference is subject to the same authorization, not a privileged backdoor.
-
-All W calls follow the standalone autocommit constraint in `design.md`.
-`CALL ... YIELD ... RETURN ...` is permitted. Calls inside UNWIND/subqueries,
-explicit BEGIN/COMMIT and mixed mutation statements are rejected before effects.
-Storage failures roll back command state, claims and receipts together. Bolt,
-HTTP, embedded and MCP tests must observe identical durable outcomes from a fresh
-session. Registration metadata alone is not proof the transaction guard exists.
+Each workflow mutation uses one version-checked durable command path. Database
+persistence failures do not return a grant. External filesystem, provider and
+tracker effects use persisted intents and read-back receipts; the service does
+not claim atomicity across those systems. Pending effects fence conflicting
+admission until reconciled. A caller cannot wrap a workflow operation inside a
+Cypher transaction: the operation is an authenticated T3 MCP call, not a database
+procedure. Fresh-session tests must verify persisted outcomes through the public
+T3 boundary. Internal helpers do not grant authority.

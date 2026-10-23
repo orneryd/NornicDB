@@ -22,24 +22,32 @@ must make this possible on local hardware without embedding each worktree.
   command tools and delegated workers. Prompt instructions alone are insufficient.
 - Release edit claims when a revision is frozen for review; retain pending-change
   visibility. Reacquire claims for rework. Expire abandoned ownership safely.
-- Reuse T3 identity and messaging. Nornic owns coordination facts, not a second
-  conversation system.
+- Reuse T3 identity and messaging. One T3 workflow service owns coordination
+  transitions and persists receipts through existing NornicDB APIs.
 - Integrate the existing NOR Linear release project: acceptance-driven intake,
   its actual development/test statuses, verified assignee mapping, separate
   develop/release PR evidence and non-closing links. Preserve human-owned scope.
 - Maintain one canonical code corpus for the active release branch in one
   configured Nornic database. No full worktree ingestion, per-agent database,
   per-agent vector index, or per-agent embedding model instance.
-- APOC and Heimdall/MCP adapters expose one shared workflow service, usable with
-  local inference disabled and without the `localllm` dependency.
+- Expose the service through T3's authenticated MCP toolkit. Use existing
+  NornicDB Cypher/search APIs; no custom NornicDB/APOC/Heimdall plugin is required.
+- Classify user intent with the local Ollama model, inject only relevant
+  instructions, and route complex/uncertain work to configured available frontier
+  providers. Routine implementation of an existing plan stays local.
+- Run the repository's duplicate checker in the harness against the candidate
+  tree, preserving advice and blocking validation until resolved; install no hook.
 
 ## What changes
 
-This PR specifies the feature; **it delivers no runtime implementation**.
-The proposed extension namespace is `apoc.swarm.*`. Mutations are procedures;
-pure resource-key helpers are functions. The contract includes identity,
+This PR includes a pinned T3 extension experiment and reproducible local setup,
+alongside the target lifecycle specification. The authenticated MCP tool is
+`nornic_workflow`, dispatched by an `operation` field; pure resource helpers remain
+internal functions. The target contract includes identity,
 projects, tasks, plans, evidence, workspaces, code-index readiness, claims,
 execution permits, handoffs, T3 notifications, review and PR receipts.
+The complete catalog is a target, not an implemented capability claim. See
+[local setup and tested limits](../../../docs/development/swarm-local.md).
 
 Read in this order:
 
@@ -63,16 +71,14 @@ Read in this order:
 ### Modified capabilities
 
 None of the existing OpenSpec capability definitions are replaced. Implementation
-extends existing plugin registration, authentication, code-intelligence ingestion
-and embedding policy owners only where this contract requires it.
+extends T3's authenticated MCP toolkit and reuses the existing NornicDB storage,
+code-intelligence importer and embedding owners.
 
 ## Status, base and dependencies
 
 Planning base: `release/v1.4.4@ba8d6d13b48452ec4e38d826869ad63a64063848`.
-No issue ID was supplied. This is a Nornic extension, not a Neo4j APOC parity
-claim or openCypher language change. The Cypher convergence plan is relevant
-only for shared procedure dispatch, authorization, cancellation and transaction
-semantics; no new parsing/execution route is proposed.
+No issue ID was supplied. This is a T3 extension using existing database APIs,
+not an openCypher language or NornicDB plugin change.
 
 Already present on the inspected release base:
 
@@ -83,7 +89,8 @@ Already present on the inspected release base:
   policies. The local update hooks currently track `main`, not this proposal's
   configurable active release ref.
 
-Still to implement: every swarm API and workflow below, provider adapters,
+The experiment implements a subset of task/plan/claim/file/validation and local
+intent routing contracts. Still to qualify: the complete API and lifecycle, provider adapters,
 execution enforcement, Linear intake/projection, single-writer release refresh,
 unembedded worktree deltas,
 and their tests. T3 and provider behavior must be version-qualified; inspected
@@ -91,7 +98,10 @@ documentation is not an end-to-end enforcement test.
 
 ## Non-goals
 
-No T3 fork, new chat service, automatic merge/release, default binary model
+No new chat service, automatic merge/release, default binary model
 bundling, replacement of T3 persistence, unbounded graph locking, or wholesale
 refactor of existing APOC locks. Existing `apoc.lock.*` is not a durable agent
-lease service. This planning PR changes no third-party source or runtime defaults.
+lease service. The user-approved local T3 patch is pinned and maintained in this
+repository; upgrades require requalification. No changes to upstream T3 are
+published by this PR. OpenAI text-embedding-3-small is the embedding provider;
+Ollama Qwen 3.5 9B is the local classifier/worker, with vectors indexed in system RAM.

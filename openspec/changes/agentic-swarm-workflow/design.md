@@ -2,17 +2,17 @@
 
 ## 1. Owners and integration boundaries
 
-One database-scoped workflow service owns all swarm state transitions. Proposed
-home: `pkg/swarm`, with narrow host-supplied storage, clock, identity and policy
-interfaces. Do not import `pkg/nornicdb` back into that service or create package
-cycles. The host constructs one instance per configured database and injects the
-same service into both adapters; two plugins must not create separate registries.
+One T3-hosted workflow service owns all swarm state transitions. Its home is
+`apps/server/src/nornic` in the pinned T3 patch. T3 supplies trusted invocation
+identity, clocks, provider registry and orchestration. The service persists
+versioned records and receipts through existing NornicDB HTTP Cypher APIs.
+NornicDB has no new workflow plugin, registry, chat service or identity endpoint.
 
 | Component | Canonical responsibility |
 | --- | --- |
-| Nornic workflow service | Tasks, evidence references, phase rules, claims, permits, pending changes, idempotent receipts |
-| APOC plugin adapter | Typed Cypher arguments, modes, metadata and result projection |
-| Heimdall swarm plugin | Explicit external MCP action schemas and the same service calls |
+| T3 workflow service | Tasks, evidence references, phase rules, claims, permits, pending changes, idempotent receipts |
+| T3 MCP toolkit | Typed operation schemas, authenticated provider-session context and result projection |
+| Existing NornicDB APIs | Durable graph/receipt storage and canonical code search and native code-scoped MCP; no custom workflow plugin |
 | Harness adapter/execution gateway | Trusted session binding, worktree provisioning, action interception, constrained process execution and evidence capture |
 | Existing code-intelligence importer | Release-commit extraction, incremental content updates and repository graph ownership |
 | Existing embedding worker | Shared model lifetime, queues and vector generation for canonical code only |
@@ -20,10 +20,71 @@ same service into both adapters; two plugins must not create separate registries
 | Linear tracker adapter | Live outcome/criteria intake, verified assignments and evidence-derived status/delivery projections |
 | Git/GitHub | Commits, branches, pull requests and maintainer merge authority |
 
-The harness owns filesystem/process effects; APOC does not execute arbitrary
-shell commands. The database records receipts for effects that occur elsewhere.
-Direct Bolt/HTTP callers receive the same authorization checks as MCP callers.
+The T3 harness owns filesystem/process effects. The database stores receipts for
+effects that occur elsewhere. Workflow admission is enforced in T3, not by direct
+Bolt/HTTP access to the database; managed workers receive no database credentials.
 An LLM-provided `agentId` is a display hint, never proof of ownership.
+
+```mermaid
+flowchart LR
+  U[User or Linear outcome] --> T[T3 authenticated intake]
+  T --> C[Local Ollama intent classifier]
+  T --> SQ[(Native T3 threads and sessions: SQLite)]
+  C --> I[Intent-specific instructions and tool admission]
+  I -->|Routine planned work| L[Local Qwen worker]
+  I -->|Complex or uncertain| F[Available authenticated frontier provider]
+  I --> R[Bounded code and documentation retrieval]
+  R --> L
+  R --> F
+  R --> N
+  L --> W[T3 workflow service and file gateway]
+  F --> W
+  W --> D[Mandatory existing duplicate checker]
+  W --> N[NornicDB existing Cypher, search and MCP APIs]
+  T --> M[Native MCP tools, fixed code database]
+  M --> N
+  D --> N
+  N --> E[OpenAI text-embedding-3-small]
+  N --> V[(Persistent Docker data volume)]
+  N --> WF[(t3workflow: coordination and receipts)]
+  N --> CODE[(nornicdbcode: code, docs and vectors)]
+  CODE --> RAM[Search indexes in system RAM]
+  W <--> A[Linear tracker adapter]
+  A <--> X[Linear GraphQL API]
+```
+
+The diagram shows the target integration. The restricted local Pi profile has
+native tool admission; frontier execution isolation and full evidence-driven
+Linear projection require separate qualification. Diagram arrows do not imply
+those boundaries have already passed end-to-end tests.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant T3
+  participant Local as Local classifier
+  participant Worker
+  participant DB as NornicDB
+  participant Check as Duplicate checker
+  participant Linear
+  User->>T3: Intent or issue reference
+  T3->>Linear: Read current scope, criteria and version
+  T3->>Local: Classify the requested action
+  Local-->>T3: Kind, complexity, confidence
+  T3->>Worker: Scoped instructions and selected provider
+  T3->>DB: Hybrid search for relevant code and documentation
+  DB-->>T3: Bounded excerpts, citations and readiness limits
+  T3->>Worker: Intent-specific retrieved context
+  Worker->>T3: Versioned plan and resource claims
+  T3->>DB: Persist ownership and receipts
+  Worker->>T3: Hash-checked file action in isolated worktree
+  T3->>Check: Exact candidate via private Git index
+  Check->>DB: Search canonical code corpus
+  Check-->>T3: Pass or blocking advice
+  T3->>DB: Persist actual validation receipt
+  T3->>Linear: Reconcile evidence-derived projection
+  Note over T3,Linear: Human scope and merge/release decisions remain authoritative
+```
 
 ## 2. Identity and graph model
 
@@ -208,21 +269,18 @@ project's delivery observer still distinguishes Merged from Released.
 
 ## 7. Compatibility, startup and rollout
 
-Install the optional swarm service and adapters explicitly. All mutation
-procedures use `WRITE`, reads use `READ`, and configuration uses admin checks.
-Pure helper functions do not read mutable state or cause side effects.
-`SHOW PROCEDURES`/`SHOW FUNCTIONS` must expose truthful signatures. Existing
-APOC names/behavior remain unchanged. No semantic claim is made for Neo4j.
+Install the pinned T3 extension explicitly. The authenticated MCP toolkit calls
+one workflow service; pure helpers remain internal and have no side effects.
+NornicDB uses its existing Cypher API with server-owned credentials. Coordination
+records use a separate logical database (`t3workflow`) from the code corpus
+(`nornicdbcode`); both persist in the Docker data volume. T3 retains native SQLite
+for its own threads and sessions because this pinned release has no Neo4j backend.
 
-The initial control-plane transaction contract is standalone autocommit calls:
-mutation procedures are rejected inside caller-managed explicit transactions,
-multi-statement batches and row-driven/subquery invocation before any effect.
-The host must expose and enforce this context; do not guess from query strings.
-This avoids reporting a grant that is later rolled back by an outer transaction.
-Reads use normal transaction snapshots for display only; authorization always
-checks current authoritative state. MCP mutations use the same internal atomic
-command path. Future composable transaction support needs a separate explicit
-contract, not an autonomous inner commit masquerading as rollback-safe work.
+Admission reads current authoritative state. Mutations persist version-checked
+receipts before acknowledging success. Filesystem/provider/tracker effects use
+intents and reconciliation, not an invented distributed transaction. Ordinary
+Cypher transaction behavior is unchanged; there are no workflow procedures to
+invoke through UNWIND or caller-owned transactions.
 
 Service startup verifies storage, schemas, embedding exclusions and required
 adapter registration before advertising capabilities. Unload stops admission,
@@ -230,7 +288,7 @@ drains active calls and removes public tools through the existing lifecycle.
 Persisted claims survive server restart and are reconciled before new ownership.
 An in-memory backend is suitable for isolated tests, not durable production claims.
 
-No runtime behavior is changed in this spec PR. Implementation is incremental,
+This PR includes a local runtime experiment. Implementation is incremental,
 but the feature is not marked complete until both requested providers pass the
 full lifecycle and enforcement tests. Use supported T3/provider extension points;
 any unavoidable third-party source patch needs its own explicit maintainer scope.

@@ -191,7 +191,7 @@ def check_staged(root):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["ingest", "check-staged", "post-update", "main-updated"])
+    parser.add_argument("command", choices=["ingest", "ingest-docs", "check-staged", "post-update", "main-updated"])
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--revision", default="HEAD", help="immutable commit to ingest")
     parser.add_argument("--force", action="store_true")
@@ -207,6 +207,9 @@ def main(argv=None):
                 print("main was updated, but its graph refresh failed. Fix configuration/service availability "
                       "and run scripts/code_intelligence.py ingest. The Git update is not rolled back.", file=sys.stderr)
                 raise
+        elif args.command == "ingest-docs":
+            from document_ingest import ingest_documents
+            ingest_documents(root, args.revision)
         elif args.command == "ingest":
             ingest(root, args.revision, args.force)
         else:

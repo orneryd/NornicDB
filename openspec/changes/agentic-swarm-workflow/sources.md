@@ -6,6 +6,10 @@ support are not implemented or verified by those references.
 
 ## NornicDB release snapshot
 
+The plugin sources below are historical integration candidates inspected for the
+original proposal. The revised architecture does not modify or install a workflow
+plugin; the implementation is the pinned T3 patch using existing NornicDB APIs.
+
 Commit: `ba8d6d13b48452ec4e38d826869ad63a64063848`.
 
 | Source | Observed fact / design consequence |

@@ -1,5 +1,20 @@
 # Linear-driven development workflow
 
+## Current local implementation
+
+The pinned T3 patch implements authenticated issue reads and versioned task
+binding through `linear.issue` / `linear.bind`. Credentials belong to the T3
+server's private environment. Binding preserves the live issue snapshot and
+invalidates the task's prior plan, claims and duplicate receipt; a changed Linear
+version blocks new implementation admission until refreshed. No database plugin
+or separate tracker-owned workflow aggregate is introduced. The connected NOR
+status mapping was rechecked during implementation.
+
+The remaining sections define the target bidirectional lifecycle integration.
+External status/Delivery/assignee mutations are not enabled by the experiment;
+they require the independent evidence, field ownership and reconciliation gates
+specified below. A successful issue read is not a completed tracker qualification.
+
 ## 1. Inspected workspace and boundary
 
 The connected `NOR` / `Nornicdb` team and its **v1.4.4 — Stabilization & release**
@@ -33,7 +48,7 @@ private evidence excerpts or exported workspace data.
 | Fact | Authoritative owner |
 | --- | --- |
 | Outcome, acceptance criteria, priority, scope, project/milestone, human assignee, issue dependencies | Linear issue/project, with human edits preserved |
-| Current execution phase, claims, agent session, permits and evidence receipts | Nornic workflow service |
+| Current execution phase, claims, agent session, permits and evidence receipts | T3 workflow service, durably stored in NornicDB |
 | Conversation and executing agent identity | T3 thread/provider session |
 | Actual code, branch, PR head/base/merge and release publication | Git/GitHub |
 | Linear status/Delivery update proposed by the harness | Evidence-derived projection, applied through one tracker adapter and reconciled with the live issue |

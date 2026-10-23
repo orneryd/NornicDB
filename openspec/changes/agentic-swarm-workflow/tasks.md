@@ -1,8 +1,9 @@
 # Implementation milestones
 
-All tasks below are unimplemented. Drafting or merging this specification does
-not complete an implementation task. Keep checkboxes unchecked until its public
-contract and acceptance evidence are verified.
+The full lifecycle milestones below remain unqualified unless explicitly checked.
+The pinned local experiment implements a subset; its setup and actual checks are
+documented in `docs/development/swarm-local.md`. A partial implementation does
+not complete the larger milestone's acceptance contract.
 
 ## 1. Establish integration capabilities
 
@@ -12,17 +13,17 @@ contract and acceptance evidence are verified.
   record any missing upstream capability explicitly before implementation (SW-02).
 - [ ] Prove the managed executor can constrain/stop every enabled mutation path,
   including stdin and children; do not mark advisory integration strict (SW-11/19/20).
-- [ ] Confirm plugin packaging and shared-service injection without import cycles
-  or local inference/native model dependencies (SW-01/18).
+- [ ] Qualify pinned T3 extension packaging, authenticated MCP service injection
+  and existing NornicDB API persistence without custom DB plugins (SW-01/18).
 
 ## 2. Canonical service and API contracts
 
 - [ ] Implement typed version-1 registry, common envelopes, schemas, error mapping,
   modes, pure helpers, capability inventory and contract generation (SW-01/17/18).
-- [ ] Implement database-scoped service, storage transaction guard, durable
-  receipts, role-scoped context and standalone-autocommit invocation guard (SW-18).
-- [ ] Wire both plugin adapters to that same instance; register explicit external
-  actions and preserve collision/unload semantics (SW-01).
+- [ ] Qualify T3-hosted service, durable compare-and-set receipts, scoped identity
+  and atomic command persistence through existing database APIs (SW-18).
+- [ ] Qualify the authenticated MCP toolkit against that one service instance;
+  advertise only implemented operations and preserve unload semantics (SW-01).
 - [ ] Apply and verify embedding exclusions to coordination/delta records before
   their first creation (SW-21).
 

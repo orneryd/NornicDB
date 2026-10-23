@@ -1,21 +1,64 @@
 ## ADDED Requirements
 
+### Requirement: Local classification selects instructions and provider
+
+The T3 intake SHALL classify the actual authenticated user message with the
+local model. It SHALL inject only the applicable intent instructions and admit
+only that intent's operations. Routine implementation of a supplied plan SHALL
+remain eligible for the local worker. Design, independent review, complex and
+uncertain intents SHALL route to an available authenticated configured frontier
+provider. Failed classification or missing provider readiness SHALL block work.
+
+#### Scenario: Implement a supplied plan
+
+- **WHEN** the user requests a bounded defect correction with explicit steps and acceptance checks
+- **THEN** classification distinguishes implementation from a request to create a plan
+- **AND** the harness uses actual operation receipts rather than an announced plan as completion evidence.
+
+### Requirement: Bounded retrieval uses the canonical corpus
+
+The harness SHALL use NornicDB's existing search API to retrieve relevant code
+and documentation for code-related intents. It SHALL retain source references,
+known revision, excerpt bounds, truncation and readiness limits. Retrieved text
+SHALL be treated as untrusted reference data, never as authorization or instructions.
+It SHALL NOT create per-agent corpora or imply missing hits prove absence.
+
+#### Scenario: Documentation and code context
+
+- **WHEN** a classified code intent needs repository context
+- **THEN** the harness searches the configured shared code database and repository
+- **AND** the injected context is bounded and cites source locations
+- **AND** partial ingestion, unknown revisions and truncated excerpts remain explicit.
+
+### Requirement: Duplicate advice is a harness validation gate
+
+Implementation validation SHALL run the existing duplicate checker against the
+exact candidate tree using an isolated Git index. Findings, checker failures and
+source changes during analysis SHALL block validation and preserve actionable
+advice. The integration SHALL install no Git hook and SHALL NOT accept model
+prose as a checker receipt.
+
+#### Scenario: Candidate changes during checking
+
+- **WHEN** the candidate tree changes while duplicate analysis runs
+- **THEN** the previous result grants no validation readiness
+- **AND** the harness requires a check of the current tree.
+
 ### Requirement: One workflow owner across public adapters
 
-The system SHALL expose the version-1 API in `api.md` through one database-scoped
-coordination service, typed APOC procedures/functions and opt-in Heimdall MCP
-actions. It SHALL preserve existing authentication, database pinning, procedure
-modes, collision handling and plugin lifecycle behavior. It SHALL work without
-local inference and SHALL identify this namespace as a Nornic extension.
+The system SHALL expose the target version-1 API in `api.md` through one
+T3-hosted coordination service and authenticated MCP toolkit. It SHALL persist
+workflow records in a configured NornicDB database separate from the code corpus,
+using existing database APIs. It SHALL install no custom database workflow plugin
+and SHALL advertise only implemented and qualified capabilities.
 
-#### Scenario: Adapter parity without local inference
+#### Scenario: Durable workflow state through existing APIs
 
-- **WHEN** an authorized client creates a task and acquires resources through
-  APOC while the local inference harness is disabled
-- **THEN** MCP observes the same task, owner and generation from a fresh session
-- **AND** no local model is loaded and no second coordination registry exists.
+- **WHEN** an authorized T3 session creates a task and acquires resources
+- **THEN** a fresh authorized read observes the persisted task, owner and generation
+- **AND** the records belong to the workflow database, not the code corpus.
 
-#### Scenario: Incomplete plugin registration
+#### Scenario: Incomplete toolkit registration
 
 - **WHEN** a required external action cannot register because its name collides
 - **THEN** the first registered handler remains intact and the collision is logged

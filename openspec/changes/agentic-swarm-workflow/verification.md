@@ -12,7 +12,7 @@ or pass. The planning PR's actual checks belong in its PR verification comment.
   external transports. Restore environment/settings with cleanup. Never mutate
   user worktrees, shared test globals, model caches or real GitHub/T3/Linear state.
 - Concurrency tests launch known competing requests behind a barrier and join all
-  workers. No leaked goroutines, subprocesses, locks, streams or temporary disks.
+  workers. No leaked fibers, subprocesses, locks, streams or temporary disks.
 - Real-provider acceptance is opt-in with dedicated fixtures/accounts. Unit tests
   use deterministic adapters and never spend inference/API credits.
 - Run memory, race, disk and full-suite compatibility checks appropriate to the
@@ -75,7 +75,7 @@ supported configuration/integration or a separately approved upstream change.
 
 ## 4. End-to-end acceptance story
 
-1. Start Nornic with swarm enabled and local inference disabled; bind upstream
+1. Start NornicDB with existing APIs and the T3 workflow extension; bind upstream
    T3 and authenticated Codex/Copilot CLI fixture sessions. Bind a synthetic Linear
    Todo issue with criteria and dependencies using the observed NOR mapping.
    Confirm Dev In Progress before the first source mutation.

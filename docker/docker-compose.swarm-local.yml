@@ -1,0 +1,35 @@
+name: nornicdb-swarm-local
+
+services:
+  nornicdb:
+    image: nornicdb:1.4.4-cuda-local
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - swarm-openai-data:/data
+    environment:
+      NORNICDB_HTTP_ADDRESS: "0.0.0.0"
+      NORNICDB_BOLT_ADDRESS: "0.0.0.0"
+      NORNICDB_NO_AUTH: "true"
+      NORNICDB_DATA_DIR: /data
+      NORNICDB_EMBEDDING_PROVIDER: openai
+      NORNICDB_EMBEDDING_API_URL: https://api.openai.com
+      NORNICDB_EMBEDDING_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in docker/.env.swarm-local}
+      NORNICDB_EMBEDDING_ENABLED: "true"
+      NORNICDB_EMBEDDING_MODEL: text-embedding-3-small
+      NORNICDB_EMBEDDING_DIMENSIONS: "1536"
+      NORNICDB_EMBED_WORKER_NUM_WORKERS: "10"
+      NORNICDB_GPU_BACKEND: cpu
+      NORNICDB_HNSW_BUILD_GPU_ENABLED: "false"
+      NORNICDB_EMBEDDING_LABELS_EXCLUDE: "SwarmWorkflow,SwarmLocalSmoke,CodeDocumentRepository"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  swarm-openai-data:
