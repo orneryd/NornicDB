@@ -5475,7 +5475,7 @@ index e48700ff6a..557f4fb81a 100644
                      }),
                  ),
 diff --git a/packages/provider-pi/src/server/mcpBridge.testkit.ts b/packages/provider-pi/src/server/mcpBridge.testkit.ts
-index 133a4b2981..3a61c74bfd 100644
+index 133a4b2981..ddb058cbba 100644
 --- a/packages/provider-pi/src/server/mcpBridge.testkit.ts
 +++ b/packages/provider-pi/src/server/mcpBridge.testkit.ts
 @@ -1,4 +1,4 @@
@@ -5510,15 +5510,18 @@ index 133a4b2981..3a61c74bfd 100644
      readonly result?: unknown;
      readonly toolSearchAvailable?: boolean;
      readonly toolSearchDisabled?: boolean;
-@@ -51,6 +59,7 @@ export async function loadMcpBridge(
+@@ -50,7 +58,10 @@ export async function loadMcpBridge(
+     readonly inputSchema?: Record<string, unknown>;
    } = {},
  ) {
++  const providerStreams = new Map<string, { streamSimple: (...args: unknown[]) => unknown }>();
++  const nativeRequests: unknown[][] = [];
    const handlers = new Map<string, AgentStartHook>();
 +  const followUps: string[] = [];
    const tools: RegisteredTool[] = [];
    const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
    let activeTools = ["read"];
-@@ -74,6 +83,16 @@ export async function loadMcpBridge(
+@@ -74,6 +85,16 @@ export async function loadMcpBridge(
        annotations: { readOnlyHint: false },
      },
      { name: "preview_snapshot", description: "Inspect the collaborative browser." },
@@ -5535,7 +5538,7 @@ index 133a4b2981..3a61c74bfd 100644
    ].map((tool) => ({
      ...tool,
      inputSchema: options.inputSchema ?? { type: "object", properties: {} },
-@@ -92,6 +111,8 @@ export async function loadMcpBridge(
+@@ -92,10 +113,20 @@ export async function loadMcpBridge(
          T3_MCP_BEARER_TOKEN: "fixture-token",
          T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
          T3_PI_RUNTIME_MODE: options.runtimeMode,
@@ -5544,7 +5547,19 @@ index 133a4b2981..3a61c74bfd 100644
        },
      },
      AbortSignal,
-@@ -124,6 +145,9 @@ export async function loadMcpBridge(
+     NodePath,
++    createAssistantMessageEventStream: () => {
++      const events: unknown[] = [];
++      return { events, push: (event: unknown) => events.push(event), end: () => undefined };
++    },
++    openAICompletionsApi: () => ({ streamSimple: (...args: unknown[]) => {
++      nativeRequests.push(args);
++      return { nativeRequest: true };
++    } }),
+     Type: { Unsafe: (schema: unknown) => schema },
+     fetch: async (
+       url: string,
+@@ -124,7 +155,11 @@ export async function loadMcpBridge(
        });
      },
      pi: {
@@ -5552,18 +5567,22 @@ index 133a4b2981..3a61c74bfd 100644
 +        followUps.push(text);
 +      },
        on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
++      registerProvider: (name: string, config: { streamSimple: (...args: unknown[]) => unknown }) => providerStreams.set(name, config),
        registerTool: (tool: RegisteredTool) => {
          if (options.allowsTool && !options.allowsTool(tool.name)) return;
-@@ -153,6 +177,7 @@ export async function loadMcpBridge(
+         const index = tools.findIndex((current) => current.name === tool.name);
+@@ -153,6 +188,9 @@ export async function loadMcpBridge(
      },
    });
    return {
++    providerStreams,
++    nativeRequests,
 +    followUps,
      handlers,
      tools,
      setBridgeSourcePath: (path: string) => {
 diff --git a/packages/provider-pi/src/server/mcpExtensionSource.test.ts b/packages/provider-pi/src/server/mcpExtensionSource.test.ts
-index b1306f701e..6caafda22a 100644
+index b1306f701e..e6940547f1 100644
 --- a/packages/provider-pi/src/server/mcpExtensionSource.test.ts
 +++ b/packages/provider-pi/src/server/mcpExtensionSource.test.ts
 @@ -1,4 +1,4 @@
@@ -5572,7 +5591,7 @@ index b1306f701e..6caafda22a 100644
  import * as NodeFSP from "node:fs/promises";
  import * as NodePath from "node:path";
  import * as NodeOS from "node:os";
-@@ -46,10 +46,244 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+@@ -46,10 +46,268 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
    return handlers;
  }
  
@@ -5700,6 +5719,30 @@ index b1306f701e..6caafda22a 100644
 +    assert.propertyVal(await bridge.handlers.get("before_provider_request")!({ systemPrompt: "", payload: { model: "worker" } }, ctx), "tool_choice", "none");
 +    assert.propertyVal(await bridge.handlers.get("tool_call")!({ systemPrompt: "", toolName: "read" }, ctx), "block", true);
 +  });
++  it("streams a completed intake answer exactly without a second model request, then restores normal inference", async () => {
++    const response = { ok: true, code: "OK", data: {
++      completedRead: { outcome: "answered", answer: "Verified Linear answer: NOR-10 is Todo." },
++      instructions: "Display the verified answer", allowedOperations: [] as string[],
++    } };
++    const bridge = await loadMcpBridge({ modern: true, localWorker: true,
++      result: { structuredContent: response, content: [] },
++    });
++    const model = { api: "openai-completions", provider: "nornicLocal", id: "nornic-ornith" };
++    const ctx = { model, ui: { notify: assert.fail }, sessionManager: { getSessionId: () => "session", getLeafId: () => "leaf" } };
++    await bridge.handlers.get("before_agent_start")!({ systemPrompt: "base" }, ctx);
++    const provider = bridge.providerStreams.get("nornicLocal");
++    assert.isDefined(provider);
++    const stream = provider!.streamSimple(model, { messages: [] }, {}) as { events: Array<{ type: string; delta?: string; message?: { content: unknown; usage: { totalTokens: number } } }> };
++    assert.deepEqual(stream.events.filter((event) => event.type === "text_delta").map((event) => event.delta), [response.data.completedRead.answer]);
++    assert.deepEqual(stream.events.find((event) => event.type === "done")?.message?.content,
++      [{ type: "text", text: response.data.completedRead.answer }]);
++    assert.equal(stream.events.find((event) => event.type === "done")?.message?.usage.totalTokens, 0);
++    assert.isEmpty(bridge.nativeRequests);
++    Object.assign(response.data, { completedRead: undefined, allowedOperations: ["capabilities"] });
++    await bridge.handlers.get("before_agent_start")!({ systemPrompt: "base" }, ctx);
++    assert.deepEqual(provider!.streamSimple(model, { messages: [] }, {}), { nativeRequest: true });
++    assert.lengthOf(bridge.nativeRequests, 1);
++  });
 +  it("continues an unfinished implementation with a stable intake budget and requires a task id", async () => {
 +    const bridge = await loadMcpBridge({
 +      modern: true,
@@ -5819,7 +5862,7 @@ index b1306f701e..6caafda22a 100644
        events: [
          { systemPrompt: "base" },
          { systemPrompt: "base", systemPromptOptions: {} },
-@@ -77,7 +311,7 @@ describe("Pi orchestration prompt section", () => {
+@@ -77,7 +335,7 @@ describe("Pi orchestration prompt section", () => {
    });
  });
  
@@ -5828,7 +5871,7 @@ index b1306f701e..6caafda22a 100644
    it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
      const content = [
        { type: "text", text: "Browser screenshot" },
-@@ -130,18 +364,18 @@ describe("Pi MCP tool results", () => {
+@@ -130,18 +388,18 @@ describe("Pi MCP tool results", () => {
    });
  });
  
@@ -5850,7 +5893,7 @@ index b1306f701e..6caafda22a 100644
      assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
      assert.equal(bridge.servers.length, 0);
      assert.equal(bridge.tools.length, 8);
-@@ -200,17 +434,17 @@ describe("Pi MCP tool exposure", () => {
+@@ -200,17 +458,17 @@ describe("Pi MCP tool exposure", () => {
      assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
    });
  
@@ -5872,7 +5915,7 @@ index b1306f701e..6caafda22a 100644
        }
        assert.equal(bridge.tools.filter((tool) => tool.exposure !== "hidden").length, 4);
        assert.isTrue(
-@@ -238,7 +472,7 @@ describe("Pi MCP tool exposure", () => {
+@@ -238,7 +496,7 @@ describe("Pi MCP tool exposure", () => {
    );
  });
  
@@ -5881,7 +5924,7 @@ index b1306f701e..6caafda22a 100644
    it.each([{ type: "object" }, {}])(
      "declares empty properties on object schemas that omit them: %j",
      async (inputSchema) => {
-@@ -264,7 +498,7 @@ describe("Pi MCP tool schemas", () => {
+@@ -264,7 +522,7 @@ describe("Pi MCP tool schemas", () => {
    });
  });
  
@@ -5890,7 +5933,7 @@ index b1306f701e..6caafda22a 100644
    it.each(["approval-required", "auto-accept-edits", "auto"])(
      "allows annotated T3 reads in %s while gating mutations and replacements",
      async (runtimeMode) => {
-@@ -386,7 +620,7 @@ async function loadRequestHook(): Promise<RequestHook> {
+@@ -386,7 +644,7 @@ async function loadRequestHook(): Promise<RequestHook> {
    return hook!;
  }
  
@@ -5899,7 +5942,7 @@ index b1306f701e..6caafda22a 100644
    it.each(["max_tokens", "max_completion_tokens"])(
      "caps %s without changing the conversation or tools",
      async (key) => {
-@@ -424,7 +658,7 @@ async function loadInputHook(commands: ReadonlyArray<SkillCommand>) {
+@@ -424,7 +682,7 @@ async function loadInputHook(commands: ReadonlyArray<SkillCommand>) {
    return hook as InputHook;
  }
  
@@ -5908,7 +5951,7 @@ index b1306f701e..6caafda22a 100644
    it("loads every selected skill once while preserving inline prose, whitespace, and images", async () => {
      const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-skill-mentions-"));
      try {
-@@ -451,7 +685,7 @@ describe("Pi skill references", () => {
+@@ -451,7 +709,7 @@ describe("Pi skill references", () => {
      }
    });
  
@@ -5918,7 +5961,7 @@ index b1306f701e..6caafda22a 100644
        { name: "skill:alpha", source: "skill", sourceInfo: { path: "/unused" } },
      ]);
 diff --git a/packages/provider-pi/src/server/mcpExtensionSource.ts b/packages/provider-pi/src/server/mcpExtensionSource.ts
-index d71d9e2e46..5a86741021 100644
+index d71d9e2e46..c6b55dae9d 100644
 --- a/packages/provider-pi/src/server/mcpExtensionSource.ts
 +++ b/packages/provider-pi/src/server/mcpExtensionSource.ts
 @@ -1,5 +1,5 @@
@@ -5937,7 +5980,15 @@ index d71d9e2e46..5a86741021 100644
   * Auto-accept edits skips them; the adapter keys the approval kind off them.
   */
  export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
-@@ -30,6 +30,8 @@ const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+@@ -22,6 +22,7 @@ import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@ear
+ import * as NodeFSP from "node:fs/promises";
+ import * as NodePath from "node:path";
+ import { Type } from "typebox";
++import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai";
+
+ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
+ const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
+@@ -30,6 +31,8 @@ const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
  const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
  const PROTOCOL = "2025-06-18";
  const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -5946,7 +5997,7 @@ index d71d9e2e46..5a86741021 100644
  const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
  type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
-@@ -55,6 +57,10 @@ function env(name: string): string | undefined {
+@@ -55,6 +58,10 @@ function env(name: string): string | undefined {
    return value && value.length > 0 ? value : undefined;
  }
 
@@ -5957,7 +6008,7 @@ index d71d9e2e46..5a86741021 100644
  function runtimeMode(): RuntimeMode {
    const value = env(RUNTIME_MODE_ENV);
    return value === "approval-required" ||
-@@ -92,7 +98,7 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
+@@ -92,7 +99,7 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
    const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
    if (typeof unsafe === "function" && schema !== undefined) {
      // Zero-argument MCP tools may omit "properties", which some OpenAI-compatible
@@ -5966,7 +6017,7 @@ index d71d9e2e46..5a86741021 100644
      return unsafe({
        ...schema,
        type: schema.type ?? "object",
-@@ -129,7 +135,7 @@ function mcpModelContent(result: unknown): ModelContent[] {
+@@ -129,7 +136,7 @@ function mcpModelContent(result: unknown): ModelContent[] {
      }
    }
    // Structured output belongs to scripts. Only use it as model text when
@@ -5975,7 +6026,7 @@ index d71d9e2e46..5a86741021 100644
    if (content.length === 0) {
      content.push({ type: "text", text: JSON.stringify(record.structuredContent ?? result) });
    }
-@@ -247,7 +253,7 @@ function createMcpClient(endpoint: string, token: string) {
+@@ -247,7 +254,7 @@ function createMcpClient(endpoint: string, token: string) {
  }
  
  export default async function t3McpExtension(pi: ExtensionAPI) {
@@ -5984,7 +6035,7 @@ index d71d9e2e46..5a86741021 100644
    // command, so use its own frontmatter loader for every selected chip here.
    pi.on("input", async (event, ctx) => {
      if (!event.text.includes("$")) return;
-@@ -279,12 +285,18 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -279,12 +286,18 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
      };
    });
  
@@ -6005,7 +6056,7 @@ index d71d9e2e46..5a86741021 100644
      if (ctx.model?.provider !== "openrouter") return;
      const payload = event.payload;
      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
-@@ -300,16 +312,29 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -300,16 +313,58 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
      if (changed) return replacement;
    });
  
@@ -6025,6 +6076,35 @@ index d71d9e2e46..5a86741021 100644
    const readOnlyMcpTools = new Set<string>();
 +  let localToolBlockReason: string | undefined;
 +  let delegatedWorkerAdmitted = false;
++  let terminalReply: string | undefined;
++  const replyProviders = new Set<string>();
++  const installReplyStream = (ctx: ExtensionContext) => {
++    if (ctx.model?.api !== "openai-completions" || replyProviders.has(ctx.model.provider)) return;
++    pi.registerProvider(ctx.model.provider, {
++      api: "openai-completions",
++      streamSimple(model, context, options) {
++        // A completed workflow outcome has one author. Forward it through the
++        // normal assistant event stream; do not ask another model to rewrite it.
++        if (terminalReply === undefined) return openAICompletionsApi().streamSimple({ ...model, api: "openai-completions" }, context, options);
++        const stream = createAssistantMessageEventStream();
++        const message = {
++          role: "assistant" as const, api: model.api, provider: model.provider, model: model.id,
++          content: [{ type: "text" as const, text: terminalReply }],
++          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
++            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
++          stopReason: "stop" as const, timestamp: Date.now(),
++        };
++        stream.push({ type: "start", partial: message });
++        stream.push({ type: "text_start", contentIndex: 0, partial: message });
++        stream.push({ type: "text_delta", contentIndex: 0, delta: terminalReply, partial: message });
++        stream.push({ type: "text_end", contentIndex: 0, content: terminalReply, partial: message });
++        stream.push({ type: "done", reason: "stop", message });
++        stream.end();
++        return stream;
++      },
++    });
++    replyProviders.add(ctx.model.provider);
++  };
 +  let localAdmission: { allowedOperations: ReadonlyArray<string> } | undefined;
 +  let localToolCalls = 0;
 +  let localWorkFinished = false;
@@ -6039,7 +6119,7 @@ index d71d9e2e46..5a86741021 100644
    const isReadOnlyMcpTool = (name: string) => {
      const extensionPath = env(EXTENSION_PATH_ENV);
      if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
-@@ -321,6 +346,31 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -321,6 +376,31 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
    };
  
    pi.on("tool_call", async (event, ctx) => {
@@ -6071,7 +6151,7 @@ index d71d9e2e46..5a86741021 100644
      const mode = runtimeMode();
      if (mode === "full-access") return;
      if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {
-@@ -351,10 +401,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -351,10 +431,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
      return;
    }
  
@@ -6084,7 +6164,7 @@ index d71d9e2e46..5a86741021 100644
    let deferOptionalTools = supportsExposure;
    let catalog: ReadonlyArray<McpTool> = [];
  
-@@ -363,7 +414,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -363,7 +444,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
  
    const registerTools = () => {
      // Preserve public names for saved loadouts and tool selectors. Hidden
@@ -6093,7 +6173,7 @@ index d71d9e2e46..5a86741021 100644
      const prefixes = supportsExposure ? ["mcp__t3-code__", "mcp__t3_code__"] : ["mcp__t3-code__"];
      readOnlyMcpTools.clear();
      for (const tool of catalog) {
-@@ -376,7 +427,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -376,7 +457,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
            name: \`\${prefix}\${name}\`,
            label: name,
            description: tool.description ?? name,
@@ -6106,7 +6186,7 @@ index d71d9e2e46..5a86741021 100644
            ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
            ...(supportsExposure ? { exposure } : {}),
            async execute(_toolCallId, params, signal) {
-@@ -385,6 +440,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -385,6 +470,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
                (params ?? {}) as Record<string, unknown>,
                signal,
              );
@@ -6121,7 +6201,7 @@ index d71d9e2e46..5a86741021 100644
              const content = mcpModelContent(result);
              if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
                content.push({ type: "text", text: "MCP tool t3-code/" + name + " returned an error" });
-@@ -406,7 +469,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -406,7 +499,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
      const attempt = (async () => {
        const signal = AbortSignal.timeout(10_000);
        await client.connect(signal);
@@ -6133,7 +6213,7 @@ index d71d9e2e46..5a86741021 100644
        registerTools();
      })();
      started = attempt;
-@@ -416,7 +482,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -416,7 +512,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
      return attempt;
    };
  
@@ -6142,7 +6222,7 @@ index d71d9e2e46..5a86741021 100644
    // of a tool name. Register now so the bridge owns the T3 namespace even when
    // mcp.json configures it; retry a failed connection at session_start.
    await ensureStarted().catch(() => undefined);
-@@ -431,8 +497,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -431,8 +527,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
      const active = pi.getActiveTools();
      // Completion gateways can silently drop calls to undeclared tools named
      // in history or guidance. Eagerly load T3 schemas, including after tree
@@ -6153,7 +6233,7 @@ index d71d9e2e46..5a86741021 100644
      const required = [
        ...(hasToolSearch ? ["tool_search"] : []),
        ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name) : []),
-@@ -455,15 +521,57 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -455,15 +551,62 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
    });
  
    // Keep guidance in the system prompt so leading slash commands still expand.
@@ -6164,6 +6244,7 @@ index d71d9e2e46..5a86741021 100644
 +    let routingMessage: { customType: string; content: string; display: boolean; details?: unknown } | undefined;
 +    if (managedNornic()) {
 +      delegatedWorkerAdmitted = false;
++      terminalReply = undefined;
 +      localAdmission = undefined;
 +      localToolBlockReason = undefined;
 +      try {
@@ -6173,7 +6254,7 @@ index d71d9e2e46..5a86741021 100644
 +        });
 +        const envelope = result as { structuredContent?: unknown };
 +        const text = mcpModelContent(result).find((part) => part.type === "text");
-+        const data = (envelope.structuredContent ?? (text?.type === "text" ? JSON.parse(text.text) : undefined)) as { ok?: boolean; code?: string; data?: { taskId?: string; admission?: string; reason?: string; completedRead?: unknown; intakeId?: string; instructions?: string; kind?: string; allowedOperations?: ReadonlyArray<string>; tier?: string; delegated?: { childThreadId?: string } } };
++        const data = (envelope.structuredContent ?? (text?.type === "text" ? JSON.parse(text.text) : undefined)) as { ok?: boolean; code?: string; data?: { taskId?: string; admission?: string; reason?: string; completedRead?: { answer?: string }; intakeId?: string; instructions?: string; kind?: string; allowedOperations?: ReadonlyArray<string>; tier?: string; delegated?: { childThreadId?: string } } };
 +        const intakeId = data.data?.intakeId ?? ctx.sessionManager.getLeafId();
 +        if (localIntakeId !== intakeId) {
 +          localIntakeId = intakeId;
@@ -6189,8 +6270,10 @@ index d71d9e2e46..5a86741021 100644
 +        } else if (!data.ok) {
 +          instructions = "Work is blocked: intent routing failed (" + (data.code ?? "unknown") + "). Report the block; do not perform the task locally.";
 +        } else if (data.data?.delegated?.childThreadId) {
++          terminalReply = "Routed this task to frontier thread " + data.data.delegated.childThreadId + ".";
 +          instructions = "This intent was routed by the harness to frontier thread " + data.data.delegated.childThreadId + ". Report that thread receipt. Do not duplicate its work or invent its result.";
 +        } else {
++          if (typeof data.data?.completedRead?.answer === "string") terminalReply = data.data.completedRead.answer;
 +          if (data.data?.completedRead === undefined && data.data?.allowedOperations) localAdmission = { allowedOperations: data.data.allowedOperations };
 +          registerTools();
 +          instructions = data.data?.instructions ?? "Intent instructions are unavailable. Report this block before doing work.";
@@ -6201,6 +6284,8 @@ index d71d9e2e46..5a86741021 100644
 +        instructions = "Work is blocked because local intent classification or routing is unavailable. Report the failure; do not bypass classification.";
 +        localToolBlockReason = instructions;
 +      }
++      if (localToolBlockReason !== undefined && terminalReply === undefined) terminalReply = localToolBlockReason;
++      installReplyStream(ctx);
 +    }
      const sections = event.systemPromptOptions?.sections;
      if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {

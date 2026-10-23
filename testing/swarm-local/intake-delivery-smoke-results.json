@@ -1,0 +1,71 @@
+{
+  "intake-reply": [
+    {
+      "scenario": "intake-reply",
+      "provider": "nornicLocal",
+      "runtime_exit": 0,
+      "elapsed_seconds": 0.4,
+      "tools": [],
+      "admission_operations": [
+        "intent.route"
+      ],
+      "exact_answer": true,
+      "token_usage": [
+        0
+      ],
+      "unexpected_inference_requests": []
+    }
+  ],
+  "intake-native": [
+    {
+      "scenario": "intake-native",
+      "provider": "nornicLocal",
+      "runtime_exit": 0,
+      "elapsed_seconds": 5.75,
+      "tools": [],
+      "admission_operations": [
+        "intent.route"
+      ],
+      "exact_answer": true,
+      "token_usage": [
+        840
+      ],
+      "unexpected_inference_requests": []
+    }
+  ],
+  "worker": [
+    {
+      "scenario": "workers",
+      "provider": "nornicLocal",
+      "runtime_exit": 0,
+      "elapsed_seconds": 11.11,
+      "tools": [
+        "bash",
+        "edit",
+        "bash"
+      ],
+      "admission_operations": [
+        "worker.admit"
+      ],
+      "tests_passed": true,
+      "changed": true
+    },
+    {
+      "scenario": "workers",
+      "provider": "ollamaRemote",
+      "runtime_exit": 0,
+      "elapsed_seconds": 52.27,
+      "tools": [
+        "read",
+        "read",
+        "edit",
+        "bash"
+      ],
+      "admission_operations": [
+        "worker.admit"
+      ],
+      "tests_passed": true,
+      "changed": true
+    }
+  ]
+}

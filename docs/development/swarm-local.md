@@ -619,3 +619,40 @@ Provider-package typecheck passed. Server-package typecheck still exits 2 on
 repository-wide Effect diagnostics, with no TypeScript error diagnostics in the
 checked run. Native Windows and a live frontier-to-worker orchestration run were
 not exercised by these checks.
+
+
+## Completed intake answers
+
+The read assistant's completed answer is delivered through the runtime's normal
+assistant-message event stream, using the supported custom-provider API. It is
+not sent to Ornith for a second model-generated rendering. This prevents a
+completed Linear lookup from becoming literal `<tool_call>` markup or a repeated
+lookup. Completed answers have zero local inference tokens; the remote intake
+read itself still uses its normal model and tool budget. Routing failures and
+frontier handoff receipts use the same direct reply path. On the next admitted
+turn, the provider uses its original OpenAI-compatible SDK transport. This does
+not parse model-emitted text into tool calls or change worker tool permissions.
+
+Repeat the runtime checks using the existing smoke fixture:
+
+```sh
+python3 testing/swarm-local/worker_smoke.py --scenario intake-reply
+python3 testing/swarm-local/worker_smoke.py --scenario intake-native
+```
+
+The completed-reply scenario points the inference endpoint at a rejecting fixture
+and asserts the exact assistant message, zero inference requests and zero model
+tokens. The native scenario verifies that normal inference still runs. Unit tests
+also cover a completed reply followed by a normal admitted turn in the same
+provider session. These are runtime checks with fixture routing responses; they
+do not establish the semantic correctness of a model's interpretation of Linear
+workflow labels.
+
+
+The completed-intake delivery regression evidence is recorded in
+[`testing/swarm-local/intake-delivery-smoke-results.json`](../../testing/swarm-local/intake-delivery-smoke-results.json).
+The completed-reply runtime finished in 0.40 s with the exact expected assistant
+message, no tools, zero tokens and no inference request. A normal intake turn
+still performed native inference; both local and remote workers retained actual
+editing and test execution. The focused provider/public-workflow run passed 145
+tests, and provider-package typecheck passed.

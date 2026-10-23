@@ -143,3 +143,11 @@ not complete the larger milestone's acceptance contract.
 - [x] Prove rejection boundaries and actual controlled coding work on both servers; document Linear setup steps and limitations.
 
 - [x] Configure LAN binding for both frontend and backend, retain pairing authentication, and verify the operator's advertised address.
+
+
+## Local experiment: exact completed-intake delivery
+
+- [x] Reproduce a completed Linear read being rewritten as literal tool markup; verify the missing direct-reply stream with a failing regression.
+- [x] Deliver terminal workflow outcomes through the supported runtime assistant stream without another inference call; restore native SDK inference for ordinary turns.
+- [x] Verify exact runtime output, zero terminal inference, and same-session admission reset; retain native coding-worker checks.
+- [x] Publish focused regression and real-runtime fixture evidence with the pinned patch update.
