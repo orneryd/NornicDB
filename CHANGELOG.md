@@ -89,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 
+- Restore the list-index error source catalogs and existing translations so
+  localization generation succeeds; check every typed message for source coverage.
+
 - macOS installer/settings: preserve provider/startup configuration, replace old executable payloads safely, enforce one tray instance, and review existing settings after install. Configure independent AI services and Advanced overrides; confirm server stop/restart actions.
 
 - Avoid allocating and filling an unused predicate scope for streaming WITH
