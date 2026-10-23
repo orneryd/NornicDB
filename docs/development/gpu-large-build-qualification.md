@@ -134,3 +134,48 @@ Git Bash, supply `SHELL=C:/Progra~1/Git/bin/bash.exe`. `GOFLAGS=-p=2` limits pac
 build concurrency on a host also running the CUDA builder and GPU qualification.
 Preserve the verification summary and report the exact head/base, failures,
 skips, and pending full-scale checks in the PR result comment.
+
+## Mac handoff for PR #1671
+
+The maintainer selected `make test` plus correction of test failures as this PR's
+merge gate. Run the broader `make verify` and full GPU construction qualification
+on the release branch. Consult the latest PR verification comment for the checked
+commit and actual result; earlier successful package checks are not a complete
+current-head pass.
+
+Fetch and check out `fix/gpu-large-build-deps-v144`. To build and publish the CPU
+prerequisite with the same platform set as the release workflow, run from the
+repository root:
+
+```bash
+# Create this isolated builder once; omit if it already exists.
+docker buildx create --name nornic-llama-publish --driver docker-container
+docker buildx build --builder nornic-llama-publish \
+  --platform linux/amd64,linux/arm64 \
+  -f docker/Dockerfile.llama-cpu --build-arg LLAMA_BUILD_JOBS=2 \
+  --provenance=false --push -t timothyswt/llama-cpu-libs:v0.7.0 .
+docker buildx imagetools inspect timothyswt/llama-cpu-libs:v0.7.0
+```
+
+The native source builders check `lib/llama/REVISION` before exporting their
+libraries. The Windows yzma installer requires the release manifest digest in
+`lib/llama/YZMA_MANIFEST_SHA256`, rather than accepting an unavailable manifest.
+The expected manifest pin comes from the upstream builder's v0.7.0 release notes.
+
+The Windows CUDA distribution image is already built locally as
+`timothyswt/llama-cuda-libs:v0.7.0` (image ID starts `c8611f2a8da0`), with the full
+configured architecture set and all quantized-KV kernels. NornicDB and APOC
+compiled against its libraries. Publication was handed to the maintainer after
+repeated Docker registry DNS failures; a local tag is not proof of publication.
+
+After both registry tags are available, record their registry digests. The CPU
+digest must identify the manifest containing both AMD64 and ARM64. Update the
+application prerequisites to immutable references and verify consumers against
+those published references before considering the review's image-pin finding
+fully resolved. Do not substitute the AMD64-only local CPU qualification image
+for the multi-platform release tag.
+
+Windows checks include the combined `noui,localllm,yzma` application build and
+real BGE-M3 tokenizer chunking through yzma. CI now builds that tag combination.
+The Windows symlink test skips only when the account lacks creation privilege;
+the actual rejection assertion was also executed successfully on Linux.
