@@ -151,3 +151,12 @@ not complete the larger milestone's acceptance contract.
 - [x] Deliver terminal workflow outcomes through the supported runtime assistant stream without another inference call; restore native SDK inference for ordinary turns.
 - [x] Verify exact runtime output, zero terminal inference, and same-session admission reset; retain native coding-worker checks.
 - [x] Publish focused regression and real-runtime fixture evidence with the pinned patch update.
+
+## Local experiment: workflow transport failure recovery
+
+- [x] Reproduce a lost workflow-read response with a controlled HTTP server and retain fail-first evidence.
+- [x] Retry only known workflow reads once on transport failure, within the existing request deadline; never replay uncertain writes or database rejections.
+- [x] Preserve the service diagnostic in the terminal routing-failure reply without another model call.
+- [x] Reproduce Linear rejection of an empty model-supplied cursor and normalize it in the shared adapter; preserve nonempty continuations.
+- [x] Preserve router timeout diagnostics through nested errors.
+- [x] Verify live workflow storage, remote intake/Linear reads and runtime delivery; record failures and practical limits.

@@ -656,3 +656,39 @@ message, no tools, zero tokens and no inference request. A normal intake turn
 still performed native inference; both local and remote workers retained actual
 editing and test execution. The focused provider/public-workflow run passed 145
 tests, and provider-package typecheck passed.
+
+
+## Diagnosing a blocked intake turn
+
+`orchestration_error` is an operation failure, not a service-health diagnosis.
+A healthy Ollama and database can still have a failed request. The bridge now
+preserves the workflow service's diagnostic in its exact terminal reply. It
+continues to block local execution when routing has not succeeded.
+
+Workflow snapshot reads use Cypher over HTTP POST. The store retries a known
+read once if the HTTP transport fails before receiving a response, within the
+existing 15-second query deadline. It does not retry database errors, decoding
+failures or writes. A lost write response has an uncertain commit outcome and
+must be reconciled, rather than blindly replayed. A controlled HTTP server
+regression consumes the request and closes its socket to exercise this boundary.
+
+Linear's first assigned-issues page requires a null/absent cursor. The shared
+adapter converts an empty optional cursor to null; a nonempty continuation
+cursor is preserved. This covers a real structured model response containing
+`after: ""`, which Linear rejects with an argument-validation error. The intake
+controller and direct Linear tools share this correction. No API-key permissions
+need changing for that error.
+
+The remote model retains its 60-second request deadline. A timeout now identifies
+that deadline in the service diagnostic, and nested error wrapping preserves it.
+A model being loaded or serving `/api/ps` does not prove its current inference
+request finished. Do not bypass intent admission when a request fails.
+
+On October 23, the focused provider/store/classifier/Linear/read-controller and
+workflow tests passed 162 tests. Live remote database persistence and Linear
+reads passed; the live read assistant subsequently passed after the empty-cursor
+correction. An earlier live attempt timed out at 60 seconds, and the next exposed
+the invalid empty cursor. The controlled completed-reply runtime still delivered
+its exact answer with zero inference requests (0.34 seconds). These checks do not
+constitute a new browser-chat end-to-end run or qualify remote model latency under
+load. NornicDB engine tests and `make verify` were not run for this side exercise.
