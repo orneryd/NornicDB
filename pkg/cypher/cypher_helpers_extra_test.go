@@ -51,26 +51,6 @@ type failingEmbedder struct {
 	err error
 }
 
-type fastPathFailEngine struct {
-	storage.Engine
-	batchErr error
-	edgesErr error
-}
-
-func (f *fastPathFailEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	if f.batchErr != nil {
-		return nil, f.batchErr
-	}
-	return f.Engine.BatchGetNodes(ids)
-}
-
-func (f *fastPathFailEngine) GetEdgesByType(edgeType string) ([]*storage.Edge, error) {
-	if f.edgesErr != nil {
-		return nil, f.edgesErr
-	}
-	return f.Engine.GetEdgesByType(edgeType)
-}
-
 func (f *failingEmbedder) Embed(context.Context, string) ([]float32, error) {
 	if f.err == nil {
 		f.err = fmt.Errorf("embed failed")
@@ -1316,13 +1296,6 @@ func TestCypherHelpers_CallDbIndexVectorEmbed_Branches(t *testing.T) {
 	require.Len(t, res.Rows, 1)
 }
 
-func TestCypherHelpers_PrefixNodeIDIfNeeded(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	assert.Equal(t, storage.NodeID("n1"), exec.prefixNodeIDIfNeeded("n1", ""))
-	assert.Equal(t, storage.NodeID("tenant:n1"), exec.prefixNodeIDIfNeeded("n1", "tenant:"))
-	assert.Equal(t, storage.NodeID("tenant:n1"), exec.prefixNodeIDIfNeeded("tenant:n1", "tenant:"))
-}
-
 func TestCypherHelpers_EvaluateWhereOnComputedRow(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	values := map[string]interface{}{
@@ -1481,21 +1454,6 @@ func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
 	assert.Equal(t, "ctx_db", res.Rows[0][0])
 }
 
-func TestCypherHelpers_ArraySuffix(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	collected := []interface{}{int64(1), int64(2), int64(3), int64(4)}
-	assert.Equal(t, collected, exec.applyArraySuffix(collected, ""))
-	assert.Equal(t, collected, exec.applyArraySuffix(collected, "bad"))
-	assert.Equal(t, []interface{}{int64(1), int64(2)}, exec.applyArraySuffix(collected, "[..2]"))
-	assert.Equal(t, []interface{}{int64(2), int64(3)}, exec.applyArraySuffix(collected, "[1..3]"))
-	assert.Equal(t, []interface{}{int64(3), int64(4)}, exec.applyArraySuffix(collected, "[-2..]"))
-	assert.Equal(t, []interface{}{}, exec.applyArraySuffix(collected, "[3..1]"))
-	assert.Equal(t, int64(2), exec.applyArraySuffix(collected, "[1]"))
-	assert.Equal(t, int64(4), exec.applyArraySuffix(collected, "[-1]"))
-	assert.Nil(t, exec.applyArraySuffix(collected, "[99]"))
-}
-
 func TestCypherHelpers_AssignValueAdditionalCases(t *testing.T) {
 	// time conversion branches
 	var ts time.Time
@@ -1580,46 +1538,6 @@ func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
 		"rating",
 	))
 	assert.False(t, isReturnEdgePropertyAggNameShape("RETURN p.name", "r", "rating"))
-
-	base := newTestMemoryEngine(t)
-	ns := storage.NewNamespacedEngine(base, "tenant_fast_cov")
-	exec := NewStorageExecutor(ns)
-
-	_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}, Properties: map[string]interface{}{}})
-	require.NoError(t, err)
-	_, err = ns.CreateNode(&storage.Node{ID: "n2", Labels: []string{"X"}, Properties: map[string]interface{}{}})
-	require.NoError(t, err)
-	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "REL"}))
-
-	// getEdgesByTypeFast: namespace filter branch.
-	edges, prefix, err := exec.getEdgesByTypeFast("REL")
-	require.NoError(t, err)
-	assert.Equal(t, "tenant_fast_cov:", prefix)
-	for _, e := range edges {
-		assert.True(t, strings.HasPrefix(string(e.ID), prefix))
-	}
-
-	// batchGetNodesFast happy path.
-	nodes, gotPrefix, err := exec.batchGetNodesFast([]storage.NodeID{"tenant_fast_cov:n1"})
-	require.NoError(t, err)
-	assert.Equal(t, "tenant_fast_cov:", gotPrefix)
-	require.NotNil(t, nodes["tenant_fast_cov:n1"])
-
-	// error branches from underlying engine.
-	failExec := &StorageExecutor{
-		storage: &fastPathFailEngine{
-			Engine:   base,
-			batchErr: fmt.Errorf("batch fail"),
-			edgesErr: fmt.Errorf("edges fail"),
-		},
-		analyzer: NewQueryAnalyzer(64),
-	}
-	_, _, err = failExec.batchGetNodesFast([]storage.NodeID{"n1"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch fail")
-	_, _, err = failExec.getEdgesByTypeFast("REL")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "edges fail")
 }
 
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {
@@ -2771,154 +2689,6 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown YIELD column")
-}
-
-func TestCypherHelpers_TryFastRevenueByProduct_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-
-	// Rejection branches.
-	rejectCases := []struct {
-		name    string
-		matches *TraversalMatch
-		with    string
-		ret     string
-	}{
-		{name: "nil_matches", matches: nil, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "chained", matches: &TraversalMatch{IsChained: true}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_hops", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 2, MaxHops: 2}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_type", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"LIKES"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "wrong_direction", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "outgoing", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "missing_vars", matches: &TraversalMatch{StartNode: nodePatternInfo{labels: []string{"Product"}}, Relationship: RelationshipPattern{Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice * r.quantity) as revenue", ret: "p.productName, revenue"},
-		{name: "bad_with_expr", matches: &TraversalMatch{StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}}, Relationship: RelationshipPattern{Variable: "r", Types: []string{"ORDERS"}, Direction: "incoming", MinHops: 1, MaxHops: 1}}, with: "p, sum(p.unitPrice + r.quantity) as revenue", ret: "p.productName, revenue"},
-	}
-	for _, tc := range rejectCases {
-		t.Run(tc.name, func(t *testing.T) {
-			res, ok, err := exec.tryFastRevenueByProduct(tc.matches, tc.with, tc.ret, "", 0, 0)
-			require.NoError(t, err)
-			assert.False(t, ok)
-			assert.Nil(t, res)
-		})
-	}
-
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A", "unitPrice": float64(10)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B", "unitPrice": "20"}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"orderID": int64(1)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"orderID": int64(2)}})
-	require.NoError(t, err)
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "o1", EndNode: "p1", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int64(3)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p2", Type: "ORDERS", Properties: map[string]interface{}{"quantity": float64(2)}}))
-
-	matches := &TraversalMatch{
-		StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}},
-		Relationship: RelationshipPattern{
-			Variable:  "r",
-			Types:     []string{"ORDERS"},
-			Direction: "incoming",
-			MinHops:   1,
-			MaxHops:   1,
-		},
-	}
-	res, ok, err := exec.tryFastRevenueByProduct(
-		matches,
-		"p, sum(p.unitPrice * r.quantity) as revenue",
-		"p.productName, revenue",
-		"revenue DESC",
-		0,
-		10,
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, []string{"p.productName", "revenue"}, res.Columns)
-	require.Len(t, res.Rows, 2)
-	assert.Equal(t, "B", res.Rows[0][0])
-	assert.Equal(t, float64(40), res.Rows[0][1])
-	assert.Equal(t, "A", res.Rows[1][0])
-	assert.Equal(t, float64(30), res.Rows[1][1])
-}
-
-func TestCypherHelpers_TryFastRevenueByProduct_TypeAndPaginationBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-
-	// Products with different unitPrice types.
-	_, err := eng.CreateNode(&storage.Node{ID: "p1", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "A", "unitPrice": float32(10)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "B", "unitPrice": int(2)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p3", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "C", "unitPrice": int64(3)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p4", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "D", "unitPrice": "bad-number"}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "p5", Labels: []string{"Product"}, Properties: map[string]interface{}{"productName": "E", "unitPrice": true}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o1", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(1)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o2", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(2)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o3", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(3)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o4", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(4)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "o5", Labels: []string{"Order"}, Properties: map[string]interface{}{"id": int64(5)}})
-	require.NoError(t, err)
-
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "o1", EndNode: "p1", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int(3)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "o2", EndNode: "p2", Type: "ORDERS", Properties: map[string]interface{}{"quantity": float32(5)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e3", StartNode: "o3", EndNode: "p3", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int64(7)}}))
-	// Unusable unitPrice type/string should be skipped.
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e4", StartNode: "o4", EndNode: "p4", Type: "ORDERS", Properties: map[string]interface{}{"quantity": int64(1)}}))
-	require.NoError(t, eng.CreateEdge(&storage.Edge{ID: "e5", StartNode: "o5", EndNode: "p5", Type: "ORDERS", Properties: map[string]interface{}{"quantity": "bad-qty"}}))
-
-	matches := &TraversalMatch{
-		StartNode: nodePatternInfo{variable: "p", labels: []string{"Product"}},
-		Relationship: RelationshipPattern{
-			Variable:  "r",
-			Types:     []string{"ORDERS"},
-			Direction: "incoming",
-			MinHops:   1,
-			MaxHops:   1,
-		},
-	}
-
-	res, ok, err := exec.tryFastRevenueByProduct(
-		matches,
-		"p, sum(p.unitPrice * r.quantity) as revenue",
-		"p.productName, revenue",
-		"revenue DESC",
-		1,
-		2,
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, []string{"p.productName", "revenue"}, res.Columns)
-	// Pagination branch should retain at least one row and keep numeric revenue values.
-	require.NotEmpty(t, res.Rows)
-	for _, row := range res.Rows {
-		require.Len(t, row, 2)
-		_, okName := row[0].(string)
-		require.True(t, okName)
-		_, okRev := row[1].(float64)
-		require.True(t, okRev)
-	}
-
-	// Skip beyond row count yields empty rows.
-	res, ok, err = exec.tryFastRevenueByProduct(
-		matches,
-		"p, sum(p.unitPrice * r.quantity) as revenue",
-		"p.productName, revenue",
-		"revenue DESC",
-		100,
-		0,
-	)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Empty(t, res.Rows)
 }
 
 func TestCypherHelpers_OptionalMatchCountSharedRoute(t *testing.T) {

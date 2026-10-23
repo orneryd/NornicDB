@@ -300,9 +300,9 @@ func TestIssue894ClauseAfterName(t *testing.T) {
 	}
 }
 
-// The traversal executor's own path aggregation (the direct MATCH route,
-// which the pipeline doesn't use for aggregates) reads collect(DISTINCT …)
-// with the same rule as the pipeline: the answers match the statements above.
+// The traversal executor hands aggregate items to the row pipeline's
+// aggregation, which reads collect(DISTINCT …) with the same rule: the
+// answers match the statements above.
 func TestIssue894TraversalPathAggregateDistinct(t *testing.T) {
 	exec := newAsyncStackTestExecutor(t)
 	ctx := context.Background()
