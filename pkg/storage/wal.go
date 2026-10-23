@@ -224,10 +224,9 @@ type WALTxData struct {
 	OpCount  int               `json:"op_count,omitempty"` // For commit: number of operations
 }
 
-// WALPropKeyEntry is one staged property-key dictionary token of a buffered
-// commit. Replay must persist these before materializing the commit, or the
-// tokenized node/edge bodies reference property-key IDs the fresh engine's
-// dictionary does not know.
+// WALPropKeyEntry binds a source-store property token to its namespace and
+// name. Replay resolves that name through the destination dictionary before
+// applying the physical body; source numeric IDs are never installed there.
 type WALPropKeyEntry struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
@@ -253,26 +252,13 @@ type WALBufferedCommitData struct {
 	HasCounters     bool              `json:"has_counters,omitempty"`
 	EmbeddingRanges []NodeID          `json:"embedding_ranges,omitempty"`
 
-	// PropKeys / PropKeyCounters are the property-key dictionary tokens the
-	// commit staged; replay persists them before materializing the bodies.
+	// PropertyBindings binds every property token referenced by Writes,
+	// including persisted names. Import remaps tokens into the destination.
+	PropertyBindings []byte `json:"property_bindings,omitempty"`
+
+	// Historical writers carried only newly staged keys and source counters.
 	PropKeys        []WALPropKeyEntry `json:"prop_keys,omitempty"`
 	PropKeyCounters map[string]uint64 `json:"prop_key_counters,omitempty"`
-}
-
-// propKeyDrain reconstructs the staged property-key dictionary drain the
-// buffered commit carried at ACK time.
-func (d *WALBufferedCommitData) propKeyDrain() propKeyTxnDrain {
-	var out propKeyTxnDrain
-	if len(d.PropKeys) > 0 {
-		out.pending = make([]propKeyPersistEntry, 0, len(d.PropKeys))
-		for _, entry := range d.PropKeys {
-			out.pending = append(out.pending, propKeyPersistEntry{namespace: entry.Namespace, name: entry.Name, id: entry.ID})
-		}
-	}
-	if len(d.PropKeyCounters) > 0 {
-		out.counters = d.PropKeyCounters
-	}
-	return out
 }
 
 // WALConfig configures WAL behavior.
@@ -704,7 +690,7 @@ func (w *WAL) AppendTxAbort(database, txID, reason string) (uint64, error) {
 // (write(2)) before returning, so the ACK never outruns the record that
 // survives kill -9. It deliberately skips fsync: power-loss durability
 // remains the durable synchronous path's contract.
-func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
+func (w *WAL) AppendBufferedCommit(c *bufferedCommit, dictionary *propertyKeyDictionary) error {
 	if w == nil || c == nil {
 		return nil
 	}
@@ -725,14 +711,10 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 			data.Deletes = append(data.Deletes, key)
 		}
 	}
-	if !c.propKeyDrain.empty() {
-		if len(c.propKeyDrain.pending) > 0 {
-			data.PropKeys = make([]WALPropKeyEntry, 0, len(c.propKeyDrain.pending))
-			for _, entry := range c.propKeyDrain.pending {
-				data.PropKeys = append(data.PropKeys, WALPropKeyEntry{Namespace: entry.namespace, Name: entry.name, ID: entry.id})
-			}
-		}
-		data.PropKeyCounters = c.propKeyDrain.counters
+	var err error
+	data.PropertyBindings, err = bufferedWALPropertyBindings(c.writes, dictionary)
+	if err != nil {
+		return err
 	}
 	if _, err := w.appendWithDatabaseForcedFlush(OpBufferedCommit, &data, c.namespace); err != nil {
 		return fmt.Errorf("wal: failed to log buffered commit %q: %w", c.txID, err)
@@ -2332,13 +2314,9 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		// commit application path the flusher uses, so MVCC heads, ID
 		// counters, indexes and caches all land identically. Only
 		// BadgerEngine destinations support this; anything else skips.
-		var data WALBufferedCommitData
-		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
-		}
-		if err := decodeRecoveryPayload(payload, &data); err != nil {
-			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
 		}
 		b, ok := baseEngine.(*BadgerEngine)
 		if !ok || b == nil {
@@ -2347,7 +2325,10 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
 			return nil
 		}
-		c := data.bufferedCommit()
+		c, err := b.importBufferedWALRecord(&data)
+		if err != nil {
+			return err
+		}
 		if err := b.applyBufferedCommits([]bufferedCommit{c}); err != nil {
 			return err
 		}

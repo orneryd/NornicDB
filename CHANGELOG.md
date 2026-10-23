@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve property names when buffered WAL records are replayed after snapshot
+  restoration, including stores with different property-token assignments. Ambiguous
+  historical records report missing name bindings instead of silently exchanging values;
+  original-store upgrade recovery and retained source-WAL bindings remain supported.
+
+
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).

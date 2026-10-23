@@ -4,26 +4,6 @@ import (
 	"fmt"
 )
 
-// bufferedCommit restores the same range and point-write intent for both
-// startup recovery and individual WAL entry replay.
-func (data *WALBufferedCommitData) bufferedCommit() bufferedCommit {
-	c := bufferedCommit{
-		recovered: true,
-		namespace: data.Namespace, txID: data.TxID, ops: data.Ops,
-		writes: data.Writes, version: data.Version,
-		counterNodeMax: data.NodeMax, counterEdgeMax: data.EdgeMax,
-		hasCounters: data.HasCounters, propKeyDrain: data.propKeyDrain(),
-		embeddingRanges: data.EmbeddingRanges,
-	}
-	if len(data.Deletes) > 0 {
-		c.deletes = make(map[string]bool, len(data.Deletes))
-		for _, key := range data.Deletes {
-			c.deletes[key] = true
-		}
-	}
-	return c
-}
-
 // RecoverBufferedCommits replays write-behind commits that were acknowledged
 // into the WAL but never reached Badger before a crash lost the in-memory
 // buffer. It runs at engine open, after both the engine and the WAL are
@@ -43,6 +23,10 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	if !ok || b == nil || wal == nil || b.writeBehind == nil {
 		return 0, nil
 	}
+	if err := b.beginOriginalPropertyRecovery(); err != nil {
+		return 0, err
+	}
+	defer b.endOriginalPropertyRecovery()
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair
@@ -55,13 +39,9 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 		if entry.Operation != OpBufferedCommit {
 			return nil
 		}
-		var data WALBufferedCommitData
-		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
-		}
-		if err := decodeRecoveryPayload(payload, &data); err != nil {
-			return fmt.Errorf("wal: failed to unmarshal buffered commit %d: %w", entry.Sequence, err)
 		}
 		if data.TxID == "" {
 			return nil
@@ -71,9 +51,12 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}
 		if exists {
-			return nil // already applied to Badger
+			return b.observeBufferedWALRecord(&data) // source bindings still feed later legacy records
 		}
-		c := data.bufferedCommit()
+		c, err := b.importBufferedWALRecord(&data)
+		if err != nil {
+			return err
+		}
 		pending = append(pending, c)
 		return nil
 	})

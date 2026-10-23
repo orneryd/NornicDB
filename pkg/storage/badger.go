@@ -378,6 +378,8 @@ type BadgerEngine struct {
 	// property_key_dictionary.go for the full layout.
 	propKeyDict *propertyKeyDictionary
 
+	walPropertySource walPropertySource
+
 	// storageVersion is the on-disk schema version after migrations have
 	// run during engine open. Written once during NewBadgerEngineWithOptions
 	// and read-only thereafter. The encode path picks codecs deterministically
@@ -1051,6 +1053,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to load property key dictionary: %w", err)
 	}
+	engine.resetWALPropertySource()
 	if err := engine.loadManualSuppressions(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load manual suppressions: %w", err)
@@ -1201,6 +1204,7 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 	// initializeMVCCSequence + initializeCounts read off b.db, so swap
 	// it before calling them.
 	b.db = newDB
+	b.resetWALPropertySource()
 	if err := b.initializeMVCCSequence(); err != nil {
 		newDB.Close()
 		return nil, fmt.Errorf("reinitialize mvcc sequence: %w", err)

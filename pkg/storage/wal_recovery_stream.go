@@ -21,7 +21,8 @@ const recoveryBatchSize = 1000
 
 // RecoverIntoEngine restores a snapshot and subsequent WAL entries directly
 // into destination. Framed snapshots and WAL files are processed one record at
-// a time, so retained recovery memory is bounded by the largest record.
+// a time. Physical bodies are retained one record at a time; a source name
+// table is also retained to resolve omitted bindings in later historical WAL.
 func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	status := RecoveryStreamStatus{}
@@ -37,6 +38,10 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 			file, err := os.Open(snapshotPath)
 			if err != nil {
 				return result, status, fmt.Errorf("wal: failed to open snapshot: %w", err)
+			}
+			if err := beginRecoveryPropertyRestore(destination); err != nil {
+				file.Close()
+				return result, status, err
 			}
 			visitor := newRecoverySnapshotVisitor(destination, recoveryBatchSize)
 			metadata, readErr := readSnapshot(file, visitor, nil, materializedSnapshotRecordSize)
@@ -60,6 +65,9 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 					return result, status, fmt.Errorf("wal: failed to load snapshot: %w", err)
 				}
 			} else {
+				if err := beginRecoveryPropertyRestore(destination); err != nil {
+					return result, status, err
+				}
 				snapshotSeq = snapshot.Sequence
 				status.SnapshotNodes = uint64(len(snapshot.Nodes))
 				status.SnapshotEdges = uint64(len(snapshot.Edges))
@@ -74,7 +82,10 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 	if _, _, err := repairWALTailIfNeeded(activePath, defaultWALLogger{}); err != nil {
 		return result, status, fmt.Errorf("wal: failed to inspect recovery log: %w", err)
 	}
-	err := VisitWALEntriesAfterFromDir(walDir, snapshotSeq, func(entry WALEntry) error {
+	err := VisitWALEntriesAfterFromDir(walDir, 0, func(entry WALEntry) error {
+		if entry.Sequence <= snapshotSeq {
+			return observeRecoveryPropertyPrefix(destination, entry)
+		}
 		status.WALEntries++
 		if entry.Operation == OpCheckpoint {
 			result.Skipped++
@@ -165,6 +176,7 @@ func (v *recoverySnapshotVisitor) flushNodes() error {
 	if err := v.engine.BulkCreateNodes(v.nodes); err != nil {
 		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
+	clear(v.nodes)
 	v.nodes = v.nodes[:0]
 	return nil
 }
@@ -176,6 +188,7 @@ func (v *recoverySnapshotVisitor) flushEdges() error {
 	if err := v.engine.BulkCreateEdges(v.edges); err != nil {
 		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
+	clear(v.edges)
 	v.edges = v.edges[:0]
 	return nil
 }

@@ -136,6 +136,7 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	b.idDict.replaceWith(ids)
 	b.propKeyDict.replaceWith(keys)
+	b.resetWALPropertySource()
 	if err := b.loadManualSuppressions(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}

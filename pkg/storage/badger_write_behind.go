@@ -130,7 +130,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// buffer exists to avoid; power-loss durability remains the durable
 	// synchronous path's contract.
 	if tx.engine.bufferedCommitWAL != nil {
-		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c); err != nil {
+		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict); err != nil {
 			// The ACK must never outrun the durable record: failing to log
 			// the payload fails the commit.
 			tx.closeLocked(TxStatusRolledBack, true, nil)

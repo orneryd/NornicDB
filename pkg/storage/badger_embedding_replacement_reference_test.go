@@ -234,7 +234,7 @@ func TestEmbeddingCleanup_CapturedCompatibilityPointWrites(t *testing.T) {
 			if removeLong {
 				c.deletes[string(nodeKey(long))] = true
 			}
-			require.NoError(t, wal.AppendBufferedCommit(&c))
+			require.NoError(t, wal.AppendBufferedCommit(&c, b.propKeyDict))
 			crashClose(t, b, wal)
 			b, wal = newWriteBehindWALTestEngine(t, dir, time.Hour)
 			n, err := RecoverBufferedCommits(b, wal)
