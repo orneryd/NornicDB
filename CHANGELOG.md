@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
+- Preserve node properties and source metadata in retrieval procedure rows, graph
+  hits and continuation pages when property decay is enabled.
+
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
   and matching YAML keys; preserve the 5000 / 30000 ms defaults.
