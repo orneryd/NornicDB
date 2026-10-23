@@ -13,7 +13,7 @@ func TestCompositeEngine_Deduplication_GetNodesByLabel(t *testing.T) {
 	engine1 := newTestMemoryEngine(t)
 	engine2 := newTestMemoryEngine(t)
 
-	// Create same node in both constituents (same ID)
+	// Create different nodes with the same local ID in both constituents.
 	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}}
 	engine1.CreateNode(node1)
 	engine2.CreateNode(node1) // Same ID
@@ -33,11 +33,11 @@ func TestCompositeEngine_Deduplication_GetNodesByLabel(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get nodes by label - should deduplicate
+	// Get nodes by label - preserve both databases.
 	nodes, err := composite.GetNodesByLabel("Person")
 	require.NoError(t, err)
-	// Should only return one node, not two
-	assert.Equal(t, 1, len(nodes))
+	// Equal stored IDs in distinct databases identify two nodes.
+	assert.Equal(t, 2, len(nodes))
 	assert.Equal(t, node1.ID, nodes[0].ID)
 }
 
@@ -140,11 +140,11 @@ func TestCompositeEngine_Deduplication_GetEdgesByType(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get edges by type - should deduplicate
+	// Get edges by type - preserve both databases.
 	edges, err := composite.GetEdgesByType("KNOWS")
 	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
+	// Equal stored IDs in distinct databases identify two relationships.
+	assert.Equal(t, 2, len(edges))
 	assert.Equal(t, edge1.ID, edges[0].ID)
 }
 
@@ -173,11 +173,11 @@ func TestCompositeEngine_Deduplication_AllNodes(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get all nodes - should deduplicate
+	// Get all nodes - preserve both databases.
 	nodes, err := composite.AllNodes()
 	require.NoError(t, err)
-	// Should only return one node, not two
-	assert.Equal(t, 1, len(nodes))
+	// Equal stored IDs in distinct databases identify two nodes.
+	assert.Equal(t, 2, len(nodes))
 	assert.Equal(t, node1.ID, nodes[0].ID)
 }
 
@@ -212,11 +212,11 @@ func TestCompositeEngine_Deduplication_AllEdges(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get all edges - should deduplicate
+	// Get all edges - preserve both databases.
 	edges, err := composite.AllEdges()
 	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
+	// Equal stored IDs in distinct databases identify two relationships.
+	assert.Equal(t, 2, len(edges))
 	assert.Equal(t, edge1.ID, edges[0].ID)
 }
 
@@ -251,11 +251,11 @@ func TestCompositeEngine_Deduplication_GetOutgoingEdges(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get outgoing edges - should deduplicate
+	// Get outgoing edges - preserve both databases.
 	edges, err := composite.GetOutgoingEdges(node1.ID)
 	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
+	// Equal stored IDs in distinct databases identify two relationships.
+	assert.Equal(t, 2, len(edges))
 	assert.Equal(t, edge1.ID, edges[0].ID)
 }
 
@@ -290,11 +290,11 @@ func TestCompositeEngine_Deduplication_GetIncomingEdges(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get incoming edges - should deduplicate
+	// Get incoming edges - preserve both databases.
 	edges, err := composite.GetIncomingEdges(node2.ID)
 	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
+	// Equal stored IDs in distinct databases identify two relationships.
+	assert.Equal(t, 2, len(edges))
 	assert.Equal(t, edge1.ID, edges[0].ID)
 }
 
@@ -329,10 +329,10 @@ func TestCompositeEngine_Deduplication_GetEdgesBetween(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Get edges between - should deduplicate
+	// Get edges between - preserve both databases.
 	edges, err := composite.GetEdgesBetween(node1.ID, node2.ID)
 	require.NoError(t, err)
-	// Should only return one edge, not two
-	assert.Equal(t, 1, len(edges))
+	// Equal stored IDs in distinct databases identify two relationships.
+	assert.Equal(t, 2, len(edges))
 	assert.Equal(t, edge1.ID, edges[0].ID)
 }

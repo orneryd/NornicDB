@@ -112,3 +112,17 @@ func BenchmarkSearchResultMaterialization(b *testing.B) {
 		})
 	}
 }
+
+func TestSearchResultMaterializedNodeDatabaseContext(t *testing.T) {
+	source := &storage.Node{ID: "source", Database: "origin", Properties: map[string]any{"value": int64(42)}, CreatedAt: time.Now().Add(-time.Hour)}
+	result := searchResultFromNode("source", source, newResultPropertyProjection(nil, nil))
+	node := result.MaterializedNode("session")
+	require.Equal(t, "origin", node.Database)
+	require.Equal(t, source.CreatedAt, node.CreatedAt)
+	require.Equal(t, source.Properties, node.Properties)
+	require.Equal(t, "origin", source.Database)
+	compact := compactContinuationResult(result)
+	require.Nil(t, compact.sourceNode)
+	require.Equal(t, "session", compact.MaterializedNode("session").Database)
+	require.Empty(t, compact.MaterializedNode().Database)
+}

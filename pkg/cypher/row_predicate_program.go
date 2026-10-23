@@ -361,7 +361,7 @@ func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Conte
 	if !leftOK || !rightOK {
 		return false
 	}
-	membership, known := rowMembershipOfValues(needle, haystack, n.identity)
+	membership, known := rowMembershipOfValues(needle, haystack, n.identity, e.graphIdentityDomain())
 	return known && membership == !n.negated
 }
 
@@ -388,7 +388,7 @@ func (n *rowPredicateComparisonNode) holds(e *StorageExecutor, ctx context.Conte
 		return e.evaluateRowLogicalPredicateOperand(ctx, o.text, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 			return o.evaluate(e, ctx, scope)
 		}, false)
-	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
+	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25", e.graphIdentityDomain())
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false

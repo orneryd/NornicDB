@@ -1052,10 +1052,39 @@ func (e *StorageExecutor) selectedPathLimit(ctx context.Context, plan *selectedP
 // of the count shortest paths (count lengths for groups) to each end node:
 // to target only when it is given, to the nodes of ends only when they are.
 func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, maxLength int, source, target *storage.Node, ends []*storage.Node, count int, groups bool) []pipelineRow {
+	// The search's ID-keyed state uses the same identity view as native graph
+	// algorithms. Expression evaluation and output keep the original entities.
+	searchExecutor := e
+	var view *graphIdentityStorage
+	if storage.CompositeDatabaseOf(e.getStorage(ctx)) != "" {
+		searchExecutor = e.graphIdentityExecutor(ctx)
+		view = searchExecutor.storage.(*graphIdentityStorage)
+		source, target = view.node(source), view.node(target)
+		if ends != nil {
+			selected := make([]*storage.Node, len(ends))
+			for i, node := range ends {
+				selected[i] = view.node(node)
+			}
+			ends = selected
+		}
+	}
 	bind := func(path pathSearchPath) (pipelineRow, bool) {
+		if view != nil {
+			path.start = graphIdentityNodeValue(path.start)
+			steps := make([]pathSearchPathStep, len(path.steps))
+			for i, step := range path.steps {
+				step.node = graphIdentityNodeValue(step.node)
+				step.edge = graphIdentityEdgeValue(step.edge)
+				steps[i] = step
+			}
+			path.steps = steps
+		}
 		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
 	}
-	s := e.newPathSearch(ctx, a, row, maxLength, source)
+	s := searchExecutor.newPathSearch(ctx, a, row, maxLength, source)
+	if view != nil {
+		s.native = e
+	}
 	if target != nil {
 		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
 		for _, variable := range plan.listVariables {
@@ -1262,10 +1291,10 @@ func sameSelectedEntity(a, b interface{}) bool {
 	switch left := a.(type) {
 	case *storage.Node:
 		right, ok := b.(*storage.Node)
-		return ok && left != nil && right != nil && left.ID == right.ID
+		return ok && left != nil && right != nil && left.Identity() == right.Identity()
 	case *storage.Edge:
 		right, ok := b.(*storage.Edge)
-		return ok && left != nil && right != nil && left.ID == right.ID
+		return ok && left != nil && right != nil && left.Identity() == right.Identity()
 	}
 	return false
 }
