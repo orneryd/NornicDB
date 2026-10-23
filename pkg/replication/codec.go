@@ -3,8 +3,8 @@ package replication
 import (
 	"bytes"
 	"encoding/gob"
-	"encoding/json"
 	"fmt"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -57,7 +57,7 @@ func decodeGob(data []byte, v any) error {
 		return nil
 	}
 	// Fallback to JSON for backward compatibility/tests that still marshal JSON.
-	return json.Unmarshal(data, v)
+	return valueconvert.PropertyJSON.Unmarshal(data, v)
 }
 
 func encodeNodePayload(node *storage.Node) ([]byte, error) {
@@ -96,7 +96,7 @@ func decodeNodePayload(data []byte) (*storage.Node, error) {
 	}
 	// Fallback: legacy JSON encoding of storage.Node (no embeddings).
 	var legacy storage.Node
-	if err := json.Unmarshal(data, &legacy); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &legacy); err != nil {
 		return nil, err
 	}
 	return &legacy, nil
@@ -140,7 +140,7 @@ func decodeEdgePayload(data []byte) (*storage.Edge, error) {
 	}
 	// Fallback legacy JSON encoding of storage.Edge.
 	var legacy storage.Edge
-	if err := json.Unmarshal(data, &legacy); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &legacy); err != nil {
 		return nil, err
 	}
 	return &legacy, nil

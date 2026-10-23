@@ -12,6 +12,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -505,7 +506,7 @@ func (h *httpTransport) doRequest(ctx context.Context, body remoteTxRequest) (*r
 func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (*remoteTxResponse, error) {
 	var reader io.Reader
 	if body != nil {
-		raw, err := json.Marshal(body)
+		raw, err := valueconvert.CypherInputJSON.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
@@ -531,7 +532,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 		return nil, err
 	}
 	var txResp remoteTxResponse
-	if err := unmarshalRemoteHTTPJSON(respBody, &txResp); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(respBody, &txResp); err != nil {
 		return nil, localizedError(localization.StorageRemoteTransactionDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(txResp.Errors) > 0 {
@@ -543,12 +544,6 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 			data := &txResp.Results[resultIndex].Data[rowIndex]
 			if data.REST != nil && len(data.REST) != len(data.RawRow) {
 				return nil, localizedError(localization.StorageRemoteRESTRowLengthMismatch(), nil)
-			}
-			for _, entry := range data.Meta {
-				remoteHTTPNumbers(entry)
-			}
-			for _, entity := range append(append([]map[string]interface{}(nil), data.Graph.Nodes...), data.Graph.Relationships...) {
-				remoteHTTPNumbers(entity)
 			}
 			entities := make(map[string]interface{})
 			for _, node := range data.Graph.Nodes {
@@ -624,7 +619,7 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 
 func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
 	openBody := remoteTxRequest{Statements: []remoteStatement{}}
-	raw, err := json.Marshal(openBody)
+	raw, err := valueconvert.CypherInputJSON.Marshal(openBody)
 	if err != nil {
 		return nil, err
 	}

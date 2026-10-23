@@ -2,11 +2,12 @@
 package heimdall
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // Bifrost implements BifrostBridge for real-time communication with clients.
@@ -204,7 +205,7 @@ func (b *Bifrost) broadcast(msg BifrostMessage) error {
 }
 
 func encodeBifrostMessage(msg BifrostMessage) ([]byte, error) {
-	data, err := json.Marshal(msg)
+	data, err := valueconvert.PropertyJSON.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message: %w", err)
 	}

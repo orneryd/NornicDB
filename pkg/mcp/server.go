@@ -50,7 +50,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"net/http"
 	"sort"
@@ -59,9 +58,11 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -507,7 +508,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := valueconvert.CypherInputJSON.Unmarshal(body, &req); err != nil {
 		s.writeLocalizedJSONRPCError(w, r, nil, -32700, localization.MCPParseError(), err.Error())
 		return
 	}
@@ -540,7 +541,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// Wrap result in MCP content format (required by MCP spec)
-			resultJSON, _ := json.Marshal(toolResult)
+			resultJSON, _ := valueconvert.PropertyJSON.Marshal(toolResult)
 			result = CallToolResponse{
 				Content: []Content{{Type: "text", Text: string(resultJSON)}},
 			}
@@ -608,7 +609,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.RequestBodyReadFailed())
 		return
 	}
-	if err := json.Unmarshal(body, &req); err != nil {
+	if err := valueconvert.CypherInputJSON.Unmarshal(body, &req); err != nil {
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MCPInvalidRequestBody())
 		return
 	}
@@ -631,7 +632,7 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert result to JSON string
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, _ := valueconvert.PropertyJSON.Marshal(result)
 	s.writeJSON(w, http.StatusOK, CallToolResponse{
 		Content: []Content{{Type: "text", Text: string(resultJSON)}},
 	})
@@ -1977,7 +1978,7 @@ func (s *Server) validateAndConvertEmbedding(input interface{}) ([]float32, erro
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(data)
 }
 
 func (s *Server) writeError(w http.ResponseWriter, status int, message string) {

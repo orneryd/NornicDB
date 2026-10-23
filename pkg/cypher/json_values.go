@@ -2,11 +2,11 @@ package cypher
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-
-	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
 // apocConvertToJSON is apoc.convert.toJson(value): value as JSON text, as
@@ -17,7 +17,7 @@ import (
 // escaped. ok is false for a value JSON can't hold.
 func apocConvertToJSON(value interface{}) (string, bool) {
 	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
+	encoder := valueconvert.PropertyJSON.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(value); err != nil {
 		return "", false
@@ -55,30 +55,7 @@ func unescapeLineSeparators(encoded string) string {
 // number without '.', 'e' or 'E' that fits int64 is an INTEGER, any other a
 // FLOAT. Lists and maps are converted in place.
 func JSONNumbers(value interface{}) interface{} {
-	switch v := value.(type) {
-	case json.Number:
-		if !strings.ContainsAny(string(v), ".eE") {
-			if i, err := v.Int64(); err == nil {
-				return i
-			}
-		}
-		if f, err := v.Float64(); err == nil {
-			return f
-		}
-		return string(v)
-	case []interface{}:
-		for i, item := range v {
-			v[i] = JSONNumbers(item)
-		}
-		return v
-	case map[string]interface{}:
-		for key, item := range v {
-			v[key] = JSONNumbers(item)
-		}
-		return v
-	default:
-		return value
-	}
+	return valueconvert.CypherInputJSON.Numbers(value)
 }
 
 // apocConvertFromJSON is apoc.convert.fromJsonMap / fromJsonList(text): the
@@ -104,8 +81,7 @@ func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, error) {
 	if text == "" {
 		return nil, nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader([]byte(text)))
-	decoder.UseNumber()
+	decoder := valueconvert.CypherInputJSON.NewCompatibilityDecoder(strings.NewReader(text))
 	var decoded interface{}
 	if err := decoder.Decode(&decoded); err != nil {
 		return invalid(err)
@@ -113,7 +89,6 @@ func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, error) {
 	if decoded == nil {
 		return nil, nil
 	}
-	decoded = JSONNumbers(decoded)
 	if wantMap {
 		if result, ok := decoded.(map[string]interface{}); ok {
 			return result, nil

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"strconv"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 func decodeRemoteHTTPValue(raw json.RawMessage, metadata []interface{}, index *int, entities map[string]interface{}) (interface{}, error) {
@@ -38,10 +40,9 @@ func remoteHTTPMetaHasTypes(metadata []interface{}) bool {
 
 func decodeRemoteHTTPRowValue(raw, restRaw json.RawMessage, metadata []interface{}, index *int, entities map[string]interface{}, walk bool) (interface{}, error) {
 	var plain interface{}
-	if err := unmarshalRemoteHTTPJSON(raw, &plain); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(raw, &plain); err != nil {
 		return nil, err
 	}
-	plain = remoteHTTPNumbers(plain)
 	if len(restRaw) > 0 && !json.Valid(restRaw) {
 		return nil, localizedError(localization.StorageRemoteRESTInvalidJSON(), nil)
 	}
@@ -172,10 +173,9 @@ func remoteHTTPRESTEntity(raw json.RawMessage, plain interface{}, metadata map[s
 		return false
 	}
 	var properties interface{}
-	if unmarshalRemoteHTTPJSON(envelope.Data, &properties) != nil {
+	if valueconvert.PropertyJSON.Unmarshal(envelope.Data, &properties) != nil {
 		return false
 	}
-	properties = remoteHTTPNumbers(properties)
 	// An ordinary REST map equals its row representation and cannot also equal
 	// its own finite nested data field. No map-key shape grants provenance.
 	return reflect.DeepEqual(plain, properties)
