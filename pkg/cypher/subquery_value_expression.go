@@ -125,19 +125,6 @@ func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
 	return found[0], true
 }
 
-// wholeExistsPredicate reports whether a WHERE predicate is exactly
-// EXISTS { … } or NOT EXISTS { … }, and which. Only such a predicate is a
-// subquery test on its own; one that compares or combines the subquery
-// (EXISTS { … } = false) is an expression with the subquery as one of its
-// values.
-func wholeExistsPredicate(predicate string) (negated bool, ok bool) {
-	predicate = strings.TrimSpace(predicate)
-	if len(predicate) > len("NOT") && matchKeywordAt(predicate, 0, "NOT") {
-		return true, isStandaloneExistsSubquery(strings.TrimSpace(predicate[len("NOT"):]))
-	}
-	return false, isStandaloneExistsSubquery(predicate)
-}
-
 // rowSubqueryPlan is the shape of a predicate holding subquery expressions,
 // read once per predicate text: the subqueries, and the predicate with each
 // one masked by a name (__subquery_value_N), on which logical and
@@ -149,9 +136,6 @@ type rowSubqueryPlan struct {
 	names     []string
 	rewritten string
 	logical   bool
-	// wholeExists is set for a predicate that is exactly NOT EXISTS { … },
-	// which the predicate evaluator tests directly (evaluateRowExistsPredicate).
-	wholeExists bool
 	// integerComparison is set when the rewritten predicate is exactly
 	// __subquery_value_0 <op> <integer literal> (COUNT { … } > 1): the
 	// comparison is parsed once and applied to an integer value directly.
@@ -220,7 +204,6 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 				break
 			}
 		}
-		_, plan.wholeExists = wholeExistsPredicate(expr)
 		if !plan.logical && len(found) == 1 && strings.HasPrefix(plan.rewritten, plan.names[0]) {
 			plan.integerComparison, _ = parseIntegerComparison(plan.rewritten[len(plan.names[0]):])
 		}
@@ -310,25 +293,22 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, false, nil
+	}
 	ctx = withoutLocalSubqueryScope(ctx)
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
+		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
+			return rowCountValue(kind, count), true, nil
+		}
 		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
 			return rowCountValue(kind, count), true, nil
 		}
 		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
-		}
-		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
-			return rowCountValue(kind, count), true, nil
-		}
-		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
-			// A pattern the kernel can't match goes to the pipeline below:
-			// its failure isn't a count of 0.
-			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
-				return rowCountValue(kind, int64(len(rows))), true, nil
-			}
 		}
 	}
 	if cypherVersionFromContext(ctx) != "25" {
@@ -1010,61 +990,6 @@ func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[stri
 		}
 	}
 	return values
-}
-
-// boundPatternCountBindings reports whether a COUNT { body } is one pattern
-// with an optional WHERE ((a)-->(b) WHERE b.x > 1, with or without MATCH)
-// whose outer variables are all nodes or relationships, and returns them. Such
-// a count is the number of rows the traversal kernel expands from the bound
-// entities (evaluateBoundPatternRows, as for COUNT predicates in WHERE),
-// without running the body as a correlated pipeline per row.
-// patternHasInlineWhere reports a WHERE inside a node or relationship
-// pattern of text ((n WHERE n.x > 1), -[r WHERE r.w = 2]->), outside quoted
-// text.
-func patternHasInlineWhere(text string) bool {
-	depth := 0
-	for index := 0; index < len(text); index++ {
-		switch character := text[index]; character {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(text, index, character) - 1
-		case '(', '[':
-			depth++
-		case ')', ']':
-			depth--
-		case 'W', 'w':
-			if depth > 0 && matchKeywordAt(text, index, "WHERE") && (index == 0 || !isIdentByte(text[index-1])) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
-	query := strings.TrimSpace(body)
-	if !hasPrefixFold(query, "MATCH") {
-		query = "MATCH " + query
-	}
-	clauses, ok := splitPipelineClauses(query)
-	if !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
-		return nil, nil, false
-	}
-	// The bound-pattern matcher doesn't read a node's or relationship's own
-	// WHERE ((m:Coll WHERE m.id IN $ids)); the pipeline does.
-	if patternHasInlineWhere(query) {
-		return nil, nil, false
-	}
-	for name, value := range values {
-		switch value.(type) {
-		case *storage.Node, *storage.Edge:
-			continue
-		}
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(body, name) {
-			return nil, nil, false
-		}
-	}
-	nodes, rels := entityBindings(values)
-	return nodes, rels, true
 }
 
 // entityBindings splits a row's node and relationship values out of it.

@@ -274,9 +274,6 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return cypherfn.Coalesce(len(operands), func(index int) (interface{}, bool, error) {
 				trimmed := strings.TrimSpace(operands[index])
 				return evaluateRowLocalSubqueries(values, trimmed, func(values map[string]interface{}) (interface{}, bool, error) {
-					if matched, recognized := e.evaluateRowExistsPredicate(rowStatementContextOrBackground(values), trimmed, values); recognized {
-						return matched, true, nil
-					}
 					return e.evaluateRowValue(trimmed, values)
 				})
 			})
@@ -1535,20 +1532,14 @@ func rowValuesBindingStatementContext(ctx context.Context, values map[string]int
 // by predicate text: it is decided once, not once per row.
 var rowPredicateStatementContextNeeds = newBoundedCache[string, bool](1024, boundedCacheStringShardIndex)
 
-// rowPredicateNeedsStatementContext reports a predicate whose row values need
-// the statement context (needsRowStatementContext), except a whole [NOT]
-// EXISTS { … } predicate, which the predicate evaluator runs with its context
-// directly (evaluateRowExistsPredicate): binding it would copy every row.
+// rowPredicateNeedsStatementContext keeps the statement context available to
+// every value operand, including a whole NOT EXISTS. Logical folds evaluate
+// subqueries through the same row value owner as projections and CALL bodies.
 func rowPredicateNeedsStatementContext(expression string) bool {
 	if needs, cached := rowPredicateStatementContextNeeds.get(expression); cached {
 		return needs
 	}
 	needs := needsRowStatementContext(expression)
-	if needs && !containsStatementClockCall(expression) {
-		if _, whole := wholeExistsPredicate(expression); whole {
-			needs = false
-		}
-	}
 	rowPredicateStatementContextNeeds.put(expression, needs)
 	return needs
 }
@@ -1621,7 +1612,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 	// COUNT { … } + 1 > 1, …) are evaluated where they stand by the row
 	// evaluator (#1055), unless AND / OR / XOR split the predicate: then each
 	// side evaluates its own.
-	if plan := planRowSubqueries(expression); plan != nil && !plan.logical && !plan.wholeExists {
+	if plan := planRowSubqueries(expression); plan != nil && !plan.logical {
 		if plan.integerComparison != nil {
 			// COUNT { … } <op> <integer>: compare the count directly; a null
 			// or non-integer value takes the general comparison.
@@ -1665,11 +1656,6 @@ func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, expres
 // the predicate is evaluated from its text. A planned part whose operand the
 // plan can't resolve directly is evaluated here.
 func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
-	// EXISTS and NOT EXISTS are complete predicates, evaluated against the
-	// row's correlated typed bindings rather than as a scalar NOT.
-	if matched, recognized := e.evaluateRowExistsPredicate(ctx, expression, values); recognized {
-		return matched
-	}
 	// OR, XOR, AND and NOT (evaluateLogicalExpression) over the operands'
 	// values, or whether an operand only the predicate evaluator reads holds
 	// (rowTextFoldOperand); the result is read as a predicate.
@@ -1686,9 +1672,9 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 }
 
 // evaluateRowPredicateTextFromSubqueries is evaluateRowPredicateText for a
-// predicate that is neither a whole EXISTS nor a logical operator.
+// predicate without a top-level logical operator.
 func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Context, expression string, values map[string]interface{}) bool {
-	if plan := planRowSubqueries(expression); plan != nil && !plan.wholeExists {
+	if plan := planRowSubqueries(expression); plan != nil {
 		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, expression, values); evaluated {
 			return holds
 		}
@@ -2023,47 +2009,12 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	}), true
 }
 
-// [NOT] EXISTS { } predicate; recognized is false otherwise.
-func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (matched bool, recognized bool) {
-	trimmed := strings.TrimSpace(expression)
-	// Only a whole [NOT] EXISTS { } is this predicate: EXISTS { … } = false
-	// is a comparison, evaluated with the subquery as one of its values.
-	negated, whole := wholeExistsPredicate(trimmed)
-	if !whole {
-		return false, false
-	}
-	exists := trimmed
-	if negated {
-		exists = strings.TrimSpace(trimmed[len("NOT"):])
-	}
-	matched, recognized = e.rowExistsSubqueryMatches(ctx, exists, values)
-	return matched != negated, recognized
-}
-
-// rowPatternPredicate is a relationship pattern used as a predicate (in
-// WHERE, bare, or as exists(pattern)): whether it matches, decided by the
-// EXISTS { pattern } owner with the whole row, so bound relationships, row
-// values in property maps and rows without a node binding are all seen.
+// rowPatternPredicate interprets a bare relationship pattern through the
+// shared subquery owner, with the complete outer row.
 func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
-	return e.evaluateRowExistsPredicate(ctx, "EXISTS { "+strings.TrimSpace(pattern)+" }", values)
-}
-
-// rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the
-// whole EXISTS { } text; recognized is false for an empty body.
-func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists string, values map[string]interface{}) (matched bool, recognized bool) {
-	subquery := strings.TrimSpace(exists[strings.IndexByte(exists, '{')+1 : len(exists)-1])
-	if subquery == "" {
-		return false, false
-	}
-	// The subquery evaluator EXISTS shares with COUNT and COLLECT; its error
-	// fails the statement, it doesn't read as "no rows".
-	value, ok, err := e.rowSubqueryValue(ctx, "EXISTS", subquery, values)
-	if err != nil {
-		recordExpressionFailure(ctx, err)
-		return false, true
-	}
+	value, recognized := e.evaluateRowSubqueryValue(ctx, "EXISTS", strings.TrimSpace(pattern), values)
 	matched, _ = value.(bool)
-	return matched, ok
+	return matched, recognized
 }
 
 func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {

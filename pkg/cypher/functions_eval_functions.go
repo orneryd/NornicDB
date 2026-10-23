@@ -210,7 +210,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		inner := extractFuncArgs(expr, "exists")
 		if trimmed := strings.TrimSpace(inner); strings.HasPrefix(trimmed, "(") {
 			if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-				return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels)
+				value, _ := e.evaluateRowSubqueryValue(ctx, "EXISTS", trimmed, entityRow(ctx, nodes, rels))
+				return value
 			}
 		}
 		// Check for property access

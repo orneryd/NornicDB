@@ -444,9 +444,6 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		parts := make([]rowValueNode, len(operands))
 		infos := make([]rowValueInfo, len(operands))
 		for i, operand := range operands {
-			if _, whole := wholeExistsPredicate(strings.TrimSpace(operand)); whole {
-				return rowTextValue(expr)
-			}
 			parts[i], infos[i] = c.part(operand)
 
 		}

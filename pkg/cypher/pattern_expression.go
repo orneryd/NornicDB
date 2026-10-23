@@ -127,25 +127,8 @@ func patternComprehensionHead(pattern string) bool {
 // expression is allowed (RETURN, WITH, list elements, function arguments), not
 // only in WHERE; compound expressions reach it through their operands.
 func isStandaloneExistsSubquery(expr string) bool {
-	if len(expr) < len("EXISTS{}") || (expr[0] != 'E' && expr[0] != 'e') || !matchKeywordAt(expr, 0, "EXISTS") {
-		return false
-	}
-	open := skipSpaces(expr, len("EXISTS"))
-	if open >= len(expr) || expr[open] != '{' {
-		return false
-	}
-	return isSubqueryBrace(expr, open) && findMatchingDelimiter(expr, open, '{', '}') == len(expr)-1
-}
-
-// evaluateExistsSubqueryValue evaluates a standalone EXISTS { ... } expression
-// against the current row: the value scope of ctx (a quantifier's or
-// comprehension's variable, the row's scalars) and the entities bound in the
-// row, which shadow it. It shares the WHERE predicate's correlated evaluation
-// (evaluateRowExistsPredicate), so an EXISTS value and an EXISTS filter
-// always agree.
-func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, entityRow(ctx, nodes, rels))
-	return matched
+	kind, _, whole := rowSubqueryAtom(expr)
+	return whole && kind == "EXISTS"
 }
 
 // evaluateBoundPatternRows matches pattern (with its WHERE) from the bound
@@ -317,7 +300,6 @@ type rowContextShape struct {
 	comprehension    bool
 	pattern2         string
 	projection       string
-	exists           bool
 	trimmed          string
 	brace            bool
 	// rowOnly: the row evaluator reads the whole expression, no pattern,
@@ -349,8 +331,7 @@ func rowContextShapeOf(expr string) *rowContextShape {
 		shape.function, shape.argument = function, argument
 	}
 	shape.pattern2, shape.projection, shape.comprehension = splitPatternComprehension(expr)
-	shape.exists = isStandaloneExistsSubquery(shape.trimmed)
-	shape.rowOnly = !shape.pattern && !shape.isSubquery && !shape.identity && !shape.comprehension && !shape.exists && !mayContainSubqueryExpression(expr)
+	shape.rowOnly = !shape.pattern && !shape.isSubquery && !shape.identity && !shape.comprehension && !mayContainSubqueryExpression(expr)
 	rowContextShapes.put(expr, shape)
 	return shape
 }
@@ -421,10 +402,6 @@ func (e *StorageExecutor) evaluateRowExpressionShaped(ctx context.Context, expr 
 	}
 	if shape.comprehension {
 		return e.evaluatePatternComprehensionFromRow(ctx, shape.pattern2, shape.projection, values), true
-	}
-	if shape.exists {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, shape.trimmed, values)
-		return matched, true
 	}
 	// The row evaluator's error is the statement's: it is recorded, and the
 	// expression is unresolved. The map key order slot goes into the copy
@@ -639,8 +616,8 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
-		return matched, true, true
+		value, resolved := e.evaluateRowSubqueryValue(ctx, "EXISTS", trimmed, values)
+		return value, resolved, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpressionInContext(ctx, trimmed, func(operand string, position foldPosition) (interface{}, bool, error) {
 		if !rowOperandFactsFor(ctx, operand).isolate(position, true) {
