@@ -75,6 +75,9 @@ IMAGE_AMD64_VULKAN_HEADLESS := $(REGISTRY)/nornicdb-amd64-vulkan-headless:$(VERS
 LLAMA_VERSION ?= v0.7.0
 LLAMA_CPU := $(REGISTRY)/llama-cpu-libs:$(LLAMA_VERSION)
 LLAMA_CUDA := $(REGISTRY)/llama-cuda-libs:$(LLAMA_VERSION)
+# Consumers use immutable references; publication helpers retain writable tags.
+LLAMA_CPU_REF := $(LLAMA_CPU)@$(shell cat lib/llama/CPU_IMAGE_DIGEST)
+LLAMA_CUDA_REF := $(LLAMA_CUDA)@$(shell cat lib/llama/CUDA_IMAGE_DIGEST)
 
 # Dockerfiles
 DOCKER_DIR := docker
@@ -292,49 +295,49 @@ build-arm64-metal: ensure-llama-cpu
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64) [BYOM]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) -t $(IMAGE_ARM64) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) -t $(IMAGE_ARM64) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-arm64-metal-bge: ensure-llama-cpu download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64_BGE) [with BGE model]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) --build-arg EMBED_MODEL=true -t $(IMAGE_ARM64_BGE) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) --build-arg EMBED_MODEL=true -t $(IMAGE_ARM64_BGE) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-arm64-metal-bge-heimdall: ensure-llama-cpu download-models
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64_BGE_HEIMDALL) [BGE + Heimdall]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) -t $(IMAGE_ARM64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.arm64-metal-heimdall .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) -t $(IMAGE_ARM64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.arm64-metal-heimdall .
 
 build-arm64-metal-headless: ensure-llama-cpu
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_ARM64_HEADLESS) [headless, no UI]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) --build-arg HEADLESS=true -t $(IMAGE_ARM64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/arm64 --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) --build-arg HEADLESS=true -t $(IMAGE_ARM64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.arm64-metal .
 
 build-amd64-cuda: ensure-llama-cuda
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64) [BYOM]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) -t $(IMAGE_AMD64) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) -t $(IMAGE_AMD64) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
 
 build-amd64-cuda-bge: ensure-llama-cuda download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64_BGE) [with BGE model]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) --build-arg EMBED_MODEL=true -t $(IMAGE_AMD64_BGE) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) --build-arg EMBED_MODEL=true -t $(IMAGE_AMD64_BGE) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
 
 build-amd64-cuda-bge-heimdall: ensure-llama-cuda download-models
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64_BGE_HEIMDALL) [BGE + Heimdall]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) -t $(IMAGE_AMD64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda-heimdall .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) -t $(IMAGE_AMD64_BGE_HEIMDALL) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda-heimdall .
 
 build-amd64-cuda-headless: ensure-llama-cuda
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_AMD64_HEADLESS) [headless, no UI]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA) --build-arg HEADLESS=true -t $(IMAGE_AMD64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
+	docker build $(DOCKER_BUILD_FLAGS) --platform linux/amd64 --build-arg LLAMA_CUDA_IMAGE=$(LLAMA_CUDA_REF) --build-arg HEADLESS=true -t $(IMAGE_AMD64_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.amd64-cuda .
 
 build-amd64-cpu:
 	@echo "╔══════════════════════════════════════════════════════════════╗"
@@ -353,13 +356,13 @@ build-cpu-bge: ensure-llama-cpu download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_CPU_BGE) [CPU + BGE embeddings + reranker]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) -t $(IMAGE_CPU_BGE) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
+	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) -t $(IMAGE_CPU_BGE) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
 
 build-cpu-bge-headless: ensure-llama-cpu download-bge download-bge-reranker
 	@echo "╔══════════════════════════════════════════════════════════════╗"
 	@echo "║ Building: $(IMAGE_CPU_BGE_HEADLESS) [CPU + BGE + reranker, headless]"
 	@echo "╚══════════════════════════════════════════════════════════════╝"
-	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU) --build-arg HEADLESS=true -t $(IMAGE_CPU_BGE_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
+	docker build $(DOCKER_BUILD_FLAGS) --build-arg LLAMA_CPU_IMAGE=$(LLAMA_CPU_REF) --build-arg HEADLESS=true -t $(IMAGE_CPU_BGE_HEADLESS) -f $(DOCKER_DIR)/Dockerfile.cpu-bge .
 
 # AMD64 Vulkan (any GPU: NVIDIA/AMD/Intel)
 build-amd64-vulkan:

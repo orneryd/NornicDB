@@ -101,9 +101,11 @@ jobs:
           echo "version=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
           echo "publish_latest=${PUBLISH_LATEST}" >> "$GITHUB_OUTPUT"
           echo "docker_repo=${DOCKERHUB_USERNAME}" >> "$GITHUB_OUTPUT"
-          echo "llama_cpu_image=${DOCKERHUB_USERNAME}/llama-cpu-libs:${LLAMA_VERSION}" >> "$GITHUB_OUTPUT"
+          LLAMA_CPU_DIGEST="$(tr -d '\r\n' < lib/llama/CPU_IMAGE_DIGEST)"
+          LLAMA_CUDA_DIGEST="$(tr -d '\r\n' < lib/llama/CUDA_IMAGE_DIGEST)"
+          echo "llama_cpu_image=${DOCKERHUB_USERNAME}/llama-cpu-libs:${LLAMA_VERSION}@${LLAMA_CPU_DIGEST}" >> "$GITHUB_OUTPUT"
           echo "llama_version=${LLAMA_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "llama_cuda_image=${DOCKERHUB_USERNAME}/llama-cuda-libs:${LLAMA_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "llama_cuda_image=${DOCKERHUB_USERNAME}/llama-cuda-libs:${LLAMA_VERSION}@${LLAMA_CUDA_DIGEST}" >> "$GITHUB_OUTPUT"
 
   build-general-images:
     name: Build and Push ${{ matrix.image_name }}

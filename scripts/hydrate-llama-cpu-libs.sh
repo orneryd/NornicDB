@@ -10,7 +10,8 @@ if [[ -z "${LLAMA_VERSION}" ]]; then
   exit 1
 fi
 
-LLAMA_IMAGE="timothyswt/llama-cpu-libs:${LLAMA_VERSION}"
+LLAMA_DIGEST="$(tr -d '\r\n' < lib/llama/CPU_IMAGE_DIGEST)"
+LLAMA_IMAGE="timothyswt/llama-cpu-libs:${LLAMA_VERSION}@${LLAMA_DIGEST}"
 docker pull "${LLAMA_IMAGE}"
 
 CID="$(docker create --platform linux/amd64 "${LLAMA_IMAGE}")"

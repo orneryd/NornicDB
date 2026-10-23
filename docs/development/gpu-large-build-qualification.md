@@ -179,3 +179,17 @@ Windows checks include the combined `noui,localllm,yzma` application build and
 real BGE-M3 tokenizer chunking through yzma. CI now builds that tag combination.
 The Windows symlink test skips only when the account lacks creation privilege;
 the actual rejection assertion was also executed successfully on Linux.
+
+### Published prerequisite references
+
+The v0.7.0 CPU prerequisite is published for Linux AMD64 and ARM64 at
+`timothyswt/llama-cpu-libs:v0.7.0@sha256:ec78fcac54c5f6d8f4cb7db4d41cae2eb856d348579001a41328bde839d2f028`.
+The CUDA prerequisite is published at
+`timothyswt/llama-cuda-libs:v0.7.0@sha256:89aa226654e16adcb794d1edc3cc90d945963e993d21d5f650b6d9638c2a98f7`.
+
+The digest files in `lib/llama/CPU_IMAGE_DIGEST` and
+`lib/llama/CUDA_IMAGE_DIGEST` supply the Makefile, CD workflow and CPU
+hydration references. Application Dockerfile defaults carry those same pins.
+Publication helpers retain version tags because a push destination cannot
+include a content digest. When refreshing native dependencies, publish and
+inspect the new platform manifests before updating all consumer pins.
