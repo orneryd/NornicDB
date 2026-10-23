@@ -16,7 +16,7 @@ const (
 	ConstraintValidationFailed = "Neo.ClientError.Schema.ConstraintValidationFailed"
 	// TransactionCommitFailed is the status of a COMMIT that failed for a
 	// reason with no more specific classification.
-	TransactionCommitFailed = "Neo.ClientError.Transaction.TransactionCommitFailed"
+	TransactionCommitFailed = "Neo.DatabaseError.Transaction.TransactionCommitFailed"
 	// TransactionTimedOut is the status of a statement stopped by a timeout
 	// the server configures (Neo4j's db.transaction.timeout; NornicDB's query
 	// time limit and Bolt statement timeout).
@@ -105,6 +105,8 @@ type statusMessenger interface {
 //   - an error that carries its code (BoltErrorCode) keeps it;
 //   - transaction conflicts and MVCC pressure are transient
 //     (MapTransientTransactionError);
+//   - a typed storage commit failure is Transaction.TransactionCommitFailed,
+//     including when an implicit transaction returns it from a statement;
 //   - a transaction over the storage size limit is
 //     General.TransactionOutOfMemoryError, a ClientError drivers don't retry,
 //     with a message saying to split it;
@@ -145,6 +147,10 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 			}
 			return code, trimStatusPrefix(message, code), true
 		}
+	}
+	var commitFailure *storage.CommitFailureError
+	if stderrors.As(err, &commitFailure) {
+		return TransactionCommitFailed, message, true
 	}
 	if transientCode, ok := MapTransientTransactionError(err); ok {
 		return transientCode, message, true

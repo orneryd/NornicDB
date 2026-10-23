@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -288,6 +289,8 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 		Properties: map[string]any{"name": "Alice"},
 	}
 
+	_, err = tx.getNodeFromBadgerSnapshotLocked(nodeID)
+	require.ErrorIs(t, err, ErrNotFound)
 	err = tx.classifyUpdateConflictAsUniqueViolation(nodeID)
 	require.Error(t, err)
 	var cve *ConstraintViolationError
@@ -297,6 +300,35 @@ func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
 	require.Equal(t, []string{"name"}, cve.Properties)
 	require.Contains(t, cve.Message, "claimed by concurrent commit")
 	require.ErrorIs(t, cve.Cause, ErrConflict)
+	require.ErrorAs(t, tx.checkNodeWriteConflict(nodeID), &cve)
+
+	t.Run("snapshot read error propagates", func(t *testing.T) {
+		// The complete cache and pending value above otherwise classify as
+		// UNIQUE. Fail only the pinned reader, preserving the peer's head.
+		snapshot := tx.snapshotTx
+		discarded := engine.db.testTxn(false)
+		discarded.Discard()
+		tx.snapshotTx = discarded
+		defer func() { tx.snapshotTx = snapshot }()
+
+		_, readErr := tx.getNodeFromBadgerSnapshotLocked(nodeID)
+		require.ErrorIs(t, readErr, badger.ErrDiscardedTxn)
+		require.NotErrorIs(t, readErr, ErrNotFound)
+		classificationErr := tx.classifyUpdateConflictAsUniqueViolation(nodeID)
+		require.ErrorIs(t, classificationErr, badger.ErrDiscardedTxn)
+		require.NotErrorIs(t, classificationErr, ErrConflict)
+		var violation *ConstraintViolationError
+		require.False(t, errors.As(classificationErr, &violation), "%v", classificationErr)
+
+		writeErr := tx.checkNodeWriteConflict(nodeID)
+		var commitFailure *CommitFailureError
+		require.ErrorAs(t, writeErr, &commitFailure)
+		require.ErrorIs(t, writeErr, badger.ErrDiscardedTxn)
+		require.NotErrorIs(t, writeErr, ErrConflict)
+		require.False(t, errors.As(writeErr, &violation), "%v", writeErr)
+		require.Contains(t, writeErr.Error(), string(nodeID))
+		require.Contains(t, writeErr.Error(), "snapshot")
+	})
 
 	schema.UnregisterUniqueValue("Person", "name", "Alice")
 	require.Nil(t, tx.classifyUpdateConflictAsUniqueViolation(nodeID))

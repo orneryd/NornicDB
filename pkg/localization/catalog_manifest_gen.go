@@ -1995,6 +1995,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.transaction.namespace_required", Constructor: "StorageTransactionNamespaceRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.node_changed", Constructor: "StorageTransactionNodeChanged", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.node_changed_detailed", Constructor: "StorageTransactionNodeChangedDetailed", Fields: []string{"Head", "NodeID", "ReadTimestamp"}, PluralForms: []string{"other"}},
+	{ID: "storage.transaction.snapshot_read_failed", Constructor: "StorageTransactionSnapshotReadFailed", Fields: []string{"Cause", "NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.start_node_missing", Constructor: "StorageTransactionStartNodeMissing", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.allowed_policy", Constructor: "StorageValidationAllowedPolicy", Fields: []string{"RelationshipType", "SourceLabels", "TargetLabels"}, PluralForms: []string{"other"}},
 	{ID: "storage.validation.allowed_policy_creation", Constructor: "StorageValidationAllowedPolicyCreation", Fields: []string{"EdgeID", "EndNodeID", "RelationshipType", "StartNodeID"}, PluralForms: []string{"other"}},

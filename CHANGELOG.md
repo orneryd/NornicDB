@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve storage snapshot failures as database commit errors through implicit
+  and explicit Execute, Bolt and HTTP transactions, with the original cause.
+  Unclassified commit failures now use Neo4j's DatabaseError status class.
+
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).
@@ -44,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
   on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.
+
+- Keep unchanged-key node update conflicts as ordinary retryable transaction
+  conflicts, without a misleading UNIQUE constraint-violation message. Genuine
+  competing unique-value claims retain their existing classification.
 
 ### Security
 

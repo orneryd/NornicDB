@@ -3780,8 +3780,12 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
 		// conflict (which would just observe the peer's node, find
 		// the constraint already satisfied, and complete cleanly).
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		if cv := tx.classifyUpdateConflictAsUniqueViolation(nodeID); cv != nil {
-			return cv
+		if err := tx.classifyUpdateConflictAsUniqueViolation(nodeID); err != nil {
+			var violation *ConstraintViolationError
+			if errors.As(err, &violation) {
+				return err
+			}
+			return &CommitFailureError{Cause: localizedError(localization.StorageTransactionSnapshotReadFailed(string(nodeID), err), err)}
 		}
 		return localizedError(localization.StorageTransactionNodeChangedDetailed(string(nodeID), head.Version.String(), tx.readTS.String()), ErrConflict)
 	}
@@ -3795,7 +3799,8 @@ func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
 // redirected our UPDATE onto the peer's node. Returns nil for any conflict
 // that isn't shaped this way (lost-update on a contended counter, generic
 // SI conflict on an unrelated update, etc.); the caller falls back to
-// the generic conflict error.
+// the generic conflict error. Snapshot read failures are returned unchanged
+// so the caller can report the storage failure instead of a retryable conflict.
 func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID NodeID) error {
 	pending, ok := tx.pendingNodes[nodeID]
 	if !ok || pending == nil || tx.namespace == "" {
@@ -3805,6 +3810,29 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 	if schema == nil {
 		return nil
 	}
+	// Compare with the begin version, never pending writes or the peer's
+	// latest key. Write-behind ACKs predate their physical publication, so
+	// the pinned Badger view may miss that version (or hold an older key).
+	// This classifier runs after a newer persisted head was found: replay
+	// has materialized the ACK versions, and our active snapshot reader
+	// protects their history. Resolve readTS through the existing stored-history
+	// reader, including versions flushed since begin, without visibility filtering.
+	var snapshot *Node
+	var err error
+	if tx.engine.writeBehind != nil {
+		err = tx.engine.withView(func(view *badger.Txn) error {
+			record, _, readErr := tx.engine.loadNodeMVCCRecordAtOrBeforeInTxn(view, nodeID, tx.readTS)
+			if readErr == nil && !record.Tombstoned {
+				snapshot = record.Node
+			}
+			return readErr
+		})
+	} else {
+		snapshot, err = tx.getNodeFromBadgerSnapshotLocked(nodeID)
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	for _, c := range schema.GetConstraintsForLabels(pending.Labels) {
 		if c.Type != ConstraintUnique || len(c.Properties) != 1 {
 			continue
@@ -3812,6 +3840,9 @@ func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID Node
 		prop := c.Properties[0]
 		val, has := pending.Properties[prop]
 		if !has {
+			continue
+		}
+		if snapshot != nil && slices.Contains(snapshot.Labels, c.Label) && compareValues(snapshot.Properties[prop], val) {
 			continue
 		}
 		existing, found, complete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, val)
