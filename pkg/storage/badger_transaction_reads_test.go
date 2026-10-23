@@ -33,7 +33,7 @@ import (
 // writes onto the committed state.
 func txReadFixture(t *testing.T) *MemoryEngine {
 	t.Helper()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	commitNamespace := func(nodes []*Node, edges []*Edge) {
@@ -303,7 +303,7 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 }
 
 func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	writer, err := engine.BeginTransaction()
 	require.NoError(t, err)

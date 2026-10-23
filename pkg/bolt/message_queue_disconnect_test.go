@@ -16,8 +16,8 @@ import (
 
 // A queued PULL must not hide TCP EOF from the active RUN's connection context.
 func TestMessageQueueDisconnectCancelsActiveRun(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		t.Skip("kernel hangup probe supports Darwin and Linux")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("kernel hangup probe supports Darwin, Linux and Windows")
 	}
 	for _, extra := range []int{0, 10000} {
 		t.Run(fmt.Sprint(extra), func(t *testing.T) { testMessageQueueDisconnect(t, extra) })

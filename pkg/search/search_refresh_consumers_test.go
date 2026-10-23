@@ -35,7 +35,7 @@ func (b *consumerNotFoundBarrier) GetNode(id storage.NodeID) (*storage.Node, err
 func consumerOrphanObservationRace(t *testing.T, read func(context.Context, *Service) error) {
 	t.Helper()
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	barrier := &consumerNotFoundBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}

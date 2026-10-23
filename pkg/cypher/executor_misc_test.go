@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -729,7 +730,7 @@ func TestExecuteWithImplicitTransaction_WALBeginError(t *testing.T) {
 	require.NoError(t, err)
 	defer badger.Close()
 
-	wal, err := storage.NewWAL(tmpDir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
 	require.NoError(t, err)
 
 	walEngine := storage.NewWALEngine(badger, wal)

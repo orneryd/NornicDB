@@ -339,12 +339,7 @@ func writeRecoveryManifest(backupDir string, status RecoveryStatus) error {
 		return err
 	}
 	removeTemp = false
-	dir, err := os.Open(backupDir)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return storage.SyncDir(backupDir)
 }
 
 type renamePathFunc func(oldPath, newPath string) error

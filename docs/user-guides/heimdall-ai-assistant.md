@@ -506,9 +506,15 @@ export NORNICDB_HEIMDALL_GPU_LAYERS=999
 
 # Force CPU only
 export NORNICDB_HEIMDALL_GPU_LAYERS=0
+
+# Split a local model: 12 layers on GPU, remaining layers on CPU
+export NORNICDB_HEIMDALL_GPU_LAYERS=12
 ```
 
 On Apple Silicon, Metal acceleration is automatic. On NVIDIA, CUDA is used if available.
+Positive layer counts enable partial offload when the whole model does not fit
+VRAM; system RAM must still accommodate the CPU portion. This setting applies
+to the local provider. Ollama and remote providers manage their own placement.
 
 ## Disabling Heimdall
 

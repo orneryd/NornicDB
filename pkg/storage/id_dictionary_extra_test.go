@@ -15,7 +15,7 @@ import (
 // to the embedded *BadgerEngine.idDict.
 func idDictTestEngine(t *testing.T) *MemoryEngine {
 	t.Helper()
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	return e
 }

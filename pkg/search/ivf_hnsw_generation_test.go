@@ -126,7 +126,7 @@ func TestIVFHNSWGenerationForReplacedClusterIndexIsDiscarded(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	const dimensions = 4
 	ctx := context.Background()
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), dimensions)
+	svc := NewServiceWithDimensions(newTestMemoryEngine(t), dimensions)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 	svc.SetPersistenceEnabled(true)
@@ -192,7 +192,7 @@ func TestClusterGenerationReplacementAfterCheckRetiresPublication(t *testing.T) 
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+			svc := NewServiceWithDimensions(newTestMemoryEngine(t), 4)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			svc.EnableClustering(nil, 1)
 			original := svc.clusterIndex

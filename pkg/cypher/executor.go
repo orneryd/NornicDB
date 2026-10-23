@@ -471,6 +471,10 @@ type StorageExecutor struct {
 	// SetSlowQueryThreshold so the configured cfg.Logging.SlowQueryThreshold
 	// flows in from the bootstrap site without breaking the ctor.
 	slowQueryThreshold time.Duration
+	// executionElapsed defaults to time.Since. Tests that exercise deferred
+	// logging outcomes supply deterministic elapsed time rather than relying
+	// on a query exceeding the platform clock's resolution.
+	executionElapsed func(time.Time) time.Duration
 
 	// allowLocalAPOCImportFileAccess gates non-HTTP APOC load/import file reads.
 	// Default deny; enable explicitly via env-backed APOC config or setter.

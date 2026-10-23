@@ -16,7 +16,7 @@ import (
 
 func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service, []float32) {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(tb)
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
 

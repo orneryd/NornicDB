@@ -25,7 +25,7 @@ set "SCRIPT_DIR=%~dp0"
 set "LIB_DIR=%SCRIPT_DIR%lib\llama"
 set "MODELS_DIR=%SCRIPT_DIR%models"
 set "BIN_DIR=%SCRIPT_DIR%bin"
-set "LLAMA_VERSION=v0.4.1"
+set "LLAMA_VERSION=v0.7.0"
 set "RELEASE_URL=https://github.com/timothyswt/nornicdb/releases/download/libs-v1"
 set "MODEL_URL=https://huggingface.co/BAAI/bge-m3-gguf/resolve/main/bge-m3-Q4_K_M.gguf"
 

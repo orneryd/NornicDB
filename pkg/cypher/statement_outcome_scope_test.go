@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -46,7 +45,7 @@ func TestPostCommitMemoryFailureDoesNotReportRollback(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	h := &postExecutionMemoryHandler{}
 	exec.SetLogger(slog.New(h))
-	exec.SetSlowQueryThreshold(time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 	result, err := exec.Execute(t.Context(), "CREATE (:PublishedBeforeLog)", nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -65,7 +64,7 @@ func TestCallerCancellationPrecedesMemoryFailure(t *testing.T) {
 	exec := newTransactionMemoryExecutor(t)
 	h := &postExecutionMemoryHandler{cancel: cancel}
 	exec.SetLogger(slog.New(h))
-	exec.SetSlowQueryThreshold(time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 	_, err := exec.Execute(ctx, "UNWIND range(1, 10) AS x RETURN x", nil)
 	require.ErrorIs(t, err, context.Canceled)
 	requirePoolsEmpty(t, "nornic")
@@ -98,7 +97,7 @@ func TestExecuteIndependentOutcomeDuringCommittedLog(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	h := &reentrantStatementLogHandler{executor: exec}
 	exec.SetLogger(slog.New(h))
-	exec.SetSlowQueryThreshold(time.Nanosecond)
+	forceSlowQueryLogging(t, exec)
 	result, err := exec.Execute(t.Context(), "CREATE (:IndependentOutcome)", nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)

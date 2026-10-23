@@ -38,7 +38,7 @@ func newRetentionWALEngine(t *testing.T, root string, maxAge time.Duration, maxS
 	t.Helper()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate", RetentionMaxAge: maxAge, RetentionMaxSegments: maxSegments})
 	require.NoError(t, err)
-	walEngine := NewWALEngine(NewMemoryEngine(), wal)
+	walEngine := NewWALEngine(newTestMemoryEngine(t), wal)
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
 	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
 	return walEngine, wal

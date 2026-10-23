@@ -168,6 +168,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// the original query text — by the time the deferred emission fires,
 	// `cypher` has been normalized; we want to log what the client submitted.
 	slowStart := time.Now()
+	elapsed := e.executionElapsed
+	if elapsed == nil {
+		elapsed = time.Since
+	}
 	statement := e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
 	embeddingState := statement.state
 	var embeddingGeneration uint64
@@ -224,7 +228,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}()
 	defer func() {
-		executionDuration = time.Since(slowStart)
+		executionDuration = elapsed(slowStart)
 		dur := executionDuration
 		e.emitRejectionReport(ctx, originalCypher, retErr)
 		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and

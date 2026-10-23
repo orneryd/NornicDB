@@ -260,13 +260,11 @@ func (b *BadgerEngine) currentMVCCReadVersion(namespace string) MVCCVersion {
 
 // BeginTransaction starts a new Badger transaction with ACID guarantees.
 //
-// At begin time the namespace is unknown; readTS is populated with a
-// wall-clock-only sample (no sequence component) and rebound the moment
-// the transaction's namespace is pinned via the first prefixed write or
-// SetNamespace. Pre-pin reads see a version that does not constrain
-// against any namespace's commit sequence, which is the correct behavior:
-// a transaction that has not yet identified its database has not made
-// any per-database isolation claims.
+// At begin time the namespace is unknown. The unpinned scan boundary includes
+// the captured namespaces' logical high-water marks as well as wall time, so
+// coarse or backward clocks cannot hide rows in the physical snapshot. The
+// first prefixed write, point read, or SetNamespace rebinds this boundary to
+// that namespace's exact begin-time version.
 func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	b.mu.RLock()
 	if b.closed {
@@ -282,6 +280,16 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	}
 	readTS := b.currentMVCCReadVersion("")
 	beginSnapshot := b.snapshotNamespaceVersions()
+	// Unpinned scans span namespaces in the already captured physical snapshot.
+	// A wall-clock-only version (sequence zero) sorts before a committed head
+	// at the same timestamp on coarse clocks, or after a backward clock step.
+	// Include every captured namespace's boundary until pinning replaces this
+	// scan boundary with that namespace's exact begin-time version.
+	for _, version := range beginSnapshot {
+		if readTS.Compare(version) < 0 {
+			readTS = version
+		}
+	}
 	txID := generateTxID()
 	startTime := time.Now()
 	badgerTx := badgerDB.newTxnAt(badgerReadTs, true)

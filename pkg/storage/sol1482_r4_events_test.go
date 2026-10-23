@@ -8,7 +8,7 @@ import (
 )
 
 func TestSol1482R4SidecarPublishes(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	_, err := e.CreateNode(&Node{ID: "test:n", Properties: map[string]any{"content": "text"}})
 	require.NoError(t, err)
@@ -20,7 +20,7 @@ func TestSol1482R4SidecarPublishes(t *testing.T) {
 	requirePublished(t, events, "node updated test:n", "sidecar")
 }
 func TestSol1482R4EdgeDecayPublishes(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	e.SetDecayEnabled(true)
 	s := e.GetSchemaForNamespace("test")

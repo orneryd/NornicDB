@@ -21,7 +21,7 @@ func (e *countingReadEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 
 func newCountingService(t *testing.T) (*Service, *countingReadEngine, storage.Engine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	engine := &countingReadEngine{Engine: store}

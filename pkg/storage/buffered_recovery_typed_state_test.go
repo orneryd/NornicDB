@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 					engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
 					require.NoError(t, err)
 					cfg := DefaultWALConfig()
-					cfg.Dir = dir + "/wal"
+					cfg.Dir = filepath.Join(dir, "wal")
 					cfg.BatchSyncInterval = time.Hour
 					wal, err := NewWAL(cfg.Dir, cfg)
 					require.NoError(t, err)
@@ -185,7 +186,7 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
 				require.NoError(t, err)
 				cfg := DefaultWALConfig()
-				cfg.Dir = dir + "/wal"
+				cfg.Dir = filepath.Join(dir, "wal")
 				w, err := NewWAL(cfg.Dir, cfg)
 				require.NoError(t, err)
 				b.SetBufferedCommitWAL(w)

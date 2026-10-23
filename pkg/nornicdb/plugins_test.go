@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,9 @@ import (
 
 func buildTestPluginSO(t *testing.T, dir, baseName, source string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Go buildmode=plugin is unsupported on Windows")
+	}
 	srcPath := filepath.Join(dir, baseName+".go")
 	soPath := filepath.Join(dir, baseName+".so")
 	require.NoError(t, os.WriteFile(srcPath, []byte(source), 0o600))
@@ -158,17 +162,15 @@ func TestLoadPluginsFromDir(t *testing.T) {
 	})
 
 	t.Run("non-existent directory returns nil (not an error)", func(t *testing.T) {
-		err := LoadPluginsFromDir("/nonexistent/path/to/plugins", nil)
+		err := LoadPluginsFromDir(filepath.Join(t.TempDir(), "missing", "plugins"), nil)
 		assert.NoError(t, err)
 	})
 
 	t.Run("file path instead of directory returns error", func(t *testing.T) {
-		// Create a temp file
-		err := LoadPluginsFromDir("/dev/null", nil) // This is a file, not a directory
-		// Should return error since it's not a directory
-		if err != nil {
-			assert.Contains(t, err.Error(), "not a directory")
-		}
+		path := filepath.Join(t.TempDir(), "not-a-directory")
+		require.NoError(t, os.WriteFile(path, []byte("file"), 0o600))
+		err := LoadPluginsFromDir(path, nil)
+		require.ErrorContains(t, err, "not a directory")
 	})
 
 	t.Run("heimdall plugin is skipped when context is nil", func(t *testing.T) {

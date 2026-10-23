@@ -8,12 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestReviewerR6FinalDrainDoesNotPublishReadiness(t *testing.T) {
-	engine := &triageSnapshotEngine{MemoryEngine: storage.NewMemoryEngine()}
+	engine := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(triageNode("nornic:baseline"))
 	require.NoError(t, err)

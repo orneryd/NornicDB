@@ -18,7 +18,7 @@ func TestContinuationExecutionGeneratedDepthMatrix(t *testing.T) {
 	const cap = 8
 	for _, population := range []int{cap - 1, cap, cap + 1} {
 		t.Run(fmt.Sprintf("population_%d", population), func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "matrix")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "matrix")
 			service := NewService(engine)
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			for i := 0; i < population; i++ {

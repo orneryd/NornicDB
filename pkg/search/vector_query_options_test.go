@@ -26,7 +26,7 @@ func (g *efRecordingGen) SearchCandidates(ctx context.Context, _ []float32, _ in
 
 func newOptionsTestService(t *testing.T, dims int, nodes ...*storage.Node) *Service {
 	t.Helper()
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	svc := NewServiceWithDimensions(engine, dims)
 	t.Cleanup(func() { _ = svc.Close() })
 	for _, node := range nodes {

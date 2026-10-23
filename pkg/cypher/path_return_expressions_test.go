@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -82,7 +83,7 @@ func newPathReturnServerStackExecutor(t *testing.T) *StorageExecutor {
 	dir := t.TempDir()
 	badger, err := storage.NewBadgerEngine(dir)
 	require.NoError(t, err)
-	wal, err := storage.NewWAL(dir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
 	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {

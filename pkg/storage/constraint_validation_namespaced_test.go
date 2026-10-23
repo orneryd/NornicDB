@@ -116,7 +116,7 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 // See docs/plans/consumer-pinned-error-contract-plan.md §2.3. Do not relax
 // this test without coordinating with known consumers.
 func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 
 	const namespace = "tenant_a"

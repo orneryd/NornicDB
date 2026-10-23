@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 	})
 	if opts.wal {
 		walCfg := DefaultWALConfig()
-		walCfg.Dir = opts.dataDir + "/wal"
+		walCfg.Dir = filepath.Join(opts.dataDir, "wal")
 		walCfg.BatchSyncInterval = time.Hour
 		wal, err := NewWAL(walCfg.Dir, walCfg)
 		require.NoError(t, err)

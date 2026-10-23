@@ -6,6 +6,7 @@ package storage
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func serverStack(t *testing.T) (*BadgerEngine, *WALEngine) {
 	dir := t.TempDir()
 	badger, err := NewBadgerEngine(dir)
 	require.NoError(t, err)
-	wal, err := NewWAL(dir+"/wal", nil)
+	wal, err := NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
 	engine := NewWALEngine(badger, wal)
 	t.Cleanup(func() {

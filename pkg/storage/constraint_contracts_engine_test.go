@@ -13,7 +13,7 @@ import (
 // against. Returns the engine; tear-down is handled by t.Cleanup.
 func constraintContractsEngineFixture(t *testing.T) *MemoryEngine {
 	t.Helper()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }

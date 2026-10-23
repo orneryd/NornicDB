@@ -2,7 +2,9 @@ package search
 
 import (
 	"context"
+	"math"
 	"math/rand"
+	"reflect"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -43,13 +45,23 @@ func TestCPUHNSWBuildScratchDoesNotAliasReturnedCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !reflect.DeepEqual(ids[0], []int{0, 1, 2}) {
+		t.Fatalf("unexpected initial candidates: %v", ids)
+	}
+	for i, distance := range dist[0] {
+		if math.Abs(float64(distance)-float64(i)) > 1e-6 {
+			t.Fatalf("unexpected initial distances: %v", dist)
+		}
+	}
+	ownedIDs := append([]int(nil), ids[0]...)
+	ownedDistances := append([]float32(nil), dist[0]...)
 	for i := 0; i < 20; i++ {
 		_, _, err = a.CandidateSearch(context.Background(), [][]float32{{0, 1}, {-1, 0}}, frontier, 3)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if ids[0][0] != 0 || ids[0][1] != 1 || ids[0][2] != 2 || dist[0][0] != 0 || dist[0][1] != 1 || dist[0][2] != 2 {
+	if !reflect.DeepEqual(ids[0], ownedIDs) || !reflect.DeepEqual(dist[0], ownedDistances) {
 		t.Fatalf("pooled scratch changed an owned result: %v %v", ids, dist)
 	}
 }

@@ -9,7 +9,7 @@ import (
 )
 
 func TestDeleteConnectedNode(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 	for _, node := range []*Node{{ID: "test:a"}, {ID: "test:b"}, {ID: "test:c"}} {
 		_, err := engine.CreateNode(node)

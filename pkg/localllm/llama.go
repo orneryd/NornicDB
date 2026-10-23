@@ -1,4 +1,4 @@
-//go:build cgo && !nolocalllm && (darwin || linux)
+//go:build cgo && !nolocalllm && !yzma && (darwin || linux)
 
 // Package localllm provides CGO bindings to llama.cpp for local GGUF model inference.
 //

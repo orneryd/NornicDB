@@ -55,7 +55,7 @@ func TestSol1482R3RefreshReadMatrix(t *testing.T) {
 					for _, pending := range []bool{false, true} {
 						t.Run(fmt.Sprintf("warm=%t/edge=%t/missing=%t/remove=%t/pending=%t", warm, edge, missing, remove, pending), func(t *testing.T) {
 							ctx := context.Background()
-							base := storage.NewMemoryEngine()
+							base := newTestMemoryEngine(t)
 							t.Cleanup(func() { _ = base.Close() })
 							store := storage.NewNamespacedEngine(base, "test")
 							for _, id := range []storage.NodeID{"a", "b"} {
@@ -192,7 +192,7 @@ func (b *solR3RelationshipSnapshot) AllEdges() ([]*storage.Edge, error) {
 func TestSol1482R3RelationshipStartupCannotOverwriteRefresh(t *testing.T) {
 	for _, remove := range []bool{false, true} {
 		t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "test")
 			for _, id := range []storage.NodeID{"a", "b"} {

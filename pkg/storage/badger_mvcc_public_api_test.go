@@ -20,7 +20,7 @@ import (
 //     AppendEdgeVersion calls below)
 func mvccPublicAPIFixture(t *testing.T) (*MemoryEngine, NodeID, NodeID, EdgeID) {
 	t.Helper()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	tx, err := engine.BeginTransaction()

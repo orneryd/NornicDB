@@ -806,7 +806,7 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	require.Len(t, between, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), between[0].ID)
 
-	fallbackInner := &nonMVCCEngine{Engine: NewMemoryEngine()}
+	fallbackInner := &nonMVCCEngine{Engine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = fallbackInner.Close() })
 	fallback := NewNamespacedEngine(fallbackInner, "test")
 	_, err = fallback.GetOutgoingEdgesVisibleAt("mvcc-ns-start", edgeHead.Version)
@@ -1225,7 +1225,7 @@ func TestBadgerEngine_DeleteNodeCascade_WritesAdjacencyTombstonesInHeadOnlyMode(
 }
 
 func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.T) {
-	baseInner := NewMemoryEngine()
+	baseInner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = baseInner.Close() })
 	base := &nonMVCCEngine{Engine: baseInner}
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -49,6 +50,8 @@ func TestReplicationLocalizedSentinelPreservesErrorsIs(t *testing.T) {
 
 func TestReplicationLocalizedTransportCause(t *testing.T) {
 	missingCert := filepath.Join(t.TempDir(), "missing.pem")
+	_, cause := os.Open(missingCert)
+	require.Error(t, cause)
 	config := DefaultConfig()
 	config.TLS.Enabled = true
 	config.TLS.CertFile = missingCert
@@ -56,7 +59,7 @@ func TestReplicationLocalizedTransportCause(t *testing.T) {
 
 	_, err := NewDefaultTransportFromConfig(config)
 	require.ErrorIs(t, err, fs.ErrNotExist)
-	localizedErr := requireReplicationLocalizedError(t, err, localization.MessageReplicationTransportLoadTLSCertKeyFailed, "load TLS cert/key: open "+missingCert+": no such file or directory")
+	localizedErr := requireReplicationLocalizedError(t, err, localization.MessageReplicationTransportLoadTLSCertKeyFailed, "load TLS cert/key: "+cause.Error())
 	require.Contains(t, localizedErr.Message.Data["Cause"], missingCert)
 }
 

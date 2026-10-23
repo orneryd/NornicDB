@@ -7,7 +7,7 @@ import (
 )
 
 func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -61,7 +61,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 
 	t.Run("bulk create registers unique values", func(t *testing.T) {
 		// Create a new engine for this test
-		base2 := NewMemoryEngine()
+		base2 := newTestMemoryEngine(t)
 		defer base2.Close()
 		engine2 := NewNamespacedEngine(base2, "test")
 
@@ -107,7 +107,7 @@ func TestBulkCreateNodesConstraintEnforcement(t *testing.T) {
 	})
 
 	t.Run("bulk create with no constraints succeeds", func(t *testing.T) {
-		base3 := NewMemoryEngine()
+		base3 := newTestMemoryEngine(t)
 		defer base3.Close()
 		engine3 := NewNamespacedEngine(base3, "test")
 

@@ -17,7 +17,7 @@ import (
 // WAL-compaction stream (SaveStreamingSnapshot) and the materialized snapshot
 // (WAL.CreateSnapshot, SaveSnapshot).
 func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
-	source := NewMemoryEngine()
+	source := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = source.Close() })
 	source.SetDecayEnabled(true)
 	bindings, err := knowledgepolicy.BuildBindingTable(
@@ -65,7 +65,7 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 
 	for name, path := range map[string]string{"streaming": streaming, "materialized": materialized} {
 		t.Run(name, func(t *testing.T) {
-			recovered := NewMemoryEngine()
+			recovered := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = recovered.Close() })
 			_, _, err := RecoverIntoEngine(recovered, t.TempDir(), path)
 			require.NoError(t, err)

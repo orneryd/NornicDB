@@ -38,7 +38,7 @@ func (e *allEdgesOverrideEngine) GetEdgesByType(edgeType string) ([]*Edge, error
 func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T) {
 	t.Run("all-edges scan error is propagated", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			err:    errors.New("scan boom"),
 		}
 		t.Cleanup(func() { _ = eng.Engine.Close() })
@@ -56,7 +56,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 
 	t.Run("property type constraint is accepted in this path", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			edges: []*Edge{
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k": 1}},
 			},
@@ -76,7 +76,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 
 	t.Run("relationship key first enforces existence", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			edges: []*Edge{
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k1": "x"}},
 			},
@@ -96,7 +96,7 @@ func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T
 
 	t.Run("unsupported relationship constraint type returns explicit error", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			edges: []*Edge{
 				{ID: "test:e1", Type: "REL", Properties: map[string]interface{}{"k": "x"}},
 			},

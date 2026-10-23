@@ -208,7 +208,7 @@ func (h *finalPersistGateLog) Handle(_ context.Context, r slog.Record) error {
 // survives the second build's restore of the saved indexes.
 func TestBuildOverlappingPersistedBuildsKeepTheTail(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(buildWriteNode("nornic:a", "oldterm", []float32{1, 0, 0}))
 	require.NoError(t, err)
@@ -627,7 +627,7 @@ func (e *relationshipLoaderGateEngine) StreamEdges(ctx context.Context, fn func(
 // loader applies the stored relationships from a snapshot; a live update or
 // removal made meanwhile wins over the loader's older copy.
 func TestRelationshipLoaderLeavesLiveUpdatesInPlace(t *testing.T) {
-	engine := &relationshipLoaderGateEngine{MemoryEngine: storage.NewMemoryEngine(), entered: make(chan struct{}), release: make(chan struct{})}
+	engine := &relationshipLoaderGateEngine{MemoryEngine: newTestMemoryEngine(t), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { engine.open(); _ = engine.MemoryEngine.Close() })
 	for _, id := range []storage.NodeID{"nornic:s", "nornic:e"} {
 		_, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"text": "node"}})

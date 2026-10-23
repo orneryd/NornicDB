@@ -76,6 +76,13 @@ NORNICDB_EMBEDDING_LAZY_MODE=1                 # 0 = off, 1 = auto (default), 2 
 
 ## GPU Acceleration
 
+For a model that should span CPU and GPU, set a positive layer count, for example
+`NORNICDB_EMBEDDING_GPU_LAYERS=12`. Those layers are offloaded to GPU and the
+remaining layers run on CPU. Use `0` for CPU only and `-1` for automatic/full
+offload when VRAM permits. These settings apply to the local GGUF provider.
+The portable CPU build setting `GGML_NATIVE=OFF` keeps this hybrid execution
+available; it only avoids CPU instructions specific to the build host.
+
 Follows llama.cpp's GPU-first strategy:
 
 ```

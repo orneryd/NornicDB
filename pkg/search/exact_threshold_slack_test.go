@@ -26,7 +26,7 @@ func TestXhigh014fPublicThresholdSlackProbe(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = base.Close() })
 			engine := storage.NewNamespacedEngine(base, "threshold")
 			service := NewServiceWithDimensions(engine, 2)

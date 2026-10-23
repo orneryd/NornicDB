@@ -98,7 +98,7 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 	for _, mode := range []string{"cancel", "node", "edge", "open"} {
 		for _, entry := range []string{"timer", "shutdown", "direct"} {
 			t.Run(mode+"/"+entry, func(t *testing.T) {
-				e := &failedPopulationEngine{MemoryEngine: storage.NewMemoryEngine(), mode: mode, entered: make(chan struct{}), release: make(chan struct{})}
+				e := &failedPopulationEngine{MemoryEngine: newTestMemoryEngine(t), mode: mode, entered: make(chan struct{}), release: make(chan struct{})}
 				t.Cleanup(func() { _ = e.Close() })
 				for i := 0; i < 3; i++ {
 					_, err := e.CreateNode(triageNode(fmt.Sprintf("nornic:original%d", i)))
@@ -183,7 +183,7 @@ func TestFailedPopulationCannotPersistOrReplaceArtifacts(t *testing.T) {
 
 func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
-	e := &triageSnapshotEngine{MemoryEngine: storage.NewMemoryEngine()}
+	e := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = e.Close() })
 	_, err := e.CreateNode(triageNode("nornic:original"))
 	require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestCancelledWarmupPreservesCommittedPopulationAndRetries(t *testing.T) {
 
 func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *testing.T) {
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
-	e := &triageSnapshotEngine{MemoryEngine: storage.NewMemoryEngine()}
+	e := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = e.Close() })
 	_, err := e.CreateNode(triageNode("nornic:original"))
 	require.NoError(t, err)
@@ -246,7 +246,7 @@ func TestInterruptedPopulationRejectsPrebuildPersistenceAndSavedAdmission(t *tes
 
 func TestFailedFinalReplayPreservesCommittedPopulationArtifacts(t *testing.T) {
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
-	e := &triageSnapshotEngine{MemoryEngine: storage.NewMemoryEngine()}
+	e := &triageSnapshotEngine{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = e.Close() })
 	_, err := e.CreateNode(triageNode("nornic:original"))
 	require.NoError(t, err)

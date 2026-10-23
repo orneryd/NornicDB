@@ -210,7 +210,7 @@ func TestReporter_SaveJSON_InvalidPath(t *testing.T) {
 	r := NewReporter(&buf)
 
 	result := makeTestEvalResult()
-	err := r.SaveJSON(result, "/nonexistent/path/results.json")
+	err := r.SaveJSON(result, filepath.Join(t.TempDir(), "nonexistent", "results.json"))
 	assert.Error(t, err)
 }
 

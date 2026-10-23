@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -1370,7 +1372,8 @@ func TestStorageAdapter_GetWALEntries_ReadErrorPath(t *testing.T) {
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	// Force persistent WAL read failure branch (path is not a directory).
-	adapter.walDir = "/dev/null"
+	adapter.walDir = filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(adapter.walDir, []byte("file"), 0o600))
 	_, err := adapter.GetWALEntries(0, 10)
 	require.ErrorContains(t, err, "failed to read WAL entries")
 }

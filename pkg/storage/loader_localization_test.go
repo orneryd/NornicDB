@@ -28,9 +28,11 @@ func requireStorageLoaderLocalizedError(t *testing.T, err error, messageID local
 func TestStorageLoaderLocalizedPublicErrors(t *testing.T) {
 	t.Run("load preserves nested cause and path data", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "missing.json")
+		_, cause := os.Open(path)
+		require.Error(t, cause)
 		err := LoadFromNeo4jExport(loaderUnsupportedEngine{}, path)
 
-		localizedErr := requireStorageLoaderLocalizedError(t, err, localization.MessageStorageLoaderOpeningFile, "opening file: open "+path+": no such file or directory")
+		localizedErr := requireStorageLoaderLocalizedError(t, err, localization.MessageStorageLoaderOpeningFile, "opening file: "+cause.Error())
 		require.Equal(t, path, localizedErr.Message.Data["Path"])
 		var pathErr *os.PathError
 		require.ErrorAs(t, err, &pathErr)

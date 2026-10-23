@@ -259,13 +259,15 @@ step_differential() {
 }
 
 step_docs() {
-  local venv="${STATE_DIR}/docs-venv" stamp
-  stamp="$(shasum requirements-docs.txt | cut -d' ' -f1)"
-  if [[ ! -x "${venv}/bin/mkdocs" || "$(cat "${venv}/.requirements" 2>/dev/null)" != "${stamp}" ]]; then
-    python3 -m venv "${venv}" && "${venv}/bin/pip" install --quiet -r requirements-docs.txt || return 1
+  local venv="${STATE_DIR}/docs-venv" stamp python
+  stamp="$(python3 -c 'import hashlib; print(hashlib.sha256(open("requirements-docs.txt", "rb").read()).hexdigest())')"
+  python="${venv}/bin/python"
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) python="${venv}/Scripts/python.exe" ;; esac
+  if [[ ! -x "${python}" || "$(cat "${venv}/.requirements" 2>/dev/null)" != "${stamp}" ]]; then
+    python3 -m venv "${venv}" && "${python}" -m pip install --quiet -r requirements-docs.txt || return 1
     echo "${stamp}" > "${venv}/.requirements"
   fi
-  "${venv}/bin/mkdocs" build --strict --site-dir "${LOG_DIR}/site"
+  "${python}" -m mkdocs build --strict --site-dir "${LOG_DIR}/site"
 }
 
 # --- run ----------------------------------------------------------------------------

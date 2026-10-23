@@ -50,7 +50,7 @@ func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (Relationsh
 
 func relationshipTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

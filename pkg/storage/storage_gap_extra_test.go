@@ -210,7 +210,7 @@ func TestLabelNodeIDLookupHelpers(t *testing.T) {
 	})
 
 	t.Run("lookup engine path", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		engine := &lookupEngine{Engine: base, ids: []NodeID{"n1", "n2", "n3"}}
 
 		id, err := FirstNodeIDByLabel(engine, "Person")
@@ -224,17 +224,17 @@ func TestLabelNodeIDLookupHelpers(t *testing.T) {
 
 	t.Run("lookup engine errors and empty", func(t *testing.T) {
 		wantErr := errors.New("boom")
-		engine := &lookupEngine{Engine: NewMemoryEngine(), err: wantErr}
+		engine := &lookupEngine{Engine: newTestMemoryEngine(t), err: wantErr}
 		_, err := FirstNodeIDByLabel(engine, "Person")
 		require.ErrorIs(t, err, wantErr)
 
-		engine = &lookupEngine{Engine: NewMemoryEngine()}
+		engine = &lookupEngine{Engine: newTestMemoryEngine(t)}
 		_, err = FirstNodeIDByLabel(engine, "Person")
 		require.ErrorIs(t, err, ErrNotFound)
 	})
 
 	t.Run("fallback engine path", func(t *testing.T) {
-		engine := NewNamespacedEngine(NewMemoryEngine(), "test")
+		engine := NewNamespacedEngine(newTestMemoryEngine(t), "test")
 		_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Person"}})
 		require.NoError(t, err)
 		_, err = engine.CreateNode(&Node{ID: "n2", Labels: []string{"Person"}})
@@ -596,7 +596,7 @@ func TestWALDiagnosticsHelpers(t *testing.T) {
 func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 	t.Run("stream nodes and edges with exportable fallback", func(t *testing.T) {
 		engine := &exportableOnlyEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			allNodes: []*Node{
 				{ID: "n1", Labels: []string{"Person", "User"}},
 				{ID: "n2", Labels: []string{"Person"}},
@@ -641,7 +641,7 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 
 	t.Run("stream fallback surfaces context and callback errors", func(t *testing.T) {
 		engine := &exportableOnlyEngine{
-			Engine:   NewMemoryEngine(),
+			Engine:   newTestMemoryEngine(t),
 			allNodes: []*Node{{ID: "n1"}},
 			allEdges: []*Edge{{ID: "e1", Type: "REL"}},
 		}
@@ -672,7 +672,7 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 
 	t.Run("stream fallback returns load errors", func(t *testing.T) {
 		engine := &exportableOnlyEngine{
-			Engine:  NewMemoryEngine(),
+			Engine:  newTestMemoryEngine(t),
 			nodeErr: errors.New("all nodes failed"),
 			edgeErr: errors.New("all edges failed"),
 		}
@@ -692,12 +692,12 @@ func TestStreamingFallbackAndCollectionHelpers(t *testing.T) {
 
 func TestLoaderEmbeddingFinderAndWALDegradedHelpers(t *testing.T) {
 	t.Run("loader embedding finder", func(t *testing.T) {
-		nonExportable := NewMemoryEngine()
+		nonExportable := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = nonExportable.Close() })
 		assert.Nil(t, FindNodeNeedingEmbedding(nonExportable))
 
 		exportable := &exportableOnlyEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			allNodes: []*Node{
 				{ID: "embedded", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2}}},
 				{ID: "needs", Labels: []string{"Doc"}, Properties: map[string]any{"text": "embed me"}},
@@ -736,7 +736,7 @@ func TestLoaderEmbeddingFinderAndWALDegradedHelpers(t *testing.T) {
 func TestConstraintValidationCreationHelpers(t *testing.T) {
 	t.Run("dispatcher routes and unknown types error", func(t *testing.T) {
 		engine := &constraintValidationEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			nodes: []*Node{
 				{ID: "n1", Labels: []string{"Person"}, Properties: map[string]any{"email": "a@example.com", "id": "1", "name": "alice"}},
 			},
@@ -768,7 +768,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 	})
 
 	t.Run("node key helper validates property counts nulls and duplicates", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 
 		err := validateNodeKeyConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{
@@ -807,7 +807,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 	})
 
 	t.Run("temporal helper validates arity scan errors and temporal violations", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 
 		err := validateTemporalConstraintOnCreationWithEngine(&constraintValidationEngine{Engine: base}, Constraint{

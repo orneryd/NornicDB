@@ -12,7 +12,7 @@ import (
 )
 
 func TestEmbeddingRangeReaderRetainedKeysAndLongCursor(t *testing.T) {
-	engine := NewMemoryEngine().BadgerEngine
+	engine := newTestMemoryEngine(t).BadgerEngine
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	id := NodeID("test:" + strings.Repeat("long-owner", 40))
 	prefix := embeddingPrefix(id)
@@ -45,7 +45,7 @@ func TestEmbeddingRangeReaderRetainedKeysAndLongCursor(t *testing.T) {
 }
 
 func TestEmbeddingRangeReaderSnapshotsAndStagedWrites(t *testing.T) {
-	engine := NewMemoryEngine().BadgerEngine
+	engine := newTestMemoryEngine(t).BadgerEngine
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	id := NodeID("test:range-reader")
 	prefix := embeddingPrefix(id)

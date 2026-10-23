@@ -104,7 +104,7 @@ func (c *stubLifecycleController) TopLifecycleDebtKeys(limit int) []MVCCLifecycl
 }
 
 func TestBadgerEngine_Lifecycle_NilControllerBehavior(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	// No controller installed.
 
@@ -138,7 +138,7 @@ func TestBadgerEngine_Lifecycle_NilControllerBehavior(t *testing.T) {
 }
 
 func TestBadgerEngine_CloseReleasesRetainedState(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	_, err := e.CreateNode(&Node{
 		ID:         "nornic:release-node",
 		Labels:     []string{"Release"},
@@ -165,7 +165,7 @@ func TestBadgerEngine_CloseReleasesRetainedState(t *testing.T) {
 }
 
 func TestBadgerEngine_Lifecycle_ControllerDelegation(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	stub := newStubLifecycleController()
@@ -214,7 +214,7 @@ func TestBadgerEngine_Lifecycle_ControllerDelegation(t *testing.T) {
 }
 
 func TestBadgerEngine_AcquireAndEvaluateSnapshotReader_NoController(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	// With no controller, acquireSnapshotReader bumps the simple
@@ -278,7 +278,7 @@ func TestBadgerEngine_MVCCVersionKeyForLogicalKey_NodeAndEdge(t *testing.T) {
 }
 
 func TestBadgerEngine_IterateMVCCHeads_AndVersions_ReadWrite(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	// Bootstrap a node and an edge so the head index has rows.
@@ -357,7 +357,7 @@ func TestBadgerEngine_IterateMVCCHeads_AndVersions_ReadWrite(t *testing.T) {
 }
 
 func TestBadgerEngine_IterateMVCCHeads_RespectsContextCancel(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	// Stage some heads.

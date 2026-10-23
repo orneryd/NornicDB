@@ -10,7 +10,7 @@ import (
 
 func TestVectorSearchCandidates_CollapsesChunkIDsToNodeID_MaxScore(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{
@@ -37,7 +37,7 @@ func TestVectorSearchCandidates_CollapsesChunkIDsToNodeID_MaxScore(t *testing.T)
 
 func TestVectorSearchCandidates_CollapsesNamedIDsToNodeID(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{
@@ -63,7 +63,7 @@ func TestVectorSearchCandidates_CollapsesNamedIDsToNodeID(t *testing.T) {
 
 func TestSearch_VectorOnly_ResolvesNamedEmbeddingsToNode(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{

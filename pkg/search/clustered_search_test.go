@@ -13,7 +13,7 @@ import (
 )
 
 func newNamespacedMemoryEngine(t *testing.T) storage.Engine {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }

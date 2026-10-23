@@ -2,9 +2,9 @@ package search
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +32,7 @@ func TestDisabledBM25IndexMethods(t *testing.T) {
 }
 
 func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewServiceWithDimensions(engine, 4)
@@ -57,7 +57,7 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 }
 
 func TestPropertyVectorHelpers(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewServiceWithDimensions(engine, 4)
@@ -112,7 +112,7 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
 
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { engine.Close() })
 	svc = NewServiceWithDimensions(engine, 2)
 	score, ok = svc.scoreVectorIDDot([]float32{1, 0}, "missing")
@@ -132,9 +132,9 @@ func TestIVFPQBackgroundPersistenceNoopBranches(t *testing.T) {
 	require.Equal(t, "vector-path", svc.ivfpqPersistenceBasePath("vector-path", ""))
 
 	svc.persistIVFPQBackground("", "")
-	svc.persistIVFPQBackground(t.TempDir()+"/vectors", "")
+	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
 	svc.ivfpqIndex = &IVFPQIndex{}
-	svc.persistIVFPQBackground(t.TempDir()+"/vectors", "")
+	svc.persistIVFPQBackground(filepath.Join(t.TempDir(), "vectors"), "")
 }
 
 func TestFilterByPropertiesDirect(t *testing.T) {

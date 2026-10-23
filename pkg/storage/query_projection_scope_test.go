@@ -33,7 +33,7 @@ func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
 	fresh, _, freshEnd := BeginQueryResultProjectionContext(owner, be)
 	require.NotSame(t, owner, fresh, "expired context must acquire a new genuine scope")
 	freshEnd()
-	unowned, noop := BeginQueryRevealScopeContext(ctx, NewMemoryEngine(), false)
+	unowned, noop := BeginQueryRevealScopeContext(ctx, newTestMemoryEngine(t), false)
 	require.Same(t, ctx, unowned)
 	noop()
 	same := InheritQueryRevealScopes(ctx, nil)
@@ -57,7 +57,7 @@ func TestQueryProjectionScopeBorrowingAndCancellation(t *testing.T) {
 	release()
 	cancel()
 	require.ErrorIs(t, borrowed.Err(), context.Canceled)
-	_, _, releaseDisabled := BeginQueryResultProjectionContext(ctx, NewMemoryEngine())
+	_, _, releaseDisabled := BeginQueryResultProjectionContext(ctx, newTestMemoryEngine(t))
 	releaseDisabled()
 }
 func TestQueryProjectionNestedReaderDoesNotDeadlockWaitingRevealWriter(t *testing.T) {

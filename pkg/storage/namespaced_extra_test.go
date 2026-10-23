@@ -13,7 +13,7 @@ import (
 // Helper kept here so each test stays self-contained.
 func nsTestEngine(t *testing.T) (*MemoryEngine, *NamespacedEngine) {
 	t.Helper()
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	return base, NewNamespacedEngine(base, "ns")
 }

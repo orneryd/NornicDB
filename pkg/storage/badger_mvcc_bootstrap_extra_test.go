@@ -27,7 +27,7 @@ func TestMVCCBootstrapTime_Priority(t *testing.T) {
 }
 
 func TestWriteNodeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	id := NodeID("test:fresh-1")
@@ -53,7 +53,7 @@ func TestWriteNodeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
 }
 
 func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	state, err := be.namespaceMVCC("test")
@@ -82,7 +82,7 @@ func TestAllocateMVCCVersion_FallsBackToTimestampOrderingWhenSequenceExhausted(t
 }
 
 func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	id := EdgeID("test:fresh-edge-1")
@@ -104,7 +104,7 @@ func TestWriteEdgeMVCCHeadForFreshCreateInTxn_FloorEqualsVersion(t *testing.T) {
 }
 
 func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{
@@ -142,7 +142,7 @@ func TestBootstrapNodeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 }
 
 func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{ID: "test:n-from", Labels: []string{"X"}})
@@ -181,7 +181,7 @@ func TestBootstrapEdgeMVCCFromCurrentStateInTxn_PopulatesHead(t *testing.T) {
 }
 
 func TestBootstrapNodeMVCCFromCurrentStateInTxn_SkipsExistingHead(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{ID: "test:skip-1", Labels: []string{"L"}})
@@ -211,7 +211,7 @@ func TestBootstrapNodeMVCCFromCurrentStateInTxn_SkipsExistingHead(t *testing.T) 
 // TestApplyEdgeBootstrapBatch_SkipsExistingHead exercises the public-facing
 // batch apply for an already-headed edge: head version must not move.
 func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{ID: "test:n-from", Labels: []string{"X"}})
@@ -246,7 +246,7 @@ func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 }
 
 func TestApplyEdgeBootstrapBatch_NilAndEmpty(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	// Empty batch is a no-op.
@@ -257,7 +257,7 @@ func TestApplyEdgeBootstrapBatch_NilAndEmpty(t *testing.T) {
 }
 
 func TestBootstrapMVCCHeadsFromCurrentState_FullPath(t *testing.T) {
-	be := NewMemoryEngine()
+	be := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = be.Close() })
 
 	_, err := be.CreateNode(&Node{ID: "test:b-n1", Labels: []string{"L"}})

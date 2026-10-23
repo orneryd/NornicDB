@@ -76,7 +76,7 @@ func TestIVFPQMainKeyEvidenceDoesNotHideMembers(t *testing.T) {
 		t.Run(map[bool]string{false: "retired alias", true: "hidden named member"}[hidden], func(t *testing.T) {
 			t.Setenv(EnvSearchResultCacheEnabled, "false")
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 			svc := NewServiceWithDimensions(engine, 2)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			node := &storage.Node{ID: "winner", ChunkEmbeddings: [][]float32{{1, 0}}}

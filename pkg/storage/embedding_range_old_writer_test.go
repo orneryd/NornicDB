@@ -19,7 +19,7 @@ import (
 func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 	for _, shape := range []string{"extra_chunk", "extra_shards", "extra_chunk_freshness", "extra_shards_freshness"} {
 		t.Run(shape, func(t *testing.T) {
-			engine := NewMemoryEngine().BadgerEngine
+			engine := newTestMemoryEngine(t).BadgerEngine
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			engine.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 			body := &Node{ID: NodeID("test:downgrade-" + shape), Labels: []string{"Doc"}, Properties: map[string]any{"text": "unchanged source"}}

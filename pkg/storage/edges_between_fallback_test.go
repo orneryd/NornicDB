@@ -57,7 +57,7 @@ func TestEdgesBetweenFallback_CostIsTheSmallerDegree(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
 	}
-	run := func(degree int) time.Duration {
+	run := func(degree int) func(int) time.Duration {
 		engine := createTestBadgerEngine(t)
 		hub := testNode("deg-hub")
 		_, err := engine.CreateNode(hub)
@@ -73,17 +73,25 @@ func TestEdgesBetweenFallback_CostIsTheSmallerDegree(t *testing.T) {
 		fresh := testNode("deg-fresh")
 		_, err = engine.CreateNode(fresh)
 		require.NoError(t, err)
-		start := time.Now()
-		for i := 0; i < 200; i++ {
-			got, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, fresh.ID, "HAS")
-			require.NoError(t, err)
-			require.Empty(t, got)
+		return func(iterations int) time.Duration {
+			start := time.Now()
+			for i := 0; i < iterations; i++ {
+				got, err := engine.edgesBetweenFromLegacyOutgoingIndex(hub.ID, fresh.ID, "HAS")
+				require.NoError(t, err)
+				require.Empty(t, got)
+			}
+			return time.Since(start)
 		}
-		return time.Since(start)
 	}
-	run(100)
-	small, large := run(1000), run(16000)
+	smallRun, largeRun := run(1000), run(16000)
+	// Use equal work above clock resolution; a 200-operation sample can
+	// round to zero on Windows and cannot establish the scaling ratio.
+	iterations := 200
+	for smallRun(iterations) < 20*time.Millisecond {
+		iterations *= 2
+	}
+	small, large := smallRun(iterations), largeRun(iterations)
 	ratio := float64(large) / float64(small)
-	t.Logf("200 misses from a hub of degree 1000: %v, 16000: %v, ratio %.1f (hub-degree cost ~16)", small, large, ratio)
+	t.Logf("%d misses from a hub of degree 1000: %v, 16000: %v, ratio %.1f (hub-degree cost ~16)", iterations, small, large, ratio)
 	require.Less(t, ratio, 4.0)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -105,7 +104,7 @@ func TestExecuteRoutedDeferredOutcome(t *testing.T) {
 			defer cancel()
 			h := &cancelDeferredFrameHandler{cancel: cancel, frame: tc.frame}
 			session.SetLogger(slog.New(h))
-			session.SetSlowQueryThreshold(time.Nanosecond)
+			forceSlowQueryLogging(t, session)
 			result, err := session.Execute(ctx, tc.query, tc.params)
 			t.Logf("frames=%d canceled=%t nilResult=%t err=%v", h.seen, ctx.Err() != nil, result == nil, err)
 			require.Equal(t, tc.frame, h.seen, "attack must reach the outer log")

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -104,7 +105,7 @@ func newThreeValuedServerStackExecutor(t *testing.T) *StorageExecutor {
 	dir := t.TempDir()
 	badger, err := storage.NewBadgerEngine(dir)
 	require.NoError(t, err)
-	wal, err := storage.NewWAL(dir+"/wal", nil)
+	wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
 	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {

@@ -1,6 +1,4 @@
-//go:build vulkan && (linux || windows || darwin)
-// +build vulkan
-// +build linux windows darwin
+//go:build !cgovulkan
 
 package vulkan
 
@@ -178,38 +176,6 @@ func TestBufferDoubleRelease(t *testing.T) {
 	buffer.Release() // Should not panic
 }
 
-func TestNormalizeVectors(t *testing.T) {
-	if !IsAvailable() {
-		t.Skip("Vulkan not available")
-	}
-
-	device, err := NewDevice(0)
-	if err != nil {
-		t.Fatalf("NewDevice failed: %v", err)
-	}
-	defer device.Release()
-
-	// Vector: [3, 4, 0] -> norm = 5 -> normalized = [0.6, 0.8, 0]
-	data := []float32{3.0, 4.0, 0.0}
-	buffer, err := device.NewBuffer(data)
-	if err != nil {
-		t.Fatalf("NewBuffer failed: %v", err)
-	}
-	defer buffer.Release()
-
-	err = device.NormalizeVectors(buffer, 1, 3)
-	if err != nil {
-		t.Fatalf("NormalizeVectors failed: %v", err)
-	}
-
-	result := buffer.ReadFloat32(3)
-
-	tolerance := float32(0.001)
-	if abs(result[0]-0.6) > tolerance || abs(result[1]-0.8) > tolerance || abs(result[2]) > tolerance {
-		t.Errorf("Normalized = [%f, %f, %f], want [0.6, 0.8, 0]", result[0], result[1], result[2])
-	}
-}
-
 func TestCosineSimilarity(t *testing.T) {
 	if !IsAvailable() {
 		t.Skip("Vulkan not available")
@@ -264,135 +230,6 @@ func TestCosineSimilarity(t *testing.T) {
 	}
 	if abs(scores[2]-0.6) > tolerance {
 		t.Errorf("Score[2] = %f, want 0.6", scores[2])
-	}
-}
-
-func TestNormalizeVectors(t *testing.T) {
-	if !IsAvailable() {
-		t.Skip("Vulkan not available")
-	}
-
-	device, err := NewDevice(0)
-	if err != nil {
-		t.Fatalf("NewDevice failed: %v", err)
-	}
-	defer device.Release()
-
-	// Test vector: [3, 4, 0] -> norm = 5 -> normalized = [0.6, 0.8, 0]
-	data := []float32{3.0, 4.0, 0.0}
-	buffer, err := device.NewBuffer(data)
-	if err != nil {
-		t.Fatalf("NewBuffer failed: %v", err)
-	}
-	defer buffer.Release()
-
-	// Call normalize through C bridge
-	ret := C.vulkan_normalize_vectors(device.ptr, buffer.ptr, 1, 3)
-	if ret != 0 {
-		errMsg := C.GoString(C.vulkan_get_last_error())
-		C.vulkan_clear_error()
-		t.Fatalf("vulkan_normalize_vectors failed: %s", errMsg)
-	}
-
-	// Read back results
-	result := buffer.ReadFloat32(3)
-	if result == nil {
-		t.Fatal("Failed to read buffer")
-	}
-
-	tolerance := float32(0.01)
-	expected := []float32{0.6, 0.8, 0.0}
-	for i, exp := range expected {
-		if absF32(result[i]-exp) > tolerance {
-			t.Errorf("result[%d] = %f, want %f", i, result[i], exp)
-		}
-	}
-}
-
-func TestNormalizeVectorsCBridgeMultiple(t *testing.T) {
-	if !IsAvailable() {
-		t.Skip("Vulkan not available")
-	}
-
-	device, err := NewDevice(0)
-	if err != nil {
-		t.Fatalf("NewDevice failed: %v", err)
-	}
-	defer device.Release()
-
-	// Test multiple vectors: [3,4,0] and [1,1,1]
-	// [3,4,0] -> [0.6, 0.8, 0]
-	// [1,1,1] -> [0.577, 0.577, 0.577] (1/sqrt(3))
-	data := []float32{
-		3.0, 4.0, 0.0,
-		1.0, 1.0, 1.0,
-	}
-	buffer, err := device.NewBuffer(data)
-	if err != nil {
-		t.Fatalf("NewBuffer failed: %v", err)
-	}
-	defer buffer.Release()
-
-	ret := C.vulkan_normalize_vectors(device.ptr, buffer.ptr, 2, 3)
-	if ret != 0 {
-		errMsg := C.GoString(C.vulkan_get_last_error())
-		C.vulkan_clear_error()
-		t.Fatalf("vulkan_normalize_vectors failed: %s", errMsg)
-	}
-
-	result := buffer.ReadFloat32(6)
-	if result == nil {
-		t.Fatal("Failed to read buffer")
-	}
-
-	tolerance := float32(0.01)
-	expected := []float32{
-		0.6, 0.8, 0.0,
-		0.57735026, 0.57735026, 0.57735026, // 1/sqrt(3)
-	}
-	for i, exp := range expected {
-		if absF32(result[i]-exp) > tolerance {
-			t.Errorf("result[%d] = %f, want %f", i, result[i], exp)
-		}
-	}
-}
-
-func TestNormalizeVectorsCBridgeZeroVector(t *testing.T) {
-	if !IsAvailable() {
-		t.Skip("Vulkan not available")
-	}
-
-	device, err := NewDevice(0)
-	if err != nil {
-		t.Fatalf("NewDevice failed: %v", err)
-	}
-	defer device.Release()
-
-	// Test zero vector: [0, 0, 0] -> should remain [0, 0, 0]
-	data := []float32{0.0, 0.0, 0.0}
-	buffer, err := device.NewBuffer(data)
-	if err != nil {
-		t.Fatalf("NewBuffer failed: %v", err)
-	}
-	defer buffer.Release()
-
-	ret := C.vulkan_normalize_vectors(device.ptr, buffer.ptr, 1, 3)
-	if ret != 0 {
-		errMsg := C.GoString(C.vulkan_get_last_error())
-		C.vulkan_clear_error()
-		t.Fatalf("vulkan_normalize_vectors failed: %s", errMsg)
-	}
-
-	result := buffer.ReadFloat32(3)
-	if result == nil {
-		t.Fatal("Failed to read buffer")
-	}
-
-	// Zero vector should remain zero
-	for i, val := range result {
-		if val != 0.0 {
-			t.Errorf("result[%d] = %f, want 0.0", i, val)
-		}
 	}
 }
 
@@ -609,5 +446,45 @@ func BenchmarkSearch(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		device.Search(embBuf, query, uint32(n), uint32(dims), 10, true)
+	}
+}
+
+func TestNormalizeVectors(t *testing.T) {
+	if !IsAvailable() {
+		t.Skip("Vulkan not available")
+	}
+	device, err := NewDevice(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer device.Release()
+	cases := []struct {
+		name            string
+		input, expected []float32
+	}{
+		{"single", []float32{3, 4, 0}, []float32{0.6, 0.8, 0}},
+		{"multiple", []float32{3, 4, 0, 1, 1, 1}, []float32{0.6, 0.8, 0, 0.57735026, 0.57735026, 0.57735026}},
+		{"zero", []float32{0, 0, 0}, []float32{0, 0, 0}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := device.NewBuffer(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Release()
+			if err := device.NormalizeVectors(b, uint32(len(tc.input)/3), 3); err != nil {
+				t.Fatal(err)
+			}
+			result := b.ReadFloat32(len(tc.input))
+			if len(result) != len(tc.expected) {
+				t.Fatal("missing normalized values")
+			}
+			for i, want := range tc.expected {
+				if absF32(result[i]-want) > 0.001 {
+					t.Errorf("value[%d]=%f, want %f", i, result[i], want)
+				}
+			}
+		})
 	}
 }

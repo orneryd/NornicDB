@@ -14,7 +14,7 @@ import (
 func TestSearchTextChunksCancellationDuringLexicalSearch(t *testing.T) {
 	for _, mode := range []string{"no_embedder", "single_fallback", "multi_fallback", "hybrid_control"} {
 		t.Run(mode, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})
@@ -56,7 +56,7 @@ func TestSearchTextChunksCancellationDuringLexicalSearch(t *testing.T) {
 func TestSearchTextChunksProviderDeadlineKeepsLexicalFallback(t *testing.T) {
 	for _, mode := range []string{"single", "multi"} {
 		t.Run(mode, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})

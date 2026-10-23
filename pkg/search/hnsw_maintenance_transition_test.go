@@ -90,7 +90,9 @@ func TestHNSWMaintenanceOverlaySurvivesSharedGraphTransition(t *testing.T) {
 	assert.False(t, hasDeleted, "replacement graph resurrected a deleted ID")
 	results, err := rebuilt.Search(context.Background(), []float32{0, 1, 0}, 1, 0)
 	require.NoError(t, err)
-	assert.Contains(t, results, ANNResult{ID: "late", Score: 1})
+	require.Len(t, results, 1)
+	assert.Equal(t, "late", results[0].ID)
+	assert.InDelta(t, 1.0, results[0].Score, 1e-6)
 	assert.Empty(t, svc.hnswRebuildOverlay.snapshot().Vectors, "the builder owns final overlay cleanup")
 	assert.Empty(t, svc.hnswRebuildOverlay.snapshot().Tombstones)
 }

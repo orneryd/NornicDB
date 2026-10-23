@@ -14,7 +14,7 @@ import (
 // while index builds reset it concurrently (#593). Run with -race to also
 // check the field is only read under pipelineMu.
 func TestGetOrCreateVectorPipelineConcurrentWithReset(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 4)
 	for i := 0; i < 8; i++ {

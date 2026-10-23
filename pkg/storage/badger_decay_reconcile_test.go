@@ -7,7 +7,7 @@ import (
 )
 
 func TestReconcileDecaySuppression_NoOpWhenDisabled(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	// Decay disabled by default → reconciliation is a no-op.
@@ -19,7 +19,7 @@ func TestReconcileDecaySuppression_NoOpWhenDisabled(t *testing.T) {
 }
 
 func TestReconcileDecaySuppression_NoOpWhenEmptyNamespace(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	e.SetDecayEnabled(true)
 
@@ -31,7 +31,7 @@ func TestReconcileDecaySuppression_NoOpWhenEmptyNamespace(t *testing.T) {
 }
 
 func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 	e.SetDecayEnabled(true)
 
@@ -57,7 +57,7 @@ func TestReconcileDecaySuppression_WithEntities(t *testing.T) {
 }
 
 func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
@@ -76,7 +76,7 @@ func TestReadNodeSuppressionState_RoundTrip(t *testing.T) {
 }
 
 func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	for _, id := range []NodeID{"test:a", "test:b"} {
@@ -98,7 +98,7 @@ func TestReadEdgeSuppressionState_RoundTrip(t *testing.T) {
 }
 
 func TestCollectNamespaceNodeAndEdgeIDs(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	for _, id := range []NodeID{"test:a", "test:b", "other:c"} {

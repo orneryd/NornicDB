@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -50,7 +52,21 @@ func LoadRatchet(path string) (Ratchet, error) {
 	ratchet := Ratchet{}
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return ratchet, nil
+		// Windows can report PATH_NOT_FOUND when an ancestor is a regular
+		// file. Only a genuinely missing ratchet is optional; an invalid
+		// directory path must still fail, as it does on Unix.
+		for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
+			info, parentErr := os.Stat(parent)
+			if parentErr == nil {
+				if !info.IsDir() {
+					return nil, &os.PathError{Op: "open", Path: path, Err: syscall.ENOTDIR}
+				}
+				return ratchet, nil
+			}
+			if !os.IsNotExist(parentErr) || filepath.Dir(parent) == parent {
+				return nil, parentErr
+			}
+		}
 	}
 	if err != nil {
 		return nil, err

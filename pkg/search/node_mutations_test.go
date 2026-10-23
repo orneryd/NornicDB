@@ -13,7 +13,7 @@ import (
 func TestNodeMutationReservationPreservesNewerLiveMutation(t *testing.T) {
 	for _, remove := range []bool{false, true} {
 		t.Run(fmt.Sprintf("remove=%t", remove), func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = base.Close() })
 			engine := storage.NewNamespacedEngine(base, "test")
 			svc := NewServiceWithDimensions(engine, 2)
@@ -55,7 +55,7 @@ func TestNodeMutationReservationPreservesNewerLiveMutation(t *testing.T) {
 }
 
 func TestNodeMutationConcurrentReservationsAndDirectWrites(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewServiceWithDimensions(engine, 2)
@@ -92,7 +92,7 @@ func TestNodeMutationConcurrentReservationsAndDirectWrites(t *testing.T) {
 // A refresh rejected at entry never happened: the reservation it superseded
 // stays current, so the older queued or pending write still applies.
 func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewServiceWithDimensions(engine, 2)
@@ -107,7 +107,7 @@ func TestDiscardedReservationRestoresTheOneItSuperseded(t *testing.T) {
 // A refresh indexes what storage holds when it reads, and a refresh reserved
 // before a newer one stays obsolete after the newer one retired.
 func TestRefreshNodeFollowsStorage(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	svc := NewServiceWithDimensions(engine, 2)
@@ -151,7 +151,7 @@ func (b *edgeReadBarrier) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
 // A relationship refresh that read the edge before a newer delete and its
 // refresh applied must not put its vector back.
 func TestRefreshEdgeReadBeforeNewerDeleteCannotResurrect(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "test")
 	for _, id := range []storage.NodeID{"a", "b"} {

@@ -54,7 +54,7 @@ func TestExecuteDeferredLoggingFinalOutcome(t *testing.T) {
 					}
 				}()
 				session.SetLogger(slog.New(h))
-				session.SetSlowQueryThreshold(time.Nanosecond)
+				forceSlowQueryLogging(t, session)
 				query := "MATCH (n) RETURN n"
 				if outcome == "rejection" {
 					query = "RETURN unknownDeferredVariable"

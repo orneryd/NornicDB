@@ -28,7 +28,7 @@ func (b *sol1482OrphanReadBarrier) GetNode(id storage.NodeID) (*storage.Node, er
 
 func TestSol1482R2OrphanObservationCannotRemoveNewerIndex(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	barrier := &sol1482OrphanReadBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}

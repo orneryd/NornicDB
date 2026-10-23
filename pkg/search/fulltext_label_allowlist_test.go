@@ -11,7 +11,7 @@ import (
 // are keyword hits; when a node loses its listed label, it stops being one;
 // the label list joins the BM25 build fingerprint only when set (#1067).
 func TestServiceFulltextLabelAllowlist(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	service := NewService(base)
 	service.SetFulltextLabels([]string{"Searchable", " ", "Source", "Searchable"})
@@ -38,7 +38,7 @@ func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	require.Empty(t, ids(), "a node that lost its listed label is no longer a keyword hit")
 
 	require.Contains(t, service.composeBM25BuildSettings(), ";labels=Searchable,Source")
-	unset := NewService(storage.NewMemoryEngine())
+	unset := NewService(newTestMemoryEngine(t))
 	require.NotContains(t, unset.composeBM25BuildSettings(), "labels=")
 	require.NotEqual(t, unset.composeBM25BuildSettings(), service.composeBM25BuildSettings())
 }
