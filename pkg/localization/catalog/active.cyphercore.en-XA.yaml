@@ -192,6 +192,12 @@
   other: "[!! Coercion of list to boolean is not allowed. Please use `NOT isEmpty(...)` instead. !!]"
 - id: cyphercore.list_index_type_mismatch
   other: "[!! Type mismatch: list index must be given as Integer, but was {{.Type}} !!]"
+- id: cyphercore.list_index_non_integer
+  other: "[!! Cannot access a list using an non-integer number index, got {{.Value}} !!]"
+- id: cyphercore.list_index_non_number
+  other: "[!! Cannot access a list '{{.List}}' using a non-number index, got {{.Value}} !!]"
+- id: cyphercore.list_index_boolean
+  other: "[!! Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}: Expected {{.Value}} to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.{{.Class}} !!]"
 - id: cyphercore.regex_pattern_type_mismatch
   other: "[!! Type mismatch: a regular expression pattern must be a String, but was {{.Value}} !!]"
 - id: cyphercore.duration_arithmetic_overflow
