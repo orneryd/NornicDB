@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make deferred-log outcome tests independent of clock resolution, calibrate
   cold-scan timing batches, and retain positive elapsed-time checks using
   collection work that spans a clock tick.
-- Correct legacy Bolt DateTime seconds for clients that do not negotiate the `utc` patch. Offset and named-zone values now preserve their local clock and instant in results and parameters, including nested lists and maps. UTC-patched Bolt 4.4 and Bolt 5.x retain their existing encodings.
+- Correct legacy Bolt DateTime seconds for clients that do not negotiate the `utc` patch, including properties on relationships inside paths. Named-zone parameters share the temporal constructor's DST resolution: choose the earlier overlap instant and shift gaps forward. Offset and named-zone values, nanoseconds and nested lists/maps retain their proper representation. UTC-patched Bolt 4.4 and Bolt 5.x retain their existing encodings.
 
 - Concurrent identical `MERGE` statements on a uniquely constrained key now all succeed when they write the node they match (`ON MATCH SET`, or a later `SET`/`REMOVE`/`DELETE` of it), as in Neo4j: a later writer waits for the earlier one and writes on top of its commit, instead of failing with a UNIQUE violation. MERGEs that only read the node do not wait.
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.

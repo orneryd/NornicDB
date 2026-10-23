@@ -226,12 +226,12 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		}
 		return encodeStorageEdgeIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case unboundRelationship:
-		return encodeUnboundRelationshipInto(dst, &val)
+		return encodeUnboundRelationshipIntoWithUTC(dst, &val, useUTCDateTimeStructs)
 	case *unboundRelationship:
 		if val == nil {
 			return append(dst, 0xC0)
 		}
-		return encodeUnboundRelationshipInto(dst, val)
+		return encodeUnboundRelationshipIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case []storage.Edge:
 		if len(val) == 0 {
 			return append(dst, 0x90)
@@ -592,7 +592,7 @@ func encodePackStreamCypherDateTimeInto(dst []byte, value cypher.CypherDateTime,
 	return encodePackStreamIntInto(dst, int64(offset))
 }
 
-func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, useUTCDateTimeStructs bool) time.Time {
+func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, useUTCDateTimeStructs, namedZone bool) time.Time {
 	value := time.Unix(seconds, nanos)
 	if useUTCDateTimeStructs {
 		return value.In(location)
@@ -600,6 +600,11 @@ func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, use
 	// Interpret the legacy wall-clock components in the supplied zone. Looking
 	// up the offset at time.Unix(seconds, nanos) instead is wrong near DST changes.
 	value = value.UTC()
+	if namedZone {
+		// Legacy zone IDs use the string-constructor policy: the earlier overlap
+		// instant and a forward shift through gaps, matching Neo4j's wire reader.
+		return cypher.ResolveNamedZoneLocalTime(value, location, false)
+	}
 	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), location)
 }
 
@@ -1731,7 +1736,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 			offsetSec, okOffset := toInt64Field(fields[2])
 			if okSec && okNsec && okOffset {
 				loc := time.FixedZone("", int(offsetSec))
-				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x49)}, fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x49, false)}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
@@ -1815,7 +1820,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 				if err != nil {
 					loc = time.UTC
 				}
-				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x69), ZoneID: zoneID}, fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x69, true), ZoneID: zoneID}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTimeZoneId", "fields": fields}, fieldsConsumed, nil
