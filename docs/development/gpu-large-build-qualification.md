@@ -25,6 +25,9 @@ Remove-Item Env:NORNICDB_LARGE_GPU_TEST
 ```
 
 Vulkan uses the default pure-Go bridge and does not require the `cuda` tag.
+Its unit suite includes a native subprocess that forces Go stack relocation
+and garbage collection before pushing shader constants. This covers the
+pointer lifetime through normalization, search, and both HNSW dispatches.
 On a Metal Mac, the existing `NORNICDB_LARGE_METAL_TEST=1` tests use the same
 construction fixture. No Metal run is implied by results collected on Windows.
 
@@ -52,6 +55,12 @@ Application Dockerfiles consume the versioned `timothyswt/llama-*-libs` images.
 Those new versioned images must be built and published before a clean remote
 application build can consume them. A successful local builder image does not
 establish that the remote tags exist.
+
+To build an application against the local GPU library without publishing it:
+
+```powershell
+docker build -f docker/Dockerfile.amd64-cuda --build-arg LLAMA_CUDA_IMAGE=nornic-llama-cuda:v0.7.0-sm75-local --build-arg HEADLESS=true --build-arg EMBED_MODEL=false -t nornicdb:v1.4.4-llama070-local .
+```
 
 For actual Windows inference regression checks, point `NORNICDB_LIB` to the
 directory containing the matching llama/ggml DLLs and `TEST_GGUF_MODEL` to a

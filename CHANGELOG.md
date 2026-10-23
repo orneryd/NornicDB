@@ -45,12 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   system database fixtures, and clock-dependent continuation deadline coverage.
 - Run Windows build GPU detection from a PowerShell file so shell expansion
   cannot corrupt its variables; support Windows documentation virtualenv paths.
-- Include typed list-index errors in all source localization catalogs, using
-  the correction from PR #1657 and its source-catalog completeness test.
 - Drain rejected GraphQL WebSocket messages within the transport limits before
   closing so Windows delivers the memory-capacity close frame instead of a reset.
-- Isolate evaluation file-error fixtures and run native Go plugin loading only
-  on supported platforms; retain Linux coverage for actual plugin loading.
+- Isolate evaluation file-error fixtures and restrict native Go plugin and
+  POSIX self-signal tests to platforms that support those operations.
 - Recognize native Windows drive paths as local APOC files. Parameterize file
   paths in procedure tests and normalize documentation line endings when
   extracting executable Cypher examples.
