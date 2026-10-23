@@ -26,6 +26,8 @@ class SwarmLocalTest(unittest.TestCase):
             self.assertIn("ollama_local", saved["providerInstances"])
             self.assertIn("ollama_remote", saved["providerInstances"])
             self.assertIn("codex", saved["providerInstances"])
+            self.assertEqual(saved["providerInstances"]["ollama_local"]["displayName"], "Nornic Local 27B")
+            self.assertEqual(saved["providerInstances"]["ollama_remote"]["displayName"], "Nornic Remote 9B")
             self.assertEqual(saved["defaultModelSelection"]["model"], "gpt-6.1-sol")
             self.assertEqual(saved["defaultModelSelection"]["options"], [{"id": "reasoningEffort", "value": "low"}])
             models = json.loads((root / "pi-state" / "models.json").read_text())

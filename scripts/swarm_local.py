@@ -19,7 +19,7 @@ import urllib.request
 
 REPO = Path(__file__).resolve().parent.parent
 T3_PIN = "2c8bdf6177159d8fcd12a897d7c9311f6eb93237"
-PI_PACKAGE = "@earendil-works/pi-coding-agent@1.4.0"
+AGENT_RUNTIME_PACKAGE = "@earendil-works/pi-coding-agent@1.4.0"
 
 
 def paths():
@@ -70,15 +70,15 @@ def model_entry(model, name):
     }
 
 
-def provider_instance(name, provider, model, pi_home, pi_binary):
+def provider_instance(name, provider, model, agent_home, agent_binary):
     return {
         "driver": "pi", "displayName": name, "enabled": True,
         "environment": [
-            {"name": "PI_CODING_AGENT_DIR", "value": str(pi_home), "sensitive": False},
+            {"name": "PI_CODING_AGENT_DIR", "value": str(agent_home), "sensitive": False},
             {"name": "T3_NORNIC_LOCAL_WORKER", "value": "1", "sensitive": False},
         ],
         "config": {
-            "enabled": True, "binaryPath": str(pi_binary),
+            "enabled": True, "binaryPath": str(agent_binary),
             "launchArgs": f"--provider {provider} --model {model} --no-context-files --no-skills --no-builtin-tools",
             "customModels": [],
         },
@@ -91,7 +91,7 @@ def write_json(path, value):
 
 
 def configure_providers(root, env):
-    pi_home = root / "pi-state"
+    agent_home = root / "pi-state"
     local_url = env.get("SWARM_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
     remote_url = env.get("SWARM_REMOTE_OLLAMA_URL", "").rstrip("/")
     local_model = env.get("SWARM_LOCAL_MODEL", "qwen3.5:27b")
@@ -107,7 +107,7 @@ def configure_providers(root, env):
             "baseUrl": remote_url + "/v1", "api": "openai-completions", "apiKey": "ollama",
             "models": [model_entry(remote_model, "Qwen 3.5 9B Remote (32K)")],
         }
-    models_path = pi_home / "models.json"
+    models_path = agent_home / "models.json"
     models = json.loads(models_path.read_text()) if models_path.exists() else {}
     models.setdefault("providers", {}).update(providers)
     write_json(models_path, models)
@@ -120,10 +120,10 @@ def configure_providers(root, env):
             "options": [{"id": "reasoningEffort", "value": "low"}],
         }
     instances = settings.setdefault("providerInstances", {})
-    pi_binary = root / "pi" / "node_modules" / ".bin" / "pi"
-    instances.setdefault("ollama_local", provider_instance("Ollama Local 27B", "ollamaLocal", local_model, pi_home, pi_binary))
+    agent_binary = root / "pi" / "node_modules" / ".bin" / "pi"
+    instances.setdefault("ollama_local", provider_instance("Nornic Local 27B", "ollamaLocal", local_model, agent_home, agent_binary))
     if remote_url:
-        instances.setdefault("ollama_remote", provider_instance("Ollama Remote 9B", "ollamaRemote", remote_model, pi_home, pi_binary))
+        instances.setdefault("ollama_remote", provider_instance("Nornic Remote 9B", "ollamaRemote", remote_model, agent_home, agent_binary))
     codex = env.get("SWARM_CODEX_BINARY") or shutil.which("codex")
     if codex:
         instances.setdefault("codex", {
@@ -152,9 +152,9 @@ def setup():
         run("git", "apply", patch, cwd=t3)
     if not (t3 / "node_modules" / ".modules.yaml").exists():
         run("vp", "install", "--frozen-lockfile", cwd=t3)
-    pi_binary = root / "pi" / "node_modules" / ".bin" / "pi"
-    if not pi_binary.exists():
-        run("npm", "install", "--prefix", root / "pi", PI_PACKAGE)
+    agent_binary = root / "pi" / "node_modules" / ".bin" / "pi"
+    if not agent_binary.exists():
+        run("npm", "install", "--prefix", root / "pi", AGENT_RUNTIME_PACKAGE)
     python = root / "code-intel" / "bin" / "python"
     if not python.exists():
         run("uv", "venv", "--python", "3.13", root / "code-intel")
@@ -187,7 +187,7 @@ def doctor():
     env = private_env(root)
     for label, value in [
         ("T3 checkout", t3.exists()),
-        ("Pi binary", (root / "pi" / "node_modules" / ".bin" / "pi").exists()),
+        ("Nornic agent runtime", (root / "pi" / "node_modules" / ".bin" / "pi").exists()),
         ("Code intelligence", (root / "code-intel" / "bin" / "python").exists()),
         ("Codex CLI", bool(env.get("SWARM_CODEX_BINARY") or shutil.which("codex"))),
     ]:

@@ -53,7 +53,7 @@ flowchart LR
   A <--> X[Linear GraphQL API]
 ```
 
-The diagram shows the target integration. The restricted local Pi profile has
+The diagram shows the target integration. The restricted local Nornic profile has
 native tool admission; frontier execution isolation and full evidence-driven
 Linear projection require separate qualification. Diagram arrows do not imply
 those boundaries have already passed end-to-end tests.

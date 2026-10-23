@@ -31,7 +31,7 @@ make swarm-setup
 The default permanent tools/state directory is
 `~/.local/share/nornicdb-swarm`; set `SWARM_TOOLS_ROOT` to change it. The setup
 pins T3 to `2c8bdf6177159d8fcd12a897d7c9311f6eb93237`, applies this PR's
-patch, installs frozen T3 dependencies, Pi 1.4.0 and the code-intelligence
+patch, installs frozen T3 dependencies, Nornic 1.4.0 and the code-intelligence
 Python requirements. It preserves existing T3 provider instances. It does not
 download a model or change global Git hooks.
 
@@ -52,7 +52,7 @@ local NornicDB setting in your shell cannot redirect this harness. If the server
 requires authentication, set `NORNICDB_TOKEN` or `NORNICDB_USER` and
 `NORNICDB_PASSWORD` in the shell or private env file. Set `LINEAR_API_KEY` there
 only when using Linear. Never put keys in the tracked model JSON or patch.
-Authenticate Codex separately with `codex login`; the Pi/Ollama workers do not
+Authenticate Codex separately with `codex login`; the Nornic/Ollama workers do not
 need cloud API keys. The code graph remains in `nornicdbcode`; the launcher
 creates or reuses `t3workflow` for workflow records and keeps T3's own SQLite
 state locally. It does not reingest the remote graph.
@@ -62,12 +62,19 @@ make swarm-doctor
 make swarm
 ```
 
+The agent is named **Nornic** in T3. Its local entry is **Nornic Local 27B**,
+with **Nornic default** as the model selection; the remote entry is
+**Nornic Remote 9B**. The underlying runtime dependency remains
+`@earendil-works/pi-coding-agent@1.4.0`. Its `pi` executable,
+`PI_CODING_AGENT_DIR` environment variable, T3 adapter package path and `pi`
+driver identifier are technical dependency names, not the agent's UI name.
+
 The Codex model dropdown defaults to **GPT-6.1 Sol** with **Low** reasoning.
-Choose **Ollama Local 27B** to use automatic intent routing. Selecting
-**Codex Frontier** or **Ollama Remote 9B** directly starts that agent without
+Choose **Nornic Local 27B** to use automatic intent routing. Selecting
+**Codex Frontier** or **Nornic Remote 9B** directly starts that agent without
 the automatic classifier. The intent classifier uses the remote `nornic-coder` model. For
-automatic intake routing, the local Pi instance is `ollama_local` and Codex is
-available as a frontier provider; the remote Pi instance remains selectable for
+automatic intake routing, the local Nornic instance is `ollama_local` and Codex is
+available as a frontier provider; the remote Nornic instance remains selectable for
 bounded tasks. The remote 9B model classifies intent and complexity. `intent.route`
 may automatically delegate frontier work only to the exact `gpt-6.1-sol` model,
 starting at low reasoning. Plans, reviews, and very uncertain classifications use
@@ -106,7 +113,7 @@ An existing machine can keep custom startup paths in the ignored
 `CheckerRepository`, `GitDirectory`). Explicit script arguments take precedence;
 passing `-ToolsRoot` selects that installation instead of the private overrides.
 Setup clones T3 at `2c8bdf6177159d8fcd12a897d7c9311f6eb93237`, applies
-`testing/swarm-local/t3-nornic.patch`, installs its frozen dependencies, Pi 1.4.0
+`testing/swarm-local/t3-nornic.patch`, installs its frozen dependencies, Nornic 1.4.0
 and the existing code checker's pinned Python requirements, and creates the
 `nornic-coder` Ollama alias. Existing T3 settings are preserved. Use a fresh tools
 directory when changing the pinned patch; do not apply it to arbitrary T3 releases.
@@ -334,7 +341,7 @@ The service deliberately reports `strictEnforcementReady: false`: this experimen
 does not implement PR 1648's entire procedure catalog, universal provider process
 isolation, independent test/review evidence, Linear projection, or full lifecycle
 completion. Frontier providers retain their existing T3 execution facilities;
-the restricted Pi profile's tool admission must not be described as universal
+the restricted Nornic profile's tool admission must not be described as universal
 enforcement. Do not claim an agent's prose summary is an execution receipt.
 
 The full duplicate integration check requires an indexed fixture. From this repo:
@@ -364,7 +371,7 @@ command refuses to overwrite an existing directory.
 
 Qualification observed on the initial Windows/RTX 2080 Ti setup:
 
-- 42 focused T3/Pi tests passed with live NornicDB, Ollama, Linear and duplicate
+- 42 focused T3/Nornic tests passed with live NornicDB, Ollama, Linear and duplicate
   fixtures enabled; server type checking and focused lint passed.
 - 25 Python document-ingestion and existing code-intelligence hook tests passed
   in a disposable Linux container. No hooks were installed in the development repo.

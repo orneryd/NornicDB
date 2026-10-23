@@ -45,15 +45,15 @@ if (!(Test-Path (Join-Path $venv 'Scripts\python.exe'))) {
 Invoke-SwarmCommand uv -Arguments @('pip', 'install', '--python', (Join-Path $venv 'Scripts\python.exe'), '-r', (Join-Path $repo 'scripts\requirements-code-intelligence.txt'))
 Invoke-SwarmCommand ollama -Arguments @('pull', 'qwen3.5:9b')
 Invoke-SwarmCommand ollama -Arguments @('create', 'nornic-coder', '-f', (Join-Path $repo 'testing\swarm-local\Coder.Modelfile'))
-$piHome = Join-Path $ToolsRoot 'pi-state'
+$agentHome = Join-Path $ToolsRoot 'pi-state'
 $userdata = Join-Path $ToolsRoot 'state\userdata'
-New-Item -ItemType Directory -Force $piHome, $userdata | Out-Null
+New-Item -ItemType Directory -Force $agentHome, $userdata | Out-Null
 $utf8 = New-Object Text.UTF8Encoding($false)
 $models = @{providers=@{ollama=@{baseUrl='http://127.0.0.1:11434/v1';api='openai-completions';apiKey='ollama';models=@(@{id='nornic-coder';name='Qwen 3.5 9B Local (32K)';reasoning=$false;input=@('text');contextWindow=32768;maxTokens=4096;samplingParams=@{reasoning_effort='none'};cost=@{input=0;output=0;cacheRead=0;cacheWrite=0}})}}}
-[IO.File]::WriteAllText((Join-Path $piHome 'models.json'), ($models | ConvertTo-Json -Depth 15), $utf8)
+[IO.File]::WriteAllText((Join-Path $agentHome 'models.json'), ($models | ConvertTo-Json -Depth 15), $utf8)
 $settingsPath = Join-Path $userdata 'settings.json'
 if (!(Test-Path $settingsPath)) {
-    $instances = @{ollama=@{driver='pi';displayName='Ollama Local';enabled=$true;environment=@(@{name='PI_CODING_AGENT_DIR';value=$piHome;sensitive=$false},@{name='T3_NORNIC_LOCAL_WORKER';value='1';sensitive=$false});config=@{enabled=$true;binaryPath=(Join-Path $provider 'node_modules\.bin\pi.cmd');launchArgs='--provider ollama --model nornic-coder --no-context-files --no-skills --no-builtin-tools';customModels=@()}}}
+    $instances = @{ollama=@{driver='pi';displayName='Nornic Local';enabled=$true;environment=@(@{name='PI_CODING_AGENT_DIR';value=$agentHome;sensitive=$false},@{name='T3_NORNIC_LOCAL_WORKER';value='1';sensitive=$false});config=@{enabled=$true;binaryPath=(Join-Path $provider 'node_modules\.bin\pi.cmd');launchArgs='--provider ollama --model nornic-coder --no-context-files --no-skills --no-builtin-tools';customModels=@()}}}
     if (!$CodexBinary) {
         $found = Get-Command codex -ErrorAction SilentlyContinue
         if ($found) { $CodexBinary = $found.Source }

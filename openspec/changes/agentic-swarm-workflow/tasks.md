@@ -7,6 +7,8 @@ not complete the larger milestone's acceptance contract.
 
 ## Local experiment: model defaults
 
+- [x] Name the managed agent Nornic across provider/model labels, settings,
+  diagnostics, launchers and docs; retain valid upstream runtime identifiers.
 - [x] Reproduce the Codex dropdown choosing Astra despite the harness's saved
   Sol selection; default the shared catalog to GPT-6.1 Sol with low reasoning.
 - [x] Verify catalog selection, reasoning defaults and provider/model consumers

@@ -3298,6 +3298,241 @@ index 4a60f12891..84f3b5cc04 100644
  }
  
  export function mapCodexModelCapabilities(
+diff --git a/apps/web/src/components/usage/usageProviders.ts b/apps/web/src/components/usage/usageProviders.ts
+index 003a225f26..fae1976a0f 100644
+--- a/apps/web/src/components/usage/usageProviders.ts
++++ b/apps/web/src/components/usage/usageProviders.ts
+@@ -36,7 +36,7 @@ export const PROVIDER_PRESENTATION = {
+     driverKind: ProviderDriverKind.make("antigravity"),
+   },
+   pi: {
+-    label: "Pi",
++    label: "Nornic",
+     color: "#4d9f8a",
+     driverKind: ProviderDriverKind.make("pi"),
+   },
+diff --git a/docs/README.md b/docs/README.md
+index dc3c08bfc6..25ed1fa5cf 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -23,7 +23,7 @@
+ - [Outside agents (MCP)](./user/outside-agents.md)
+ - [Running in the background](./user/background-service.md)
+ - [Updating T3 Code](./user/updating.md)
+-- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md)
++- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Nornic](./user/providers-nornic.md) · [Muse Code](./user/providers-muse.md)
+ 
+ ---
+ 
+diff --git a/docs/user/install.md b/docs/user/install.md
+index 64b1f19fac..20d4a3d52b 100644
+--- a/docs/user/install.md
++++ b/docs/user/install.md
+@@ -142,7 +142,7 @@ computer.
+ | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
+ | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
+ | Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
+-| Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
++| Nornic          | Install [Nornic](./providers-nornic.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
+ | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
+ 
+ Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
+@@ -172,7 +172,7 @@ their original values.
+ 
+ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
+ [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
+-[Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
++[Antigravity](./providers-antigravity.md), [Nornic](./providers-nornic.md), and
+ [Muse Code](./providers-muse.md).
+ 
+ ## Next steps
+diff --git a/docs/user/providers-nornic.md b/docs/user/providers-nornic.md
+new file mode 100644
+index 0000000000..64e8263079
+--- /dev/null
++++ b/docs/user/providers-nornic.md
+@@ -0,0 +1,90 @@
++# Nornic
++
++The Nornic agent uses the upstream `@earendil-works/pi-coding-agent` runtime.
++Its executable remains `pi`; runtime package names, driver IDs and environment
++variables retain their upstream names. In this harness, setup pins runtime
++version 1.4.0 and configures the local/remote models.
++
++T3 Code can use your existing Nornic coding agent installation while keeping Nornic's models, auth,
++extensions, skills, context files, and native session history.
++
++## Set Up Nornic
++
++1. Install the [agent runtime](https://pi.dev) on the machine running the T3 Code server. Nornic requires Node.js
++   22.19 or newer; its platform installers can install Node if needed. T3 Code supports Nornic
++   0.80.5 or newer.
++2. Run `pi` in a terminal, then `/login` to connect your model provider or configure its API key.
++3. Open T3 Code Settings, enable Nornic, and refresh the provider.
++
++For an npm installation, use:
++
++```sh
++npm install -g --ignore-scripts @earendil-works/pi-coding-agent
++```
++
++If `pi` is not on the server's `PATH`, set Nornic's binary path to the executable. Provider environment
++variables and launch arguments are also available for installations that need a custom agent
++directory, endpoint, or model configuration. `--provider` must be paired with `--model`. T3 Code
++rejects launch arguments that change Nornic's execution mode or select a session because T3 owns those
++parts of the process lifecycle.
++
++On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
++Open the authorization URL on your own computer. If the callback cannot reach the server,
++paste the final redirect URL or authorization code back into Nornic when prompted. You can also
++set your model provider's API-key environment variable in the Nornic instance's settings; mark
++secret values as sensitive.
++
++Update installer-managed Nornic with `pi update`. If another package manager owns the installation,
++update it through that manager instead. For example, a Nix profile installation uses
++`nix profile upgrade pi`.
++
++## What Carries Over
++
++T3 Code discovers the models reported by Nornic and exposes their supported thinking levels. The
++thinking picker marks the discovered active model's configured level as its default without
++overriding it. Other models keep their Nornic defaults when no level is selected. Threads
++use Nornic's native session files for resume, rollback, and forks within the same Nornic instance. Forks
++preserve the native conversation through the selected turn in the destination workspace.
++Switching providers uses portable conversation context. Extension
++dialogs appear in the T3 Code composer, and the composer context meter follows Nornic's own usage
++reporting while a response streams and after it settles.
++
++Nornic skills appear in the composer's `$` menu. This includes user skills and project skills that Nornic
++loads for the current workspace; selecting one uses Nornic's native skill expansion.
++
++Nornic loads its normal user and project extensions. Blocking `select`, `confirm`, `input`, and `editor`
++dialogs work in T3 Code. Notifications appear in the work log. Nornic terminal decoration such as
++titles, status lines, and widgets does not have a T3 Code equivalent.
++
++## Permission Modes
++
++T3 Code applies the composer permission mode through Nornic's blocking tool hook:
++
++- **Supervised** asks before commands, file changes, and extension tools. Read-only tools continue.
++- **Auto-accept edits** allows Nornic's edit and write tools, but asks before commands and extension
++  tools.
++- **Full access** allows tools without T3 Code approval prompts.
++
++The **Auto** option is not shown for Nornic because Nornic does not expose an AI approval reviewer.
++Threads that already stored Auto before Nornic support was added behave and display as Supervised.
++
++Changing the mode restarts the Nornic provider session and resumes the same native conversation. The
++policy covers Nornic tool calls; it is not an operating-system sandbox, and code that a trusted Nornic
++extension runs outside a tool call remains governed by Nornic's own extension trust model.
++
++T3 Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
++installs Nornic's example `subagent` extension, T3 Code also shows its task progress and results in that
++UI. Nornic runs those children without a session, so they cannot be opened or resumed as T3 Code
++threads.
++
++## Troubleshooting
++
++- If Nornic is unavailable, confirm that the configured binary runs on the server machine, then refresh
++  the provider in Settings.
++- If no models appear, open Nornic directly and confirm its authentication and model configuration.
++- If discovery cannot complete, T3 Code keeps Nornic available with the `Nornic default` model. Start a
++  thread to let the interactive Nornic session handle any startup prompt.
++- If a project extension is missing, approve the project in Nornic, then start a fresh provider session.
++- If a project skill is missing from the `$` menu, approve the project in Nornic and refresh the provider.
++- The context meter appears once Nornic reports usage for the thread. Some model providers only
++  report usage when a response completes, so the meter can wait for the first reply.
+diff --git a/docs/user/providers-pi.md b/docs/user/providers-pi.md
+deleted file mode 100644
+index 123258f6cc..0000000000
+--- a/docs/user/providers-pi.md
++++ /dev/null
+@@ -1,85 +0,0 @@
+-# Pi
+-
+-T3 Code can use your existing Pi coding agent installation while keeping Pi's models, auth,
+-extensions, skills, context files, and native session history.
+-
+-## Set Up Pi
+-
+-1. Install [Pi](https://pi.dev) on the machine running the T3 Code server. Pi requires Node.js
+-   22.19 or newer; its platform installers can install Node if needed. T3 Code supports Pi
+-   0.80.5 or newer.
+-2. Run `pi` in a terminal, then `/login` to connect your model provider or configure its API key.
+-3. Open T3 Code Settings, enable Pi, and refresh the provider.
+-
+-For an npm installation, use:
+-
+-```sh
+-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+-```
+-
+-If `pi` is not on the server's `PATH`, set Pi's binary path to the executable. Provider environment
+-variables and launch arguments are also available for installations that need a custom agent
+-directory, endpoint, or model configuration. `--provider` must be paired with `--model`. T3 Code
+-rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
+-parts of the process lifecycle.
+-
+-On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
+-Open the authorization URL on your own computer. If the callback cannot reach the server,
+-paste the final redirect URL or authorization code back into Pi when prompted. You can also
+-set your model provider's API-key environment variable in the Pi instance's settings; mark
+-secret values as sensitive.
+-
+-Update installer-managed Pi with `pi update`. If another package manager owns the installation,
+-update it through that manager instead. For example, a Nix profile installation uses
+-`nix profile upgrade pi`.
+-
+-## What Carries Over
+-
+-T3 Code discovers the models reported by Pi and exposes their supported thinking levels. The
+-thinking picker marks the discovered active model's configured level as its default without
+-overriding it. Other models keep their Pi defaults when no level is selected. Threads
+-use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
+-preserve the native conversation through the selected turn in the destination workspace.
+-Switching providers uses portable conversation context. Extension
+-dialogs appear in the T3 Code composer, and the composer context meter follows Pi's own usage
+-reporting while a response streams and after it settles.
+-
+-Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
+-loads for the current workspace; selecting one uses Pi's native skill expansion.
+-
+-Pi loads its normal user and project extensions. Blocking `select`, `confirm`, `input`, and `editor`
+-dialogs work in T3 Code. Notifications appear in the work log. Pi terminal decoration such as
+-titles, status lines, and widgets does not have a T3 Code equivalent.
+-
+-## Permission Modes
+-
+-T3 Code applies the composer permission mode through Pi's blocking tool hook:
+-
+-- **Supervised** asks before commands, file changes, and extension tools. Read-only tools continue.
+-- **Auto-accept edits** allows Pi's edit and write tools, but asks before commands and extension
+-  tools.
+-- **Full access** allows tools without T3 Code approval prompts.
+-
+-The **Auto** option is not shown for Pi because Pi does not expose an AI approval reviewer.
+-Threads that already stored Auto before Pi support was added behave and display as Supervised.
+-
+-Changing the mode restarts the Pi provider session and resumes the same native conversation. The
+-policy covers Pi tool calls; it is not an operating-system sandbox, and code that a trusted Pi
+-extension runs outside a tool call remains governed by Pi's own extension trust model.
+-
+-T3 Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
+-installs Pi's example `subagent` extension, T3 Code also shows its task progress and results in that
+-UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
+-threads.
+-
+-## Troubleshooting
+-
+-- If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh
+-  the provider in Settings.
+-- If no models appear, open Pi directly and confirm its authentication and model configuration.
+-- If discovery cannot complete, T3 Code keeps Pi available with the `Pi default` model. Start a
+-  thread to let the interactive Pi session handle any startup prompt.
+-- If a project extension is missing, approve the project in Pi, then start a fresh provider session.
+-- If a project skill is missing from the `$` menu, approve the project in Pi and refresh the provider.
+-- The context meter appears once Pi reports usage for the thread. Some model providers only
+-  report usage when a response completes, so the meter can wait for the first reply.
 diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
 index 7f38a38dbb..8f9cb44f54 100644
 --- a/packages/contracts/src/index.ts
@@ -3308,7 +3543,7 @@ index 7f38a38dbb..8f9cb44f54 100644
  export * from "./clientRpcPermissions.ts";
 +export * from "./nornicWorkflow.ts";
 diff --git a/packages/contracts/src/model.ts b/packages/contracts/src/model.ts
-index 36356146fd..89879c2e50 100644
+index 36356146fd..ef573251d0 100644
 --- a/packages/contracts/src/model.ts
 +++ b/packages/contracts/src/model.ts
 @@ -123,7 +123,7 @@ const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
@@ -3320,6 +3555,23 @@ index 36356146fd..89879c2e50 100644
  
  /**
   * The provider snapshot marks the first of these present in the live
+@@ -151,7 +151,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
+   [GROK_DRIVER_KIND]: "grok-build",
+   [MUSE_DRIVER_KIND]: MUSE_DEFAULT_MODEL,
+   [ACP_REGISTRY_DRIVER_KIND]: "default",
+-  // "default" defers to the user's own Pi settings.json model selection.
++  // "default" defers to the Nornic agent's runtime settings.json model selection.
+   [PI_DRIVER_KIND]: "default",
+   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+@@ -201,6 +201,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
+   [GROK_DRIVER_KIND]: "Grok",
+   [MUSE_DRIVER_KIND]: "Muse Code",
+   [ACP_REGISTRY_DRIVER_KIND]: "ACP Registry",
+-  [PI_DRIVER_KIND]: "Pi",
++  [PI_DRIVER_KIND]: "Nornic",
+   [OPENCODE_DRIVER_KIND]: "OpenCode",
+ };
 diff --git a/packages/contracts/src/nornicWorkflow.ts b/packages/contracts/src/nornicWorkflow.ts
 new file mode 100644
 index 0000000000..6bc9134a7e
@@ -3377,10 +3629,880 @@ index 0000000000..6bc9134a7e
 +  version: Schema.Int,
 +  requestId: Schema.String,
 +});
+diff --git a/packages/provider-pi/src/client.ts b/packages/provider-pi/src/client.ts
+index 44095bec0c..308b7601b7 100644
+--- a/packages/provider-pi/src/client.ts
++++ b/packages/provider-pi/src/client.ts
+@@ -5,17 +5,16 @@ import { PiSettings } from "./settings.ts";
+ 
+ export const piClient = defineProviderClient({
+   driverKind: ProviderDriverKind.make("pi"),
+-  label: "Pi",
++  label: "Nornic",
+   settingsSchema: PiSettings,
+   icon: {
+-    viewBox: "165.29 165.29 469.43 469.43",
++    viewBox: "0 0 24 24",
+     fill: { light: "#0F0F0F", dark: "#F5F5F5" },
+     paths: [
+       {
+-        d: "M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z",
++        d: "M4 3h4l8 12V3h4v18h-4L8 9v12H4Z",
+         fillRule: "evenodd",
+       },
+-      { d: "M517.36 400H634.72V634.72H517.36Z" },
+     ],
+   },
+ });
+diff --git a/packages/provider-pi/src/server/adapter.test.ts b/packages/provider-pi/src/server/adapter.test.ts
+index 9c81bab0ab..f0eab91ffd 100644
+--- a/packages/provider-pi/src/server/adapter.test.ts
++++ b/packages/provider-pi/src/server/adapter.test.ts
+@@ -172,8 +172,8 @@ interface FakePi {
+ }
+ 
+ /**
+- * Pi 1.0.0's idle `get_state` reply, taken from the `simple` replay fixture
+- * (fixtures/simple/pi_transcript.ndjson) minus the model object. Pi omits
++ * Nornic 1.0.0's idle `get_state` reply, taken from the `simple` replay fixture
++ * (fixtures/simple/pi_transcript.ndjson) minus the model object. Nornic omits
+  * `model` when none is selected and `sessionName` until one is set.
+  */
+ const recordedIdleState = (sessionFile: string) => ({
+@@ -464,7 +464,7 @@ const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THR
+     creationSource: "web",
+     id: threadId,
+     projectId: "project:fixture:pi" as OrchestrationV2AppThread["projectId"],
+-    title: "Pi test thread",
++    title: "Nornic test thread",
+     providerInstanceId: PI_INSTANCE_ID,
+     modelSelection: modelSelection(model),
+     runtimeMode: "full-access",
+@@ -520,7 +520,7 @@ const startTurn = Effect.fnUntraced(function* (
+ 
+ describe("PiAdapterV2", () => {
+   it.effect.each([false, true])(
+-    "completes a resumed user turn before native wake events arrive, Pi streaming=%s",
++    "completes a resumed user turn before native wake events arrive, Nornic streaming=%s",
+     (streaming) =>
+       Effect.gen(function* () {
+         const fake = yield* makeFakePi;
+@@ -643,7 +643,7 @@ describe("PiAdapterV2", () => {
+               event.type === "provider_session.updated" &&
+               event.providerSession.status === "stopped",
+           ).pipe(Effect.as(true), Effect.raceFirst(Queue.take(offers).pipe(Effect.as(false))));
+-          assert.isTrue(retired, "Pi offered native work while rollback was changing its binding");
++          assert.isTrue(retired, "Nornic offered native work while rollback was changing its binding");
+           const result = yield* Fiber.join(rollingBack);
+           assert.equal(result._tag, "Failure");
+           assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+@@ -910,7 +910,7 @@ describe("PiAdapterV2", () => {
+         );
+       });
+       const dialog = requests[0]?.runtimeRequest;
+-      assert.isDefined(dialog, "Pi buffered the dialog needed to finish model selection");
++      assert.isDefined(dialog, "Nornic buffered the dialog needed to finish model selection");
+       assert.equal(requests[0]?.threadId, THREAD_ID);
+       assert.isNull(dialog!.providerTurnId);
+       yield* runtime.respondToRuntimeRequest({ requestId: dialog!.id, decision: "accept" });
+@@ -966,7 +966,7 @@ describe("PiAdapterV2", () => {
+             (event) =>
+               event.type === "provider_session.updated" && event.providerSession.status === "error",
+           ).pipe(
+-            Effect.andThen(Effect.sync(() => assert.fail("Pi killed a routable native wake"))),
++            Effect.andThen(Effect.sync(() => assert.fail("Nornic killed a routable native wake"))),
+           ),
+         ),
+       );
+@@ -1542,7 +1542,7 @@ describe("PiAdapterV2", () => {
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+ 
+-  it.effect("budgets legacy native history with Pi's selected model capacity", () =>
++  it.effect("budgets legacy native history with Nornic's selected model capacity", () =>
+     Effect.gen(function* () {
+       const fake = yield* makeFakePi;
+       fake.queueState({
+@@ -1628,7 +1628,7 @@ describe("PiAdapterV2", () => {
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+ 
+-  it.effect("resets applied thinking when returning to Pi default", () =>
++  it.effect("resets applied thinking when returning to Nornic default", () =>
+     Effect.gen(function* () {
+       const fake = yield* makeFakePi;
+       fake.queueState({
+@@ -1842,7 +1842,7 @@ describe("PiAdapterV2", () => {
+         .allRequests()
+         .filter((request) => request.type === "fork")
+         .map((request) => request.entryId);
+-      // Pi keeps only the fork entry's ancestors, so u2 (not steer2) drops all of turn 2.
++      // Nornic keeps only the fork entry's ancestors, so u2 (not steer2) drops all of turn 2.
+       assert.deepEqual(forkedEntries, ["u2"]);
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+@@ -2819,7 +2819,7 @@ describe("PiAdapterV2", () => {
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+ 
+-  it.effect("restarts Pi when Stop interrupts a user compact", () =>
++  it.effect("restarts Nornic when Stop interrupts a user compact", () =>
+     Effect.gen(function* () {
+       const fake = yield* makeFakePi;
+       const { runtime, takeEvent } = yield* openRuntime(fake);
+@@ -2999,7 +2999,7 @@ describe("PiAdapterV2", () => {
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+ 
+-  it.effect("cancels startup dialogs when Pi exits before a turn exists", () =>
++  it.effect("cancels startup dialogs when Nornic exits before a turn exists", () =>
+     Effect.gen(function* () {
+       const fake = yield* makeFakePi;
+       const { runtime, takeEvent } = yield* openRuntime(fake);
+@@ -3652,7 +3652,7 @@ describe("PiAdapterV2", () => {
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+ 
+-  it.effect("marks retry progress recovered when Pi succeeds", () =>
++  it.effect("marks retry progress recovered when Nornic succeeds", () =>
+     Effect.gen(function* () {
+       const fake = yield* makeFakePi;
+       const { runtime, takeEvent } = yield* openRuntime(fake);
+@@ -3841,7 +3841,7 @@ describe("PiAdapterV2", () => {
+     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+   );
+ 
+-  it.effect("restarts Pi when Stop interrupts detached compaction", () =>
++  it.effect("restarts Nornic when Stop interrupts detached compaction", () =>
+     Effect.gen(function* () {
+       const fake = yield* makeFakePi;
+       const { runtime, takeEvent } = yield* openRuntime(fake);
+diff --git a/packages/provider-pi/src/server/adapter.ts b/packages/provider-pi/src/server/adapter.ts
+index a2a3caf926..f0abfec993 100644
+--- a/packages/provider-pi/src/server/adapter.ts
++++ b/packages/provider-pi/src/server/adapter.ts
+@@ -79,7 +79,7 @@ const PI_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(PI_DRIVER_KIND);
+ const DEFAULT_PI_SETTINGS = Schema.decodeSync(PiSettings)({});
+ 
+ /**
+- * Sentinel model slug meaning "do not call set_model": Pi resolves the model
++ * Sentinel model slug meaning "do not call set_model": Nornic resolves the model
+  * from the user's own settings.json (`defaultProvider`/`defaultModel`).
+  */
+ const PI_INHERIT_MODEL_SLUG = "default";
+@@ -88,7 +88,7 @@ const STREAM_FLUSH_MS = 50;
+ const PI_REQUEST_TIMEOUT_MS = 15_000;
+ const PI_SESSION_TIMEOUT_MS = 60_000;
+ const PI_UNSOLICITED_ACTIVITY_ERROR =
+-  "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
++  "Nornic started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
+ const SETTLE_PROBE_MAX_ATTEMPTS = 3;
+ const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
+ 
+@@ -368,7 +368,7 @@ interface ActivePiTurn {
+   latestCompactionAfterTokens: number | null;
+   lastLiveUsedTokens: number | null;
+   settleProbeGeneration: number;
+-  /** An extension may start compaction immediately after Pi emits agent_settled. */
++  /** An extension may start compaction immediately after Nornic emits agent_settled. */
+   settleWhenIdle: boolean;
+   sawCompaction: boolean;
+   manualCompactInFlight: boolean;
+@@ -457,7 +457,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               }),
+           ),
+         );
+-      // The extension owns both the optional MCP bridge and Pi's permission
++      // The extension owns both the optional MCP bridge and Nornic's permission
+       // hook. Materialize it even when this session has no MCP credential so
+       // Supervised never silently degrades to unrestricted tool execution.
+       const extensionPath = yield* provideCacheFs(
+@@ -517,7 +517,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+       const pendingPrompts = new Map<string, PendingPiPrompt>();
+       const sessionApprovals = new Set<string>();
+       // Answering a dialog and terminalizing a turn both publish lifecycle
+-      // events. Pi can settle immediately after `extension_ui_response`, so
++      // events. Nornic can settle immediately after `extension_ui_response`, so
+       // serialize the two paths to stop `turn.terminal` from overtaking the
+       // dialog's own resolution updates.
+       const sessionEventPermit = yield* Semaphore.make(1);
+@@ -539,7 +539,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+           if (rollbackBarrier !== null)
+             yield* Deferred.fail(
+               rollbackBarrier,
+-              protocolError("Pi session closed during rollback"),
++              protocolError("Nornic session closed during rollback"),
+             );
+         }),
+       );
+@@ -549,13 +549,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+       const outOfTurnExtensionErrors: Array<PiRpcRecord> = [];
+       let lastKnownLeaf: string | null = null;
+       /**
+-       * Set when a `get_entries` capture failed. Pi may have advanced past
++       * Set when a `get_entries` capture failed. Nornic may have advanced past
+        * `lastKnownLeaf` since, so the cursor no longer bounds a single turn
+        * and the next capture re-syncs it instead of trusting it.
+        */
+       let leafCursorStale = false;
+-      // Pi's own configured defaults, captured from the first `get_state` so
+-      // that selecting the displayed "Pi default" again can restore them. Pi
++      // Nornic's own configured defaults, captured from the first `get_state` so
++      // that selecting the displayed "Nornic default" again can restore them. Nornic
+       // has no "unset" commands, so the baselines have to be replayed
+       // explicitly.
+       let baselineModel: { provider: string; modelId: string } | null = null;
+@@ -643,10 +643,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+ 
+       const lifecycleRequest = (record: PiRpcRecord) =>
+         request(record, PI_SESSION_TIMEOUT_MS).pipe(
+-          // A local timeout does not cancel Pi's lifecycle hook. Retire the
++          // A local timeout does not cancel Nornic's lifecycle hook. Retire the
+           // process before fallback can race its eventual switch/new-session.
+           Effect.tapError((error) =>
+-            Effect.logWarning("Pi session lifecycle request failed", {
++            Effect.logWarning("Nornic session lifecycle request failed", {
+               providerSessionId: input.providerSessionId,
+               operation: record["type"],
+               errorTag: error._tag,
+@@ -692,7 +692,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         );
+ 
+       /**
+-       * Pi attaches the current message's cumulative usage to every streaming update (0.84.2+).
++       * Nornic attaches the current message's cumulative usage to every streaming update (0.84.2+).
+        */
+       const reportLiveUsage =
+         /* Provider events include streaming deltas; avoid a span for each update. */
+@@ -1268,7 +1268,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         const turn = state?.activeTurn ?? null;
+         const createdAt = yield* DateTime.now;
+         const timeout = recordNumber(event, "timeout");
+-        // Pi treats zero as no timeout and negative durations as immediate expiry.
++        // Nornic treats zero as no timeout and negative durations as immediate expiry.
+         const expiresAt =
+           timeout === undefined || timeout === 0
+             ? null
+@@ -1605,7 +1605,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                 data,
+               }),
+             // A failed probe still has to reach the pump. Dropping it would
+-            // leave a command-only turn active forever, because Pi never emits
++            // leave a command-only turn active forever, because Nornic never emits
+             // agent events for one.
+             onFailure: () =>
+               Queue.offer(connection.events, {
+@@ -1747,7 +1747,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+             yield* completeOpenStreamItems(turn);
+             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
+               turn.failure = makeProviderFailure({
+-                message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
++                message: recordString(message, "errorMessage") ?? "Nornic reported a model error.",
+                 class: "provider_error",
+               });
+             }
+@@ -1799,7 +1799,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                 return;
+               }
+               const errorMessage =
+-                recordString(event, "errorMessage") ?? "Pi context compaction failed.";
++                recordString(event, "errorMessage") ?? "Nornic context compaction failed.";
+               yield* emitCompaction(turn, compaction, "failed", {
+                 summary: errorMessage.slice(0, 1_000),
+               });
+@@ -1809,8 +1809,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               return;
+             }
+             // An overflow can surface as a model error (`message_end` with
+-            // stopReason error) before Pi compacts and retries the turn. Clear
+-            // that failure only when Pi confirms that compaction will retry;
++            // stopReason error) before Nornic compacts and retries the turn. Clear
++            // that failure only when Nornic confirms that compaction will retry;
+             // a successful non-retrying compaction must not erase an exhausted
+             // provider retry.
+             if (event["willRetry"] === true) turn.failure = null;
+@@ -1839,7 +1839,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+             );
+             const retryDelayMs = Math.max(0, Math.trunc(recordNumber(event, "delayMs") ?? 0));
+             const failure = makeProviderFailure({
+-              message: recordString(event, "errorMessage") ?? "Pi provider request failed.",
++              message: recordString(event, "errorMessage") ?? "Nornic provider request failed.",
+               class: "provider_error",
+               retryable: true,
+             });
+@@ -1880,7 +1880,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               return;
+             }
+             const failure = makeProviderFailure({
+-              message: recordString(event, "finalError") ?? "Pi auto-retry failed.",
++              message: recordString(event, "finalError") ?? "Nornic auto-retry failed.",
+               class: "provider_error",
+               retryable: false,
+             });
+@@ -1954,14 +1954,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               if (compactTurn === null) return;
+               if (compactTurn.activeCompaction !== null) return;
+               if (pendingCompact?.kind === "steer") {
+-                yield* Effect.logWarning("Pi rejected a compact steer.", {
++                yield* Effect.logWarning("Nornic rejected a compact steer.", {
+                   errorLength: recordString(event, "error")?.length,
+                 });
+                 return;
+               }
+               if (!compactTurn.sawCompaction) {
+                 compactTurn.failure = makeProviderFailure({
+-                  message: recordString(event, "error") ?? "Pi compact failed.",
++                  message: recordString(event, "error") ?? "Nornic compact failed.",
+                   class: "provider_error",
+                 });
+                 if (state !== null) yield* finalizeTurn(state);
+@@ -1979,7 +1979,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               // Deferred success ack. Command-only prompts (pure extension
+               // slash commands) never start an agent run and never emit
+               // `agent_settled`, so probe for idleness. The probe result is
+-              // re-queued behind any events Pi emitted before answering
++              // re-queued behind any events Nornic emitted before answering
+               // get_state, which keeps the check stream-ordered.
+               if (
+                 pendingPrompt?.kind === "turn_start" &&
+@@ -1995,9 +1995,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+             if (event["success"] !== false) return;
+             if (command === "steer" || pendingPrompt?.kind === "steer") {
+               // A rejected steer only means that one message was refused. The
+-              // turn it was aimed at is still running on Pi, so terminalizing
++              // turn it was aimed at is still running on Nornic, so terminalizing
+               // here would report a failure while output keeps streaming.
+-              yield* Effect.logWarning("Pi rejected a steer message.", {
++              yield* Effect.logWarning("Nornic rejected a steer message.", {
+                 errorLength: recordString(event, "error")?.length,
+               });
+               return;
+@@ -2010,7 +2010,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                   : null;
+             if (failedTurn !== null) {
+               const failure = makeProviderFailure({
+-                message: recordString(event, "error") ?? "Pi rejected the prompt.",
++                message: recordString(event, "error") ?? "Nornic rejected the prompt.",
+                 class: "provider_error",
+               });
+               if (failedTurn.adoptedWake && command === "prompt") {
+@@ -2102,7 +2102,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               if (rollbackBarrier !== null)
+                 yield* Deferred.fail(
+                   rollbackBarrier,
+-                  protocolError("Pi transport closed during rollback"),
++                  protocolError("Nornic transport closed during rollback"),
+                 );
+               pendingWake = null;
+               const interrupted = state?.activeTurn?.interrupted === true;
+@@ -2111,7 +2111,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                   ? null
+                   : makeProviderFailure({
+                       cause,
+-                      message: "Pi process exited unexpectedly.",
++                      message: "Nornic process exited unexpectedly.",
+                       class: "transport_error",
+                     });
+                 yield* finalizeTurn(state, false);
+@@ -2127,7 +2127,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               } else {
+                 yield* updateProviderSession(
+                   "error",
+-                  interrupted ? "Pi process was stopped." : "Pi process exited unexpectedly.",
++                  interrupted ? "Nornic process was stopped." : "Nornic process exited unexpectedly.",
+                 );
+                 yield* Queue.fail(
+                   events,
+@@ -2149,9 +2149,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         publish = true,
+       ) {
+         if (rollbackBarrier !== null)
+-          return yield* protocolError("Cannot register a Pi thread during rollback");
++          return yield* protocolError("Cannot register a Nornic thread during rollback");
+         if (threadState !== null && threadState.activeTurn !== null) {
+-          return yield* protocolError("Cannot register a Pi thread while a turn is active");
++          return yield* protocolError("Cannot register a Nornic thread while a turn is active");
+         }
+         if (pendingWake !== null) {
+           const state = threadState;
+@@ -2165,7 +2165,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+           )
+             return state.providerThread;
+           return yield* protocolError(
+-            "Cannot switch Pi threads while native work is awaiting a turn",
++            "Cannot switch Nornic threads while native work is awaiting a turn",
+           );
+         }
+         const existing = threadInput.existingProviderThread;
+@@ -2174,7 +2174,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         registrationAttempted = true;
+         if (resumeId != null || needsNewSession) {
+           lastNativeThreadId = resumeId ?? lastNativeThreadId;
+-          // Even a failed lifecycle operation can change Pi's native session.
++          // Even a failed lifecycle operation can change Nornic's native session.
+           // Never leave the old app binding or model defaults usable afterward.
+           threadState = null;
+           appliedModel = null;
+@@ -2189,7 +2189,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               : { type: "new_session" },
+           );
+           if (recordField(result, "cancelled") === true) {
+-            return yield* protocolError("A Pi extension cancelled the session switch");
++            return yield* protocolError("A Nornic extension cancelled the session switch");
+           }
+         }
+         const stateData = yield* request({ type: "get_state" });
+@@ -2206,7 +2206,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
+         // Each baseline is captured independently, and only while nothing has
+         // been applied yet, so a `get_state` that arrives after our own
+-        // selection cannot record that selection as Pi's default.
++        // selection cannot record that selection as Nornic's default.
+         if (baselineModel === null && appliedModel === null) {
+           const stateModel = recordField(stateData, "model");
+           const provider = recordString(stateModel, "provider");
+@@ -2218,13 +2218,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         if (baselineThinking === null && appliedThinking === null) {
+           baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
+         }
+-        // switch_session accepts a file path, not Pi's display session UUID.
++        // switch_session accepts a file path, not Nornic's display session UUID.
+         const nativeId = recordString(stateData, "sessionFile");
+         if (nativeId === undefined) {
+           return yield* protocolError("get_state returned no persisted sessionFile", stateData);
+         }
+         if (needsNewSession && nativeId === lastNativeThreadId) {
+-          return yield* protocolError("Pi did not create a distinct session file");
++          return yield* protocolError("Nornic did not create a distinct session file");
+         }
+         lastNativeThreadId = nativeId;
+         const createdAt = yield* DateTime.now;
+@@ -2302,7 +2302,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+           const parsed = parsePiModelSlug(modelSelection.model);
+           if (parsed === null) {
+             return yield* protocolError(
+-              `Pi model '${modelSelection.model}' must use provider/model format`,
++              `Nornic model '${modelSelection.model}' must use provider/model format`,
+             );
+           }
+           const selectedModel = yield* request({
+@@ -2414,15 +2414,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         startTurn: Effect.fn("PiAdapter.startTurn")(
+           function* (turnInput) {
+             if (rollbackBarrier !== null)
+-              return yield* protocolError("Cannot start a Pi turn during rollback");
++              return yield* protocolError("Cannot start a Nornic turn during rollback");
+             const state = threadState;
+             if (state === null) {
+-              return yield* protocolError("Pi session has no registered thread");
++              return yield* protocolError("Nornic session has no registered thread");
+             }
+             if (state.activeTurn !== null) {
+               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                 driver: PI_PROVIDER,
+-                detail: `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
++                detail: `Nornic provider thread ${turnInput.providerThread.id} already has an active turn`,
+                 reason: "previous_turn_active",
+               });
+             }
+@@ -2430,7 +2430,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               state.providerThread.nativeThreadRef?.nativeId !==
+               turnInput.providerThread.nativeThreadRef?.nativeId
+             ) {
+-              return yield* protocolError("Pi turn requested for a different native session");
++              return yield* protocolError("Nornic turn requested for a different native session");
+             }
+             // The orchestrator adopts a fork under its already-allocated row.
+             // Future session updates must retain that authoritative identity.
+@@ -2520,11 +2520,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                 state.providerThread.nativeThreadRef?.nativeId !==
+                   turnInput.providerThread.nativeThreadRef?.nativeId
+               ) {
+-                return yield* protocolError("Pi turn ownership changed before it could start");
++                return yield* protocolError("Nornic turn ownership changed before it could start");
+               }
+               const wake = pendingWake?.state === state ? pendingWake : null;
+               if (wake !== null && wake.state.providerThread.appThreadId !== turnInput.threadId) {
+-                return yield* protocolError("Pi native wake belongs to a different app thread");
++                return yield* protocolError("Nornic native wake belongs to a different app thread");
+               }
+               pendingWake = null;
+               state.providerThread = turnInput.providerThread;
+@@ -2583,7 +2583,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                 }),
+               ),
+             );
+-            // Pi acks `prompt` only after slash-command expansion completes,
++            // Nornic acks `prompt` only after slash-command expansion completes,
+             // and extension commands may block on user dialogs indefinitely.
+             // Rejections therefore return later as id-less response records
+             // handled by the event pump.
+@@ -2606,7 +2606,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+           function* (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
+             const turn = threadState?.activeTurn ?? null;
+             if (turn === null || turn.providerTurn.id !== steerInput.providerTurnId) {
+-              return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
++              return yield* protocolError(`Nornic turn ${steerInput.providerTurnId} is not active`);
+             }
+             const compactCommand = parsePiCompactCommand(steerInput.message.text);
+             const payload =
+@@ -2616,17 +2616,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                     steerInput.message.attachments,
+                   )
+                 : null;
+-            // Prompt with streamingBehavior steer is atomic on Pi's side: it
++            // Prompt with streamingBehavior steer is atomic on Nornic's side: it
+             // queues during an active run and starts a new run if settlement
+-            // won the race. A direct `steer` sent after Pi became idle would
++            // won the race. A direct `steer` sent after Nornic became idle would
+             // remain queued forever. Send fire-and-forget under the session
+             // permit so a slash-command dialog cannot block the turn, and so
+             // settlement cannot overtake the active-turn check.
+-            // /compact is not a prompt: Pi's compact RPC aborts the agent first.
++            // /compact is not a prompt: Nornic's compact RPC aborts the agent first.
+             yield* sessionEventPermit.withPermits(1)(
+               Effect.gen(function* () {
+                 if (threadState?.activeTurn !== turn) {
+-                  return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
++                  return yield* protocolError(`Nornic turn ${steerInput.providerTurnId} is not active`);
+                 }
+                 if (compactCommand !== null) {
+                   turn.manualCompactInFlight = true;
+@@ -2673,7 +2673,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               return;
+             }
+             if (turn === null || turn.providerTurn.id !== interruptInput.providerTurnId) {
+-              return yield* protocolError(`Pi turn ${interruptInput.providerTurnId} is not active`);
++              return yield* protocolError(`Nornic turn ${interruptInput.providerTurnId} is not active`);
+             }
+             turn.interrupted = true;
+             if (
+@@ -2682,7 +2682,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               turn.activeCompaction !== null ||
+               turn.manualCompactInFlight
+             ) {
+-              // Pi's generic abort does not cancel manual compaction. Terminate
++              // Nornic's generic abort does not cancel manual compaction. Terminate
+               // so Stop covers user /compact as well as detached recovery compact.
+               stopRequested = true;
+               if (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) {
+@@ -2724,7 +2724,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+             const pending = pendingPrompts.get(String(requestInput.requestId));
+             if (pending === undefined) {
+               return yield* protocolError(
+-                `No pending Pi extension request ${requestInput.requestId}`,
++                `No pending Nornic extension request ${requestInput.requestId}`,
+               );
+             }
+             const answeredAt = yield* DateTime.now;
+@@ -2735,7 +2735,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+               pendingPrompts.delete(String(requestInput.requestId));
+               yield* cancelPrompt(pending, answeredAt);
+               return yield* protocolError(
+-                `Pi extension request ${requestInput.requestId} has expired`,
++                `Nornic extension request ${requestInput.requestId} has expired`,
+               );
+             }
+             const response = piUiResponse(pending, requestInput.decision, requestInput.answers);
+@@ -2797,10 +2797,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+             const wantedNativeId = snapshotInput.providerThread.nativeThreadRef?.nativeId;
+             if (state === null || wantedNativeId == null || boundNativeId !== wantedNativeId) {
+               return yield* protocolError(
+-                "Pi snapshot requested for a thread this session does not host",
++                "Nornic snapshot requested for a thread this session does not host",
+               );
+             }
+-            // get_messages is Pi's active-branch view. get_entries returns the
++            // get_messages is Nornic's active-branch view. get_entries returns the
+             // whole session tree, including abandoned branches after /tree or
+             // fork, which would leak discarded conversation into handoffs.
+             const messagesData = yield* request({ type: "get_messages" });
+@@ -2861,18 +2861,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+           function* (rollbackInput) {
+             const state = threadState;
+             if (state === null) {
+-              return yield* protocolError("Pi session has no registered thread");
++              return yield* protocolError("Nornic session has no registered thread");
+             }
+             if (state.providerThread.id !== rollbackInput.providerThread.id) {
+               return yield* protocolError(
+-                "Pi rollback requested for a thread this session does not host",
++                "Nornic rollback requested for a thread this session does not host",
+               );
+             }
+             if (state.activeTurn !== null) {
+-              return yield* protocolError("Cannot roll back while a Pi turn is active");
++              return yield* protocolError("Cannot roll back while a Nornic turn is active");
+             }
+             if (pendingWake !== null) {
+-              return yield* protocolError("Cannot roll back while native Pi work awaits a turn");
++              return yield* protocolError("Cannot roll back while native Nornic work awaits a turn");
+             }
+             const boundary = piForkBoundary(rollbackInput);
+             if (boundary.type === "nothing") {
+@@ -2895,7 +2895,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                     stopRequested
+                   )
+                     return yield* protocolError(
+-                      "Pi rollback ownership changed before its fork could start",
++                      "Nornic rollback ownership changed before its fork could start",
+                     );
+                   const barrier = yield* Deferred.make<
+                     void,
+@@ -2909,7 +2909,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                 Effect.gen(function* () {
+                   const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
+                   if (recordField(forkData, "cancelled") === true)
+-                    return yield* protocolError("A Pi extension cancelled the session fork");
++                    return yield* protocolError("A Nornic extension cancelled the session fork");
+                   const forkState = yield* request({ type: "get_state" }).pipe(
+                     Effect.onError(() =>
+                       Effect.sync(() => {
+@@ -2920,7 +2920,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                   const forkSessionFile = recordString(forkState, "sessionFile");
+                   if (forkSessionFile === undefined) {
+                     threadState = null;
+-                    return yield* protocolError("Pi fork did not return a persisted session file");
++                    return yield* protocolError("Nornic fork did not return a persisted session file");
+                   }
+                   const entriesData = yield* request({ type: "get_entries" }).pipe(
+                     Effect.orElseSucceed(() => undefined),
+@@ -2932,14 +2932,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                     type: "t3.rollback_barrier",
+                     barrier,
+                   });
+-                  if (!queued) return yield* protocolError("Pi transport closed during rollback");
++                  if (!queued) return yield* protocolError("Nornic transport closed during rollback");
+                   yield* Deferred.await(barrier);
+                   return yield* sessionEventPermit.withPermits(1)(
+                     Effect.gen(function* () {
+                       if (pendingWake !== null) {
+                         yield* stopPendingWake(pendingWake);
+                         return yield* protocolError(
+-                          "Native Pi work started while rollback was changing the session",
++                          "Native Nornic work started while rollback was changing the session",
+                         );
+                       }
+                       if (
+@@ -2949,7 +2949,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                         stopRequested
+                       )
+                         return yield* protocolError(
+-                          "Pi rollback ownership changed during its fork",
++                          "Nornic rollback ownership changed during its fork",
+                         );
+                       lastNativeThreadId = forkSessionFile;
+                       appliedModel = null;
+@@ -2988,18 +2988,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+         forkThread: Effect.fn("PiAdapter.forkThread")(
+           function* (forkInput) {
+             if (threadState?.activeTurn != null) {
+-              return yield* protocolError("Cannot fork while a Pi turn is active");
++              return yield* protocolError("Cannot fork while a Nornic turn is active");
+             }
+             const source = forkInput.sourceProviderThread;
+             const sourceFile = source.nativeThreadRef?.nativeId;
+             if (sourceFile == null)
+-              return yield* protocolError("Pi fork source has no session file");
++              return yield* protocolError("Nornic fork source has no session file");
+             const sourceTurns = (forkInput.sourceProviderTurns ?? []).filter(
+               (turn) => turn.providerThreadId === source.id,
+             );
+             const target = sourceTurns.find((turn) => turn.id === forkInput.providerTurnId);
+             if (forkInput.providerTurnId !== undefined && target === undefined) {
+-              return yield* protocolError("Pi fork target turn is missing");
++              return yield* protocolError("Nornic fork target turn is missing");
+             }
+             const boundary: PiForkBoundary =
+               target === undefined
+@@ -3008,7 +3008,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                     target: { type: "provider_turn", providerTurn: target },
+                     providerThreadTurns: sourceTurns,
+                   });
+-            // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
++            // CLI --fork uses Nornic's own session format and sets the destination cwd. RPC
+             // switch_session/clone alone would retain the source cwd.
+             const forkLaunch = buildPiRpcLaunch({
+               launchArgs: resolvedLaunchArgs.args,
+@@ -3045,13 +3045,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+                     entryId: beforeEntry,
+                   });
+                   if (recordField(result, "cancelled") === true) {
+-                    return yield* protocolError("A Pi extension cancelled the session fork");
++                    return yield* protocolError("A Nornic extension cancelled the session fork");
+                   }
+                 }
+                 const state = yield* forkConnection.request({ type: "get_state" });
+                 const file = recordString(state, "sessionFile");
+                 if (file === undefined || file === sourceFile) {
+-                  return yield* protocolError("Pi fork did not create a distinct session file");
++                  return yield* protocolError("Nornic fork did not create a distinct session file");
+                 }
+                 return file;
+               }),
+@@ -3112,7 +3112,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
+ interface PiSessionEntry {
+   readonly parentId: string | null;
+   readonly isUserMessage: boolean;
+-  /** Pi's `timestamp` as epoch milliseconds; null when missing or unparsable. */
++  /** Nornic's `timestamp` as epoch milliseconds; null when missing or unparsable. */
+   readonly timestamp: number | null;
+ }
+ 
+@@ -3224,7 +3224,7 @@ function piForkEntry<E>(
+         ? Effect.fail(
+             new ProviderAdapter.ProviderAdapterProtocolError({
+               driver: PI_PROVIDER,
+-              detail: `Pi turn ${boundary.turn.ordinal} has no captured session-tree entry and none was found in the session tree`,
++              detail: `Nornic turn ${boundary.turn.ordinal} has no captured session-tree entry and none was found in the session tree`,
+             }),
+           )
+         : Effect.succeed(entryId);
+@@ -3233,7 +3233,7 @@ function piForkEntry<E>(
+ }
+ 
+ /**
+- * Pi shares the server clock. An adopted wake can precede its T3 turn, so search from the target
++ * Nornic shares the server clock. An adopted wake can precede its T3 turn, so search from the target
+  * turn's end through the boundary turn's end. A boundary turn still running has no end yet, so
+  * the window stays open through the tree read. At thread start, use the earlier of thread
+  * creation and turn start to include adopted wakes while preserving inherited session history.
+@@ -3286,10 +3286,10 @@ function piSubagentOutput(result: unknown): string {
+ }
+ 
+ function piExtensionDisplayName(extensionPath: string | undefined): string {
+-  if (extensionPath === undefined) return "Pi extension";
++  if (extensionPath === undefined) return "Nornic extension";
+   const normalized = extensionPath.replace(/\\/g, "/").replace(/\/+$/, "");
+   const name = normalized.slice(normalized.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
+-  return name.length === 0 ? "Pi extension" : name;
++  return name.length === 0 ? "Nornic extension" : name;
+ }
+ 
+ function piThreadSnapshot(
+@@ -3378,7 +3378,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
+             new ProviderAdapterDriverCreateError({
+               driver: PI_DRIVER_KIND,
+               instanceId: input.instanceId,
+-              detail: "Failed to create Pi adapter.",
++              detail: "Failed to create Nornic adapter.",
+               cause,
+             }),
+         ),
+diff --git a/packages/provider-pi/src/server/commands.test.ts b/packages/provider-pi/src/server/commands.test.ts
+index b1089bdd52..e69b73b0b6 100644
+--- a/packages/provider-pi/src/server/commands.test.ts
++++ b/packages/provider-pi/src/server/commands.test.ts
+@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
+ 
+ import { parsePiDiscoveredCommands } from "./commands.ts";
+ 
+-it("maps current Pi skill metadata to T3's user and project skill scopes", () => {
++it("maps current Nornic skill metadata to T3's user and project skill scopes", () => {
+   expect(
+     parsePiDiscoveredCommands({
+       commands: [
+diff --git a/packages/provider-pi/src/server/commands.ts b/packages/provider-pi/src/server/commands.ts
+index 0abe0d55f7..8418022d4e 100644
+--- a/packages/provider-pi/src/server/commands.ts
++++ b/packages/provider-pi/src/server/commands.ts
+@@ -1,7 +1,7 @@
+ import { type ServerProviderSkill, type ServerProviderSlashCommand } from "@t3tools/contracts";
+ import * as Predicate from "effect/Predicate";
+ 
+-// Pi RPC get_commands omits TUI builtins. Advertise /compact so T3 can map it to RPC compact.
++// Nornic RPC get_commands omits TUI builtins. Advertise /compact so T3 can map it to RPC compact.
+ const PI_COMPACT_SLASH_COMMAND: ServerProviderSlashCommand = {
+   name: "compact",
+   description: "Summarize the conversation and reduce context usage",
+diff --git a/packages/provider-pi/src/server/driver.test.ts b/packages/provider-pi/src/server/driver.test.ts
+index 087a8089aa..fdc2badb00 100644
+--- a/packages/provider-pi/src/server/driver.test.ts
++++ b/packages/provider-pi/src/server/driver.test.ts
+@@ -116,7 +116,7 @@ const makePiSpawner = Effect.fnUntraced(function* (
+ const create = (config: Partial<PiSettings> = {}, enabled = true) =>
+   PiDriver.create({
+     instanceId: ProviderInstanceId.make("pi-workspace-test"),
+-    displayName: "My Pi",
++    displayName: "My Nornic",
+     accentColor: "#abcdef",
+     environment: [{ name: "PI_CODING_AGENT_DIR", value: "/isolated-pi", sensitive: false }],
+     enabled,
+@@ -158,7 +158,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
+         ["compact"],
+       );
+       assert.equal(first.instanceId, instance.instanceId);
+-      assert.equal(first.displayName, "My Pi");
++      assert.equal(first.displayName, "My Nornic");
+       assert.equal(first.accentColor, "#abcdef");
+       assert.deepEqual(first.models, machine.models);
+       const workspaceLaunch = launches.find((launch) => launch.options.cwd === "/first");
+@@ -177,7 +177,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
+       const instance = yield* create({}, false).pipe(
+         Effect.provideService(
+           ChildProcessSpawner.ChildProcessSpawner,
+-          ChildProcessSpawner.make(() => Effect.die("Disabled Pi must not spawn")),
++          ChildProcessSpawner.make(() => Effect.die("Disabled Nornic must not spawn")),
+         ),
+       );
+       assert.isDefined(instance.snapshotForCwd);
+diff --git a/packages/provider-pi/src/server/driver.ts b/packages/provider-pi/src/server/driver.ts
+index e48700ff6a..557f4fb81a 100644
+--- a/packages/provider-pi/src/server/driver.ts
++++ b/packages/provider-pi/src/server/driver.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Pi state (sessions, settings, extensions, auth) lives in the user's own
++ * Nornic state (sessions, settings, extensions, auth) lives in the user's own
+  * `~/.pi/agent`, so continuation identity uses the default instance grouping.
+  */
+ import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+@@ -79,7 +79,7 @@ const withInstanceIdentity =
+ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
+   driverKind: DRIVER_KIND,
+   metadata: {
+-    displayName: "Pi",
++    displayName: "Nornic",
+     supportsMultipleInstances: true,
+   },
+   usage: piUsageReader,
+@@ -136,7 +136,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
+           new ProviderDriverError({
+             driver: DRIVER_KIND,
+             instanceId,
+-            detail: "Failed to build Pi orchestration adapter.",
++            detail: "Failed to build Nornic orchestration adapter.",
+             cause,
+           }),
+       ),
+@@ -176,7 +176,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
+           new ProviderDriverError({
+             driver: DRIVER_KIND,
+             instanceId,
+-            detail: "Failed to build Pi snapshot.",
++            detail: "Failed to build Nornic snapshot.",
+             cause,
+           }),
+       ),
+@@ -202,7 +202,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
+                     new ProviderDriverError({
+                       driver: DRIVER_KIND,
+                       instanceId,
+-                      detail: "Failed to discover Pi workspace commands.",
++                      detail: "Failed to discover Nornic workspace commands.",
+                       cause,
+                     }),
+                 ),
 diff --git a/packages/provider-pi/src/server/mcpBridge.testkit.ts b/packages/provider-pi/src/server/mcpBridge.testkit.ts
-index 133a4b2981..a5825362ba 100644
+index 133a4b2981..6afaa0b69b 100644
 --- a/packages/provider-pi/src/server/mcpBridge.testkit.ts
 +++ b/packages/provider-pi/src/server/mcpBridge.testkit.ts
+@@ -1,4 +1,4 @@
+-// @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
++// @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Nornic extension at its native JavaScript boundary.
+ import * as NodeModule from "node:module";
+ import * as NodePath from "node:path";
+ import * as NodeVM from "node:vm";
 @@ -31,17 +31,24 @@ interface RegisteredTool {
  type AgentStartHook = (
    event: {
@@ -3458,13 +4580,21 @@ index 133a4b2981..a5825362ba 100644
      tools,
      setBridgeSourcePath: (path: string) => {
 diff --git a/packages/provider-pi/src/server/mcpExtensionSource.test.ts b/packages/provider-pi/src/server/mcpExtensionSource.test.ts
-index b1306f701e..2be057c0f3 100644
+index b1306f701e..98c0abec7b 100644
 --- a/packages/provider-pi/src/server/mcpExtensionSource.test.ts
 +++ b/packages/provider-pi/src/server/mcpExtensionSource.test.ts
-@@ -47,6 +47,118 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+@@ -1,4 +1,4 @@
+-// @effect-diagnostics nodeBuiltinImport:off -- Pi extensions run outside Effect; these tests exercise their native filesystem boundary.
++// @effect-diagnostics nodeBuiltinImport:off -- Nornic extensions run outside Effect; these tests exercise their native filesystem boundary.
+ import * as NodeFSP from "node:fs/promises";
+ import * as NodePath from "node:path";
+ import * as NodeOS from "node:os";
+@@ -46,10 +46,122 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+   return handlers;
  }
  
- describe("Pi orchestration prompt section", () => {
+-describe("Pi orchestration prompt section", () => {
++describe("Nornic orchestration prompt section", () => {
 +  it("continues an unfinished implementation with a stable intake budget and requires a task id", async () => {
 +    const bridge = await loadMcpBridge({
 +      modern: true,
@@ -3579,13 +4709,166 @@ index b1306f701e..2be057c0f3 100644
 +  });
    it.each([
      {
-       name: "on Pi builds without prompt sections",
+-      name: "on Pi builds without prompt sections",
++      name: "on Nornic builds without prompt sections",
+       events: [
+         { systemPrompt: "base" },
+         { systemPrompt: "base", systemPromptOptions: {} },
+@@ -77,7 +189,7 @@ describe("Pi orchestration prompt section", () => {
+   });
+ });
+ 
+-describe("Pi MCP tool results", () => {
++describe("Nornic MCP tool results", () => {
+   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
+     const content = [
+       { type: "text", text: "Browser screenshot" },
+@@ -130,18 +242,18 @@ describe("Pi MCP tool results", () => {
+   });
+ });
+ 
+-describe("Pi MCP tool exposure", () => {
++describe("Nornic MCP tool exposure", () => {
+   const discoveryContext = {
+     model: { api: "anthropic-messages" },
+     ui: { notify: () => undefined },
+   };
+ 
+-  it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
++  it("keeps orchestration direct and optional bridge tools discoverable on modern Nornic", async () => {
+     const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+     await bridge.handlers.get("session_start")!({ systemPrompt: "" }, discoveryContext);
+     const start = bridge.handlers.get("before_agent_start");
+     assert.isDefined(start);
+-    const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
++    const prompt = await start!({ systemPrompt: "Nornic system prompt" }, discoveryContext);
+     assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
+     assert.equal(bridge.servers.length, 0);
+     assert.equal(bridge.tools.length, 8);
+@@ -200,17 +312,17 @@ describe("Pi MCP tool exposure", () => {
+     assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
+   });
+ 
+-  it.each(["legacy Pi", "disabled tool search"])(
++  it.each(["legacy Nornic", "disabled tool search"])(
+     "keeps tool execution available with %s",
+     async (mode) => {
+       const bridge = await loadMcpBridge({
+-        modern: mode !== "legacy Pi",
++        modern: mode !== "legacy Nornic",
+         toolSearchAvailable: mode === "disabled tool search",
+         toolSearchDisabled: mode === "disabled tool search",
+       });
+-      if (mode !== "legacy Pi") {
++      if (mode !== "legacy Nornic") {
+         const start = bridge.handlers.get("session_start");
+-        await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
++        await start!({ systemPrompt: "Nornic system prompt" }, discoveryContext);
+       }
+       assert.equal(bridge.tools.filter((tool) => tool.exposure !== "hidden").length, 4);
+       assert.isTrue(
+@@ -238,7 +350,7 @@ describe("Pi MCP tool exposure", () => {
+   );
+ });
+ 
+-describe("Pi MCP tool schemas", () => {
++describe("Nornic MCP tool schemas", () => {
+   it.each([{ type: "object" }, {}])(
+     "declares empty properties on object schemas that omit them: %j",
+     async (inputSchema) => {
+@@ -264,7 +376,7 @@ describe("Pi MCP tool schemas", () => {
+   });
+ });
+ 
+-describe("Pi tool discovery permissions", () => {
++describe("Nornic tool discovery permissions", () => {
+   it.each(["approval-required", "auto-accept-edits", "auto"])(
+     "allows annotated T3 reads in %s while gating mutations and replacements",
+     async (runtimeMode) => {
+@@ -386,7 +498,7 @@ async function loadRequestHook(): Promise<RequestHook> {
+   return hook!;
+ }
+ 
+-describe("Pi upstream output-budget workaround", () => {
++describe("Nornic upstream output-budget workaround", () => {
+   it.each(["max_tokens", "max_completion_tokens"])(
+     "caps %s without changing the conversation or tools",
+     async (key) => {
+@@ -424,7 +536,7 @@ async function loadInputHook(commands: ReadonlyArray<SkillCommand>) {
+   return hook as InputHook;
+ }
+ 
+-describe("Pi skill references", () => {
++describe("Nornic skill references", () => {
+   it("loads every selected skill once while preserving inline prose, whitespace, and images", async () => {
+     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-skill-mentions-"));
+     try {
+@@ -451,7 +563,7 @@ describe("Pi skill references", () => {
+     }
+   });
+ 
+-  it("leaves unknown references and native skill commands for Pi", async () => {
++  it("leaves unknown references and native skill commands for Nornic", async () => {
+     const hook = await loadInputHook([
+       { name: "skill:alpha", source: "skill", sourceInfo: { path: "/unused" } },
+     ]);
 diff --git a/packages/provider-pi/src/server/mcpExtensionSource.ts b/packages/provider-pi/src/server/mcpExtensionSource.ts
-index d71d9e2e46..9410f37a41 100644
+index d71d9e2e46..cc2a8a2a16 100644
 --- a/packages/provider-pi/src/server/mcpExtensionSource.ts
 +++ b/packages/provider-pi/src/server/mcpExtensionSource.ts
-@@ -285,6 +285,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
-   // reject even a short conversation. Remove this cap when Pi accounts for
+@@ -1,5 +1,5 @@
+ /**
+- * Do not import t3code modules from the string body. The Pi process resolves
++ * Do not import t3code modules from the string body. The Nornic process resolves
+  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
+  */
+ import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+@@ -12,7 +12,7 @@ export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+ 
+ /**
+- * Pi tools whose confirmations the bridge raises as file-change approvals.
++ * Nornic tools whose confirmations the bridge raises as file-change approvals.
+  * Auto-accept edits skips them; the adapter keys the approval kind off them.
+  */
+ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
+@@ -92,7 +92,7 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
+   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
+   if (typeof unsafe === "function" && schema !== undefined) {
+     // Zero-argument MCP tools may omit "properties", which some OpenAI-compatible
+-    // servers reject. Declare it, as Pi does for its own MCP tools.
++    // servers reject. Declare it, as Nornic does for its own MCP tools.
+     return unsafe({
+       ...schema,
+       type: schema.type ?? "object",
+@@ -129,7 +129,7 @@ function mcpModelContent(result: unknown): ModelContent[] {
+     }
+   }
+   // Structured output belongs to scripts. Only use it as model text when
+-  // the server supplied no model-facing blocks, matching Pi's native MCP tools.
++  // the server supplied no model-facing blocks, matching Nornic's native MCP tools.
+   if (content.length === 0) {
+     content.push({ type: "text", text: JSON.stringify(record.structuredContent ?? result) });
+   }
+@@ -247,7 +247,7 @@ function createMcpClient(endpoint: string, token: string) {
+ }
+ 
+ export default async function t3McpExtension(pi: ExtensionAPI) {
+-  // Keep skill chips in the request. Pi expands only one leading /skill:
++  // Keep skill chips in the request. Nornic expands only one leading /skill:
+   // command, so use its own frontmatter loader for every selected chip here.
+   pi.on("input", async (event, ctx) => {
+     if (!event.text.includes("$")) return;
+@@ -279,12 +279,15 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+     };
+   });
+ 
+-  // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
++  // Workaround for an upstream Nornic context-budgeting bug: pi-ai reuses the
+   // previous response's usage even when a fork's instructions/tools differ,
+   // then reserves almost all remaining context for output. OpenRouter can
+-  // reject even a short conversation. Remove this cap when Pi accounts for
++  // reject even a short conversation. Remove this cap when Nornic accounts for
    // the current request prefix reliably (api/simple-options + utils/estimate).
    pi.on("before_provider_request", (event, ctx) => {
 +    if (env("T3_NORNIC_LOCAL_WORKER") === "1" && localAdmission?.allowedOperations.includes("file.write") && typeof event.payload === "object" && event.payload !== null) {
@@ -3594,7 +4877,21 @@ index d71d9e2e46..9410f37a41 100644
      if (ctx.model?.provider !== "openrouter") return;
      const payload = event.payload;
      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
-@@ -310,6 +313,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -300,16 +303,27 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+     if (changed) return replacement;
+   });
+ 
+-  // Pi deliberately leaves permission policy to extensions. T3's injected
+-  // bridge uses Pi's public blocking tool hook so the shared runtime modes
+-  // keep their normal meaning without replacing or shadowing Pi's runtime.
+-  // Only Pi's own search is known to be read-only. An extension that replaces
++  // Nornic deliberately leaves permission policy to extensions. T3's injected
++  // bridge uses Nornic's public blocking tool hook so the shared runtime modes
++  // keep their normal meaning without replacing or shadowing Nornic's runtime.
++  // Only Nornic's own search is known to be read-only. An extension that replaces
+   // it keeps the name, and cannot discover deferred tools either.
+   const hasBuiltinToolSearch = () =>
+     typeof pi.getAllTools === "function" &&
      pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
  
    const readOnlyMcpTools = new Set<string>();
@@ -3632,7 +4929,12 @@ index d71d9e2e46..9410f37a41 100644
      const mode = runtimeMode();
      if (mode === "full-access") return;
      if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {
-@@ -355,6 +382,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+@@ -351,10 +378,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+     return;
+   }
+ 
+-  // Tool exposure arrived with registerMcpServer in Pi 0.99. Keep the HTTP
++  // Tool exposure arrived with registerMcpServer in Nornic 0.99. Keep the HTTP
    // bridge as the credential owner: mcp.json overrides native registrations.
    const supportsExposure = "registerMcpServer" in pi && typeof pi.registerMcpServer === "function";
    const directTools = new Set(["orchestrator_capabilities", "delegate_task", "task_status"]);
@@ -3640,6 +4942,15 @@ index d71d9e2e46..9410f37a41 100644
    let deferOptionalTools = supportsExposure;
    let catalog: ReadonlyArray<McpTool> = [];
  
+@@ -363,7 +391,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+ 
+   const registerTools = () => {
+     // Preserve public names for saved loadouts and tool selectors. Hidden
+-    // canonical names reserve ownership against Pi's configured MCP servers.
++    // canonical names reserve ownership against Nornic's configured MCP servers.
+     const prefixes = supportsExposure ? ["mcp__t3-code__", "mcp__t3_code__"] : ["mcp__t3-code__"];
+     readOnlyMcpTools.clear();
+     for (const tool of catalog) {
 @@ -376,7 +404,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
            name: \`\${prefix}\${name}\`,
            label: name,
@@ -3680,6 +4991,26 @@ index d71d9e2e46..9410f37a41 100644
        registerTools();
      })();
      started = attempt;
+@@ -416,7 +459,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+     return attempt;
+   };
+ 
+-  // CLI extensions load before builtins, and Pi keeps the first registration
++  // CLI extensions load before builtins, and Nornic keeps the first registration
+   // of a tool name. Register now so the bridge owns the T3 namespace even when
+   // mcp.json configures it; retry a failed connection at session_start.
+   await ensureStarted().catch(() => undefined);
+@@ -431,8 +474,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
+     const active = pi.getActiveTools();
+     // Completion gateways can silently drop calls to undeclared tools named
+     // in history or guidance. Eagerly load T3 schemas, including after tree
+-    // restores, while retaining deferred exposure for Pi's allowlist rules.
+-    // Pi still applies --tools/--exclude-tools to this active loadout.
++    // restores, while retaining deferred exposure for Nornic's allowlist rules.
++    // Nornic still applies --tools/--exclude-tools to this active loadout.
+     const required = [
+       ...(hasToolSearch ? ["tool_search"] : []),
+       ...(ctx.model?.api === "openai-completions" ? catalog.map((tool) => "mcp__t3-code__" + tool.name) : []),
 @@ -455,15 +498,49 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
    });
  
@@ -3723,9 +5054,10 @@ index d71d9e2e46..9410f37a41 100644
 +    }
      const sections = event.systemPromptOptions?.sections;
      if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {
-       // A full prompt override bypasses Pi's later section rendering.
+-      // A full prompt override bypasses Pi's later section rendering.
 -      sections.t3_code_orchestration = ORCHESTRATION_INSTRUCTIONS;
 -      return undefined;
++      // A full prompt override bypasses Nornic's later section rendering.
 +      sections.t3_code_orchestration = instructions;
 +      return routingMessage ? { message: routingMessage } : undefined;
      }
@@ -3734,3 +5066,645 @@ index d71d9e2e46..9410f37a41 100644
    });
  }
  `;
+diff --git a/packages/provider-pi/src/server/mcpInjection.test.ts b/packages/provider-pi/src/server/mcpInjection.test.ts
+index 26d01b9830..0a933debb3 100644
+--- a/packages/provider-pi/src/server/mcpInjection.test.ts
++++ b/packages/provider-pi/src/server/mcpInjection.test.ts
+@@ -118,17 +118,17 @@ describe("pi T3 MCP injection", () => {
+     assert.isFalse(launch.hasT3Mcp);
+     assert.deepInclude(resolvePiLaunchArgs("--mode text"), {
+       ok: false,
+-      message: "Pi launch argument '--mode' is controlled by T3 Code and cannot be overridden.",
++      message: "Nornic launch argument '--mode' is controlled by T3 Code and cannot be overridden.",
+     });
+     assert.deepInclude(resolvePiLaunchArgs("--session old.jsonl"), { ok: false });
+     assert.deepInclude(resolvePiLaunchArgs("prompt pi immediately"), { ok: false });
+     assert.deepInclude(resolvePiLaunchArgs("--plan @instructions.md"), { ok: false });
+   });
+ 
+-  it("rejects --provider without --model, which Pi 1.0 refuses at startup", () => {
++  it("rejects --provider without --model, which Nornic 1.0 refuses at startup", () => {
+     const rejection = {
+       ok: false,
+-      message: "Pi launch argument '--provider' requires '--model'.",
++      message: "Nornic launch argument '--provider' requires '--model'.",
+     };
+     assert.deepInclude(resolvePiLaunchArgs("--provider openrouter"), rejection);
+     assert.deepInclude(resolvePiLaunchArgs("--provider=openrouter --models gpt-6"), rejection);
+diff --git a/packages/provider-pi/src/server/mcpInjection.ts b/packages/provider-pi/src/server/mcpInjection.ts
+index 2ba0e3dca3..7140748a11 100644
+--- a/packages/provider-pi/src/server/mcpInjection.ts
++++ b/packages/provider-pi/src/server/mcpInjection.ts
+@@ -101,7 +101,7 @@ function normalizePiBuiltInEqualsArguments(args: ReadonlyArray<string>): Readonl
+ }
+ 
+ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution {
+-  // Pi parses equals-form tokens only as extension flags, even when their name
++  // Nornic parses equals-form tokens only as extension flags, even when their name
+   // matches a built-in option. Split known built-ins while leaving arbitrary
+   // extension flags in their native form.
+   const args = normalizePiBuiltInEqualsArguments(tokenizeCliArgs(launchArgs));
+@@ -114,19 +114,19 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution
+     if (reserved !== undefined) {
+       return {
+         ok: false,
+-        message: `Pi launch argument '${reserved}' is controlled by T3 Code and cannot be overridden.`,
++        message: `Nornic launch argument '${reserved}' is controlled by T3 Code and cannot be overridden.`,
+       };
+     }
+     if (arg === "--") {
+       return {
+         ok: false,
+-        message: "Pi launch arguments cannot include positional prompts.",
++        message: "Nornic launch arguments cannot include positional prompts.",
+       };
+     }
+     if (PI_ARGUMENTS_WITH_VALUES.has(arg)) {
+       const value = args[index + 1];
+       if (value === undefined) {
+-        return { ok: false, message: `Pi launch argument '${arg}' requires a value.` };
++        return { ok: false, message: `Nornic launch argument '${arg}' requires a value.` };
+       }
+       if (arg === "--provider") hasProvider = true;
+       if (arg === "--model") hasModel = true;
+@@ -137,7 +137,7 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution
+       continue;
+     }
+     if (arg.startsWith("--")) {
+-      // Pi extensions may register arbitrary long flags. Treat one following
++      // Nornic extensions may register arbitrary long flags. Treat one following
+       // non-flag token as that extension flag's value.
+       if (
+         args[index + 1] !== undefined &&
+@@ -149,15 +149,15 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution
+       continue;
+     }
+     if (arg.startsWith("-")) {
+-      return { ok: false, message: `Pi launch argument '${arg}' is not supported by T3 Code.` };
++      return { ok: false, message: `Nornic launch argument '${arg}' is not supported by T3 Code.` };
+     }
+     return {
+       ok: false,
+-      message: `Pi launch arguments cannot include positional prompt '${arg}'.`,
++      message: `Nornic launch arguments cannot include positional prompt '${arg}'.`,
+     };
+   }
+   if (hasProvider && !hasModel) {
+-    return { ok: false, message: "Pi launch argument '--provider' requires '--model'." };
++    return { ok: false, message: "Nornic launch argument '--provider' requires '--model'." };
+   }
+   return { ok: true, args };
+ }
+@@ -285,7 +285,7 @@ export function buildPiRpcLaunch(input: {
+     args.push("--extension", input.extensionPath);
+   }
+   const environment = { ...input.environment };
+-  // These values belong to the current T3 session. Never let a Pi child reuse
++  // These values belong to the current T3 session. Never let a Nornic child reuse
+   // credentials inherited from the server or a parent provider process.
+   delete environment[T3_MCP_URL_ENV];
+   delete environment[T3_MCP_BEARER_ENV];
+diff --git a/packages/provider-pi/src/server/rpc.ts b/packages/provider-pi/src/server/rpc.ts
+index c36a231051..a01cd50d1d 100644
+--- a/packages/provider-pi/src/server/rpc.ts
++++ b/packages/provider-pi/src/server/rpc.ts
+@@ -1,5 +1,5 @@
+ /**
+- * Framing follows Pi's spec: LF-delimited only, with a trailing `\r` stripped.
++ * Framing follows Nornic's spec: LF-delimited only, with a trailing `\r` stripped.
+  * Lines are split manually (never with `readline`, which also splits on
+  * U+2028/U+2029 and would corrupt frames).
+  */
+@@ -30,7 +30,7 @@ export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
+   cause: Schema.optional(Schema.Defect()),
+ }) {
+   override get message(): string {
+-    return `Pi RPC ${this.operation} failed${this.detail === undefined ? "" : `: ${this.detail}`}.`;
++    return `Nornic RPC ${this.operation} failed${this.detail === undefined ? "" : `: ${this.detail}`}.`;
+   }
+ }
+ 
+@@ -42,7 +42,7 @@ export class PiRpcTimeoutError extends Schema.TaggedError<PiRpcTimeoutError>()(
+   },
+ ) {
+   override get message(): string {
+-    return `Pi RPC ${this.operation} failed: timed out after ${this.timeoutMs}ms.`;
++    return `Nornic RPC ${this.operation} failed: timed out after ${this.timeoutMs}ms.`;
+   }
+ }
+ 
+@@ -143,7 +143,7 @@ function summarizePiError(error: unknown): string {
+ }
+ 
+ /**
+- * Stdout closure is not enough to diagnose an early crash: Pi 0.84+ can exit 1
++ * Stdout closure is not enough to diagnose an early crash: Nornic 0.84+ can exit 1
+  * on import before writing any protocol line.
+  */
+ function describePiStdoutClosure(exitCode: number | undefined): string {
+diff --git a/packages/provider-pi/src/server/status.test.ts b/packages/provider-pi/src/server/status.test.ts
+index cee6442fc9..9f223c1e22 100644
+--- a/packages/provider-pi/src/server/status.test.ts
++++ b/packages/provider-pi/src/server/status.test.ts
+@@ -9,7 +9,13 @@ import * as Stream from "effect/Stream";
+ import * as ChildProcess from "effect/process/ChildProcess";
+ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+ 
+-import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
++import {
++  buildInitialPiProviderSnapshot,
++  checkPiProviderStatus,
++  MINIMUM_PI_VERSION,
++} from "./status.ts";
++import { piClient } from "../client.ts";
++import { PROVIDER_DISPLAY_NAMES, ProviderDriverKind } from "@t3tools/contracts";
+ 
+ const encoder = new TextEncoder();
+ const decodeRpcRequest = Schema.decodeSync(
+@@ -105,18 +111,30 @@ const settings = {
+ } as const;
+ 
+ describe("PiProvider", () => {
+-  it.effect("requires the first published Pi version with entries and settlement hooks", () =>
++  it.effect("presents the agent and its default model as Nornic", () =>
++    Effect.gen(function* () {
++      const snapshot = yield* buildInitialPiProviderSnapshot(settings);
++      assert.equal(snapshot.displayName, "Nornic");
++      assert.equal(
++        snapshot.models.find((model) => model.slug === "default")?.name,
++        "Nornic default",
++      );
++      assert.equal(piClient.label, "Nornic");
++      assert.equal(PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("pi")], "Nornic");
++    }).pipe(Effect.provide(NodeServices.layer)),
++  );
++  it.effect("requires the first published Nornic version with entries and settlement hooks", () =>
+     Effect.gen(function* () {
+       const snapshot = yield* checkPiProviderStatus(settings).pipe(
+         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner("0.80.3")),
+       );
+       assert.equal(snapshot.status, "error");
+       assert.equal(snapshot.version, "0.80.3");
+-      assert.include(snapshot.message ?? "", `Pi ${MINIMUM_PI_VERSION} or newer`);
++      assert.include(snapshot.message ?? "", `Nornic ${MINIMUM_PI_VERSION} or newer`);
+     }).pipe(Effect.provide(NodeServices.layer)),
+   );
+ 
+-  it.effect("keeps compatible Pi selectable when optional discovery fails", () =>
++  it.effect("keeps compatible Nornic selectable when optional discovery fails", () =>
+     Effect.gen(function* () {
+       const snapshot = yield* checkPiProviderStatus(settings).pipe(
+         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner("0.84.3")),
+@@ -131,7 +149,7 @@ describe("PiProvider", () => {
+     }).pipe(Effect.provide(NodeServices.layer)),
+   );
+ 
+-  it.effect("reports a known unauthenticated inventory when Pi returns no usable models", () =>
++  it.effect("reports a known unauthenticated inventory when Nornic returns no usable models", () =>
+     Effect.gen(function* () {
+       const spawner = yield* piDiscoverySpawner({ models: [] });
+       const snapshot = yield* checkPiProviderStatus(settings).pipe(
+@@ -146,7 +164,7 @@ describe("PiProvider", () => {
+     }).pipe(Effect.provide(NodeServices.layer)),
+   );
+ 
+-  // regression: #18498 a malformed model inventory must not restore stale Pi models
++  // regression: #18498 a malformed model inventory must not restore stale Nornic models
+   it.effect.each([
+     ["missing models", {}],
+     ["missing model id", { models: [{ provider: "anthropic" }] }],
+@@ -154,14 +172,16 @@ describe("PiProvider", () => {
+       "mixed valid and invalid models",
+       { models: [{ provider: "anthropic", id: "claude-sonnet-4" }, { provider: "openrouter" }] },
+     ],
+-  ] as const)("reports unknown authentication when Pi discovery returns %s", (_label, inventory) =>
+-    Effect.gen(function* () {
+-      const spawner = yield* piDiscoverySpawner(inventory);
+-      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+-      );
+-      assert.equal(snapshot.status, "ready");
+-      assert.equal(snapshot.auth.status, "unknown");
+-    }).pipe(Effect.provide(NodeServices.layer)),
++  ] as const)(
++    "reports unknown authentication when Nornic discovery returns %s",
++    (_label, inventory) =>
++      Effect.gen(function* () {
++        const spawner = yield* piDiscoverySpawner(inventory);
++        const snapshot = yield* checkPiProviderStatus(settings).pipe(
++          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
++        );
++        assert.equal(snapshot.status, "ready");
++        assert.equal(snapshot.auth.status, "unknown");
++      }).pipe(Effect.provide(NodeServices.layer)),
+   );
+ });
+diff --git a/packages/provider-pi/src/server/status.ts b/packages/provider-pi/src/server/status.ts
+index 3030200c24..0849643b25 100644
+--- a/packages/provider-pi/src/server/status.ts
++++ b/packages/provider-pi/src/server/status.ts
+@@ -48,8 +48,8 @@ import {
+   type PiDiscoveredCommands,
+ } from "./commands.ts";
+ 
+-const PI_PRESENTATION = {
+-  displayName: "Pi",
++const NORNIC_PRESENTATION = {
++  displayName: "Nornic",
+   showInteractionModeToggle: false,
+   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
+   reportsContextWindow: true,
+@@ -64,9 +64,9 @@ const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
+  */
+ export const MINIMUM_PI_VERSION = "0.80.5";
+ 
+-const PI_DEFAULT_MODEL: ServerProviderModel = {
++const NORNIC_DEFAULT_MODEL: ServerProviderModel = {
+   slug: "default",
+-  name: "Pi default",
++  name: "Nornic default",
+   isCustom: false,
+   capabilities: EMPTY_PI_MODEL_CAPABILITIES,
+ };
+@@ -81,7 +81,7 @@ function piModelsFromSettings(
+   discovered: ReadonlyArray<ServerProviderModel> = [],
+ ): ReadonlyArray<ServerProviderModel> {
+   return providerModelsFromSettings(
+-    [PI_DEFAULT_MODEL, ...discovered],
++    [NORNIC_DEFAULT_MODEL, ...discovered],
+     customModels ?? [],
+     EMPTY_PI_MODEL_CAPABILITIES,
+   );
+@@ -229,7 +229,7 @@ export const buildInitialPiProviderSnapshot = Effect.fn(
+   const models = piModelsFromSettings(piSettings.customModels);
+   if (!piSettings.enabled) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: false,
+       checkedAt,
+       models,
+@@ -238,12 +238,12 @@ export const buildInitialPiProviderSnapshot = Effect.fn(
+         version: null,
+         status: "warning",
+         auth: { status: "unknown" },
+-        message: "Pi is disabled in T3 Code settings.",
++        message: "Nornic is disabled in T3 Code settings.",
+       },
+     });
+   }
+   return buildServerProvider({
+-    presentation: PI_PRESENTATION,
++    presentation: NORNIC_PRESENTATION,
+     enabled: true,
+     checkedAt,
+     models,
+@@ -252,7 +252,7 @@ export const buildInitialPiProviderSnapshot = Effect.fn(
+       version: null,
+       status: "warning",
+       auth: { status: "unknown" },
+-      message: "Checking Pi CLI availability...",
++      message: "Checking Nornic CLI availability...",
+     },
+   });
+ });
+@@ -267,7 +267,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+ 
+   if (!piSettings.enabled) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: false,
+       checkedAt,
+       models: fallbackModels,
+@@ -276,7 +276,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         version: null,
+         status: "warning",
+         auth: { status: "unknown" },
+-        message: "Pi is disabled in T3 Code settings.",
++        message: "Nornic is disabled in T3 Code settings.",
+       },
+     });
+   }
+@@ -288,9 +288,9 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+ 
+   if (Result.isFailure(versionResult)) {
+     const error = versionResult.failure;
+-    yield* Effect.logWarning("Pi CLI health check failed.", { errorTag: error._tag });
++    yield* Effect.logWarning("Nornic CLI health check failed.", { errorTag: error._tag });
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -300,15 +300,15 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         status: "error",
+         auth: { status: "unknown" },
+         message: isCommandMissingCause(error)
+-          ? "Pi CLI (`pi`) is not installed or not on PATH. Install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`."
+-          : "Failed to execute Pi CLI health check.",
++          ? "Nornic CLI (`pi`) is not installed or not on PATH. Install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`."
++          : "Failed to execute Nornic CLI health check.",
+       },
+     });
+   }
+ 
+   if (Option.isNone(versionResult.success)) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -317,7 +317,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         version: null,
+         status: "error",
+         auth: { status: "unknown" },
+-        message: "Pi CLI is installed but timed out while running `pi --version`.",
++        message: "Nornic CLI is installed but timed out while running `pi --version`.",
+       },
+     });
+   }
+@@ -326,7 +326,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+   if (versionOutput.code !== 0) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -335,14 +335,14 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         version,
+         status: "error",
+         auth: { status: "unknown" },
+-        message: "Pi CLI is installed but failed to run.",
++        message: "Nornic CLI is installed but failed to run.",
+       },
+     });
+   }
+ 
+   if (version === null) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -351,14 +351,14 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         version: null,
+         status: "error",
+         auth: { status: "unknown" },
+-        message: `T3 Code could not determine the Pi version. Pi ${MINIMUM_PI_VERSION} or newer is required.`,
++        message: `T3 Code could not determine the Nornic version. Nornic ${MINIMUM_PI_VERSION} or newer is required.`,
+       },
+     });
+   }
+ 
+   if (compareSemverVersions(version, MINIMUM_PI_VERSION) < 0) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -367,7 +367,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         version,
+         status: "error",
+         auth: { status: "unknown" },
+-        message: `Pi ${version} is unsupported. Update to Pi ${MINIMUM_PI_VERSION} or newer.`,
++        message: `Nornic ${version} is unsupported. Update to Nornic ${MINIMUM_PI_VERSION} or newer.`,
+       },
+     });
+   }
+@@ -375,7 +375,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+   const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+   if (!resolvedLaunchArgs.ok) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -396,11 +396,11 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+     cwd,
+   ).pipe(Effect.timeoutOption(PI_RPC_DISCOVERY_TIMEOUT_MS), Effect.exit);
+   if (Exit.isFailure(discoveryExit)) {
+-    yield* Effect.logWarning("Pi RPC discovery failed.", {
++    yield* Effect.logWarning("Nornic RPC discovery failed.", {
+       errorTag: causeErrorTag(discoveryExit.cause),
+     });
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -410,13 +410,13 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         status: "ready",
+         auth: { status: "unknown" },
+         message:
+-          "Pi is available, but T3 Code could not refresh its models and commands. The live session will retry startup.",
++          "Nornic is available, but T3 Code could not refresh its models and commands. The live session will retry startup.",
+       },
+     });
+   }
+   if (Option.isNone(discoveryExit.value)) {
+     return buildServerProvider({
+-      presentation: PI_PRESENTATION,
++      presentation: NORNIC_PRESENTATION,
+       enabled: piSettings.enabled,
+       checkedAt,
+       models: fallbackModels,
+@@ -426,7 +426,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         status: "ready",
+         auth: { status: "unknown" },
+         message:
+-          "Pi is available, but model and command discovery needs interactive input. The live session will handle it.",
++          "Nornic is available, but model and command discovery needs interactive input. The live session will handle it.",
+       },
+     });
+   }
+@@ -434,7 +434,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+   const discovery = discoveryExit.value.value;
+   const models = piModelsFromSettings(piSettings.customModels, discovery.models);
+   return buildServerProvider({
+-    presentation: PI_PRESENTATION,
++    presentation: NORNIC_PRESENTATION,
+     enabled: piSettings.enabled,
+     checkedAt,
+     models,
+@@ -449,7 +449,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
+         ? {}
+         : {
+             message:
+-              "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent.",
++              "Nornic has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent.",
+           }),
+     },
+   });
+@@ -471,7 +471,7 @@ export const enrichPiSnapshot = (input: {
+   }).pipe(
+     Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+     Effect.catchCause((cause) =>
+-      Effect.logWarning("Pi version advisory enrichment failed", {
++      Effect.logWarning("Nornic version advisory enrichment failed", {
+         errorTag: causeErrorTag(cause),
+       }),
+     ),
+diff --git a/packages/provider-pi/src/server/textGeneration.test.ts b/packages/provider-pi/src/server/textGeneration.test.ts
+index f4f9300c73..a39a92cda3 100644
+--- a/packages/provider-pi/src/server/textGeneration.test.ts
++++ b/packages/provider-pi/src/server/textGeneration.test.ts
+@@ -63,7 +63,7 @@ const makeFakePi = (reply: string, setModelError?: string) =>
+     return { spawner, received };
+   });
+ 
+-it.effect("names the model and the disabled extensions when Pi cannot load it", () =>
++it.effect("names the model and the disabled extensions when Nornic cannot load it", () =>
+   Effect.gen(function* () {
+     const pi = yield* makeFakePi("", "Model not found: demo/demo-model");
+     const textGeneration = yield* makePiTextGeneration(
+@@ -82,7 +82,7 @@ it.effect("names the model and the disabled extensions when Pi cannot load it",
+       .pipe(Effect.flip);
+ 
+     assert.equal(error._tag, "TextGenerationError");
+-    assert.include(error.detail, "Pi rejected model 'demo/demo-model'");
++    assert.include(error.detail, "Nornic rejected model 'demo/demo-model'");
+     assert.include(error.detail, "Model not found: demo/demo-model");
+     assert.include(error.detail, "--no-extensions");
+     assert.isUndefined(pi.received.find((record) => record["type"] === "prompt"));
+diff --git a/packages/provider-pi/src/server/textGeneration.ts b/packages/provider-pi/src/server/textGeneration.ts
+index a0137f3716..34e008ec03 100644
+--- a/packages/provider-pi/src/server/textGeneration.ts
++++ b/packages/provider-pi/src/server/textGeneration.ts
+@@ -51,13 +51,13 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function*
+ 
+       if (modelSelection.model !== "default") {
+         // `customModels` accepts arbitrary strings, so an unusable slug is
+-        // rejected rather than skipped: running Pi's default model here would
++        // rejected rather than skipped: running Nornic's default model here would
+         // report success for a model the caller never asked for.
+         const parsed = parsePiModelSlug(modelSelection.model);
+         if (parsed === null) {
+           return yield* new TextGenerationError({
+             operation,
+-            detail: `Pi model '${modelSelection.model}' must use provider/model format.`,
++            detail: `Nornic model '${modelSelection.model}' must use provider/model format.`,
+           });
+         }
+         yield* connection
+@@ -69,10 +69,10 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function*
+                 ? new TextGenerationError({
+                     operation,
+                     detail:
+-                      `Pi rejected model '${modelSelection.model}': ${error.detail ?? "unknown error"}. ` +
+-                      "If the model comes from a Pi extension or package, text generation cannot use it " +
+-                      "because it runs Pi with --no-extensions. Pick a built-in Pi model or one defined " +
+-                      "in Pi's models.json.",
++                      `Nornic rejected model '${modelSelection.model}': ${error.detail ?? "unknown error"}. ` +
++                      "If the model comes from a Nornic extension or package, text generation cannot use it " +
++                      "because it runs Nornic with --no-extensions. Pick a built-in Nornic model or one defined " +
++                      "in Nornic's models.json.",
+                     cause: error,
+                   })
+                 : error,
+@@ -97,10 +97,10 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function*
+       if (!text) {
+         return yield* new TextGenerationError({
+           operation,
+-          detail: "Pi returned empty output.",
++          detail: "Nornic returned empty output.",
+         });
+       }
+-      return yield* TextGenerationOperations.decodeJsonReply(request, "Pi", text);
++      return yield* TextGenerationOperations.decodeJsonReply(request, "Nornic", text);
+     },
+     (effect, request) => {
+       const { operation } = request;
+@@ -109,7 +109,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function*
+         Effect.flatMap(
+           Option.match({
+             onNone: () =>
+-              Effect.fail(new TextGenerationError({ operation, detail: "Pi request timed out." })),
++              Effect.fail(new TextGenerationError({ operation, detail: "Nornic request timed out." })),
+             onSome: (value) => Effect.succeed(value),
+           }),
+         ),
+@@ -118,7 +118,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function*
+             ? cause
+             : new TextGenerationError({
+                 operation,
+-                detail: "Pi text generation failed.",
++                detail: "Nornic text generation failed.",
+                 cause,
+               }),
+         ),
+@@ -129,6 +129,6 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function*
+ 
+   return TextGenerationOperations.fromRunner(
+     "PiTextGeneration",
+-    TextGenerationOperations.withoutInvestigation("Pi", runPiJson),
++    TextGenerationOperations.withoutInvestigation("Nornic", runPiJson),
+   );
+ });
+diff --git a/packages/provider-pi/src/server/thinkingCapabilities.ts b/packages/provider-pi/src/server/thinkingCapabilities.ts
+index 3ae1f21109..9ecc419fe9 100644
+--- a/packages/provider-pi/src/server/thinkingCapabilities.ts
++++ b/packages/provider-pi/src/server/thinkingCapabilities.ts
+@@ -3,7 +3,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
+ import * as Predicate from "effect/Predicate";
+ 
+ /**
+- * Pi's full thinking ladder. Extra High (`xhigh`) and Max are opt-in per
++ * Nornic's full thinking ladder. Extra High (`xhigh`) and Max are opt-in per
+  * model via `thinkingLevelMap`; advertising them globally makes
+  * `set_thinking_level` fail on models that lack them.
+  */
+diff --git a/packages/provider-pi/src/server/usage.ts b/packages/provider-pi/src/server/usage.ts
+index f0899c57a6..ecefdfae8d 100644
+--- a/packages/provider-pi/src/server/usage.ts
++++ b/packages/provider-pi/src/server/usage.ts
+@@ -62,8 +62,8 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly
+   if (timestampMs === null) return [];
+   const source = entry.type === "message" ? entry.message : entry;
+   const usage = source.usage;
+-  // Pi's auxiliary tool and summary records carry no model attribution. Match
+-  // Pi's own breakdown rather than assigning them to the conversation model.
++  // Nornic's auxiliary tool and summary records carry no model attribution. Match
++  // Nornic's own breakdown rather than assigning them to the conversation model.
+   const rateModel =
+     "model" in source
+       ? "responseModel" in source
+@@ -73,7 +73,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly
+   const model = "provider" in source ? `${source.provider}/${rateModel}` : "Tools/summaries";
+   const outputTokens = tokenCount(usage.output);
+   const totals = {
+-    // Pi's input/cache counters are already disjoint.
++    // Nornic's input/cache counters are already disjoint.
+     uncachedInputTokens: tokenCount(usage.input),
+     cachedInputTokens: tokenCount(usage.cacheRead),
+     cacheCreationTokens: tokenCount(usage.cacheWrite),
+@@ -81,7 +81,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly
+     reasoningTokens: Math.min(outputTokens, tokenCount(usage.reasoning)),
+   };
+   const cost = usage.cost?.total;
+-  // Pi defaults omitted catalog rates to zero. Let shared pricing estimate
++  // Nornic defaults omitted catalog rates to zero. Let shared pricing estimate
+   // API-equivalent cost when the transcript has no positive cost estimate.
+   const reportedCostUsd =
+     typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null;
+diff --git a/packages/provider-pi/src/settings.ts b/packages/provider-pi/src/settings.ts
+index 25d807fccc..fe67a2a528 100644
+--- a/packages/provider-pi/src/settings.ts
++++ b/packages/provider-pi/src/settings.ts
+@@ -20,7 +20,7 @@ export const PiSettings = makeProviderSettingsSchema(
+     binaryPath: makeBinaryPathSetting("pi").pipe(
+       Schema.annotateKey({
+         title: "Binary path",
+-        description: "Path to the Pi coding agent binary.",
++        description: "Path to the Nornic coding agent binary.",
+         providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
+       }),
+     ),
