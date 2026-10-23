@@ -23,6 +23,7 @@ import (
 // that didn't maintain the index, or a partial file copy.
 func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine) {
 	t.Helper()
+	eng.invalidateLabelIndexReadyReadTs()
 	require.NoError(t, eng.db.DropPrefix([]byte{prefixLabelIndex}))
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)
@@ -72,7 +73,7 @@ func TestLabelIndexBackfill_RebuildsForPreexistingNodesAfterReopen(t *testing.T)
 	// Sanity: in-session GetNodesByLabel now returns 0 (index wiped).
 	gone, err := engine1.GetNodesByLabel("Concept")
 	require.NoError(t, err)
-	require.Len(t, gone, 0, "label index must be empty after wipe (preconditions)")
+	require.Len(t, gone, n, "label reads must use stored node bodies while the ready marker is absent")
 	require.NoError(t, engine1.Close())
 
 	// Stage 2: reopen — backfill must rebuild the index.
@@ -284,6 +285,7 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 // existing (possibly stale) on-disk index.
 func wipeMarkerOnly(t *testing.T, eng *BadgerEngine) {
 	t.Helper()
+	eng.invalidateLabelIndexReadyReadTs()
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)
 	}))
@@ -310,6 +312,7 @@ func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
 		{name: "malformed", value: []byte{3, 0}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			engine.invalidateLabelIndexReadyReadTs()
 			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 				if testCase.value == nil {
 					return txn.Delete(labelIndexReadyKey)
@@ -357,7 +360,10 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 			return err
 		}
 		return item.Value(func(value []byte) error {
-			assert.Equal(t, []byte{3}, value)
+			ready, generation, valid := decodeLabelIndexMarker(value)
+			assert.True(t, valid)
+			assert.True(t, ready)
+			assert.NotZero(t, generation)
 			return nil
 		})
 	}))
@@ -408,12 +414,21 @@ func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
 					return err
 				}
 				return item.Value(func(value []byte) error {
-					assert.Equal(t, []byte{3}, value)
+					ready, _, valid := decodeLabelIndexMarker(value)
+					assert.True(t, valid)
+					assert.True(t, ready)
 					return nil
 				})
 			}))
 		})
 	}
+}
+
+func TestLabelIndexMarkReadyReturnsClosedEngineError(t *testing.T) {
+	engine, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, engine.Close())
+	require.ErrorIs(t, engine.markEmptyLabelIndexReady(), ErrStorageClosed)
 }
 
 func TestLabelIndexBackfill_NamespacedNodesRebuildIntoCorrectScope(t *testing.T) {

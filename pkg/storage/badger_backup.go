@@ -116,6 +116,9 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	defer db.oracle.releaseReads()
 
+	// The replacement store has a different label-index generation even when
+	// its published timestamp is above the old marker's version.
+	b.labelIndexStoreReplaced()
 	if err := db.DropAll(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -221,11 +224,13 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.ensureOpen(); err != nil {
 		return 0, 0, err
 	}
+	labelReset := b.beginLabelIndexReset()
 	// Runs after the lock below is released: the reset's consumers may write.
 	var reset *commitNotification
 	defer func() { b.awaitCommitNotification(reset) }()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
+	defer func() { err = labelReset.finish(err) }()
 
 	prefixBytes := []byte(prefix)
 	namespace, wholeNamespace := strings.CutSuffix(prefix, ":")
@@ -318,6 +323,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindLabel, namespace))
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindEdgeType, namespace))
 	}
+	if err := labelReset.markBuilding(); err != nil {
+		return 0, 0, err
+	}
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
@@ -328,22 +336,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		return 0, 0, err
 	}
 	// Node and edge dict entries are sharded: collect the victim IDs shard
-	// by shard, then remove each pair with the sharded helpers (the drop is
-	// exclusive, so the passes race with nothing).
-	var nodeVictims []NodeID
-	for i := range b.idDict.nodes {
-		sh := &b.idDict.nodes[i]
-		sh.mu.RLock()
-		for id := range sh.forward {
-			if strings.HasPrefix(string(id), prefix) {
-				nodeVictims = append(nodeVictims, id)
-			}
-		}
-		sh.mu.RUnlock()
-	}
-	for _, id := range nodeVictims {
-		b.idDict.nodePairRemoveByID(id)
-	}
+	// by shard, then remove each pair with the sharded helpers. Node IDs go
+	// through the label-index lifecycle, which fences older readers first.
+	labelReset.retireNodeDictionaryEntries(prefix)
 	var edgeVictims []EdgeID
 	for i := range b.idDict.edges {
 		sh := &b.idDict.edges[i]

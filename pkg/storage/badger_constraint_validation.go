@@ -221,23 +221,12 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 		hook()
 	}
 
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	iter := b.newLabelIndexReader(txn, nodeScopeForNamespace(namespace), label, "", storedRead, false)
 	defer iter.Close()
 
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
+	for iter.Next() {
+		nodeID := iter.NodeID()
+		if nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
 
@@ -276,27 +265,16 @@ func (b *BadgerEngine) scanForUniqueViolationInTxn(txn *badger.Txn, namespace, l
 		}
 	}
 
-	return nil
+	return iter.Err()
 }
 
 func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	iter := b.newLabelIndexReader(txn, nodeScopeForNamespace(namespace), label, "", storedRead, false)
 	defer iter.Close()
 
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
+	for iter.Next() {
+		nodeID := iter.NodeID()
+		if nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
 
@@ -341,7 +319,7 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 		}
 	}
 
-	return nil
+	return iter.Err()
 }
 
 // temporalOverlapViolation reports whether existing overlaps the interval for
@@ -382,23 +360,12 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 	}
 	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 	label := c.Label
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	iter := b.newLabelIndexReader(txn, nodeScopeForNamespace(namespace), label, "", storedRead, false)
 	defer iter.Close()
 
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
+	for iter.Next() {
+		nodeID := iter.NodeID()
+		if nodeID == "" || nodeID == excludeNodeID {
 			continue
 		}
 
@@ -427,7 +394,7 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 		}
 	}
 
-	return nil
+	return iter.Err()
 }
 
 // scanForTemporalOverlapInTxn checks the interval [start, end) for keyValue

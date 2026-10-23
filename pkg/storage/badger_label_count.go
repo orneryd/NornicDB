@@ -249,6 +249,13 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
+	ready, err := b.labelIndexReady()
+	if err != nil {
+		return 0, err
+	}
+	if !ready {
+		return b.countStoredLabelNodes(nodeScopeForNamespace(namespace), label)
+	}
 	b.labelCountWriteMu.RLock()
 	defer b.labelCountWriteMu.RUnlock()
 	count, _, err := b.readNodeCountByLabelInNamespace(namespace, label)
@@ -318,32 +325,17 @@ func (b *BadgerEngine) repairLabelCountLocked(namespace, label string) error {
 	})
 }
 
-// countLabelIndexEntriesInNamespace counts the label-index entries of one
-// label whose node lives in one namespace.
+// countLabelIndexEntriesInNamespace counts one label through the shared
+// readiness-aware reader, including the stored-node fallback during rebuild.
 func (b *BadgerEngine) countLabelIndexEntriesInNamespace(namespace, label string) (int64, error) {
 	var count int64
-	err := b.db.View(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		labelLen := len(label)
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			num, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-			if !ok {
-				continue
-			}
-			id, ok := b.idDict.lookupNodeIDByNum(num)
-			if !ok {
-				continue
-			}
-			ns, _, ok := ParseDatabasePrefix(string(id))
-			if !ok || ns != namespace {
-				continue
-			}
+	err := b.withView(func(txn *badger.Txn) error {
+		reader := b.newLabelIndexReader(txn, nodeScopeForNamespace(namespace), label, "", storedRead, false)
+		defer reader.Close()
+		for reader.Next() {
 			count++
 		}
-		return nil
+		return reader.Err()
 	})
 	return count, err
 }
@@ -376,11 +368,18 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
+	ready, err := b.labelIndexReady()
+	if err != nil {
+		return 0, err
+	}
+	if !ready {
+		return b.countStoredLabelNodes("", label)
+	}
 	b.labelCountWriteMu.RLock()
 	defer b.labelCountWriteMu.RUnlock()
 	needle := []byte(label)
 	var total int64
-	err := b.withView(func(txn *badger.Txn) error {
+	err = b.withView(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badgerPrefixIteratorOptions(labelCountPrefix()))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
