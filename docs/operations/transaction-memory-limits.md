@@ -156,7 +156,7 @@ HTTP/1.1 requests. The adapter cannot buffer a client payload before admission.
 Bodyless h2c upgrades, prior-knowledge h2c and TLS h2 remain supported. Application
 metadata/body credit belongs to each request or HTTP/2 stream, never to an entire
 upgraded connection. See the
-[listener-to-admission audit](../../openspec/changes/dynamic-memory-soft-limits/transport-admission-audit.md).
+[listener-to-admission audit](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/openspec/changes/dynamic-memory-soft-limits/transport-admission-audit.md).
 
 GraphQL GET variables in the query string also pass through request admission.
 Standalone GraphQL handlers use the same body/query/header admission helper;
@@ -174,7 +174,7 @@ the socket read before the scope ends. Policy rejection closes with code `1013` 
 `Neo.TransientError.General.MemoryPoolOutOfMemoryError`. The existing gqlgen
 payload read limit still applies independently. Policy-disabled GraphQL uses
 the unchanged default gqlgen transport. See the
-[pre-decode consumer audit](../../openspec/changes/dynamic-memory-soft-limits/predecode-consumer-audit.md).
+[pre-decode consumer audit](https://github.com/orneryd/NornicDB/blob/release/v1.4.4/openspec/changes/dynamic-memory-soft-limits/predecode-consumer-audit.md).
 
 `NORNICDB_MEMORY_APPLICATION_SOFT_MAX` (`memory.application_soft_max`) enables
 physical cgroup admission separately from the transaction estimates. Its default
