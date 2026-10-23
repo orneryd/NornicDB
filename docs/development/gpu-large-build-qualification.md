@@ -44,6 +44,8 @@ Windows uses yzma `v1.30.0`, whose context ABI includes `MoeCacheSize`.
 ```powershell
 docker build -f docker/Dockerfile.llama-cpu -t nornic-llama-cpu:v0.7.0-local .
 docker build -f docker/Dockerfile.llama-cuda --build-arg LLAMA_BUILD_JOBS=2 -t nornic-llama-cuda:v0.7.0-local .
+# For a local RTX 2080 Ti build, compile only its SM 75 architecture:
+docker build -f docker/Dockerfile.llama-cuda --build-arg LLAMA_BUILD_JOBS=2 --build-arg LLAMA_CUDA_ARCHITECTURES=75 -t nornic-llama-cuda:v0.7.0-sm75-local .
 ```
 
 Application Dockerfiles consume the versioned `timothyswt/llama-*-libs` images.

@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Use device pointer mode for CUDA vector norms and wide coordinate offsets.
+- Keep Vulkan push-constant data alive across the native binding and Go stack
+  movement; cover normalization, search, and HNSW construction under forced
+  stack relocation and garbage collection.
 - Read pooled sequence embeddings through the Windows yzma adapter so BGE-M3
   returns normalized embeddings rather than zero token-output vectors.
 - Resolve HNSW construction coordinates from its supplied file store when
