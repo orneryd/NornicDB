@@ -645,7 +645,7 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 	})
 }
 
-// rowSubqueryNode is an EXISTS / COUNT / COLLECT { … } subquery read once:
+// rowSubqueryNode is an EXISTS / COUNT / COLLECT { â€¦ } subquery read once:
 // its keyword and body. It runs the body for the row in the statement
 // context the row carries, as evaluateRowSubqueryAtom does, without reading
 // the text again. A row without a statement context, or a body the
@@ -750,6 +750,9 @@ func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	if err := scalarExpressionEvaluationError(expr, values); err != nil {
+		return nil, false, err
+	}
 	// The shared evaluator evaluates the text it is handed itself and hands
 	// back only its parts, subqueries included (handedBackByRowEvaluator).
 	value, err := e.evaluateRowFallback(expr, values)

@@ -16,6 +16,7 @@ func (e *StorageExecutor) pipelineApplyCallSubquery(ctx context.Context, rows []
 type pipelineCallMetadata struct {
 	scope   map[string]struct{}
 	columns []string
+	batch   *boundTransactionBatch
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
@@ -23,12 +24,23 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	// however many outer rows run the operator.
 	ctx = withPipelineClausePlans(ctx)
 	parsed := e.callSubqueryParseFor(ctx, clause)
-	body, afterCall, inTransactions, batchSize := parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize
-	if body == "" {
-		return nil, nil, true, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
+	body, afterCall, inTransactions, batchExpression := parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize
+	if err := validateCallSubqueryBody(body); err != nil {
+		return nil, nil, true, err
 	}
 	if strings.TrimSpace(afterCall) != "" {
 		return nil, nil, false, nil
+	}
+	var batch *boundTransactionBatch
+	if inTransactions {
+		if metadata != nil {
+			batch = metadata.batch
+		}
+		var err error
+		batch, err = e.bindTransactionalCallBatch(ctx, batchExpression, batch)
+		if err != nil {
+			return nil, nil, true, err
+		}
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
@@ -282,16 +294,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		return run(targetExec, ctx, rows)
 	}
 
-	if err := targetExec.rejectCallInTransactionsInExplicitTx(); err != nil {
+	if err := targetExec.validateTransactionalCallInput(len(rows)); err != nil {
 		return nil, nil, true, err
-	}
-	if batchSize <= 0 {
-		batchSize = 1000
 	}
 	combined := make([]pipelineRow, 0, len(rows))
 	stats := &QueryStats{}
-	for start := 0; start < len(rows); start += batchSize {
-		end := start + batchSize
+	for start := 0; start < len(rows); start += batch.size {
+		end := start + batch.size
 		if end > len(rows) {
 			end = len(rows)
 		}

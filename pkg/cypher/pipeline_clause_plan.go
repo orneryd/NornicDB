@@ -278,7 +278,7 @@ type callSubqueryParse struct {
 	body           string
 	afterCall      string
 	inTransactions bool
-	batchSize      int
+	batchSize      *transactionBatchSpec
 	scoped         bool
 	scopedImports  []string
 }

@@ -795,9 +795,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if invalidIntegerKey {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreListIndexTypeMismatch(key.display))
 		}
-		if element := elementOfType(receiver.typeName()); element != "" {
-			return typedOperand(element), nil
-		}
+		return staticListElementOperand(receiver), nil
 	case receiver.kind == "Map" || receiver.kind == "Map, Node or Relationship":
 		if keyKnown && key.kind != "String" {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreMapKeyTypeMismatch(key.display))
@@ -960,7 +958,7 @@ func staticMapProjectionSplit(expression string) (variable, items string, projec
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
 func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand, error) {
-	if expression[0] == '$' {
+	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		name := strings.TrimSpace(expression[1:])
 		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
 			return staticOperand{}, nil
@@ -1067,6 +1065,18 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 				if _, err := checker.check(argument); err != nil {
 					return staticOperand{}, err
 				}
+			}
+		}
+		// List selectors preserve the element constraint supplied by their
+		// argument, including a bound parameter. CASE and coalesce join those
+		// constraints through their existing rules rather than selected values.
+		if strings.EqualFold(function, "head") || strings.EqualFold(function, "last") {
+			if args := splitTopLevelComma(arguments); len(args) == 1 {
+				list, err := checker.check(args[0])
+				if err != nil {
+					return staticOperand{}, err
+				}
+				return staticListElementOperand(list), nil
 			}
 		}
 		return knownOperand(staticFunctionResultType(function, arguments)), nil
@@ -1475,4 +1485,13 @@ func numericOperatorResult(left, right staticOperand) staticOperand {
 		return knownOperand("Integer")
 	}
 	return knownOperand("Number")
+}
+
+// staticListElementOperand preserves develop's complete list element union.
+// Subscripts and list-selector functions use the same existing type owner.
+func staticListElementOperand(list staticOperand) staticOperand {
+	if element := elementOfType(list.typeName()); element != "" {
+		return typedOperand(element)
+	}
+	return staticOperand{}
 }

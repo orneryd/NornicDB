@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).
+- Parse transactional CALL batch clauses structurally and share static size/context admission between execution and EXPLAIN.
+  Include every expression position in shared graph-effect and chain-dependency analysis, including graph-reading projections and predicates.
+  Bind runtime sizes at the resulting chain boundaries and preserve every earlier committed batch when a later batch fails.
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
 
