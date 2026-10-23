@@ -293,10 +293,6 @@ func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause strin
 	})
 }
 
-func (e *StorageExecutor) inferTopLevelReturnColumnsFor(ctx context.Context, query string) []string {
-	return clauseAnalysisFor(ctx, clauseAnalysisReturnColumns, query, e.inferTopLevelReturnColumns)
-}
-
 func callSubqueryQueryIsWriteFor(ctx context.Context, query string) bool {
 	return clauseAnalysisFor(ctx, clauseAnalysisWrite, query, callSubqueryQueryIsWrite)
 }

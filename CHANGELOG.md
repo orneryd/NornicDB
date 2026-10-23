@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Share statement structure, projected scope and ordered result columns across
+  EXPLAIN, statement metadata and empty CALL results. Preserve imports through
+  USE and YIELD, expand wildcards from the scope and procedure registry, and use
+  the same UNION contract. Expose complete facts to composite query planning;
+  unresolved metadata is a terminal error rather than a guessed or empty header.
+
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).

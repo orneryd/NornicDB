@@ -366,7 +366,7 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 	// Cut the query on each boundary. The first clause must begin at the
 	// first boundary (i.e. the query should begin with one of these keywords
 	// after trimming).
-	trimmedLeft := len(cypher) - len(strings.TrimLeft(cypher, " \t\n\r"))
+	trimmedLeft := queryGapEnd(cypher, 0)
 	if boundaries[0].pos != trimmedLeft {
 		return nil, false, topLevelCall
 	}
@@ -953,16 +953,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var stats *QueryStats
 			ok := true
 			var err error
-			if clause.optional {
-				body, _, _, _ := e.parseCallSubquery(clause.text)
-				columns := e.inferTopLevelReturnColumns(body)
+			if clause.optional && len(rows) > 0 {
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
 					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
 					addQueryStats(stats, rowStats)
-					return rowsOut, columns, handled, err
+					return rowsOut, callMetadata.columns, handled, err
 				}, &ok)
-				callMetadata.columns = columns
 			} else {
 				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
 			}
@@ -975,12 +972,8 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			terminalCallColumns = append(terminalCallColumns[:0], callMetadata.columns...)
-			for _, row := range rows {
-				for name := range row {
-					if !strings.HasPrefix(name, "$") {
-						scope[name] = struct{}{}
-					}
-				}
+			for _, name := range callMetadata.columns {
+				scope[name] = struct{}{}
 			}
 			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCII(clause.text), "IN TRANSACTIONS") {
 				wrote = true

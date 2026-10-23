@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -812,102 +811,6 @@ func pipelineAggregateNumber(value interface{}) (float64, int64, bool, bool) {
 	}
 }
 
-// returnProjection is one RETURN item: its expression, its column name, and
-// for an aggregating item the aggregate (aggregateName empty when the
-// aggregate is nested in a larger expression, aggregateExpr then being the
-// whole expression).
-type returnProjection struct {
-	expr          string
-	alias         string
-	isAggr        bool
-	aggregateName string
-	aggregateExpr string
-	distinct      bool
-}
-
-// returnProjectionPlan is a RETURN clause parsed for pipelineApplyReturn:
-// its items, columns, DISTINCT and trailing ORDER BY / SKIP / LIMIT. A plan
-// depends only on the clause text, so it is parsed once per text
-// (returnProjectionPlanFor). valid is false when the clause has no items.
-type returnProjectionPlan struct {
-	valid bool
-	star  bool
-	// starItems are the items after a leading * (RETURN *, x AS y, #883);
-	// the * stands for every variable in scope, in name order.
-	starItems    []string
-	distinct     bool
-	modifiers    string
-	projections  []returnProjection
-	columns      []string
-	hasAggregate bool
-}
-
-// returnProjectionPlans caches parsed RETURN clauses by text. Plans are
-// immutable once cached; the cache is cleared when it reaches
-// returnProjectionPlanLimit entries, which bounds it for workloads with
-// unbounded distinct query texts.
-var returnProjectionPlans = struct {
-	sync.RWMutex
-	plans map[string]*returnProjectionPlan
-}{plans: make(map[string]*returnProjectionPlan)}
-
-const returnProjectionPlanLimit = 4096
-
-func returnProjectionPlanFor(clause string) *returnProjectionPlan {
-	returnProjectionPlans.RLock()
-	plan, cached := returnProjectionPlans.plans[clause]
-	returnProjectionPlans.RUnlock()
-	if cached {
-		return plan
-	}
-	plan = parseReturnProjectionPlan(clause)
-	returnProjectionPlans.Lock()
-	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
-		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
-	}
-	returnProjectionPlans.plans[clause] = plan
-	returnProjectionPlans.Unlock()
-	return plan
-}
-
-func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	// The clause is scanned with its keyword, which tells a keyword-named
-	// first item from a clause (RETURN by ORDER BY by, #894).
-	body := strings.TrimSpace(clause)
-	modifierStart := len(body)
-	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
-		modifierStart = cut
-	}
-	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
-	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
-	items := splitTopLevelComma(body)
-	if len(items) > 0 && strings.TrimSpace(items[0]) == "*" {
-		plan.valid, plan.star = true, true
-		for _, item := range items[1:] {
-			plan.starItems = append(plan.starItems, strings.TrimSpace(item))
-		}
-		return plan
-	}
-	for _, rawItem := range items {
-		// Semantic validation rejects an empty item (RETURN 1,,2).
-		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
-		plan.addProjection(expr, alias)
-	}
-	plan.valid = len(plan.projections) > 0
-	return plan
-}
-
-// withStarExpanded is the plan of RETURN *, items with the * written out
-// (starProjectionItems, #883).
-func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProjectionPlan {
-	expanded := &returnProjectionPlan{valid: true, distinct: plan.distinct, modifiers: plan.modifiers}
-	for _, item := range starProjectionItems(columns, plan.starItems) {
-		expanded.addProjection(parseProjectionExprAlias(item))
-	}
-	return expanded
-}
-
 // pipelineOriginalReturnText is the text the statement gave the RETURN
 // clause at idx, before rewrites, or "".
 func pipelineOriginalReturnText(originalClauses []pipelineClause, idx int) string {
@@ -934,55 +837,6 @@ func pipelineNameReturnColumns(ctx context.Context, final *ExecuteResult, clause
 	if columns := pipelineReturnSourceColumnsFor(ctx, original); len(columns) == len(final.Columns) {
 		final.Columns = slices.Clone(columns)
 	}
-}
-
-// starProjectionItems writes out the * of `WITH *, items` or
-// `RETURN *, items` (#883), as Neo4j orders the columns: each of columns, in
-// the given (name) order, as a variable item, except a column one of items
-// names (`RETURN *, a + 1 AS a` has the one column a), then items.
-func starProjectionItems(columns, items []string) []string {
-	named := make(map[string]bool, len(items))
-	for _, item := range items {
-		_, alias := parseProjectionExprAlias(item)
-		named[alias] = true
-	}
-	out := make([]string, 0, len(columns)+len(items))
-	for _, column := range columns {
-		if !named[column] {
-			variable := projectionVariableText(column)
-			out = append(out, variable+" AS "+variable)
-		}
-	}
-	return append(out, items...)
-}
-
-// projectionVariableText is a variable as an expression: backtick-quoted when
-// it isn't a plain identifier.
-func projectionVariableText(name string) string {
-	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
-		return name
-	}
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
-
-func (plan *returnProjectionPlan) addProjection(expr, alias string) {
-	aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
-	if !isAggr && pipelineExpressionContainsAggregate(expr) {
-		isAggr = true
-		aggregateExpr = expr
-	}
-	plan.hasAggregate = plan.hasAggregate || isAggr
-	plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
-	plan.columns = append(plan.columns, alias)
-}
-
-func returnProjectionPlanFromItems(items []returnItem) *returnProjectionPlan {
-	plan := &returnProjectionPlan{}
-	for _, item := range items {
-		plan.addProjection(item.expr, item.column())
-	}
-	plan.valid = len(plan.projections) > 0
-	return plan
 }
 
 // pipelineApplyReturn projects each binding row through the RETURN list.

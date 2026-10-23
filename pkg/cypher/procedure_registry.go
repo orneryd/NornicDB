@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -100,6 +101,9 @@ type ProcedureRegistry struct {
 	builtins map[string]registeredProcedure
 	user     map[string]registeredProcedure
 	userFold map[string]struct{}
+
+	// generation invalidates read-only procedure metadata caches.
+	generation atomic.Uint64
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
@@ -121,6 +125,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -141,6 +146,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -217,6 +223,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
 	r.userFold = make(map[string]struct{})
+	r.generation.Add(1)
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {
@@ -237,18 +244,7 @@ func procedureOutputTypes(clause string) map[string]string {
 	if !found {
 		return nil
 	}
-	outputs := procedure.Spec.Returns
-	if len(outputs) == 0 {
-		separator := strings.LastIndex(procedure.Spec.Signature, " :: (")
-		if separator < 0 || !strings.HasSuffix(procedure.Spec.Signature, ")") {
-			return nil
-		}
-		for _, output := range splitTopLevelComma(procedure.Spec.Signature[separator+5 : len(procedure.Spec.Signature)-1]) {
-			if name, typeName, ok := strings.Cut(output, "::"); ok {
-				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
-			}
-		}
-	}
+	outputs := procedureDeclaredReturns(procedure.Spec)
 	result := make(map[string]string, len(outputs))
 	for _, output := range outputs {
 		if typeName := procedureStaticType(output.Type); typeName != "" {
@@ -256,6 +252,24 @@ func procedureOutputTypes(clause string) map[string]string {
 		}
 	}
 	return result
+}
+
+// procedureDeclaredReturns is the registry's ordered output declaration,
+// shared by static type consumers and result-header analysis.
+func procedureDeclaredReturns(spec ProcedureSpec) []ProcedureColumn {
+	outputs := spec.Returns
+	if len(outputs) == 0 {
+		separator := strings.LastIndex(spec.Signature, " :: (")
+		if separator < 0 || !strings.HasSuffix(spec.Signature, ")") {
+			return nil
+		}
+		for _, output := range splitTopLevelComma(spec.Signature[separator+5 : len(spec.Signature)-1]) {
+			if name, typeName, ok := strings.Cut(output, "::"); ok {
+				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
+			}
+		}
+	}
+	return outputs
 }
 
 func procedureStaticType(typeName string) string {

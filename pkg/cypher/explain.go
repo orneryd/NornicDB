@@ -96,6 +96,10 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 
 // executeExplain returns the execution plan without executing the query
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
+	columns, err := e.StatementResultColumnsContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
 	if indexASCIIFold(query, "shortestpath") >= 0 {
 		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
@@ -107,7 +111,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	}
 	plan.Mode = ModeExplain
 	result := &ExecuteResult{
-		Columns: e.inferExplainColumns(query),
+		Columns: columns,
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
@@ -116,6 +120,12 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 
 // executeProfile executes the query and returns the plan with statistics
 func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*ExecuteResult, error) {
+	// Resolve participant signatures through the same owner as EXPLAIN and
+	// planning. Incomplete metadata cannot authorize execution effects.
+	columns, err := e.StatementResultColumnsContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
 	// Build the plan first
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
@@ -160,6 +170,10 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 			Stats:   &QueryStats{},
 		}
 	}
+	if err := verifyResultColumns(result.Columns, columns); err != nil {
+		return nil, err
+	}
+
 	return e.attachPlanMetadata(result, plan), nil
 }
 
@@ -828,65 +842,6 @@ func neo4jPlanOperatorMap(op *PlanOperator, profile bool) map[string]any {
 		node["dbHits"] = op.DBHits
 	}
 	return node
-}
-
-// StatementColumns returns the columns query declares (its YIELD or last
-// top-level RETURN), which its EXPLAIN reports, and which a statement that
-// failed while running reports with no rows over HTTP (#668).
-func (e *StorageExecutor) StatementColumns(query string) []string {
-	return e.inferExplainColumns(query)
-}
-
-func (e *StorageExecutor) inferExplainColumns(query string) []string {
-	// Neo4j EXPLAIN returns the same columns as the underlying query but no rows.
-	if y := parseYieldClause(query); y != nil {
-		// The statement's own RETURN, without its ORDER BY / SKIP / LIMIT.
-		returnExpr := ""
-		if returnIdx := topLevelKeywordIndex(query, "RETURN"); returnIdx >= 0 {
-			returnExpr = strings.TrimSpace(query[returnIdx+len("RETURN"):])
-			for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
-				if index := topLevelKeywordIndex(returnExpr, keyword); index >= 0 {
-					returnExpr = strings.TrimSpace(returnExpr[:index])
-				}
-			}
-		}
-		if returnExpr != "" {
-			items := e.parseReturnItems(returnExpr)
-			// For RETURN * after explicit YIELD items, project yielded aliases/names.
-			if len(items) == 1 && strings.TrimSpace(items[0].expr) == "*" && len(y.items) > 0 {
-				cols := make([]string, 0, len(y.items))
-				for _, item := range y.items {
-					if item.alias != "" {
-						cols = append(cols, item.alias)
-					} else {
-						cols = append(cols, item.name)
-					}
-				}
-				return cols
-			}
-			cols := make([]string, 0, len(items))
-			for _, item := range items {
-				cols = append(cols, item.column())
-			}
-			return cols
-		}
-		if !y.yieldAll {
-			cols := make([]string, 0, len(y.items))
-			for _, item := range y.items {
-				if item.alias != "" {
-					cols = append(cols, item.alias)
-				} else {
-					cols = append(cols, item.name)
-				}
-			}
-			return cols
-		}
-	}
-
-	if cols := e.inferTopLevelReturnColumns(query); cols != nil {
-		return cols
-	}
-	return []string{}
 }
 
 // formatPlan formats the execution plan as a string (tree visualization)

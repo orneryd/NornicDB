@@ -1443,11 +1443,7 @@ func (r *labelExpressionRewriter) opensSubquery(brace int) bool {
 	for i >= start && isIdentByte(q[i]) {
 		i--
 	}
-	switch strings.ToUpper(q[i+1 : end]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-		return true
-	}
-	return false
+	return queryBodyContainerKeyword(q[i+1 : end])
 }
 
 // subquery rewrites a subquery body query[start:end]: a statement, or a

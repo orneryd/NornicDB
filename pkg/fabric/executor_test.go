@@ -969,21 +969,6 @@ func TestSynthesizeEmptyCollectOnlyReturn(t *testing.T) {
 	}
 }
 
-func TestInferReturnColumnsFromQuery(t *testing.T) {
-	query := `CALL {
-  USE translations.tr
-  MATCH (t:MongoDocument)
-  RETURN t.textKey AS textKey, t.textKey128 AS textKey128
-}
-RETURN coalesce(textKey, textKey128) AS textKey, textKey128, count(*) AS c
-ORDER BY textKey128
-LIMIT 25`
-	got := inferReturnColumnsFromQuery(query)
-	if len(got) != 3 || got[0] != "textKey" || got[1] != "textKey128" || got[2] != "c" {
-		t.Fatalf("unexpected inferred columns: %#v", got)
-	}
-}
-
 func TestExecuteRowsGroupedJoinProjection_CoversShapes(t *testing.T) {
 	input := &ResultStream{
 		Columns: []string{"rows", "k", "texts"},
@@ -1653,34 +1638,6 @@ func TestBuildColumnIndex_SkipsWhitespace(t *testing.T) {
 	}
 	if idx["a"] != 0 || idx["b"] != 2 {
 		t.Fatalf("unexpected index: %v", idx)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_NoReturn(t *testing.T) {
-	got := inferReturnColumnsFromQuery("MATCH (n) WHERE n.id = 1")
-	if got != nil {
-		t.Fatalf("expected nil for no RETURN, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_EmptyReturn(t *testing.T) {
-	got := inferReturnColumnsFromQuery("MATCH (n) RETURN")
-	if got != nil {
-		t.Fatalf("expected nil for empty RETURN clause, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_WithSemicolon(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN a, b;")
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("expected [a b], got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_NestedParens(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN coalesce(a, b) AS x, c ORDER BY x")
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c], got %v", got)
 	}
 }
 
@@ -2529,62 +2486,6 @@ func TestFabricExecutor_UnknownFragmentType(t *testing.T) {
 	// non-default switch path. The default branch requires an external Fragment type
 	// which is impossible due to the sealed interface. FragmentLeaf path is already
 	// tested in TestFabricExecutor_LeafFragment.
-}
-
-func TestInferReturnColumnsFromQuery_QuotedCommas(t *testing.T) {
-	// Commas inside single-quoted strings.
-	got := inferReturnColumnsFromQuery("RETURN 'a,b' AS x, c")
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c], got %v", got)
-	}
-	// Commas inside double-quoted strings.
-	got = inferReturnColumnsFromQuery(`RETURN "a,b" AS x, c`)
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c] with double quotes, got %v", got)
-	}
-	// Commas inside backtick-quoted.
-	got = inferReturnColumnsFromQuery("RETURN `a,b` AS x, c")
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c] with backticks, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_BracketsAndBraces(t *testing.T) {
-	// Commas inside brackets should not split.
-	got := inferReturnColumnsFromQuery("RETURN [1,2,3] AS arr, b")
-	if len(got) != 2 || got[0] != "arr" || got[1] != "b" {
-		t.Fatalf("expected [arr b], got %v", got)
-	}
-	// Commas inside braces should not split.
-	got = inferReturnColumnsFromQuery("RETURN {x: 1, y: 2} AS m, c")
-	if len(got) != 2 || got[0] != "m" || got[1] != "c" {
-		t.Fatalf("expected [m c], got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_SkipAndLimit(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN a, b SKIP 5")
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("expected [a b] ignoring SKIP, got %v", got)
-	}
-	got = inferReturnColumnsFromQuery("RETURN a LIMIT 10")
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a] ignoring LIMIT, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_NoAlias(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN n.name")
-	if len(got) != 1 || got[0] != "n.name" {
-		t.Fatalf("expected [n.name] with no alias, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_BacktickAlias(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN n.name AS `my col`")
-	if len(got) != 1 || got[0] != "my col" {
-		t.Fatalf("expected [my col] stripped of backticks, got %v", got)
-	}
 }
 
 func TestSplitTopLevelResultModifiers_ParensSkipped(t *testing.T) {
@@ -4328,15 +4229,6 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 	}
 	if len(result.Rows) != 0 {
 		t.Fatalf("expected 0 rows for nil results, got %d", len(result.Rows))
-	}
-}
-
-func TestInferReturnColumnsFromQuery_EmptyItemAfterComma(t *testing.T) {
-	// Trailing comma leaves an empty item.
-	got := inferReturnColumnsFromQuery("RETURN a, ")
-	// Empty items are skipped.
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a], got %v", got)
 	}
 }
 

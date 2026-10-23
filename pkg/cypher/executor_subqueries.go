@@ -185,19 +185,6 @@ func rowMatchesSeedID(value interface{}, seedID string) bool {
 	return false
 }
 
-func (e *StorageExecutor) normalizeUnionBranchColumns(query string, result *ExecuteResult) {
-	if result == nil || len(result.Columns) > 0 {
-		return
-	}
-	if inferred := e.inferTopLevelReturnColumns(query); len(inferred) > 0 {
-		result.Columns = inferred
-		return
-	}
-	if inferred := e.inferExplainColumns(query); len(inferred) > 0 {
-		result.Columns = inferred
-	}
-}
-
 // isCallSubqueryPureReturn checks whether innerBody is a pure RETURN projection
 // with no MATCH/CALL/UNWIND/write clauses. Precomputed once per branch to avoid
 // repeated keyword scans on every seed row.
@@ -472,16 +459,8 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 
 	trimmed := strings.TrimSpace(cypher)
 
-	// Find the opening brace
-	braceStart := strings.Index(trimmed, "{")
-	if braceStart == -1 {
-		return "", "", false, batchSize
-	}
-
-	// The matching closing brace; a brace in quoted text isn't one
-	// (CALL () { RETURN '}' AS y } …).
-	braceEnd := findMatchingDelimiter(trimmed, braceStart, '{', '}')
-	if braceEnd < 0 {
+	braceStart, braceEnd, ok := callSubqueryBraces(trimmed)
+	if !ok {
 		return "", "", false, batchSize
 	}
 
@@ -531,54 +510,6 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 // unit subquery whose body is just that WITH (#907).
 func callSubqueryHasScopeClause(cypher string) bool {
 	return readCallSubqueryScope(cypher).scoped
-}
-
-type callSubqueryScopeClause struct {
-	names      []string
-	scoped     bool
-	text       string
-	bodyOffset int
-	invalid    bool
-}
-
-// readCallSubqueryScope is the shared static/runtime owner of CALL's scope
-// clause. scoped distinguishes CALL (*) from legacy CALL { ... }; a nil name
-// list means all outer variables, and a non-nil empty list means CALL ().
-// text and bodyOffset let validation use the same parsed clause. Legacy
-// importing-WITH and implicit imports are resolved by their existing owners.
-func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
-	trimmed := strings.TrimSpace(cypher)
-	if findKeywordIndex(trimmed, "CALL") != 0 {
-		return callSubqueryScopeClause{}
-	}
-	idx := skipSpaces(trimmed, len("CALL"))
-	offset := strings.Index(cypher, trimmed)
-	scope := callSubqueryScopeClause{bodyOffset: offset + idx}
-	if idx >= len(trimmed) || trimmed[idx] != '(' {
-		return scope
-	}
-	close := findMatchingCallParen(trimmed, idx)
-	if close < 0 {
-		return scope
-	}
-	scope.scoped = true
-	scope.text = strings.TrimSpace(trimmed[idx+1 : close])
-	scope.bodyOffset = offset + skipSpaces(trimmed, close+1)
-	if scope.text == "*" {
-		return scope
-	}
-	parts := splitProcedureTopLevelComma(scope.text)
-	scope.names = make([]string, 0, len(parts))
-	for _, part := range parts {
-		if simpleSemanticIdentifier(part) == "" && scope.text != "" {
-			scope.invalid = true
-		}
-		name := strings.Trim(strings.TrimSpace(part), "`")
-		if isSimpleIdentifier(name) {
-			scope.names = append(scope.names, name)
-		}
-	}
-	return scope
 }
 
 // prefixUnionBranches puts prefix before body, or before each branch of a

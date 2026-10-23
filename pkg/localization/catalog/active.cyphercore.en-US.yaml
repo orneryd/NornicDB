@@ -352,3 +352,12 @@
   other: "Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}"
 - id: cyphercore.list_index_boolean
   other: "Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}: Expected {{.Value}} to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.{{.Class}}"
+- id: cyphercore.result_metadata_unresolved
+  description: The statement owner could not establish complete scope and result columns.
+  other: Cannot establish the statement scope and result columns
+- id: cyphercore.result_metadata_mismatch
+  description: An execution stream disagrees with the established statement schema.
+  other: Execution result columns do not match the statement schema
+- id: cyphercore.call_import_variables_required
+  description: A CALL import item must name a variable.
+  other: CALL imports must contain only variable names

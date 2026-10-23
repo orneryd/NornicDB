@@ -3011,11 +3011,11 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 	exec := &StorageExecutor{}
 
-	cols := exec.inferExplainColumns("CALL db.labels() YIELD label AS lbl RETURN lbl")
+	cols := exec.StatementColumns("CALL db.labels() YIELD label AS lbl RETURN lbl")
 	require.Equal(t, []string{"lbl"}, cols)
-	cols = exec.inferExplainColumns("MATCH (n) RETURN n.name AS name, n.age")
+	cols = exec.StatementColumns("MATCH (n) RETURN n.name AS name, n.age")
 	require.Equal(t, []string{"name", "n.age"}, cols)
-	cols = exec.inferExplainColumns("MATCH (n)")
+	cols = exec.StatementColumns("MATCH (n)")
 	require.Empty(t, cols)
 
 	limit := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")

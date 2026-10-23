@@ -2,10 +2,10 @@ package cypher
 
 import (
 	"context"
-	"slices"
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -51,16 +51,6 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 		}
 	}
-	if len(rows) == 0 {
-		if metadata != nil {
-			metadata.columns = slices.Clone(e.inferTopLevelReturnColumnsFor(ctx, body))
-			for _, name := range metadata.columns {
-				metadata.scope[name] = struct{}{}
-			}
-		}
-		return []pipelineRow{}, &QueryStats{}, true, nil
-	}
-
 	targetExec := e
 	if use, remaining, hasUse, err := parseUseClause(body, true); hasUse || err != nil {
 		if err != nil {
@@ -76,6 +66,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		targetExec = scoped
 		ctx = scopedCtx
 		body = remaining
+	}
+
+	if len(rows) == 0 {
+		if metadata != nil {
+			columns, err := e.ResultColumns(clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25")
+			if err != nil {
+				return nil, nil, true, err
+			}
+			metadata.columns = columns
+			for _, name := range metadata.columns {
+				metadata.scope[name] = struct{}{}
+			}
+		}
+		return []pipelineRow{}, &QueryStats{}, true, nil
 	}
 
 	scopedImports := parsed.scopedImports

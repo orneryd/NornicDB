@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -18,6 +19,14 @@ import (
 
 type fabricStatsAccumulatorKey struct{}
 type fabricPreparedExecKey struct{}
+
+// participantSchemaForStatement is the participant schema boundary shared by
+// statement metadata consumers and Fabric planning. The Fabric integration
+// supplies the resolver; without it, participant-owned implicit signatures are
+// deliberately unresolved before execution.
+func (e *StorageExecutor) participantSchemaForStatement(ctx context.Context, query string) resultmetadata.ParticipantSchema {
+	return nil
+}
 
 type fabricStatsAccumulator struct {
 	mu    sync.Mutex
@@ -178,11 +187,15 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	if len(stream.Columns) == 0 {
-		if inferred := e.inferTopLevelReturnColumns(cypher); len(inferred) > 0 {
-			stream.Columns = inferred
+		columns, err := e.ResultColumns(cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25")
+		if err != nil {
+			return nil, err
 		}
+		stream.Columns = columns
 	}
-	e.normalizeFabricRowWrapper(cypher, stream)
+	if err := e.normalizeFabricRowWrapper(cypher, stream); err != nil {
+		return nil, err
+	}
 	s := statsAcc.snapshot()
 	return &ExecuteResult{
 		Columns: stream.Columns,
@@ -375,13 +388,16 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	return fragment, nil
 }
 
-func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) {
+func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) error {
 	if stream == nil || len(stream.Columns) != 1 || stream.Columns[0] != "__fabric_row" || len(stream.Rows) == 0 {
-		return
+		return nil
 	}
-	inferred := e.inferTopLevelReturnColumns(cypher)
+	inferred, err := e.ResultColumns(cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25")
+	if err != nil {
+		return err
+	}
 	if len(inferred) == 0 {
-		return
+		return nil
 	}
 	projectedRows := make([][]interface{}, 0, len(stream.Rows))
 	for _, row := range stream.Rows {
@@ -408,10 +424,11 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabri
 		projectedRows = append(projectedRows, out)
 	}
 	if len(projectedRows) == 0 {
-		return
+		return nil
 	}
 	stream.Columns = inferred
 	stream.Rows = projectedRows
+	return nil
 }
 
 func normalizeFabricRowMap(v interface{}) (map[string]interface{}, bool) {
@@ -473,52 +490,6 @@ func (e *StorageExecutor) currentDatabaseName() string {
 		}
 	}
 	return "nornic"
-}
-
-// inferTopLevelReturnColumns best-effort derives outer RETURN columns for Fabric queries.
-// This is used when a distributed execution path returns zero rows and no columns.
-func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
-	opts := defaultKeywordScanOpts()
-	opts.SkipBraces = true
-
-	lastReturn := -1
-	searchFrom := 0
-	for {
-		idx := keywordIndexFrom(query, "RETURN", searchFrom, opts)
-		if idx < 0 {
-			break
-		}
-		lastReturn = idx
-		searchFrom = idx + len("RETURN")
-	}
-	if lastReturn < 0 {
-		return nil
-	}
-
-	clause := strings.TrimSpace(query[lastReturn+len("RETURN"):])
-	if clause == "" {
-		return nil
-	}
-
-	// Strip trailing ORDER BY / SKIP / LIMIT at top-level.
-	end := len(clause)
-	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	clause = strings.TrimSpace(clause[:end])
-	clause = strings.TrimSuffix(clause, ";")
-	clause = strings.TrimSpace(clause)
-	if clause == "" {
-		return nil
-	}
-
-	items := e.parseReturnItems(clause)
-	if len(items) == 0 {
-		return nil
-	}
-	return e.buildColumnsFromReturnItems(items)
 }
 
 func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
@@ -961,4 +932,12 @@ func fabricGraphReferenceError(err error) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntax.Message)
 	}
 	return err
+}
+
+func (e *cypherFabricExecutor) CachedResultColumns(ctx context.Context, query string, incoming []string) resultmetadata.Names {
+	return e.base.CachedResultColumns(ctx, query, incoming)
+}
+
+func (e *cypherFabricExecutor) ResultProjection(query string, incoming []string) resultmetadata.Projection {
+	return e.base.ResultProjection(query, incoming)
 }
