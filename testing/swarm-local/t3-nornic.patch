@@ -40,6 +40,151 @@ index 5c6c4fece4..0fbc7447c0 100644
    layerAttachmentToolkit,
    layerProjectRegistration,
    layerEnvironmentToolkit,
+diff --git a/apps/server/src/mcp/OrchestratorMcpService.test.ts b/apps/server/src/mcp/OrchestratorMcpService.test.ts
+index bba4e816ca..8b83e38761 100644
+--- a/apps/server/src/mcp/OrchestratorMcpService.test.ts
++++ b/apps/server/src/mcp/OrchestratorMcpService.test.ts
+@@ -1386,6 +1386,45 @@ describe("OrchestratorMcpService provider resolution", () => {
+     }),
+   );
+ 
++  it.effect("denies an agent's Astra delegation before dispatch", () =>
++    Effect.gen(function* () {
++      const dispatched = yield* Ref.make(0);
++      const layerDependencies = Layer.mergeAll(
++        NodeServices.layer,
++        Layer.mock(ThreadManagementService.ThreadManagementService)({
++          hasReceipt: () => Effect.succeed(false),
++          getThreadRecords: () => Effect.succeed(parentProjection([])),
++          dispatch: () => Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
++        }),
++        ServerSettings.layerTest(),
++        providerRegistryLayer([
++          providerSnapshot({
++            instanceId: codexInstanceId,
++            driver: ProviderDriverKind.make("codex"),
++            model: "gpt-6-astra",
++          }),
++        ]),
++        adapterRegistryLayer([codexInstanceId]),
++        Layer.mock(ProjectService.ProjectService)({}),
++        Layer.mock(SecretRequests.SecretRequests)({}),
++        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
++      );
++      yield* Effect.gen(function* () {
++        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
++        const denied = yield* service
++          .delegateTask(scope, {
++            task: "Start a child task",
++            target: { providerInstanceId: codexInstanceId, model: "gpt-6-astra" },
++            mode: "async",
++            clientRequestId: "astra-without-user-approval",
++          })
++          .pipe(Effect.flip);
++        assert.equal(denied.code, "capability_denied");
++        assert.equal(yield* Ref.get(dispatched), 0);
++      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
++    }),
++  );
++
+   it.effect("driver-only delegation skips an instance the project turned off", () =>
+     Effect.gen(function* () {
+       const altInstanceId = ProviderInstanceId.make("codex-alt");
+diff --git a/apps/server/src/mcp/OrchestratorMcpService.ts b/apps/server/src/mcp/OrchestratorMcpService.ts
+index edaa8777b4..8ebe30790d 100644
+--- a/apps/server/src/mcp/OrchestratorMcpService.ts
++++ b/apps/server/src/mcp/OrchestratorMcpService.ts
+@@ -67,6 +67,7 @@ import {
+ } from "@t3tools/contracts";
+ import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
+ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
++import { requiresUserStartedSession } from "./agentDelegationPolicy.ts";
+ import {
+   normalizeThreadPullRequestKey,
+   visibleThreadPullRequests,
+@@ -214,6 +215,17 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
+   return new OrchestratorMcpFailure({ code, message });
+ }
+ 
++function assertAgentModelAllowed(model: string) {
++  return requiresUserStartedSession(model)
++    ? Effect.fail(
++        failure(
++          "capability_denied",
++          "Astra requires explicit user approval: select and start it in T3. MCP agents cannot start or delegate to Astra.",
++        ),
++      )
++    : Effect.void;
++}
++
+ /**
+  * A caller's thread is live while it is not archived, runs on the caller's
+  * provider instance, and has an active run or a background subagent that
+@@ -1824,6 +1836,7 @@ const make = Effect.gen(function* () {
+       }
+       const modelSelection =
+         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
++      yield* assertAgentModelAllowed(modelSelection.model);
+       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
+       const title =
+         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
+@@ -1885,6 +1898,7 @@ const make = Effect.gen(function* () {
+         const { parent, limits } = yield* loadCaller(scope);
+         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
+         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
++        yield* assertAgentModelAllowed(existing.modelSelection.model);
+         if (
+           input.bindToCurrentThread === true &&
+           (parent === undefined || parent.thread.projectId !== existing.projectId)
+@@ -2171,6 +2185,7 @@ const make = Effect.gen(function* () {
+         providers,
+         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+       });
++      yield* assertAgentModelAllowed(target.modelSelection.model);
+       const runtimeMode = yield* resolveRuntimeMode(
+         parent.thread.runtimeMode,
+         input.runtimeMode,
+@@ -2567,6 +2582,7 @@ const make = Effect.gen(function* () {
+                 providers,
+                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+               });
++              yield* assertAgentModelAllowed(target.modelSelection.model);
+               const runtimeMode = yield* resolveRuntimeMode(
+                 parent.thread.runtimeMode,
+                 request.runtimeMode,
+@@ -2824,6 +2840,7 @@ const make = Effect.gen(function* () {
+     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
+       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
+       yield* assertLiveCallerForOtherThread(scope, parent, target);
++      yield* assertAgentModelAllowed(target.thread.modelSelection.model);
+       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+ 
+diff --git a/apps/server/src/mcp/agentDelegationPolicy.test.ts b/apps/server/src/mcp/agentDelegationPolicy.test.ts
+new file mode 100644
+index 0000000000..3250c35dee
+--- /dev/null
++++ b/apps/server/src/mcp/agentDelegationPolicy.test.ts
+@@ -0,0 +1,9 @@
++import { expect, it } from "vite-plus/test";
++import { requiresUserStartedSession } from "./agentDelegationPolicy.ts";
++
++it("blocks Astra aliases from agent delegation but allows Sol", () => {
++  expect(requiresUserStartedSession("gpt-6-astra")).toBe(true);
++  expect(requiresUserStartedSession("gpt-6-astra-preview")).toBe(true);
++  expect(requiresUserStartedSession("gpt-6.1-sol")).toBe(false);
++  expect(requiresUserStartedSession("gpt-6-sol")).toBe(false);
++});
+diff --git a/apps/server/src/mcp/agentDelegationPolicy.ts b/apps/server/src/mcp/agentDelegationPolicy.ts
+new file mode 100644
+index 0000000000..38a7cdb947
+--- /dev/null
++++ b/apps/server/src/mcp/agentDelegationPolicy.ts
+@@ -0,0 +1,4 @@
++/** Astra requires a user-started T3 session; an MCP agent cannot approve itself. */
++export function requiresUserStartedSession(model: string): boolean {
++  return /^gpt-6-astra(?:$|[-:])/.test(model);
++}
 diff --git a/apps/server/src/mcp/toolkits/nornic/graphHandlers.ts b/apps/server/src/mcp/toolkits/nornic/graphHandlers.ts
 new file mode 100644
 index 0000000000..21aaaf3658
@@ -1437,10 +1582,10 @@ index 0000000000..5108be92cf
 +export const layer = Layer.effect(NornicStore, make).pipe(Layer.provide(FetchHttpClient.layer));
 diff --git a/apps/server/src/nornic/NornicWorkflow.ts b/apps/server/src/nornic/NornicWorkflow.ts
 new file mode 100644
-index 0000000000..64f594e020
+index 0000000000..8e8dcfdd3a
 --- /dev/null
 +++ b/apps/server/src/nornic/NornicWorkflow.ts
-@@ -0,0 +1,541 @@
+@@ -0,0 +1,574 @@
 +import {
 +  OrchestratorMcpFailure,
 +  NornicWorkflowResponse,
@@ -1464,6 +1609,7 @@ index 0000000000..64f594e020
 +import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 +import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 +import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
++import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
 +import * as IntentClassifier from "./IntentClassifier.ts";
 +import * as DuplicateGate from "./DuplicateGate.ts";
 +import * as ProjectService from "../project/ProjectService.ts";
@@ -1473,7 +1619,7 @@ index 0000000000..64f594e020
 +import * as LinearTracker from "./LinearTracker.ts";
 +import * as CodeContext from "./CodeContext.ts";
 +import { latestUserIntent } from "./intentSource.ts";
-+import { intentRouteDecision } from "./intentPolicy.ts";
++import { autonomousFrontierTarget } from "./intentPolicy.ts";
 +
 +export class NornicWorkflow extends Context.Service<
 +  NornicWorkflow,
@@ -1501,6 +1647,7 @@ index 0000000000..64f594e020
 +  const store = yield* NornicStore.NornicStore;
 +  const classifier = yield* IntentClassifier.IntentClassifier;
 +  const registry = yield* ProviderRegistry.ProviderRegistry;
++  const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
 +  const duplicateGate = yield* DuplicateGate.DuplicateGate;
 +  const projects = yield* ProjectService.ProjectService;
 +  const workspaceGateway = yield* WorkspaceGateway.WorkspaceGateway;
@@ -1686,11 +1833,41 @@ index 0000000000..64f594e020
 +        intakeId: message.id,
 +        instructions: classified.instructions + retrievalText,
 +      };
-+      const decision = intentRouteDecision(classification.tier, request.operation);
++      if (request.operation === "intent.classify" || classification.tier === "local")
++        return yield* finish({
++          ok: true,
++          code: "OK",
++          data: classification,
++          version: 1,
++          requestId: request.requestId,
++        });
++      const providers = yield* registry.getProviders;
++      const target = frontierInstances.has("codex")
++        ? autonomousFrontierTarget(providers, scope.thread.providerInstanceId, classified)
++        : null;
++      if (!target)
++        return yield* finish({
++          ok: false,
++          code: "SOL_UNAVAILABLE",
++          data: {
++            ...classification,
++            next: "GPT-6.1 Sol is not ready or not advertised by Codex. No other model will be selected automatically; choose a provider manually in T3.",
++          },
++          version: 1,
++          requestId: request.requestId,
++        });
++      const delegated = yield* orchestrator.delegateTask(scope, {
++        task: `${classification.instructions}\n\nUser intent:\n${message.text}`,
++        title: `Classified ${classification.kind}`,
++        target,
++        isolation: "worktree",
++        mode: "async",
++        clientRequestId: `nornic-intent:${message.id}`,
++      });
 +      return yield* finish({
-+        ok: decision.ok,
-+        code: decision.code,
-+        data: { ...classification, ...("next" in decision ? { next: decision.next } : {}) },
++        ok: true,
++        code: "OK",
++        data: { ...classification, delegated },
 +        version: 1,
 +        requestId: request.requestId,
 +      });
@@ -1977,6 +2154,7 @@ index 0000000000..64f594e020
 +export const layer = Layer.effect(NornicWorkflow, make).pipe(
 +  Layer.provide(NornicStore.layer),
 +  Layer.provide(IntentClassifier.layer),
++  Layer.provide(OrchestratorMcpService.layer),
 +  Layer.provide(DuplicateGate.layer),
 +  Layer.provide(WorkspaceGateway.layer),
 +  Layer.provide(LinearTracker.layer),
@@ -2157,12 +2335,12 @@ index 0000000000..cff6ee1c32
 +export const layer = Layer.effect(WorkspaceGateway, make);
 diff --git a/apps/server/src/nornic/intentPolicy.test.ts b/apps/server/src/nornic/intentPolicy.test.ts
 new file mode 100644
-index 0000000000..3952654ffe
+index 0000000000..c1e3217eab
 --- /dev/null
 +++ b/apps/server/src/nornic/intentPolicy.test.ts
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,80 @@
 +import { expect, it } from "vite-plus/test";
-+import { intentPolicy, intentRouteDecision } from "./intentPolicy.ts";
++import { autonomousFrontierTarget, intentPolicy } from "./intentPolicy.ts";
 +
 +it("injects only intent-specific obligations and routes uncertainty to a frontier worker", () => {
 +  const question = intentPolicy({
@@ -2196,35 +2374,57 @@ index 0000000000..3952654ffe
 +  ).toBe("frontier");
 +});
 +
-+it("requires a user-started frontier session for complex and uncertain intent", () => {
-+  const complex = intentPolicy({
++it("selects only ready authenticated GPT-6.1 Sol, never Astra or a provider default", () => {
++  const intent = {
 +    kind: "feature",
 +    complexity: "complex",
 +    confidence: 0.95,
-+    reason: "cross-system change",
++    reason: "cross-system",
++  } as const;
++  const provider = {
++    instanceId: "codex",
++    driver: "codex",
++    enabled: true,
++    installed: true,
++    status: "ready",
++    auth: { status: "authenticated" },
++    models: [
++      { slug: "gpt-6-astra", isLegacy: false },
++      { slug: "gpt-6.1-sol", isLegacy: false },
++    ],
++  };
++  expect(autonomousFrontierTarget([provider], "ollama_local", intent)).toEqual({
++    providerInstanceId: "codex",
++    model: "gpt-6.1-sol",
++    options: [{ id: "reasoningEffort", value: "low" }],
 +  });
-+  const uncertain = intentPolicy({
-+    kind: "bugfix",
-+    complexity: "routine",
-+    confidence: 0.5,
-+    reason: "uncertain scope",
++  expect(
++    autonomousFrontierTarget(
++      [{ ...provider, models: provider.models.slice(0, 1) }],
++      "ollama_local",
++      intent,
++    ),
++  ).toBeNull();
++  expect(
++    autonomousFrontierTarget(
++      [{ ...provider, auth: { status: "signed_out" } }],
++      "ollama_local",
++      intent,
++    ),
++  ).toBeNull();
++  expect(autonomousFrontierTarget([provider], "codex", intent)).toBeNull();
++  expect(
++    autonomousFrontierTarget([provider], "ollama_local", { ...intent, kind: "review" }),
++  ).toMatchObject({
++    options: [{ id: "reasoningEffort", value: "medium" }],
 +  });
-+  for (const intent of [complex, uncertain]) {
-+    expect(intentRouteDecision(intent.tier, "intent.classify")).toEqual({ ok: true, code: "OK" });
-+    expect(intentRouteDecision(intent.tier, "intent.route")).toMatchObject({
-+      ok: false,
-+      code: "FRONTIER_APPROVAL_REQUIRED",
-+      next: expect.stringContaining("select and start the Codex provider"),
-+    });
-+  }
-+  expect(intentRouteDecision("local", "intent.route")).toEqual({ ok: true, code: "OK" });
 +});
 diff --git a/apps/server/src/nornic/intentPolicy.ts b/apps/server/src/nornic/intentPolicy.ts
 new file mode 100644
-index 0000000000..85f2825a2d
+index 0000000000..5b6863c6c7
 --- /dev/null
 +++ b/apps/server/src/nornic/intentPolicy.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,119 @@
 +import * as Schema from "effect/Schema";
 +
 +export const Intent = Schema.Struct({
@@ -2301,16 +2501,47 @@ index 0000000000..85f2825a2d
 +  } as const;
 +}
 +
-+/** Classifying a frontier request never grants permission to run that provider. */
-+export function intentRouteDecision(
-+  tier: "local" | "frontier",
-+  operation: "intent.classify" | "intent.route",
++export const AUTONOMOUS_FRONTIER_MODEL = "gpt-6.1-sol";
++
++/** Autonomous routing has one exact model target and never inherits a provider default. */
++export function autonomousFrontierTarget<Id extends string>(
++  providers: ReadonlyArray<{
++    readonly instanceId: Id;
++    readonly driver: string;
++    readonly enabled: boolean;
++    readonly installed: boolean;
++    readonly status: string;
++    readonly auth: { readonly status: string };
++    readonly models: ReadonlyArray<{
++      readonly slug: string;
++      readonly isLegacy?: boolean | undefined;
++    }>;
++  }>,
++  callerInstanceId: Id,
++  intent: Intent,
 +) {
-+  if (operation === "intent.classify" || tier === "local") return { ok: true, code: "OK" } as const;
++  const provider = providers.find(
++    (candidate) =>
++      candidate.instanceId === "codex" &&
++      candidate.driver === "codex" &&
++      candidate.instanceId !== callerInstanceId &&
++      candidate.enabled &&
++      candidate.installed &&
++      candidate.status === "ready" &&
++      candidate.auth.status === "authenticated",
++  );
++  if (
++    !provider?.models.some((model) => model.slug === AUTONOMOUS_FRONTIER_MODEL && !model.isLegacy)
++  )
++    return null;
++  const reasoningEffort =
++    intent.kind === "plan" || intent.kind === "review" || intent.confidence < 0.6
++      ? "medium"
++      : "low";
 +  return {
-+    ok: false,
-+    code: "FRONTIER_APPROVAL_REQUIRED",
-+    next: "Frontier work requires explicit user approval. The user must select and start the Codex provider in T3; intent.route will not launch it.",
++    providerInstanceId: provider.instanceId,
++    model: AUTONOMOUS_FRONTIER_MODEL,
++    options: [{ id: "reasoningEffort", value: reasoningEffort }],
 +  } as const;
 +}
 diff --git a/apps/server/src/nornic/intentSource.test.ts b/apps/server/src/nornic/intentSource.test.ts

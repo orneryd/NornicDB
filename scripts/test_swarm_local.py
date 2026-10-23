@@ -26,6 +26,8 @@ class SwarmLocalTest(unittest.TestCase):
             self.assertIn("ollama_local", saved["providerInstances"])
             self.assertIn("ollama_remote", saved["providerInstances"])
             self.assertIn("codex", saved["providerInstances"])
+            self.assertEqual(saved["defaultModelSelection"]["model"], "gpt-6.1-sol")
+            self.assertEqual(saved["defaultModelSelection"]["options"], [{"id": "reasoningEffort", "value": "low"}])
             models = json.loads((root / "pi-state" / "models.json").read_text())
             self.assertEqual(models["providers"]["custom"], {"baseUrl": "http://custom"})
             self.assertEqual(models["providers"]["ollamaRemote"]["baseUrl"], "http://remote:11434/v1")
@@ -40,6 +42,17 @@ class SwarmLocalTest(unittest.TestCase):
             swarm_local.auth_headers({"NORNICDB_USER": "u", "NORNICDB_PASSWORD": "p"})["Authorization"],
             "Basic dTpw",
         )
+
+    def test_astra_cannot_remain_the_implicit_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = root / "state" / "userdata" / "settings.json"
+            swarm_local.write_json(settings, {
+                "defaultModelSelection": {"instanceId": "codex", "model": "gpt-6-astra"},
+            })
+            with mock.patch.object(swarm_local.shutil, "which", return_value="/bin/codex"):
+                swarm_local.configure_providers(root, {})
+            self.assertEqual(json.loads(settings.read_text())["defaultModelSelection"]["model"], "gpt-6.1-sol")
 
     def test_private_env_does_not_execute_or_override_process_values(self):
         with tempfile.TemporaryDirectory() as directory:

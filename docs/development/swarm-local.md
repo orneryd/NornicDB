@@ -65,10 +65,14 @@ make swarm
 Choose **Ollama Local 27B**, **Ollama Remote 9B**, or **Codex Frontier** as the
 agent in T3. The intent classifier uses the remote `nornic-coder` model. For
 automatic intake routing, the local Pi instance is `ollama_local` and Codex is
-available as a frontier provider; the remote Pi instance remains selectable for bounded
-tasks. The remote classifier only recommends a frontier tier. `intent.route`
-returns `FRONTIER_APPROVAL_REQUIRED` for that tier and never starts Codex;
-the user must explicitly select and start Codex in T3. For terminal use, run
+available as a frontier provider; the remote Pi instance remains selectable for
+bounded tasks. The remote 9B model classifies intent and complexity. `intent.route`
+may automatically delegate frontier work only to the exact `gpt-6.1-sol` model,
+starting at low reasoning. Plans, reviews, and very uncertain classifications use
+medium reasoning. If Sol is not advertised and ready, routing returns
+`SOL_UNAVAILABLE` without choosing a different model. Astra requires an explicit
+user-started T3 session; MCP agents cannot delegate to it, create Astra threads,
+send Astra threads new work, or schedule Astra runs. For terminal use, run
 `make swarm` and keep the terminal open; T3 prints the
 browser pairing URL there. To launch from any directory, add a shell alias such
 as `alias t3-swarm='make -C /absolute/path/to/NornicDB-swarm swarm'` to your

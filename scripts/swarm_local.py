@@ -113,6 +113,12 @@ def configure_providers(root, env):
     write_json(models_path, models)
     settings_path = root / "state" / "userdata" / "settings.json"
     settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    selected = settings.get("defaultModelSelection")
+    if selected is None or str(selected.get("model", "")).startswith("gpt-6-astra"):
+        settings["defaultModelSelection"] = {
+            "instanceId": "codex", "model": "gpt-6.1-sol",
+            "options": [{"id": "reasoningEffort", "value": "low"}],
+        }
     instances = settings.setdefault("providerInstances", {})
     pi_binary = root / "pi" / "node_modules" / ".bin" / "pi"
     instances.setdefault("ollama_local", provider_instance("Ollama Local 27B", "ollamaLocal", local_model, pi_home, pi_binary))
