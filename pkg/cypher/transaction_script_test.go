@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"os"
 	"testing"
@@ -270,7 +272,7 @@ func TestTransactionStatementHandlers_WithWALAsyncEngine(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -323,7 +325,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 

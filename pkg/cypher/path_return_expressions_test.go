@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -80,7 +81,10 @@ func TestPathReturnItemsAreFullExpressions(t *testing.T) {
 func newPathReturnServerStackExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	dir := t.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", nil)
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,7 +14,7 @@ import (
 // uids/edge IDs the benchmark iteration will drive through the executor.
 func populateUnwindDeleteFixture(b *testing.B, batchSize int) (*storage.MemoryEngine, []string, []storage.EdgeID) {
 	b.Helper()
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	uids := make([]string, 0, batchSize)
 	edgeIDs := make([]storage.EdgeID, 0, batchSize)
 	for j := 0; j < batchSize; j++ {

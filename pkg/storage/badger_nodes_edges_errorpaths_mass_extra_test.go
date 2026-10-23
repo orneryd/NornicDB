@@ -8,7 +8,7 @@ import (
 )
 
 func TestBadgerEngine_NodeAndEdgeInputValidationBranches(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(nil)
@@ -36,7 +36,7 @@ func TestBadgerEngine_NodeAndEdgeInputValidationBranches(t *testing.T) {
 }
 
 func TestBadgerEngine_EdgeCRUDErrorAndBranchPaths(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	require.ErrorIs(t, engine.CreateEdge(nil), ErrInvalidData)
@@ -80,7 +80,7 @@ func TestBadgerEngine_EdgeCRUDErrorAndBranchPaths(t *testing.T) {
 }
 
 func TestBadgerEngine_DeleteNodeInTxnMissingNodeBranch(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {

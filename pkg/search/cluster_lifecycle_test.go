@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func clusteredService(t *testing.T) *Service {
 	t.Helper()
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.SetMinEmbeddingsForClustering(4)
 	for i := 0; i < 8; i++ {
@@ -101,7 +102,7 @@ func TestClusterGraphsFromRetiredGenerationAreNotPublished(t *testing.T) {
 func TestVectorTeardownJoinsClusteringFromAnyContext(t *testing.T) {
 	for _, operation := range []string{"clear", "close"} {
 		t.Run(operation, func(t *testing.T) {
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+			svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 			if operation == "clear" {
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			}

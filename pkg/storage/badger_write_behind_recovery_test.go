@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -14,16 +15,22 @@ import (
 func newWriteBehindWALTestEngine(t *testing.T, dir string, interval time.Duration) (*BadgerEngine, *WAL) {
 	t.Helper()
 	t.Cleanup(config.WithWALEnabled())
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		WriteBehind:         true,
 		WriteBehindInterval: interval,
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	walCfg := DefaultWALConfig()
 	walCfg.Dir = dir + "/wal"
 	walCfg.BatchSyncInterval = time.Hour // do not fsync in the background during tests
 	wal, err := NewWAL(walCfg.Dir, walCfg)
+	if wal != nil {
+		fixtureowner.Own(t, wal, engine)
+	}
 	require.NoError(t, err)
 	engine.SetBufferedCommitWAL(wal)
 	return engine, wal
@@ -62,7 +69,7 @@ func crashClose(t *testing.T, engine *BadgerEngine, wal *WAL) {
 func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	dir := t.TempDir()
 	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	// No cleanup for engine/wal: crashClose below tears them down.
+	// Explicit crash teardown below runs before the construction-time fallback.
 
 	// Buffered, acknowledged create: nothing reaches Badger, the payload
 	// reaches the WAL.
@@ -91,7 +98,6 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 
 	// Reopen a fresh engine + WAL on the same directories.
 	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 
 	// Before recovery the node is gone from Badger.
 	_, err = recovered.GetNode("test:n1")
@@ -115,7 +121,6 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	dir := t.TempDir()
 	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -134,7 +139,6 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	require.NoError(t, engine.Close())
 
 	recovered, wal2 := newWriteBehindWALTestEngine(t, dir, time.Hour)
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 
 	// The marker says the commit is already applied: nothing to replay, and
 	// no double-apply.
@@ -179,7 +183,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	// A fresh Badger engine, no WAL wiring needed: ReplayWALEntry must apply
 	// the payload through the buffered-commit application path.
-	fresh, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	fresh, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Close() })
 

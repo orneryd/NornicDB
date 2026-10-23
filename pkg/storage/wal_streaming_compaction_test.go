@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +15,7 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 	root := t.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	walEngine := NewWALEngine(engine, wal)
 	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
 	walmart := NodeID("nornic:walmart")
@@ -35,7 +36,7 @@ func TestAutoCompactionWritesRecoverableStreamingSnapshot(t *testing.T) {
 	require.GreaterOrEqual(t, len(header), len(streamSnapshotMagic))
 	require.Equal(t, streamSnapshotMagic, string(header[:len(streamSnapshotMagic)]))
 
-	recovered, err := RecoverFromWAL(wal.config.Dir, paths[0])
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(wal.config.Dir, paths[0]))
 	require.NoError(t, err)
 	nodes, err := recovered.AllNodes()
 	require.NoError(t, err)
@@ -50,7 +51,7 @@ func TestAutoCompactionSkipsSnapshotWhenWALHasNotAdvanced(t *testing.T) {
 	root := t.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	walEngine := NewWALEngine(NewMemoryEngine(), wal)
+	walEngine := NewWALEngine(newTestMemoryEngine(t), wal)
 	t.Cleanup(func() { require.NoError(t, walEngine.Close()) })
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
 	require.NoError(t, walEngine.createSnapshotAndCompact())
@@ -87,7 +88,7 @@ func BenchmarkIdleAutoCompaction(b *testing.B) {
 	root := b.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(root, "wal"), SyncMode: "immediate"})
 	require.NoError(b, err)
-	walEngine := NewWALEngine(NewMemoryEngine(), wal)
+	walEngine := NewWALEngine(fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)), wal)
 	b.Cleanup(func() { require.NoError(b, walEngine.Close()) })
 	walEngine.snapshotDir = filepath.Join(root, "snapshots")
 	_, err = walEngine.CreateNode(&Node{ID: "nornic:document"})

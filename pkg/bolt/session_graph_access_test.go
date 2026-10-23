@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -15,7 +16,7 @@ import (
 // alias needs itself and its database); without one (no server, or a
 // manager that is not a *multidb.DatabaseManager) it needs only its name.
 func TestSessionGraphAccessDataDatabase(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {
@@ -57,7 +58,7 @@ func TestSessionGraphAccessDataDatabase(t *testing.T) {
 // its composite and its target database are, and without a multidb manager
 // only the name itself is checked.
 func TestSessionCanAccessGraph(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {

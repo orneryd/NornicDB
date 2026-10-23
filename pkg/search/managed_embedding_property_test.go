@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestManagedEmbeddingContentIsExcludedFromDefaultSearchText(t *testing.T) {
-	service := NewService(storage.NewMemoryEngine())
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	service.SetFulltextProperties([]string{"title"})
 	node := &storage.Node{
 		ID:     "test:visual",
@@ -28,7 +29,7 @@ func TestManagedEmbeddingContentIsExcludedFromDefaultSearchText(t *testing.T) {
 }
 
 func TestManagedEmbeddingContentIsExcludedFromSearchResultProperties(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node := &storage.Node{ID: "test:visual", Properties: map[string]any{
 		"title":              "Architecture diagram",
 		"_embedding_content": "large-image-payload",
@@ -59,7 +60,7 @@ func TestSearchResultPropertyProjectionCombinesIncludeAndExclude(t *testing.T) {
 
 func TestBM25PropertyAllowlistDoesNotProjectSearchResponses(t *testing.T) {
 	properties := map[string]any{"title": "diagram", "structured_payload": "opaque-value"}
-	service := NewService(storage.NewMemoryEngine())
+	service := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	service.SetFulltextProperties([]string{"title"})
 
 	require.NotContains(t, service.extractSearchableText(&storage.Node{Properties: properties}), "opaque-value")
@@ -67,7 +68,7 @@ func TestBM25PropertyAllowlistDoesNotProjectSearchResponses(t *testing.T) {
 }
 
 func TestContinuationHydrationPreservesCallerPropertyProjection(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node := &storage.Node{ID: "test:visual", Properties: map[string]any{
 		"title": "diagram", "structured_payload": "opaque-value",
 	}}

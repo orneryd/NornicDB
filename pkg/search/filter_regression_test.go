@@ -16,6 +16,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -30,7 +32,7 @@ import (
 
 func newFilterTestEngine(tb testing.TB) storage.Engine {
 	tb.Helper()
-	eng := storage.NewMemoryEngine()
+	eng := runtimeFixtureOwner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	tb.Cleanup(func() { eng.Close() })
 	return eng
 }

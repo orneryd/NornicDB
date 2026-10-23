@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"testing"
 	"time"
@@ -11,11 +12,11 @@ import (
 
 func newWriteBehindTestEngine(t *testing.T, interval time.Duration) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: interval,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine
@@ -238,18 +239,21 @@ func TestWriteBehind_ExplicitBeginDrainsBufferedWrites(t *testing.T) {
 
 func TestWriteBehind_CloseDrainsAndPersists(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(7)}})
 	require.Greater(t, engine.writeBehind.PendingOps(), 0)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	got, err := reopened.GetNode("test:n1")
@@ -522,7 +526,7 @@ func TestWriteBehind_PropertyIndexKeepsUnchangedValueOnBufferedUpdate(t *testing
 }
 
 func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"testing"
 
@@ -204,7 +205,7 @@ func optimalKForBenchmark(n int) int {
 
 // TestKMeansCandidateGen_Integration tests k-means candidate generation in a real scenario.
 func TestKMeansCandidateGen_Integration(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 4)
 
 	// Enable clustering

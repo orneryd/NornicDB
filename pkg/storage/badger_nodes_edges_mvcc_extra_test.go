@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 	"time"
@@ -288,7 +290,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ReturnsDeletedEdgeBodiesForAdjacencyTombst
 }
 
 func TestBadgerEngine_BulkDeleteEdges_MixedIDsStillWriteAdjacencyTombstones(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -727,7 +729,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 }
 
 func TestBadgerEngine_DeleteNode_WithPropertiesCascadesAdjacencyAndSchemaCleanup(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

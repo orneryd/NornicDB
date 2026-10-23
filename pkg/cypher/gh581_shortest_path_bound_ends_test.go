@@ -8,6 +8,8 @@ package cypher
 // Pinned against neo4j:5.26.30-community (issue tables).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -18,7 +20,7 @@ import (
 
 func newGh581Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())

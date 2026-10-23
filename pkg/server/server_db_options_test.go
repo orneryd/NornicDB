@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -10,7 +12,7 @@ import (
 
 // The server adapter forwards database options to the manager (#937).
 func TestServerAdapterForwardsDatabaseOptions(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	manager, err := multidb.NewDatabaseManager(engine, nil)
 	require.NoError(t, err)

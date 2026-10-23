@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -17,7 +18,10 @@ func TestVectorSettersPreserveEmbeddingsAfterRestart(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%s/id=%v", layout, mode, byID), func(t *testing.T) {
 					dir := t.TempDir()
 					open := func() *storage.BadgerEngine {
-						engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true})
+						engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, LowMemory: true}))
+						if engine != nil {
+							fixtureowner.Own(t, engine)
+						}
 						require.NoError(t, err)
 						engine.SetEmbeddingTextPolicy(storage.EmbeddingTextPolicy{Include: []string{"text"}})
 						return engine

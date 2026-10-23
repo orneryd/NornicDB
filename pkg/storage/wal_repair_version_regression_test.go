@@ -1,6 +1,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"os"
 	"testing"
@@ -36,12 +38,12 @@ func TestWALUnknownVersionDoesNotTruncateDuringRecovery(t *testing.T) {
 			original := append(good, future...)
 			require.NoError(t, os.WriteFile(path, original, 0600))
 			if streaming {
-				target := NewMemoryEngine()
+				target := newTestMemoryEngine(t)
 				t.Cleanup(func() { _ = target.Close() })
 				_, _, err = RecoverIntoEngine(target, dir, "")
 			} else {
 				var target *MemoryEngine
-				target, _, err = RecoverFromWALWithResult(dir, "")
+				target, _, err = fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 				if target != nil {
 					_ = target.Close()
 				}

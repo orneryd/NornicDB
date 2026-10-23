@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"strings"
@@ -22,7 +24,7 @@ func perRowKeys() []interface{} {
 // documents, and every document -[:REL]-> one (:Case): 450 relationships.
 func perRowDocGraph(b *testing.B) *StorageExecutor {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bench")
 	nodes := []*storage.Node{{ID: "case", Labels: []string{"Case"}, Properties: map[string]interface{}{"id": "case"}}}
@@ -56,7 +58,7 @@ func perRowDocGraph(b *testing.B) *StorageExecutor {
 // perRowWideGraph: 990 nodes, each with two outgoing :T: 1,980 relationships.
 func perRowWideGraph(b *testing.B) *StorageExecutor {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bench")
 	const n = 990

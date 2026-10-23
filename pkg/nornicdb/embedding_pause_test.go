@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -152,7 +153,7 @@ func TestEmbeddingPauseWithoutEmbedQueue(t *testing.T) {
 // holds only a queue: Open's background goroutines would order the two
 // sides through shared locks and hide the race from the detector.
 func TestEmbeddingStatusRacesQueueStop(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	db := &DB{embedQueue: NewEmbedQueue(nil, engine, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true})}
 	started, stop, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -202,7 +203,7 @@ func (e *pendingWriterEngine) PendingEmbeddingsCount() int {
 func TestEmbeddingProceduresUnderPendingWriter(t *testing.T) {
 	for _, query := range []string{"CALL db.embedding.status()", "CALL db.embedding.pause()", "CALL db.embedding.resume()"} {
 		t.Run(query, func(t *testing.T) {
-			engine := &pendingWriterEngine{Engine: storage.NewMemoryEngine()}
+			engine := &pendingWriterEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 			queue := NewEmbedQueue(nil, engine, &EmbedWorkerConfig{NumWorkers: 1, DeferWorkerStart: true})
 			t.Cleanup(queue.Close)
 			db := &DB{baseStorage: engine, embedQueue: queue}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"net/http"
@@ -920,7 +921,7 @@ func TestHandleOpenTransaction_CompositeRemoteOpenSucceeds(t *testing.T) {
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
 			_ = authToken
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			remoteEngines = append(remoteEngines, engine)
 			return engine, nil
 		},
@@ -1061,7 +1062,7 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
 			tokenSeen = authToken
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			remoteEngines = append(remoteEngines, engine)
 			return engine, nil
 		},
@@ -2650,7 +2651,7 @@ func TestHandleImplicitTransaction_AsyncWriteAccepted(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authn, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,
@@ -2692,7 +2693,7 @@ func TestHandleImplicitTransaction_AsyncEnabledBuffersSetWriteReturnsAccepted(t 
 	require.NoError(t, err)
 	defer db.Close()
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authn, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,

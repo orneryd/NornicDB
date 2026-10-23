@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"log/slog"
 	"os"
@@ -28,7 +30,7 @@ const (
 
 func parkedLifetimeEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	for _, node := range []*storage.Node{
 		admissionNode("nornic:a", "alpha", []float32{1, 0, 0}, "named"),
@@ -379,7 +381,7 @@ func TestParkedBM25CloseDuringWarmupRestart(t *testing.T) {
 // replaces the older snapshot instead of keeping its removed documents.
 func TestRebuiltEmptyBM25ReplacesTheSavedSnapshot(t *testing.T) {
 	parkedLifetimeBackends(t, func(t *testing.T, backend string) {
-		engine := storage.NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { require.NoError(t, engine.Close()) })
 		a := admissionNode("nornic:a", "alpha", []float32{1, 0, 0}, "named")
 		_, err := engine.CreateNode(a)

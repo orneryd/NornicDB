@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "test")
 	_, err := engine.CreateNode(&storage.Node{
 		ID:     "doc-1",
@@ -48,7 +49,7 @@ func TestBuildIndexes_DoesNotPersistWhenDisabled(t *testing.T) {
 }
 
 func TestSetPersistenceEnabledFalse_DisablesExistingVectorFileStoreWrites(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "test")
 	_, err := engine.CreateNode(&storage.Node{
 		ID:     "doc-1",

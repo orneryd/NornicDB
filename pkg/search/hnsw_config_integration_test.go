@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestHNSWConfigIntegration(t *testing.T) {
 		os.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "fast")
 		defer os.Unsetenv("NORNICDB_VECTOR_ANN_QUALITY")
 
-		engine := storage.NewMemoryEngine()
+		engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		svc := NewServiceWithDimensions(engine, 4)
 
 		// Add nodes and verify HNSW is used by default.
@@ -51,7 +52,7 @@ func TestHNSWConfigIntegration(t *testing.T) {
 		os.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "accurate")
 		defer os.Unsetenv("NORNICDB_VECTOR_ANN_QUALITY")
 
-		engine := storage.NewMemoryEngine()
+		engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		svc := NewServiceWithDimensions(engine, 4)
 
 		// Add nodes and verify HNSW is used by default.
@@ -91,7 +92,7 @@ func TestHNSWConfigIntegration(t *testing.T) {
 			os.Unsetenv("NORNICDB_VECTOR_HNSW_EF_SEARCH")
 		}()
 
-		engine := storage.NewMemoryEngine()
+		engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		svc := NewServiceWithDimensions(engine, 4)
 
 		// Add nodes and verify HNSW is used by default.

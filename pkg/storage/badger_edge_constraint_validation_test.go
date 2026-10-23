@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 	"time"
@@ -20,7 +22,7 @@ import (
 // path does not exercise the same way.
 func edgeConstraintFixture(t *testing.T, c Constraint) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

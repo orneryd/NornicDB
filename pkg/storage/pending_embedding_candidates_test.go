@@ -5,6 +5,7 @@ import (
 	"errors"
 	"expvar"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
@@ -109,7 +110,10 @@ func TestPendingCandidatesFailedEngineWrite(t *testing.T) {
 
 func TestPendingCandidatesRecoveryAndRestore(t *testing.T) {
 	path := t.TempDir()
-	e, err := NewBadgerEngine(path)
+	e, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	if e != nil {
+		fixtureowner.Own(t, e)
+	}
 	require.NoError(t, err)
 	e.SetEmbeddingsEnabled(true)
 	_, err = e.CreateNode(pendingCandidateNode(0))
@@ -117,7 +121,7 @@ func TestPendingCandidatesRecoveryAndRestore(t *testing.T) {
 	backup := t.TempDir() + "/pending.backup"
 	require.NoError(t, e.Backup(backup))
 	require.NoError(t, e.Close())
-	e, err = NewBadgerEngine(path)
+	e, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	defer e.Close()
 	e.SetEmbeddingsEnabled(true)
@@ -276,7 +280,10 @@ func TestPendingCandidatesWALReplay(t *testing.T) {
 
 func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	path := t.TempDir()
-	e, err := NewBadgerEngine(path)
+	e, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	if e != nil {
+		fixtureowner.Own(t, e)
+	}
 	require.NoError(t, err)
 	e.SetEmbeddingsEnabled(true)
 	_, err = e.CreateNode(pendingCandidateNode(0))
@@ -293,7 +300,7 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	// Model the exact crash boundary: the marker is durable but the commit
 	// writer's volatile hint publication has not run. Discard all RAM state.
 	require.NoError(t, e.Close())
-	e, err = NewBadgerEngine(path)
+	e, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	defer e.Close()
 	e.SetEmbeddingsEnabled(true)
@@ -302,7 +309,10 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 
 func TestPendingCandidatesRestartLargeBacklog(t *testing.T) {
 	path := t.TempDir()
-	e, err := NewBadgerEngine(path)
+	e, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	if e != nil {
+		fixtureowner.Own(t, e)
+	}
 	require.NoError(t, err)
 	e.SetEmbeddingsEnabled(true)
 	const n = 2048
@@ -312,7 +322,7 @@ func TestPendingCandidatesRestartLargeBacklog(t *testing.T) {
 	}
 	require.NoError(t, e.BulkCreateNodes(nodes))
 	require.NoError(t, e.Close())
-	e, err = NewBadgerEngine(path)
+	e, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	defer e.Close()
 	e.SetEmbeddingsEnabled(true)

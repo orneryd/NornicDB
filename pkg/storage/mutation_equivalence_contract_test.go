@@ -14,6 +14,7 @@ package storage
 // paths is what prevents batch-related divergences.
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 
@@ -24,18 +25,21 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 	t.Helper()
 	return map[string]func(*testing.T) Engine{
 		"memory": func(t *testing.T) Engine {
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			return engine
 		},
 		"badger": func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			return engine
 		},
 		"wal": func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+			if engine != nil {
+				fixtureowner.Own(t, engine)
+			}
 			require.NoError(t, err)
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)
@@ -43,7 +47,10 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 			return NewWALEngine(engine, walLog)
 		},
 		"namespaced+wal": func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+			if engine != nil {
+				fixtureowner.Own(t, engine)
+			}
 			require.NoError(t, err)
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)

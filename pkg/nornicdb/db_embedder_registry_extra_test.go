@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sync"
 	"testing"
@@ -89,7 +91,7 @@ func TestDB_GetOrCreateEmbedderForDB_ExtraBranches(t *testing.T) {
 }
 
 func TestDB_SetEmbedder_ExistingQueueAppliesYieldFn(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	queue := NewEmbedQueue(nil, base, &EmbedQueueConfig{DeferWorkerStart: true})
@@ -124,7 +126,7 @@ func TestDB_SetDefaultEmbedConfig_ReturnsWhenQueueUnavailable(t *testing.T) {
 }
 
 func TestDB_BuildSearchIndexes_PropagatesGetOrCreateError(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	db := &DB{
@@ -182,7 +184,7 @@ func TestDB_SetEmbedder_ClusteringFlagBranches(t *testing.T) {
 		cleanup := featureflags.WithGPUClusteringEnabled()
 		t.Cleanup(cleanup)
 
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 0
@@ -205,7 +207,7 @@ func TestDB_SetEmbedder_ClusteringFlagBranches(t *testing.T) {
 		cleanup := featureflags.WithGPUClusteringEnabled()
 		t.Cleanup(cleanup)
 
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = time.Hour

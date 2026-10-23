@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -58,7 +59,7 @@ func (e *mmrGetNodeErrorEngine) GetNode(storage.NodeID) (*storage.Node, error) {
 }
 
 func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 	svc := NewServiceWithDimensions(engine, 2)
 
@@ -86,7 +87,7 @@ func TestSearchRerankExtraApplyMMRBranches(t *testing.T) {
 }
 
 func TestSearchRerankExtraApplyMMRErrorBranches(t *testing.T) {
-	missingEngine := storage.NewMemoryEngine()
+	missingEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { missingEngine.Close() })
 	_, err := missingEngine.CreateNode(&storage.Node{ID: "nornic:ok", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 0}}})
 	require.NoError(t, err)
@@ -99,7 +100,7 @@ func TestSearchRerankExtraApplyMMRErrorBranches(t *testing.T) {
 	require.Equal(t, []rrfResult{{ID: "nornic:ok", RRFScore: 0.8}}, selected)
 	require.True(t, seen["nornic:missing"])
 
-	boomEngine := &mmrGetNodeErrorEngine{Engine: storage.NewMemoryEngine(), err: errors.New("storage boom")}
+	boomEngine := &mmrGetNodeErrorEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), err: errors.New("storage boom")}
 	t.Cleanup(func() { boomEngine.Close() })
 	boomSvc := NewServiceWithDimensions(boomEngine, 2)
 	results := []rrfResult{{ID: "a", RRFScore: 0.9}, {ID: "b", RRFScore: 0.8}}
@@ -108,7 +109,7 @@ func TestSearchRerankExtraApplyMMRErrorBranches(t *testing.T) {
 }
 
 func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 	svc := NewServiceWithDimensions(engine, 2)
 	ctx := context.Background()
@@ -157,7 +158,7 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 }
 
 func TestStage2RerankUsesWinningPassageAndBoundsFallbackContent(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 	svc := NewServiceWithDimensions(engine, 2)
 
@@ -222,7 +223,7 @@ func TestRerankCandidateCharCeilingUsesOptionThenEnvironmentThenDefault(t *testi
 }
 
 func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 	svc := NewServiceWithDimensions(engine, 2)
 	for _, id := range []string{"nornic:a", "nornic:b", "nornic:c"} {
@@ -256,7 +257,7 @@ func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
 var benchmarkRerankCandidateContent string
 
 func BenchmarkRerankCandidateContentForLongDocument(b *testing.B) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	text := strings.Repeat("предисловие ", 7000) + "alpha tango" + strings.Repeat(" заключение", 7000)
 	node := &storage.Node{
 		ID:         "nornic:long",

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -26,7 +28,7 @@ func seedRoleRename(t *testing.T, engine storage.Engine) *RoleStore {
 
 func TestRenamedRoleKeepsItsGrants(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := seedRoleRename(t, system)
@@ -72,7 +74,7 @@ func TestRoleRenameRecordFailureChangesNothing(t *testing.T) {
 		{"update", "user:worker"},
 	} {
 		t.Run(test.op+string(test.id), func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
@@ -94,7 +96,7 @@ func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 	for _, fail := range []bool{true, false} {
 		t.Run(map[bool]string{true: "failure", false: "success"}[fail], func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
@@ -139,7 +141,7 @@ func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 	} {
 		t.Run(test.op+string(test.id)+string(rune('0'+test.nth)), func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
@@ -165,7 +167,7 @@ func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 
 func TestRoleRenameRejectsDifferentCacheStores(t *testing.T) {
 	ctx := context.Background()
-	base, other := storage.NewMemoryEngine(), storage.NewMemoryEngine()
+	base, other := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed), runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close(); _ = other.Close() })
 	roles := seedRoleRename(t, storage.NewNamespacedEngine(base, "system"))
 	for _, stores := range []RoleMutationStores{
@@ -179,7 +181,7 @@ func TestRoleRenameRejectsDifferentCacheStores(t *testing.T) {
 
 func TestAllowlistRenameReadFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &mutationFault{Engine: storage.NewNamespacedEngine(base, "system")}
 	roles := NewRoleStore(fault)
@@ -198,7 +200,7 @@ func TestAllowlistRenameReadFailureChangesNothing(t *testing.T) {
 
 func TestRoleRenamePreservesUnrelatedRecordsAndRejectsOccupiedKeys(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := seedRoleRename(t, system)

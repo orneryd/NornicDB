@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -15,7 +16,7 @@ import (
 // is Neo4j's SyntaxError "Expected exactly one statement per query but got:
 // 2", and USE <db>; alone is a USE with no clause.
 func TestBoltUseSemicolon(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, mgr)

@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"runtime"
@@ -187,7 +189,7 @@ func (q *pausingQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
 func TestEmbedWorkerPauseStopsBatchFill(t *testing.T) {
 	for _, path := range []string{"resolved", "document"} {
 		t.Run(path, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			nodes := []*storage.Node{
 				{ID: "docs:first", Properties: map[string]any{"content": "first"}},
@@ -256,7 +258,7 @@ func (q *blockingQueue) RefreshPendingEmbeddingsIndex() int { return 0 }
 // A pause that finds the flag already set still waits out a claim in
 // progress: no SetPaused(true) returns while a node can still be claimed.
 func TestEmbedWorkerRepeatedPauseWaitsForClaim(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	nodes := []*storage.Node{{ID: "docs:first", Properties: map[string]any{"content": "first"}}}
 	_, err := engine.CreateNode(nodes[0])

@@ -1,6 +1,8 @@
 package cypher_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 )
 
 func TestDatabaseManagerStorageExposesQueryLimitsToExecutor(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	manager, err := multidb.NewDatabaseManager(inner, nil)
 	require.NoError(t, err)

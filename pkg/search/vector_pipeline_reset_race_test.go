@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"sync"
@@ -14,7 +16,7 @@ import (
 // while index builds reset it concurrently (#593). Run with -race to also
 // check the field is only read under pipelineMu.
 func TestGetOrCreateVectorPipelineConcurrentWithReset(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 4)
 	for i := 0; i < 8; i++ {

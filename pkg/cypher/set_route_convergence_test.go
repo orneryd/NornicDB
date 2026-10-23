@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 
@@ -249,7 +250,10 @@ func newSetRouteServerStackExecutor(t *testing.T) *StorageExecutor {
 	// -> Namespaced) while skipping per-case on-disk database opens, which
 	// dominated the suite runtime (profiled: ~30% CPU in badger.Open plus
 	// fsync wall-clock per build).
-	badger, err := storage.NewBadgerEngineInMemory()
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", &storage.WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
@@ -268,18 +272,18 @@ func TestUnwindMergeBatchSetSemantics(t *testing.T) {
 	resolve := func(expr string, row map[string]interface{}) interface{} { return row[expr] }
 
 	node := &storage.Node{ID: "n", Properties: map[string]interface{}{"t": int64(1)}}
-	changed, err := sharedSetAssignmentForTest(node, unwindSimpleSetAssignment{prop: "t", expr: "t"}, map[string]interface{}{"t": nil}, resolve, &setWrites{})
+	changed, err := sharedSetAssignmentForTest(t, node, unwindSimpleSetAssignment{prop: "t", expr: "t"}, map[string]interface{}{"t": nil}, resolve, &setWrites{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, changed)
 	assert.NotContains(t, node.Properties, "t")
-	changed, err = sharedSetAssignmentForTest(node, unwindSimpleSetAssignment{prop: "t", expr: "t"}, map[string]interface{}{"t": nil}, resolve, &setWrites{})
+	changed, err = sharedSetAssignmentForTest(t, node, unwindSimpleSetAssignment{prop: "t", expr: "t"}, map[string]interface{}{"t": nil}, resolve, &setWrites{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, changed, "removing an absent key is not a change")
-	_, err = sharedSetAssignmentForTest(node, unwindSimpleSetAssignment{prop: "t", expr: "t"}, map[string]interface{}{"t": map[string]interface{}{"a": 1}}, resolve, &setWrites{})
+	_, err = sharedSetAssignmentForTest(t, node, unwindSimpleSetAssignment{prop: "t", expr: "t"}, map[string]interface{}{"t": map[string]interface{}{"a": 1}}, resolve, &setWrites{})
 	assert.Error(t, err)
 
 	edge := &storage.Edge{ID: "e", Properties: map[string]interface{}{"a": int64(1)}}
-	changed, err = sharedSetAssignmentForTest(edge, unwindSimpleSetAssignment{mergeMap: true, expr: "p"}, map[string]interface{}{"p": map[string]interface{}{"a": nil, "b": int64(2)}}, resolve, &setWrites{})
+	changed, err = sharedSetAssignmentForTest(t, edge, unwindSimpleSetAssignment{mergeMap: true, expr: "p"}, map[string]interface{}{"p": map[string]interface{}{"a": nil, "b": int64(2)}}, resolve, &setWrites{})
 	require.NoError(t, err)
 	assert.Equal(t, 2, changed)
 	assert.Equal(t, map[string]interface{}{"b": int64(2)}, edge.Properties)

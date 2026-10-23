@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -11,7 +13,7 @@ import (
 // end node is visible the way GetNode would, and declines to answer while
 // decay filtering can hide a node. Writes apply synchronously.
 func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)
@@ -86,7 +88,7 @@ type nonCheckingEngine struct{ Engine }
 // show. A head newer than the read version, and decay filtering, leave the
 // answer to GetNode.
 func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer engine.Close()
 	for _, id := range []NodeID{"ns:kept", "ns:gone", "ns:changed", "ns:peer-deleted", "ns:dropped"} {

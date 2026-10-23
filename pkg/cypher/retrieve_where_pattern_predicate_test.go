@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -14,7 +16,7 @@ import (
 // COUNT, with literals, parameters and the calling row's variables.
 func TestRetrieveWhereReadsPatternElementWhere(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)

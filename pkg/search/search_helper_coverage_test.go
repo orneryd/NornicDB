@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -32,7 +34,7 @@ func TestDisabledBM25IndexMethods(t *testing.T) {
 }
 
 func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewServiceWithDimensions(engine, 4)
@@ -57,7 +59,7 @@ func TestServiceWarmAndIntrospectionHelpers(t *testing.T) {
 }
 
 func TestPropertyVectorHelpers(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 
 	svc := NewServiceWithDimensions(engine, 4)
@@ -112,7 +114,7 @@ func TestScoreVectorIDDotBranches(t *testing.T) {
 	require.False(t, ok)
 	require.Equal(t, 0.0, score)
 
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 	svc = NewServiceWithDimensions(engine, 2)
 	score, ok = svc.scoreVectorIDDot([]float32{1, 0}, "missing")

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"os"
@@ -27,7 +29,7 @@ func TestLegacyRecoveryPreservesExactIntegerLexemes(t *testing.T) {
 }
 
 func TestLightweightSnapshotDoesNotAdvertiseOmittedVectors(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	vectors := make([][]float32, 16)

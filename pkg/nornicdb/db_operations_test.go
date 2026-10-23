@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"os"
@@ -80,7 +82,7 @@ func TestDB_GetIndexes(t *testing.T) {
 		require.Equal(t, "body", created[0].Property)
 		require.Equal(t, "fulltext", created[0].Type)
 
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		nilSchema := &nilSchemaEngine{Engine: baseEngine}
 		minimal := &DB{storage: nilSchema, baseStorage: nilSchema, config: DefaultConfig()}
@@ -200,7 +202,7 @@ func TestDB_Backup(t *testing.T) {
 	})
 
 	t.Run("backup returns wrapped node read error", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage: &backupErrorEngine{
@@ -216,7 +218,7 @@ func TestDB_Backup(t *testing.T) {
 	})
 
 	t.Run("backup returns wrapped edge read error", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage: &backupErrorEngine{

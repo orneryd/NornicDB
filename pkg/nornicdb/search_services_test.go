@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sync"
@@ -122,7 +123,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 	})
 
 	t.Run("defaultDatabaseName panics when storage is not namespaced", func(t *testing.T) {
-		db := &DB{storage: storage.NewMemoryEngine()}
+		db := &DB{storage: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 		require.Panics(t, func() {
 			_ = db.defaultDatabaseName()
 		})
@@ -186,7 +187,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 	})
 
 	t.Run("pending flush debounces ready-service mutations", func(t *testing.T) {
-		engine := storage.NewMemoryEngine()
+		engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = engine.Close() })
 		db := &DB{buildCtx: context.Background()}
 		svc := search.NewServiceWithDimensionsAndBM25Engine(engine, 3, search.DefaultBM25Engine())
@@ -522,7 +523,7 @@ func TestSearchServices_RunClusteringOnceAllDatabases_BranchMatrix(t *testing.T)
 		namespaces: []string{"", "system", "tenant_from_lister"},
 	}
 
-	readyEngine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "ready_cov")
+	readyEngine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "ready_cov")
 	readySvc := search.NewServiceWithDimensions(readyEngine, 3)
 	readySvc.EnableClustering(nil, 2)
 	_, err = readyEngine.CreateNode(&storage.Node{
@@ -533,9 +534,9 @@ func TestSearchServices_RunClusteringOnceAllDatabases_BranchMatrix(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, readySvc.BuildIndexes(context.Background()))
 
-	disabledSvc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "disabled_cov"), 3)
+	disabledSvc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "disabled_cov"), 3)
 
-	notReadySvc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "not_ready_cov"), 3)
+	notReadySvc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "not_ready_cov"), 3)
 	notReadySvc.EnableClustering(nil, 2)
 
 	db.searchServicesMu.Lock()
@@ -820,12 +821,12 @@ func TestSearchServices_StartBuildDefaultAndClosedBranches(t *testing.T) {
 
 func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 	db := &DB{
-		storage:             storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"),
+		storage:             storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic"),
 		searchServices:      make(map[string]*dbSearchService),
 		embeddingDims:       3,
 		searchMinSimilarity: 0.1,
 	}
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant_timeout")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_timeout")
 	svc := search.NewServiceWithDimensions(engine, 3)
 
 	entry := &dbSearchService{
@@ -846,7 +847,7 @@ func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 func TestSearchServices_EnsureBuiltAndStart_ErrorBranches(t *testing.T) {
 	t.Run("ensureSearchIndexesBuilt returns not initialized error for missing service", func(t *testing.T) {
 		db := &DB{
-			storage:        storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"),
+			storage:        storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic"),
 			searchServices: map[string]*dbSearchService{},
 		}
 
@@ -869,7 +870,7 @@ func TestSearchServices_EnsureBuiltAndStart_ErrorBranches(t *testing.T) {
 }
 
 func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	db := &DB{
 		storage:             storage.NewNamespacedEngine(base, "nornic"),
@@ -924,7 +925,7 @@ func TestSearchServices_OffLazyStatsAndRemoveBranches(t *testing.T) {
 	require.Zero(t, dims)
 	require.Zero(t, bytes)
 
-	broken := &DB{storage: storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"), searchServices: make(map[string]*dbSearchService)}
+	broken := &DB{storage: storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic"), searchServices: make(map[string]*dbSearchService)}
 	count, dims, bytes = broken.GetDatabaseManagedEmbeddingStats("tenant_without_base")
 	require.Zero(t, count)
 	require.Zero(t, dims)
@@ -941,7 +942,7 @@ func TestSearchServices_CloseBuildDone_IsIdempotent(t *testing.T) {
 
 func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	db := &DB{}
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant_flush")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_flush")
 	svc := search.NewServiceWithDimensions(engine, 3)
 
 	entry := &dbSearchService{
@@ -1111,7 +1112,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplayed(t *testing.
 
 	// Use isolated storage for deterministic replay assertions. Using db.baseStorage
 	// can introduce unrelated async mutation callbacks that race this test.
-	tenantStorage := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant_race")
+	tenantStorage := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_race")
 	blocking := &blockingIterEngine{
 		Engine:  tenantStorage,
 		entered: make(chan struct{}),
@@ -1167,7 +1168,7 @@ func TestSearchServices_RemoveEventDuringBuild_IsDeterministicallyReplayed(t *te
 
 	// Use isolated storage for deterministic replay assertions. Using db.baseStorage
 	// can introduce unrelated async mutation callbacks that race this test.
-	tenantStorage := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant_remove_race")
+	tenantStorage := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant_remove_race")
 	blocking := &blockingIterEngine{
 		Engine:  tenantStorage,
 		entered: make(chan struct{}),

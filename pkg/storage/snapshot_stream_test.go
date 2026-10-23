@@ -44,7 +44,7 @@ func (v *collectingSnapshotVisitor) VisitEdge(edge *Edge) error {
 }
 
 func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	_, err := engine.CreateNode(&Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "alpha"}})
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "nornic:n2"})
@@ -66,7 +66,7 @@ func TestStreamingSnapshotRoundTripAndFooter(t *testing.T) {
 }
 
 func TestWriteSnapshotUsesEmbeddingFreeNodeStream(t *testing.T) {
-	engine := &embeddingFreeSnapshotSpy{MemoryEngine: NewMemoryEngine()}
+	engine := &embeddingFreeSnapshotSpy{MemoryEngine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err := engine.CreateNode(&Node{
 		ID:              "nornic:document",
@@ -135,13 +135,13 @@ func streamingSnapshotHeader(t *testing.T) *bytes.Buffer {
 
 func TestWriteSnapshotRequiresStreamingEngine(t *testing.T) {
 	var output bytes.Buffer
-	err := WriteSnapshot(context.Background(), &materializingOnlyEngine{Engine: NewMemoryEngine()}, &output, SnapshotOptions{})
+	err := WriteSnapshot(context.Background(), &materializingOnlyEngine{Engine: newTestMemoryEngine(t)}, &output, SnapshotOptions{})
 	require.ErrorIs(t, err, ErrStreamingSnapshotUnsupported)
 }
 
 func TestWriteSnapshotRejectsUnreadableRecordLimit(t *testing.T) {
 	var output bytes.Buffer
-	err := WriteSnapshot(context.Background(), NewMemoryEngine(), &output, SnapshotOptions{
+	err := WriteSnapshot(context.Background(), newTestMemoryEngine(t), &output, SnapshotOptions{
 		MaxRecordBytes: defaultSnapshotRecordSize + 1,
 	})
 	require.ErrorContains(t, err, "snapshot max record bytes")
@@ -158,8 +158,8 @@ func TestWriteSnapshotPropagatesStreamingFailures(t *testing.T) {
 		want   error
 		prefix string
 	}{
-		{name: "nodes", engine: &failingStreamingSnapshotEngine{MemoryEngine: NewMemoryEngine(), nodeErr: nodeErr}, want: nodeErr, prefix: "stream snapshot nodes"},
-		{name: "edges", engine: &failingStreamingSnapshotEngine{MemoryEngine: NewMemoryEngine(), edgeErr: edgeErr}, want: edgeErr, prefix: "stream snapshot edges"},
+		{name: "nodes", engine: &failingStreamingSnapshotEngine{MemoryEngine: newTestMemoryEngine(t), nodeErr: nodeErr}, want: nodeErr, prefix: "stream snapshot nodes"},
+		{name: "edges", engine: &failingStreamingSnapshotEngine{MemoryEngine: newTestMemoryEngine(t), edgeErr: edgeErr}, want: edgeErr, prefix: "stream snapshot edges"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
@@ -212,7 +212,7 @@ func TestReadSnapshotRejectsInvalidStructure(t *testing.T) {
 }
 
 func TestReadSnapshotPropagatesVisitorErrors(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	_, err := engine.CreateNode(&Node{ID: "nornic:n1"})
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "nornic:n2"})

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -23,7 +25,7 @@ func grantedAccess(store *PrivilegesStore, roles []string, database string) Reso
 // override.
 func TestResolveDatabaseAccess(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	// The system database, as the server gives it to the auth stores.
 	engine := storage.NewNamespacedEngine(base, "system")

@@ -15,6 +15,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,7 +48,7 @@ func createEdgeEndpoints(t *testing.T, engine *BadgerEngine) {
 // that edge must fail with the retryable ErrConflict ("edge ... changed after
 // transaction start"), NOT ErrNotFound.
 func TestBug_UpdateEdgePeerCommittedAfterBeginIsConflictNotNotFound(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	createEdgeEndpoints(t, engine)
@@ -79,7 +81,7 @@ func TestBug_UpdateEdgePeerCommittedAfterBeginIsConflictNotNotFound(t *testing.T
 // absent (tombstoned) at latest-committed state, so ErrNotFound remains the
 // correct answer — the reclassification must be tombstone-aware.
 func TestUpdateEdgePeerDeletedEdgeStillNotFound(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	createEdgeEndpoints(t, engine)
@@ -104,7 +106,7 @@ func TestUpdateEdgePeerDeletedEdgeStillNotFound(t *testing.T) {
 // TestUpdateEdgeMissingEdgeStillNotFound pins the trivial case: an edge that
 // never existed anywhere keeps returning ErrNotFound.
 func TestUpdateEdgeMissingEdgeStillNotFound(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	createEdgeEndpoints(t, engine)
@@ -122,7 +124,7 @@ func TestUpdateEdgeMissingEdgeStillNotFound(t *testing.T) {
 // hiding peer commits that landed after this transaction began (snapshot
 // isolation). Only the write path reclassifies; reads are untouched.
 func TestGetEdgeSnapshotReadStaysNotFound(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	createEdgeEndpoints(t, engine)
@@ -144,7 +146,7 @@ func TestGetEdgeSnapshotReadStaysNotFound(t *testing.T) {
 // pre-pin path: with no namespace pinned yet (readTS zero) the write-side
 // resolver must delegate to the plain committed read and see the edge.
 func TestGetCommittedEdgeForUpdateLockedZeroReadTSDelegates(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	createEdgeEndpoints(t, engine)
@@ -169,7 +171,7 @@ func TestGetCommittedEdgeForUpdateLockedZeroReadTSDelegates(t *testing.T) {
 // runs on the previously-failing ErrNotVisibleAtSnapshot path, so this
 // benchmark pins the no-regression claim for the hot path.
 func BenchmarkTransaction_UpdateEdge(b *testing.B) {
-	engine, err := NewBadgerEngine(b.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
 	if err != nil {
 		b.Fatal(err)
 	}

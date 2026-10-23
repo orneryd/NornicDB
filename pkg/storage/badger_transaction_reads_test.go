@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sort"
 	"strconv"
@@ -33,7 +35,7 @@ import (
 // writes onto the committed state.
 func txReadFixture(t *testing.T) *MemoryEngine {
 	t.Helper()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	commitNamespace := func(nodes []*Node, edges []*Edge) {
@@ -163,7 +165,7 @@ func TestTxReads_StreamNodesByLabelProjected_CallbackCanReadWithPendingWrites(t 
 }
 
 func BenchmarkTxReads_StreamNodesByLabelProjectedWithPendingWrites(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	for _, name := range []string{"alice", "bob", "carol"} {
@@ -303,7 +305,7 @@ func TestTxReads_EndpointPrefixNodeCacheIsBounded(t *testing.T) {
 }
 
 func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	writer, err := engine.BeginTransaction()
 	require.NoError(t, err)

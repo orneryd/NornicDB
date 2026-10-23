@@ -5,6 +5,8 @@ package storage
 // PropertyFilter and prefix, without materialising the population (#824).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"sort"
@@ -26,7 +28,7 @@ func streamTxIDs(t *testing.T, tx *BadgerTransaction, opts StreamNodesOptions) (
 }
 
 func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{
@@ -89,7 +91,7 @@ func TestBadgerTransactionStreamNodesWithOptions(t *testing.T) {
 }
 
 func TestBadgerTransactionStreamNodesAfterCommitFails(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	tx, err := engine.BeginTransaction()
@@ -102,7 +104,7 @@ func TestBadgerTransactionStreamNodesAfterCommitFails(t *testing.T) {
 // stream the engine's current view when they have no read version, and the
 // MVCC view at their read version otherwise.
 func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{
@@ -136,7 +138,7 @@ func TestBadgerTransactionStreamNodesWithoutPinnedSnapshot(t *testing.T) {
 
 // Errors and stops from the visitor end the pending-only part of the stream.
 func TestBadgerTransactionStreamNodesPendingVisitErrors(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	tx, err := engine.BeginTransaction()

@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"log/slog"
 	"path/filepath"
@@ -55,7 +57,7 @@ func TestBM25ParkedOnlyWhenTheBaseCheckpointWasWritten(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		for _, kind := range []string{"empty_never_written", "empty_dirty", "populated"} {
 			t.Run(backend+"/"+kind, func(t *testing.T) {
-				engine := storage.NewMemoryEngine()
+				engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				if kind == "populated" {
 					_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
@@ -114,7 +116,7 @@ func parkingSearchIDs(t *testing.T, svc *Service, term string) []string {
 func TestBM25ParkedAtTheCheckpointThePersistWrote(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
 			require.NoError(t, err)

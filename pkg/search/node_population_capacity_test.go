@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -17,7 +18,7 @@ func TestNodePopulationRestoresCapacityBeforeFirstMutation(t *testing.T) {
 		for _, traced := range []bool{false, true} {
 			for _, operation := range []string{"new_node", "index_node", "remove_node", "index_edge", "remove_edge"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, operation), func(t *testing.T) {
-					engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+					engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 					t.Cleanup(func() { require.NoError(t, engine.Close()) })
 					var source storage.Engine = engine
 					if traced {

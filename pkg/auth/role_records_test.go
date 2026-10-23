@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sync"
 	"testing"
@@ -15,7 +17,7 @@ import (
 // one namespace, so one transaction can change them together.
 func newSystemTestEngine(t testing.TB) storage.Engine {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	return storage.NewNamespacedEngine(base, "system")
 }
@@ -71,7 +73,7 @@ func TestRoleRecordWriteRacingRoleChangeLeavesNoRecord(t *testing.T) {
 		for kind, setter := range roleRecordSetters {
 			t.Run(map[bool]string{false: "delete", true: "rename"}[rename]+"/"+kind, func(t *testing.T) {
 				ctx := context.Background()
-				base := storage.NewMemoryEngine()
+				base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { _ = base.Close() })
 				system := storage.NewNamespacedEngine(base, "system")
 				roles := NewRoleStore(system)
@@ -135,7 +137,7 @@ func TestRoleRecordWriteToMissingRoleIsRefused(t *testing.T) {
 	}
 	for kind, write := range writes {
 		t.Run(kind, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			before, err := system.AllNodes()

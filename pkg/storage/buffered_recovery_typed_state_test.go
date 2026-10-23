@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -32,7 +33,10 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 			t.Run(mutation+map[bool]string{false: "/replay", true: "/startup"}[startup], func(t *testing.T) {
 				dir := t.TempDir()
 				open := func() (*BadgerEngine, *WAL) {
-					engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
+					engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+					if engine != nil {
+						fixtureowner.Own(t, engine)
+					}
 					require.NoError(t, err)
 					cfg := DefaultWALConfig()
 					cfg.Dir = dir + "/wal"
@@ -151,7 +155,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 func TestSnapshotEmptyNamedVectorsDoNotAdvertiseAvailability(t *testing.T) {
 	for _, vector := range [][]float32{nil, {}, {1, 2}} {
 		t.Run(string(rune('0'+len(vector))), func(t *testing.T) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			chunks := make([][]float32, 16)
@@ -182,7 +186,10 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 		t.Run(map[bool]string{false: "replay", true: "startup"}[startup], func(t *testing.T) {
 			dir := t.TempDir()
 			open := func() (*BadgerEngine, *WAL) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+				if b != nil {
+					fixtureowner.Own(t, b)
+				}
 				require.NoError(t, err)
 				cfg := DefaultWALConfig()
 				cfg.Dir = dir + "/wal"
@@ -240,7 +247,7 @@ func TestBufferedRecoveryPreservesCreatedVectorsAndEndpoints(t *testing.T) {
 func TestBufferedRecoveryRejectsCorruptAuthoritativeBodies(t *testing.T) {
 	for _, edge := range []bool{false, true} {
 		t.Run(map[bool]string{false: "node", true: "edge"}[edge], func(t *testing.T) {
-			b, err := NewBadgerEngineInMemory()
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = b.Close() })
 			data := WALBufferedCommitData{TxID: "corrupt", Namespace: "test", Writes: map[string][]byte{}}

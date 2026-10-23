@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"math"
 	"testing"
@@ -715,7 +717,7 @@ func TestCreatePromotionPolicy_MissingProfileRef(t *testing.T) {
 func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
 	for _, boundary := range []string{"namespace", "corrupt", "read", "write", "serialize"} {
 		t.Run(boundary, func(t *testing.T) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			if boundary == "corrupt" {
@@ -753,7 +755,7 @@ func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
 }
 
 func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	transaction, err := engine.BeginTransaction()
@@ -776,7 +778,7 @@ func TestKnowledgePolicySchemaPublishesPersistedSnapshot(t *testing.T) {
 
 func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	directory := t.TempDir()
-	engine, err := NewBadgerEngine(directory)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	committed := engine.GetSchemaForNamespace("native")
@@ -841,7 +843,7 @@ func TestKnowledgePolicySchemaTransactionLifecycle(t *testing.T) {
 	require.NoError(t, other.Commit())
 	require.Len(t, committed.ShowPromotionPolicies(), 1)
 	require.NoError(t, engine.Close())
-	reopened, err := NewBadgerEngine(directory)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.Equal(t, "first", reopened.GetSchemaForNamespace("native").ShowPromotionPolicies()[0].Name)

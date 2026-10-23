@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"log/slog"
 	"sync"
@@ -19,7 +21,7 @@ func TestGPUManagerChangeRetiresConcurrentFactory(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	svc := NewServiceWithDimensions(engine, 3)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
@@ -127,7 +129,7 @@ func TestGPUManagerChangeRetiresConcurrentFactory(t *testing.T) {
 func TestGPUManagerChangeSerializesCompletedTransition(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	svc := NewServiceWithDimensions(engine, 3)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
@@ -227,7 +229,7 @@ func TestGPUManagerDisablePreservesCappedCurrentResultsWithoutHardware(t *testin
 	for _, mode := range []string{"nil", "disabled"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
-			engine := storage.NewMemoryEngine()
+			engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			svc := NewServiceWithDimensions(engine, 3)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })

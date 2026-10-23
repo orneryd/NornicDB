@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"sort"
@@ -13,7 +15,7 @@ import (
 // returns the same projected shape through every layer of the production stack,
 // Writes apply synchronously, so reads at every layer observe them.
 func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)
@@ -71,7 +73,7 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 // maintenance forwards behave like the inner engine with the namespace
 // boundary applied.
 func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -163,7 +165,7 @@ func TestWrapperCapabilityParity_NamespacedMaintenanceForwards(t *testing.T) {
 // event registration works through WAL and Namespaced wrappers, that the
 // namespaced view translates IDs, and that cross-namespace events are filtered.
 func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 

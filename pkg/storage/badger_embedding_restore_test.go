@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 func TestEmbeddingCleanup_RestoreLegacyOrphans(t *testing.T) {
 	for _, legacy := range []bool{true, false} {
 		t.Run(fmt.Sprintf("released=%v", legacy), func(t *testing.T) {
-			source, err := NewBadgerEngine(t.TempDir())
+			source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer source.Close()
 			id := NodeID("test:restored-inline")
@@ -60,7 +61,10 @@ func TestEmbeddingCleanup_RestoreLegacyOrphans(t *testing.T) {
 			for _, action := range []string{"delete", "update", "transaction_delete", "transaction_update"} {
 				t.Run(action, func(t *testing.T) {
 					dir := t.TempDir()
-					b, err := NewBadgerEngine(dir)
+					b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+					if b != nil {
+						fixtureowner.Own(t, b)
+					}
 					require.NoError(t, err)
 					defer func() { require.NoError(t, b.Close()) }()
 					require.NoError(t, b.Restore(backup))
@@ -88,7 +92,10 @@ func TestEmbeddingCleanup_RestoreLegacyOrphans(t *testing.T) {
 						require.NoError(t, tx.Commit())
 					}
 					require.NoError(t, b.Close())
-					b, err = NewBadgerEngine(dir)
+					b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+					if b != nil {
+						fixtureowner.Own(t, b)
+					}
 					require.NoError(t, err)
 					require.Zero(t, separatorIDKeyCount(t, b, id))
 					require.Equal(t, live.ChunkEmbeddings, embeddingCleanupColdNode(t, b, live.ID).ChunkEmbeddings)

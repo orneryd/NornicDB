@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -118,7 +119,7 @@ func testHNSWBackgroundExact(t *testing.T, fileBacked bool) {
 func TestHNSWBackgroundBuildCancelledByOwner(t *testing.T) {
 	for _, drop := range []bool{false, true} {
 		t.Run(map[bool]string{false: "close", true: "drop"}[drop], func(t *testing.T) {
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+			svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 			t.Cleanup(func() { _ = svc.Close() })
 			require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 			started := make(chan struct{})
@@ -175,7 +176,7 @@ func (g *cancelSearchCandidateGenerator) SearchCandidates(ctx context.Context, _
 }
 
 func TestSearchCancelledContextDoesNotRetryFallback(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	t.Cleanup(func() { _ = svc.Close() })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

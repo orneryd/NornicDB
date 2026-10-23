@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -49,7 +51,7 @@ func (e *coverageQueryEmbedder) Backend() string { return "cpu" }
 var _ embed.Embedder = (*coverageQueryEmbedder)(nil)
 
 func TestDBCachingAccessorAndNoopBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	queue := NewEmbedQueue(nil, engine, &EmbedQueueConfig{DeferWorkerStart: true})
 	t.Cleanup(func() { queue.Close() })
@@ -101,7 +103,7 @@ func TestDBRetentionPoliciesPathBranches(t *testing.T) {
 }
 
 func TestDBCollectSubjectRetentionRecords(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "alice", "category": "note"}})
 	require.NoError(t, err)
@@ -345,7 +347,7 @@ func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 }
 
 func TestDBSearchStatusAndDropStateBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	cfg := DefaultConfig()
 	db := &DB{

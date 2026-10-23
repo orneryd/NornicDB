@@ -8,6 +8,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -24,7 +26,7 @@ import (
 
 // TestUndoCreateNode verifies that creating a node can be undone.
 func TestUndoCreateNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -63,7 +65,7 @@ func TestUndoCreateNode(t *testing.T) {
 
 // TestUndoUpdateNode verifies that updating a node can be undone.
 func TestUndoUpdateNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -109,7 +111,7 @@ func TestUndoUpdateNode(t *testing.T) {
 
 // TestUndoDeleteNode verifies that deleting a node can be undone.
 func TestUndoDeleteNode(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -157,7 +159,7 @@ func TestUndoDeleteNode(t *testing.T) {
 
 // TestUndoWithoutBeforeImage verifies error on missing undo data.
 func TestUndoWithoutBeforeImage(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer base.Close()
 	engine := NewNamespacedEngine(base, "test")
 
@@ -335,7 +337,7 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -377,7 +379,7 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -416,7 +418,7 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -468,7 +470,7 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -548,7 +550,7 @@ func TestRecoverWithTransactions_ErrorAccountingPaths(t *testing.T) {
 
 	require.NoError(t, wal.Close())
 
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	require.NoError(t, err)
 	require.NotNil(t, baseEngine)
 
@@ -588,7 +590,7 @@ func TestRecoveryResultSummary(t *testing.T) {
 
 // TestUndoCreateEdge verifies edge creation can be undone.
 func TestUndoCreateEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes first
@@ -621,7 +623,7 @@ func TestUndoCreateEdge(t *testing.T) {
 
 // TestUndoDeleteEdge verifies edge deletion can be undone.
 func TestUndoDeleteEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	// Create nodes and edge
@@ -659,7 +661,7 @@ func TestUndoDeleteEdge(t *testing.T) {
 }
 
 func TestUndoUpdateEdge(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	_, err := engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
@@ -695,7 +697,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	}
 
 	t.Run("bulk create nodes then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		data, _ := json.Marshal(WALBulkNodesData{Nodes: nodes})
 		entry := WALEntry{Operation: OpBulkNodes, Data: data, Checksum: crc32Checksum(data), Database: "test"}
@@ -707,7 +709,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	})
 
 	t.Run("bulk create edges then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
 			_, err := engine.CreateNode(n)
@@ -724,7 +726,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	})
 
 	t.Run("bulk delete nodes then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
 			_, err := engine.CreateNode(n)
@@ -740,7 +742,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 	})
 
 	t.Run("bulk delete edges then undo", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		for _, n := range nodes {
 			_, err := engine.CreateNode(n)
@@ -759,7 +761,7 @@ func TestReplayAndUndoBulkWALEntries(t *testing.T) {
 }
 
 func TestReplayAndUndoWALEntry_ErrorBranches(t *testing.T) {
-	baseEngine := NewMemoryEngine()
+	baseEngine := newTestMemoryEngine(t)
 	engine := NewNamespacedEngine(baseEngine, "test")
 
 	t.Run("marker operations are noops", func(t *testing.T) {
@@ -823,15 +825,19 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("invalid snapshot returns load error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("invalid wal manifest returns read error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		require.NoError(t, writeWALManifest(dir, &WALManifest{
 			Version: walManifestVersion,
@@ -840,11 +846,13 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			},
 		}))
 
-		_, _, err := RecoverWithTransactions(dir, "")
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
 	t.Run("snapshot restore succeeds with namespaced replay base", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -859,7 +867,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		baseEngine, result, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.NotNil(t, baseEngine)
 		require.Equal(t, uint64(7), result.SnapshotSeq)
@@ -874,6 +882,8 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("snapshot restore returns node restore error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-dupe.json")
 		// The current writer rejects nil entities. Keep the legacy loader's
@@ -884,11 +894,13 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(snapshotPath, legacy, 0600))
 
-		_, _, err = RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore nodes")
 	})
 
 	t.Run("snapshot restore returns edge restore error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-bad-edge.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -900,7 +912,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
 }

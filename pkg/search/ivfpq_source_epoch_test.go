@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,7 @@ func TestCompressedIndexIsRetiredWithItsVectorSource(t *testing.T) {
 	profile := IVFPQProfile{Dimensions: 2, IVFLists: 2, PQSegments: 1, PQBits: 1, NProbe: 1, RerankTopK: 2}
 	base := filepath.Join(t.TempDir(), "hnsw")
 	bundleDir := ivfpqBundleDir(base)
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.hnswIndexPath = base
 

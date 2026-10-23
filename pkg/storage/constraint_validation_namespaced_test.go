@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync"
 	"testing"
@@ -11,7 +13,7 @@ import (
 func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(fmt.Sprintf("explicit=%t", explicit), func(t *testing.T) {
-			engine, err := NewBadgerEngine(t.TempDir())
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "cu1", Type: ConstraintUnique, Label: "CU", Properties: []string{"a", "b"}}))
@@ -60,7 +62,7 @@ func TestMonster531ConcurrentCompositeUnique(t *testing.T) {
 }
 
 func TestMonster531CompositeUniqueStorage(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	constraint := Constraint{Name: "cu1", Type: ConstraintUnique, Label: "CU", Properties: []string{"a", "b"}}
@@ -116,7 +118,7 @@ func TestMonster531CompositeUniqueStorage(t *testing.T) {
 // See docs/plans/consumer-pinned-error-contract-plan.md §2.3. Do not relax
 // this test without coordinating with known consumers.
 func TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine(t *testing.T) {
-	inner := NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 
 	const namespace = "tenant_a"

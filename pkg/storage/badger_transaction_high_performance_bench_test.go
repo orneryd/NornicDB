@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync"
 	"testing"
@@ -12,7 +14,7 @@ import (
 // are outside the timer; unexpected conflicts fail instead of being retried.
 func BenchmarkHighPerformanceDisjointEdgeUpdates(b *testing.B) {
 	const workers = 4
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir(), HighPerformance: true})
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir(), HighPerformance: true}))
 	if err != nil {
 		b.Fatal(err)
 	}

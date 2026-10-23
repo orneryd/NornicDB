@@ -3,6 +3,7 @@ package replication
 import (
 	"encoding/json"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -68,7 +69,7 @@ func TestReplicationLocalizedRaftValidation(t *testing.T) {
 }
 
 func TestReplicationLocalizedStorageAdapterCause(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() {

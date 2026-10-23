@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,7 +13,7 @@ import (
 // list (page offsets) indexed before any embedding can't make the index
 // 2-dimensional and reject every embedding after it.
 func TestFixedVectorDimensionsIgnoreNumericListProperties(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4)
 	svc.FixVectorDimensions()
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "source", Labels: []string{"Source"},
 		Properties: map[string]interface{}{"page_starts": []interface{}{int64(0), int64(30)}, "page_ends": []interface{}{int64(30), int64(200)}}}))
@@ -33,7 +34,7 @@ func TestFixedVectorDimensionsIgnoreNumericListProperties(t *testing.T) {
 // Without an embedder the first vector-shaped value still sets an empty
 // index's dimension (a database storing its own vectors).
 func TestUnfixedVectorDimensionsFollowFirstVector(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "own", Labels: []string{"V"},
 		Properties: map[string]interface{}{"embedding": []interface{}{1.0, 0.5}}}))
 	require.Equal(t, 2, svc.vectorIndex.GetDimensions())
@@ -48,7 +49,7 @@ func TestVectorDimensionReadersAndFirstIndex(t *testing.T) {
 	require.Equal(t, 0, firstEdgeVectorDimensions(&storage.Edge{Properties: map[string]interface{}{"name": "x"}}))
 	require.Equal(t, 3, firstEdgeVectorDimensions(&storage.Edge{Properties: map[string]interface{}{"v": []float32{1, 2, 3}}}))
 
-	service := NewService(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"))
+	service := NewService(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic"))
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	service.mu.Lock()
 	service.vectorIndex = nil

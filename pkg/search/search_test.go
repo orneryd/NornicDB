@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log"
 	"math"
 	"os"
@@ -103,7 +104,7 @@ func (r *testReranker) Rerank(ctx context.Context, query string, candidates []Re
 }
 
 func newNamespacedEngine(tb testing.TB) storage.Engine {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	tb.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }
@@ -181,7 +182,7 @@ func TestVectorIndexPersistsOneNormalizedPrivateCopy(t *testing.T) {
 }
 
 func TestVectorIndexPreservesNonUnitValuesForCypherSimilarity(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.vectorIndex.Add("doc", []float32{3, 4, 0}))
 
@@ -212,7 +213,7 @@ func TestVectorIndexLoadCompactsLegacyUnitRawVectors(t *testing.T) {
 }
 
 func TestInMemoryHNSWReusesVectorIndexStorage(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	for id, vec := range map[string][]float32{
 		"a": {1, 0, 0},
@@ -863,11 +864,11 @@ func TestSearch_FallbackDisabledDoesNotUseBM25WhenEmbeddingMissing(t *testing.T)
 
 func TestSearchResultCacheCanBeDisabled(t *testing.T) {
 	t.Setenv(EnvSearchResultCacheEnabled, "false")
-	disabled := NewService(storage.NewMemoryEngine())
+	disabled := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.Nil(t, disabled.resultCache)
 
 	t.Setenv(EnvSearchResultCacheEnabled, "true")
-	enabled := NewService(storage.NewMemoryEngine())
+	enabled := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NotNil(t, enabled.resultCache)
 }
 
@@ -1376,7 +1377,7 @@ func TestSearchService_BuildIndexes_ForcedRebuildOnSettingsMismatch(t *testing.T
 }
 
 func TestSearchService_BuildIndexes_DoesNotReuseDiskIndexesWhenStorageEmpty(t *testing.T) {
-	root := storage.NewMemoryEngine()
+	root := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { root.Close() })
 	base := storage.NewNamespacedEngine(root, "test")
 	_, err := base.CreateNode(&storage.Node{
@@ -1729,7 +1730,7 @@ func TestVectorSearchOnly_SearchMethodVariants(t *testing.T) {
 
 func TestEnableClustering_ReentrantAndEnvOverrides(t *testing.T) {
 	t.Run("reentrant same mode keeps existing cluster index", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 2)
 		require.NotNil(t, svc.clusterIndex)
 		first := svc.clusterIndex
@@ -1743,7 +1744,7 @@ func TestEnableClustering_ReentrantAndEnvOverrides(t *testing.T) {
 		t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "11")
 		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1")
 
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 0)
 		require.NotNil(t, svc.clusterIndex)
 		cfg := svc.clusterIndex.Config()
@@ -1756,7 +1757,7 @@ func TestEnableClustering_ReentrantAndEnvOverrides(t *testing.T) {
 		t.Setenv("NORNICDB_KMEANS_NUM_CLUSTERS", "")
 		t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9999")
 
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 0)
 		require.NotNil(t, svc.clusterIndex)
 		cfg := svc.clusterIndex.Config()
@@ -2319,7 +2320,7 @@ func TestKMeansCandidateGenerators_Branches(t *testing.T) {
 }
 
 func TestVectorQueryNodes_IndexedAndExactPaths(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	namedNode := &storage.Node{
@@ -2378,7 +2379,7 @@ func TestVectorQueryNodes_IndexedAndExactPaths(t *testing.T) {
 }
 
 func TestVectorQueryNodes_ExactPathDefaultsAndNamedBranches(t *testing.T) {
-	emptyEngine := storage.NewMemoryEngine()
+	emptyEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { emptyEngine.Close() })
 	emptySvc := NewServiceWithDimensions(emptyEngine, 3)
 	var nilCtx context.Context
@@ -2386,7 +2387,7 @@ func TestVectorQueryNodes_ExactPathDefaultsAndNamedBranches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, hits)
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{
@@ -2483,7 +2484,7 @@ func TestVectorQueryHelpers_ConversionsAndResolution(t *testing.T) {
 }
 
 func TestVectorQueryNodes_MissingIndexFallsThroughToManagedNamedEmbeddings(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	require.NoError(t, svc.IndexNode(&storage.Node{
@@ -2517,7 +2518,7 @@ func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
 	require.ErrorAs(t, err, &localizedErr)
 	require.Equal(t, localization.MessageSearchServiceUnavailable, localizedErr.Message.ID)
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 	_, err = svc.VectorQueryNodes(context.Background(), nil, VectorQuerySpec{})
 	require.Error(t, err)
@@ -2543,7 +2544,7 @@ func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
 }
 
 func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	svc.buildAttempted.Store(true)
 	svc.ready.Store(false)
 
@@ -2568,7 +2569,7 @@ func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
 }
 
 func TestSearchHelpers_BM25SeedAndSettingsEquivalence(t *testing.T) {
-	s := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	s := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 
 	assert.False(t, s.ClusteringInProgress())
 	s.kmeansInProgress.Store(true)
@@ -2622,14 +2623,14 @@ func TestSearchHelpers_BM25SeedAndSettingsEquivalence(t *testing.T) {
 
 func TestTriggerClustering_GuardBranches(t *testing.T) {
 	t.Run("not enabled returns explicit error", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		err := svc.TriggerClustering(context.Background())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "not enabled")
 	})
 
 	t.Run("already running returns nil", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 2)
 		svc.kmeansInProgress.Store(true)
 		defer svc.kmeansInProgress.Store(false)
@@ -2639,7 +2640,7 @@ func TestTriggerClustering_GuardBranches(t *testing.T) {
 	})
 
 	t.Run("too few embeddings returns nil", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 2)
 		svc.SetMinEmbeddingsForClustering(10)
 		require.NoError(t, svc.IndexNode(&storage.Node{
@@ -2652,7 +2653,7 @@ func TestTriggerClustering_GuardBranches(t *testing.T) {
 	})
 
 	t.Run("canceled context is returned after threshold gate", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 2)
 		svc.SetMinEmbeddingsForClustering(1)
 		require.NoError(t, svc.IndexNode(&storage.Node{
@@ -2701,7 +2702,7 @@ func TestRRFHybridSearch_ClusteredMethodBranch(t *testing.T) {
 }
 
 func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
-	s := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	s := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 
 	// Restore shortcut branches.
 	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, 0, ""))
@@ -2724,7 +2725,7 @@ func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
 }
 
 func TestSearchHelpers_ClusterBackfillAndWarmupBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 
@@ -2747,7 +2748,7 @@ func TestSearchHelpers_ClusterBackfillAndWarmupBranches(t *testing.T) {
 }
 
 func TestSearchHelpers_BuildPipelineAndGPUBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	vi := NewVectorIndex(2)
 	require.NoError(t, vi.Add("x", []float32{1, 0}))
 
@@ -2779,7 +2780,7 @@ func TestSearchHelpers_BuildPipelineAndGPUBranches(t *testing.T) {
 }
 
 func TestSearchHelpers_SetGPUManager_NonGPUBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.pipelineMu.Lock()
 	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
 	svc.pipelineMu.Unlock()
@@ -2808,7 +2809,7 @@ func TestSearchHelpers_SetGPUManager_NonGPUBranches(t *testing.T) {
 }
 
 func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 
 	require.Nil(t, svc.hnswLexicalSeedNodeSet(nil))
 
@@ -2878,7 +2879,7 @@ func TestSearchHelpers_HNSWLexicalSeedsAndGetOrCreateBranches(t *testing.T) {
 }
 
 func TestSearchHelpers_BuildHNSWForTransition_Branches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 
 	// Nil indexes should return a deterministic error.
 	_, err := svc.buildHNSWForTransition(context.Background(), 2, nil, nil)
@@ -2917,7 +2918,7 @@ func TestSearchHelpers_BuildHNSWForTransition_Branches(t *testing.T) {
 }
 
 func TestSearchHelpers_MaybeRebuildHNSW_RebuildAndCancelBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.vectorIndex = NewVectorIndex(2)
 	require.NoError(t, svc.vectorIndex.Add("n1", []float32{1, 0}))
 	require.NoError(t, svc.vectorIndex.Add("n2", []float32{0, 1}))
@@ -2969,7 +2970,7 @@ func TestSearchHelpers_MaybeRebuildHNSW_RebuildAndCancelBranches(t *testing.T) {
 }
 
 func TestSearchHelpers_HNSWLiveUpdateAddsAndReplacesVectors(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 
 	// No HNSW index is a no-op.
 	svc.hnswUpdateLive("missing", []float32{1, 0})
@@ -2990,7 +2991,7 @@ func TestSearchHelpers_HNSWLiveUpdateAddsAndReplacesVectors(t *testing.T) {
 
 func TestSearchService_CloseStopsHNSWMaintenance(t *testing.T) {
 	t.Setenv("NORNICDB_HNSW_MAINT_INTERVAL_MS", "1")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	idx := NewHNSWIndex(2, DefaultHNSWConfig())
 	require.NoError(t, idx.Add("doc-a", []float32{1, 0}))
 	svc.hnswMu.Lock()
@@ -3011,7 +3012,7 @@ func TestSearchService_CloseStopsHNSWMaintenance(t *testing.T) {
 }
 
 func TestSearchHelpers_TryRestoreClusteredWarmupFromDisk_Success(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 
@@ -3066,7 +3067,7 @@ func TestSearchHelpers_TransitionDeltaVectorAndReplay(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, vec)
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.strategyTransitionMu.Lock()
 	svc.strategyTransitionDeltas = []strategyDeltaMutation{
 		{seq: 1, id: "vi_only", add: true},
@@ -3946,7 +3947,7 @@ func TestSearchService_FilterByType(t *testing.T) {
 }
 
 func TestHybridSearch_DoesNotHoldServiceLockWhileWaitingForPipeline(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 4)
 
 	opts := DefaultSearchOptions()

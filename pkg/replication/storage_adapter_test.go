@@ -3,6 +3,7 @@ package replication
 import (
 	"bytes"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sync"
@@ -39,7 +40,7 @@ func encodeGobForTest(t *testing.T, v any) []byte {
 // setupTestAdapter creates a StorageAdapter with a temporary WAL directory.
 func setupTestAdapter(t *testing.T) (*StorageAdapter, string) {
 	t.Helper()
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	walDir := filepath.Join(t.TempDir(), "wal")
@@ -50,7 +51,7 @@ func setupTestAdapter(t *testing.T) (*StorageAdapter, string) {
 
 func TestNewStorageAdapter(t *testing.T) {
 	t.Run("default WAL directory", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		adapter, err := NewStorageAdapter(engine)
@@ -62,7 +63,7 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("custom WAL directory", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "custom_wal")
@@ -74,7 +75,7 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("creates WAL directory if missing", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "new_wal", "subdir")
@@ -90,7 +91,7 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 
 	t.Run("empty WAL directory uses default", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		adapter, err := NewStorageAdapterWithWAL(engine, "")
@@ -112,7 +113,7 @@ func TestStorageAdapter_LoadWALPosition(t *testing.T) {
 	})
 
 	t.Run("recovers position from existing WAL", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "wal_recovery")
@@ -171,7 +172,7 @@ func TestStorageAdapter_LoadWALPosition(t *testing.T) {
 	})
 
 	t.Run("handles corrupted WAL gracefully", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "corrupted_wal")
@@ -410,7 +411,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	})
 
 	t.Run("returns entries across restarts", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "wal_persistence")
@@ -444,7 +445,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	})
 
 	t.Run("handles missing WAL file", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		walDir := filepath.Join(t.TempDir(), "missing_wal")
@@ -623,7 +624,7 @@ func TestStorageAdapter_SetExecutor(t *testing.T) {
 		adapter, _ := setupTestAdapter(t)
 		defer adapter.Close()
 
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		executor := cypher.NewStorageExecutor(engine)

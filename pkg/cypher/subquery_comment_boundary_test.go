@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -20,7 +22,7 @@ func TestSubqueryCommentBoundaryWithNormalizationSetting(t *testing.T) {
 				t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
 					exec, _ := newTestExecutor(t)
 					if explicit {
-						base, err := storage.NewBadgerEngineInMemory()
+						base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 						require.NoError(t, err)
 						t.Cleanup(func() { require.NoError(t, base.Close()) })
 						tx, err := base.BeginTransaction()

@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Close internally allocated stores when snapshot or WAL recovery fails, and check test package boundaries for leaked database stores.
+
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).

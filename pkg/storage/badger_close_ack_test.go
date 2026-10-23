@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -17,7 +18,10 @@ import (
 func TestCommitNotifications_CloseWithLateACK(t *testing.T) {
 	if os.Getenv("NORNIC_R4_CLOSE_CHILD") == "1" {
 		barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-		b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour, Logger: slog.New(barrier)})
+		b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour, Logger: slog.New(barrier)}))
+		if b != nil {
+			fixtureowner.Own(t, b)
+		}
 		require.NoError(t, err)
 		entered, resume := make(chan struct{}), make(chan struct{})
 		b.OnNodeCreated(func(n *Node) {
@@ -117,7 +121,7 @@ func TestCommitNotifications_CloseWithLateACK(t *testing.T) {
 }
 
 func TestCommitNotifications_CloseRetriesFailedReplay(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour})
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	defer b.Close()
 	original := b.writeBehind.apply

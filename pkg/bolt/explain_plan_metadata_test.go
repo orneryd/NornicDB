@@ -5,6 +5,8 @@ package bolt
 // plan for PROFILE, read straight from the PULL SUCCESS metadata.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -18,7 +20,7 @@ import (
 
 func newStatementFramingSession(t *testing.T) neo4jdriver.SessionWithContext {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})

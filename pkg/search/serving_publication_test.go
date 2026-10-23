@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -46,7 +47,7 @@ type lifecycleGate struct {
 
 func newLifecycleGateEngine(t *testing.T) *lifecycleGateEngine {
 	t.Helper()
-	e := &lifecycleGateEngine{MemoryEngine: storage.NewMemoryEngine(), gates: map[string]*lifecycleGate{}}
+	e := &lifecycleGateEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), gates: map[string]*lifecycleGate{}}
 	t.Cleanup(func() { e.releaseAll(); _ = e.MemoryEngine.Close() })
 	return e
 }

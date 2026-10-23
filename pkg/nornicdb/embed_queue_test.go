@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
@@ -74,7 +75,7 @@ func (e *sequenceEmbeddingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node)
 }
 
 func TestEmbedWorkerBatchesNodesThatResolveToTheSameProvider(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	nodes := []*storage.Node{
 		{ID: "docs:first", Properties: map[string]any{"content": "first"}},
 		{ID: "docs:second", Properties: map[string]any{"content": "second"}},
@@ -128,7 +129,7 @@ func (e *structuredDocumentEmbedder) EmbedDocumentBatchChunks(context.Context, [
 }
 
 func TestEmbedWorkerPassesStructuredNodeContentAndPersistsModelSpace(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.Engine(base)
 	node := &storage.Node{ID: "visual:image", Labels: []string{"Image"}, Properties: map[string]any{
 		"_embedding_content": []any{map[string]any{"type": "image_url", "image_url": "https://example.invalid/image.png"}},
@@ -358,7 +359,7 @@ func TestCopyNodeForEmbedding(t *testing.T) {
 // TestEmbedWorkerRecentlyProcessed tests the duplicate processing prevention
 func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 	t.Run("tracks_processed_nodes", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -390,7 +391,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 	})
 
 	t.Run("cleans_old_entries", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -450,7 +451,7 @@ func TestEmbedWorkerRecentlyProcessed(t *testing.T) {
 // TestEmbedWorkerPersistence tests that embeddings are actually persisted
 func TestEmbedWorkerPersistence(t *testing.T) {
 	t.Run("embedding_persisted_to_storage", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -512,7 +513,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 	})
 
 	t.Run("node_not_reprocessed_after_embedding", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -575,7 +576,7 @@ func TestEmbedWorkerPersistence(t *testing.T) {
 }
 
 func TestEmbedWorkerSkipsExcludedNodeLabels(t *testing.T) {
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	base.SetEmbeddingsEnabled(true)
@@ -612,7 +613,7 @@ func TestEmbedWorkerSkipsExcludedNodeLabels(t *testing.T) {
 // TestEmbedWorkerFindNodeWithoutEmbedding tests the node discovery logic
 func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	t.Run("finds_node_without_embedding", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -638,7 +639,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	})
 
 	t.Run("skips_node_with_embedding", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -664,7 +665,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	})
 
 	t.Run("skips_internal_nodes", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -689,7 +690,7 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 	})
 
 	t.Run("skips_deleted_nodes", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1139,7 +1140,7 @@ func (a *Application) Stop(ctx context.Context) error {
 // TestLargeContentEmbedding tests end-to-end embedding of large content
 func TestLargeContentEmbedding(t *testing.T) {
 	t.Run("large_file_gets_chunked_and_embedded", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1229,7 +1230,7 @@ func TestLargeContentEmbedding(t *testing.T) {
 
 func TestEmbedWorkerMicroBatching(t *testing.T) {
 	t.Run("large_node_uses_bounded_embed_batch_size", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newRecordingBatchEmbedder()
@@ -1279,7 +1280,7 @@ func TestEmbedWorkerMicroBatching(t *testing.T) {
 // TestEmbedWorkerConcurrency tests for race conditions
 func TestEmbedWorkerConcurrency(t *testing.T) {
 	t.Run("concurrent_triggers_safe", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1331,7 +1332,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 	})
 
 	t.Run("reset_close_overlap_no_waitgroup_reuse_panic", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
 		embedder := newMockEmbedder()
@@ -1378,7 +1379,7 @@ func TestEmbedWorkerConcurrency(t *testing.T) {
 // TestRecentlyProcessedOnlyLogsOnce verifies we don't spam "recently processed" logs
 func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 	t.Run("skip_message_should_not_repeat", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1439,7 +1440,7 @@ func TestRecentlyProcessedOnlyLogsOnce(t *testing.T) {
 // would print infinitely
 func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 	t.Run("no_content_node_stops_loop", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1509,7 +1510,7 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
 	t.Run("persisted_embedding_not_refound", func(t *testing.T) {
 		// Create underlying engine
-		baseUnderlying := storage.NewMemoryEngine()
+		baseUnderlying := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseUnderlying.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseUnderlying, "test")
@@ -1574,7 +1575,7 @@ func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
 // and readable back from storage - this catches the bug where n1 keeps getting skipped
 func TestEmbeddingPersistenceVerification(t *testing.T) {
 	t.Run("embedding_readable_after_update", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1627,7 +1628,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 	})
 
 	t.Run("storage_update_persists_embedding_field", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1667,7 +1668,7 @@ func TestEmbeddingPersistenceVerification(t *testing.T) {
 // where the embedding worker processes a node while another goroutine reads it
 func TestRaceConditionPrevention(t *testing.T) {
 	t.Run("concurrent_node_access_during_embedding", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -1757,7 +1758,7 @@ func TestRaceConditionPrevention(t *testing.T) {
 }
 
 func TestEmbedQueueSmallWrappers(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "test")
 	cfg := DefaultEmbedQueueConfig()
 	cfg.DeferWorkerStart = true
@@ -2026,7 +2027,7 @@ func (p *pendingAdderEngine) AddToPendingEmbeddings(id storage.NodeID) {
 
 func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	t.Run("queue len and trigger debounce branches", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		worker := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 			NumWorkers:           1,
@@ -2092,7 +2093,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("addNodeToPendingEmbeddings delegates when supported", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		adder := &pendingAdderEngine{Engine: storage.NewNamespacedEngine(base, "test")}
 		ew := &EmbedWorker{storage: adder}
 		ew.addNodeToPendingEmbeddings(storage.NodeID("n-1"))
@@ -2153,7 +2154,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch stale pending node is cleaned", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		qe := &queueBranchEngine{
 			Engine:     engine,
@@ -2173,7 +2174,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch handles nil node returned from storage", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		qe := &queueBranchEngine{
 			Engine:        engine,
@@ -2194,7 +2195,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch retains local batch work after bounded request retries", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n1"),
@@ -2225,7 +2226,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch marks non-retryable embed failures permanent", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n-permanent"),
@@ -2263,7 +2264,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch retains retryable document work until provider recovery", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n-document-retry-limit"),
@@ -2302,7 +2303,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch uses deterministic chunker from embedder", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n-deterministic"),
@@ -2333,7 +2334,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch parks an empty embedding response", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n2"),
@@ -2364,7 +2365,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch skips when update embedding reports not found", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n3"),
@@ -2393,7 +2394,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("processNextBatch skips when node is deleted before save", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		node := &storage.Node{
 			ID:         storage.NodeID("n4"),
@@ -2425,7 +2426,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("startWorkers guards closed and accepts disabled worker pool", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		cfg := &EmbedWorkerConfig{
 			NumWorkers:       0,
@@ -2450,7 +2451,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("close stops debounce timer safely", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		worker := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 			NumWorkers:       1,
@@ -2487,7 +2488,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("worker waits for embedder then enqueue picks up new node", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		base.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(base, "test")
 
@@ -2558,7 +2559,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("findNodeWithoutEmbedding uses EmbeddingFinder fast path", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		qe := &queueBranchEngine{
 			Engine:   engine,
@@ -2571,7 +2572,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("findNodeWithoutEmbedding falls back to storage helper", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 		_, err := engine.CreateNode(&storage.Node{
 			ID:     storage.NodeID("fallback-node"),
@@ -2589,7 +2590,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 	})
 
 	t.Run("refreshEmbeddingIndex manager and fallback branches", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		engine := storage.NewNamespacedEngine(base, "test")
 
 		qe := &queueBranchEngine{Engine: engine, refreshCount: 7}
@@ -2602,7 +2603,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 }
 
 func TestEmbedWorker_ProcessNextBatch_YieldsUnderForegroundPressure(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := &queueBranchEngine{
 		Engine: storage.NewNamespacedEngine(base, "test"),
 		findNode: &storage.Node{
@@ -2631,7 +2632,7 @@ func TestEmbedWorker_ProcessNextBatch_YieldsUnderForegroundPressure(t *testing.T
 // Reset drops a trigger left over from before the reset instead of handing it
 // to the restarted worker, and leaves an empty trigger channel empty.
 func TestEmbedWorker_ResetDrainsPendingTrigger(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	worker := NewEmbedWorker(newMockEmbedder(), engine, &EmbedWorkerConfig{
 		NumWorkers:   1,
 		ScanInterval: time.Hour,

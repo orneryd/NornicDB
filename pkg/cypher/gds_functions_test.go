@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"math"
@@ -113,7 +115,7 @@ func TestGDSFunctionArgumentErrors(t *testing.T) {
 		for index := range values {
 			args[index] = strconv.Itoa(index)
 		}
-		store := storage.NewMemoryEngine()
+		store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = store.Close() })
 		value, found, err := cypherfn.EvaluateFunction(name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
 			index, _ := strconv.Atoi(expression)

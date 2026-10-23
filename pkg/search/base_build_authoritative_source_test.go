@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestBaseBuildRespectsAuthoritativeMemoryBeforeDiskRestore(t *testing.T) {
 			for _, kind := range []string{"update", "replace_membership", "changed_text", "active_source", "unchanged", "fresh_restart"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, kind), func(t *testing.T) {
 					ctx := context.Background()
-					engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+					engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 					t.Cleanup(func() { require.NoError(t, engine.Close()) })
 					var source storage.Engine = engine
 					if traced {

@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -15,7 +17,7 @@ import (
 // as a rebuild does.
 func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0") // HNSW at any size
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
@@ -45,7 +47,7 @@ func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 // build or rebuild can record its own.
 func TestHNSWFailedInitialBuildStopsRecording(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

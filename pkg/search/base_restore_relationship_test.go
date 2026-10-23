@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -52,7 +54,7 @@ func TestBaseRestoreLoadsCompleteRelationshipPopulation(t *testing.T) {
 			for _, kind := range []string{"oversized_payload", "aggregate_payload", "oversized_metadata", "aggregate_metadata", "existing_edge_headroom", "traversal_error", "within_budget", "unlimited"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, kind), func(t *testing.T) {
 					ctx := context.Background()
-					base := storage.NewMemoryEngine()
+					base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					engine := storage.NewNamespacedEngine(base, "nornic")
 					_, err := engine.CreateNode(&storage.Node{ID: "a", NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}, Properties: map[string]any{"text": "seed"}})

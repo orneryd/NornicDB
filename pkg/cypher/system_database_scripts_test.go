@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -13,7 +15,7 @@ import (
 // refused, as Neo4j 5.26.30 refuses it.
 func TestSystemDatabaseChecksScriptBodiesAndProcedureResults(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(inner, "system"))
 

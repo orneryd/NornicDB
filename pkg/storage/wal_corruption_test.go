@@ -7,6 +7,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"hash/crc32"
 	"os"
@@ -228,7 +230,7 @@ func TestWALSkipsCorruptedEmbeddingEntries(t *testing.T) {
 
 // TestReplayResultTracking verifies ReplayResult correctly tracks outcomes.
 func TestReplayResultTracking(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create test entries
 	node1 := &Node{ID: "n1", Labels: []string{"Test"}}
@@ -328,7 +330,7 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	file.Close()
 
 	// Recovery should track results
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}

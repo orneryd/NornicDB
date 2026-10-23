@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -9,7 +10,10 @@ import (
 
 func newTestEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory: %v", err)
 	}

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -8,7 +10,7 @@ import (
 )
 
 func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	be.SetDecayEnabled(true)
@@ -21,7 +23,7 @@ func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
 	require.Equal(t, "tenant:", view.prefix)
 	end()
 	require.True(t, be.revealAll.Load(), "a borrowed normal projection must preserve owned REVEAL")
-	be2, err := NewBadgerEngineInMemory()
+	be2, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be2.Close()
 	other, otherEnd := BeginQueryRevealScopeContext(owner, be2, false)
@@ -33,7 +35,7 @@ func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
 	fresh, _, freshEnd := BeginQueryResultProjectionContext(owner, be)
 	require.NotSame(t, owner, fresh, "expired context must acquire a new genuine scope")
 	freshEnd()
-	unowned, noop := BeginQueryRevealScopeContext(ctx, NewMemoryEngine(), false)
+	unowned, noop := BeginQueryRevealScopeContext(ctx, newTestMemoryEngine(t), false)
 	require.Same(t, ctx, unowned)
 	noop()
 	same := InheritQueryRevealScopes(ctx, nil)
@@ -41,7 +43,7 @@ func TestQueryProjectionScopeReusesOnlyLivePhysicalOwner(t *testing.T) {
 	require.Same(t, ctx, InheritQueryRevealScopes(ctx, owner), "expired leases are not inherited")
 }
 func TestQueryProjectionScopeBorrowingAndCancellation(t *testing.T) {
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	be.SetDecayEnabled(true)
@@ -57,11 +59,11 @@ func TestQueryProjectionScopeBorrowingAndCancellation(t *testing.T) {
 	release()
 	cancel()
 	require.ErrorIs(t, borrowed.Err(), context.Canceled)
-	_, _, releaseDisabled := BeginQueryResultProjectionContext(ctx, NewMemoryEngine())
+	_, _, releaseDisabled := BeginQueryResultProjectionContext(ctx, newTestMemoryEngine(t))
 	releaseDisabled()
 }
 func TestQueryProjectionNestedReaderDoesNotDeadlockWaitingRevealWriter(t *testing.T) {
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	be.SetDecayEnabled(true)

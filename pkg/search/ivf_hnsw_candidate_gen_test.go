@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -13,7 +14,7 @@ func TestIVFHNSW_UsedAfterClustering_CPUOnly(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_ENABLED", "true")
 	t.Setenv("NORNICDB_VECTOR_IVF_HNSW_MIN_CLUSTER_SIZE", "1")
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 4)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)

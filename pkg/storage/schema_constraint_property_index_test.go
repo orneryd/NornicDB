@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -199,7 +201,7 @@ func TestBadgerConstraintPropertyIndexMaintainedAndRebuilt(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	schema = reopened.GetSchemaForNamespace("test")

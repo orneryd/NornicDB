@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bufio"
 	"bytes"
 	"encoding/binary"
@@ -95,7 +97,7 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 			e.ID = "e"
 			e.StartNode = "a"
 			e.EndNode = "b"
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			ns := NewNamespacedEngine(engine, "test")
 			_, err := ns.CreateNode(&Node{ID: "b"})
@@ -178,10 +180,10 @@ func TestRecoverySnapshotSaveRestoreAcrossRoutes(t *testing.T) {
 			assert.Equal(t, snapshot.Sequence, loaded.Sequence)
 			assert.Equal(t, snapshot.Version, loaded.Version)
 			assert.True(t, snapshot.Timestamp.Equal(loaded.Timestamp))
-			memory, _, err := RecoverFromWALWithResult(t.TempDir(), path)
+			memory, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.TempDir(), path))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = memory.Close() })
-			target := NewMemoryEngine()
+			target := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = target.Close() })
 			_, status, err := RecoverIntoEngine(target, t.TempDir(), path)
 			require.NoError(t, err)
@@ -263,12 +265,12 @@ func TestRecoveryMaterializedSnapshotKeepsLargeEntitySupport(t *testing.T) {
 	require.NoError(t, file.Close())
 	// Memory recovery retains its pre-existing 64KiB Badger value ceiling;
 	// its storage error must be reached after the large frame was decoded.
-	restored, _, err := RecoverFromWALWithResult(t.TempDir(), path)
+	restored, _, err := runtimeFixtureOwner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(t.TempDir(), path))
 	require.ErrorContains(t, err, "exceeded 65536 limit")
 	if restored != nil {
 		_ = restored.Close()
 	}
-	target, err := NewBadgerEngine(t.TempDir())
+	target, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
 	_, _, err = RecoverIntoEngine(target, t.TempDir(), path)

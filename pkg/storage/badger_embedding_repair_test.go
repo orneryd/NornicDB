@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -15,7 +16,10 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 	for _, action := range []string{"delete", "update", "transaction_delete", "transaction_update"} {
 		t.Run(action, func(t *testing.T) {
 			dir := t.TempDir()
-			b, err := NewBadgerEngine(dir)
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+			if b != nil {
+				fixtureowner.Own(t, b)
+			}
 			require.NoError(t, err)
 			id := NodeID("test:r3-old-shrink")
 			_, err = b.CreateNode(separatelyStoredNode(id))
@@ -50,7 +54,7 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 			}))
 			require.Equal(t, 14, countEmbeddingKeys(t, b, id))
 			require.NoError(t, b.Close())
-			b, err = NewBadgerEngine(dir)
+			b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			defer b.Close()
 			require.Zero(t, countEmbeddingKeys(t, b, id), "open repairs the legacy range before absence can be trusted")

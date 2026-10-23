@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,12 +59,12 @@ func createMVCCBadgerEngine(t *testing.T) *BadgerEngine {
 	// MVCC-focused tests exercise prior-version reads, so opt into
 	// historical retention. The production default is head-only
 	// (MaxVersionsPerKey = 0) to keep write amplification low.
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
 		},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, engine.Close())
@@ -236,11 +237,11 @@ func TestBadgerEngine_MVCCEdgeLatestSnapshotAndRecreate(t *testing.T) {
 }
 
 func TestNodeBodyCacheExcludesEmbeddingsAndEvictsByBytes(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory:              true,
 		NodeCacheMaxEntries:   100,
 		NodeBodyCacheMaxBytes: 900,
-	})
+	}))
 	require.NoError(t, err)
 	defer engine.Close()
 
@@ -471,12 +472,12 @@ func TestBadgerTransaction_CreateEdge_AllowsReadableNodesWithoutMVCCHead(t *test
 }
 
 func TestBadgerEngine_PruneMVCCVersions_UsesRetentionPolicyDefaults(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 1},
 		},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, engine.Close())
@@ -518,7 +519,10 @@ func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 1},
 		},
 	}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	nodeID := NodeID(prefixTestID("mvcc-floor-node"))
 	edgeID := EdgeID(prefixTestID("mvcc-floor-edge"))
@@ -554,12 +558,15 @@ func TestBadgerEngine_PruneFloorSurvivesReopenAndRestore(t *testing.T) {
 		require.ErrorIs(t, err, ErrNotVisibleAtSnapshot)
 	}
 
-	reopened, err := NewBadgerEngineWithOptions(options)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if reopened != nil {
+		fixtureowner.Own(t, reopened)
+	}
 	require.NoError(t, err)
 	check(reopened)
 	require.NoError(t, reopened.Close())
 
-	restored, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: options.EngineOptions})
+	restored, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: options.EngineOptions}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.Restore(backupPath))
@@ -597,7 +604,7 @@ func TestBadgerEngine_PruneMVCCVersions_TombstoneCompactionHonorsActiveReaders(t
 }
 
 func TestBadgerEngine_PruneMVCCVersions_NoDeletionPreservesFloor(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -657,12 +664,12 @@ func TestBadgerEngine_MVCCStress_ChurnPruneBoundsRetainedChain(t *testing.T) {
 	dir := t.TempDir()
 	// Exercises multi-version retention specifically; opt into
 	// historical archival (production default is head-only).
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir: dir,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
 		},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, engine.Close())
@@ -806,7 +813,7 @@ func TestNamespacedEngine_MVCCDelegation(t *testing.T) {
 	require.Len(t, between, 1)
 	require.Equal(t, EdgeID("mvcc-ns-edge"), between[0].ID)
 
-	fallbackInner := &nonMVCCEngine{Engine: NewMemoryEngine()}
+	fallbackInner := &nonMVCCEngine{Engine: newTestMemoryEngine(t)}
 	t.Cleanup(func() { _ = fallbackInner.Close() })
 	fallback := NewNamespacedEngine(fallbackInner, "test")
 	_, err = fallback.GetOutgoingEdgesVisibleAt("mvcc-ns-start", edgeHead.Version)
@@ -1002,12 +1009,15 @@ func TestBadgerEngine_MVCCDirectionalAdjacencyVisibleAtTracksDeletes(t *testing.
 
 func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "mvcc-adj-restart")
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir: dir,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
 		},
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	start := NodeID(prefixTestID("mvcc-adj-restart-start"))
@@ -1024,12 +1034,12 @@ func TestBadgerEngine_MVCCDirectionalAdjacencySurvivesRestart(t *testing.T) {
 	require.NoError(t, engine.DeleteEdge(edgeID))
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngineWithOptions(BadgerOptions{
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir: dir,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
 		},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
@@ -1080,7 +1090,7 @@ func TestBadgerEngine_PruneMVCCVersions_PrunesDirectionalAdjacencyHistory(t *tes
 }
 
 func TestBadgerEngine_PruneMVCCVersions_DropsHeadlessAdjacencyTombstonesWhenUnretained(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -1136,7 +1146,7 @@ func TestBadgerEngine_PruneMVCCVersions_AdjacencyKeyspaceErrorsSurface(t *testin
 }
 
 func TestBadgerEngine_PruneMVCCVersions_ZeroRetentionDropsNodeAndEdgeHeads(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -1159,7 +1169,7 @@ func TestBadgerEngine_PruneMVCCVersions_ZeroRetentionDropsNodeAndEdgeHeads(t *te
 }
 
 func TestBadgerEngine_DeleteEdge_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -1181,7 +1191,7 @@ func TestBadgerEngine_DeleteEdge_WritesAdjacencyTombstonesInHeadOnlyMode(t *test
 }
 
 func TestBadgerEngine_BulkDeleteEdges_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -1203,7 +1213,7 @@ func TestBadgerEngine_BulkDeleteEdges_WritesAdjacencyTombstonesInHeadOnlyMode(t 
 }
 
 func TestBadgerEngine_DeleteNodeCascade_WritesAdjacencyTombstonesInHeadOnlyMode(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -1225,7 +1235,7 @@ func TestBadgerEngine_DeleteNodeCascade_WritesAdjacencyTombstonesInHeadOnlyMode(
 }
 
 func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.T) {
-	baseInner := NewMemoryEngine()
+	baseInner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = baseInner.Close() })
 	base := &nonMVCCEngine{Engine: baseInner}
 

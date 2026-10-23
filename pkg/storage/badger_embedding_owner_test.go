@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
@@ -13,7 +14,10 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 			for _, reopen := range []bool{false, true} {
 				t.Run(fmt.Sprintf("id=%x/legacy=%v/reopen=%v", id, legacy, reopen), func(t *testing.T) {
 					dir := t.TempDir()
-					b, err := NewBadgerEngine(dir)
+					b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+					if b != nil {
+						fixtureowner.Own(t, b)
+					}
 					require.NoError(t, err)
 
 					n := separatelyStoredNode(id)
@@ -45,7 +49,10 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 					if reopen {
 						require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(embeddingRepairReadyKey) }))
 						require.NoError(t, b.Close())
-						b, err = NewBadgerEngine(dir)
+						b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+						if b != nil {
+							fixtureowner.Own(t, b)
+						}
 						require.NoError(t, err)
 					} else {
 						removed, repairErr := b.RepairOrphanedEmbeddingKeys()

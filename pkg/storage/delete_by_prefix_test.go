@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/binary"
 	"testing"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person"}})
@@ -59,9 +61,9 @@ func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
 }
 
 func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: EngineOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: EngineOptions{
 		RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
-	}})
+	}}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err = engine.CreateNode(&Node{ID: "drop:n", Labels: []string{"Person"}, Properties: map[string]any{"v": 1}})
@@ -163,7 +165,7 @@ func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testi
 }
 
 func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCounts(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person", "Employee"}})
@@ -191,7 +193,7 @@ func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCounts(t *testing.T) {
 }
 
 func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCountsForPartialPrefix(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "db1:temp-1", Labels: []string{"Person", "Temporary"}})
@@ -217,7 +219,7 @@ func TestBadgerEngine_DeleteByPrefix_UpdatesLabelCountsForPartialPrefix(t *testi
 }
 
 func TestBadgerEngine_DeleteByPrefix_AdvancesRevisionForEdgeOnlyDelete(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	_, err := engine.CreateNode(&Node{ID: "keep:n1"})
@@ -241,7 +243,7 @@ func TestBadgerEngine_DeleteByPrefix_AdvancesRevisionForEdgeOnlyDelete(t *testin
 
 func TestBadgerEngine_DeleteByPrefix_EdgeCases(t *testing.T) {
 	t.Run("empty prefix rejected", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = engine.Close() })
 
 		_, _, err := engine.DeleteByPrefix("")
@@ -249,7 +251,7 @@ func TestBadgerEngine_DeleteByPrefix_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("missing namespace returns zero counts", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = engine.Close() })
 
 		_, err := engine.CreateNode(&Node{ID: "db1:n1", Labels: []string{"Person"}})
@@ -265,7 +267,7 @@ func TestBadgerEngine_DeleteByPrefix_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("closed engine returns storage closed", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		require.NoError(t, engine.Close())
 
 		_, _, err := engine.DeleteByPrefix("db1:")

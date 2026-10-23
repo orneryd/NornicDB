@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -94,7 +96,7 @@ func TestInnerAggregateSubqueryRows(t *testing.T) {
 					config.SetCypherQueryNormalizationEnabled(normalize)
 					exec, _ := newTestExecutor(t)
 					if explicit {
-						base, err := storage.NewBadgerEngineInMemory()
+						base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 						require.NoError(t, err)
 						t.Cleanup(func() { require.NoError(t, base.Close()) })
 						tx, err := base.BeginTransaction()

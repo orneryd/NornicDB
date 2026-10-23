@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestRerankCandidateContentPrependsTitleAndExpandsChunkNeighbours(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	chunks := []string{"chunk zero", "chunk one", "chunk two matched", "chunk three", "chunk four"}
 	node := &storage.Node{
 		ID:         "nornic:doc",
@@ -43,7 +44,7 @@ func TestRerankCandidateContentPrependsTitleAndExpandsChunkNeighbours(t *testing
 
 func TestRerankCandidateContentHeaderPropertiesAreConfigurableAndBounded(t *testing.T) {
 	t.Setenv(EnvSearchRerankContextProperties, " name , missing,title ")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	longName := strings.Repeat("н", 300)
 	node := &storage.Node{
 		ID:         "nornic:doc",
@@ -86,7 +87,7 @@ func TestExpandedChunkWindowNeverExceedsBudgetWithMultibyteText(t *testing.T) {
 }
 
 func TestRerankBudgetCountsCharactersNotBytes(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	for _, script := range []struct {
 		name   string
 		chunks []string
@@ -118,7 +119,7 @@ func TestRerankDefaultBudgetIs2048Chars(t *testing.T) {
 }
 
 func TestRerankBudgetHandlesMixedScripts(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	mixed := "Москва alpha 北京 β 東京 gamma Київ 😀 delta"
 	chunks := []string{mixed, mixed + " second", mixed + " third"}
 	node := &storage.Node{ID: "nornic:doc", EmbedMeta: map[string]interface{}{"chunk_texts": chunks}}

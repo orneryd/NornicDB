@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -12,7 +14,7 @@ import (
 // only the main embedding.
 func TestHNSWLiveIndexTakesEveryChunk(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "first", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))

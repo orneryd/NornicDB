@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/gob"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,10 @@ func writeLegacyGobEdge(t *testing.T, db *badger.DB, edge *Edge) {
 
 func TestMigrateBadgerToMsgpack_GobToMsgpack(t *testing.T) {
 	dir := t.TempDir()
-	db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	if db != nil {
+		fixtureowner.Own(t, db)
+	}
 	require.NoError(t, err)
 
 	writeLegacyGobNode(t, db, &Node{
@@ -73,7 +77,7 @@ func TestMigrateBadgerToMsgpack_GobToMsgpack(t *testing.T) {
 	// Reopen via the engine and confirm reads still work. The data
 	// directory is at V0 (msgpack-headered bodies, no schema version)
 	// so we authorize the upgrade chain to advance it to V2.
-	base2, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	base2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
 	require.NoError(t, err)
 	defer base2.Close()
 	engine2 := NewNamespacedEngine(base2, "test")
@@ -90,7 +94,7 @@ func TestMigrateBadgerToMsgpackWithDB_EdgeCases(t *testing.T) {
 
 	t.Run("empty database reports no legacy data", func(t *testing.T) {
 		dir := t.TempDir()
-		db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+		db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
@@ -102,7 +106,7 @@ func TestMigrateBadgerToMsgpackWithDB_EdgeCases(t *testing.T) {
 
 	t.Run("dry run counts conversions without rewriting payloads", func(t *testing.T) {
 		dir := t.TempDir()
-		db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+		db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
@@ -138,7 +142,7 @@ func TestDetectStoredSerializer(t *testing.T) {
 		require.ErrorContains(t, err, "nil badger db")
 
 		dir := t.TempDir()
-		db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+		db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = db.Close() })
 
@@ -150,7 +154,10 @@ func TestDetectStoredSerializer(t *testing.T) {
 
 	t.Run("detects gob and msgpack payloads", func(t *testing.T) {
 		gobDir := t.TempDir()
-		gobDB, err := badger.Open(badger.DefaultOptions(gobDir).WithLogger(nil))
+		gobDB, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(gobDir).WithLogger(nil)))
+		if gobDB != nil {
+			fixtureowner.Own(t, gobDB)
+		}
 		require.NoError(t, err)
 		writeLegacyGobNode(t, gobDB, &Node{ID: "detect:gob", Labels: []string{"Test"}})
 
@@ -161,7 +168,7 @@ func TestDetectStoredSerializer(t *testing.T) {
 		require.NoError(t, gobDB.Close())
 
 		msgpackDir := t.TempDir()
-		msgpackEngine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: msgpackDir})
+		msgpackEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: msgpackDir}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = msgpackEngine.Close() })
 		_, err = msgpackEngine.CreateNode(&Node{ID: "detect:msgpack", Labels: []string{"Test"}})
@@ -176,7 +183,10 @@ func TestDetectStoredSerializer(t *testing.T) {
 
 func TestMigrateBadgerToMsgpack_DryRun(t *testing.T) {
 	dir := t.TempDir()
-	db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	if db != nil {
+		fixtureowner.Own(t, db)
+	}
 	require.NoError(t, err)
 
 	writeLegacyGobNode(t, db, &Node{

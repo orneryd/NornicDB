@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"log/slog"
 	"sync"
@@ -61,7 +63,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 	for _, scenario := range []string{"peer_updates_edge", "peer_deletes_edge"} {
 		t.Run(scenario, func(t *testing.T) {
 			barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-			engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)})
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)
@@ -123,7 +125,7 @@ func testEdgeUpdatePostValidationPeerWrite(t *testing.T, highPerformance bool) {
 
 func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *testing.T) {
 	barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(barrier)})
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: true, Logger: slog.New(barrier)}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	source, _, edgeID := seedSnapshotAdjacencyGraph(t, engine, 0)

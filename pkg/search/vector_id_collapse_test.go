@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +11,7 @@ import (
 
 func TestVectorSearchCandidates_CollapsesChunkIDsToNodeID_MaxScore(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{
@@ -37,7 +38,7 @@ func TestVectorSearchCandidates_CollapsesChunkIDsToNodeID_MaxScore(t *testing.T)
 
 func TestVectorSearchCandidates_CollapsesNamedIDsToNodeID(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{
@@ -63,7 +64,7 @@ func TestVectorSearchCandidates_CollapsesNamedIDsToNodeID(t *testing.T) {
 
 func TestSearch_VectorOnly_ResolvesNamedEmbeddingsToNode(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{

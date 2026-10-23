@@ -4,6 +4,8 @@ package storage
 // large generations. Delete once the trigger is understood.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"strconv"
 	"testing"
 	"time"
@@ -66,7 +68,7 @@ func TestWriteBehind_LargeGenerationFlushWithPropertyTokens(t *testing.T) {
 // Sync-path control: one explicit transaction creating the same 30K nodes,
 // write-behind disabled entirely.
 func TestWriteBehind_SyncLargeCommitControl(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

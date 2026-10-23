@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -43,7 +44,7 @@ func TestNodePopulationKeepsRemovalsBeforeFirstBuild(t *testing.T) {
 				for _, route := range []string{"explicit_build", "persist"} {
 					t.Run(fmt.Sprintf("%s/%s/%s/%s", backend, first, then, route), func(t *testing.T) {
 						ctx := context.Background()
-						engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+						engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 						t.Cleanup(func() { require.NoError(t, engine.Close()) })
 						dir := t.TempDir()
 						a := admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named")

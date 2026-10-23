@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"reflect"
@@ -13,7 +15,7 @@ import (
 // (w = 0..3 on the relationship, k = 0..3 on the target).
 func callPlanBenchExecutor(tb testing.TB) *StorageExecutor {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	tb.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "callplan")
 	nodes := make([]*storage.Node, 0, 440)

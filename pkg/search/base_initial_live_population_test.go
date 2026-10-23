@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestBaseInitialPopulationIncludesLiveWritesBeforeFirstBuild(t *testing.T) {
 			for _, kind := range []string{"live_before_first_build", "fresh_restore", "already_built"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, kind), func(t *testing.T) {
 					ctx := context.Background()
-					engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+					engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 					t.Cleanup(func() { require.NoError(t, engine.Close()) })
 					var source storage.Engine = engine
 					if traced {

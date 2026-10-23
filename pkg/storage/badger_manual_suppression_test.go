@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 // again with its ID isn't hidden (#1064).
 func TestManualSuppression(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"Doc"}})
@@ -45,7 +49,7 @@ func TestManualSuppression(t *testing.T) {
 
 	// Kept across a reopen.
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	hidden(t, engine)
@@ -121,7 +125,7 @@ type unsuppressibleEngine struct{ Engine }
 // Engines without on-demand suppression under the WAL engine report
 // ErrNotImplemented; a closed engine fails (#1064).
 func TestManualSuppressionUnsupportedAndClosed(t *testing.T) {
-	backing := NewMemoryEngine()
+	backing := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = backing.Close() })
 	memory := unsuppressibleEngine{Engine: backing}
 	wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
@@ -131,7 +135,10 @@ func TestManualSuppressionUnsupportedAndClosed(t *testing.T) {
 	require.ErrorIs(t, walEngine.SetNodeManuallySuppressed("x", true), ErrNotImplemented)
 	require.ErrorIs(t, walEngine.SetEdgeManuallySuppressed("x", true), ErrNotImplemented)
 
-	closed, err := NewBadgerEngine(t.TempDir())
+	closed, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if closed != nil {
+		fixtureowner.Own(t, closed)
+	}
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
 	require.Error(t, closed.SetNodeManuallySuppressed("test:a", true))

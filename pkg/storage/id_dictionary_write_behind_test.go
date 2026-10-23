@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
 	dir := t.TempDir()
 	open := func() *BadgerEngine {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		return engine
 	}

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,7 +15,7 @@ import (
 
 func buildSearchProfileFixture(tb testing.TB, nodeCount int, dims int) (*Service, []float32) {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	svc := NewServiceWithDimensions(engine, dims)
 
@@ -116,7 +117,10 @@ func loadSearchProfileDiskFixture(tb testing.TB) (*Service, []float32) {
 		tb.Skipf("disk fixture vector file unavailable: %s.vec (%v)", vectorPath, err)
 	}
 
-	baseEngine, err := storage.NewBadgerEngine(dataDir)
+	baseEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	if baseEngine != nil {
+		fixtureowner.Own(tb, baseEngine)
+	}
 	if err != nil {
 		tb.Skipf("disk fixture storage unavailable (possibly already open/locked): %v", err)
 	}

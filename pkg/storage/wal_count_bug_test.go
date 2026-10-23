@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"os"
 	"testing"
@@ -18,7 +20,7 @@ func TestWALEngine_CountAfterDeleteRecreate(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create BadgerEngine
-	badger, err := NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -71,7 +73,7 @@ func TestAsyncEngine_CountAfterDeleteRecreate(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create full stack: BadgerEngine -> WALEngine -> AsyncEngine
-	badger, err := NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 

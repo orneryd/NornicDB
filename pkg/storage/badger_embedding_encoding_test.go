@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -54,7 +56,7 @@ func TestEmbeddingCleanup_NewShardsPreservePriorOwners(t *testing.T) {
 	for _, binaryLength := range []bool{false, true} {
 		for _, action := range []string{"direct", "transaction", "sidecar", "buffered"} {
 			t.Run(fmt.Sprintf("binary=%v/%s", binaryLength, action), func(t *testing.T) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: action == "buffered", WriteBehindInterval: time.Hour})
+				b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: action == "buffered", WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				defer b.Close()
 				short, long := NodeID("test:alias"), NodeID("test:alias\x00\x00\x00")

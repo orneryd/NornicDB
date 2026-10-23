@@ -1,6 +1,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"path/filepath"
@@ -116,7 +118,7 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	dir := t.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
 	require.NoError(t, err)
-	live := NewWALEngine(NewMemoryEngine(), wal)
+	live := NewWALEngine(newTestMemoryEngine(t), wal)
 	t.Cleanup(func() { _ = live.Close() })
 	n, e := recoveryFieldFixture()
 	_, err = live.CreateNode(n)
@@ -125,7 +127,7 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, live.CreateEdge(e))
 	require.NoError(t, wal.Close())
-	recovered, err := RecoverFromWAL(dir, "")
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(n.ID)
@@ -184,7 +186,7 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 	dir := t.TempDir()
 	wal, err := NewWAL("", &WALConfig{Dir: dir, SyncMode: "immediate"})
 	require.NoError(t, err)
-	live := NewWALEngine(NewMemoryEngine(), wal)
+	live := NewWALEngine(newTestMemoryEngine(t), wal)
 	t.Cleanup(func() { _ = live.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err = live.CreateNode(&Node{ID: id})
@@ -196,7 +198,7 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 	e, err := live.GetEdge("test:e")
 	require.NoError(t, err)
 	require.NoError(t, wal.Close())
-	recovered, err := RecoverFromWAL(dir, "")
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(n.ID)
@@ -220,7 +222,7 @@ func TestWALEngineDefaultUpdateTimeRecordedBeforeMutation(t *testing.T) {
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "immediate"})
 	require.NoError(t, err)
-	live := NewWALEngine(NewMemoryEngine(), wal)
+	live := NewWALEngine(newTestMemoryEngine(t), wal)
 	t.Cleanup(func() { _ = live.Close() })
 	_, err = live.CreateNode(&Node{ID: "test:a"})
 	require.NoError(t, err)
@@ -233,7 +235,7 @@ func TestWALEngineDefaultUpdateTimeRecordedBeforeMutation(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, want.UpdatedAt.IsZero())
 	require.NoError(t, wal.Close())
-	recovered, err := RecoverFromWAL(dir, "")
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	got, err := recovered.GetNode(node.ID)

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 // newSidecarTestBadger returns the Badger core of an in-memory engine.
 func newSidecarTestBadger(t *testing.T) *BadgerEngine {
 	t.Helper()
-	return NewMemoryEngine().BadgerEngine
+	return newTestMemoryEngine(t).BadgerEngine
 }
 
 func sidecarTestNode(t *testing.T, b *BadgerEngine, id string, props map[string]any, at time.Time) *Node {
@@ -217,7 +218,7 @@ type EmbeddingFailureLike struct {
 // writeback in the production shape: a persistent engine and a pool of nodes,
 // each writeback targeting the next node (bounded per-key churn).
 func BenchmarkUpdateNodeEmbeddingSidecar(b *testing.B) {
-	engine := NewMemoryEngine().BadgerEngine
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)).BadgerEngine
 	defer engine.Close()
 	now := time.Now()
 	const pool = 2000

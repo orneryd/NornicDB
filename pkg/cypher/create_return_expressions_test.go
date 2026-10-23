@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -24,7 +25,10 @@ func newAsyncStackTestExecutor(t *testing.T) *StorageExecutor {
 func newAsyncStackExecutor(t testing.TB) *StorageExecutor {
 	t.Helper()
 	dir := t.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", nil)
 	require.NoError(t, err)

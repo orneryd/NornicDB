@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestGDSLouvainMissingSeedNames(t *testing.T) {
 func BenchmarkLouvainProjected3000(b *testing.B) {
 	for _, orientation := range []string{"NATURAL", "REVERSE", "UNDIRECTED"} {
 		b.Run(orientation, func(b *testing.B) {
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "benchlouvain")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "benchlouvain")
 			defer engine.Close()
 			exec := NewStorageExecutor(engine)
 			for i := 0; i < 3000; i++ {

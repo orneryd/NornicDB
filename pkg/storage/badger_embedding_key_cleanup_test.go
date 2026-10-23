@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -88,7 +90,7 @@ func TestDeleteEmbeddingKeysInTxn_ReadOnlyTxnFails(t *testing.T) {
 // one would pile up versions of the same keys, which every later scan of the
 // prefix walks, and make the cost per delete grow with b.N.
 func BenchmarkDeleteNode_SeparateEmbeddings(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

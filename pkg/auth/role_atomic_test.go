@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func TestDeleteRoleFailureChangesNothing(t *testing.T) {
 	for _, stage := range []string{"second grant delete", "role delete"} {
 		t.Run(stage, func(t *testing.T) {
 			ctx := context.Background()
-			inner := storage.NewMemoryEngine()
+			inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			base := storage.NewNamespacedEngine(inner, "system")
 			t.Cleanup(func() { _ = base.Close() })
 			engine := &roleFailureEngine{Engine: base}

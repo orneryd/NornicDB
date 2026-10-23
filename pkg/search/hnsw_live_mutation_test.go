@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestHNSWMutationsRemainImmediatelySearchableAtAnyIndexSize(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 	// Cross the former live-update cutoff before indexing the new node. Keeping
@@ -77,7 +78,7 @@ func BenchmarkHNSWLiveAdditionAtScale(b *testing.B) {
 }
 
 func TestPersistedHNSWIncludesLatestLiveMutations(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	require.NoError(t, svc.vectorIndex.Add("existing", []float32{0, 1}))
 	require.NoError(t, svc.vectorIndex.Add("new", []float32{1, 0}))
 
@@ -100,7 +101,7 @@ func TestPersistedHNSWIncludesLatestLiveMutations(t *testing.T) {
 }
 
 func TestHNSWRebuildPreservesMutationsArrivingBeforeSwap(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	require.NoError(t, svc.vectorIndex.Add("existing", []float32{0, 1}))
 	require.NoError(t, svc.vectorIndex.Add("trigger", []float32{0.5, 0.5}))
 

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -91,7 +92,7 @@ func TestIVFPQPersist_ServiceBranches(t *testing.T) {
 		KMeansMaxIterations: 4,
 	}
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 8)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 8)
 
 	// vfs nil branch when no compatible in-memory/persisted index exists.
 	_, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, svc.vectorSourceEpoch.Load())
@@ -202,14 +203,14 @@ func TestIVFPQPersist_ServiceSuccessAndCacheBranches(t *testing.T) {
 	require.Equal(t, idx.overflow, loaded.overflow)
 	require.True(t, loaded.compatibleProfile(profile))
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.ivfpqIndex = idx
 	var nilCtx context.Context
 	cached, err := svc.getOrBuildIVFPQIndex(nilCtx, profile, nil, svc.vectorSourceEpoch.Load())
 	require.NoError(t, err)
 	require.Same(t, idx, cached)
 
-	svc = NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc = NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.hnswIndexPath = base
 	loadedFromDisk, err := svc.getOrBuildIVFPQIndex(context.Background(), profile, nil, svc.vectorSourceEpoch.Load())
 	require.NoError(t, err)

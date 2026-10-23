@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -48,7 +49,7 @@ func TestNodePopulationFirstMutationPreservesRestart(t *testing.T) {
 			for _, operation := range []string{"update", "remove", "text_only", "named", "property", "chunks"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, operation), func(t *testing.T) {
 					ctx := context.Background()
-					engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+					engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 					t.Cleanup(func() { require.NoError(t, engine.Close()) })
 					var source storage.Engine = engine
 					if traced {
@@ -136,7 +137,7 @@ func TestNodePopulationUninitializedPersistAndClosePreserveArtifacts(t *testing.
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			dir := t.TempDir()
 			_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
@@ -168,7 +169,7 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			a := admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named")
 			_, err := engine.CreateNode(a)
@@ -252,7 +253,7 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
 	for _, closeOwner := range []bool{false, true} {
 		t.Run(fmt.Sprint("close=", closeOwner), func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			_, err := engine.CreateNode(admissionNode("nornic:a", "aterm", []float32{1, 0, 0}, "named"))
 			require.NoError(t, err)

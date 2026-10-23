@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 	"time"
@@ -11,7 +13,7 @@ import (
 
 func scopedLabelOrderFixture(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"a:z", "b:z", "a:a", "a:m", "ab:foreign"} {

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 	"time"
@@ -24,7 +26,7 @@ func BenchmarkTemporalConstraintCreate(b *testing.B) {
 			}
 			b.Run(name, func(b *testing.B) {
 				b.StopTimer()
-				inner, err := NewBadgerEngine(b.TempDir())
+				inner, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngine(b.TempDir()))
 				require.NoError(b, err)
 				b.Cleanup(func() { require.NoError(b, inner.Close()) })
 				engine := NewNamespacedEngine(inner, "test")

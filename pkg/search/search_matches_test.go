@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"strings"
 	"testing"
@@ -89,7 +90,7 @@ func TestLocateReadsAnalyzeTerms(t *testing.T) {
 }
 
 func newMatchTestService(t *testing.T) (*Service, storage.Engine) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := NewServiceWithDimensions(engine, 2)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	return service, engine
@@ -196,7 +197,7 @@ func TestSearchMatchesOfEarlierEmbeddings(t *testing.T) {
 // the embedding-free hit read leaves out: the hits' chunk places, and the
 // chunk texts the reranker reads, come from the metadata-only read.
 func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
-	badgerEngine, err := storage.NewBadgerEngineInMemory()
+	badgerEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badgerEngine.Close() })
 	engine := storage.NewNamespacedEngine(badgerEngine, "nornic")

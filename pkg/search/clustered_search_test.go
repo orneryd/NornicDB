@@ -2,6 +2,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"testing"
@@ -13,7 +15,7 @@ import (
 )
 
 func newNamespacedMemoryEngine(t *testing.T) storage.Engine {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { base.Close() })
 	return storage.NewNamespacedEngine(base, "nornic")
 }

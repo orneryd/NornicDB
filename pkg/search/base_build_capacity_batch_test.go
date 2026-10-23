@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -30,7 +32,7 @@ func TestBaseBuildCapacityUsesOneBatchOwner(t *testing.T) {
 		for _, traced := range []bool{false, true} {
 			for _, kind := range []string{"oversized_text", "aggregate_text", "aggregate_metadata", "aggregate_vector", "full_batch_text", "within_budget", "unlimited"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, kind), func(t *testing.T) {
-					engine := storage.NewMemoryEngine()
+					engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, engine.Close()) })
 					var source storage.Engine = engine
 					if traced {

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // No relationship is a merge.
 func holderBenchExecutor(b testing.TB) *StorageExecutor {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bench")
 	nodes := []*storage.Node{{ID: "hub", Labels: []string{"Item"}, Properties: map[string]interface{}{"key": "hub"}}}

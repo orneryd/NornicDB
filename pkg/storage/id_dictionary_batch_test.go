@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +13,10 @@ import (
 // are now written once per commit (not once per alloc).
 func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dict")
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	require.NoError(t, err)
 
 	// Allocate three node numIDs via three separate txns (each goes
@@ -27,7 +31,7 @@ func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 	require.NoError(t, eng.Close())
 
 	// Reopen. loadFromBadger must pick the counter up.
-	eng2, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	eng2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = eng2.Close() })
 	nodeMaxAfter, _ := eng2.idDict.CounterUsage()
@@ -45,7 +49,7 @@ func TestIDDict_CounterSurvivesRestart(t *testing.T) {
 // explicit transaction write exactly ONE counter key at commit time
 // (not one per alloc).
 func TestIDDict_BulkTxnCommitsCounterOnce(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = eng.Close() })
 
@@ -80,7 +84,10 @@ func TestIDDict_BulkTxnCommitsCounterOnce(t *testing.T) {
 // uniqueness, but the persisted key stays at the last committed value).
 func TestIDDict_RollbackDoesNotPersistCounter(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "dict-rollback")
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	require.NoError(t, err)
 
 	// Commit one node so the persisted counter is 1.
@@ -105,7 +112,7 @@ func TestIDDict_RollbackDoesNotPersistCounter(t *testing.T) {
 	require.NoError(t, eng.Close())
 
 	// Reopen: persisted counter should reflect only the committed node.
-	eng2, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	eng2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = eng2.Close() })
 	n, _ := eng2.idDict.CounterUsage()

@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"encoding/base64"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -33,11 +34,11 @@ func (s *testServerStream) RecvMsg(any) error            { return nil }
 func TestQdrantGRPC_AuthAndRBAC(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
@@ -140,7 +141,7 @@ func TestQdrantGRPC_AuthAndRBAC(t *testing.T) {
 func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	store, _ := newTestCollectionStore(t)
@@ -206,10 +207,10 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
@@ -282,7 +283,7 @@ func TestServer_AuthorizeMethodBranches(t *testing.T) {
 	}
 
 	store, _ := newTestCollectionStore(t)
-	srv, err := NewServer(cfg, store, storage.NewMemoryEngine(), nil, nil)
+	srv, err := NewServer(cfg, store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 
 	claimsViewer := &auth.JWTClaims{Roles: []string{string(auth.RoleViewer)}}
@@ -301,7 +302,7 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	t.Parallel()
 
 	store, _ := newTestCollectionStore(t)
-	srvNoAuth, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, nil)
+	srvNoAuth, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 
 	// Auth disabled paths call handler directly.
@@ -324,7 +325,7 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// handleBasicAuth input validation branches.
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
@@ -333,7 +334,7 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	_, err = authenticator.CreateUser("viewer3", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
-	srvAuth, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, authenticator)
+	srvAuth, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, authenticator)
 	require.NoError(t, err)
 
 	_, err = srvAuth.handleBasicAuth(context.Background(), "Basic !!!")
@@ -363,13 +364,13 @@ func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 func TestServer_MiscBranches(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewServer(nil, nil, storage.NewMemoryEngine(), nil, nil)
+	_, err := NewServer(nil, nil, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.Error(t, err)
 
 	require.Nil(t, (*Server)(nil).CollectionStore())
 
 	store, _ := newTestCollectionStore(t)
-	srv, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, nil)
+	srv, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, "", srv.Addr())
@@ -414,21 +415,21 @@ func TestServer_MiscBranches(t *testing.T) {
 		_ = roles
 		return auth.FullDatabaseAccessMode
 	}
-	srvVis, err := NewServer(cfg, store, storage.NewMemoryEngine(), nil, nil)
+	srvVis, err := NewServer(cfg, store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 	ctxClaims := context.WithValue(context.Background(), contextKeyClaims{}, &auth.JWTClaims{Roles: []string{"viewer"}})
 	visible, err := srvVis.VisibleDatabases(ctxClaims, []string{"d1", "d2"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"d1", "d2"}, visible)
 
-	_, err = NewServerWithDatabaseManager(DefaultConfig(), nil, storage.NewMemoryEngine(), nil, nil)
+	_, err = NewServerWithDatabaseManager(DefaultConfig(), nil, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.Error(t, err)
 }
 
 func TestServer_AuthInterceptorErrorBranches(t *testing.T) {
 	t.Parallel()
 
-	authStore := storage.NewMemoryEngine()
+	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	authCfg.SecurityEnabled = true
@@ -438,7 +439,7 @@ func TestServer_AuthInterceptorErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	store, _ := newTestCollectionStore(t)
-	srv, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, authenticator)
+	srv, err := NewServer(DefaultConfig(), store, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, authenticator)
 	require.NoError(t, err)
 
 	// Basic malformed then missing bearer token.

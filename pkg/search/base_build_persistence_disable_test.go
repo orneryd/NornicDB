@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"log/slog"
@@ -36,7 +38,7 @@ func TestBaseBuildPersistenceDisablePreservesCurrentFulltext(t *testing.T) {
 			for _, kind := range []string{"missing", "equal_count_old", "transfer_refused", "disabled_before_entry", "enabled"} {
 				t.Run(fmt.Sprintf("%s/traced=%t/%s", backend, traced, kind), func(t *testing.T) {
 					ctx := context.Background()
-					engine := storage.NewMemoryEngine()
+					engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, engine.Close()) })
 					_, err := engine.CreateNode(&storage.Node{ID: "nornic:a", NamedEmbeddings: map[string][]float32{"v": {1, 0, 0}}, Properties: map[string]any{"old": "oldterm", "next": "newterm"}})
 					require.NoError(t, err)

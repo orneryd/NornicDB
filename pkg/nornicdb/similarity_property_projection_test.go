@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -18,7 +20,7 @@ func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, names
 }
 
 func TestFindSimilarProjectsSuppressedProperties(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	setupSimilarityPropertyPolicy(t, be, "tenant", "Doc")

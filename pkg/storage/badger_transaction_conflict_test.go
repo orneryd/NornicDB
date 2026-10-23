@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 // snapshot-isolation conflict check: tx1 begins, tx2 commits a node create,
 // tx1 tries to create that same node ID — must fail with ErrConflict.
 func TestCheckNodeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -38,7 +40,7 @@ func TestCheckNodeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
 // TestCheckEdgeCreateConflict_ConcurrentWriteAfterReadTS: same shape as the
 // node test, for edges.
 func TestCheckEdgeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -69,7 +71,7 @@ func TestCheckEdgeCreateConflict_ConcurrentWriteAfterReadTS(t *testing.T) {
 // TestCheckNodeCreateConflict_NoExistingHead is the no-op path: a fresh ID
 // passes the conflict check and the create succeeds.
 func TestCheckNodeCreateConflict_NoExistingHead(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -86,7 +88,7 @@ func TestCheckNodeCreateConflict_NoExistingHead(t *testing.T) {
 // in-place must trigger DISALLOWED-policy validation against connected
 // edges — Cypher SET/REMOVE label semantics.
 func TestValidatePolicyOnNodeLabelChange_DisallowsViaUpdate(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -132,7 +134,7 @@ func TestValidatePolicyOnNodeLabelChange_DisallowsViaUpdate(t *testing.T) {
 // TestValidatePolicyOnNodeLabelChange_NoMatchingPolicy: relabeling that
 // produces no policy violations must succeed.
 func TestValidatePolicyOnNodeLabelChange_NoMatchingPolicy(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -169,7 +171,7 @@ func TestValidatePolicyOnNodeLabelChange_NoMatchingPolicy(t *testing.T) {
 // TestValidatePolicyOnNodeLabelChange_NoConstraintIsNoOp: with no policies
 // in the schema, label change is a fast path that returns nil.
 func TestValidatePolicyOnNodeLabelChange_NoConstraintIsNoOp(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -187,7 +189,7 @@ func TestValidatePolicyOnNodeLabelChange_NoConstraintIsNoOp(t *testing.T) {
 // goes through the MVCC GetEdgeVisibleAt path — verify we get the expected
 // edge body even though the in-tx snapshot is non-zero.
 func TestGetCommittedEdgeLocked_SnapshotRead(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -214,7 +216,7 @@ func TestGetCommittedEdgeLocked_SnapshotRead(t *testing.T) {
 
 func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 	t.Run("endpoint deleted after transaction start returns conflict", func(t *testing.T) {
-		engine, err := NewBadgerEngine(t.TempDir())
+		engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
@@ -235,7 +237,7 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 	})
 
 	t.Run("missing endpoint returns invalid edge", func(t *testing.T) {
-		engine, err := NewBadgerEngine(t.TempDir())
+		engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
@@ -252,7 +254,7 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 }
 
 func TestClassifyUpdateConflictAsUniqueViolation(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

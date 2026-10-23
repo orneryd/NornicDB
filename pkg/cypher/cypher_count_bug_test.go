@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"os"
@@ -19,7 +21,7 @@ func TestCypher_CountAfterDeleteRecreate(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create full stack: BadgerEngine -> WALEngine -> AsyncEngine
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 
@@ -89,7 +91,7 @@ func TestCypher_CountVsMatchCount(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	badger, err := storage.NewBadgerEngine(tmpDir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer badger.Close()
 

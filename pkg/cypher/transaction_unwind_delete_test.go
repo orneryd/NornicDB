@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -21,7 +23,7 @@ func TestExplicitTransactionUnwindDeleteCommitAndRollback(t *testing.T) {
 		{name: "rollback", terminal: "ROLLBACK", remainingEdge: 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			store := storage.NewMemoryEngine()
+			store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "test"))
 			ctx := context.Background()
@@ -57,7 +59,7 @@ DELETE rel`, map[string]any{
 }
 
 func TestExplicitTransactionUnwindDeleteEmptyInput(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "test"))
 	ctx := context.Background()

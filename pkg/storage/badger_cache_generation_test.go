@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -13,7 +15,7 @@ import (
 // A read that captured a cache's generation before a write can't put back
 // what it read once the write has written to that cache (#1024).
 func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 
@@ -90,7 +92,7 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 // older version cached once the writes are done (#1024). Before the fix,
 // 31 of 200 rounds left a stale version.
 func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	engine.nodeCacheMaxEntries = 4 // so reads keep missing
@@ -138,7 +140,7 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 // A label scan that finds its cached first node no longer has the label
 // drops it and caches the node it finds instead.
 func TestLabelScanReplacesFirstNodeThatLostTheLabel(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	_, err = engine.CreateNode(&Node{ID: "gen:other", Labels: []string{"Other"}})

@@ -11,6 +11,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"sync"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ import (
 // Mirrors the existing setupTest* helper convention in this package.
 func newTestBadgerEngineForAccessors(t *testing.T) *BadgerEngine {
 	t.Helper()
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 	return be

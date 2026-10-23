@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -417,7 +418,7 @@ func TestRunCypherMutationWithRetry_CancelledContextReturnsCtxError(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "rc"))
 	// Cypher executor returns ctx.Err() before performing work when the
 	// context is already cancelled. The exact contract under cancellation
@@ -431,7 +432,7 @@ func TestRunCypherMutationWithRetry_CancelledContextReturnsCtxError(t *testing.T
 }
 
 func TestRunCypherMutationWithRetry_HappyPathReturnsResult(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "rc-ok"))
 	result, err := runCypherMutationWithRetry(context.Background(), exec, "RETURN 1 AS one", nil)
 	require.NoError(t, err)
@@ -440,7 +441,7 @@ func TestRunCypherMutationWithRetry_HappyPathReturnsResult(t *testing.T) {
 }
 
 func TestRunCypherMutationWithRetry_NonConflictErrorPropagates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "rc-syntax"))
 	_, err := runCypherMutationWithRetry(context.Background(), exec, "NOT VALID CYPHER {{}}", nil)
 	require.Error(t, err)

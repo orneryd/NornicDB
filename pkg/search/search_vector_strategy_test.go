@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 
 func TestResolveCompressedVectorStrategy_FallsBackWhenNotReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 16)
 
 	strategy, err := svc.resolveVectorStrategy(context.Background(), svc.vectorSourceEpoch.Load(), 8000, 16, nil)
 	require.NoError(t, err)
@@ -27,7 +28,7 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
 	t.Setenv("NORNICDB_VECTOR_IVFPQ_NPROBE", "4")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 16)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 16)
 	require.NoError(t, err)
@@ -52,7 +53,7 @@ func TestResolveCompressedVectorStrategy_UsesIVFPQWhenReady(t *testing.T) {
 func TestResolveCompressedVectorStrategy_FallbackOnLoadError(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "compressed")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 16)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 16)
 	dir := t.TempDir()
 	vfs, err := NewVectorFileStore(fmt.Sprintf("%s/vectors", dir), 16)
 	require.NoError(t, err)

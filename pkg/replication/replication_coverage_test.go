@@ -1,6 +1,8 @@
 package replication
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -163,7 +165,7 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	var nilEngine *ReplicatedEngine
 	assert.True(t, nilEngine.IsLeader())
 
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	noRepl := NewReplicatedEngine(base, nil, 0)

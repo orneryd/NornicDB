@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 )
 
@@ -852,7 +853,10 @@ func TestBadgerTransactionEvaluateConstraintContractExpressions(t *testing.T) {
 }
 
 func TestBadgerTransactionCurrentStateHelpers(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory: %v", err)
 	}

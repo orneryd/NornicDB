@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -73,7 +74,7 @@ func TestLexicalSeedHintsV1V2Parity(t *testing.T) {
 }
 
 func TestHNSWBuildMetadataDoesNotExecuteBM25Queries(t *testing.T) {
-	service := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	service := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	index := &metadataOnlySeedIndex{bm25Index: NewFulltextIndexV2()}
 
 	hints := service.hnswLexicalSeedHints(index, 16)

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -11,7 +12,10 @@ import (
 
 func TestGH461_AutocommitCreatedRelationshipVisibleAcrossTransactionsAndReopen(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir})
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -54,7 +58,10 @@ func TestGH461_AutocommitCreatedRelationshipVisibleAcrossTransactionsAndReopen(t
 
 	require.NoError(t, engine.Close())
 	engine = nil
-	engine, err = storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir})
+	engine, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dataDir}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	exec = NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
 	_, err = exec.Execute(ctx, "BEGIN", nil)

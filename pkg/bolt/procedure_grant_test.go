@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"net"
@@ -110,7 +112,7 @@ func runOnBoltSession(t *testing.T, server *Server, result *BoltAuthResult, quer
 // the grant is revoked.
 func TestBoltBoostedProcedureGrantFromStore(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	system := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	unreadable := false
 	store := auth.NewProcedurePrivilegeStore(&grantLookupEngine{Engine: system, fail: &unreadable})
@@ -160,7 +162,7 @@ func (e *grantLookupEngine) GetNodesByLabel(label string) ([]*storage.Node, erro
 // refused (Neo.ClientError.Security.Forbidden, as Neo4j 5.26.30
 // Enterprise) on one with authentication.
 func TestBoltImmutableGrantNeedsAuthenticationDisabled(t *testing.T) {
-	system := storage.NewMemoryEngine()
+	system := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	exec := cypher.NewStorageExecutor(system)
 	admin := &BoltAuthResult{Authenticated: true, Username: "admin", Roles: []string{"admin"},
@@ -177,7 +179,7 @@ func TestBoltImmutableGrantNeedsAuthenticationDisabled(t *testing.T) {
 	require.True(t, executed)
 	require.NoError(t, execErr)
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: true, JWTSecret: []byte("test-secret-key-for-testing-only-32b")}, authStorage)
 	require.NoError(t, err)

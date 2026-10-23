@@ -7,6 +7,8 @@ package cypher
 // transactional route.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"os"
 	"strconv"
@@ -33,12 +35,12 @@ func BenchmarkZZAsyncStrip(b *testing.B) {
 				maxOps = n
 			}
 		}
-		badger, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 			DataDir:             dir,
 			WriteBehind:         writeBehind,
 			WriteBehindInterval: interval,
 			WriteBehindMaxOps:   maxOps,
-		})
+		}))
 		if err != nil {
 			b.Fatal(err)
 		}

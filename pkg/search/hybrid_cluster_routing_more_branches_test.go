@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +11,7 @@ import (
 
 func buildClusteredServiceForRouting(t *testing.T) *Service {
 	t.Helper()
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.EnableClustering(nil, 2)
 	svc.SetMinEmbeddingsForClustering(1)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "a1", Properties: map[string]interface{}{"text": "alpha one"}, ChunkEmbeddings: [][]float32{{1, 0}}}))
@@ -23,7 +24,7 @@ func buildClusteredServiceForRouting(t *testing.T) *Service {
 }
 
 func TestHybridRouting_RebuildProfilesGuardBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.clusterLexicalProfiles = map[int]map[string]float64{1: {"x": 1}}
 	svc.rebuildClusterLexicalProfiles()
 	require.Empty(t, svc.clusterLexicalProfiles)
@@ -74,7 +75,7 @@ func TestHybridRouting_SelectHybridClustersMoreBranches(t *testing.T) {
 
 func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 	t.Run("nil_fields_and_nonclustered_empty_index", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.applyBM25SeedHints() // nil cluster/fulltext
 
 		svc.EnableClustering(nil, 2)
@@ -83,7 +84,7 @@ func TestHybridRouting_ApplyBM25SeedHintsMoreBranches(t *testing.T) {
 	})
 
 	t.Run("no_indices_for_seed_ids", func(t *testing.T) {
-		svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+		svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 		svc.EnableClustering(nil, 2)
 		require.NoError(t, svc.clusterIndex.Add("existing", []float32{1, 0}))
 		svc.setFulltext(&seedOverrideFulltext{FulltextIndex: NewFulltextIndex(), seedIDs: []string{"missing"}})

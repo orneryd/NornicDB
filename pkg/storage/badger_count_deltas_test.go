@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -34,7 +35,7 @@ func TestCountDeltaPrefixesDisjoint(t *testing.T) {
 // TestCountDeltaFoldCollapsesIntoBase pins the fold: persisted deltas sum into
 // the base key and are deleted, and reads agree before and after.
 func TestCountDeltaFoldCollapsesIntoBase(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -87,7 +88,7 @@ func TestCountDeltaFoldCollapsesIntoBase(t *testing.T) {
 // TestCountDeltaCrossNamespaceFastPath pins the by-name summation: deltas for
 // the same label in two namespaces both contribute to NodeCountByLabel.
 func TestCountDeltaCrossNamespaceFastPath(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -105,7 +106,7 @@ func TestCountDeltaCrossNamespaceFastPath(t *testing.T) {
 // malformed edge-type base count: the read recomputes from the edge-type
 // index and returns the correct count.
 func TestCountDeltaMalformedEdgeTypeBaseRepair(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -132,14 +133,17 @@ func TestCountDeltaMalformedEdgeTypeBaseRepair(t *testing.T) {
 // the same counts.
 func TestCountDeltaFoldAtClose(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	_, err = engine.CreateNode(&Node{ID: "ns1:a", Labels: []string{"CloseFold"}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 

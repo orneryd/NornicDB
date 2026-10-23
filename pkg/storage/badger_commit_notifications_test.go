@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"os/exec"
 	"sync"
@@ -147,7 +148,7 @@ func r3Await(t *testing.T, c <-chan error, name string) {
 }
 
 func TestCommitNotifications_BufferedOrder(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour})
+	b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	defer b.Close()
 	id := NodeID("test:r3-order")
@@ -239,7 +240,10 @@ func TestCommitNotifications_EdgeReentry(t *testing.T) {
 func TestCommitNotifications_CloseDuringCallback(t *testing.T) {
 	for _, path := range []string{"direct", "transaction", "sidecar", "buffered"} {
 		t.Run(path, func(t *testing.T) {
-			b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: path == "buffered", WriteBehindInterval: time.Hour})
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: path == "buffered", WriteBehindInterval: time.Hour}))
+			if b != nil {
+				fixtureowner.Own(t, b)
+			}
 			require.NoError(t, err)
 			id := NodeID("test:r3-close")
 			if path == "sidecar" {
@@ -329,7 +333,10 @@ func TestCommitNotifications_CloseDuringCallback(t *testing.T) {
 func TestCommitNotifications_PanicReleasesLifetime(t *testing.T) {
 	for _, path := range []string{"direct", "transaction", "sidecar", "buffered"} {
 		t.Run(path, func(t *testing.T) {
-			b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: path == "buffered", WriteBehindInterval: time.Hour})
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: path == "buffered", WriteBehindInterval: time.Hour}))
+			if b != nil {
+				fixtureowner.Own(t, b)
+			}
 			require.NoError(t, err)
 			id := NodeID("test:r3-panic")
 			if path == "sidecar" {

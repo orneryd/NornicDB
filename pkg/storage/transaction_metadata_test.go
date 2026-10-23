@@ -6,7 +6,7 @@ import (
 )
 
 func TestTransaction_SetMetadata(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Set metadata
@@ -36,7 +36,7 @@ func TestTransaction_SetMetadata(t *testing.T) {
 }
 
 func TestTransaction_SetMetadata_Merge(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Set initial metadata
@@ -64,7 +64,7 @@ func TestTransaction_SetMetadata_Merge(t *testing.T) {
 }
 
 func TestTransaction_SetMetadata_TooLarge(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Create metadata > 2048 chars
@@ -84,7 +84,7 @@ func TestTransaction_SetMetadata_TooLarge(t *testing.T) {
 }
 
 func TestTransaction_SetMetadata_ClosedTransaction(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Commit transaction
@@ -98,7 +98,7 @@ func TestTransaction_SetMetadata_ClosedTransaction(t *testing.T) {
 }
 
 func TestTransaction_GetMetadata_Copy(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	tx.SetMetadata(map[string]interface{}{
@@ -117,7 +117,7 @@ func TestTransaction_GetMetadata_Copy(t *testing.T) {
 }
 
 func TestTransaction_Commit_LogsMetadata(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Set metadata
@@ -150,7 +150,7 @@ func TestTransaction_Commit_LogsMetadata(t *testing.T) {
 }
 
 func TestTransaction_Metadata_EmptyByDefault(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	metadata := tx.GetMetadata()
@@ -160,7 +160,7 @@ func TestTransaction_Metadata_EmptyByDefault(t *testing.T) {
 }
 
 func TestTransaction_Metadata_WithOperations(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	tx, _ := engine.BeginTransaction()
 
 	// Set metadata before operations

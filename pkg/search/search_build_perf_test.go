@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 
@@ -95,7 +96,7 @@ func TestLooksLikeDenseNumericSlice_Branches(t *testing.T) {
 func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 	t.Parallel()
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	node := &storage.Node{
@@ -141,7 +142,7 @@ func TestBuildIndexes_IndexesNamedChunkAndPropertyVectors(t *testing.T) {
 func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 	t.Parallel()
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 3)
 
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a"})
@@ -177,7 +178,7 @@ func TestBuildIndexes_IndexesRelationshipPropertyVectors(t *testing.T) {
 func TestIndexEdge_ReplacesExistingRelationshipVectors(t *testing.T) {
 	t.Parallel()
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	edge := &storage.Edge{
 		ID:        "r1",
 		StartNode: "a",
@@ -213,7 +214,7 @@ func BenchmarkRelationshipVectorQueryIndexedVsStorageScan(b *testing.B) {
 		limit     = 50
 	)
 
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 

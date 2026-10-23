@@ -15,6 +15,8 @@ package cypher
 //     nodes).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"strings"
@@ -27,7 +29,7 @@ import (
 
 func newGh640Executor(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
@@ -300,7 +302,7 @@ func TestGh640_FindMergeNodeDoesNotScanAllNodes(t *testing.T) {
 	// A labelled, property-carrying MERGE lookup must stay on label/schema
 	// paths: the removed AllNodes() fallback made bulk creating-MERGE
 	// ingestion quadratic (85 ms per row at 20k nodes, issue measurement).
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())

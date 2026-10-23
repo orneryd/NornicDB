@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestBM25RejectedCheckpointRebuildsInitialNodePopulation(t *testing.T) {
 				for _, entry := range []string{"explicit_build", "live_before_first_build"} {
 					t.Run(fmt.Sprintf("%s/traced=%t/%s/%s", backend, traced, rejection, entry), func(t *testing.T) {
 						ctx := context.Background()
-						engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+						engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 						t.Cleanup(func() { require.NoError(t, engine.Close()) })
 						var source storage.Engine = engine
 						if traced {
@@ -129,7 +130,7 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 				for _, entry := range []string{"explicit_build", "live_before_first_build"} {
 					t.Run(fmt.Sprintf("%s/traced=%t/%s/%s", backend, traced, kind, entry), func(t *testing.T) {
 						ctx := context.Background()
-						engine := &authoritativeSourceEngine{MemoryEngine: storage.NewMemoryEngine()}
+						engine := &authoritativeSourceEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 						t.Cleanup(func() { require.NoError(t, engine.Close()) })
 						var source storage.Engine = engine
 						if traced {
@@ -261,7 +262,7 @@ func TestBM25WarmupCheckpointRequiresAcceptedSnapshot(t *testing.T) {
 	for _, backend := range []string{"v1", "v2"} {
 		for _, kind := range []string{"valid_empty", "rejected_empty", "missing"} {
 			t.Run(backend+"/"+kind, func(t *testing.T) {
-				engine := storage.NewMemoryEngine()
+				engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				svc := NewServiceWithDimensionsAndBM25Engine(engine, 3, backend)
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })

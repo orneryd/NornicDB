@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1243,7 +1244,7 @@ func TestSnapshot_CreateAndLoad(t *testing.T) {
 	defer wal.Close()
 
 	// Create engine with data
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Alice"}})
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Person"}, Properties: map[string]any{"name": "Bob"}})
@@ -1300,7 +1301,7 @@ func TestReplayWALEntry(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("replay_create_node", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		entry := WALEntry{
 			Sequence:  1,
@@ -1318,7 +1319,7 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_update_node", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
 
@@ -1345,7 +1346,7 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_delete_node", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		engine.CreateNode(&Node{ID: "n1", Labels: []string{"Test"}})
 
@@ -1364,7 +1365,7 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_create_edge", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		engine.CreateNode(&Node{ID: "n1"})
 		engine.CreateNode(&Node{ID: "n2"})
@@ -1385,7 +1386,7 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_bulk_nodes", func(t *testing.T) {
-		baseEngine := NewMemoryEngine()
+		baseEngine := newTestMemoryEngine(t)
 		engine := NewNamespacedEngine(baseEngine, "test")
 		nodes := []*Node{
 			{ID: "b1", Labels: []string{"Bulk"}},
@@ -1407,7 +1408,7 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_checkpoint_is_noop", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		entry := WALEntry{
 			Sequence:  6,
 			Operation: OpCheckpoint,
@@ -1420,7 +1421,7 @@ func TestReplayWALEntry(t *testing.T) {
 	})
 
 	t.Run("replay_unknown_operation", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		entry := WALEntry{
 			Sequence:  7,
 			Operation: "unknown_op",
@@ -1447,7 +1448,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"Original"}})
 		require.NoError(t, err)
 		_, err = engine.CreateNode(&Node{ID: NodeID(prefixTestID("n2")), Labels: []string{"Original"}})
@@ -1465,7 +1466,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		wal.Close()
 
 		// Recover.
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
 		require.NoError(t, err)
 
 		// Verify state (wrap recovered base engine with namespace used in WAL)
@@ -1500,7 +1501,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}}, "test"))
 		wal.Close()
 
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 
 		recoveredNS := NewNamespacedEngine(recovered, "test")
@@ -1515,7 +1516,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		walDir := filepath.Join(dir, "wal")
 		os.MkdirAll(walDir, 0755)
 
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		// If no WAL file exists, should still return empty engine (not error)
 		require.NoError(t, err)
 
@@ -1541,7 +1542,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		}, "test"))
 		require.NoError(t, wal.Close())
 
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -1556,15 +1557,19 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("invalid snapshot payload returns load error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{invalid-json"), 0644))
 
-		_, _, err := RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("snapshot restore edge failures return explicit errors", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 
 		edgeSnapshotPath := filepath.Join(dir, "snapshot-bad-edge.json")
@@ -1574,11 +1579,13 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 				{ID: "tenant_x:e1", StartNode: "tenant_x:a", EndNode: "tenant_x:b", Type: "REL"},
 			},
 		}, edgeSnapshotPath))
-		_, _, err := RecoverFromWALWithResult(filepath.Join(dir, "wal-edge"), edgeSnapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal-edge"), edgeSnapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
 
 	t.Run("snapshot edge prefix selects namespace for restore", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-prefixed.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -1592,7 +1599,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 			},
 		}, snapshotPath))
 
-		engine, result, err := RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath)
+		engine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.Equal(t, 0, result.Failed)
 
@@ -1603,6 +1610,8 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 	})
 
 	t.Run("invalid manifest path bubbles as read wal error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		require.NoError(t, writeWALManifest(dir, &WALManifest{
 			Version: walManifestVersion,
@@ -1610,19 +1619,23 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 				{FirstSeq: 1, LastSeq: 1, Path: "../escape.wal"},
 			},
 		}))
-		_, _, err := RecoverFromWALWithResult(dir, "")
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
 	t.Run("RecoverFromWAL returns wrapped error on invalid snapshot", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-bad.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
-		_, err := RecoverFromWAL(filepath.Join(dir, "wal"), snapshotPath)
+		_, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("RecoverFromWAL succeeds even when replay has failed entries", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		walDir := filepath.Join(dir, "wal")
 		wal, err := NewWAL("", &WALConfig{Dir: walDir, SyncMode: "immediate"})
@@ -1635,7 +1648,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		}, "test"))
 		require.NoError(t, wal.Close())
 
-		engine, err := RecoverFromWAL(walDir, "")
+		engine, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 		require.NotNil(t, engine)
 	})
@@ -1677,7 +1690,7 @@ func TestWALEngine(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		defer base.Close()
 		namespaced := NewNamespacedEngine(base, "test")
 		walEngine := NewWALEngine(namespaced, wal)
@@ -1702,7 +1715,7 @@ func TestWALEngine(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		defer base.Close()
 		namespaced := NewNamespacedEngine(base, "test")
 		walEngine := NewWALEngine(namespaced, wal)
@@ -1741,7 +1754,7 @@ func TestWALEngine(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		engine.CreateNode(&Node{ID: "n1"})
 		engine.CreateNode(&Node{ID: "n2"})
 		engine.CreateEdge(&Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "TEST"})
@@ -1772,7 +1785,7 @@ func TestWALEngine(t *testing.T) {
 	t.Run("getters_return_underlying_components", func(t *testing.T) {
 		dir := t.TempDir()
 		wal, _ := NewWAL(dir, nil)
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 		defer walEngine.Close()
 
@@ -1789,7 +1802,7 @@ func TestWALEngine_WithFeatureFlagDisabled(t *testing.T) {
 	wal, err := NewWAL("", cfg)
 	require.NoError(t, err)
 
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	walEngine := NewWALEngine(engine, wal)
 	defer walEngine.Close()
 
@@ -1972,7 +1985,7 @@ func BenchmarkWALEngine_CreateNode(b *testing.B) {
 	dir := b.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 	wal, _ := NewWAL("", cfg)
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 	walEngine := NewWALEngine(engine, wal)
 	defer walEngine.Close()
 
@@ -2138,7 +2151,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 
 		// Add entries before snapshot
 		for i := 1; i <= 5; i++ {
@@ -2205,7 +2218,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 
 		// Add 100 nodes
 		for i := 1; i <= 100; i++ {
@@ -2239,7 +2252,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		wal.Close()
 
 		// Recover from snapshot + truncated WAL
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -2272,7 +2285,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 
 		// Add nodes
 		for i := 1; i <= 10; i++ {
@@ -2326,7 +2339,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		n1 := &Node{ID: NodeID(prefixTestID("n1")), Labels: []string{"BeforeSnapshot"}}
 		_, err = engine.CreateNode(n1)
 		require.NoError(t, err)
@@ -2524,7 +2537,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -2599,7 +2612,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 			require.NoError(t, err)
 			defer wal.Close()
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -2634,7 +2647,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, jsonFiles[len(jsonFiles)-1].Name())
 
 		// Second session: recover from snapshot + WAL
-		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, latestSnapshot))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -2667,7 +2680,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable then immediately disable
@@ -2745,7 +2758,7 @@ func TestWALEngine_StreamNodes(t *testing.T) {
 	defer config.DisableWAL()
 
 	dir := t.TempDir()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
@@ -2799,7 +2812,7 @@ func TestWALEngine_StreamNodesByPrefix(t *testing.T) {
 			{ID: "tenant_a:n3"},
 		}
 		inner := &walPrefixStreamingEngine{
-			Engine: NewMemoryEngine(),
+			Engine: newTestMemoryEngine(t),
 			nodes:  nodes,
 		}
 		t.Cleanup(func() { _ = inner.Engine.Close() })
@@ -2824,7 +2837,7 @@ func TestWALEngine_StreamNodesByPrefix(t *testing.T) {
 	})
 
 	t.Run("enforces prefix scope through the Engine kernel", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		inner := &walStreamingCountEngine{
 			Engine: base,
@@ -2852,7 +2865,7 @@ func TestWALEngine_ForEachNodeIDByLabel(t *testing.T) {
 	config.EnableWAL()
 	defer config.DisableWAL()
 
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 
 	for i := 0; i < 5; i++ {
@@ -2885,7 +2898,7 @@ func TestWALEngine_StreamEdges(t *testing.T) {
 	defer config.DisableWAL()
 
 	dir := t.TempDir()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
@@ -2944,7 +2957,7 @@ func TestWALEngine_StreamNodeChunks(t *testing.T) {
 	defer config.DisableWAL()
 
 	dir := t.TempDir()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
@@ -2990,7 +3003,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	}
 
 	t.Run("prefix counts use fallback and propagate streaming errors", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := &exportableOnlyEngine{
 			Engine:   base,
@@ -3007,7 +3020,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), edges)
 
-		streamErrBase := NewMemoryEngine()
+		streamErrBase := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = streamErrBase.Close() })
 		streamErrEngine := &walPrefixErrorEngine{
 			Engine:  streamErrBase,
@@ -3024,7 +3037,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("prefix stats and schema provider delegation", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		schema := NewSchemaManager()
 		engine := &walSchemaProviderEngine{
@@ -3052,7 +3065,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("prefix counts use streaming fallback", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := &walStreamingCountEngine{
 			Engine: base,
@@ -3079,7 +3092,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("embedding delegates and iterate fallback", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = engine.Close() })
 		engine.SetEmbeddingsEnabled(true)
 		walEngine := newWALEngine(t, engine)
@@ -3106,7 +3119,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		}))
 		assert.Equal(t, 1, visited)
 
-		noIterBase := NewMemoryEngine()
+		noIterBase := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = noIterBase.Close() })
 		noIter := newWALEngine(t, &exportableOnlyEngine{Engine: noIterBase})
 		err = noIter.IterateNodes(func(node *Node) bool { return true })
@@ -3119,7 +3132,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("stream fallback handles callback and load errors", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := &exportableOnlyEngine{
 			Engine:   base,
@@ -3146,7 +3159,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("direct streaming delegate propagates node edge and chunk errors", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := &walStreamErrorEngine{
 			Engine:  base,
@@ -3166,7 +3179,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("stream node chunks fallback and delete by prefix", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := &exportableOnlyEngine{
 			Engine: base,
@@ -3206,7 +3219,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	t.Run("read delegates last-write time and namespace listing", func(t *testing.T) {
 		assert.Equal(t, time.Time{}, (*WALEngine)(nil).LastWriteTime())
 
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		engine := &walNamespaceListerEngine{
 			Engine:     base,
@@ -3226,7 +3239,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("update embedding dispatch and bulk database guards", func(t *testing.T) {
-		base := NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 
 		dispatch := &walEmbeddingDispatchEngine{Engine: base}
@@ -3297,7 +3310,7 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 	})
 
 	t.Run("delegate getters and bulk delete edges", func(t *testing.T) {
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = engine.Close() })
 		walEngine := newWALEngine(t, engine)
 
@@ -3336,7 +3349,7 @@ func TestWALEngine_ImplementsStreamingEngine(t *testing.T) {
 	defer config.DisableWAL()
 
 	dir := t.TempDir()
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 
 	wal, err := NewWAL(dir, &WALConfig{SyncMode: "none"})
@@ -3359,7 +3372,7 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create the full storage chain
-	badgerEngine, err := NewBadgerEngineInMemory()
+	badgerEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badgerEngine.Close()
 

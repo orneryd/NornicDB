@@ -1,6 +1,7 @@
 package search
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func TestSearchBuildSettingsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "build_settings")
 
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 384)
 	snap := svc.currentSearchBuildSettings()
 
@@ -48,7 +49,7 @@ func TestComposeRoutingBuildSettings_DoesNotEncodeSeedMode(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "9")
 	t.Setenv("NORNICDB_KMEANS_SEED_MODE", "none")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	routing := svc.composeRoutingBuildSettings()
 
 	require.NotEmpty(t, routing)
@@ -57,7 +58,7 @@ func TestComposeRoutingBuildSettings_DoesNotEncodeSeedMode(t *testing.T) {
 }
 
 func TestComposeHNSWBuildSettingsTracksGraphConfiguration(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	require.Contains(t, svc.composeHNSWBuildSettings(), "gpu_build=true")
 
 	t.Setenv("NORNICDB_HNSW_BUILD_GPU_ENABLED", "false")
@@ -71,7 +72,7 @@ func TestComposeStrategyBuildSettings_CompressedIncludesFingerprint(t *testing.T
 	t.Setenv("NORNICDB_VECTOR_PQ_SEGMENTS", "8")
 	t.Setenv("NORNICDB_VECTOR_PQ_BITS", "4")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 64)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 64)
 	strategy := svc.composeStrategyBuildSettings()
 	require.True(t, strings.Contains(strategy, "quality=compressed"))
 	require.True(t, strings.Contains(strategy, "lists=64"))
@@ -136,7 +137,7 @@ func TestLoadAndSaveSearchBuildSettings_EdgeBranches(t *testing.T) {
 }
 
 func TestComposeRoutingBuildSettings_ClampsAndDefaults(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 
 	t.Setenv("NORNICDB_KMEANS_MAX_ITERATIONS", "1")
 	t.Setenv("NORNICDB_VECTOR_ROUTING_MODE", "")
@@ -152,7 +153,7 @@ func TestComposeRoutingBuildSettings_ClampsAndDefaults(t *testing.T) {
 }
 
 func TestBuildSettings_CurrentBM25AndPersistBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	svc := NewServiceWithDimensions(engine, 384)
 
 	// Explicit v1 engine should use v1 format marker.

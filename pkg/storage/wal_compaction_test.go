@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sort"
@@ -159,7 +160,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 		require.NoError(t, err)
 		require.NoError(t, wal.Close())
-		_, err = wal.CreateSnapshot(NewMemoryEngine())
+		_, err = wal.CreateSnapshot(newTestMemoryEngine(t))
 		require.ErrorIs(t, err, ErrWALClosed)
 	})
 
@@ -168,7 +169,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 		engine := &snapshotErrorEngine{
-			MemoryEngine: NewMemoryEngine(),
+			MemoryEngine: newTestMemoryEngine(t),
 			allNodesErr:  fmt.Errorf("nodes-fail"),
 		}
 		_, err = wal.CreateSnapshot(engine)
@@ -180,7 +181,7 @@ func TestSnapshotAndSaveSnapshot_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		defer wal.Close()
 		engine := &snapshotErrorEngine{
-			MemoryEngine: NewMemoryEngine(),
+			MemoryEngine: newTestMemoryEngine(t),
 			allEdgesErr:  fmt.Errorf("edges-fail"),
 		}
 		_, err = wal.CreateSnapshot(engine)
@@ -297,7 +298,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create 100 nodes
@@ -344,7 +345,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create 50 nodes before snapshot
@@ -392,7 +393,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			// Create nodes
@@ -423,7 +424,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Session 2: Recover from snapshot + truncated WAL
 		snapshotPath := filepath.Join(snapshotDir, "snapshot.json")
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -457,7 +458,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -481,7 +482,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable first time - should succeed
@@ -511,7 +512,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Add some data before enabling compaction
@@ -569,7 +570,7 @@ func TestWALAutoCompactionEnabled(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction
@@ -615,7 +616,7 @@ func TestWALCompactionUnderLoad(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -685,7 +686,7 @@ func TestWALCompactionDiskSpace(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Write a lot of data to grow the WAL
@@ -759,7 +760,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			err = walEngine.EnableAutoCompaction(snapshotDir)
@@ -795,7 +796,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, names[len(names)-1])
 
 		// Session 2: Recover
-		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, latestSnapshot))
 		require.NoError(t, err)
 
 		// Should have all 100 nodes (5 batches x 20 nodes)
@@ -814,7 +815,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 			wal, err := NewWAL("", cfg)
 			require.NoError(t, err)
 
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			walEngine := NewWALEngine(engine, wal)
 
 			for i := 1; i <= 50; i++ {
@@ -826,7 +827,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		}()
 
 		// Session 2: Recover without snapshot
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 
 		count, err := recovered.NodeCount()
@@ -853,7 +854,7 @@ func TestWALCompactionEdgeCases(t *testing.T) {
 		wal, err := NewWAL("", cfg)
 		require.NoError(t, err)
 
-		engine := NewMemoryEngine()
+		engine := newTestMemoryEngine(t)
 		walEngine := NewWALEngine(engine, wal)
 
 		// Enable auto-compaction on empty WAL
@@ -916,7 +917,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 			wal, _ := NewWAL("", cfg)
 
-			engine := NewMemoryEngine()
+			engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 			walEngine := NewWALEngine(engine, wal)
 
 			// Create data
@@ -943,7 +944,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 		cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 		wal, _ := NewWAL("", cfg)
 
-		engine := NewMemoryEngine()
+		engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create test data

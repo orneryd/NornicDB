@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,7 +17,7 @@ import (
 func TestHNSWPreflightSynchronizesWithFileStoreTeardown(t *testing.T) {
 	for _, operation := range []string{"close", "disable-persistence"} {
 		t.Run(operation, func(t *testing.T) {
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+			svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 			t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			vfs, err := NewVectorFileStore(filepath.Join(t.TempDir(), "vectors"), 3)
 			require.NoError(t, err)
@@ -107,7 +108,7 @@ func TestVectorPipelineSnapshotDoesNotReenterServiceLock(t *testing.T) {
 				mode = "file"
 			}
 			t.Run(operation+"/"+mode, func(t *testing.T) {
-				svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+				svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 				resume := svc.pauseHNSWBuild()
 				defer resume()
 				var releaseCount func()

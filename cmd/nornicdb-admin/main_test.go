@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,7 +223,10 @@ func (w *wrapped) Unwrap() error { return w.err }
 // entry; --repair adds what it restored (#907, I29).
 func TestCheckIDsCommand(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := storage.NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
 	require.NoError(t, err)

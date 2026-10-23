@@ -2,6 +2,7 @@ package multidb
 
 import (
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestDatabaseManager_DefaultConfig(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -37,7 +38,7 @@ func TestDatabaseManager_DefaultConfig(t *testing.T) {
 }
 
 func TestDatabaseManagerPersistentIdentity(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, inner.Close()) })
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
@@ -86,7 +87,7 @@ type identityReadOnlyEngine struct {
 func (e *identityReadOnlyEngine) IsLeader() bool { return false }
 
 func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, inner.Close()) })
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
@@ -139,7 +140,7 @@ func TestDatabaseManagerIdentityLegacyMetadata(t *testing.T) {
 }
 
 func TestDatabaseManager_CustomConfig(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	config := &Config{
@@ -159,7 +160,7 @@ func TestDatabaseManager_CustomConfig(t *testing.T) {
 }
 
 func TestDatabaseManager_CreateDatabase(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -188,7 +189,7 @@ func TestDatabaseManager_CreateDatabase(t *testing.T) {
 }
 
 func TestDatabaseManager_CreateDatabase_Duplicate(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -205,7 +206,7 @@ func TestDatabaseManager_CreateDatabase_Duplicate(t *testing.T) {
 }
 
 func TestDatabaseManagerDropClearsLimitChecker(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
@@ -225,7 +226,7 @@ func TestDatabaseManagerDropClearsLimitChecker(t *testing.T) {
 }
 
 func TestResolveConnectionLimitOwner(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
@@ -244,7 +245,7 @@ func TestResolveConnectionLimitOwner(t *testing.T) {
 }
 
 func TestDatabaseManagerStorageEnforcesRuntimeLimitReplacement(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
@@ -269,7 +270,7 @@ func TestDatabaseManagerStorageEnforcesRuntimeLimitReplacement(t *testing.T) {
 }
 
 func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
@@ -292,7 +293,7 @@ func TestDatabaseManagerStorageEnforcesMaxBytesUpdateDelta(t *testing.T) {
 }
 
 func TestDatabaseManager_CreateDatabase_InvalidName(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -306,7 +307,7 @@ func TestDatabaseManager_CreateDatabase_InvalidName(t *testing.T) {
 }
 
 func TestDatabaseManager_CreateDatabase_MaxLimit(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	config := &Config{
@@ -330,7 +331,7 @@ func TestDatabaseManager_CreateDatabase_MaxLimit(t *testing.T) {
 }
 
 func TestDatabaseManager_DropDatabase(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -369,7 +370,7 @@ func TestDatabaseManager_DropDatabase(t *testing.T) {
 }
 
 func TestDatabaseManager_DropDatabase_NotFound(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -382,7 +383,7 @@ func TestDatabaseManager_DropDatabase_NotFound(t *testing.T) {
 }
 
 func TestDatabaseManager_DropDatabase_System(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -396,7 +397,7 @@ func TestDatabaseManager_DropDatabase_System(t *testing.T) {
 }
 
 func TestDatabaseManager_DropDatabase_Default(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -410,7 +411,7 @@ func TestDatabaseManager_DropDatabase_Default(t *testing.T) {
 }
 
 func TestDatabaseManager_DropDatabase_Default_Allowed(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	config := &Config{
@@ -433,7 +434,7 @@ func TestDatabaseManager_DropDatabase_Default_Allowed(t *testing.T) {
 // a database actually deletes all nodes and edges from the underlying storage.
 // This is a critical test to ensure DeleteByPrefix works correctly.
 func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -603,7 +604,7 @@ func TestDatabaseManager_DropDatabase_DeletesNodesAndEdges(t *testing.T) {
 // TestDatabaseManager_NodeNamespacePrefix verifies that nodes created in a database
 // get the proper namespace prefix. This ensures database isolation works correctly.
 func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -677,7 +678,7 @@ func TestDatabaseManager_NodeNamespacePrefix(t *testing.T) {
 }
 
 func TestDatabaseManager_GetStorage(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -738,7 +739,7 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 }
 
 func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	seed, err := NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	engine, err := seed.GetStorage(seed.DefaultDatabaseName())
@@ -775,7 +776,7 @@ func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
 }
 
 func TestDatabaseManager_GetStorage_NotFound(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -788,7 +789,7 @@ func TestDatabaseManager_GetStorage_NotFound(t *testing.T) {
 }
 
 func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -843,7 +844,7 @@ func TestDatabaseManager_GetStorage_Isolation(t *testing.T) {
 }
 
 func TestDatabaseManager_ListDatabases(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -874,7 +875,7 @@ func TestDatabaseManager_ListDatabases(t *testing.T) {
 }
 
 func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -907,7 +908,7 @@ func TestDatabaseManager_SetDatabaseStatus(t *testing.T) {
 }
 
 func TestDatabaseManager_SetDatabaseStatus_Invalid(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -923,7 +924,7 @@ func TestDatabaseManager_SetDatabaseStatus_Invalid(t *testing.T) {
 }
 
 func TestDatabaseManager_GetDefaultStorage(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -941,7 +942,7 @@ func TestDatabaseManager_GetDefaultStorage(t *testing.T) {
 }
 
 func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -971,7 +972,7 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 	t.Run("default database name and alias validation branches", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.DefaultDatabase = cfg.SystemDatabase
-		manager2, err := NewDatabaseManager(storage.NewMemoryEngine(), cfg)
+		manager2, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), cfg)
 		require.NoError(t, err)
 		defer manager2.Close()
 		assert.Equal(t, "nornic", manager2.DefaultDatabaseName())
@@ -1005,7 +1006,7 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 }
 
 func TestDatabaseManager_MetadataPersistence(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Create first manager
@@ -1033,7 +1034,7 @@ func TestDatabaseManager_MetadataPersistence(t *testing.T) {
 
 func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 	// Test that existing code without multi-db still works
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Create manager with default config (simulates old behavior)
@@ -1063,7 +1064,7 @@ func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 }
 
 func TestDatabaseManager_GetStorageSize_LazyInitFromRealData(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -1114,7 +1115,7 @@ func TestDatabaseManager_GetStorageSize_LazyInitFromRealData(t *testing.T) {
 }
 
 func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -1178,7 +1179,7 @@ func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *
 }
 
 func TestDatabaseManager_StorageSizeSnapshot_NoRaceWithListDatabases(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)

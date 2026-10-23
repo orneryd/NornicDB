@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -14,7 +15,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 	var nilSvc *Service
 	nilSvc.maybeAutoSetVectorDimensions(4)
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	oldDims := svc.vectorIndex.GetDimensions()
 	svc.maybeAutoSetVectorDimensions(0)
 	require.Equal(t, oldDims, svc.vectorIndex.GetDimensions())
@@ -47,7 +48,7 @@ func TestService_MaybeAutoSetVectorDimensions_MoreBranches(t *testing.T) {
 }
 
 func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 
 	// vectorIndex path returns a copy, not alias to raw backing storage.
 	require.NoError(t, svc.vectorIndex.Add("idx", []float32{1, 0, 0}))
@@ -80,7 +81,7 @@ func TestService_GetVectorForCypher_MoreBranches(t *testing.T) {
 func TestService_VectorQueryNodes_FileStorePropertyVectors(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4)
 	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
@@ -118,7 +119,7 @@ func TestService_VectorQueryNodes_FileStorePropertyVectors(t *testing.T) {
 }
 
 func TestService_VectorQueryNodes_FileStorePropertyVectorsSupplementsStaleHNSW(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 4)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 4)
 	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors", 4)
 	require.NoError(t, err)
 	defer func() { _ = vfs.Close() }()
@@ -164,7 +165,7 @@ func TestService_VectorQueryNodes_FileStorePropertyVectorsSupplementsStaleHNSW(t
 }
 
 func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 
 	// resolveMinSimilarity precedence: explicit option > service default > fallback.
 	explicit := 0.77
@@ -187,7 +188,7 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 	require.Equal(t, 4, svc.VectorIndexDimensions())
 
 	// Empty file store should fall back to in-memory index for count/dimensions.
-	svcFallback := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svcFallback := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 	emptyVFS, err := NewVectorFileStore(t.TempDir()+"/vectors-empty", 7)
 	require.NoError(t, err)
 	defer func() { _ = emptyVFS.Close() }()
@@ -196,14 +197,14 @@ func TestService_MinSimilarityAndCountDimensionFallbacks(t *testing.T) {
 	require.Equal(t, 3, svcFallback.VectorIndexDimensions())
 
 	// No vector backends => zero count/dimensions fallback branches.
-	svcNoIndex := NewService(storage.NewMemoryEngine())
+	svcNoIndex := NewService(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	svcNoIndex.vectorIndex = nil
 	require.Equal(t, 0, svcNoIndex.EmbeddingCount())
 	require.Equal(t, 0, svcNoIndex.VectorIndexDimensions())
 }
 
 func TestService_ClearVectorIndex_ClearsAllBackendsAndMetadata(t *testing.T) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	svc := NewServiceWithDimensions(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 3)
 
 	vfs, err := NewVectorFileStore(t.TempDir()+"/vectors-clear", 3)
 	require.NoError(t, err)

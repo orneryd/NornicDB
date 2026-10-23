@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"strings"
 	"testing"
@@ -16,7 +18,7 @@ func BenchmarkBadgerEngine_DeleteByPrefix(b *testing.B) {
 	b.StopTimer()
 
 	for i := 0; i < b.N; i++ {
-		engine := NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 
 		for n := 0; n < nodes; n++ {
 			_, err := engine.CreateNode(&Node{
@@ -65,7 +67,7 @@ func BenchmarkBadgerEngine_DeleteByPartialPrefix(b *testing.B) {
 	b.StopTimer()
 
 	for i := 0; i < b.N; i++ {
-		engine := NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 		for n := 0; n < nodes; n++ {
 			kind := "keep"
 			labels := []string{"Person", "Permanent"}

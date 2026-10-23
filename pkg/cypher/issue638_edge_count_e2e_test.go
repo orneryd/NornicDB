@@ -4,6 +4,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func (p *getEdgesByTypeProbe) GetEdgesByType(edgeType string) ([]*storage.Edge, 
 
 func newIssue638E2EStore(t *testing.T) (*storage.NamespacedEngine, *storage.BadgerEngine, *StorageExecutor, *getEdgesByTypeProbe) {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
@@ -211,7 +212,10 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 }
 
 func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	async := base
 	t.Cleanup(func() { require.NoError(t, async.Close()) })

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 
 func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := seedRoleRename(t, system)
@@ -51,7 +53,7 @@ func TestDeleteRoleOwnedRecordFailureChangesNothing(t *testing.T) {
 		{"delete", "role:ops"},
 	} {
 		t.Run(test.op+string(test.id), func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
@@ -72,7 +74,7 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 	for _, stage := range []string{"success", "user update", "role delete", "cache load"} {
 		t.Run(stage, func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
@@ -119,7 +121,7 @@ func TestRoleChangesPreserveOtherRoles(t *testing.T) {
 	for _, remove := range []bool{true, false} {
 		t.Run(map[bool]string{true: "delete", false: "rename"}[remove], func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			roles := seedRoleRename(t, system)

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 
 	"log/slog"
@@ -63,7 +64,10 @@ func TestEmbeddingCleanup_BufferedReplacement(t *testing.T) {
 				require.True(t, second.AcknowledgedBuffered())
 				if recovery {
 					crashClose(t, b, wal)
-					b, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+					b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+					if b != nil {
+						fixtureowner.Own(t, b)
+					}
 					require.NoError(t, err)
 					wal2, openErr := NewWAL(wal.Config().Dir, wal.Config())
 					require.NoError(t, openErr)
@@ -101,7 +105,7 @@ func TestEmbeddingCleanup_PostValidationConflictAndRetry(t *testing.T) {
 	for _, action := range []string{"delete", "inline"} {
 		t.Run(action, func(t *testing.T) {
 			barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-			b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), Logger: slog.New(barrier)})
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), Logger: slog.New(barrier)}))
 			require.NoError(t, err)
 			defer b.Close()
 			id := NodeID("test:r2-conflict")
@@ -150,10 +154,10 @@ func TestEmbeddingCleanup_BufferedPostValidationConflict(t *testing.T) {
 	for _, action := range []string{"delete", "inline"} {
 		t.Run(action, func(t *testing.T) {
 			barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-			b, err := NewBadgerEngineWithOptions(BadgerOptions{
+			b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 				DataDir: t.TempDir(), Logger: slog.New(barrier),
 				WriteBehind: true, WriteBehindInterval: time.Hour,
-			})
+			}))
 			require.NoError(t, err)
 			defer b.Close()
 			id := NodeID("test:r2-buffered-conflict")
@@ -307,7 +311,7 @@ func TestEmbeddingCleanup_SidecarFromCallback(t *testing.T) {
 	if os.Getenv("NORNIC_EMBEDDING_CLEANUP_CALLBACK_CHILD") == "1" {
 		for _, action := range []string{"create", "update", "transaction_create", "transaction_update", "buffered_create", "buffered_update"} {
 			t.Run(action, func(t *testing.T) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: strings.HasPrefix(action, "buffered"), WriteBehindInterval: time.Hour})
+				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: strings.HasPrefix(action, "buffered"), WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				defer b.Close()
 				id := NodeID("test:callback")
