@@ -76,8 +76,8 @@ LLAMA_VERSION ?= v0.7.0
 LLAMA_CPU := $(REGISTRY)/llama-cpu-libs:$(LLAMA_VERSION)
 LLAMA_CUDA := $(REGISTRY)/llama-cuda-libs:$(LLAMA_VERSION)
 # Consumers use immutable references; publication helpers retain writable tags.
-LLAMA_CPU_REF := $(LLAMA_CPU)@$(shell cat lib/llama/CPU_IMAGE_DIGEST)
-LLAMA_CUDA_REF := $(LLAMA_CUDA)@$(shell cat lib/llama/CUDA_IMAGE_DIGEST)
+LLAMA_CPU_REF := $(LLAMA_CPU)@$(shell tr -d '\r\n' < lib/llama/CPU_IMAGE_DIGEST)
+LLAMA_CUDA_REF := $(LLAMA_CUDA)@$(shell tr -d '\r\n' < lib/llama/CUDA_IMAGE_DIGEST)
 
 # Dockerfiles
 DOCKER_DIR := docker
