@@ -5,6 +5,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -66,7 +67,7 @@ func isUnquotedName(name string) bool {
 // unquoted name in Neo4j 5.26: a letter, a letter number (Ⅰ) or a
 // connector punctuation (‿), not a digit, mark or currency sign.
 func isIdentifierStartRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.In(r, unicode.Nl, unicode.Pc)
+	return cyphertext.IdentifierStartRune(r)
 }
 
 // isIdentifierPartRune reports whether a non-ASCII character can continue an
@@ -74,8 +75,7 @@ func isIdentifierStartRune(r rune) bool {
 // digit, a combining mark, a currency sign (a€), a format character, or a
 // C1 control.
 func isIdentifierPartRune(r rune) bool {
-	return isIdentifierStartRune(r) || unicode.In(r, unicode.Nd, unicode.Mn, unicode.Mc, unicode.Sc, unicode.Cf) ||
-		r >= 0x80 && r <= 0x9F
+	return cyphertext.IdentifierPartRune(r)
 }
 
 func invalidUnicodeCharacterError(character rune, offset int) error {

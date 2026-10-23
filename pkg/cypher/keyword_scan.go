@@ -1,16 +1,13 @@
 package cypher
 
-// This file is the scanning core of the Nornic parser, a scannerless
-// recursive descent parser: clause boundaries and keyword classification come
-// from top-level keyword scans over the raw query text, with quoted text,
-// comments and bracket nesting tracked inline instead of by a lexer.
+// Clause and keyword grammar consumes the canonical internal/cyphertext
+// tokenizer. Quotation, comments, names and parameters have no private lexer here.
 
 import (
 	"hash/maphash"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -546,62 +543,10 @@ func lastLiveByte(s string, pos int) int {
 	if pos <= 0 {
 		return -1
 	}
+	reader := cyphertext.NewReader(s[:pos], 0)
 	last := -1
-	inLineComment, inBlockComment := false, false
-	quote := byte(0)
-	for i := 0; i < pos && i < len(s); i++ {
-		c := s[i]
-		if inLineComment {
-			if c == '\n' || c == '\r' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-		if quote != 0 {
-			if c == '\\' && quote != '`' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == quote {
-				if i+1 < len(s) && s[i+1] == quote {
-					i++
-					continue
-				}
-				quote = 0
-				last = i // the closing quote ends the expression
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"', '`':
-			quote = c
-			last = i
-			continue
-		case '/':
-			if i+1 < len(s) {
-				switch s[i+1] {
-				case '/':
-					inLineComment = true
-					i++
-					continue
-				case '*':
-					inBlockComment = true
-					i++
-					continue
-				}
-			}
-		}
-		if isASCIISpace(c) {
-			continue
-		}
-		last = i
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		last = span.End - 1
 	}
 	return last
 }
@@ -640,175 +585,8 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 	if isDefaultKeywordScanOpts(opts) {
 		return cachedKeywordIndexFromDefault(s, keyword, from)
 	}
-
-	ks, ke := trimKeywordWSBounds(keyword)
-	if ks >= ke {
-		return -1
-	}
-	if from < 0 {
-		from = 0
-	}
-	if from >= len(s) {
-		return -1
-	}
-
-	first := asciiUpper(keyword[ks])
-
-	var (
-		parenDepth   int
-		bracketDepth int
-		braceDepth   int
-
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
-	)
-
-	for i := from; i < len(s); i++ {
-		c := s[i]
-
-		if opts.SkipComments {
-			if inLineComment {
-				if c == '\n' || c == '\r' {
-					inLineComment = false
-				}
-				continue
-			}
-			if inBlockComment {
-				if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-					inBlockComment = false
-					i++
-				}
-				continue
-			}
-		}
-
-		if opts.SkipStrings {
-			if inSingleQuote {
-				if c == '\\' && i+1 < len(s) {
-					i++
-					continue
-				}
-				if c == '\'' {
-					if i+1 < len(s) && s[i+1] == '\'' {
-						i++
-						continue
-					}
-					inSingleQuote = false
-				}
-				continue
-			}
-			if inDoubleQuote {
-				if c == '\\' && i+1 < len(s) {
-					i++
-					continue
-				}
-				if c == '"' {
-					if i+1 < len(s) && s[i+1] == '"' {
-						i++
-						continue
-					}
-					inDoubleQuote = false
-				}
-				continue
-			}
-		}
-
-		if opts.SkipBackticks && inBacktick {
-			if c == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-			}
-			continue
-		}
-
-		if opts.SkipComments && c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
-				continue
-			}
-		}
-
-		if opts.SkipStrings {
-			if c == '\'' {
-				inSingleQuote = true
-				continue
-			}
-			if c == '"' {
-				inDoubleQuote = true
-				continue
-			}
-		}
-		if opts.SkipBackticks && c == '`' {
-			inBacktick = true
-			continue
-		}
-
-		switch c {
-		case '(':
-			parenDepth++
-		case ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-		case '[':
-			bracketDepth++
-		case ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-		case '{':
-			braceDepth++
-		case '}':
-			if braceDepth > 0 {
-				braceDepth--
-			}
-		}
-
-		if (opts.SkipParens && parenDepth > 0) ||
-			(opts.SkipBrackets && bracketDepth > 0) ||
-			(opts.SkipBraces && braceDepth > 0) {
-			continue
-		}
-
-		if asciiUpper(c) != first {
-			continue
-		}
-
-		if !keywordLeftBoundaryOK(s, i, opts.Boundary) {
-			continue
-		}
-
-		endPos, ok := keywordMatchAt(s, i, keyword, ks, ke)
-		if !ok {
-			continue
-		}
-		if !keywordRightBoundaryOK(s, endPos, opts.Boundary) {
-			continue
-		}
-		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
-			continue
-		}
-		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
-			continue
-		}
-		return i
-	}
-
-	return -1
+	return scanKeywordTokens(s, from, opts, keyword)
 }
-
 func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
 	key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
 	if idx, ok := defaultKeywordIndexCache.get(key); ok {
@@ -832,19 +610,14 @@ const maxKeywordSet = 16
 // keywords is found in one scan rather than one scan per keyword. It takes
 // at most maxKeywordSet keywords.
 func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
+	return scanKeywordTokens(s, from, defaultKeywordScanOpts(), keywords...)
+}
+
+// scanKeywordTokens owns keyword grammar, never token boundaries. Visibility
+// options use the same tokenizer as the normal parser, including names with $.
+func scanKeywordTokens(s string, from int, opts keywordScanOpts, keywords ...string) int {
 	if len(keywords) > maxKeywordSet {
 		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
-	}
-	type keywordBounds struct {
-		ks, ke int
-		first  byte
-	}
-	var bounds [maxKeywordSet]keywordBounds
-	for k, keyword := range keywords {
-		ks, ke := trimKeywordWSBounds(keyword)
-		if ks < ke {
-			bounds[k] = keywordBounds{ks: ks, ke: ke, first: asciiUpper(keyword[ks])}
-		}
 	}
 	if from < 0 {
 		from = 0
@@ -852,156 +625,66 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 	if from >= len(s) {
 		return -1
 	}
-
-	var (
-		parenDepth   int
-		bracketDepth int
-		braceDepth   int
-
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
-	)
-
-	for i := from; i < len(s); i++ {
-		c := s[i]
-
-		if inLineComment {
-			if c == '\n' || c == '\r' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-		if inSingleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '\'' {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
-				inSingleQuote = false
-			}
-			continue
-		}
-		if inDoubleQuote {
-			if c == '\\' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == '"' {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
-				inDoubleQuote = false
-			}
-			continue
-		}
-		if inBacktick {
-			if c == '`' {
-				if i+1 < len(s) && s[i+1] == '`' {
-					i++
-					continue
-				}
-				inBacktick = false
-			}
-			continue
-		}
-		if c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
-				continue
-			}
-		}
-		if c == '\'' {
-			inSingleQuote = true
-			continue
-		}
-		if c == '"' {
-			inDoubleQuote = true
-			continue
-		}
-		if c == '`' {
-			inBacktick = true
-			continue
-		}
-
-		switch c {
-		case '(':
-			parenDepth++
-		case ')':
-			if parenDepth > 0 {
-				parenDepth--
-			}
-		case '[':
-			bracketDepth++
-		case ']':
-			if bracketDepth > 0 {
-				bracketDepth--
-			}
-		case '{':
-			braceDepth++
-		case '}':
-			if braceDepth > 0 {
-				braceDepth--
-			}
-		}
-
-		if parenDepth > 0 || bracketDepth > 0 {
-			continue
-		}
-
-		upper := asciiUpper(c)
-		leftChecked := false
-		for k, keyword := range keywords {
-			b := bounds[k]
-			if b.first != upper || b.ks >= b.ke {
-				continue
-			}
-			if !leftChecked {
-				if !keywordLeftBoundaryOK(s, i, keywordBoundaryWord) {
-					break
-				}
-				leftChecked = true
-			}
-			endPos, ok := keywordMatchAt(s, i, keyword, b.ks, b.ke)
-			if !ok {
-				continue
-			}
-			if !keywordRightBoundaryOK(s, endPos, keywordBoundaryWord) {
-				continue
-			}
-			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
-				continue
-			}
-			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
-				continue
-			}
-			return i
+	type bound struct {
+		start, end int
+		first      byte
+	}
+	var bounds [maxKeywordSet]bound
+	for index, keyword := range keywords {
+		start, end := trimKeywordWSBounds(keyword)
+		if start < end {
+			bounds[index] = bound{start, end, asciiUpper(keyword[start])}
 		}
 	}
-
+	reader := cyphertext.NewReaderPolicy(s, from, cyphertext.LexicalPolicy{Strings: opts.SkipStrings, Backticks: opts.SkipBackticks, Comments: opts.SkipComments})
+	parens, brackets, braces := 0, 0, 0
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind == cyphertext.Symbol {
+			switch span.Text(s) {
+			case "(":
+				parens++
+			case ")":
+				if parens > 0 {
+					parens--
+				}
+			case "[":
+				brackets++
+			case "]":
+				if brackets > 0 {
+					brackets--
+				}
+			case "{":
+				braces++
+			case "}":
+				if braces > 0 {
+					braces--
+				}
+			}
+		}
+		if opts.SkipParens && parens > 0 || opts.SkipBrackets && brackets > 0 || opts.SkipBraces && braces > 0 || span.Kind != cyphertext.Word {
+			continue
+		}
+		at := span.Start
+		for index, keyword := range keywords {
+			b := bounds[index]
+			if b.start >= b.end || b.first != asciiUpper(s[at]) || !keywordLeftBoundaryOK(s, at, opts.Boundary) {
+				continue
+			}
+			end, matches := keywordMatchAt(s, at, keyword, b.start, b.end)
+			if !matches || !keywordRightBoundaryOK(s, end, opts.Boundary) {
+				continue
+			}
+			if b.end-b.start == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, at) {
+				continue
+			}
+			if clauseKeywordUsedAsName(s, at, end, keyword) {
+				continue
+			}
+			return at
+		}
+	}
 	return -1
 }
-
 func isDefaultKeywordScanOpts(opts keywordScanOpts) bool {
 	return opts.SkipParens &&
 		opts.SkipBrackets &&
@@ -1013,36 +696,21 @@ func isDefaultKeywordScanOpts(opts keywordScanOpts) bool {
 }
 
 func keywordMatchAt(s string, pos int, keyword string, ks, ke int) (endPos int, ok bool) {
-	j := pos
-	k := ks
-
-	for k < ke {
-		ck := keyword[k]
-		if isASCIISpace(ck) {
-			for k < ke && isASCIISpace(keyword[k]) {
-				k++
-			}
-			if j >= len(s) || !isASCIISpace(s[j]) {
-				return 0, false
-			}
-			for j < len(s) && isASCIISpace(s[j]) {
-				j++
-			}
-			continue
-		}
-		if j >= len(s) {
+	query := cyphertext.NewReader(s, pos)
+	words := cyphertext.NewReader(keyword[ks:ke], 0)
+	endPos = pos
+	for expected, more := words.Next(); more; expected, more = words.Next() {
+		actual, exists := query.Next()
+		if endPos == pos && (!exists || actual.Start != pos) {
 			return 0, false
 		}
-		if asciiUpper(s[j]) != asciiUpper(ck) {
+		if !exists || !equalFoldASCII(actual.Text(s), expected.Text(keyword[ks:ke])) {
 			return 0, false
 		}
-		j++
-		k++
+		endPos = actual.End
 	}
-
-	return j, true
+	return endPos, endPos > pos
 }
-
 func trimKeywordWSBounds(s string) (start, end int) {
 	start = 0
 	end = len(s)
@@ -1082,6 +750,8 @@ func keywordRightBoundaryOK(s string, endPos int, boundary keywordBoundaryMode) 
 	}
 	return !isIdentByte(next)
 }
+
+func isCypherWhitespace(c byte) bool { return cyphertext.IsWhitespaceByte(c) }
 
 func isASCIISpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
@@ -1167,9 +837,7 @@ func indexASCIIFold(text, lowerSub string) int {
 // keyword. Which non-ASCII characters Neo4j takes in a name is checked once,
 // per character, by validateUnicodeOperators (isIdentifierStartRune,
 // isIdentifierPartRune). It and isIdentByte are the scanners' one rule.
-func isIdentStartByte(b byte) bool {
-	return b >= 0x80 || b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
-}
+func isIdentStartByte(b byte) bool { return cyphertext.IdentifierStartByte(b) }
 
 // isIdentStartRune is isIdentStartByte for a decoded character.
 func isIdentStartRune(r rune) bool {
@@ -1185,27 +853,11 @@ func isIdentRune(r rune) bool {
 // isIdentStartByte takes, a digit, or '$': as in Neo4j, a$b and L$M are
 // names, and $ starts a parameter only where no name goes on
 // (isParameterStart).
-func isIdentByte(b byte) bool {
-	if b >= 0x80 {
-		return true
-	}
-	if b >= 'A' && b <= 'Z' {
-		return true
-	}
-	if b >= 'a' && b <= 'z' {
-		return true
-	}
-	if b >= '0' && b <= '9' {
-		return true
-	}
-	return b == '_' || b == '$'
-}
+func isIdentByte(b byte) bool { return cyphertext.IdentifierPartByte(b) }
 
 // isParameterStart reports whether the '$' at query[index] starts a
 // parameter ($name, $0, $`name`): it doesn't continue a name (a$b).
-func isParameterStart(query string, index int) bool {
-	return index == 0 || !isIdentByte(query[index-1])
-}
+func isParameterStart(query string, index int) bool { return cyphertext.ParameterStart(query, index) }
 
 func startsWithKeywordFold(s string, keywordUpper string) bool {
 	if len(s) < len(keywordUpper) {
@@ -1265,18 +917,7 @@ type queryRewrite struct {
 
 // queryWhitespaceAt returns the length of the whitespace character at
 // query[index] (ASCII or a Unicode space), 0 when there is none.
-func queryWhitespaceAt(query string, index int) int {
-	switch c := query[index]; {
-	case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
-		return 1
-	case c >= utf8.RuneSelf:
-		r, width := utf8.DecodeRuneInString(query[index:])
-		if unicode.IsSpace(r) {
-			return width
-		}
-	}
-	return 0
-}
+func queryWhitespaceAt(query string, index int) int { return cyphertext.WhitespaceAt(query, index) }
 
 // queryCommentEnd returns the end of the comment that starts at
 // query[index], or -1 when none starts there. A line comment ends before
@@ -1287,21 +928,7 @@ func queryCommentEnd(query string, index int) int {
 
 // queryGapEnd returns the end of the run of whitespace and comments that
 // starts at index, index itself when none does.
-func queryGapEnd(query string, index int) int {
-	end := index
-	for end < len(query) {
-		if commentEnd := queryCommentEnd(query, end); commentEnd >= 0 {
-			end = commentEnd
-			continue
-		}
-		size := queryWhitespaceAt(query, end)
-		if size == 0 {
-			break
-		}
-		end += size
-	}
-	return end
-}
+func queryGapEnd(query string, index int) int { return cyphertext.SkipTrivia(query, index) }
 
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
 // statements with a syntax of its own, which canonicalizeQueryText leaves as
@@ -1414,25 +1041,7 @@ func classificationText(query string) string {
 // for text that does. Most statements are canonical and leave the pass here,
 // in one pass over their bytes.
 func queryMayNeedCanonicalRewrite(query string) bool {
-	for i := 0; i < len(query); i++ {
-		switch c := query[i]; {
-		case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
-			if gluedAliasKeywordAt(query, i+1) || c == '`' && aliasKeywordEndsAt(query, i) {
-				return true
-			}
-		case c == ' ':
-			if i+1 < len(query) && (query[i+1] == ' ' || arrowGapClass[query[i+1]]&arrowGapAfter != 0 && i > 0 && arrowGap(query[i-1], query[i+1])) {
-				return true
-			}
-		case c == '/':
-			if i+1 < len(query) && (query[i+1] == '/' || query[i+1] == '*') {
-				return true
-			}
-		case c < ' ' || c >= utf8.RuneSelf:
-			return true
-		}
-	}
-	return false
+	return cyphertext.MayNeedNormalization(query, arrowGap, gluedAliasKeywordAt, aliasKeywordEndsAt)
 }
 
 // gluedAliasKeywordAt reports whether the keyword AS starts at query[at],
@@ -1495,67 +1104,58 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 	if hasOwnStatementSyntax(query[verbatimEnd:]) {
 		verbatimEnd = len(query)
 	}
-	for index := 0; index < len(query); {
-		c := query[index]
-		if c == '\'' || c == '"' || c == '`' {
-			if c == '`' && index >= verbatimEnd && aliasKeywordEndsAt(query, index) {
-				replace(index, index, " ")
-				if memoized != nil {
-					return memoized.canonical, memoized
-				}
-			}
-			index = skipCypherQuotedText(query, index, c)
-			if index >= verbatimEnd && gluedAliasKeywordAt(query, index) {
-				replace(index, index, " ")
-				if memoized != nil {
-					return memoized.canonical, memoized
-				}
-			}
-			continue
-		}
-		if (c == ')' || c == ']' || c == '}') && index >= verbatimEnd && gluedAliasKeywordAt(query, index+1) {
-			// [1, 2][0]AS x: AS is the alias keyword, spaced as every
-			// clause reader expects.
-			replace(index+1, index+1, " ")
+	reader := cyphertext.NewReader(query, 0)
+	for span, ok := reader.NextRaw(); ok; span, ok = reader.NextRaw() {
+		if span.Kind == cyphertext.QuotedName && span.Start >= verbatimEnd && aliasKeywordEndsAt(query, span.Start) {
+			replace(span.Start, span.Start, " ")
 			if memoized != nil {
 				return memoized.canonical, memoized
 			}
-			index++
-			continue
 		}
-		if c > ' ' && c != '/' && c < utf8.RuneSelf {
-			// Can't start a comment or a run of whitespace.
-			index++
-			continue
-		}
-		if index < verbatimEnd {
-			if end := queryCommentEnd(query, index); end >= 0 {
-				replace(index, end, commentReplacement(query[index:end]))
-				if memoized != nil {
-					return memoized.canonical, memoized
-				}
-				index = end
-				continue
-			}
-			index++
-			continue
-		}
-		if end := queryGapEnd(query, index); end > index {
-			if index > 0 && end < len(query) && arrowGap(query[index-1], query[end]) && inPatternClause(query, index) {
-				replace(index, end, "")
-				if memoized != nil {
-					return memoized.canonical, memoized
-				}
-			} else if end != index+1 || c != ' ' {
-				replace(index, end, " ")
+		if span.Kind == cyphertext.String || span.Kind == cyphertext.QuotedName || span.Is(query, ")") || span.Is(query, "]") || span.Is(query, "}") {
+			if span.End >= verbatimEnd && gluedAliasKeywordAt(query, span.End) {
+				replace(span.End, span.End, " ")
 				if memoized != nil {
 					return memoized.canonical, memoized
 				}
 			}
-			index = end
 			continue
 		}
-		index++
+		if span.Kind != cyphertext.Whitespace && span.Kind != cyphertext.Comment {
+			continue
+		}
+		if span.Unterminated {
+			continue
+		}
+		if span.Start < verbatimEnd {
+			if span.Kind == cyphertext.Comment {
+				replace(span.Start, span.End, commentReplacement(span.Text(query)))
+				if memoized != nil {
+					return memoized.canonical, memoized
+				}
+			}
+			continue
+		}
+		end := span.End
+		for {
+			lookahead := reader
+			next, exists := lookahead.NextRaw()
+			if !exists || next.Unterminated || next.Kind != cyphertext.Whitespace && next.Kind != cyphertext.Comment {
+				break
+			}
+			end = next.End
+			reader = lookahead
+		}
+		replacement := " "
+		if span.Start > 0 && end < len(query) && arrowGap(query[span.Start-1], query[end]) && inPatternClause(query, span.Start) {
+			replacement = ""
+		}
+		if end-span.Start != 1 || query[span.Start:end] != replacement {
+			replace(span.Start, end, replacement)
+			if memoized != nil {
+				return memoized.canonical, memoized
+			}
+		}
 	}
 	if rewrite == nil {
 		return query, nil
@@ -1605,49 +1205,37 @@ func inPatternClause(query string, index int) bool {
 		depth   int
 	}
 	frames := []frame{{}}
-	previous := ""
-	for i := 0; i < index; {
-		c := query[i]
-		switch {
-		case c == '\'' || c == '"' || c == '`':
-			i = skipCypherQuotedText(query, i, c)
-			continue
-		case c == '/':
-			if end := queryCommentEnd(query, i); end >= 0 {
-				i = end
-				continue
+	previousWord := ""
+	var previous cyphertext.Token
+	reader := cyphertext.NewReader(query[:index], 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind == cyphertext.Symbol {
+			switch span.Text(query) {
+			case "{":
+				frames = append(frames, frame{})
+			case "}":
+				if len(frames) > 1 {
+					frames = frames[:len(frames)-1]
+				}
+			case "(", "[":
+				frames[len(frames)-1].depth++
+			case ")", "]":
+				frames[len(frames)-1].depth--
 			}
-		case c == '{':
-			frames = append(frames, frame{})
-		case c == '}':
-			if len(frames) > 1 {
-				frames = frames[:len(frames)-1]
-			}
-		case c == '(' || c == '[':
-			frames[len(frames)-1].depth++
-		case c == ')' || c == ']':
-			frames[len(frames)-1].depth--
-		case isIdentByte(c) && (c < '0' || c > '9') && (i == 0 || !isIdentByte(query[i-1]) && query[i-1] != '.' && query[i-1] != '$'):
-			end := i + 1
-			for end < len(query) && isIdentByte(query[end]) {
-				end++
-			}
-			word := upperASCII(query[i:end])
+		} else if span.Kind == cyphertext.Word && isIdentStartByte(query[span.Start]) && !previous.Is(query, ".") {
+			word := upperASCII(span.Text(query))
 			switch word {
 			case "MATCH", "MERGE", "CREATE":
-				if previous == "ON" {
+				if previousWord == "ON" {
 					word = "ON"
 				}
 				frames[len(frames)-1].keyword = word
-			case "ON", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "FOREACH", "CALL", "YIELD",
-				"ORDER", "SKIP", "LIMIT", "UNION", "FINISH", "LET", "FILTER", "USE", "LOAD", "OFFSET":
+			case "ON", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "FOREACH", "CALL", "YIELD", "ORDER", "SKIP", "LIMIT", "UNION", "FINISH", "LET", "FILTER", "USE", "LOAD", "OFFSET":
 				frames[len(frames)-1].keyword = word
 			}
-			previous = word
-			i = end
-			continue
+			previousWord = word
 		}
-		i++
+		previous = span
 	}
 	top := frames[len(frames)-1]
 	return top.depth == 0 && (top.keyword == "MATCH" || top.keyword == "MERGE" || top.keyword == "CREATE")
@@ -1661,18 +1249,14 @@ func inPatternClause(query string, index int) bool {
 func StripComments(query string) string {
 	var out strings.Builder
 	last := 0
-	for index := 0; index < len(query); index++ {
-		switch c := query[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(query, index, c) - 1
-		case '/':
-			if end := queryCommentEnd(query, index); end >= 0 {
-				out.WriteString(query[last:index])
-				out.WriteString(commentReplacement(query[index:end]))
-				last = end
-				index = end - 1
-			}
+	reader := cyphertext.NewReader(query, 0)
+	for span, ok := reader.NextRaw(); ok; span, ok = reader.NextRaw() {
+		if span.Kind != cyphertext.Comment || span.Unterminated {
+			continue
 		}
+		out.WriteString(query[last:span.Start])
+		out.WriteString(commentReplacement(span.Text(query)))
+		last = span.End
 	}
 	if last == 0 {
 		return query
@@ -1776,35 +1360,33 @@ func (r *queryRewrite) restoreMessage(message string) string {
 	}
 	var out strings.Builder
 	last := 0
-	for index := 0; index < len(message); index++ {
-		switch quote := message[index]; {
-		case quote == '\'' || quote == '"' || quote == '`':
-			close := strings.IndexByte(message[index+1:], quote)
-			if close <= 0 {
-				continue
-			}
-			inner := message[index+1 : index+1+close]
+	reader := cyphertext.NewReader(message, 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if (span.Kind == cyphertext.String || span.Kind == cyphertext.QuotedName) && !span.Unterminated && span.End-span.Start > 2 {
+			inner := message[span.Start+1 : span.End-1]
 			if restored := r.originalText(inner); restored != inner {
-				out.WriteString(message[last : index+1])
+				out.WriteString(message[last : span.Start+1])
 				out.WriteString(restored)
-				last = index + 1 + close
+				last = span.End - 1
 			}
-			index += close + 1
-		case strings.HasPrefix(message[index:], "line "):
-			line, column, end, ok := parseLineColumn(message, index+len("line "))
-			if !ok {
-				continue
-			}
-			offset, found := offsetAtLineColumn(r.canonical, line, column)
-			if !found {
-				continue
-			}
-			origLine, origColumn := lineColumnAtOffset(r.original, r.originalOffset(offset, true))
-			out.WriteString(message[last : index+len("line ")])
-			out.WriteString(strconv.Itoa(origLine) + ":" + strconv.Itoa(origColumn))
-			last = end
-			index = end - 1
+			continue
 		}
+		if span.Kind != cyphertext.Word || span.Text(message) != "line" || span.End >= len(message) || message[span.End] != ' ' {
+			continue
+		}
+		line, column, end, valid := parseLineColumn(message, span.End+1)
+		if !valid {
+			continue
+		}
+		offset, found := offsetAtLineColumn(r.canonical, line, column)
+		if !found {
+			continue
+		}
+		origLine, origColumn := lineColumnAtOffset(r.original, r.originalOffset(offset, true))
+		out.WriteString(message[last : span.End+1])
+		out.WriteString(strconv.Itoa(origLine) + ":" + strconv.Itoa(origColumn))
+		last = end
+		reader.Seek(end)
 	}
 	if last == 0 {
 		return message
@@ -2002,9 +1584,12 @@ func scanCypherQuotedText(query string, start int, quote byte) (int, bool) {
 	if start < 0 || start >= len(query) || query[start] != quote {
 		return start, false
 	}
-	return cyphertext.ScanQuotedText(query, start)
+	span, ok := cyphertext.TokenAt(query, start)
+	if !ok || (span.Kind != cyphertext.String && span.Kind != cyphertext.QuotedName) {
+		return start, false
+	}
+	return span.End, !span.Unterminated
 }
-
 func skipCypherLexicalToken(text string, index int) (int, bool) {
 	return cyphertext.SkipToken(text, index)
 }
@@ -2038,24 +1623,7 @@ func cypherStringLexicalByte(character byte) int {
 }
 
 func scanIdentifierToken(text string, start int) (string, int, bool) {
-	if start < 0 || start >= len(text) {
-		return "", start, false
-	}
-	if text[start] == '`' {
-		end, closed := scanCypherQuotedText(text, start, '`')
-		if !closed {
-			return "", start, false
-		}
-		return strings.ReplaceAll(text[start+1:end-1], "``", "`"), end, true
-	}
-	if !isIdentStartByte(text[start]) {
-		return "", start, false
-	}
-	end := start + 1
-	for end < len(text) && isIdentByte(text[end]) {
-		end++
-	}
-	return text[start:end], end, true
+	return cyphertext.ScanIdentifier(text, start)
 }
 
 func parseIdentifierToken(text string) (string, string, bool) {

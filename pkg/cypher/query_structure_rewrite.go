@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -63,24 +64,24 @@ func desugarQueryStructure(query string, columns statementColumner) (string, *qu
 // mayUseQueryStructure is desugarQueryStructure's quick check: NEXT or WHEN
 // appear, or a brace starts the statement or follows UNION.
 func mayUseQueryStructure(query string) bool {
-	if strings.Contains(query, "{") {
-		opener := &labelExpressionRewriter{query: query}
-		for index := 0; index < len(query); index++ {
-			if isCypherQuoteByte(query[index]) {
-				index = skipCypherQuotedText(query, index, query[index]) - 1
-				continue
-			}
-			if query[index] == '{' && opener.opensSubquery(index) {
-				if next := skipSpaces(query, index+1); next < len(query) && query[next] == '{' {
-					return true
-				}
+	scanner := newSubqueryBraceScanner(query, 0)
+	for span, subquery, ok := scanner.next(); ok; span, subquery, ok = scanner.next() {
+		if subquery {
+			lookahead := cyphertext.NewReader(query, span.End)
+			next, _ := lookahead.Next()
+			if next.Is(query, "{") {
+				return true
 			}
 		}
+		if span.Kind == cyphertext.Word && (strings.EqualFold(span.Text(query), "NEXT") || strings.EqualFold(span.Text(query), "WHEN") || strings.EqualFold(span.Text(query), "UNION")) {
+			return true
+		}
+		if span.Is(query, "{") && scanner.prior.End == 0 {
+			return true
+		}
 	}
-	return indexASCIIFold(query, "next") >= 0 || indexASCIIFold(query, "when") >= 0 || strings.HasPrefix(strings.TrimSpace(query), "{") ||
-		indexASCIIFold(query, "union") >= 0
+	return false
 }
-
 func (r *structureRewriter) edit(start, end int, text string) {
 	r.edits = append(r.edits, labelRewriteEdit{start: start, end: end, text: text})
 }
@@ -102,31 +103,31 @@ type topLevelWord struct {
 // braces in q[start:end].
 func topLevelWords(q string, start, end int) []topLevelWord {
 	var words []topLevelWord
-	for i := start; i < end; i++ {
-		c := q[i]
-		switch {
-		case isCypherQuoteByte(c):
-			i = skipCypherQuotedText(q[:end], i, c) - 1
-		case c == '/':
-			if commentEnd := queryCommentEnd(q[:end], i); commentEnd >= 0 {
-				i = commentEnd - 1
+	reader := cyphertext.NewReader(q[:end], start)
+	var previous cyphertext.Token
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		switch span.Kind {
+		case cyphertext.Symbol:
+			closer := rune(0)
+			switch span.Text(q) {
+			case "(":
+				closer = ')'
+			case "[":
+				closer = ']'
+			case "{":
+				closer = '}'
 			}
-		case c == '(' || c == '[' || c == '{':
-			closer := map[byte]rune{'(': ')', '[': ']', '{': '}'}[c]
-			if close := findMatchingDelimiter(q[:end], i, rune(c), closer); close >= 0 {
-				i = close
+			if closer != 0 {
+				if close := findMatchingDelimiter(q[:end], span.Start, rune(q[span.Start]), closer); close >= 0 {
+					reader.Seek(close + 1)
+				}
 			}
-		case isIdentByte(c) && !isDigitByte(c):
-			if i > start && (isIdentByte(q[i-1]) || q[i-1] == '$' || q[i-1] == '.') {
-				continue
+		case cyphertext.Word:
+			if isIdentStartByte(q[span.Start]) && !previous.Is(q, ".") {
+				words = append(words, topLevelWord{span.Start, span.End, strings.ToUpper(span.Text(q))})
 			}
-			j := i
-			for j < end && isIdentByte(q[j]) {
-				j++
-			}
-			words = append(words, topLevelWord{start: i, end: j, upper: strings.ToUpper(q[i:j])})
-			i = j - 1
 		}
+		previous = span
 	}
 	return words
 }
@@ -268,24 +269,19 @@ func (r *structureRewriter) hasDistinctUnion(start, end int) bool {
 
 // subqueries rewrites the subquery bodies in q[start:end].
 func (r *structureRewriter) subqueries(start, end int) error {
-	opener := &labelExpressionRewriter{query: r.query}
-	for i := start; i < end; i++ {
-		switch c := r.query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			i = skipCypherQuotedText(r.query[:end], i, c) - 1
-		case '{':
-			if !opener.opensSubquery(i) {
-				continue
-			}
-			close := findMatchingDelimiter(r.query[:end], i, '{', '}')
-			if close < 0 {
-				return nil
-			}
-			if err := r.region(i+1, close, false); err != nil {
-				return err
-			}
-			i = close
+	scanner := newSubqueryBraceScanner(r.query[:end], start)
+	for span, subquery, ok := scanner.next(); ok; span, subquery, ok = scanner.next() {
+		if !subquery {
+			continue
 		}
+		close := findMatchingDelimiter(r.query[:end], span.Start, '{', '}')
+		if close < 0 {
+			return nil
+		}
+		if err := r.region(span.End, close, false); err != nil {
+			return err
+		}
+		scanner.skipBody(close)
 	}
 	return nil
 }

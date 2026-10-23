@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"hash/fnv"
 	"sort"
 	"strings"
@@ -251,45 +252,36 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 // string literals, with their positions classified.
 func scanQuotedTokens(query string) []quotedToken {
 	var tokens []quotedToken
-	var brackets []byte // open ( [ { at the current position
-	for i := 0; i < len(query); {
-		switch c := query[i]; c {
-		case '\'', '"':
-			i = skipQuotedText(query, i)
-			continue
-		case '(', '[', '{':
-			brackets = append(brackets, c)
-		case ')', ']', '}':
-			if len(brackets) > 0 {
-				brackets = brackets[:len(brackets)-1]
-			}
-		case '$':
-			// A quoted parameter name ($`a b`) becomes a plain one, like a
-			// quoted variable.
-			if i+1 < len(query) && query[i+1] == '`' {
-				if written, end, ok := scanSymbolicName(query, i+1); ok {
-					tokens = append(tokens, quotedToken{start: i + 1, end: end, written: written, name: symbolicNameValue(written), parameter: true})
-					i = end
-					continue
+	var brackets []byte
+	reader := cyphertext.NewReader(query, 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		switch span.Kind {
+		case cyphertext.Symbol:
+			switch span.Text(query) {
+			case "(", "[", "{":
+				brackets = append(brackets, query[span.Start])
+			case ")", "]", "}":
+				if len(brackets) > 0 {
+					brackets = brackets[:len(brackets)-1]
 				}
 			}
-		case '`':
-			written, end, ok := scanSymbolicName(query, i)
-			if !ok {
-				i++
-				continue
+		case cyphertext.Parameter:
+			nameReader := cyphertext.NewReader(query, span.Start+1)
+			name, exists := nameReader.Next()
+			if exists && name.Kind == cyphertext.QuotedName {
+				written := name.Text(query)
+				tokens = append(tokens, quotedToken{start: name.Start, end: name.End, written: written, name: symbolicNameValue(written), parameter: true})
 			}
+		case cyphertext.QuotedName:
+			written := span.Text(query)
 			inner := byte(0)
 			if len(brackets) > 0 {
 				inner = brackets[len(brackets)-1]
 			}
-			token := quotedToken{start: i, end: end, written: written, name: symbolicNameValue(written)}
+			token := quotedToken{start: span.Start, end: span.End, written: written, name: symbolicNameValue(written)}
 			classifyQuotedToken(query, &token, inner)
 			tokens = append(tokens, token)
-			i = end
-			continue
 		}
-		i++
 	}
 	return tokens
 }
@@ -351,37 +343,27 @@ func callParenthesis(query string, index int) bool {
 }
 
 func previousSignificant(query string, index int) (byte, int) {
-	for i := index - 1; i >= 0; i-- {
-		if !isWhitespace(query[i]) {
-			return query[i], i
-		}
+	span := cyphertext.PreviousToken(query, index)
+	if span.End == 0 {
+		return 0, -1
 	}
-	return 0, -1
+	return query[span.End-1], span.End - 1
 }
-
 func nextSignificant(query string, index int) (byte, int) {
-	for i := index; i < len(query); i++ {
-		if !isWhitespace(query[i]) {
-			return query[i], i
-		}
+	reader := cyphertext.NewReader(query, index)
+	span, ok := reader.Next()
+	if !ok {
+		return 0, len(query)
 	}
-	return 0, len(query)
+	return query[span.Start], span.Start
 }
-
-// previousWord is the identifier that ends right before index (whitespace
-// skipped), or "".
 func previousWord(query string, index int) string {
-	end := index
-	for end > 0 && isWhitespace(query[end-1]) {
-		end--
+	span := cyphertext.PreviousToken(query, index)
+	if span.Kind != cyphertext.Word {
+		return ""
 	}
-	start := end
-	for start > 0 && isIdentByte(query[start-1]) {
-		start--
-	}
-	return query[start:end]
+	return span.Text(query)
 }
-
 func nextWordAt(query string, index int) string {
 	word, _, ok := scanIdentifierToken(query, index)
 	if !ok {
@@ -413,47 +395,27 @@ func isLabelColon(query string, colon int, inner byte) bool {
 	if inner != '{' {
 		return true
 	}
-	before, beforeIndex := previousSignificant(query, colon)
-	if before == 0 {
+	key := cyphertext.PreviousToken(query, colon)
+	if key.End == 0 {
 		return true
 	}
-	start := beforeIndex
-	if before == '`' {
-		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
-		}
-	} else {
-		for start > 0 && isIdentByte(query[start-1]) {
-			start--
-		}
-	}
-	keyPrev, _ := previousSignificant(query, start)
-	return !(keyPrev == '{' || keyPrev == ',')
+	boundary := cyphertext.PreviousToken(query, key.Start)
+	return !boundary.Is(query, "{") && !boundary.Is(query, ",")
 }
-
-// inLabelExpression reports whether the operator at index continues a label
-// expression (:A|B, :A&B, :!A).
 func inLabelExpression(query string, index int, inner byte) bool {
-	before, beforeIndex := previousSignificant(query, index)
-	if before == ':' {
-		return isLabelColon(query, beforeIndex, inner)
+	before := cyphertext.PreviousToken(query, index)
+	if before.Is(query, ":") {
+		return isLabelColon(query, before.Start, inner)
 	}
-	start := beforeIndex
-	if before == '`' {
-		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
-		}
-	} else if isIdentByte(before) {
-		for start > 0 && isIdentByte(query[start-1]) {
-			start--
-		}
-	} else {
+	if before.Kind != cyphertext.Word && before.Kind != cyphertext.QuotedName {
 		return false
 	}
-	operator, operatorIndex := previousSignificant(query, start)
-	switch operator {
-	case ':':
-		return isLabelColon(query, operatorIndex, inner)
-	case '|', '&', '!':
-		return inLabelExpression(query, operatorIndex, inner)
+	operator := cyphertext.PreviousToken(query, before.Start)
+	switch operator.Text(query) {
+	case ":":
+		return isLabelColon(query, operator.Start, inner)
+	case "|", "&", "!":
+		return inLabelExpression(query, operator.Start, inner)
 	}
 	return false
 }
@@ -469,28 +431,7 @@ func followsOperator(query string, index int) bool {
 
 // mapProjectionBrace reports whether the '{' enclosing index follows a
 // variable (n {…}), making it a map projection rather than a map literal.
-func mapProjectionBrace(query string, index int) bool {
-	depth := 0
-	for i := index - 1; i >= 0; i-- {
-		switch query[i] {
-		case '}', ')', ']':
-			depth++
-		case '(', '[':
-			if depth == 0 {
-				return false
-			}
-			depth--
-		case '{':
-			if depth > 0 {
-				depth--
-				continue
-			}
-			before, _ := previousSignificant(query, i)
-			return before == '`' || isIdentByte(before)
-		}
-	}
-	return false
-}
+func mapProjectionBrace(query string, index int) bool { return enclosingProjectionBrace(query, index) }
 
 // inYieldList reports whether index is inside the item list of a YIELD.
 func inYieldList(query string, index int) bool {

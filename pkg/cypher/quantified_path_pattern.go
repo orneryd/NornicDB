@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -684,16 +685,22 @@ func quantifiedGroupQuantifierAt(s string, at int) bool {
 // parenthesisedPathAt reports whether s[open:close+1] is a parenthesised
 // path pattern: a node pattern, then a relationship arrow.
 func parenthesisedPathAt(s string, open, close int) bool {
-	inner := skipASCIISpaces(s, open+1, close)
-	if inner >= close || s[inner] != '(' {
+	reader := cyphertext.NewReader(s[:close], open+1)
+	node, ok := reader.Next()
+	if !ok || !node.Is(s, "(") {
 		return false
 	}
-	nodeEnd := findMatchingParen(s[:close], inner)
+	nodeEnd := findMatchingParen(s[:close], node.Start)
 	if nodeEnd < 0 {
 		return false
 	}
-	arrow := skipASCIISpaces(s, nodeEnd+1, close)
-	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && strings.IndexByte("-[>", s[arrow+1]) >= 0
+	reader.Seek(nodeEnd + 1)
+	first, ok := reader.Next()
+	if !ok || (!first.Is(s, "-") && !first.Is(s, "<")) {
+		return false
+	}
+	second, ok := reader.Next()
+	return ok && (second.Is(s, "-") || second.Is(s, "[") || second.Is(s, ">"))
 }
 
 // quantifiedGroupError is Neo4j's SyntaxError for the quantified group

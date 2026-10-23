@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"reflect"
 	"strings"
@@ -694,11 +695,8 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 		}
 		return end, typeName, name
 	case isCypherStringQuoteByte(c):
-		end = start + 1
-		for end < len(cypher) && (cypher[end] != c || isBackslashEscaped(cypher, end)) {
-			end++
-		}
-		return end + 1, "String", ""
+		span, _ := cyphertext.TokenAt(cypher, start)
+		return span.End, "String", ""
 	case c == '{':
 		close := findMatchingDelimiter(cypher, start, '{', '}')
 		if close < 0 {

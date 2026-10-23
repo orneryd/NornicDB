@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -37,63 +38,66 @@ func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
 // unless a doubled backtick has to be unescaped, so scanning allocates
 // nothing for ordinary labels.
 func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) bool {
-	for start := 0; ; {
-		index := start
-		for index < len(chain) && isASCIISpace(chain[index]) {
-			index++
-		}
-		if index+1 < len(chain) && chain[index] == '$' && chain[index+1] == '(' {
-			closing := findMatchingDelimiter(chain, index+1, '(', ')')
-			if closing < 0 {
-				return false
-			}
-			end := closing + 1
-			for end < len(chain) && isASCIISpace(chain[end]) {
-				end++
-			}
-			if end < len(chain) && chain[end] != ':' {
-				return false
-			}
-			visit(strings.TrimSpace(chain[index+2:closing]), false, true)
-			if end >= len(chain) {
-				return true
-			}
-			start = end + 1
-			continue
-		}
-		if index < len(chain) && isCypherBacktickByte(chain[index]) {
-			name, end, ok := scanQuotedName(chain, index)
-			if !ok {
-				return false
-			}
-			for end < len(chain) && isASCIISpace(chain[end]) {
-				end++
-			}
-			if end < len(chain) && chain[end] != ':' {
-				return false
-			}
-			visit(name, true, false)
-			if end >= len(chain) {
-				return true
-			}
-			start = end + 1
-			continue
-		}
-		end := strings.IndexByte(chain[start:], ':')
-		if end < 0 {
-			end = len(chain)
-		} else {
-			end += start
-		}
-		segment := chain[start:end]
-		if strings.IndexByte(segment, '`') >= 0 {
-			return false
-		}
-		visit(strings.TrimSpace(segment), false, false)
-		if end >= len(chain) {
+	reader := cyphertext.NewReader(chain, 0)
+	for {
+		first, exists := reader.Next()
+		if !exists {
+			visit("", false, false)
 			return true
 		}
-		start = end + 1
+		if first.Is(chain, ":") {
+			visit("", false, false)
+			continue
+		}
+		if first.Is(chain, "$") {
+			open, ok := reader.Next()
+			if !ok || !open.Is(chain, "(") {
+				return false
+			}
+			close := findMatchingDelimiter(chain, open.Start, '(', ')')
+			if close < 0 {
+				return false
+			}
+			reader.Seek(close + 1)
+			next, ok := reader.Next()
+			if ok && !next.Is(chain, ":") {
+				return false
+			}
+			visit(strings.TrimSpace(chain[open.End:close]), false, true)
+			if !ok {
+				return true
+			}
+			continue
+		}
+		if first.Kind == cyphertext.QuotedName {
+			if first.Unterminated {
+				return false
+			}
+			next, ok := reader.Next()
+			if ok && !next.Is(chain, ":") {
+				return false
+			}
+			visit(symbolicNameValue(first.Text(chain)), true, false)
+			if !ok {
+				return true
+			}
+			continue
+		}
+		end := first.End
+		for {
+			next, ok := reader.Next()
+			if !ok || next.Is(chain, ":") {
+				visit(strings.TrimSpace(chain[first.Start:end]), false, false)
+				if !ok {
+					return true
+				}
+				break
+			}
+			if next.Kind == cyphertext.QuotedName {
+				return false
+			}
+			end = next.End
+		}
 	}
 }
 

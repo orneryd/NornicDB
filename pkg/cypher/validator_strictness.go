@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 func validateExpressionOperandCompleteness(expression string) error {
 	expression = strings.TrimSpace(expression)
@@ -19,16 +22,13 @@ func validateExpressionOperandCompleteness(expression string) error {
 }
 
 func validateExpressionLexicalTokens(text string) error {
-	for index := 0; index < len(text); index++ {
-		if end, quoted := skipCypherLexicalToken(text, index); quoted {
-			index = end - 1
+	reader := cyphertext.NewReader(text, 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind == cyphertext.String || span.Kind == cyphertext.QuotedName {
 			continue
 		}
-		character := text[index]
-		malformedOptional := matchKeywordAt(text, index, "OPTIONAL") &&
-			(index == 0 || !clauseKeywordUsedAsName(text, index, index+len("OPTIONAL"), "OPTIONAL")) &&
-			strings.HasPrefix(text[skipSpaces(text, index+len("OPTIONAL")):], "<tab>")
-		if character == '\\' || malformedOptional {
+		malformedOptional := span.Kind == cyphertext.Word && equalFoldASCII(span.Text(text), "OPTIONAL") && (span.Start == 0 || !clauseKeywordUsedAsName(text, span.Start, span.End, "OPTIONAL")) && strings.HasPrefix(text[queryGapEnd(text, span.End):], "<tab>")
+		if span.Is(text, "\\") || malformedOptional {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid expression token")
 		}
 	}
@@ -107,42 +107,13 @@ func containsTrailingListComma(cypher string) bool {
 // a backslash; a doubled quote is not an escape, so `'a”b'` is two adjacent
 // literals and Neo4j rejects it.
 func hasAdjacentStringLiterals(cypher string) bool {
-	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
-		if isCypherBacktickByte(c) {
-			i = skipCypherQuotedText(cypher, i, c) - 1
-			continue
-		}
-		if c == '/' {
-			if end := queryCommentEnd(cypher, i); end >= 0 {
-				i = end - 1
-				continue
-			}
-		}
-		if !isCypherStringQuoteByte(c) {
-			continue
-		}
-		end, closed := scanCypherQuotedText(cypher, i, c)
-		if !closed {
-			// Unterminated literal; the existing validation rejects it.
-			return false
-		}
-		// The shared lexer recognizes doubled quote bytes as one quoted span;
-		// Cypher's string grammar rejects that spelling, so retain the strict
-		// check inside the already-delimited token.
-		for index := i + 1; index+1 < end; index++ {
-			if cypher[index] == '\\' {
-				index++
-				continue
-			}
-			if cypher[index] == c && cypher[index+1] == c {
-				return true
-			}
-		}
-		if end < len(cypher) && (isCypherStringQuoteByte(cypher[end])) {
+	reader := cyphertext.NewReader(cypher, 0)
+	var previous cyphertext.Token
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind == cyphertext.String && previous.Kind == cyphertext.String && span.Start == previous.End {
 			return true
 		}
-		i = end - 1
+		previous = span
 	}
 	return false
 }
@@ -283,72 +254,22 @@ func isExpressionWith(s string, start, end int) bool {
 
 // previousSignificantWord returns the word immediately before position i,
 // skipping whitespace and comments, or "".
-func previousSignificantWord(s string, i int) string {
-	j := i
-	for {
-		for j > 0 && isWhitespace(s[j-1]) {
-			j--
-		}
-		if j >= 2 && s[j-2] == '*' && s[j-1] == '/' {
-			open := strings.LastIndex(s[:j-1], "/*")
-			if open < 0 {
-				return ""
-			}
-			j = open
-			continue
-		}
-		if j >= 2 && s[j-2] == '/' && s[j-1] == '/' {
-			line := strings.LastIndex(s[:j], "\n")
-			if line >= 0 {
-				j = line
-				continue
-			}
-			return ""
-		}
-		break
-	}
-	end := j
-	for j > 0 && isIdentByte(s[j-1]) {
-		j--
-	}
-	if j == end {
+func previousSignificantWord(s string, at int) string {
+	span := cyphertext.PreviousToken(s, at)
+	if span.Kind != cyphertext.Word {
 		return ""
 	}
-	return s[j:end]
+	return span.Text(s)
 }
-
-// nextSignificantWords returns the two words that follow position j, skipping
-// whitespace and comments; missing words are "".
-func nextSignificantWords(s string, j int) [2]string {
+func nextSignificantWords(s string, at int) [2]string {
 	var result [2]string
-	read := func() string {
-		for {
-			for j < len(s) && isWhitespace(s[j]) {
-				j++
-			}
-			if j+1 < len(s) && s[j] == '/' && s[j+1] == '*' {
-				if close := strings.Index(s[j+2:], "*/"); close >= 0 {
-					j += 2 + close + 2
-					continue
-				}
-				return ""
-			}
-			if j+1 < len(s) && s[j] == '/' && s[j+1] == '/' {
-				if nl := strings.IndexAny(s[j:], "\r\n"); nl >= 0 {
-					j += nl
-					continue
-				}
-				return ""
-			}
+	reader := cyphertext.NewReader(s, at)
+	for index := range result {
+		span, ok := reader.Next()
+		if !ok || span.Kind != cyphertext.Word {
 			break
 		}
-		start := j
-		for j < len(s) && isIdentByte(s[j]) {
-			j++
-		}
-		return s[start:j]
+		result[index] = span.Text(s)
 	}
-	result[0] = read()
-	result[1] = read()
 	return result
 }

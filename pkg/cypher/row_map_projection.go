@@ -1,8 +1,7 @@
 package cypher
 
 import (
-	"strings"
-
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -26,23 +25,7 @@ import (
 // doesn't close it, or what precedes the brace isn't a variable (a map
 // literal, a subquery such as COUNT { … }).
 func rowMapProjectionSplit(expression string) (variable, items string, ok bool) {
-	trimmed := strings.TrimSpace(expression)
-	if !strings.HasSuffix(trimmed, "}") {
-		return "", "", false
-	}
-	open := strings.IndexByte(trimmed, '{')
-	if open <= 0 || findMatchingDelimiter(trimmed, open, '{', '}') != len(trimmed)-1 {
-		return "", "", false
-	}
-	variable = strings.TrimSpace(trimmed[:open])
-	if !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
-		return "", "", false
-	}
-	if precedingSubqueryExpressionKeyword(trimmed, open) {
-		return "", "", false
-	}
-
-	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
+	return completeProjection(expression)
 }
 
 func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
@@ -72,56 +55,39 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	if inner == "" {
 		return result, true, true, nil
 	}
-	for _, rawItem := range splitTopLevelComma(inner) {
-		item := strings.TrimSpace(rawItem)
-		switch {
-		case item == ".*":
+	parts := cyphertext.CommaSegments(inner)
+	for item, ok := parts.Next(); ok; item, ok = parts.Next() {
+		entry, valid := parseBraceEntry(item, projectionBrace)
+		if !valid {
+			return nil, true, false, nil
+		}
+		switch entry.kind {
+		case wildcardBraceEntry:
 			if temporal {
-				return nil, true, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-					localization.CypherCoreMapProjectionCoercion(formatCypherValueString(base)))
+				return nil, true, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreMapProjectionCoercion(formatCypherValueString(base)))
 			}
 			for name, value := range properties {
 				result[name] = value
 			}
-		case strings.HasPrefix(item, "."):
-			name, selector := mapProjectionPropertySelector(item)
-			if !selector {
-				return nil, true, false, nil
-			}
+		case propertyBraceEntry:
 			if !temporal {
-				result[name] = properties[name]
+				result[entry.key] = properties[entry.key]
 				continue
 			}
-			value, _, supported := evaluateTemporalProperty(base, name)
+			value, _, supported := evaluateTemporalProperty(base, entry.key)
 			if !supported {
-				return nil, true, false, temporalNoSuchFieldError(name)
+				return nil, true, false, temporalNoSuchFieldError(entry.key)
 			}
-			result[name] = value
-		default:
-			separator := findTopLevelMapKeyValueSeparator(item)
-			if separator > 0 {
-				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(strings.TrimSpace(item[separator+1:]), values)
-				if err != nil {
-					return nil, true, false, err
-				}
-				if !ok {
-					return nil, true, false, nil
-				}
-				result[name] = value
-				continue
-			}
-			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
-				return nil, true, false, nil
-			}
-			value, ok, err := e.evaluateRowValue(item, values)
+			result[entry.key] = value
+		case keyedBraceEntry, variableBraceEntry:
+			value, ok, err := e.evaluateRowValue(cyphertext.TrimTrivia(entry.value), values)
 			if err != nil {
 				return nil, true, false, err
 			}
 			if !ok {
 				return nil, true, false, nil
 			}
-			result[normalizePropertyKey(item)] = value
+			result[normalizePropertyKey(entry.key)] = value
 		}
 	}
 	return result, true, true, nil
@@ -130,14 +96,32 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 // mapProjectionPropertySelector reads a map projection's property selector,
 // .name or .`quoted name`, and returns the property key (unquoted).
 func mapProjectionPropertySelector(item string) (string, bool) {
-	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "."))
-	switch {
-	case isValidIdentifier(name):
-		return name, true
-	case isBacktickQuotedName(name):
-		return normalizePropertyKey(name), true
+	name, wildcard, ok := mapProjectionSelector(item)
+	return name, ok && !wildcard
+}
+
+// mapProjectionSelector shares selector grammar between preflight and execution;
+// trivia around the dot, name or wildcard never changes its token identity.
+func mapProjectionSelector(item string) (name string, wildcard, ok bool) {
+	reader := cyphertext.NewReader(item, 0)
+	dot, exists := reader.Next()
+	if !exists || !dot.Is(item, ".") {
+		return "", false, false
 	}
-	return "", false
+	token, exists := reader.Next()
+	if !exists {
+		return "", false, false
+	}
+	if _, more := reader.Next(); more {
+		return "", false, false
+	}
+	if token.Is(item, "*") {
+		return "", true, true
+	}
+	if _, valid := isOneSymbolicName(token.Text(item)); valid {
+		return normalizePropertyKey(token.Text(item)), false, true
+	}
+	return "", false, false
 }
 
 // rowProjectionProperties returns the properties of a node, relationship or

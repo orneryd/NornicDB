@@ -55,6 +55,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -160,69 +161,24 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 // reference (#701). A quoted parameter name ($`a b`) is made plain by
 // canonicalizeQuotedVariables before any scan.
 func scanParameterReferences(query string, visit func(dollar, start, end int)) {
-	if strings.IndexByte(query, '$') < 0 {
-		return
-	}
-	quoted := containsQuoteCharacter(query)
-	for i := 0; i < len(query); {
-		next := nextUnquotedDollar(query, i, quoted)
-		if next < 0 {
-			return
+	reader := cyphertext.NewReader(query, 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind == cyphertext.Parameter && !dynamicLabelStartsAt(query, span.Start) {
+			visit(span.Start, span.Start+1, span.End)
 		}
-		if !isParameterStart(query, next) {
-			i = next + 1
-			continue
-		}
-		start := next + 1
-		if start >= len(query) {
-			return
-		}
-		first := query[start]
-		if !isIdentStartByte(first) {
-			i = start
-			continue
-		}
-		end := start + 1
-		for end < len(query) && isIdentByte(query[end]) {
-			end++
-		}
-		if dynamicLabelStartsAt(query, next) {
-			// $all(e), $any(e): a dynamic label, not a parameter.
-			i = end
-			continue
-		}
-		visit(next, start, end)
-		i = end
 	}
 }
 
-// containsQuoteCharacter reports whether query has a quote character, so
-// nextUnquotedDollar has quoted text to skip.
-func containsQuoteCharacter(query string) bool {
-	return strings.IndexByte(query, '\'') >= 0 || strings.IndexByte(query, '"') >= 0 || strings.IndexByte(query, '`') >= 0
-}
-
-// nextUnquotedDollar is the offset of the first '$' at or after from that
-// isn't inside a string literal or a backtick-quoted name, or -1. Without
-// quote characters (quoted false) the single-byte search is much faster
-// than IndexAny.
+// nextUnquotedDollar is a compatibility facade over owned significant spans.
 func nextUnquotedDollar(query string, from int, quoted bool) int {
-	for from < len(query) {
-		if !quoted {
-			if next := strings.IndexByte(query[from:], '$'); next >= 0 {
-				return from + next
-			}
-			return -1
+	reader := cyphertext.NewReader(query, from)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind != cyphertext.Word && span.Kind != cyphertext.Parameter {
+			continue
 		}
-		next := strings.IndexAny(query[from:], "$'\"`")
-		if next < 0 {
-			return -1
+		if offset := strings.IndexByte(span.Text(query), '$'); offset >= 0 {
+			return span.Start + offset
 		}
-		next += from
-		if query[next] == '$' {
-			return next
-		}
-		from = skipQuotedText(query, next)
 	}
 	return -1
 }
@@ -238,25 +194,36 @@ func separateCypher25Parameters(query string) (string, *queryRewrite) {
 	if strings.IndexByte(query, '$') < 0 {
 		return query, nil
 	}
-	var (
-		rewrite *queryRewrite
-		out     strings.Builder
-		last    int
-	)
-	quoted := containsQuoteCharacter(query)
-	for i := nextUnquotedDollar(query, 0, quoted); i >= 0; i = nextUnquotedDollar(query, i+1, quoted) {
-		if isParameterStart(query, i) {
+	var rewrite *queryRewrite
+	var out strings.Builder
+	last := 0
+	reader := cyphertext.NewReader(query, 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind != cyphertext.Word && span.Kind != cyphertext.Parameter {
 			continue
 		}
-		if rewrite == nil {
-			rewrite = &queryRewrite{original: query}
-			out.Grow(len(query) + 4)
+		// Cypher 25 separates dollars inside a Cypher 5 name. Inspect that owned
+		// name span, never quoted text or comments from the surrounding statement.
+		for offset := 0; offset < span.End-span.Start; {
+			next := strings.IndexByte(query[span.Start+offset:span.End], '$')
+			if next < 0 {
+				break
+			}
+			at := span.Start + offset + next
+			offset = at - span.Start + 1
+			if at == span.Start && span.Kind == cyphertext.Parameter {
+				continue
+			}
+			if rewrite == nil {
+				rewrite = &queryRewrite{original: query}
+				out.Grow(len(query) + 4)
+			}
+			out.WriteString(query[last:at])
+			start := out.Len()
+			out.WriteString(" $")
+			rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: at, origEnd: at + 1, canonStart: start, canonEnd: out.Len()})
+			last = at + 1
 		}
-		out.WriteString(query[last:i])
-		canonStart := out.Len()
-		out.WriteString(" $")
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: i, origEnd: i + 1, canonStart: canonStart, canonEnd: out.Len()})
-		last = i + 1
 	}
 	if rewrite == nil {
 		return query, nil
@@ -278,7 +245,7 @@ func replaceParameterReferences(query string, replace func(name string, next byt
 		if end < len(query) {
 			following = query[end]
 		}
-		replacement, ok := replace(query[start:end], following)
+		replacement, ok := replace(symbolicNameValue(query[start:end]), following)
 		if !ok {
 			return
 		}
@@ -332,46 +299,21 @@ func validateStatementParameters(cypher string, params map[string]interface{}) e
 // the shell's and the enclosing query's parameters.
 func statementMissingParameters(cypher string, bound func(name string) bool) []string {
 	var missing []string
-	for index := 0; index < len(cypher); index++ {
-		switch cypherLexicalByte(cypher[index]) {
-		case cypherQuoteClass:
-			index = skipQuotedSemanticText(cypher, index) - 1
-		case '/':
-			if end := queryCommentEnd(cypher, index); end >= 0 {
-				index = end - 1
-			}
-		case '$':
-			if !isParameterStart(cypher, index) {
-				continue
-			}
-			start := index + 1
-			var name string
-			if start < len(cypher) && isCypherBacktickByte(cypher[start]) {
-				end := skipQuotedSemanticText(cypher, start)
-				name = normalizePropertyKey(cypher[start:end])
-				index = end - 1
-			} else {
-				end := start
-				for end < len(cypher) && isIdentByte(cypher[end]) {
-					end++
-				}
-				name = cypher[start:end]
-				index = end - 1
-			}
-			if name == "" || dynamicLabelStartsAt(cypher, start-1) {
-				// $(e), $all(e), $any(e): a dynamic label, not a parameter.
-				continue
-			}
-			if bound(name) {
-				continue
-			}
-			known := false
-			for _, previous := range missing {
-				known = known || previous == name
-			}
-			if !known {
-				missing = append(missing, name)
-			}
+	reader := cyphertext.NewReader(cypher, 0)
+	for span, ok := reader.Next(); ok; span, ok = reader.Next() {
+		if span.Kind != cyphertext.Parameter || dynamicLabelStartsAt(cypher, span.Start) {
+			continue
+		}
+		name := symbolicNameValue(cypher[span.Start+1 : span.End])
+		if name == "" || bound(name) {
+			continue
+		}
+		known := false
+		for _, previous := range missing {
+			known = known || previous == name
+		}
+		if !known {
+			missing = append(missing, name)
 		}
 	}
 	return missing

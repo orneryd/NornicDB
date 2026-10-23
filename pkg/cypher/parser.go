@@ -23,12 +23,9 @@ const (
 
 // Parser parses Cypher queries into AST.
 //
-// The execution path's workhorse is a scannerless recursive descent parser
-// over the raw query text (no lexer, no parse tree): clause boundaries and
-// operator precedence are found by scanning for top-level keywords and
-// operators while skipping quoted text, comments and brackets, and each
-// construct recurses into its split fragments (keyword_scan.go,
-// operators.go, row_expression.go).
+// The recursive-descent grammar consumes shared lexical spans for clause
+// boundaries, names, operators and delimiters (internal/cyphertext). Grammar
+// responsibilities recurse into the same source spans without private lexers.
 type Parser struct{}
 
 // NewParser creates a new Cypher parser.
